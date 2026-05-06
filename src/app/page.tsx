@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+export const revalidate = 0;
 
 console.log("My URL is:", process.env.NEXT_PUBLIC_SUPABASE_URL)
 const supabase = createClient(
