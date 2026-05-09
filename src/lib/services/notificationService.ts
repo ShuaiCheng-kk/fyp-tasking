@@ -56,7 +56,7 @@ export async function notifyApplicationUpdate(
       body: `Thank you for applying to "${jobTitle}". We have moved forward with other candidates.`,
     },
     hired: {
-      title: 'Congratulations — you're hired!',
+      title: "Congratulations — you're hired!",
       body: `You have been selected for "${jobTitle}". Your manager will share shift details soon.`,
     },
   }
