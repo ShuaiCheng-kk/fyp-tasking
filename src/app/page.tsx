@@ -281,8 +281,9 @@ export default function HomePage() {
   return (
     <>
       {/* ========== HERO SECTION ========== */}
-      <section id="hero" style={{ background: '#FFFBF5', padding: '80px 0 100px' }}>
+      <section id="hero" className="page-section" style={{ background: '#FFFBF5', padding: '80px 0 100px' }}>
         <div
+          className="hero-flex section-inner"
           style={{
             maxWidth: '1280px',
             margin: '0 auto',
@@ -293,7 +294,7 @@ export default function HomePage() {
           }}
         >
           {/* Left content */}
-          <div style={{ flex: '1', minWidth: 0 }}>
+          <div className="hero-left" style={{ flex: '1', minWidth: 0 }}>
             {/* Badge */}
             <div style={heroAnim(h0)}>
               <span
@@ -316,6 +317,7 @@ export default function HomePage() {
             {/* Headline line 1 */}
             <div style={{ overflow: 'hidden' }}>
               <h1
+                className="hero-heading"
                 style={{
                   ...heroAnim(h1),
                   fontFamily: 'var(--font-heading)',
@@ -333,6 +335,7 @@ export default function HomePage() {
             {/* Headline line 2 */}
             <div style={{ overflow: 'hidden', marginBottom: '22px' }}>
               <h1
+                className="hero-heading"
                 style={{
                   ...heroAnim(h2),
                   fontFamily: 'var(--font-heading)',
@@ -365,6 +368,7 @@ export default function HomePage() {
 
           {/* Right side – dashboard mockup placeholder */}
           <div
+            className="hero-mockup"
             style={{
               flex: '1.1',
               minWidth: 0,
@@ -386,8 +390,9 @@ export default function HomePage() {
       </section>
 
       {/* ========== HOW IT WORKS SECTION ========== */}
-      <section id="how-it-works" style={{ background: '#FFFFFF', padding: '80px 0' }}>
+      <section id="how-it-works" className="page-section" style={{ background: '#FFFFFF', padding: '80px 0' }}>
         <div
+          className="section-inner"
           style={{
             maxWidth: '1280px',
             margin: '0 auto',
@@ -433,8 +438,9 @@ export default function HomePage() {
       </section>
 
       {/* ========== UNIQUE SELLING POINT (USP) SECTION ========== */}
-      <section id="why-tasking" style={{ background: '#FFFBF5', padding: '80px 0' }}>
+      <section id="why-tasking" className="page-section" style={{ background: '#FFFBF5', padding: '80px 0' }}>
         <div
+          className="section-inner"
           style={{
             maxWidth: '1280px',
             margin: '0 auto',
@@ -447,6 +453,7 @@ export default function HomePage() {
 
           {/* 2×2 USP grid */}
           <div
+            className="grid-usp"
             style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(2, 1fr)',
@@ -529,8 +536,9 @@ export default function HomePage() {
       </section>
 
       {/* ========== PRODUCTS PREVIEW SECTION ========== */}
-      <section id="products" style={{ background: '#FFFFFF', padding: '80px 0' }}>
+      <section id="products" className="page-section" style={{ background: '#FFFFFF', padding: '80px 0' }}>
         <div
+          className="section-inner"
           style={{
             maxWidth: '1280px',
             margin: '0 auto',
@@ -547,11 +555,13 @@ export default function HomePage() {
 
           {/* 5 module cards */}
           <div
+            className="grid-products"
             style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(5, 1fr)',
               gap: '16px',
               marginBottom: '48px',
+              alignItems: 'stretch',
             }}
           >
             {[
@@ -561,7 +571,7 @@ export default function HomePage() {
               { Icon: TeamIcon, title: 'Team Management', desc: 'Manage roles, departments, and permissions with ease.', href: '/products/team-management' },
               { Icon: BellIcon, title: 'Smart Notifications', desc: 'Automated alerts that keep your team informed and on time.', href: '/products/smart-notifications' },
             ].map(({ Icon, title, desc, href }, i) => (
-              <AnimatedSection key={href} delay={i * 70}>
+              <AnimatedSection key={href} delay={i * 70} style={{ height: '100%' }}>
                 <Link
                   href={href}
                   className="card-lift"
@@ -570,7 +580,9 @@ export default function HomePage() {
                     borderRadius: '14px',
                     padding: '28px 22px',
                     border: '1px solid #F0E8D8',
-                    display: 'block',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    height: '100%',
                   }}
                 >
                   <div
@@ -607,8 +619,8 @@ export default function HomePage() {
       </section>
 
       {/* ========== INDUSTRIES PREVIEW SECTION ========== */}
-      <section id="industries" style={{ background: '#FFFBF5', padding: '80px 0' }}>
-        <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '0 24px' }}>
+      <section id="industries" className="page-section" style={{ background: '#FFFBF5', padding: '80px 0' }}>
+        <div className="section-inner" style={{ maxWidth: '1280px', margin: '0 auto', padding: '0 24px' }}>
           <AnimatedSection style={{ textAlign: 'center', marginBottom: '52px' }}>
             <h2 style={heading2}>Built for the Industries That Run on Casual Workers</h2>
             <p style={sectionSubtitle}>
@@ -619,6 +631,7 @@ export default function HomePage() {
 
           {/* 4 industry cards */}
           <div
+            className="grid-industries"
             style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(4, 1fr)',
@@ -677,7 +690,7 @@ export default function HomePage() {
       </section>
 
       {/* ========== FINAL CTA BANNER SECTION ========== */}
-      <section id="get-started" style={{ background: '#F97316', padding: '80px 24px' }}>
+      <section id="get-started" className="page-section" style={{ background: '#F97316', padding: '80px 24px' }}>
         <AnimatedSection>
           <div style={{ maxWidth: '640px', margin: '0 auto', textAlign: 'center' }}>
             <h2

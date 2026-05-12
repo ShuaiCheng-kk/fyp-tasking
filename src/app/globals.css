@@ -65,16 +65,128 @@ a {
   transform: scale(1.05);
 }
 
-/* ── Hamburger lines → X transition ── */
-.ham-line {
-  display: block;
-  width: 20px;
-  height: 2px;
-  background: #FFFBF5;
-  border-radius: 2px;
-  transition: transform 0.25s ease, opacity 0.25s ease;
-  transform-origin: center;
+/* ── Mobile nav button (hidden on desktop) ── */
+.nav-mobile-btn {
+  display: none;
 }
-.ham-open .ham-line:nth-child(1) { transform: translateY(6px) rotate(45deg); }
-.ham-open .ham-line:nth-child(2) { opacity: 0; transform: scaleX(0); }
-.ham-open .ham-line:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
+
+/* ═══════════════════════════════════════════════
+   RESPONSIVE BREAKPOINTS
+   ═══════════════════════════════════════════════ */
+
+/* ── Laptop / large tablet (≤ 1100px) ── */
+@media (max-width: 1100px) {
+  .hero-heading {
+    font-size: 2.9rem !important;
+  }
+
+  .grid-products {
+    grid-template-columns: repeat(3, 1fr) !important;
+  }
+}
+
+/* ── iPad / tablet portrait (≤ 900px) ── */
+@media (max-width: 900px) {
+  /* Navbar: hide desktop links, show hamburger */
+  .nav-links {
+    display: none !important;
+  }
+  .nav-cta {
+    display: none !important;
+  }
+  .nav-mobile-btn {
+    display: flex !important;
+  }
+
+  /* Sections: reduce vertical padding */
+  .page-section {
+    padding-top: 60px !important;
+    padding-bottom: 60px !important;
+  }
+
+  /* Section inner: tighter horizontal padding */
+  .section-inner {
+    padding-left: 20px !important;
+    padding-right: 20px !important;
+  }
+
+  /* Hero: stack vertically */
+  .hero-flex {
+    flex-direction: column !important;
+    gap: 36px !important;
+  }
+  .hero-mockup {
+    width: 100% !important;
+    flex: none !important;
+    height: 300px !important;
+  }
+  .hero-heading {
+    font-size: 2.5rem !important;
+  }
+
+  /* Section headings */
+  .page-section h2 {
+    font-size: 1.875rem !important;
+  }
+
+  /* USP: single column */
+  .grid-usp {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Products: 2 columns */
+  .grid-products {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  /* Industries: 2 columns */
+  .grid-industries {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  /* CTA banner */
+  #get-started h2 {
+    font-size: 2rem !important;
+  }
+}
+
+/* ── Phone (≤ 600px) ── */
+@media (max-width: 600px) {
+  .page-section {
+    padding-top: 48px !important;
+    padding-bottom: 48px !important;
+  }
+  .section-inner {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+
+  .hero-heading {
+    font-size: 2rem !important;
+  }
+  .hero-mockup {
+    height: 240px !important;
+  }
+  .page-section h2 {
+    font-size: 1.625rem !important;
+  }
+
+  /* Products: 1 column on small phones */
+  .grid-products {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Industries: keep 2 columns, just smaller */
+  .grid-industries {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 12px !important;
+  }
+
+  /* CTA banner */
+  #get-started {
+    padding: 56px 16px !important;
+  }
+  #get-started h2 {
+    font-size: 1.75rem !important;
+  }
+}
