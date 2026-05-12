@@ -35,6 +35,18 @@ const ChevronDown = () => (
   </svg>
 );
 
+const MenuIcon = () => (
+  <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+    <path d="M3 5.5h16M3 11h16M3 16.5h16" stroke="#FFFBF5" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
+const CloseIcon = () => (
+  <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+    <path d="M5 5l12 12M17 5L5 17" stroke="#FFFBF5" strokeWidth="1.75" strokeLinecap="round" />
+  </svg>
+);
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface DropdownItem {
@@ -132,10 +144,31 @@ const NavLink = ({
   </Link>
 );
 
+// ─── Mobile menu link (dark text on white) ────────────────────────────────────
+
+const MobileNavLink = ({ label, href, onClick }: { label: string; href: string; onClick: () => void }) => (
+  <Link
+    href={href}
+    onClick={onClick}
+    style={{
+      display: 'block',
+      padding: '12px 20px',
+      color: '#1C1917',
+      fontSize: '0.9375rem',
+      fontFamily: 'var(--font-body)',
+      fontWeight: 500,
+      borderBottom: '1px solid #F0E8D8',
+    }}
+  >
+    {label}
+  </Link>
+);
+
 // ─── Navbar ──────────────────────────────────────────────────────────────────
 
 export default function Navbar() {
   const [scrolled, setScrolled] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const pathname = usePathname();
 
   useEffect(() => {
@@ -144,8 +177,14 @@ export default function Navbar() {
     return () => window.removeEventListener('scroll', handler);
   }, []);
 
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [pathname]);
+
   const isActive = (href: string) =>
     href === '/' ? pathname === '/' : pathname.startsWith(href);
+
+  const close = () => setMobileOpen(false);
 
   return (
     <header
@@ -192,8 +231,8 @@ export default function Navbar() {
           </span>
         </Link>
 
-        {/* Center nav */}
-        <nav style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+        {/* Center nav — hidden on mobile */}
+        <nav className="nav-links" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
           <NavDropdown
             label="Products"
             href="/products"
@@ -232,8 +271,8 @@ export default function Navbar() {
           <NavLink label="Job Board" href="/job-board" isActive={isActive('/job-board')} />
         </nav>
 
-        {/* Right CTAs */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        {/* Right CTAs — hidden on mobile */}
+        <div className="nav-cta" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <Link
             href="/signin"
             className="btn-press"
@@ -266,6 +305,81 @@ export default function Navbar() {
           </Link>
         </div>
 
+        {/* Hamburger — shown on mobile only */}
+        <button
+          className="nav-mobile-btn"
+          onClick={() => setMobileOpen((v) => !v)}
+          aria-label="Toggle menu"
+          style={{
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            padding: '6px',
+            display: 'none',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          {mobileOpen ? <CloseIcon /> : <MenuIcon />}
+        </button>
+      </div>
+
+      {/* ── Mobile slide-down menu ── */}
+      <div
+        style={{
+          background: '#FFFFFF',
+          borderTop: '1px solid #F0E8D8',
+          overflow: 'hidden',
+          maxHeight: mobileOpen ? '600px' : '0',
+          transition: 'max-height 0.35s ease',
+        }}
+      >
+        <MobileNavLink label="Products" href="/products" onClick={close} />
+        <MobileNavLink label="AI Features" href="/products/ai-features" onClick={close} />
+        <MobileNavLink label="Recruitment" href="/products/recruitment" onClick={close} />
+        <MobileNavLink label="Attendance" href="/products/attendance" onClick={close} />
+        <MobileNavLink label="Team Management" href="/products/team-management" onClick={close} />
+        <MobileNavLink label="Smart Notifications" href="/products/smart-notifications" onClick={close} />
+        <MobileNavLink label="Industries" href="/industries" onClick={close} />
+        <MobileNavLink label="Pricing" href="/pricing" onClick={close} />
+        <MobileNavLink label="About" href="/about" onClick={close} />
+        <MobileNavLink label="Job Board" href="/job-board" onClick={close} />
+        <div style={{ padding: '16px 20px', display: 'flex', gap: '10px' }}>
+          <Link
+            href="/signin"
+            onClick={close}
+            style={{
+              flex: 1,
+              textAlign: 'center',
+              padding: '11px 0',
+              color: '#1C1917',
+              fontFamily: 'var(--font-body)',
+              fontWeight: 500,
+              fontSize: '0.9375rem',
+              border: '1px solid #F0E8D8',
+              borderRadius: '8px',
+            }}
+          >
+            Sign In
+          </Link>
+          <Link
+            href="/get-started"
+            onClick={close}
+            style={{
+              flex: 1,
+              textAlign: 'center',
+              padding: '11px 0',
+              background: '#F97316',
+              color: '#FFFFFF',
+              fontFamily: 'var(--font-body)',
+              fontWeight: 600,
+              fontSize: '0.9375rem',
+              borderRadius: '8px',
+            }}
+          >
+            Get Started
+          </Link>
+        </div>
       </div>
     </header>
   );
