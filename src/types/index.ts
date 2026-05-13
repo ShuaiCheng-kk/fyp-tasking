@@ -28,6 +28,20 @@ export interface Department {
   created_at: string
 }
 
+export interface JobPosting {
+  id: string
+  title: string
+  description: string | null
+  company_id: string
+  department_id: string | null
+  manager_id: string
+  status: 'draft' | 'open' | 'closed' | 'cancelled'
+  slots: number
+  required_skills: string[]
+  created_at: string
+  closes_at: string | null
+}
+
 export interface InvitationCode {
   code: string
   company_id: string
