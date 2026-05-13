@@ -83,6 +83,25 @@ a {
   .grid-products {
     grid-template-columns: repeat(3, 1fr) !important;
   }
+
+  /* Sub-page grids: drop 5-col to 3-col */
+  .grid-features-5 {
+    grid-template-columns: repeat(3, 1fr) !important;
+  }
+
+  /* Roles: 3 columns */
+  .grid-roles {
+    grid-template-columns: repeat(3, 1fr) !important;
+  }
+
+  /* Steps: 2 columns */
+  .grid-steps-4 {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 32px !important;
+  }
+  .grid-steps-3 {
+    grid-template-columns: repeat(3, 1fr) !important;
+  }
 }
 
 /* ── iPad / tablet portrait (≤ 900px) ── */
@@ -103,9 +122,17 @@ a {
     padding-top: 60px !important;
     padding-bottom: 60px !important;
   }
+  .sub-section {
+    padding-top: 60px !important;
+    padding-bottom: 60px !important;
+  }
 
   /* Section inner: tighter horizontal padding */
   .section-inner {
+    padding-left: 20px !important;
+    padding-right: 20px !important;
+  }
+  .sub-inner {
     padding-left: 20px !important;
     padding-right: 20px !important;
   }
@@ -123,9 +150,15 @@ a {
   .hero-heading {
     font-size: 2.5rem !important;
   }
+  .sub-hero-h1 {
+    font-size: 2.25rem !important;
+  }
 
   /* Section headings */
   .page-section h2 {
+    font-size: 1.875rem !important;
+  }
+  .sub-h2 {
     font-size: 1.875rem !important;
   }
 
@@ -134,7 +167,7 @@ a {
     grid-template-columns: 1fr !important;
   }
 
-  /* Products: 2 columns */
+  /* Homepage products grid: 2 columns */
   .grid-products {
     grid-template-columns: repeat(2, 1fr) !important;
   }
@@ -144,8 +177,40 @@ a {
     grid-template-columns: repeat(2, 1fr) !important;
   }
 
+  /* Sub-page feature grids: 2 columns */
+  .grid-features-3 {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+  .grid-features-2 {
+    grid-template-columns: 1fr !important;
+  }
+  .grid-features-5 {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  /* Roles: 2 columns */
+  .grid-roles {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  /* Steps: 2 columns, hide connector lines */
+  .grid-steps-4 {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 32px !important;
+  }
+  .grid-steps-3 {
+    grid-template-columns: 1fr !important;
+    gap: 32px !important;
+  }
+  .step-connector {
+    display: none !important;
+  }
+
   /* CTA banner */
   #get-started h2 {
+    font-size: 2rem !important;
+  }
+  .cta-banner h2 {
     font-size: 2rem !important;
   }
 }
@@ -156,7 +221,15 @@ a {
     padding-top: 48px !important;
     padding-bottom: 48px !important;
   }
+  .sub-section {
+    padding-top: 48px !important;
+    padding-bottom: 48px !important;
+  }
   .section-inner {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+  .sub-inner {
     padding-left: 16px !important;
     padding-right: 16px !important;
   }
@@ -167,13 +240,39 @@ a {
   .hero-mockup {
     height: 240px !important;
   }
+  .sub-hero-h1 {
+    font-size: 1.875rem !important;
+  }
   .page-section h2 {
     font-size: 1.625rem !important;
   }
+  .sub-h2 {
+    font-size: 1.625rem !important;
+  }
 
-  /* Products: 1 column on small phones */
+  /* All feature grids: 1 column */
   .grid-products {
     grid-template-columns: 1fr !important;
+  }
+  .grid-features-3 {
+    grid-template-columns: 1fr !important;
+  }
+  .grid-features-2 {
+    grid-template-columns: 1fr !important;
+  }
+  .grid-features-5 {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Roles: 1 column */
+  .grid-roles {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Steps: 1 column */
+  .grid-steps-4 {
+    grid-template-columns: 1fr !important;
+    gap: 24px !important;
   }
 
   /* Industries: keep 2 columns, just smaller */
@@ -187,6 +286,12 @@ a {
     padding: 56px 16px !important;
   }
   #get-started h2 {
+    font-size: 1.75rem !important;
+  }
+  .cta-banner {
+    padding: 56px 16px !important;
+  }
+  .cta-banner h2 {
     font-size: 1.75rem !important;
   }
 }

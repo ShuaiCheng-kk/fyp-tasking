@@ -245,17 +245,7 @@ export default function Navbar() {
               { label: 'Smart Notifications', href: '/products/smart-notifications' },
             ]}
           />
-          <NavDropdown
-            label="Industries"
-            href="/industries"
-            isActive={isActive('/industries')}
-            items={[
-              { label: 'Retail', href: '/industries/retail' },
-              { label: 'F&B', href: '/industries/fnb' },
-              { label: 'Logistics', href: '/industries/logistics' },
-              { label: 'Event Management', href: '/industries/event-management' },
-            ]}
-          />
+          <NavLink label="Industries" href="/industries" isActive={isActive('/industries')} />
           <NavLink label="Pricing" href="/pricing" isActive={isActive('/pricing')} />
           <NavDropdown
             label="About"

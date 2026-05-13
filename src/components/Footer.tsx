@@ -12,15 +12,6 @@ const columns = [
     ],
   },
   {
-    title: "Industries",
-    links: [
-      { label: "Retail", href: "/industries/retail" },
-      { label: "F&B", href: "/industries/fnb" },
-      { label: "Logistics", href: "/industries/logistics" },
-      { label: "Event Management", href: "/industries/event-management" },
-    ],
-  },
-  {
     title: "About",
     links: [
       { label: "Mission", href: "/about/mission" },
@@ -51,7 +42,7 @@ export default function Footer() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(4, 1fr)",
+            gridTemplateColumns: "repeat(3, 1fr)",
             gap: "40px",
             marginBottom: "48px",
           }}
