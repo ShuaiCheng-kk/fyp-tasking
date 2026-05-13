@@ -215,6 +215,41 @@ a {
   }
 }
 
+/* ── Auth card ── */
+.auth-card {
+  width: 100%;
+}
+
+/* ── Industry alternating rows ── */
+.industry-row {
+  display: flex;
+  align-items: center;
+  gap: 80px;
+  padding: 64px 0;
+}
+
+/* ── Plans grid (2-col pricing) ── */
+.plans-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 24px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+/* ── Comparison table scroll wrapper ── */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ── Search / filter row ── */
+.search-filter-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
 /* ── Phone (≤ 600px) ── */
 @media (max-width: 600px) {
   .page-section {
@@ -279,6 +314,35 @@ a {
   .grid-industries {
     grid-template-columns: repeat(2, 1fr) !important;
     gap: 12px !important;
+  }
+
+  /* Industry rows: stack vertically */
+  .industry-row {
+    flex-direction: column !important;
+    gap: 40px !important;
+    padding: 48px 0 !important;
+  }
+
+  /* Plans grid: single column */
+  .plans-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Search filter: stack vertically */
+  .search-filter-row {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+  .search-filter-row select,
+  .search-filter-row input,
+  .search-filter-row button {
+    width: 100% !important;
+    min-width: unset !important;
+  }
+
+  /* Auth card: reduce padding on small screens */
+  .auth-card {
+    padding: 32px 24px !important;
   }
 
   /* CTA banner */

@@ -1,0 +1,16 @@
+export const page = {
+  logo: 'Tasking',
+  headline: 'Welcome back',
+  subheadline: 'Sign in to your Tasking account',
+  emailLabel: 'Email',
+  emailPlaceholder: 'you@company.com',
+  passwordLabel: 'Password',
+  passwordPlaceholder: '••••••••',
+  forgotPassword: 'Forgot password?',
+  forgotPasswordHref: '/forgot-password',
+  submitButton: 'Sign In',
+  dividerText: "Don't have an account?",
+  getStartedLabel: 'Get Started',
+  getStartedHref: '/get-started',
+  errorMessage: 'Invalid email or password. Please try again.',
+}
