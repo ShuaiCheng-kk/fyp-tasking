@@ -210,9 +210,9 @@ export default function Navbar() {
           margin: '0 auto',
           padding: '0 24px',
           height: '68px',
-          display: 'flex',
+          display: 'grid',
+          gridTemplateColumns: '1fr auto 1fr',
           alignItems: 'center',
-          justifyContent: 'space-between',
         }}
       >
         {/* Logo */}
@@ -262,7 +262,7 @@ export default function Navbar() {
         </nav>
 
         {/* Right CTAs — hidden on mobile */}
-        <div className="nav-cta" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <div className="nav-cta" style={{ display: 'flex', alignItems: 'center', gap: '10px', justifyContent: 'flex-end' }}>
           <Link
             href="/signin"
             className="btn-press"
