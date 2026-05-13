@@ -281,7 +281,7 @@ export default function HomePage() {
   return (
     <>
       {/* ========== HERO SECTION ========== */}
-      <section id="hero" className="page-section" style={{ background: '#FFFBF5', padding: '80px 0 100px' }}>
+      <section id="hero" className="page-section" style={{ background: '#1C1C1E', padding: '80px 0 100px' }}>
         <div
           className="hero-flex section-inner"
           style={{
@@ -300,8 +300,8 @@ export default function HomePage() {
               <span
                 style={{
                   display: 'inline-block',
-                  background: '#FEF3C7',
-                  color: '#92400E',
+                  background: 'rgba(249,115,22,0.18)',
+                  color: '#FB923C',
                   padding: '5px 14px',
                   borderRadius: '100px',
                   fontSize: '0.8125rem',
@@ -324,7 +324,7 @@ export default function HomePage() {
                   fontWeight: 600,
                   fontSize: '3.5rem',
                   lineHeight: 1.12,
-                  color: '#1C1917',
+                  color: '#FFFFFF',
                   marginBottom: '4px',
                 }}
               >
@@ -355,7 +355,7 @@ export default function HomePage() {
                 ...heroAnim(h3),
                 fontFamily: 'var(--font-body)',
                 fontSize: '1.125rem',
-                color: '#78716C',
+                color: 'rgba(255,255,255,0.65)',
                 lineHeight: 1.75,
                 maxWidth: '500px',
               }}
@@ -372,17 +372,18 @@ export default function HomePage() {
             style={{
               flex: '1.1',
               minWidth: 0,
-              background: '#F0E8D8',
+              background: '#2C2C2E',
               borderRadius: '20px',
               height: '440px',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              border: '2px dashed #D6C9B0',
+              border: '1px solid rgba(255,255,255,0.08)',
+              boxShadow: '0 0 60px rgba(249,115,22,0.3)',
             }}
           >
             {/* TODO: Add dashboard mockup image here */}
-            <p style={{ color: '#A8977E', fontFamily: 'var(--font-body)', fontSize: '0.9375rem' }}>
+            <p style={{ color: 'rgba(255,255,255,0.3)', fontFamily: 'var(--font-body)', fontSize: '0.9375rem' }}>
               Dashboard Mockup
             </p>
           </div>
@@ -390,7 +391,7 @@ export default function HomePage() {
       </section>
 
       {/* ========== HOW IT WORKS SECTION ========== */}
-      <section id="how-it-works" className="page-section" style={{ background: '#FFFFFF', padding: '80px 0' }}>
+      <section id="how-it-works" className="page-section" style={{ background: '#F97316', padding: '80px 0' }}>
         <div
           className="section-inner"
           style={{
@@ -401,8 +402,8 @@ export default function HomePage() {
           }}
         >
           <AnimatedSection>
-            <h2 style={heading2}>See Tasking in Action</h2>
-            <p style={sectionSubtitle}>
+            <h2 style={{ ...heading2, color: '#FFFFFF' }}>See Tasking in Action</h2>
+            <p style={{ ...sectionSubtitle, color: 'rgba(255,255,255,0.8)' }}>
               Watch how Tasking simplifies your entire casual workforce workflow
               in minutes.
             </p>
