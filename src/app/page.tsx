@@ -641,15 +641,13 @@ export default function HomePage() {
             }}
           >
             {[
-              { Icon: ShoppingBagIcon, name: 'Retail', href: '/industries/retail' },
-              { Icon: UtensilsIcon, name: 'Food & Beverage', href: '/industries/fnb' },
-              { Icon: TruckIcon, name: 'Logistics', href: '/industries/logistics' },
-              { Icon: EventIcon, name: 'Event Management', href: '/industries/event-management' },
-            ].map(({ Icon, name, href }, i) => (
-              <AnimatedSection key={href} delay={i * 80}>
-                <Link
-                  href={href}
-                  className="card-lift"
+              { Icon: ShoppingBagIcon, name: 'Retail' },
+              { Icon: UtensilsIcon, name: 'Food & Beverage' },
+              { Icon: TruckIcon, name: 'Logistics' },
+              { Icon: EventIcon, name: 'Event Management' },
+            ].map(({ Icon, name }, i) => (
+              <AnimatedSection key={name} delay={i * 80}>
+                <div
                   style={{
                     background: '#FFFFFF',
                     borderRadius: '16px',
@@ -677,7 +675,7 @@ export default function HomePage() {
                   <span style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: '1.0625rem', color: '#1C1917' }}>
                     {name}
                   </span>
-                </Link>
+                </div>
               </AnimatedSection>
             ))}
           </div>

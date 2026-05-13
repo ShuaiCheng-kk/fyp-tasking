@@ -127,11 +127,7 @@ export default function TeamPage() {
       {/* ========== CLOSING ========== */}
       <section style={{ background: '#F97316', padding: '72px 24px' }}>
         <div style={{ maxWidth: '640px', margin: '0 auto', textAlign: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', marginBottom: '20px' }}>
-            <p style={{ fontFamily: 'var(--font-body)', fontSize: '1rem', color: 'rgba(255,255,255,0.8)' }}>
-              Built as a Final Year Project — with production-quality ambitions.
-            </p>
-          </div>
+
           <h2 style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, fontSize: '2rem', color: '#FFFFFF', lineHeight: 1.25 }}>
             Six people. One platform. Built for the businesses that need it most.
           </h2>
