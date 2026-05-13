@@ -155,7 +155,7 @@ export default function FAQPage() {
             Still have questions?
           </h2>
           <p style={{ fontFamily: 'var(--font-body)', fontSize: '1rem', color: '#78716C', lineHeight: 1.7, marginBottom: '28px' }}>
-            The best way to get answers is to try it. Everything in the core plan is free — no credit card, no commitment.
+            The best way to get answers is to try it. Everything in the core plan is free
           </p>
           <Link href="/get-started" className="btn-press cta-shimmer" style={{ display: 'inline-block', background: '#F97316', color: '#FFFFFF', padding: '13px 30px', borderRadius: '10px', fontFamily: 'var(--font-body)', fontWeight: 700, fontSize: '0.9375rem' }}>
             Get Started Free
