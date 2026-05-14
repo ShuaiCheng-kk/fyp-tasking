@@ -140,7 +140,7 @@ export default function IndustriesPage() {
             const isEven = idx % 2 === 0;
 
             return (
-              <div key={industry.id}>
+              <div key={industry.id} id={industry.id}>
                 {/* Industry row */}
                 <div className="industry-row" style={{
                   flexDirection: isEven ? 'row' : 'row-reverse',

@@ -50,4 +50,17 @@ export const authService = {
     if (error) throw new Error(error.message)
   },
 
+  async forgotPassword(email: string): Promise<void> {
+    const redirectTo = process.env.NODE_ENV === 'production'
+      ? 'https://fyp-tasking.vercel.app/reset-password'
+      : 'http://localhost:3000/reset-password'
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo })
+    if (error) throw new Error(error.message)
+  },
+
+  async resetPassword(password: string): Promise<void> {
+    const { error } = await supabase.auth.updateUser({ password })
+    if (error) throw new Error(error.message)
+  },
+
 }

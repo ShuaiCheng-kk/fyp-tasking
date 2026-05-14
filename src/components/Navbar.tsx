@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
@@ -63,60 +63,84 @@ interface NavDropdownProps {
 
 // ─── Nav Sub-Components ───────────────────────────────────────────────────────
 
-const dropdownMenuStyle: React.CSSProperties = {
-  position: 'absolute',
-  top: 'calc(100% + 4px)',
-  left: '0',
-  minWidth: '210px',
-  background: '#FFFFFF',
-  borderRadius: '10px',
-  boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
-  border: '1px solid #F0E8D8',
-  padding: '6px 0',
-  zIndex: 100,
-};
+const NavDropdown = ({ label, href, items, isActive }: NavDropdownProps) => {
+  const [open, setOpen] = useState(false);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-const NavDropdown = ({ label, href, items, isActive }: NavDropdownProps) => (
-  <div className="group" style={{ position: 'relative' }}>
-    <Link
-      href={href}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: '4px',
-        padding: '8px 12px',
-        color: isActive ? '#F97316' : '#FFFBF5',
-        fontSize: '0.875rem',
-        fontFamily: 'var(--font-body)',
-        borderRadius: '6px',
-        fontWeight: isActive ? 600 : 400,
-        transition: 'color 0.15s',
-      }}
+  const handleEnter = () => {
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    setOpen(true);
+  };
+
+  const handleLeave = () => {
+    hideTimer.current = setTimeout(() => setOpen(false), 150);
+  };
+
+  return (
+    <div
+      style={{ position: 'relative' }}
+      onMouseEnter={handleEnter}
+      onMouseLeave={handleLeave}
     >
-      {label}
-      <ChevronDown />
-    </Link>
-    <div className="hidden group-hover:block" style={dropdownMenuStyle}>
-      {items.map((item) => (
-        <Link
-          key={item.href}
-          href={item.href}
-          className="hover:bg-[#FEF3C7]"
+      <Link
+        href={href}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '4px',
+          padding: '8px 12px',
+          color: isActive ? '#F97316' : '#FFFBF5',
+          fontSize: '0.875rem',
+          fontFamily: 'var(--font-body)',
+          borderRadius: '6px',
+          fontWeight: isActive ? 600 : 400,
+          transition: 'color 0.15s',
+        }}
+      >
+        {label}
+        <ChevronDown />
+      </Link>
+      {/* invisible bridge fills the gap between trigger and panel */}
+      {open && (
+        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, height: '8px' }} />
+      )}
+      {open && (
+        <div
           style={{
-            display: 'block',
-            padding: '10px 16px',
-            color: '#1C1917',
-            fontSize: '0.875rem',
-            fontFamily: 'var(--font-body)',
-            transition: 'background 0.15s',
+            position: 'absolute',
+            top: 'calc(100% + 4px)',
+            left: '0',
+            minWidth: '210px',
+            background: '#FFFFFF',
+            borderRadius: '10px',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
+            border: '1px solid #F0E8D8',
+            padding: '6px 0',
+            zIndex: 100,
           }}
         >
-          {item.label}
-        </Link>
-      ))}
+          {items.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              className="hover:bg-[#FEF3C7]"
+              style={{
+                display: 'block',
+                padding: '10px 16px',
+                color: '#1C1917',
+                fontSize: '0.875rem',
+                fontFamily: 'var(--font-body)',
+                transition: 'background 0.15s',
+              }}
+            >
+              {item.label}
+            </Link>
+          ))}
+        </div>
+      )}
     </div>
-  </div>
-);
+  );
+};
 
 const NavLink = ({
   label,

@@ -72,10 +72,9 @@ function ModalOverlay({ children, onClose }: { children: React.ReactNode; onClos
         alignItems: 'center',
         justifyContent: 'center',
         zIndex: 100,
-        padding: '24px',
       }}
     >
-      <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: '460px' }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: '520px' }}>
         {children}
       </div>
     </div>
@@ -87,8 +86,8 @@ function ModalBox({ children }: { children: React.ReactNode }) {
     <div style={{
       background: '#FFFFFF',
       borderRadius: '16px',
-      padding: '28px',
-      boxShadow: '0 24px 64px rgba(0,0,0,0.18)',
+      padding: '32px',
+      boxShadow: '0 8px 40px rgba(0,0,0,0.12)',
     }}>
       {children}
     </div>
@@ -132,12 +131,11 @@ function InlineError({ message }: { message: string }) {
 function CodeBox({ code, loading }: { code: string; loading: boolean }) {
   return (
     <div style={{
-      background: '#F9FAFB',
-      border: '1.5px solid #E5E7EB',
+      background: '#F8F9FA',
+      border: '1px solid #E5E7EB',
       borderRadius: '12px',
-      padding: '24px 16px',
+      padding: '24px',
       textAlign: 'center',
-      margin: '16px 0',
       minHeight: '84px',
       display: 'flex',
       alignItems: 'center',
@@ -150,8 +148,8 @@ function CodeBox({ code, loading }: { code: string; loading: boolean }) {
           fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
           fontWeight: 700,
           fontSize: '2rem',
-          letterSpacing: '0.28em',
-          color: '#111827',
+          letterSpacing: '0.15em',
+          color: '#1C1C1E',
         }}>
           {code}
         </span>
@@ -162,9 +160,11 @@ function CodeBox({ code, loading }: { code: string; loading: boolean }) {
   )
 }
 
-// ─── Copy button ──────────────────────────────────────────────────────────────
+// ─── Code action buttons (Copy Link) ─────────────────────────────────────────
 
-function CopyButton({ code, loading, copied, onCopy }: {
+const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fyp-tasking.vercel.app'
+
+function CodeActions({ code, loading, copied, onCopy }: {
   code: string
   loading: boolean
   copied: boolean
@@ -177,23 +177,26 @@ function CopyButton({ code, loading, copied, onCopy }: {
       disabled={disabled}
       style={{
         width: '100%',
+        height: '48px',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         gap: '8px',
-        padding: '11px',
-        background: copied ? '#059669' : '#111827',
+        background: copied ? '#059669' : '#F97316',
         color: '#FFFFFF',
         border: 'none',
-        borderRadius: '9px',
+        borderRadius: '10px',
         fontWeight: 600,
         fontSize: '0.9375rem',
         cursor: disabled ? 'not-allowed' : 'pointer',
         opacity: disabled ? 0.45 : 1,
         transition: 'background 0.2s',
+        whiteSpace: 'nowrap',
       }}
+      onMouseEnter={(e) => { if (!disabled && !copied) e.currentTarget.style.background = '#EA6C0A' }}
+      onMouseLeave={(e) => { if (!disabled && !copied) e.currentTarget.style.background = '#F97316' }}
     >
-      {copied ? <><Check size={15} /> Copied!</> : <><Copy size={15} /> Copy Code</>}
+      {copied ? <><Check size={15} /> Copied!</> : <><Copy size={15} /> Copy Link</>}
     </button>
   )
 }
@@ -383,20 +386,23 @@ export default function OwnerDashboard() {
     setInviteCode('')
   }
 
-  const copyCode = () => {
+  const copyLink = (role: 'Owner' | 'Manager' | 'Employee') => {
     if (!inviteCode) return
-    navigator.clipboard.writeText(inviteCode)
+    const roleLabel = role === 'Owner' ? 'Owner' : role
+    const message = `Join ${ownerName}'s company as ${roleLabel} in Tasking with invitation code: ${inviteCode}\nGet started here: ${appUrl}/get-started`
+    navigator.clipboard.writeText(message)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
 
   // ── Sign out ───────────────────────────────────────────────────────────────
 
-  const handleSignOut = async () => {
-    try { await fetch('/api/auth/signout', { method: 'POST' }) } catch {}
+  const handleSignOut = () => {
     localStorage.removeItem('tasking_user_id')
     localStorage.removeItem('tasking_company_id')
-    router.push('/signout')
+    localStorage.removeItem('tasking_active_session')
+    fetch('/api/auth/signout', { method: 'POST' })
+    window.location.href = '/signout'
   }
 
   // ── Department CRUD ────────────────────────────────────────────────────────
@@ -834,32 +840,32 @@ export default function OwnerDashboard() {
         <ModalOverlay onClose={() => setInviteModal(null)}>
           <ModalBox>
             <ModalHeader title="Invite Partner" onClose={() => setInviteModal(null)} />
-            <p style={{ fontSize: '0.9rem', color: '#6B7280', margin: '0 0 4px', lineHeight: 1.55 }}>
-              Share this code with someone you want to give full Owner access to.
+            <p style={{ fontSize: '0.9rem', color: '#6B7280', margin: '0 0 16px', lineHeight: 1.55 }}>
+              Share this code with someone you want to give full access to.
             </p>
             {inviteCode ? (
-              <>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <CodeBox code={inviteCode} loading={inviteLoading} />
-                <CopyButton code={inviteCode} loading={inviteLoading} copied={copied} onCopy={copyCode} />
-                <p style={{ fontSize: '0.8125rem', color: '#B45309', textAlign: 'center', fontWeight: 500, marginTop: '12px', marginBottom: '4px' }}>
-                  ⚠️ This person will have full access to your company.
+                <CodeActions code={inviteCode} loading={inviteLoading} copied={copied} onCopy={() => copyLink('Owner')} />
+                <p style={{ fontSize: '13px', color: '#F97316', textAlign: 'center', margin: 0 }}>
+                  This person will have full access to your company.
                 </p>
-                <p style={{ fontSize: '0.8125rem', color: '#9CA3AF', textAlign: 'center', marginBottom: 0 }}>
+                <p style={{ fontSize: '0.75rem', color: '#9CA3AF', textAlign: 'center', margin: 0 }}>
                   This code expires in 7 days.
                 </p>
-              </>
+              </div>
             ) : (
               <button
                 onClick={() => generateCode('Owner')}
                 disabled={inviteLoading}
                 style={{
-                  marginTop: '20px',
                   width: '100%',
-                  padding: '11px',
+                  height: '48px',
+                  padding: '0',
                   background: '#F97316',
                   color: '#FFFFFF',
                   border: 'none',
-                  borderRadius: '9px',
+                  borderRadius: '10px',
                   fontWeight: 600,
                   fontSize: '0.9375rem',
                   cursor: inviteLoading ? 'not-allowed' : 'pointer',
@@ -868,6 +874,7 @@ export default function OwnerDashboard() {
                   alignItems: 'center',
                   justifyContent: 'center',
                   gap: '8px',
+                  whiteSpace: 'nowrap',
                 }}
               >
                 {inviteLoading && <Spinner size={14} />}
@@ -884,7 +891,7 @@ export default function OwnerDashboard() {
           <ModalBox>
             <ModalHeader title="Invite Manager" onClose={() => setInviteModal(null)} />
             <p style={{ fontSize: '0.9rem', color: '#6B7280', margin: '0 0 16px', lineHeight: 1.55 }}>
-              Select a department and generate a code to invite a new Manager.
+              Select a department and share the code with your new Manager.
             </p>
             {departments.length === 0 ? (
               <p style={{ fontSize: '0.875rem', color: '#9CA3AF', textAlign: 'center', margin: '16px 0' }}>
@@ -909,13 +916,13 @@ export default function OwnerDashboard() {
               </>
             )}
             {inviteCode ? (
-              <>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
                 <CodeBox code={inviteCode} loading={inviteLoading} />
-                <CopyButton code={inviteCode} loading={inviteLoading} copied={copied} onCopy={copyCode} />
-                <p style={{ fontSize: '0.8125rem', color: '#9CA3AF', textAlign: 'center', marginTop: '12px', marginBottom: 0 }}>
+                <CodeActions code={inviteCode} loading={inviteLoading} copied={copied} onCopy={() => copyLink('Manager')} />
+                <p style={{ fontSize: '0.75rem', color: '#9CA3AF', textAlign: 'center', margin: 0 }}>
                   This code expires in 7 days.
                 </p>
-              </>
+              </div>
             ) : (
               <button
                 onClick={() => { if (selectedDeptId) generateCode('Manager', selectedDeptId) }}
@@ -923,11 +930,12 @@ export default function OwnerDashboard() {
                 style={{
                   marginTop: '20px',
                   width: '100%',
-                  padding: '11px',
+                  height: '48px',
+                  padding: '0',
                   background: '#F97316',
                   color: '#FFFFFF',
                   border: 'none',
-                  borderRadius: '9px',
+                  borderRadius: '10px',
                   fontWeight: 600,
                   fontSize: '0.9375rem',
                   cursor: (!selectedDeptId || departments.length === 0) ? 'not-allowed' : 'pointer',
@@ -936,6 +944,7 @@ export default function OwnerDashboard() {
                   alignItems: 'center',
                   justifyContent: 'center',
                   gap: '8px',
+                  whiteSpace: 'nowrap',
                 }}
               >
                 {inviteLoading && <Spinner size={14} />}
@@ -977,13 +986,13 @@ export default function OwnerDashboard() {
               </>
             )}
             {inviteCode ? (
-              <>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
                 <CodeBox code={inviteCode} loading={inviteLoading} />
-                <CopyButton code={inviteCode} loading={inviteLoading} copied={copied} onCopy={copyCode} />
-                <p style={{ fontSize: '0.8125rem', color: '#9CA3AF', textAlign: 'center', marginTop: '12px', marginBottom: 0 }}>
+                <CodeActions code={inviteCode} loading={inviteLoading} copied={copied} onCopy={() => copyLink('Employee')} />
+                <p style={{ fontSize: '0.75rem', color: '#9CA3AF', textAlign: 'center', margin: 0 }}>
                   This code expires in 7 days.
                 </p>
-              </>
+              </div>
             ) : (
               <button
                 onClick={() => { if (selectedDeptId) generateCode('Employee', selectedDeptId) }}
@@ -991,11 +1000,12 @@ export default function OwnerDashboard() {
                 style={{
                   marginTop: '20px',
                   width: '100%',
-                  padding: '11px',
+                  height: '48px',
+                  padding: '0',
                   background: '#F97316',
                   color: '#FFFFFF',
                   border: 'none',
-                  borderRadius: '9px',
+                  borderRadius: '10px',
                   fontWeight: 600,
                   fontSize: '0.9375rem',
                   cursor: (!selectedDeptId || departments.length === 0) ? 'not-allowed' : 'pointer',
@@ -1004,6 +1014,7 @@ export default function OwnerDashboard() {
                   alignItems: 'center',
                   justifyContent: 'center',
                   gap: '8px',
+                  whiteSpace: 'nowrap',
                 }}
               >
                 {inviteLoading && <Spinner size={14} />}

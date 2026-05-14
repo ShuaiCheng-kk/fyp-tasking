@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Eye, EyeOff } from 'lucide-react';
 import { page as c } from './content';
@@ -61,12 +60,12 @@ const ROLE_ROUTES: Record<string, string> = {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function SignInPage() {
-  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [showError, setShowError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('Invalid email or password');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -80,10 +79,13 @@ export default function SignInPage() {
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.message);
+
       localStorage.setItem('tasking_user_id', data.user.id);
+      localStorage.setItem('tasking_active_session', 'true');
       const route = ROLE_ROUTES[data.user.role] || '/owner/dashboard';
-      router.push(route);
+      window.location.href = route;
     } catch {
+      setErrorMessage('Invalid email or password');
       setIsLoading(false);
       setShowError(true);
     }
@@ -219,7 +221,7 @@ export default function SignInPage() {
               color: '#DC2626',
               lineHeight: 1.5,
             }}>
-              Invalid email or password
+              {errorMessage}
             </div>
           )}
 

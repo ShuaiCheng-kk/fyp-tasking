@@ -46,23 +46,29 @@ export async function POST(req: NextRequest) {
       { status: 201 },
     )
   } catch (error: any) {
-    console.error('Register error full:', error)
-    console.log('Register error:', JSON.stringify(error, null, 2))
-    console.log('Register error message:', error?.message)
-    console.log('Register error code:', error?.code)
+    console.error('REGISTER ERROR:', JSON.stringify(error, null, 2))
 
-    const msg = error?.message || ''
-    const details = error?.details || ''
-    const combined = msg + details
+    const msg = (error?.message || '').toLowerCase()
 
-    if (combined.includes('phone_number') || combined.includes('users_phone_number_key')) {
-      return NextResponse.json({ success: false, message: 'This phone number is already in use.' }, { status: 400 })
+    if (msg.includes('user already registered') || msg.includes('already registered')) {
+      return NextResponse.json({
+        success: false,
+        message: 'This email is already registered. Please sign in instead.',
+      }, { status: 400 })
     }
-    if (combined.includes('email') && (combined.includes('unique') || combined.includes('duplicate'))) {
-      return NextResponse.json({ success: false, message: 'This email is already registered.' }, { status: 400 })
+
+    if (msg.includes('phone') && (msg.includes('unique') || msg.includes('duplicate') || msg.includes('already'))) {
+      return NextResponse.json({
+        success: false,
+        message: 'This phone number is already registered. Please use a different number.',
+      }, { status: 400 })
     }
+
     if (error?.code === '23505') {
-      return NextResponse.json({ success: false, message: 'This account already exists.' }, { status: 400 })
+      return NextResponse.json({
+        success: false,
+        message: 'An account with these details already exists.',
+      }, { status: 400 })
     }
 
     return NextResponse.json({ success: false, message: 'Something went wrong. Please try again.' }, { status: 500 })
