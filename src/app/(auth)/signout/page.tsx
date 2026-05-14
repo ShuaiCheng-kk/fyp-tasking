@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect } from 'react'
 import Link from 'next/link'
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
@@ -28,9 +29,15 @@ function TaskingLogo() {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function SignOutPage() {
+  useEffect(() => {
+    localStorage.removeItem('tasking_user_id')
+    localStorage.removeItem('tasking_company_id')
+    localStorage.removeItem('tasking_active_session')
+  }, [])
+
   return (
     <div style={{
-      minHeight: '100vh',
+      flex: 1,
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',

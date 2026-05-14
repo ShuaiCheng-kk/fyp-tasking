@@ -363,19 +363,6 @@ export default function PricingPage() {
             }}>
               {cta.primaryLabel}
             </Link>
-            <Link href={cta.secondaryHref} className="btn-press" style={{
-              display: 'inline-block',
-              background: 'transparent',
-              color: '#FFFFFF',
-              padding: '13px 28px',
-              borderRadius: '10px',
-              fontFamily: fontBody,
-              fontWeight: 700,
-              fontSize: '0.9375rem',
-              border: '2px solid rgba(255,255,255,0.6)',
-            }}>
-              {cta.secondaryLabel}
-            </Link>
           </div>
           <p style={{ fontFamily: fontBody, fontSize: '0.875rem', color: 'rgba(255,255,255,0.6)' }}>
             {cta.footnote}

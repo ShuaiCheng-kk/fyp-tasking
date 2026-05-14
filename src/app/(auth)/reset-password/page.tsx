@@ -1,0 +1,245 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { Eye, EyeOff } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
+
+const fH = 'var(--font-heading)';
+const fB = 'var(--font-body)';
+
+function Spinner() {
+  return (
+    <svg className="animate-spin" width="18" height="18" viewBox="0 0 18 18" style={{ display: 'inline-block' }}>
+      <circle cx="9" cy="9" r="7" stroke="rgba(255,255,255,0.35)" strokeWidth="2.5" fill="none" />
+      <path d="M9 2a7 7 0 0 1 7 7" stroke="white" strokeWidth="2.5" strokeLinecap="round" fill="none" />
+    </svg>
+  );
+}
+
+function TaskingLogo() {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', justifyContent: 'center', marginBottom: '32px' }}>
+      <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+        <rect width="32" height="32" rx="8" fill="#F97316" />
+        <rect x="8" y="9" width="9" height="2.5" rx="1.25" fill="white" />
+        <rect x="8" y="14.75" width="16" height="2.5" rx="1.25" fill="white" />
+        <rect x="8" y="20.5" width="12" height="2.5" rx="1.25" fill="white" />
+        <circle cx="22" cy="10.25" r="3.5" fill="#10B981" />
+        <path d="M20.3 10.25L21.5 11.5L23.8 9" stroke="white" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+      <span style={{ fontFamily: fH, fontWeight: 700, fontSize: '1.25rem', color: '#1C1917' }}>Tasking</span>
+    </div>
+  );
+}
+
+export default function ResetPasswordPage() {
+  const router = useRouter();
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [sessionReady, setSessionReady] = useState(false);
+  const [success, setSuccess] = useState(false);
+
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setSessionReady(true);
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (password !== confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters.');
+      return;
+    }
+    setIsLoading(true);
+    const { error: updateError } = await supabase.auth.updateUser({ password });
+    if (updateError) {
+      setError(updateError.message);
+      setIsLoading(false);
+    } else {
+      setSuccess(true);
+      setTimeout(() => router.push('/signin'), 2000);
+    }
+  };
+
+  const labelStyle: React.CSSProperties = {
+    display: 'block',
+    fontFamily: fB,
+    fontWeight: 600,
+    fontSize: '0.875rem',
+    color: '#374151',
+    marginBottom: '8px',
+  };
+
+  const inputStyle: React.CSSProperties = {
+    width: '100%',
+    fontFamily: fB,
+    fontSize: '0.9375rem',
+    color: '#1C1917',
+    border: '1.5px solid #E5E7EB',
+    borderRadius: '10px',
+    padding: '12px 14px',
+    background: '#FFFFFF',
+    outline: 'none',
+    boxSizing: 'border-box',
+    transition: 'border-color 0.15s',
+  };
+
+  const eyeButtonStyle: React.CSSProperties = {
+    position: 'absolute',
+    right: '14px',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    color: '#9CA3AF',
+    display: 'flex',
+    alignItems: 'center',
+    padding: 0,
+  };
+
+  return (
+    <div style={{
+      flex: 1,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      background: '#FFFBF5',
+      padding: '40px 24px',
+    }}>
+      <div className="auth-card" style={{
+        background: '#FFFFFF',
+        border: '1px solid #F0E8D8',
+        borderRadius: '20px',
+        padding: '48px 44px',
+        width: '100%',
+        maxWidth: '440px',
+        boxShadow: '0 4px 32px rgba(0,0,0,0.06)',
+      }}>
+        <TaskingLogo />
+
+        <div style={{ textAlign: 'center', marginBottom: '36px' }}>
+          <h1 style={{ fontFamily: fH, fontWeight: 700, fontSize: '1.75rem', color: '#1C1917', marginBottom: '8px' }}>
+            Set a new password
+          </h1>
+          <p style={{ fontFamily: fB, fontSize: '0.9375rem', color: '#78716C' }}>
+            Enter your new password below.
+          </p>
+        </div>
+
+        {!sessionReady ? (
+          <div style={{ textAlign: 'center', fontFamily: fB, fontSize: '0.9375rem', color: '#78716C', padding: '20px 0' }}>
+            Verifying reset link…
+          </div>
+        ) : success ? (
+          <div style={{
+            background: '#F0FDF4',
+            border: '1px solid #BBF7D0',
+            borderRadius: '10px',
+            padding: '16px',
+            fontFamily: fB,
+            fontSize: '0.9375rem',
+            color: '#15803D',
+            textAlign: 'center',
+            lineHeight: 1.5,
+          }}>
+            Password updated successfully. Redirecting to sign in…
+          </div>
+        ) : (
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <div>
+            <label style={labelStyle}>New Password</label>
+            <div style={{ position: 'relative' }}>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                autoComplete="new-password"
+                style={{ ...inputStyle, paddingRight: '48px' }}
+              />
+              <button type="button" onClick={() => setShowPassword((v) => !v)} style={eyeButtonStyle}>
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label style={labelStyle}>Confirm Password</label>
+            <div style={{ position: 'relative' }}>
+              <input
+                type={showConfirm ? 'text' : 'password'}
+                placeholder="••••••••"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                required
+                autoComplete="new-password"
+                style={{ ...inputStyle, paddingRight: '48px' }}
+              />
+              <button type="button" onClick={() => setShowConfirm((v) => !v)} style={eyeButtonStyle}>
+                {showConfirm ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
+          </div>
+
+          {error && (
+            <div style={{
+              background: '#FEF2F2',
+              border: '1px solid #FECACA',
+              borderRadius: '10px',
+              padding: '12px 16px',
+              fontFamily: fB,
+              fontSize: '0.875rem',
+              color: '#DC2626',
+              lineHeight: 1.5,
+            }}>
+              {error}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="btn-press"
+            style={{
+              width: '100%',
+              background: '#F97316',
+              color: '#FFFFFF',
+              padding: '14px',
+              borderRadius: '10px',
+              fontFamily: fB,
+              fontWeight: 700,
+              fontSize: '0.9375rem',
+              border: 'none',
+              cursor: isLoading ? 'default' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              opacity: isLoading ? 0.85 : 1,
+              transition: 'opacity 0.15s',
+            }}
+          >
+            {isLoading ? <><Spinner /> Updating…</> : 'Update Password'}
+          </button>
+        </form>
+        )}
+      </div>
+    </div>
+  );
+}
