@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useRouter } from 'next/navigation'
 import { Plus, Search, Pencil, Trash2, X, ChevronDown, Check, Copy } from 'lucide-react'
 import OwnerSidebar from '@/components/OwnerSidebar'
 
@@ -195,12 +194,9 @@ const modalLabelStyle: React.CSSProperties = {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function OwnerDashboard() {
-  const router = useRouter()
-
   // Auth / company IDs read once on mount
   const [userId, setUserId] = useState('')
   const [companyId, setCompanyId] = useState('')
-  const [companyStatus, setCompanyStatus] = useState<'loading' | 'found' | 'not-found'>('loading')
 
   // Top-bar data
   const [companies, setCompanies] = useState<{ id: string; name: string }[]>([])
@@ -253,7 +249,7 @@ export default function OwnerDashboard() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  // ── Mount: read localStorage, fetch data ───────────────────────────────────
+  // ── Mount: read localStorage, resolve company ──────────────────────────────
 
   useEffect(() => {
     const uid = localStorage.getItem('tasking_user_id') || ''
@@ -263,14 +259,16 @@ export default function OwnerDashboard() {
 
     if (cid) {
       setCompanyId(cid)
-      setCompanyStatus('found')
-      fetchDepts(cid)
     } else if (uid) {
       fetchCompanyByOwner(uid)
-    } else {
-      setCompanyStatus('not-found')
     }
   }, [])
+
+  // ── Fetch departments whenever companyId changes ───────────────────────────
+
+  useEffect(() => {
+    if (companyId) fetchDepts(companyId)
+  }, [companyId])
 
   // ── Data fetchers ──────────────────────────────────────────────────────────
 
@@ -278,7 +276,16 @@ export default function OwnerDashboard() {
     try {
       const res = await fetch(`/api/company/my-companies?owner_id=${uid}`)
       const data = await res.json()
-      if (data.success) setCompanies(data.companies)
+      if (data.success) {
+        setCompanies(data.companies)
+        // If companyId isn't set yet, fall back to the first company in the list
+        setCompanyId((prev) => {
+          if (!prev && data.companies.length > 0) {
+            return data.companies[0].id
+          }
+          return prev
+        })
+      }
     } catch {}
   }
 
@@ -290,14 +297,8 @@ export default function OwnerDashboard() {
         const cid = data.company.id
         localStorage.setItem('tasking_company_id', cid)
         setCompanyId(cid)
-        setCompanyStatus('found')
-        fetchDepts(cid)
-      } else {
-        setCompanyStatus('not-found')
       }
-    } catch {
-      setCompanyStatus('not-found')
-    }
+    } catch {}
   }
 
   const fetchDepts = async (cid: string) => {
@@ -591,42 +592,6 @@ export default function OwnerDashboard() {
 
         {/* Content */}
         <div style={{ padding: '28px 32px', flex: 1 }}>
-
-          {/* ── Company setup incomplete banner ────────────────────────────── */}
-          {companyStatus === 'not-found' && (
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '16px',
-              background: '#FEF3C7',
-              border: '1px solid #FCD34D',
-              borderRadius: '10px',
-              padding: '14px 18px',
-              marginBottom: '28px',
-            }}>
-              <span style={{ fontSize: '0.9375rem', color: '#92400E', fontWeight: 500 }}>
-                Company setup incomplete. Please complete your company profile.
-              </span>
-              <button
-                onClick={() => router.push('/get-started')}
-                style={{
-                  flexShrink: 0,
-                  padding: '7px 14px',
-                  background: '#F97316',
-                  border: 'none',
-                  borderRadius: '7px',
-                  fontWeight: 600,
-                  fontSize: '0.875rem',
-                  color: '#FFFFFF',
-                  cursor: 'pointer',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                Complete Setup
-              </button>
-            </div>
-          )}
 
           {/* ── Section: Departments ─────────────────────────────────────── */}
           <div>

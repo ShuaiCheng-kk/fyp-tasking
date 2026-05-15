@@ -124,7 +124,13 @@ export default function SettingsPage() {
     try {
       const res = await fetch(`/api/company/my-companies?owner_id=${uid}`)
       const data = await res.json()
-      if (data.success) setCompanies(data.companies)
+      if (data.success) {
+        const sorted = [...data.companies].sort((a: Company, b: Company) => {
+          if (a.plan !== b.plan) return a.plan === 'Paid' ? -1 : 1
+          return a.name.localeCompare(b.name)
+        })
+        setCompanies(sorted)
+      }
     } catch {}
     finally { setLoading(false) }
   }

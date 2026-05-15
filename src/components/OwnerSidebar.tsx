@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { usePathname } from 'next/navigation'
+import Link from 'next/link'
 import {
   LayoutDashboard,
   BarChart2,
@@ -25,17 +26,33 @@ export default function OwnerSidebar() {
   const [expanded, setExpanded] = useState(false)
 
   useEffect(() => {
-    const checkSession = async () => {
-      const supabase = createClient()
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) {
-        localStorage.removeItem('tasking_user_id')
-        localStorage.removeItem('tasking_company_id')
-        localStorage.removeItem('tasking_active_session')
-        window.location.href = '/signin'
+    const supabase = createClient()
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        if (event === 'SIGNED_OUT' || (!session && event !== 'INITIAL_SESSION')) {
+          localStorage.removeItem('tasking_user_id')
+          localStorage.removeItem('tasking_company_id')
+          localStorage.removeItem('tasking_active_session')
+          window.location.href = '/signin'
+          return
+        }
+
+        if (session) {
+          const sessionMarker = sessionStorage.getItem('tasking_session_active')
+          if (!sessionMarker) {
+            supabase.auth.signOut()
+            localStorage.removeItem('tasking_user_id')
+            localStorage.removeItem('tasking_company_id')
+            localStorage.removeItem('tasking_active_session')
+            window.location.href = '/signin'
+            return
+          }
+        }
       }
-    }
-    checkSession()
+    )
+
+    return () => subscription.unsubscribe()
   }, [])
 
   const handleSignOut = async () => {
@@ -68,7 +85,7 @@ export default function OwnerSidebar() {
       }}
     >
       {/* Logo */}
-      <a
+      <Link
         href="/"
         style={{
           display: 'flex',
@@ -99,7 +116,7 @@ export default function OwnerSidebar() {
         }}>
           Tasking
         </span>
-      </a>
+      </Link>
 
       {/* Nav */}
       <nav style={{ flex: 1, padding: '12px 8px', overflow: 'hidden' }}>
