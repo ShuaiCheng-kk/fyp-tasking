@@ -87,7 +87,7 @@ export const invitationService = {
     full_name: string
     email_address: string
     phone_number: string | null
-  }): Promise<{ role: User['role']; company_id: string; department_id: string | null }> {
+  }): Promise<{ user: User; company_id: string; department_id: string | null }> {
     const invitation = await invitationRepository.findByCode(data.code)
     if (!invitation) throw new Error('Invalid or expired invitation code')
 
@@ -110,7 +110,7 @@ export const invitationService = {
     })
 
     await invitationRepository.markAsUsed(data.code, user.id)
-    return { role: invitation.role, company_id: invitation.company_id, department_id: invitation.department_id }
+    return { user, company_id: invitation.company_id, department_id: invitation.department_id }
   },
 
 }

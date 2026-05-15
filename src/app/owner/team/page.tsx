@@ -93,13 +93,32 @@ const modalLabelStyle: React.CSSProperties = {
 type OwnedCompany = { id: string; name: string }
 type Department = { id: string; name: string }
 type Manager = { id: string; full_name: string }
+type TeamMember = {
+  id: string
+  full_name: string
+  email_address: string
+  role: string
+  department_id: string | null
+}
+
+const ROLE_LABEL: Record<string, string> = {
+  Owner: 'Owner / Partner',
+  Manager: 'Manager',
+  Employee: 'Employee',
+  'Casual Worker': 'Casual Worker',
+}
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function TeamPage() {
   const [userId, setUserId] = useState('')
+  const [companyId, setCompanyId] = useState('')
   const [ownerEmail, setOwnerEmail] = useState('')
   const [companyName, setCompanyName] = useState('')
+
+  // Team members
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([])
+  const [teamLoading, setTeamLoading] = useState(false)
 
   // Modal state
   const [inviteOpen, setInviteOpen] = useState(false)
@@ -148,18 +167,48 @@ export default function TeamPage() {
     return () => document.removeEventListener('keydown', onKey)
   }, [closeModal])
 
+  const fetchTeamMembers = useCallback(async (cid: string) => {
+    if (!cid) return
+    setTeamLoading(true)
+    try {
+      const res = await fetch(`/api/team/members?company_id=${cid}`)
+      const data = await res.json()
+      if (data.success) setTeamMembers(data.members)
+    } catch {}
+    finally { setTeamLoading(false) }
+  }, [])
+
   useEffect(() => {
     const uid = localStorage.getItem('tasking_user_id') || ''
-    const cid = localStorage.getItem('tasking_company_id') || ''
     setUserId(uid)
-    if (uid) {
-      fetchCompanyName(uid, cid)
-      fetch(`/api/user/me?user_id=${uid}`)
+    if (!uid) return
+
+    fetch(`/api/user/me?user_id=${uid}`)
+      .then(r => r.json())
+      .then(d => { if (d.success) setOwnerEmail(d.user.email_address) })
+      .catch(() => {})
+
+    const storedCid = localStorage.getItem('tasking_company_id') || ''
+    if (storedCid) {
+      setCompanyId(storedCid)
+      fetchCompanyName(uid, storedCid)
+      fetchTeamMembers(storedCid)
+    } else {
+      // Fallback: resolve company via API for owners who created their own company
+      fetch(`/api/company/by-owner?owner_id=${uid}`)
         .then(r => r.json())
-        .then(d => { if (d.success) setOwnerEmail(d.user.email_address) })
+        .then(d => {
+          if (d.success && d.company) {
+            const cid = d.company.id
+            localStorage.setItem('tasking_company_id', cid)
+            setCompanyId(cid)
+            setCompanyName(d.company.name)
+            fetchTeamMembers(cid)
+          }
+        })
         .catch(() => {})
     }
-  }, [])
+  }, [fetchTeamMembers])
 
   const fetchCompanyName = async (uid: string, cid: string) => {
     try {
@@ -170,6 +219,16 @@ export default function TeamPage() {
       if (data.success && data.company?.name) setCompanyName(data.company.name)
     } catch {}
   }
+
+  // Group members by role in display order
+  const groupedMembers = (['Owner', 'Manager', 'Employee', 'Casual Worker'] as const).reduce(
+    (acc, role) => {
+      const group = teamMembers.filter((m) => m.role === role)
+      if (group.length > 0) acc.push({ role, members: group })
+      return acc
+    },
+    [] as { role: string; members: TeamMember[] }[]
+  )
 
   const openInviteModal = async () => {
     setInviteOpen(true)
@@ -330,9 +389,72 @@ export default function TeamPage() {
         </div>
 
         <div style={{ padding: '28px 32px', flex: 1 }}>
-          <p style={{ color: '#9CA3AF', fontSize: '0.9375rem' }}>
-            Invite team members to get started.
-          </p>
+          {teamLoading ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#9CA3AF', fontSize: '0.9375rem' }}>
+              <Spinner size={16} dark /> Loading team…
+            </div>
+          ) : groupedMembers.length === 0 ? (
+            <p style={{ color: '#9CA3AF', fontSize: '0.9375rem' }}>
+              Invite team members to get started.
+            </p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+              {groupedMembers.map(({ role, members }) => (
+                <div key={role}>
+                  <p style={{ fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '12px' }}>
+                    {ROLE_LABEL[role] || role}
+                  </p>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                    {members.map((member) => (
+                      <div key={member.id} style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '12px 16px',
+                        background: '#FFFFFF',
+                        borderRadius: '10px',
+                        border: '1px solid #F3F4F6',
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <div style={{
+                            width: 36,
+                            height: 36,
+                            borderRadius: '50%',
+                            background: '#FFF7ED',
+                            border: '1.5px solid #FED7AA',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontWeight: 700,
+                            fontSize: '0.875rem',
+                            color: '#F97316',
+                            flexShrink: 0,
+                          }}>
+                            {member.full_name.charAt(0).toUpperCase()}
+                          </div>
+                          <div>
+                            <p style={{ fontWeight: 600, fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{member.full_name}</p>
+                            <p style={{ fontSize: '0.8125rem', color: '#6B7280', margin: 0 }}>{member.email_address}</p>
+                          </div>
+                        </div>
+                        <span style={{
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          color: '#F97316',
+                          background: '#FFF7ED',
+                          border: '1px solid #FED7AA',
+                          borderRadius: '6px',
+                          padding: '3px 10px',
+                        }}>
+                          {ROLE_LABEL[member.role] || member.role}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </main>
 

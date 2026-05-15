@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
   try {
     const user = await authService.signIn(email_address, password)
     return NextResponse.json(
-      { success: true, user: { id: user.id, role: user.role, full_name: user.full_name } },
+      { success: true, user: { id: user.id, role: user.role, full_name: user.full_name, company_id: user.company_id } },
       { status: 200 },
     )
   } catch (err) {

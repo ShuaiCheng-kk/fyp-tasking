@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { createClient } from '@/lib/supabase';
 import { Building2, UserPlus, Eye, EyeOff, ChevronLeft, Check } from 'lucide-react';
 import {
   step1,
@@ -490,6 +491,7 @@ export default function GetStartedPage() {
       sessionStorage.setItem('pending_full_name', invitedAccount.fullName);
       sessionStorage.setItem('pending_email', invitedAccount.email);
       sessionStorage.setItem('pending_phone', invitedAccount.phone || '');
+      sessionStorage.setItem('pending_password', invitedAccount.password);
       goNext();
     } catch {
       setError('Something went wrong. Please try again.');
@@ -503,7 +505,10 @@ export default function GetStartedPage() {
     setError('');
     try {
       const user_id = sessionStorage.getItem('pending_user_id') || '';
+      const email_address = sessionStorage.getItem('pending_email') || '';
+      const password = sessionStorage.getItem('pending_password') || '';
       const code = inviteCode || sessionStorage.getItem('invite_code') || '';
+
       const redeemRes = await fetch('/api/invitation/redeem', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -511,19 +516,37 @@ export default function GetStartedPage() {
           code: code.trim().toUpperCase(),
           user_id,
           full_name: sessionStorage.getItem('pending_full_name') || '',
-          email_address: sessionStorage.getItem('pending_email') || '',
+          email_address,
           phone_number: sessionStorage.getItem('pending_phone') || null,
+          password,
         }),
       });
       const redeemData = await redeemRes.json();
       if (!redeemData.success) throw new Error(redeemData.message);
 
+      // Establish the browser session via client-side Supabase
+      const supabase = createClient();
+      const { error: signInError } = await supabase.auth.signInWithPassword({ email: email_address, password });
+      if (signInError) throw new Error(signInError.message);
+
+      // Persist identity in localStorage for dashboard pages
+      localStorage.setItem('tasking_user_id', redeemData.user.id);
+      localStorage.setItem('tasking_company_id', redeemData.company_id);
+      localStorage.setItem('tasking_user_role', redeemData.user.role);
+      localStorage.setItem('tasking_active_session', 'true');
+      sessionStorage.setItem('tasking_session_active', 'true');
+
+      // Clear pending sessionStorage keys
+      ['pending_user_id', 'pending_full_name', 'pending_email', 'pending_phone', 'pending_password', 'invite_code']
+        .forEach((k) => sessionStorage.removeItem(k));
+
       const roleRoutes: Record<string, string> = {
         'Owner': '/owner/dashboard',
         'Manager': '/manager/dashboard',
         'Employee': '/employee/dashboard',
+        'Casual Worker': '/casual/dashboard',
       };
-      router.push(roleRoutes[redeemData.role] || '/owner/dashboard');
+      window.location.href = roleRoutes[redeemData.user.role] || '/owner/dashboard';
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Invalid or expired invitation code');
       setIsLoading(false);

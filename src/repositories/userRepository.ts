@@ -118,6 +118,16 @@ export const userRepository = {
     return data.user
   },
 
+  async findMembersByCompanyId(company_id: string): Promise<User[]> {
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('company_id', company_id)
+      .order('role', { ascending: true })
+    if (error) throw new Error(error.message)
+    return data || []
+  },
+
   async deleteById(user_id: string): Promise<void> {
     const { error } = await supabase
       .from('users')

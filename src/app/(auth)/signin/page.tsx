@@ -91,6 +91,8 @@ export default function SignInPage() {
       if (!data.success) throw new Error(data.message);
 
       localStorage.setItem('tasking_user_id', data.user.id);
+      if (data.user.company_id) localStorage.setItem('tasking_company_id', data.user.company_id);
+      localStorage.setItem('tasking_user_role', data.user.role);
       localStorage.setItem('tasking_active_session', 'true');
       sessionStorage.setItem('tasking_session_active', 'true');
       const route = ROLE_ROUTES[data.user.role] || '/owner/dashboard';
