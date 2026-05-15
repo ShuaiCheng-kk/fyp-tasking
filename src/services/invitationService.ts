@@ -52,6 +52,11 @@ export const invitationService = {
     invited_by: string
     reporting_manager_id?: string | null
   }): Promise<void> {
+    const inviter = await userRepository.findById(data.invited_by)
+    if (inviter?.email_address.toLowerCase() === data.email.toLowerCase()) {
+      throw new Error('You cannot send an invitation to yourself.')
+    }
+
     const expired_at = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
     const invitation = await invitationRepository.createCode({
       code: generateRandomCode(data.role),
@@ -78,25 +83,33 @@ export const invitationService = {
 
   async redeemCode(data: {
     code: string
-    user_id: string
+    supabase_auth_id: string
+    full_name: string
+    email_address: string
+    phone_number: string | null
   }): Promise<{ role: User['role']; company_id: string; department_id: string | null }> {
     const invitation = await invitationRepository.findByCode(data.code)
     if (!invitation) throw new Error('Invalid or expired invitation code')
 
     const now = new Date()
-    const expiredAt = new Date(invitation.expired_at)
-    if (now > expiredAt) {
-      await invitationRepository.markAsUsed(data.code, data.user_id)
+    if (now > new Date(invitation.expired_at)) {
       throw new Error('Invitation code has expired')
     }
 
-    await userRepository.updateRole(data.user_id, invitation.role)
-    await userRepository.updateCompanyAndDepartment(
-      data.user_id,
-      invitation.company_id,
-      invitation.department_id
-    )
-    await invitationRepository.markAsUsed(data.code, data.user_id)
+    // Create the public.users record with role/company from the invitation.
+    // This must happen before markAsUsed because invitation_code.used_by
+    // has a FK constraint referencing public.users.id.
+    const user = await userRepository.createUser({
+      supabase_auth_id: data.supabase_auth_id,
+      full_name: data.full_name,
+      email_address: data.email_address,
+      phone_number: data.phone_number,
+      role: invitation.role,
+      company_id: invitation.company_id,
+      department_id: invitation.department_id,
+    })
+
+    await invitationRepository.markAsUsed(data.code, user.id)
     return { role: invitation.role, company_id: invitation.company_id, department_id: invitation.department_id }
   },
 

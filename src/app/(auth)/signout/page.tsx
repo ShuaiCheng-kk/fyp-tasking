@@ -33,6 +33,7 @@ export default function SignOutPage() {
     localStorage.removeItem('tasking_user_id')
     localStorage.removeItem('tasking_company_id')
     localStorage.removeItem('tasking_active_session')
+    sessionStorage.removeItem('tasking_session_active')
   }, [])
 
   return (

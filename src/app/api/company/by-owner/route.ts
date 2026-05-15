@@ -12,10 +12,12 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const company = await companyService.getCompanyByOwnerId(owner_id)
-    if (!company) {
+    const companies = await companyService.getCompaniesByOwner(owner_id)
+    if (!companies || companies.length === 0) {
       return NextResponse.json({ success: false, message: 'Company not found' }, { status: 404 })
     }
+    const activeId = req.nextUrl.searchParams.get('company_id')
+    const company = (activeId && companies.find((c) => c.id === activeId)) || companies[0]
     return NextResponse.json({ success: true, company }, { status: 200 })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to fetch company'

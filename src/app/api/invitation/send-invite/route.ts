@@ -27,8 +27,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true, message: 'Invite sent' })
   } catch (error: unknown) {
-    console.error('Send invite error:', error)
     const message = error instanceof Error ? error.message : 'Something went wrong'
-    return NextResponse.json({ success: false, message }, { status: 500 })
+    const clientError = message === 'You cannot send an invitation to yourself.'
+    return NextResponse.json({ success: false, message }, { status: clientError ? 200 : 500 })
   }
 }

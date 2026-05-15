@@ -208,12 +208,19 @@ export default function Navbar() {
   }, [pathname]);
 
   useEffect(() => {
-    const checkAuth = async () => {
-      const supabase = createClient()
-      const { data: { session } } = await supabase.auth.getSession()
+    const supabase = createClient()
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
       setIsLoggedIn(!!session)
-    }
-    checkAuth()
+    })
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        setIsLoggedIn(!!session)
+      }
+    )
+
+    return () => subscription.unsubscribe()
   }, []);
 
   const isActive = (href: string) =>

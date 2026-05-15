@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { usePathname } from 'next/navigation'
+import Link from 'next/link'
 import {
   LayoutDashboard,
   BarChart2,
@@ -27,18 +28,34 @@ export default function OwnerSidebar() {
   useEffect(() => {
     const checkSession = async () => {
       const supabase = createClient()
+
       const { data: { session } } = await supabase.auth.getSession()
+
       if (!session) {
         localStorage.removeItem('tasking_user_id')
         localStorage.removeItem('tasking_company_id')
         localStorage.removeItem('tasking_active_session')
+        sessionStorage.removeItem('tasking_session_active')
         window.location.href = '/signin'
+        return
+      }
+
+      const sessionMarker = sessionStorage.getItem('tasking_session_active')
+      if (!sessionMarker) {
+        await supabase.auth.signOut()
+        localStorage.removeItem('tasking_user_id')
+        localStorage.removeItem('tasking_company_id')
+        localStorage.removeItem('tasking_active_session')
+        sessionStorage.removeItem('tasking_session_active')
+        window.location.href = '/signin'
+        return
       }
     }
+
     checkSession()
   }, [])
 
-  const handleSignOut = async () => {
+  const handleLogout = async () => {
     const supabase = createClient()
     await supabase.auth.signOut()
     localStorage.removeItem('tasking_user_id')
@@ -68,7 +85,7 @@ export default function OwnerSidebar() {
       }}
     >
       {/* Logo */}
-      <a
+      <Link
         href="/"
         style={{
           display: 'flex',
@@ -99,7 +116,7 @@ export default function OwnerSidebar() {
         }}>
           Tasking
         </span>
-      </a>
+      </Link>
 
       {/* Nav */}
       <nav style={{ flex: 1, padding: '12px 8px', overflow: 'hidden' }}>
@@ -145,7 +162,7 @@ export default function OwnerSidebar() {
       <div style={{ padding: '12px 8px', borderTop: '1px solid #F3F4F6', flexShrink: 0 }}>
         <div style={{ borderTop: '1px solid #E5E7EB', paddingTop: '8px', marginTop: '2px' }}>
           <button
-            onClick={handleSignOut}
+            onClick={handleLogout}
             style={{
               width: '100%',
               display: 'flex',

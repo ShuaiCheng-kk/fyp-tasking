@@ -84,4 +84,12 @@ export const companyRepository = {
     return company
   },
 
+  async deleteById(company_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('companies')
+      .delete()
+      .eq('id', company_id)
+    if (error) throw error
+  },
+
 }

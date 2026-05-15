@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { Eye, EyeOff } from 'lucide-react';
 import { page as c } from './content';
+import { createClient } from '@/lib/supabase';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 
@@ -72,6 +73,15 @@ export default function SignInPage() {
     setShowError(false);
     setIsLoading(true);
     try {
+      // Sign in via Supabase client so the browser session cookie is set
+      const supabase = createClient();
+      const { error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (authError) throw new Error(authError.message);
+
+      // Fetch user profile (role, id) from API
       const res = await fetch('/api/auth/signin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -82,6 +92,7 @@ export default function SignInPage() {
 
       localStorage.setItem('tasking_user_id', data.user.id);
       localStorage.setItem('tasking_active_session', 'true');
+      sessionStorage.setItem('tasking_session_active', 'true');
       const route = ROLE_ROUTES[data.user.role] || '/owner/dashboard';
       window.location.href = route;
     } catch {

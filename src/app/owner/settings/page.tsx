@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Plus, X, Pencil } from 'lucide-react'
+import { Plus, X, Pencil, Trash2 } from 'lucide-react'
 import OwnerSidebar from '@/components/OwnerSidebar'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -12,6 +12,7 @@ type Company = {
   description: string | null
   plan: 'Free' | 'Paid'
 }
+
 
 // ─── Spinner ──────────────────────────────────────────────────────────────────
 
@@ -95,12 +96,16 @@ export default function SettingsPage() {
   const [editLoading, setEditLoading] = useState(false)
   const [editError, setEditError] = useState('')
 
+  // Delete modal
+  const [deleteTarget, setDeleteTarget] = useState<Company | null>(null)
+  const [deleteLoading, setDeleteLoading] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
+
   // Add modal
   const [addOpen, setAddOpen] = useState(false)
   const [addName, setAddName] = useState('')
   const [addDesc, setAddDesc] = useState('')
   const [addDepts, setAddDepts] = useState([''])
-  const [addPlan, setAddPlan] = useState<'Free' | 'Paid'>('Free')
   const [addLoading, setAddLoading] = useState(false)
   const [addError, setAddError] = useState('')
 
@@ -111,9 +116,30 @@ export default function SettingsPage() {
     else setLoading(false)
   }, [])
 
+  const handleDelete = async () => {
+    if (!deleteTarget) return
+    setDeleteLoading(true)
+    setDeleteError('')
+    try {
+      const res = await fetch('/api/company/delete', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company_id: deleteTarget.id }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      setDeleteTarget(null)
+      fetchCompanies(userId)
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Failed to delete company')
+    } finally {
+      setDeleteLoading(false)
+    }
+  }
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { setEditTarget(null); setAddOpen(false) }
+      if (e.key === 'Escape') { setEditTarget(null); setAddOpen(false); setDeleteTarget(null) }
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
@@ -124,7 +150,16 @@ export default function SettingsPage() {
     try {
       const res = await fetch(`/api/company/my-companies?owner_id=${uid}`)
       const data = await res.json()
-      if (data.success) setCompanies(data.companies)
+      if (data.success) {
+        const startsWithDigit = (s: string) => /^\d/.test(s)
+        const sorted = [...data.companies].sort((a: Company, b: Company) => {
+          const aNum = startsWithDigit(a.name)
+          const bNum = startsWithDigit(b.name)
+          if (aNum !== bNum) return aNum ? 1 : -1
+          return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+        })
+        setCompanies(sorted)
+      }
     } catch {}
     finally { setLoading(false) }
   }
@@ -162,7 +197,7 @@ export default function SettingsPage() {
   // ── Add company ────────────────────────────────────────────────────────────
 
   const openAdd = () => {
-    setAddName(''); setAddDesc(''); setAddDepts(['']); setAddPlan('Free'); setAddError(''); setAddOpen(true)
+    setAddName(''); setAddDesc(''); setAddDepts(['']); setAddError(''); setAddOpen(true)
   }
 
   const handleAdd = async () => {
@@ -178,7 +213,6 @@ export default function SettingsPage() {
           name: addName,
           description: addDesc || null,
           departments: addDepts.filter((d) => d.trim()),
-          plan: addPlan,
         }),
       })
       const data = await res.json()
@@ -259,31 +293,44 @@ export default function SettingsPage() {
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
                           <p style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0 }}>{c.name}</p>
-                          <span style={{
-                            padding: '2px 8px', borderRadius: '99px', fontSize: '0.75rem', fontWeight: 600,
-                            background: c.plan === 'Paid' ? '#EDE9FE' : '#F3F4F6',
-                            color: c.plan === 'Paid' ? '#7C3AED' : '#6B7280',
-                          }}>
-                            {c.plan === 'Paid' ? 'Pro' : 'Free'}
-                          </span>
                         </div>
                         {c.description && (
                           <p style={{ fontSize: '0.875rem', color: '#6B7280', margin: 0 }}>{c.description}</p>
                         )}
                       </div>
-                      <button
-                        onClick={() => openEdit(c)}
-                        style={{
-                          flexShrink: 0, display: 'flex', alignItems: 'center', gap: '5px',
-                          padding: '7px 12px', border: '1px solid #E5E7EB', borderRadius: '7px',
-                          background: 'none', cursor: 'pointer', fontSize: '0.8125rem', color: '#374151', fontWeight: 500,
-                        }}
-                        onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#9CA3AF')}
-                        onMouseLeave={(e) => (e.currentTarget.style.borderColor = '#E5E7EB')}
-                      >
-                        <Pencil size={12} strokeWidth={2} />
-                        Edit
-                      </button>
+                      <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+                        <button
+                          onClick={() => openEdit(c)}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: '5px',
+                            padding: '7px 12px', border: '1px solid #E5E7EB', borderRadius: '7px',
+                            background: 'none', cursor: 'pointer', fontSize: '0.8125rem', color: '#374151', fontWeight: 500,
+                          }}
+                          onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#9CA3AF')}
+                          onMouseLeave={(e) => (e.currentTarget.style.borderColor = '#E5E7EB')}
+                        >
+                          <Pencil size={12} strokeWidth={2} />
+                          Edit
+                        </button>
+                        <div title={companies.length <= 1 ? 'You must have at least one company' : undefined}>
+                          <button
+                            onClick={() => { if (companies.length > 1) { setDeleteTarget(c); setDeleteError('') } }}
+                            disabled={companies.length <= 1}
+                            style={{
+                              display: 'flex', alignItems: 'center', gap: '5px',
+                              padding: '7px 12px', border: '1px solid #E5E7EB', borderRadius: '7px',
+                              background: 'none', cursor: companies.length <= 1 ? 'not-allowed' : 'pointer',
+                              fontSize: '0.8125rem', color: companies.length <= 1 ? '#D1D5DB' : '#EF4444', fontWeight: 500,
+                              opacity: companies.length <= 1 ? 0.5 : 1,
+                            }}
+                            onMouseEnter={(e) => { if (companies.length > 1) e.currentTarget.style.borderColor = '#FCA5A5' }}
+                            onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#E5E7EB' }}
+                          >
+                            <Trash2 size={12} strokeWidth={2} />
+                            Delete
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -351,6 +398,39 @@ export default function SettingsPage() {
         </ModalOverlay>
       )}
 
+      {/* ── Delete Company Confirmation Modal ─────────────────────────────── */}
+      {deleteTarget && (
+        <ModalOverlay onClose={() => setDeleteTarget(null)}>
+          <ModalBox>
+            <ModalHeader title="Delete Company" onClose={() => setDeleteTarget(null)} />
+
+            <p style={{ fontSize: '0.9375rem', color: '#374151', marginBottom: '4px', lineHeight: 1.6 }}>
+              Are you sure you want to delete <strong>{deleteTarget.name}</strong>?{' '}
+              This cannot be undone.
+            </p>
+
+            <InlineError message={deleteError} />
+
+            <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+              <button style={ghostBtn} onClick={() => setDeleteTarget(null)}>Cancel</button>
+              <button
+                onClick={handleDelete}
+                disabled={deleteLoading}
+                style={{
+                  flex: 1, padding: '10px', background: '#EF4444', border: 'none', borderRadius: '8px',
+                  fontWeight: 600, fontSize: '0.9375rem', color: '#FFFFFF',
+                  cursor: deleteLoading ? 'default' : 'pointer', display: 'flex', alignItems: 'center',
+                  justifyContent: 'center', gap: '7px', opacity: deleteLoading ? 0.65 : 1,
+                }}
+              >
+                {deleteLoading && <Spinner size={14} />}
+                Delete Company
+              </button>
+            </div>
+          </ModalBox>
+        </ModalOverlay>
+      )}
+
       {/* ── Add Company Modal ──────────────────────────────────────────────── */}
       {addOpen && (
         <ModalOverlay onClose={() => setAddOpen(false)}>
@@ -412,27 +492,6 @@ export default function SettingsPage() {
               >
                 + Add another
               </button>
-            </div>
-
-            {/* Plan */}
-            <div style={{ marginBottom: '4px' }}>
-              <label style={labelStyle}>Plan</label>
-              <div style={{ display: 'flex', gap: '10px' }}>
-                {(['Free', 'Paid'] as const).map((p) => (
-                  <button
-                    key={p}
-                    onClick={() => setAddPlan(p)}
-                    style={{
-                      flex: 1, padding: '9px', border: `2px solid ${addPlan === p ? '#F97316' : '#E5E7EB'}`,
-                      borderRadius: '8px', background: addPlan === p ? '#FFF7ED' : '#FFFFFF',
-                      color: addPlan === p ? '#EA580C' : '#6B7280', fontWeight: addPlan === p ? 600 : 400,
-                      fontSize: '0.9rem', cursor: 'pointer', transition: 'all 0.12s',
-                    }}
-                  >
-                    {p === 'Paid' ? 'Pro' : 'Free'}
-                  </button>
-                ))}
-              </div>
             </div>
 
             <InlineError message={addError} />
