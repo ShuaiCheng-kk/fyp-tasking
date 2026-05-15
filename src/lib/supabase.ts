@@ -1,8 +1,10 @@
-import { createClient as createSupabaseClient } from '@supabase/supabase-js'
+import { createClient as createSupabaseClient, SupabaseClient } from '@supabase/supabase-js'
 
-let supabaseInstance: ReturnType<typeof createSupabaseClient> | null = null
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let supabaseInstance: SupabaseClient<any, any, any> | null = null
 
-export const createClient = () => {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const createClient = (): SupabaseClient<any, any, any> => {
   if (supabaseInstance) return supabaseInstance
 
   supabaseInstance = createSupabaseClient(
