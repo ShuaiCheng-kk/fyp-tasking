@@ -174,7 +174,7 @@ export default function TeamPage() {
     }
   }
 
-  const noManagersInDept = inviteRole === 'Employee' && inviteDeptId && !managersLoading && managers.length === 0
+  const noManagersInDept = inviteRole === 'Employee' && !!inviteDeptId && !managersLoading && managers.length === 0
   const deptRequired = (inviteRole === 'Manager' || inviteRole === 'Employee') && !inviteDeptId
 
   const handleSendInvite = async () => {
