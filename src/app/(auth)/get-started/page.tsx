@@ -507,26 +507,16 @@ export default function GetStartedPage() {
       const redeemRes = await fetch('/api/invitation/redeem', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: code.trim().toUpperCase(), user_id }),
-      });
-      const redeemData = await redeemRes.json();
-      if (!redeemData.success) throw new Error(redeemData.message);
-
-      const profileRes = await fetch('/api/auth/create-profile', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          code: code.trim().toUpperCase(),
           user_id,
           full_name: sessionStorage.getItem('pending_full_name') || '',
           email_address: sessionStorage.getItem('pending_email') || '',
           phone_number: sessionStorage.getItem('pending_phone') || null,
-          role: redeemData.role,
-          company_id: redeemData.company_id,
-          department_id: redeemData.department_id,
         }),
       });
-      const profileData = await profileRes.json();
-      if (!profileData.success) throw new Error(profileData.message);
+      const redeemData = await redeemRes.json();
+      if (!redeemData.success) throw new Error(redeemData.message);
 
       const roleRoutes: Record<string, string> = {
         'Owner': '/owner/dashboard',

@@ -34,13 +34,12 @@ export async function POST(req: NextRequest) {
       const user_id = await authService.registerAuthOnly({ email_address, password })
       return NextResponse.json({ success: true, user_id }, { status: 201 })
     } catch (error: any) {
-      console.error('REGISTER (invitation) ERROR:', JSON.stringify(error, null, 2))
       const msg = (error?.message || '').toLowerCase()
       if (msg.includes('user already registered') || msg.includes('already registered')) {
         return NextResponse.json({
           success: false,
           message: 'This email is already registered. Please sign in instead.',
-        }, { status: 400 })
+        })
       }
       return NextResponse.json({ success: false, message: 'Something went wrong. Please try again.' }, { status: 500 })
     }
@@ -67,11 +66,6 @@ export async function POST(req: NextRequest) {
       { status: 201 },
     )
   } catch (error: any) {
-    console.error('Register error full:', error)
-    console.log('Register error:', JSON.stringify(error, null, 2))
-    console.log('Register error message:', error?.message)
-    console.log('Register error code:', error?.code)
-
     const msg = error?.message || ''
     const details = error?.details || ''
     const combined = msg + details
@@ -82,24 +76,18 @@ export async function POST(req: NextRequest) {
       if (!existingUser) {
         await import('@/services/authService')
           .then((m) => m.authService.deleteOrphanedAuthUser(email_address as string))
-        return NextResponse.json({
-          success: false,
-          message: 'Registration incomplete. Please try again.',
-        }, { status: 400 })
+        return NextResponse.json({ success: false, message: 'Registration incomplete. Please try again.' })
       }
-      return NextResponse.json({
-        success: false,
-        message: 'This email is already registered. Please sign in instead.',
-      }, { status: 400 })
+      return NextResponse.json({ success: false, message: 'This email is already registered. Please sign in instead.' })
     }
     if (combined.includes('phone_number') || combined.includes('users_phone_number_key')) {
-      return NextResponse.json({ success: false, message: 'This phone number is already in use.' }, { status: 400 })
+      return NextResponse.json({ success: false, message: 'This phone number is already in use.' })
     }
     if (combined.includes('email') && (combined.includes('unique') || combined.includes('duplicate'))) {
-      return NextResponse.json({ success: false, message: 'This email is already registered.' }, { status: 400 })
+      return NextResponse.json({ success: false, message: 'This email is already registered.' })
     }
     if (error?.code === '23505') {
-      return NextResponse.json({ success: false, message: 'This account already exists.' }, { status: 400 })
+      return NextResponse.json({ success: false, message: 'This account already exists.' })
     }
 
     return NextResponse.json({ success: false, message: 'Something went wrong. Please try again.' }, { status: 500 })
