@@ -27,17 +27,16 @@ export async function POST(req: NextRequest) {
 
   if (existingAuthUser) {
     // Check if they have a complete users table record with company_id
-    const { data: dbUser } = await supabase
+    const { data: dbUser } = await (supabase
       .from('users')
       .select('id, company_id')
       .eq('supabase_auth_id', existingAuthUser.id)
-      .single()
+      .single() as unknown as Promise<{ data: { id: string; company_id: string | null } | null; error: unknown }>)
 
     if (dbUser && dbUser.company_id) {
       // Fully registered — tell them to sign in
       return NextResponse.json(
         { success: false, message: 'An account with this email already exists. Please sign in instead.' },
-        { status: 400 },
       )
     } else {
       // Partial registration — clean up auth + any matching users row
@@ -49,17 +48,16 @@ export async function POST(req: NextRequest) {
 
   // Also purge any orphaned users row by email (auth user may have already been deleted
   // in a previous attempt, leaving a stale row that would cause a duplicate key error)
-  const { data: orphanByEmail } = await supabase
+  const { data: orphanByEmail } = await (supabase
     .from('users')
     .select('id, company_id')
     .eq('email_address', email)
-    .single()
+    .single() as unknown as Promise<{ data: { id: string; company_id: string | null } | null; error: unknown }>)
 
   if (orphanByEmail) {
     if (orphanByEmail.company_id) {
       return NextResponse.json(
         { success: false, message: 'An account with this email already exists. Please sign in instead.' },
-        { status: 400 },
       )
     }
     await supabase.from('users').delete().eq('id', orphanByEmail.id)
@@ -68,11 +66,11 @@ export async function POST(req: NextRequest) {
 
   // Pre-check phone uniqueness to give a clear error before hitting the DB constraint
   if (phone) {
-    const { data: phoneUser } = await supabase
+    const { data: phoneUser } = await (supabase
       .from('users')
       .select('id')
       .eq('phone_number', phone)
-      .single()
+      .single() as unknown as Promise<{ data: { id: string } | null; error: unknown }>)
     if (phoneUser) {
       return NextResponse.json(
         { success: false, message: 'This phone number is already registered to another account. Please use a different number.' },
@@ -94,12 +92,10 @@ export async function POST(req: NextRequest) {
     })
     return NextResponse.json({ success: true, ...result })
   } catch (error: unknown) {
-    console.error('complete-owner-setup error:', error)
     const msg = (error instanceof Error ? error.message : '').toLowerCase()
     if (msg.includes('phone') && (msg.includes('duplicate') || msg.includes('unique'))) {
       return NextResponse.json(
         { success: false, message: 'This phone number is already registered to another account. Please use a different number.' },
-        { status: 400 },
       )
     }
     if (msg.includes('foreign key')) {
@@ -108,7 +104,6 @@ export async function POST(req: NextRequest) {
     if (msg.includes('duplicate') || msg.includes('unique') || msg.includes('already registered')) {
       return NextResponse.json(
         { success: false, message: 'An account with this email already exists. Please sign in instead.' },
-        { status: 400 },
       )
     }
     return NextResponse.json({ success: false, message: 'Something went wrong. Please try again.' }, { status: 500 })
