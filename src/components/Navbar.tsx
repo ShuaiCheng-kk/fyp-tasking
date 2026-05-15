@@ -213,12 +213,20 @@ export default function Navbar() {
     const supabase = createClient()
 
     supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) {
+        localStorage.removeItem('tasking_user_id')
+        localStorage.removeItem('tasking_company_id')
+      }
       setIsLoggedIn(!!session)
       setAuthReady(true)
     })
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (_event, session) => {
+        if (!session) {
+          localStorage.removeItem('tasking_user_id')
+          localStorage.removeItem('tasking_company_id')
+        }
         setIsLoggedIn(!!session)
         setAuthReady(true)
       }

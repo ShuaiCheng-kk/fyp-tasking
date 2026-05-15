@@ -113,20 +113,10 @@ export default function SettingsPage() {
 
   useEffect(() => {
     const resolve = async () => {
-      let uid = localStorage.getItem('tasking_user_id') || ''
-      if (!uid) {
-        const supabase = createClient()
-        const { data: { session } } = await supabase.auth.getSession()
-        if (session?.user?.id) {
-          uid = session.user.id
-          localStorage.setItem('tasking_user_id', uid)
-        }
-      }
-      if (!uid) {
-        setUserIdError('Please sign in again')
-        setLoading(false)
-        return
-      }
+      const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
+      const uid = session?.user?.id
+      if (!uid) { window.location.href = '/signin'; return }
       setUserId(uid)
       fetchCompanies(uid)
     }

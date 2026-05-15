@@ -236,13 +236,24 @@ export default function TeamPage() {
 
   const openInviteModal = async () => {
     setInviteOpen(true)
-    const uid = localStorage.getItem('tasking_user_id') || userId
+    const supabase = createClient()
+    const { data: { session } } = await supabase.auth.getSession()
+    const uid = session?.user?.id
     if (!uid) return
     setCompaniesLoading(true)
     try {
       const res = await fetch(`/api/company/my-companies?owner_id=${uid}`)
       const data = await res.json()
-      if (data.success) setOwnedCompanies(data.companies)
+      if (data.success && data.companies) {
+        setOwnedCompanies(data.companies)
+        // Auto-select current active company
+        const currentCid = localStorage.getItem(`tasking_company_id_${uid}`) || companyId
+        if (currentCid && data.companies.some((c: OwnedCompany) => c.id === currentCid)) {
+          setSelectedCompanyId(currentCid)
+        } else if (data.companies.length === 1) {
+          setSelectedCompanyId(data.companies[0].id)
+        }
+      }
     } catch {}
     finally { setCompaniesLoading(false) }
   }
@@ -284,11 +295,14 @@ export default function TeamPage() {
 
   const handleRoleChange = (role: string) => {
     setInviteRole(role)
-    setSelectedCompanyId('')
     setInviteDeptId('')
     setDepartments([])
     setManagers([])
     setInviteManagerId('')
+    // Preserve auto-selected company; fetch depts if the new role requires it
+    if (selectedCompanyId && (role === 'Manager' || role === 'Employee')) {
+      fetchDepts(selectedCompanyId)
+    }
   }
 
   const handleDeptChange = (deptId: string) => {

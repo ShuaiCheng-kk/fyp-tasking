@@ -222,6 +222,7 @@ export default function OwnerDashboard() {
   const [selectedDeptId, setSelectedDeptId] = useState('')
   const [copied, setCopied] = useState(false)
   const [ownerName, setOwnerName] = useState('')
+  const [companyName, setCompanyName] = useState('')
 
   // ── Close all modals ───────────────────────────────────────────────────────
 
@@ -256,28 +257,23 @@ export default function OwnerDashboard() {
   useEffect(() => {
     const supabase = createClient()
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!session) return
-      const uid = session.user.id
+      const uid = session?.user?.id
+      if (!uid) { window.location.href = '/signin'; return }
       setUserId(uid)
       fetchAllCompanies(uid)
 
-      const cid = localStorage.getItem(`tasking_company_id_${uid}`) || ''
-      if (cid) {
-        setCompanyId(cid)
-        fetchDeptsById(cid)
-      } else {
-        fetch(`/api/company/by-owner?owner_id=${uid}`)
-          .then((r) => r.json())
-          .then((data) => {
-            if (data.success && data.company?.id) {
-              const resolvedId = data.company.id
-              localStorage.setItem(`tasking_company_id_${uid}`, resolvedId)
-              setCompanyId(resolvedId)
-              fetchDeptsById(resolvedId)
-            }
-          })
-          .catch(() => {})
-      }
+      fetch(`/api/company/by-owner?owner_id=${uid}`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.success && data.company) {
+            const company = data.company
+            localStorage.setItem(`tasking_company_id_${uid}`, company.id)
+            setCompanyId(company.id)
+            setCompanyName(company.name)
+            fetchDeptsById(company.id)
+          }
+        })
+        .catch(() => {})
     })
   }, [])
 
@@ -292,15 +288,17 @@ export default function OwnerDashboard() {
         if (data.companies.length > 0) {
           setOwnerPlan(data.companies[0].plan === 'Paid' ? 'Pro' : 'Free')
         }
-        setCompanyId((prev) => {
-          if (!prev && data.companies.length > 0) {
-            const newId = data.companies[0].id
-            localStorage.setItem(`tasking_company_id_${uid}`, newId)
-            return newId
-          }
-          return prev
-        })
       }
+    } catch {}
+  }
+
+  const fetchCompanyName = async (uid: string, cid: string) => {
+    try {
+      const params = new URLSearchParams({ owner_id: uid })
+      if (cid) params.set('company_id', cid)
+      const res = await fetch(`/api/company/by-owner?${params}`)
+      const data = await res.json()
+      if (data.success && data.company?.name) setCompanyName(data.company.name)
     } catch {}
   }
 
@@ -563,7 +561,7 @@ export default function OwnerDashboard() {
                   userSelect: 'none',
                 }}
               >
-                {currentCompany ? `${currentCompany.name} — Overview` : 'Overview'}
+                {companyName ? `${companyName} — Overview` : 'Overview'}
                 <ChevronDown
                   size={16}
                   strokeWidth={2.5}
@@ -602,7 +600,7 @@ export default function OwnerDashboard() {
             </div>
           ) : (
             <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#111827', margin: 0 }}>
-              {currentCompany ? `${currentCompany.name} — Overview` : 'Overview'}
+              {companyName ? `${companyName} — Overview` : 'Overview'}
             </h1>
           )}
           {ownerPlan && (
