@@ -218,6 +218,12 @@ export default function OwnerDashboard() {
   const [deptFormName, setDeptFormName] = useState('')
   const [deptLoading, setDeptLoading] = useState(false)
   const [deptError, setDeptError] = useState('')
+  const [inviteLoading, setInviteLoading] = useState(false)
+  const [inviteCode, setInviteCode] = useState('')
+  const [inviteModal, setInviteModal] = useState<'owner' | 'manager' | 'employee' | null>(null)
+  const [selectedDeptId, setSelectedDeptId] = useState('')
+  const [copied, setCopied] = useState(false)
+  const [ownerName, setOwnerName] = useState('')
 
   // ── Close all modals ───────────────────────────────────────────────────────
 
