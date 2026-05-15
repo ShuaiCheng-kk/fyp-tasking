@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { Plus, X, Pencil, Trash2 } from 'lucide-react'
 import OwnerSidebar from '@/components/OwnerSidebar'
+import { createClient } from '@/lib/supabase'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -110,10 +111,13 @@ export default function SettingsPage() {
   const [addError, setAddError] = useState('')
 
   useEffect(() => {
-    const uid = localStorage.getItem('tasking_user_id') || ''
-    setUserId(uid)
-    if (uid) fetchCompanies(uid)
-    else setLoading(false)
+    const supabase = createClient()
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) { setLoading(false); return }
+      const uid = session.user.id
+      setUserId(uid)
+      fetchCompanies(uid)
+    })
   }, [])
 
   const handleDelete = async () => {
@@ -217,7 +221,7 @@ export default function SettingsPage() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
-      localStorage.setItem('tasking_company_id', data.company.id)
+      if (userId) localStorage.setItem(`tasking_company_id_${userId}`, data.company.id)
       setAddOpen(false)
       fetchCompanies(userId)
     } catch (err) {

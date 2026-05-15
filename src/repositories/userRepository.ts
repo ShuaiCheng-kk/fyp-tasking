@@ -27,6 +27,16 @@ export const userRepository = {
     return data
   },
 
+  async findByPhone(phone_number: string): Promise<User | null> {
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('phone_number', phone_number)
+      .single()
+    if (error) return null
+    return data
+  },
+
   async createUser(data: {
     supabase_auth_id: string
     full_name: string

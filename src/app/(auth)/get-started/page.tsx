@@ -428,13 +428,16 @@ export default function GetStartedPage() {
     setIsLoading(true);
     setError('');
     try {
+      const ownerEmail = sessionStorage.getItem('owner_email') || '';
+      const ownerPassword = sessionStorage.getItem('owner_password') || '';
+
       const res = await fetch('/api/auth/complete-owner-setup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           full_name: sessionStorage.getItem('owner_full_name'),
-          email: sessionStorage.getItem('owner_email'),
-          password: sessionStorage.getItem('owner_password'),
+          email: ownerEmail,
+          password: ownerPassword,
           phone: sessionStorage.getItem('owner_phone'),
           company_name: sessionStorage.getItem('company_name'),
           company_description: sessionStorage.getItem('company_description'),
@@ -445,8 +448,18 @@ export default function GetStartedPage() {
       const data = await res.json();
       if (!data.success) throw new Error(data.message);
 
-      localStorage.setItem('tasking_user_id', data.user_id);
-      localStorage.setItem('tasking_company_id', data.company_id);
+      // Establish browser session
+      const supabase = createClient();
+      const { data: signInData } = await supabase.auth.signInWithPassword({
+        email: ownerEmail,
+        password: ownerPassword,
+      });
+
+      // Store company_id under user-specific key
+      const authUserId = signInData?.user?.id || '';
+      if (authUserId) {
+        localStorage.setItem(`tasking_company_id_${authUserId}`, data.company_id);
+      }
 
       ['owner_full_name', 'owner_email', 'owner_password', 'owner_phone',
         'company_name', 'company_description', 'departments'].forEach((k) =>
@@ -467,78 +480,54 @@ export default function GetStartedPage() {
   const handleFreePlan = () => handleCompletSetup('Free');
   const handleProPlan = () => handleCompletSetup('Paid');
 
-  const handleInvitedRegister = async () => {
-    setIsLoading(true);
+  const handleInvitedRegister = () => {
     setError('');
-    try {
-      const res = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          full_name: invitedAccount.fullName,
-          email_address: invitedAccount.email,
-          password: invitedAccount.password,
-          phone_number: invitedAccount.phone || null,
-          is_invitation_path: true,
-        }),
-      });
-      const data = await res.json();
-      if (!data.success) {
-        setError(data.message || 'Something went wrong. Please try again.');
-        return;
-      }
-      sessionStorage.setItem('pending_user_id', data.user_id);
-      sessionStorage.setItem('pending_full_name', invitedAccount.fullName);
-      sessionStorage.setItem('pending_email', invitedAccount.email);
-      sessionStorage.setItem('pending_phone', invitedAccount.phone || '');
-      sessionStorage.setItem('pending_password', invitedAccount.password);
-      goNext();
-    } catch {
-      setError('Something went wrong. Please try again.');
-    } finally {
-      setIsLoading(false);
+    if (!invitedAccount.fullName.trim()) { setError('Please enter your full name.'); return; }
+    if (!invitedAccount.email.trim()) { setError('Please enter your email.'); return; }
+    if (!invitedAccount.password) { setError('Please create a password.'); return; }
+    if (invitedAccount.phone && invitedAccount.phone.replace('+', '').length < 8) {
+      setError('Please enter a valid phone number.');
+      return;
     }
+    goNext();
   };
 
   const handleRedeemCode = async () => {
     setIsLoading(true);
     setError('');
     try {
-      const user_id = sessionStorage.getItem('pending_user_id') || '';
-      const email_address = sessionStorage.getItem('pending_email') || '';
-      const password = sessionStorage.getItem('pending_password') || '';
       const code = inviteCode || sessionStorage.getItem('invite_code') || '';
+      if (!code.trim()) { setError('Please enter your invitation code.'); setIsLoading(false); return; }
 
       const redeemRes = await fetch('/api/invitation/redeem', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           code: code.trim().toUpperCase(),
-          user_id,
-          full_name: sessionStorage.getItem('pending_full_name') || '',
-          email_address,
-          phone_number: sessionStorage.getItem('pending_phone') || null,
-          password,
+          full_name: invitedAccount.fullName,
+          email: invitedAccount.email,
+          password: invitedAccount.password,
+          phone_number: invitedAccount.phone || null,
         }),
       });
       const redeemData = await redeemRes.json();
       if (!redeemData.success) throw new Error(redeemData.message);
 
-      // Establish the browser session via client-side Supabase
+      // Establish browser session via client-side Supabase
       const supabase = createClient();
-      const { error: signInError } = await supabase.auth.signInWithPassword({ email: email_address, password });
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+        email: invitedAccount.email,
+        password: invitedAccount.password,
+      });
       if (signInError) throw new Error(signInError.message);
 
-      // Persist identity in localStorage for dashboard pages
-      localStorage.setItem('tasking_user_id', redeemData.user.id);
-      localStorage.setItem('tasking_company_id', redeemData.company_id);
-      localStorage.setItem('tasking_user_role', redeemData.user.role);
-      localStorage.setItem('tasking_active_session', 'true');
-      sessionStorage.setItem('tasking_session_active', 'true');
+      // Store company_id under user-specific key (keyed by Supabase auth user id)
+      const authUserId = signInData.user?.id || '';
+      if (authUserId) {
+        localStorage.setItem(`tasking_company_id_${authUserId}`, redeemData.company_id);
+      }
 
-      // Clear pending sessionStorage keys
-      ['pending_user_id', 'pending_full_name', 'pending_email', 'pending_phone', 'pending_password', 'invite_code']
-        .forEach((k) => sessionStorage.removeItem(k));
+      sessionStorage.removeItem('invite_code');
 
       const roleRoutes: Record<string, string> = {
         'Owner': '/owner/dashboard',

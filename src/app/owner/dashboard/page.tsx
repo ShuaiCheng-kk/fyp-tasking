@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Plus, Search, Pencil, Trash2, X, ChevronDown, Check, Copy } from 'lucide-react'
 import OwnerSidebar from '@/components/OwnerSidebar'
+import { createClient } from '@/lib/supabase'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -250,30 +251,34 @@ export default function OwnerDashboard() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  // ── Mount: read localStorage, resolve company then fetch departments ──────
+  // ── Mount: resolve user from Supabase session, then fetch companies/departments ──
 
   useEffect(() => {
-    const uid = localStorage.getItem('tasking_user_id') || ''
-    const cid = localStorage.getItem('tasking_company_id') || ''
-    setUserId(uid)
-    if (uid) fetchAllCompanies(uid)
+    const supabase = createClient()
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) return
+      const uid = session.user.id
+      setUserId(uid)
+      fetchAllCompanies(uid)
 
-    if (cid) {
-      setCompanyId(cid)
-      fetchDeptsById(cid)
-    } else if (uid) {
-      fetch(`/api/company/my-companies?owner_id=${uid}`)
-        .then((r) => r.json())
-        .then((data) => {
-          if (data.success && data.companies?.length > 0) {
-            const resolvedId = data.companies[0].id
-            localStorage.setItem('tasking_company_id', resolvedId)
-            setCompanyId(resolvedId)
-            fetchDeptsById(resolvedId)
-          }
-        })
-        .catch(() => {})
-    }
+      const cid = localStorage.getItem(`tasking_company_id_${uid}`) || ''
+      if (cid) {
+        setCompanyId(cid)
+        fetchDeptsById(cid)
+      } else {
+        fetch(`/api/company/by-owner?owner_id=${uid}`)
+          .then((r) => r.json())
+          .then((data) => {
+            if (data.success && data.company?.id) {
+              const resolvedId = data.company.id
+              localStorage.setItem(`tasking_company_id_${uid}`, resolvedId)
+              setCompanyId(resolvedId)
+              fetchDeptsById(resolvedId)
+            }
+          })
+          .catch(() => {})
+      }
+    })
   }, [])
 
   // ── Data fetchers ──────────────────────────────────────────────────────────
@@ -287,25 +292,14 @@ export default function OwnerDashboard() {
         if (data.companies.length > 0) {
           setOwnerPlan(data.companies[0].plan === 'Paid' ? 'Pro' : 'Free')
         }
-        // If companyId isn't set yet, fall back to the first company in the list
         setCompanyId((prev) => {
           if (!prev && data.companies.length > 0) {
-            return data.companies[0].id
+            const newId = data.companies[0].id
+            localStorage.setItem(`tasking_company_id_${uid}`, newId)
+            return newId
           }
           return prev
         })
-      }
-    } catch {}
-  }
-
-  const fetchCompanyByOwner = async (uid: string) => {
-    try {
-      const res = await fetch(`/api/company/my-companies?owner_id=${uid}`)
-      const data = await res.json()
-      if (data.success && data.company?.id) {
-        const cid = data.company.id
-        localStorage.setItem('tasking_company_id', cid)
-        setCompanyId(cid)
       }
     } catch {}
   }
@@ -320,16 +314,15 @@ export default function OwnerDashboard() {
   }
 
   const fetchDepts = async () => {
-    const cid = localStorage.getItem('tasking_company_id')
-    if (!cid) return
-    fetchDeptsById(cid)
+    if (!companyId) return
+    fetchDeptsById(companyId)
   }
 
   // ── Invite code generation ─────────────────────────────────────────────────
 
   const generateCode = async (role: 'Manager' | 'Employee' | 'Owner', deptId?: string) => {
-    const cid = localStorage.getItem('tasking_company_id') || ''
-    const uid = localStorage.getItem('tasking_user_id') || ''
+    const cid = companyId || ''
+    const uid = userId || ''
     setInviteLoading(true)
     setInviteCode('')
     try {
@@ -401,9 +394,7 @@ export default function OwnerDashboard() {
   // ── Sign out ───────────────────────────────────────────────────────────────
 
   const handleSignOut = () => {
-    localStorage.removeItem('tasking_user_id')
-    localStorage.removeItem('tasking_company_id')
-    localStorage.removeItem('tasking_active_session')
+    if (userId) localStorage.removeItem(`tasking_company_id_${userId}`)
     fetch('/api/auth/signout', { method: 'POST' })
     window.location.href = '/signout'
   }
@@ -413,7 +404,7 @@ export default function OwnerDashboard() {
 
   const handleAddDept = async () => {
     if (!deptFormName.trim()) return
-    const cid = localStorage.getItem('tasking_company_id')
+    const cid = companyId
     if (!cid) { setDeptError('Company not found, please refresh'); return }
     setDeptLoading(true)
     setDeptError('')
@@ -589,7 +580,7 @@ export default function OwnerDashboard() {
                     <button
                       key={c.id}
                       onClick={() => {
-                        localStorage.setItem('tasking_company_id', c.id)
+                        if (userId) localStorage.setItem(`tasking_company_id_${userId}`, c.id)
                         setDropdownOpen(false)
                         window.location.reload()
                       }}

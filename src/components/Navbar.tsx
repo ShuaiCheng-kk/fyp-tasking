@@ -195,6 +195,7 @@ export default function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [authReady, setAuthReady] = useState(false);
   const pathname = usePathname();
 
   useEffect(() => {
@@ -212,11 +213,13 @@ export default function Navbar() {
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       setIsLoggedIn(!!session)
+      setAuthReady(true)
     })
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (_event, session) => {
         setIsLoggedIn(!!session)
+        setAuthReady(true)
       }
     )
 
@@ -305,7 +308,7 @@ export default function Navbar() {
 
         {/* Right CTAs — hidden on mobile */}
         <div className="nav-cta" style={{ display: 'flex', alignItems: 'center', gap: '10px', justifyContent: 'flex-end' }}>
-          {isLoggedIn ? (
+          {!authReady ? null : isLoggedIn ? (
             <>
               <Link
                 href="/owner/dashboard"
@@ -423,7 +426,7 @@ export default function Navbar() {
         <MobileNavLink label="About" href="/about" onClick={close} />
         <MobileNavLink label="Job Board" href="/job-board" onClick={close} />
         <div style={{ padding: '16px 20px', display: 'flex', gap: '10px' }}>
-          {isLoggedIn ? (
+          {!authReady ? null : isLoggedIn ? (
             <>
               <Link
                 href="/owner/dashboard"
