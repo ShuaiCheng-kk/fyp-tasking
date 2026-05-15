@@ -563,7 +563,7 @@ export default function OwnerDashboard() {
                   userSelect: 'none',
                 }}
               >
-                {currentCompany ? `${currentCompany.name} Overview` : 'Overview'}
+                {currentCompany ? `${currentCompany.name} — Overview` : 'Overview'}
                 <ChevronDown
                   size={16}
                   strokeWidth={2.5}
@@ -602,7 +602,7 @@ export default function OwnerDashboard() {
             </div>
           ) : (
             <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#111827', margin: 0 }}>
-              {currentCompany ? `${currentCompany.name} Overview` : 'Overview'}
+              {currentCompany ? `${currentCompany.name} — Overview` : 'Overview'}
             </h1>
           )}
           {ownerPlan && (

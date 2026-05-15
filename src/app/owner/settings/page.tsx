@@ -89,6 +89,7 @@ export default function SettingsPage() {
   const [userId, setUserId] = useState('')
   const [companies, setCompanies] = useState<Company[]>([])
   const [loading, setLoading] = useState(true)
+  const [userIdError, setUserIdError] = useState('')
 
   // Edit modal
   const [editTarget, setEditTarget] = useState<Company | null>(null)
@@ -111,13 +112,25 @@ export default function SettingsPage() {
   const [addError, setAddError] = useState('')
 
   useEffect(() => {
-    const supabase = createClient()
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!session) { setLoading(false); return }
-      const uid = session.user.id
+    const resolve = async () => {
+      let uid = localStorage.getItem('tasking_user_id') || ''
+      if (!uid) {
+        const supabase = createClient()
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.user?.id) {
+          uid = session.user.id
+          localStorage.setItem('tasking_user_id', uid)
+        }
+      }
+      if (!uid) {
+        setUserIdError('Please sign in again')
+        setLoading(false)
+        return
+      }
       setUserId(uid)
       fetchCompanies(uid)
-    })
+    }
+    resolve()
   }, [])
 
   const handleDelete = async () => {
@@ -282,7 +295,11 @@ export default function SettingsPage() {
               <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0 }}>My Companies</h2>
             </div>
 
-            {loading ? (
+            {userIdError ? (
+              <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '8px', padding: '14px 16px', fontSize: '0.9rem', color: '#DC2626' }}>
+                {userIdError}
+              </div>
+            ) : loading ? (
               <div style={{ display: 'flex', justifyContent: 'center', paddingTop: '48px' }}>
                 <Spinner size={24} dark />
               </div>

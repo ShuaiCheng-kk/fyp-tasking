@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase';
 
 // ─── Logo ────────────────────────────────────────────────────────────────────
@@ -197,6 +197,7 @@ export default function Navbar() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [authReady, setAuthReady] = useState(false);
   const pathname = usePathname();
+  const router = useRouter();
 
   useEffect(() => {
     const handler = () => setScrolled(window.scrollY > 50);
@@ -225,6 +226,17 @@ export default function Navbar() {
 
     return () => subscription.unsubscribe()
   }, []);
+
+  const handleDashboardClick = async () => {
+    const supabase = createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session) {
+      router.push('/owner/dashboard');
+    } else {
+      setIsLoggedIn(false);
+      router.push('/signin');
+    }
+  };
 
   const isActive = (href: string) =>
     href === '/' ? pathname === '/' : pathname.startsWith(href);
@@ -310,9 +322,9 @@ export default function Navbar() {
         <div className="nav-cta" style={{ display: 'flex', alignItems: 'center', gap: '10px', justifyContent: 'flex-end' }}>
           {!authReady ? null : isLoggedIn ? (
             <>
-              <Link
-                href="/owner/dashboard"
+              <button
                 className="btn-press"
+                onClick={handleDashboardClick}
                 style={{
                   padding: '8px 18px',
                   color: '#FFFBF5',
@@ -321,10 +333,12 @@ export default function Navbar() {
                   fontWeight: 500,
                   border: '1px solid rgba(255,251,245,0.25)',
                   borderRadius: '8px',
+                  background: 'none',
+                  cursor: 'pointer',
                 }}
               >
                 Dashboard
-              </Link>
+              </button>
               <button
                 className="btn-press"
                 onClick={async () => {
@@ -428,9 +442,8 @@ export default function Navbar() {
         <div style={{ padding: '16px 20px', display: 'flex', gap: '10px' }}>
           {!authReady ? null : isLoggedIn ? (
             <>
-              <Link
-                href="/owner/dashboard"
-                onClick={close}
+              <button
+                onClick={() => { close(); handleDashboardClick(); }}
                 style={{
                   flex: 1,
                   textAlign: 'center',
@@ -441,10 +454,12 @@ export default function Navbar() {
                   fontSize: '0.9375rem',
                   border: '1px solid #F0E8D8',
                   borderRadius: '8px',
+                  background: 'none',
+                  cursor: 'pointer',
                 }}
               >
                 Dashboard
-              </Link>
+              </button>
               <button
                 onClick={async () => {
                   const supabase = createClient()
