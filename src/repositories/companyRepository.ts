@@ -52,7 +52,7 @@ export const companyRepository = {
   async findAllByOwnerId(owner_id: string): Promise<Company[]> {
     const { data, error } = await supabase
       .from('companies')
-      .select('id, name, description, plan')
+      .select('*')
       .eq('owner_id', owner_id)
     if (error) throw error
     return data || []
