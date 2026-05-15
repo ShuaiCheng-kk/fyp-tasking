@@ -13,10 +13,15 @@ export const invitationRepository = {
     role: InvitationCode['role']
     generated_by: string
     expired_at: string
+    reporting_manager_id?: string | null
   }): Promise<InvitationCode> {
+    const { reporting_manager_id, ...baseData } = data
+    const insertData = reporting_manager_id
+      ? { ...baseData, reporting_manager_id }
+      : baseData
     const { data: invitation, error } = await supabase
       .from('invitation_code')
-      .insert(data)
+      .insert(insertData)
       .select()
       .single()
     if (error) throw new Error(error.message)

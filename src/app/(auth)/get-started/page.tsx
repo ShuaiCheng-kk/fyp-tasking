@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Building2, UserPlus, Eye, EyeOff, ChevronLeft, Check } from 'lucide-react';
@@ -265,7 +265,7 @@ function AccountFields({ form, setForm }: {
       <div>
         <label style={labelStyle}>Phone Number</label>
         <input type="tel" placeholder="+65 9123 4567" value={form.phone}
-          onChange={(e) => setForm({ ...form, phone: e.target.value })} style={inputStyle} />
+          onChange={(e) => setForm({ ...form, phone: e.target.value.replace(/[^0-9+]/g, '') })} style={inputStyle} />
       </div>
     </div>
   );
@@ -302,6 +302,7 @@ export default function GetStartedPage() {
   const [visible, setVisible] = useState(true);
   const [showProMsg, setShowProMsg] = useState(false);
   const [error, setError] = useState('');
+  const [companyNameError, setCompanyNameError] = useState('');
 
   // Owner form state
   const [ownerAccount, setOwnerAccount] = useState({ fullName: '', email: '', password: '', phone: '' });
@@ -312,6 +313,22 @@ export default function GetStartedPage() {
   // Invited form state
   const [invitedAccount, setInvitedAccount] = useState({ fullName: '', email: '', password: '', phone: '' });
   const [inviteCode, setInviteCode] = useState('');
+  const [urlCode, setUrlCode] = useState('');
+
+  // ── Read URL code on mount ────────────────────────────────────────────────
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    if (code) {
+      setUrlCode(code);
+      setInviteCode(code);
+      sessionStorage.setItem('invite_code', code);
+      setPath('invitation');
+      transition(() => setStep(1));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Transitions ───────────────────────────────────────────────────────────
 
@@ -342,118 +359,96 @@ export default function GetStartedPage() {
   // ── API Handlers ──────────────────────────────────────────────────────────
 
   const handleOwnerRegister = async () => {
-    setIsLoading(true);
     setError('');
+    if (!ownerAccount.fullName.trim()) { setError('Please enter your full name.'); return; }
+    if (!ownerAccount.email.trim()) { setError('Please enter your email.'); return; }
+    if (!ownerAccount.password) { setError('Please create a password.'); return; }
+    if (ownerAccount.phone && ownerAccount.phone.replace('+', '').length < 8) {
+      setError('Please enter a valid phone number.');
+      return;
+    }
+    setIsLoading(true);
     try {
-      const res = await fetch('/api/auth/register', {
+      const res = await fetch('/api/auth/check-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          full_name: ownerAccount.fullName,
-          email_address: ownerAccount.email,
-          password: ownerAccount.password,
-          phone_number: ownerAccount.phone || null,
-          role: 'Owner',
-        }),
+        body: JSON.stringify({ email: ownerAccount.email }),
       });
       const data = await res.json();
-      if (!data.success) throw new Error(data.message);
-      localStorage.setItem('tasking_user_id', data.user.id);
-      goNext();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Registration failed');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleCompanySetup = async () => {
-    setIsLoading(true);
-    setError('');
-    try {
-      const owner_id = localStorage.getItem('tasking_user_id') || '';
-      const res = await fetch('/api/company/setup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: companyName,
-          description: companyDesc || null,
-          owner_id,
-          plan: 'Free',
-        }),
-      });
-      const data = await res.json();
-      if (!data.success) throw new Error(data.message);
-      localStorage.setItem('tasking_company_id', data.company.id);
-      goNext();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Company setup failed');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleDepartments = async () => {
-    setIsLoading(true);
-    setError('');
-    try {
-      const company_id = localStorage.getItem('tasking_company_id') || '';
-      const nonEmpty = departments.filter((d) => d.trim());
-      for (const name of nonEmpty) {
-        const res = await fetch('/api/company/create-department', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, company_id }),
-        });
-        const data = await res.json();
-        if (!data.success) throw new Error(data.message);
+      if (data.exists) {
+        setError('An account with this email already exists. Please sign in instead.');
+        return;
       }
-      goNext();
+    } catch {
+      // 检查失败则允许继续，complete-owner-setup 会做最终验证
+    } finally {
+      setIsLoading(false);
+    }
+    sessionStorage.setItem('owner_full_name', ownerAccount.fullName);
+    sessionStorage.setItem('owner_email', ownerAccount.email);
+    sessionStorage.setItem('owner_password', ownerAccount.password);
+    sessionStorage.setItem('owner_phone', ownerAccount.phone);
+    goNext();
+  };
+
+  const handleCompanySetup = () => {
+    if (!companyName.trim()) {
+      setCompanyNameError('Company name is required.');
+      return;
+    }
+    setCompanyNameError('');
+    sessionStorage.setItem('company_name', companyName);
+    sessionStorage.setItem('company_description', companyDesc);
+    goNext();
+  };
+
+  const handleDepartments = () => {
+    sessionStorage.setItem('departments', JSON.stringify(departments));
+    goNext();
+  };
+
+  const handleCompletSetup = async (plan: 'Free' | 'Paid') => {
+    setIsLoading(true);
+    setError('');
+    try {
+      const res = await fetch('/api/auth/complete-owner-setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          full_name: sessionStorage.getItem('owner_full_name'),
+          email: sessionStorage.getItem('owner_email'),
+          password: sessionStorage.getItem('owner_password'),
+          phone: sessionStorage.getItem('owner_phone'),
+          company_name: sessionStorage.getItem('company_name'),
+          company_description: sessionStorage.getItem('company_description'),
+          departments: JSON.parse(sessionStorage.getItem('departments') || '[]'),
+          plan,
+        }),
+      });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.message);
+
+      localStorage.setItem('tasking_user_id', data.user_id);
+      localStorage.setItem('tasking_company_id', data.company_id);
+
+      ['owner_full_name', 'owner_email', 'owner_password', 'owner_phone',
+        'company_name', 'company_description', 'departments'].forEach((k) =>
+        sessionStorage.removeItem(k));
+
+      if (plan === 'Paid') {
+        setShowProMsg(true);
+      } else {
+        router.push('/owner/dashboard');
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Department creation failed');
+      setError(err instanceof Error ? err.message : 'Setup failed');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleFreePlan = async () => {
-    setIsLoading(true);
-    setError('');
-    try {
-      const company_id = localStorage.getItem('tasking_company_id') || '';
-      const res = await fetch('/api/company/update-plan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company_id, plan: 'Free' }),
-      });
-      const data = await res.json();
-      if (!data.success) throw new Error(data.message);
-      router.push('/owner/dashboard');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to set plan');
-      setIsLoading(false);
-    }
-  };
-
-  const handleProPlan = async () => {
-    setIsLoading(true);
-    setError('');
-    try {
-      const company_id = localStorage.getItem('tasking_company_id') || '';
-      const res = await fetch('/api/company/update-plan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company_id, plan: 'Paid' }),
-      });
-      const data = await res.json();
-      if (!data.success) throw new Error(data.message);
-      setShowProMsg(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to set plan');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const handleFreePlan = () => handleCompletSetup('Free');
+  const handleProPlan = () => handleCompletSetup('Paid');
 
   const handleInvitedRegister = async () => {
     setIsLoading(true);
@@ -467,7 +462,7 @@ export default function GetStartedPage() {
           email_address: invitedAccount.email,
           password: invitedAccount.password,
           phone_number: invitedAccount.phone || null,
-          role: 'Guest User',
+          is_invitation_path: true,
         }),
       });
       const data = await res.json();
@@ -475,7 +470,10 @@ export default function GetStartedPage() {
         setError(data.message || 'Something went wrong. Please try again.');
         return;
       }
-      localStorage.setItem('tasking_user_id', data.user.id);
+      sessionStorage.setItem('pending_user_id', data.user_id);
+      sessionStorage.setItem('pending_full_name', invitedAccount.fullName);
+      sessionStorage.setItem('pending_email', invitedAccount.email);
+      sessionStorage.setItem('pending_phone', invitedAccount.phone || '');
       goNext();
     } catch {
       setError('Something went wrong. Please try again.');
@@ -488,22 +486,40 @@ export default function GetStartedPage() {
     setIsLoading(true);
     setError('');
     try {
-      const user_id = localStorage.getItem('tasking_user_id') || '';
-      const res = await fetch('/api/invitation/redeem', {
+      const user_id = sessionStorage.getItem('pending_user_id') || '';
+      const code = inviteCode || sessionStorage.getItem('invite_code') || '';
+      const redeemRes = await fetch('/api/invitation/redeem', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: inviteCode.trim().toUpperCase(), user_id }),
+        body: JSON.stringify({ code: code.trim().toUpperCase(), user_id }),
       });
-      const data = await res.json();
-      if (!data.success) throw new Error(data.message);
+      const redeemData = await redeemRes.json();
+      if (!redeemData.success) throw new Error(redeemData.message);
+
+      const profileRes = await fetch('/api/auth/create-profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id,
+          full_name: sessionStorage.getItem('pending_full_name') || '',
+          email_address: sessionStorage.getItem('pending_email') || '',
+          phone_number: sessionStorage.getItem('pending_phone') || null,
+          role: redeemData.role,
+          company_id: redeemData.company_id,
+          department_id: redeemData.department_id,
+        }),
+      });
+      const profileData = await profileRes.json();
+      if (!profileData.success) throw new Error(profileData.message);
+
       const roleRoutes: Record<string, string> = {
         'Owner': '/owner/dashboard',
         'Manager': '/manager/dashboard',
         'Employee': '/employee/dashboard',
       };
-      router.push(roleRoutes[data.role] || '/owner/dashboard');
-    } catch {
-      setError('Invalid or expired invitation code');
+      router.push(roleRoutes[redeemData.role] || '/owner/dashboard');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Invalid or expired invitation code');
       setIsLoading(false);
     }
   };
@@ -627,7 +643,13 @@ export default function GetStartedPage() {
               <div>
                 <label style={labelStyle}>Company Name</label>
                 <input type="text" placeholder="Acme Pte Ltd" value={companyName}
-                  onChange={(e) => setCompanyName(e.target.value)} style={inputStyle} />
+                  onChange={(e) => { setCompanyName(e.target.value); if (e.target.value.trim()) setCompanyNameError(''); }}
+                  style={inputStyle} />
+                {companyNameError && (
+                  <p style={{ fontFamily: fB, fontSize: '0.875rem', color: '#DC2626', marginTop: '6px' }}>
+                    {companyNameError}
+                  </p>
+                )}
               </div>
               <div>
                 <label style={labelStyle}>Company Description</label>
@@ -642,7 +664,7 @@ export default function GetStartedPage() {
             </div>
             <div style={{ marginTop: '28px' }}>
               <InlineError message={error} />
-              <PrimaryButton loading={isLoading} onClick={handleCompanySetup}>
+              <PrimaryButton loading={false} onClick={handleCompanySetup}>
                 {ownerStep3.button}
               </PrimaryButton>
               <LegalText />
@@ -687,11 +709,11 @@ export default function GetStartedPage() {
             </div>
             <div style={{ marginTop: '28px' }}>
               <InlineError message={error} />
-              <PrimaryButton loading={isLoading} onClick={handleDepartments}>
+              <PrimaryButton loading={false} onClick={handleDepartments}>
                 Continue
               </PrimaryButton>
               <button
-                onClick={() => { setError(''); goNext(); }}
+                onClick={() => { sessionStorage.setItem('departments', '[]'); setError(''); goNext(); }}
                 style={{
                   display: 'block',
                   width: '100%',
@@ -931,7 +953,10 @@ export default function GetStartedPage() {
         )}
 
         {/* Step 3B — Invitation code */}
-        {path === 'invitation' && step === 2 && (
+        {path === 'invitation' && step === 2 && (() => {
+          const storedCode = sessionStorage.getItem('invite_code');
+          if (storedCode && !inviteCode) setInviteCode(storedCode);
+          return (
           <Card>
             <TaskingLogo />
             <ProgressBar current={2} total={2} />
@@ -955,8 +980,8 @@ export default function GetStartedPage() {
                   padding: '20px',
                 }}
               />
-              <p style={{ fontFamily: fB, fontSize: '0.875rem', color: '#9CA3AF', marginTop: '12px', textAlign: 'center' }}>
-                {invitedStep3.codeHelp}
+              <p style={{ fontFamily: fB, fontSize: '0.875rem', color: (urlCode || sessionStorage.getItem('invite_code')) ? '#F97316' : '#9CA3AF', marginTop: '12px', textAlign: 'center' }}>
+                {(urlCode || sessionStorage.getItem('invite_code')) ? 'Code applied from your invitation link.' : invitedStep3.codeHelp}
               </p>
             </div>
             <div style={{ marginTop: '28px' }}>
@@ -967,7 +992,8 @@ export default function GetStartedPage() {
               <LegalText />
             </div>
           </Card>
-        )}
+          );
+        })()}
 
       </div>
     </div>

@@ -9,7 +9,6 @@ export const page = {
   forgotPassword: 'Forgot password?',
   forgotPasswordHref: '/forgot-password',
   submitButton: 'Sign In',
-  dividerText: "Don't have an account?",
   getStartedLabel: 'Get Started',
   getStartedHref: '/get-started',
   errorMessage: 'Invalid email or password. Please try again.',

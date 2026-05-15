@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { createClient } from '@/lib/supabase';
 
 // ─── Logo ────────────────────────────────────────────────────────────────────
 
@@ -193,6 +194,7 @@ const MobileNavLink = ({ label, href, onClick }: { label: string; href: string; 
 export default function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
   const pathname = usePathname();
 
   useEffect(() => {
@@ -204,6 +206,15 @@ export default function Navbar() {
   useEffect(() => {
     setMobileOpen(false);
   }, [pathname]);
+
+  useEffect(() => {
+    const checkAuth = async () => {
+      const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
+      setIsLoggedIn(!!session)
+    }
+    checkAuth()
+  }, []);
 
   const isActive = (href: string) =>
     href === '/' ? pathname === '/' : pathname.startsWith(href);
@@ -287,36 +298,82 @@ export default function Navbar() {
 
         {/* Right CTAs — hidden on mobile */}
         <div className="nav-cta" style={{ display: 'flex', alignItems: 'center', gap: '10px', justifyContent: 'flex-end' }}>
-          <Link
-            href="/signin"
-            className="btn-press"
-            style={{
-              padding: '8px 18px',
-              color: '#FFFBF5',
-              fontSize: '0.875rem',
-              fontFamily: 'var(--font-body)',
-              fontWeight: 500,
-              border: '1px solid rgba(255,251,245,0.25)',
-              borderRadius: '8px',
-            }}
-          >
-            Sign In
-          </Link>
-          <Link
-            href="/get-started"
-            className="btn-press cta-shimmer"
-            style={{
-              padding: '8px 18px',
-              background: '#F97316',
-              color: '#FFFFFF',
-              fontSize: '0.875rem',
-              fontFamily: 'var(--font-body)',
-              fontWeight: 600,
-              borderRadius: '8px',
-            }}
-          >
-            Get Started
-          </Link>
+          {isLoggedIn ? (
+            <>
+              <Link
+                href="/owner/dashboard"
+                className="btn-press"
+                style={{
+                  padding: '8px 18px',
+                  color: '#FFFBF5',
+                  fontSize: '0.875rem',
+                  fontFamily: 'var(--font-body)',
+                  fontWeight: 500,
+                  border: '1px solid rgba(255,251,245,0.25)',
+                  borderRadius: '8px',
+                }}
+              >
+                Dashboard
+              </Link>
+              <button
+                className="btn-press"
+                onClick={async () => {
+                  const supabase = createClient()
+                  await supabase.auth.signOut()
+                  localStorage.removeItem('tasking_user_id');
+                  localStorage.removeItem('tasking_company_id');
+                  localStorage.removeItem('tasking_active_session');
+                  window.location.href = '/signout';
+                }}
+                style={{
+                  padding: '8px 18px',
+                  background: '#F97316',
+                  color: '#FFFFFF',
+                  fontSize: '0.875rem',
+                  fontFamily: 'var(--font-body)',
+                  fontWeight: 600,
+                  borderRadius: '8px',
+                  border: 'none',
+                  cursor: 'pointer',
+                }}
+              >
+                Logout
+              </button>
+            </>
+          ) : (
+            <>
+              <Link
+                href="/signin"
+                className="btn-press"
+                style={{
+                  padding: '8px 18px',
+                  color: '#FFFBF5',
+                  fontSize: '0.875rem',
+                  fontFamily: 'var(--font-body)',
+                  fontWeight: 500,
+                  border: '1px solid rgba(255,251,245,0.25)',
+                  borderRadius: '8px',
+                }}
+              >
+                Sign In
+              </Link>
+              <Link
+                href="/get-started"
+                className="btn-press cta-shimmer"
+                style={{
+                  padding: '8px 18px',
+                  background: '#F97316',
+                  color: '#FFFFFF',
+                  fontSize: '0.875rem',
+                  fontFamily: 'var(--font-body)',
+                  fontWeight: 600,
+                  borderRadius: '8px',
+                }}
+              >
+                Get Started
+              </Link>
+            </>
+          )}
         </div>
 
         {/* Hamburger — shown on mobile only */}
@@ -359,40 +416,89 @@ export default function Navbar() {
         <MobileNavLink label="About" href="/about" onClick={close} />
         <MobileNavLink label="Job Board" href="/job-board" onClick={close} />
         <div style={{ padding: '16px 20px', display: 'flex', gap: '10px' }}>
-          <Link
-            href="/signin"
-            onClick={close}
-            style={{
-              flex: 1,
-              textAlign: 'center',
-              padding: '11px 0',
-              color: '#1C1917',
-              fontFamily: 'var(--font-body)',
-              fontWeight: 500,
-              fontSize: '0.9375rem',
-              border: '1px solid #F0E8D8',
-              borderRadius: '8px',
-            }}
-          >
-            Sign In
-          </Link>
-          <Link
-            href="/get-started"
-            onClick={close}
-            style={{
-              flex: 1,
-              textAlign: 'center',
-              padding: '11px 0',
-              background: '#F97316',
-              color: '#FFFFFF',
-              fontFamily: 'var(--font-body)',
-              fontWeight: 600,
-              fontSize: '0.9375rem',
-              borderRadius: '8px',
-            }}
-          >
-            Get Started
-          </Link>
+          {isLoggedIn ? (
+            <>
+              <Link
+                href="/owner/dashboard"
+                onClick={close}
+                style={{
+                  flex: 1,
+                  textAlign: 'center',
+                  padding: '11px 0',
+                  color: '#1C1917',
+                  fontFamily: 'var(--font-body)',
+                  fontWeight: 500,
+                  fontSize: '0.9375rem',
+                  border: '1px solid #F0E8D8',
+                  borderRadius: '8px',
+                }}
+              >
+                Dashboard
+              </Link>
+              <button
+                onClick={async () => {
+                  const supabase = createClient()
+                  await supabase.auth.signOut()
+                  localStorage.removeItem('tasking_user_id');
+                  localStorage.removeItem('tasking_company_id');
+                  localStorage.removeItem('tasking_active_session');
+                  window.location.href = '/signout';
+                }}
+                style={{
+                  flex: 1,
+                  textAlign: 'center',
+                  padding: '11px 0',
+                  background: '#F97316',
+                  color: '#FFFFFF',
+                  fontFamily: 'var(--font-body)',
+                  fontWeight: 600,
+                  fontSize: '0.9375rem',
+                  borderRadius: '8px',
+                  border: 'none',
+                  cursor: 'pointer',
+                }}
+              >
+                Logout
+              </button>
+            </>
+          ) : (
+            <>
+              <Link
+                href="/signin"
+                onClick={close}
+                style={{
+                  flex: 1,
+                  textAlign: 'center',
+                  padding: '11px 0',
+                  color: '#1C1917',
+                  fontFamily: 'var(--font-body)',
+                  fontWeight: 500,
+                  fontSize: '0.9375rem',
+                  border: '1px solid #F0E8D8',
+                  borderRadius: '8px',
+                }}
+              >
+                Sign In
+              </Link>
+              <Link
+                href="/get-started"
+                onClick={close}
+                style={{
+                  flex: 1,
+                  textAlign: 'center',
+                  padding: '11px 0',
+                  background: '#F97316',
+                  color: '#FFFFFF',
+                  fontFamily: 'var(--font-body)',
+                  fontWeight: 600,
+                  fontSize: '0.9375rem',
+                  borderRadius: '8px',
+                }}
+              >
+                Get Started
+              </Link>
+            </>
+          )}
         </div>
       </div>
     </header>
