@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { Plus, Search, Pencil, Trash2, X, ChevronDown } from 'lucide-react'
+import { Plus, Search, Pencil, Trash2, X, ChevronDown, Check, Copy } from 'lucide-react'
 import OwnerSidebar from '@/components/OwnerSidebar'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
