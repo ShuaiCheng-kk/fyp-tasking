@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Plus, X, ChevronDown } from 'lucide-react'
 import OwnerSidebar from '@/components/OwnerSidebar'
+import { createClient } from '@/lib/supabase'
 
 // ─── Spinner ──────────────────────────────────────────────────────────────────
 
@@ -179,35 +180,38 @@ export default function TeamPage() {
   }, [])
 
   useEffect(() => {
-    const uid = localStorage.getItem('tasking_user_id') || ''
-    setUserId(uid)
-    if (!uid) return
+    const supabase = createClient()
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      const uid = session?.user?.id || localStorage.getItem('tasking_user_id') || ''
+      if (!uid) return
+      localStorage.setItem('tasking_user_id', uid)
+      setUserId(uid)
 
-    fetch(`/api/user/me?user_id=${uid}`)
-      .then(r => r.json())
-      .then(d => { if (d.success) setOwnerEmail(d.user.email_address) })
-      .catch(() => {})
-
-    const storedCid = localStorage.getItem('tasking_company_id') || ''
-    if (storedCid) {
-      setCompanyId(storedCid)
-      fetchCompanyName(uid, storedCid)
-      fetchTeamMembers(storedCid)
-    } else {
-      // Fallback: resolve company via API for owners who created their own company
-      fetch(`/api/company/by-owner?owner_id=${uid}`)
+      fetch(`/api/user/me?user_id=${uid}`)
         .then(r => r.json())
-        .then(d => {
-          if (d.success && d.company) {
-            const cid = d.company.id
-            localStorage.setItem('tasking_company_id', cid)
-            setCompanyId(cid)
-            setCompanyName(d.company.name)
-            fetchTeamMembers(cid)
-          }
-        })
+        .then(d => { if (d.success) setOwnerEmail(d.user.email_address) })
         .catch(() => {})
-    }
+
+      const storedCid = localStorage.getItem(`tasking_company_id_${uid}`) || ''
+      if (storedCid) {
+        setCompanyId(storedCid)
+        fetchCompanyName(uid, storedCid)
+        fetchTeamMembers(storedCid)
+      } else {
+        fetch(`/api/company/by-owner?owner_id=${uid}`)
+          .then(r => r.json())
+          .then(d => {
+            if (d.success && d.company) {
+              const cid = d.company.id
+              localStorage.setItem(`tasking_company_id_${uid}`, cid)
+              setCompanyId(cid)
+              setCompanyName(d.company.name)
+              fetchTeamMembers(cid)
+            }
+          })
+          .catch(() => {})
+      }
+    })
   }, [fetchTeamMembers])
 
   const fetchCompanyName = async (uid: string, cid: string) => {

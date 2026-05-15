@@ -455,9 +455,10 @@ export default function GetStartedPage() {
         password: ownerPassword,
       });
 
-      // Store company_id under user-specific key
+      // Store user id and company_id under user-specific key
       const authUserId = signInData?.user?.id || '';
       if (authUserId) {
+        localStorage.setItem('tasking_user_id', authUserId);
         localStorage.setItem(`tasking_company_id_${authUserId}`, data.company_id);
       }
 
@@ -521,9 +522,10 @@ export default function GetStartedPage() {
       });
       if (signInError) throw new Error(signInError.message);
 
-      // Store company_id under user-specific key (keyed by Supabase auth user id)
+      // Store user id and company_id under user-specific key
       const authUserId = signInData.user?.id || '';
       if (authUserId) {
+        localStorage.setItem('tasking_user_id', authUserId);
         localStorage.setItem(`tasking_company_id_${authUserId}`, redeemData.company_id);
       }
 
