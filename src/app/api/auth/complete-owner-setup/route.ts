@@ -57,15 +57,28 @@ export async function POST(req: NextRequest) {
 
   if (orphanByEmail) {
     if (orphanByEmail.company_id) {
-      // Has a company — fully registered, tell them to sign in
       return NextResponse.json(
         { success: false, message: 'An account with this email already exists. Please sign in instead.' },
         { status: 400 },
       )
     }
-    // No company — orphaned row from a previous partial failure, delete it
     await supabase.from('users').delete().eq('id', orphanByEmail.id)
     console.log('Cleaned up orphaned users row (by email) for:', email)
+  }
+
+  // Pre-check phone uniqueness to give a clear error before hitting the DB constraint
+  if (phone) {
+    const { data: phoneUser } = await supabase
+      .from('users')
+      .select('id')
+      .eq('phone_number', phone)
+      .single()
+    if (phoneUser) {
+      return NextResponse.json(
+        { success: false, message: 'This phone number is already registered to another account. Please use a different number.' },
+        { status: 400 },
+      )
+    }
   }
 
   try {
@@ -83,6 +96,12 @@ export async function POST(req: NextRequest) {
   } catch (error: unknown) {
     console.error('complete-owner-setup error:', error)
     const msg = (error instanceof Error ? error.message : '').toLowerCase()
+    if (msg.includes('phone') && (msg.includes('duplicate') || msg.includes('unique'))) {
+      return NextResponse.json(
+        { success: false, message: 'This phone number is already registered to another account. Please use a different number.' },
+        { status: 400 },
+      )
+    }
     if (msg.includes('foreign key')) {
       return NextResponse.json({ success: false, message: 'Setup failed. Please try again.' }, { status: 500 })
     }

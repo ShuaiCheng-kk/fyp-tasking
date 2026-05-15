@@ -26,36 +26,36 @@ export default function OwnerSidebar() {
   const [expanded, setExpanded] = useState(false)
 
   useEffect(() => {
-    const supabase = createClient()
+    const checkSession = async () => {
+      const supabase = createClient()
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        if (event === 'SIGNED_OUT' || (!session && event !== 'INITIAL_SESSION')) {
-          localStorage.removeItem('tasking_user_id')
-          localStorage.removeItem('tasking_company_id')
-          localStorage.removeItem('tasking_active_session')
-          window.location.href = '/signin'
-          return
-        }
+      const { data: { session } } = await supabase.auth.getSession()
 
-        if (session) {
-          const sessionMarker = sessionStorage.getItem('tasking_session_active')
-          if (!sessionMarker) {
-            supabase.auth.signOut()
-            localStorage.removeItem('tasking_user_id')
-            localStorage.removeItem('tasking_company_id')
-            localStorage.removeItem('tasking_active_session')
-            window.location.href = '/signin'
-            return
-          }
-        }
+      if (!session) {
+        localStorage.removeItem('tasking_user_id')
+        localStorage.removeItem('tasking_company_id')
+        localStorage.removeItem('tasking_active_session')
+        sessionStorage.removeItem('tasking_session_active')
+        window.location.href = '/signin'
+        return
       }
-    )
 
-    return () => subscription.unsubscribe()
+      const sessionMarker = sessionStorage.getItem('tasking_session_active')
+      if (!sessionMarker) {
+        await supabase.auth.signOut()
+        localStorage.removeItem('tasking_user_id')
+        localStorage.removeItem('tasking_company_id')
+        localStorage.removeItem('tasking_active_session')
+        sessionStorage.removeItem('tasking_session_active')
+        window.location.href = '/signin'
+        return
+      }
+    }
+
+    checkSession()
   }, [])
 
-  const handleSignOut = async () => {
+  const handleLogout = async () => {
     const supabase = createClient()
     await supabase.auth.signOut()
     localStorage.removeItem('tasking_user_id')
@@ -162,7 +162,7 @@ export default function OwnerSidebar() {
       <div style={{ padding: '12px 8px', borderTop: '1px solid #F3F4F6', flexShrink: 0 }}>
         <div style={{ borderTop: '1px solid #E5E7EB', paddingTop: '8px', marginTop: '2px' }}>
           <button
-            onClick={handleSignOut}
+            onClick={handleLogout}
             style={{
               width: '100%',
               display: 'flex',

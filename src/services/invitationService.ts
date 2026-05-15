@@ -52,6 +52,11 @@ export const invitationService = {
     invited_by: string
     reporting_manager_id?: string | null
   }): Promise<void> {
+    const inviter = await userRepository.findById(data.invited_by)
+    if (inviter?.email_address.toLowerCase() === data.email.toLowerCase()) {
+      throw new Error('You cannot send an invitation to yourself.')
+    }
+
     const expired_at = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
     const invitation = await invitationRepository.createCode({
       code: generateRandomCode(data.role),

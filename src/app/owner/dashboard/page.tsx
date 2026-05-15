@@ -199,7 +199,8 @@ export default function OwnerDashboard() {
   const [companyId, setCompanyId] = useState('')
 
   // Top-bar data
-  const [companies, setCompanies] = useState<{ id: string; name: string }[]>([])
+  const [companies, setCompanies] = useState<{ id: string; name: string; plan: string }[]>([])
+  const [ownerPlan, setOwnerPlan] = useState<string>('')
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
@@ -249,7 +250,7 @@ export default function OwnerDashboard() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  // ── Mount: read localStorage, resolve company ──────────────────────────────
+  // ── Mount: read localStorage, resolve company then fetch departments ──────
 
   useEffect(() => {
     const uid = localStorage.getItem('tasking_user_id') || ''
@@ -259,16 +260,21 @@ export default function OwnerDashboard() {
 
     if (cid) {
       setCompanyId(cid)
+      fetchDeptsById(cid)
     } else if (uid) {
-      fetchCompanyByOwner(uid)
+      fetch(`/api/company/my-companies?owner_id=${uid}`)
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.success && data.companies?.length > 0) {
+            const resolvedId = data.companies[0].id
+            localStorage.setItem('tasking_company_id', resolvedId)
+            setCompanyId(resolvedId)
+            fetchDeptsById(resolvedId)
+          }
+        })
+        .catch(() => {})
     }
   }, [])
-
-  // ── Fetch departments whenever companyId changes ───────────────────────────
-
-  useEffect(() => {
-    if (companyId) fetchDepts(companyId)
-  }, [companyId])
 
   // ── Data fetchers ──────────────────────────────────────────────────────────
 
@@ -278,6 +284,9 @@ export default function OwnerDashboard() {
       const data = await res.json()
       if (data.success) {
         setCompanies(data.companies)
+        if (data.companies.length > 0) {
+          setOwnerPlan(data.companies[0].plan === 'Paid' ? 'Pro' : 'Free')
+        }
         // If companyId isn't set yet, fall back to the first company in the list
         setCompanyId((prev) => {
           if (!prev && data.companies.length > 0) {
@@ -291,7 +300,7 @@ export default function OwnerDashboard() {
 
   const fetchCompanyByOwner = async (uid: string) => {
     try {
-      const res = await fetch(`/api/company/by-owner?owner_id=${uid}`)
+      const res = await fetch(`/api/company/my-companies?owner_id=${uid}`)
       const data = await res.json()
       if (data.success && data.company?.id) {
         const cid = data.company.id
@@ -301,12 +310,19 @@ export default function OwnerDashboard() {
     } catch {}
   }
 
-  const fetchDepts = async (cid: string) => {
+  const fetchDeptsById = async (cid: string) => {
+    if (!cid) return
     try {
       const res = await fetch(`/api/company/departments?company_id=${cid}`)
       const data = await res.json()
       if (data.success) setDepartments(data.departments)
     } catch {}
+  }
+
+  const fetchDepts = async () => {
+    const cid = localStorage.getItem('tasking_company_id')
+    if (!cid) return
+    fetchDeptsById(cid)
   }
 
   // ── Invite code generation ─────────────────────────────────────────────────
@@ -328,7 +344,9 @@ export default function OwnerDashboard() {
         }),
       })
       const data = await res.json()
-      if (data.success) setInviteCode(data.code)
+      if (data.success) {
+        setInviteCode(data.code)
+      }
     } finally {
       setInviteLoading(false)
     }
@@ -339,6 +357,7 @@ export default function OwnerDashboard() {
   const openManagerModal = () => {
     setCopied(false)
     setInviteCode('')
+
     setSelectedDeptId('')
     setInviteModal('manager')
   }
@@ -352,6 +371,7 @@ export default function OwnerDashboard() {
   const openEmployeeModal = () => {
     setCopied(false)
     setInviteCode('')
+
     setSelectedDeptId('')
     setInviteModal('employee')
   }
@@ -359,6 +379,7 @@ export default function OwnerDashboard() {
   const openOwnerModal = () => {
     setCopied(false)
     setInviteCode('')
+
     setInviteModal('owner')
   }
 
@@ -392,7 +413,8 @@ export default function OwnerDashboard() {
 
   const handleAddDept = async () => {
     if (!deptFormName.trim()) return
-    const cid = localStorage.getItem('tasking_company_id') || ''
+    const cid = localStorage.getItem('tasking_company_id')
+    if (!cid) { setDeptError('Company not found, please refresh'); return }
     setDeptLoading(true)
     setDeptError('')
     try {
@@ -405,7 +427,7 @@ export default function OwnerDashboard() {
       if (!data.success) throw new Error(data.message)
       setAddModal(false)
       setDeptFormName('')
-      fetchDepts(cid)
+      fetchDepts()
     } catch (err) {
       setDeptError(err instanceof Error ? err.message : 'Failed to add department')
     } finally {
@@ -415,7 +437,6 @@ export default function OwnerDashboard() {
 
   const handleEditDept = async () => {
     if (!deptFormName.trim() || !editModal) return
-    const cid = localStorage.getItem('tasking_company_id') || ''
     setDeptLoading(true)
     setDeptError('')
     try {
@@ -428,7 +449,7 @@ export default function OwnerDashboard() {
       if (!data.success) throw new Error(data.message)
       setEditModal(null)
       setDeptFormName('')
-      fetchDepts(cid)
+      fetchDepts()
     } catch (err) {
       setDeptError(err instanceof Error ? err.message : 'Failed to update department')
     } finally {
@@ -438,7 +459,6 @@ export default function OwnerDashboard() {
 
   const handleDeleteDept = async () => {
     if (!deleteModal) return
-    const cid = localStorage.getItem('tasking_company_id') || ''
     setDeptLoading(true)
     setDeptError('')
     try {
@@ -450,7 +470,7 @@ export default function OwnerDashboard() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
       setDeleteModal(null)
-      fetchDepts(cid)
+      fetchDepts()
     } catch (err) {
       setDeptError(err instanceof Error ? err.message : 'Failed to delete department')
     } finally {
@@ -460,9 +480,15 @@ export default function OwnerDashboard() {
 
   // ── Derived ────────────────────────────────────────────────────────────────
 
-  const filteredDepts = departments.filter((d) =>
-    d.name.toLowerCase().includes(deptSearch.toLowerCase()),
-  )
+  const startsWithDigit = (s: string) => /^\d/.test(s)
+  const filteredDepts = departments
+    .filter((d) => d.name.toLowerCase().includes(deptSearch.toLowerCase()))
+    .sort((a, b) => {
+      const aNum = startsWithDigit(a.name)
+      const bNum = startsWithDigit(b.name)
+      if (aNum !== bNum) return aNum ? 1 : -1
+      return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+    })
 
   // ── Action button styles ───────────────────────────────────────────────────
 
@@ -587,6 +613,18 @@ export default function OwnerDashboard() {
             <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#111827', margin: 0 }}>
               {currentCompany ? `${currentCompany.name} Overview` : 'Overview'}
             </h1>
+          )}
+          {ownerPlan && (
+            <span style={{
+              padding: '4px 10px',
+              borderRadius: '99px',
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              background: ownerPlan === 'Pro' ? '#EDE9FE' : '#F3F4F6',
+              color: ownerPlan === 'Pro' ? '#7C3AED' : '#6B7280',
+            }}>
+              {ownerPlan} user
+            </span>
           )}
         </div>
 
@@ -728,48 +766,34 @@ export default function OwnerDashboard() {
 
       {/* ── Invite Partner ────────────────────────────────────────────────── */}
       {inviteModal === 'owner' && (
-        <ModalOverlay onClose={() => setInviteModal(null)}>
+        <ModalOverlay onClose={() => { setInviteModal(null); setInviteCode('') }}>
           <ModalBox>
-            <ModalHeader title="Invite Partner" onClose={() => setInviteModal(null)} />
+            <ModalHeader title="Invite Partner" onClose={() => { setInviteModal(null); setInviteCode('') }} />
             <p style={{ fontSize: '0.9rem', color: '#6B7280', margin: '0 0 16px', lineHeight: 1.55 }}>
               Share this code with someone you want to give full access to.
             </p>
-            {inviteCode ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                <CodeBox code={inviteCode} loading={inviteLoading} />
-                <CodeActions code={inviteCode} loading={inviteLoading} copied={copied} onCopy={() => copyLink('Owner')} />
-                <p style={{ fontSize: '13px', color: '#F97316', textAlign: 'center', margin: 0 }}>
-                  This person will have full access to your company.
-                </p>
-                <p style={{ fontSize: '0.75rem', color: '#9CA3AF', textAlign: 'center', margin: 0 }}>
-                  This code expires in 7 days.
-                </p>
+            {inviteCode && (
+              <div style={{ marginBottom: '16px' }}>
+                <CodeBox code={inviteCode} loading={false} />
               </div>
+            )}
+            {inviteCode ? (
+              <CodeActions code={inviteCode} loading={inviteLoading} copied={copied} onCopy={() => copyLink('Owner')} />
             ) : (
               <button
                 onClick={() => generateCode('Owner')}
                 disabled={inviteLoading}
                 style={{
-                  width: '100%',
-                  height: '48px',
-                  padding: '0',
-                  background: '#F97316',
-                  color: '#FFFFFF',
-                  border: 'none',
-                  borderRadius: '10px',
-                  fontWeight: 600,
-                  fontSize: '0.9375rem',
+                  width: '100%', height: '48px', padding: '0',
+                  background: '#F97316', color: '#FFFFFF', border: 'none', borderRadius: '10px',
+                  fontWeight: 600, fontSize: '0.9375rem',
                   cursor: inviteLoading ? 'not-allowed' : 'pointer',
                   opacity: inviteLoading ? 0.45 : 1,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '8px',
-                  whiteSpace: 'nowrap',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
                 }}
               >
                 {inviteLoading && <Spinner size={14} />}
-                Generate Code
+                Generate Invite Code
               </button>
             )}
           </ModalBox>
@@ -778,9 +802,9 @@ export default function OwnerDashboard() {
 
       {/* ── Invite Manager ────────────────────────────────────────────────── */}
       {inviteModal === 'manager' && (
-        <ModalOverlay onClose={() => setInviteModal(null)}>
+        <ModalOverlay onClose={() => { setInviteModal(null); setInviteCode('') }}>
           <ModalBox>
-            <ModalHeader title="Invite Manager" onClose={() => setInviteModal(null)} />
+            <ModalHeader title="Invite Manager" onClose={() => { setInviteModal(null); setInviteCode('') }} />
             <p style={{ fontSize: '0.9rem', color: '#6B7280', margin: '0 0 16px', lineHeight: 1.55 }}>
               Select a department and share the code with your new Manager.
             </p>
@@ -806,51 +830,41 @@ export default function OwnerDashboard() {
                 </div>
               </>
             )}
-            {inviteCode ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
-                <CodeBox code={inviteCode} loading={inviteLoading} />
-                <CodeActions code={inviteCode} loading={inviteLoading} copied={copied} onCopy={() => copyLink('Manager')} />
-                <p style={{ fontSize: '0.75rem', color: '#9CA3AF', textAlign: 'center', margin: 0 }}>
-                  This code expires in 7 days.
-                </p>
+            {inviteCode && (
+              <div style={{ marginTop: '16px', marginBottom: '16px' }}>
+                <CodeBox code={inviteCode} loading={false} />
               </div>
-            ) : (
-              <button
-                onClick={() => { if (selectedDeptId) generateCode('Manager', selectedDeptId) }}
-                disabled={!selectedDeptId || inviteLoading || departments.length === 0}
-                style={{
-                  marginTop: '20px',
-                  width: '100%',
-                  height: '48px',
-                  padding: '0',
-                  background: '#F97316',
-                  color: '#FFFFFF',
-                  border: 'none',
-                  borderRadius: '10px',
-                  fontWeight: 600,
-                  fontSize: '0.9375rem',
-                  cursor: (!selectedDeptId || departments.length === 0) ? 'not-allowed' : 'pointer',
-                  opacity: (!selectedDeptId || departments.length === 0) ? 0.45 : 1,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '8px',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {inviteLoading && <Spinner size={14} />}
-                Generate Code
-              </button>
             )}
+            <div style={{ marginTop: '20px' }}>
+              {inviteCode ? (
+                <CodeActions code={inviteCode} loading={inviteLoading} copied={copied} onCopy={() => copyLink('Manager')} />
+              ) : (
+                <button
+                  onClick={() => { if (selectedDeptId) generateCode('Manager', selectedDeptId) }}
+                  disabled={!selectedDeptId || inviteLoading || departments.length === 0}
+                  style={{
+                    width: '100%', height: '48px', padding: '0',
+                    background: '#F97316', color: '#FFFFFF', border: 'none', borderRadius: '10px',
+                    fontWeight: 600, fontSize: '0.9375rem',
+                    cursor: (!selectedDeptId || departments.length === 0) ? 'not-allowed' : 'pointer',
+                    opacity: (!selectedDeptId || departments.length === 0) ? 0.45 : 1,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                  }}
+                >
+                  {inviteLoading && <Spinner size={14} />}
+                  Generate Invite Code
+                </button>
+              )}
+            </div>
           </ModalBox>
         </ModalOverlay>
       )}
 
       {/* ── Invite Employee ───────────────────────────────────────────────── */}
       {inviteModal === 'employee' && (
-        <ModalOverlay onClose={() => setInviteModal(null)}>
+        <ModalOverlay onClose={() => { setInviteModal(null); setInviteCode('') }}>
           <ModalBox>
-            <ModalHeader title="Invite Employee" onClose={() => setInviteModal(null)} />
+            <ModalHeader title="Invite Employee" onClose={() => { setInviteModal(null); setInviteCode('') }} />
             <p style={{ fontSize: '0.9rem', color: '#6B7280', margin: '0 0 16px', lineHeight: 1.55 }}>
               Select a department and share the code with your new employee.
             </p>
@@ -876,42 +890,32 @@ export default function OwnerDashboard() {
                 </div>
               </>
             )}
-            {inviteCode ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '16px' }}>
-                <CodeBox code={inviteCode} loading={inviteLoading} />
-                <CodeActions code={inviteCode} loading={inviteLoading} copied={copied} onCopy={() => copyLink('Employee')} />
-                <p style={{ fontSize: '0.75rem', color: '#9CA3AF', textAlign: 'center', margin: 0 }}>
-                  This code expires in 7 days.
-                </p>
+            {inviteCode && (
+              <div style={{ marginTop: '16px', marginBottom: '16px' }}>
+                <CodeBox code={inviteCode} loading={false} />
               </div>
-            ) : (
-              <button
-                onClick={() => { if (selectedDeptId) generateCode('Employee', selectedDeptId) }}
-                disabled={!selectedDeptId || inviteLoading || departments.length === 0}
-                style={{
-                  marginTop: '20px',
-                  width: '100%',
-                  height: '48px',
-                  padding: '0',
-                  background: '#F97316',
-                  color: '#FFFFFF',
-                  border: 'none',
-                  borderRadius: '10px',
-                  fontWeight: 600,
-                  fontSize: '0.9375rem',
-                  cursor: (!selectedDeptId || departments.length === 0) ? 'not-allowed' : 'pointer',
-                  opacity: (!selectedDeptId || departments.length === 0) ? 0.45 : 1,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '8px',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {inviteLoading && <Spinner size={14} />}
-                Generate Code
-              </button>
             )}
+            <div style={{ marginTop: '20px' }}>
+              {inviteCode ? (
+                <CodeActions code={inviteCode} loading={inviteLoading} copied={copied} onCopy={() => copyLink('Employee')} />
+              ) : (
+                <button
+                  onClick={() => { if (selectedDeptId) generateCode('Employee', selectedDeptId) }}
+                  disabled={!selectedDeptId || inviteLoading || departments.length === 0}
+                  style={{
+                    width: '100%', height: '48px', padding: '0',
+                    background: '#F97316', color: '#FFFFFF', border: 'none', borderRadius: '10px',
+                    fontWeight: 600, fontSize: '0.9375rem',
+                    cursor: (!selectedDeptId || departments.length === 0) ? 'not-allowed' : 'pointer',
+                    opacity: (!selectedDeptId || departments.length === 0) ? 0.45 : 1,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
+                  }}
+                >
+                  {inviteLoading && <Spinner size={14} />}
+                  Generate Invite Code
+                </button>
+              )}
+            </div>
           </ModalBox>
         </ModalOverlay>
       )}

@@ -46,6 +46,8 @@ function ModalBox({ children }: { children: React.ReactNode }) {
       borderRadius: '16px',
       padding: '32px',
       boxShadow: '0 8px 40px rgba(0,0,0,0.12)',
+      maxHeight: '90vh',
+      overflowY: 'auto',
     }}>
       {children}
     </div>
@@ -86,39 +88,59 @@ const modalLabelStyle: React.CSSProperties = {
   marginBottom: '8px',
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
 
+type OwnedCompany = { id: string; name: string }
 type Department = { id: string; name: string }
 type Manager = { id: string; full_name: string }
 
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
 export default function TeamPage() {
   const [userId, setUserId] = useState('')
-  const [companyId, setCompanyId] = useState('')
+  const [ownerEmail, setOwnerEmail] = useState('')
   const [companyName, setCompanyName] = useState('')
 
   // Modal state
   const [inviteOpen, setInviteOpen] = useState(false)
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviteRole, setInviteRole] = useState('')
+
+  // Company picker
+  const [ownedCompanies, setOwnedCompanies] = useState<OwnedCompany[]>([])
+  const [selectedCompanyId, setSelectedCompanyId] = useState('')
+  const [companiesLoading, setCompaniesLoading] = useState(false)
+
+  // Department picker
   const [inviteDeptId, setInviteDeptId] = useState('')
-  const [inviteManagerId, setInviteManagerId] = useState('')
   const [departments, setDepartments] = useState<Department[]>([])
+
+  // Manager picker
+  const [inviteManagerId, setInviteManagerId] = useState('')
   const [managers, setManagers] = useState<Manager[]>([])
   const [managersLoading, setManagersLoading] = useState(false)
+
   const [inviteLoading, setInviteLoading] = useState(false)
   const [inviteError, setInviteError] = useState('')
   const [inviteSuccess, setInviteSuccess] = useState('')
 
-  const closeModal = useCallback(() => {
-    setInviteOpen(false)
+  const resetModal = useCallback(() => {
     setInviteEmail('')
     setInviteRole('')
+    setSelectedCompanyId('')
+    setOwnedCompanies([])
     setInviteDeptId('')
+    setDepartments([])
     setInviteManagerId('')
     setManagers([])
     setInviteError('')
     setInviteSuccess('')
   }, [])
+
+  const closeModal = useCallback(() => {
+    setInviteOpen(false)
+    resetModal()
+  }, [resetModal])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeModal() }
@@ -130,56 +152,106 @@ export default function TeamPage() {
     const uid = localStorage.getItem('tasking_user_id') || ''
     const cid = localStorage.getItem('tasking_company_id') || ''
     setUserId(uid)
-    setCompanyId(cid)
-    if (cid) {
-      fetchDepts(cid)
-      fetchCompanyName(cid)
+    if (uid) {
+      fetchCompanyName(uid, cid)
+      fetch(`/api/user/me?user_id=${uid}`)
+        .then(r => r.json())
+        .then(d => { if (d.success) setOwnerEmail(d.user.email_address) })
+        .catch(() => {})
     }
   }, [])
 
-  const fetchCompanyName = async (cid: string) => {
+  const fetchCompanyName = async (uid: string, cid: string) => {
     try {
-      const res = await fetch(`/api/company/profile?company_id=${cid}`)
+      const params = new URLSearchParams({ owner_id: uid })
+      if (cid) params.set('company_id', cid)
+      const res = await fetch(`/api/company/by-owner?${params}`)
       const data = await res.json()
       if (data.success && data.company?.name) setCompanyName(data.company.name)
     } catch {}
   }
 
-  const fetchDepts = async (cid: string) => {
+  const openInviteModal = async () => {
+    setInviteOpen(true)
+    const uid = localStorage.getItem('tasking_user_id') || userId
+    if (!uid) return
+    setCompaniesLoading(true)
     try {
-      const res = await fetch(`/api/company/departments?company_id=${cid}`)
+      const res = await fetch(`/api/company/my-companies?owner_id=${uid}`)
+      const data = await res.json()
+      if (data.success) setOwnedCompanies(data.companies)
+    } catch {}
+    finally { setCompaniesLoading(false) }
+  }
+
+  const fetchDepts = async (companyId: string) => {
+    setDepartments([])
+    setInviteDeptId('')
+    setManagers([])
+    setInviteManagerId('')
+    try {
+      const res = await fetch(`/api/company/departments?company_id=${companyId}`)
       const data = await res.json()
       if (data.success) setDepartments(data.departments)
     } catch {}
   }
 
-  const fetchManagers = async (cid: string, deptId: string) => {
+  const fetchManagers = async (companyId: string, deptId: string) => {
     setManagersLoading(true)
     setManagers([])
     setInviteManagerId('')
     try {
-      const res = await fetch(`/api/company/managers?company_id=${cid}&department_id=${deptId}`)
+      const res = await fetch(`/api/company/managers?company_id=${companyId}&department_id=${deptId}`)
       const data = await res.json()
       if (data.success) setManagers(data.managers)
     } catch {}
     finally { setManagersLoading(false) }
   }
 
+  const handleCompanyChange = (companyId: string) => {
+    setSelectedCompanyId(companyId)
+    setInviteDeptId('')
+    setDepartments([])
+    setManagers([])
+    setInviteManagerId('')
+    if (companyId && (inviteRole === 'Manager' || inviteRole === 'Employee')) {
+      fetchDepts(companyId)
+    }
+  }
+
+  const handleRoleChange = (role: string) => {
+    setInviteRole(role)
+    setSelectedCompanyId('')
+    setInviteDeptId('')
+    setDepartments([])
+    setManagers([])
+    setInviteManagerId('')
+  }
+
   const handleDeptChange = (deptId: string) => {
     setInviteDeptId(deptId)
     setInviteManagerId('')
     setManagers([])
-    if (inviteRole === 'Employee' && deptId && companyId) {
-      fetchManagers(companyId, deptId)
+    if (inviteRole === 'Employee' && deptId && selectedCompanyId) {
+      fetchManagers(selectedCompanyId, deptId)
     }
   }
 
   const noManagersInDept = inviteRole === 'Employee' && !!inviteDeptId && !managersLoading && managers.length === 0
-  const deptRequired = (inviteRole === 'Manager' || inviteRole === 'Employee') && !inviteDeptId
+  const showDept = (inviteRole === 'Manager' || inviteRole === 'Employee') && !!selectedCompanyId
+  const showReportingManager = inviteRole === 'Employee' && !!inviteDeptId
 
   const handleSendInvite = async () => {
     if (!inviteEmail || !inviteRole) {
       setInviteError('Email and role are required.')
+      return
+    }
+    if (ownerEmail && inviteEmail.toLowerCase() === ownerEmail.toLowerCase()) {
+      setInviteError('You cannot send an invitation to yourself.')
+      return
+    }
+    if (!selectedCompanyId) {
+      setInviteError('Please select a company.')
       return
     }
     if ((inviteRole === 'Manager' || inviteRole === 'Employee') && !inviteDeptId) {
@@ -195,7 +267,7 @@ export default function TeamPage() {
         body: JSON.stringify({
           email: inviteEmail,
           role: inviteRole,
-          company_id: companyId,
+          company_id: selectedCompanyId,
           department_id: inviteRole === 'Owner' ? null : (inviteDeptId || null),
           invited_by: userId,
           reporting_manager_id: inviteRole === 'Employee' ? (inviteManagerId || null) : null,
@@ -204,7 +276,6 @@ export default function TeamPage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
       setInviteSuccess(`Invitation sent to ${inviteEmail}`)
-      setTimeout(() => closeModal(), 2000)
     } catch (err) {
       setInviteError(err instanceof Error ? err.message : 'Something went wrong')
     } finally {
@@ -212,8 +283,8 @@ export default function TeamPage() {
     }
   }
 
-  const showDept = inviteRole === 'Manager' || inviteRole === 'Employee'
-  const showReportingManager = inviteRole === 'Employee' && !!inviteDeptId
+  const sendDisabled = inviteLoading || !!noManagersInDept ||
+    ((inviteRole === 'Manager' || inviteRole === 'Employee') && !inviteDeptId)
 
   return (
     <div style={{ display: 'flex', height: '100vh', background: '#F3F4F6', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
@@ -236,7 +307,7 @@ export default function TeamPage() {
             {companyName ? `${companyName} — Team` : 'Team'}
           </h1>
           <button
-            onClick={() => setInviteOpen(true)}
+            onClick={openInviteModal}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -287,12 +358,12 @@ export default function TeamPage() {
             </div>
 
             {/* Role */}
-            <div style={{ marginBottom: showDept ? '16px' : '0' }}>
+            <div style={{ marginBottom: '16px' }}>
               <label style={modalLabelStyle}>Role</label>
               <div style={{ position: 'relative' }}>
                 <select
                   value={inviteRole}
-                  onChange={(e) => { setInviteRole(e.target.value); setInviteDeptId(''); setInviteManagerId(''); setManagers([]) }}
+                  onChange={(e) => handleRoleChange(e.target.value)}
                   style={{ ...modalInputStyle, paddingRight: '36px', appearance: 'none', cursor: 'pointer' }}
                 >
                   <option value="">Select a role</option>
@@ -304,15 +375,43 @@ export default function TeamPage() {
               </div>
             </div>
 
-            {/* Department (Manager or Employee only) */}
+            {/* Company (always shown once role is selected) */}
+            {inviteRole && (
+              <div style={{ marginBottom: '16px' }}>
+                <label style={modalLabelStyle}>Company</label>
+                <div style={{ position: 'relative' }}>
+                  {companiesLoading ? (
+                    <div style={{ ...modalInputStyle, display: 'flex', alignItems: 'center', gap: '8px', color: '#9CA3AF' }}>
+                      <Spinner size={14} dark /> Loading companies…
+                    </div>
+                  ) : (
+                    <>
+                      <select
+                        value={selectedCompanyId}
+                        onChange={(e) => handleCompanyChange(e.target.value)}
+                        style={{ ...modalInputStyle, paddingRight: '36px', appearance: 'none', cursor: 'pointer' }}
+                      >
+                        <option value="">Select a company</option>
+                        {ownedCompanies.map((c) => (
+                          <option key={c.id} value={c.id}>{c.name}</option>
+                        ))}
+                      </select>
+                      <ChevronDown size={15} style={{ position: 'absolute', right: '11px', top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Department (Manager or Employee, after company selected) */}
             {showDept && (
-              <div style={{ marginBottom: showReportingManager ? '16px' : '0' }}>
+              <div style={{ marginBottom: '16px' }}>
                 <label style={modalLabelStyle}>Department</label>
                 <div style={{ position: 'relative' }}>
                   <select
                     value={inviteDeptId}
                     onChange={(e) => handleDeptChange(e.target.value)}
-                    style={{ ...modalInputStyle, paddingRight: '36px', appearance: 'none', cursor: 'pointer', borderColor: deptRequired && inviteError === 'Please select a department.' ? '#FCA5A5' : '#E5E7EB' }}
+                    style={{ ...modalInputStyle, paddingRight: '36px', appearance: 'none', cursor: 'pointer' }}
                   >
                     <option value="">Select a department</option>
                     {departments.map((d) => (
@@ -321,9 +420,6 @@ export default function TeamPage() {
                   </select>
                   <ChevronDown size={15} style={{ position: 'absolute', right: '11px', top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
                 </div>
-                {deptRequired && inviteError === 'Please select a department.' && (
-                  <p style={{ fontSize: '0.8125rem', color: '#DC2626', margin: '4px 0 0' }}>Please select a department.</p>
-                )}
               </div>
             )}
 
@@ -358,7 +454,7 @@ export default function TeamPage() {
 
             {/* Partner warning */}
             {inviteRole === 'Owner' && (
-              <p style={{ fontSize: '0.8125rem', color: '#F97316', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: '8px', padding: '10px 12px', margin: '16px 0 0' }}>
+              <p style={{ fontSize: '0.8125rem', color: '#F97316', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: '8px', padding: '10px 12px', margin: '4px 0 0' }}>
                 This person will have full Partner access to your company.
               </p>
             )}
@@ -376,10 +472,13 @@ export default function TeamPage() {
             )}
 
             {/* Submit */}
-            <div title={noManagersInDept ? 'Add a manager to this department first' : deptRequired ? 'Please select a department first' : undefined} style={{ marginTop: '20px' }}>
+            <div
+              title={noManagersInDept ? 'Add a manager to this department first' : undefined}
+              style={{ marginTop: '20px' }}
+            >
               <button
                 onClick={handleSendInvite}
-                disabled={inviteLoading || !!noManagersInDept || deptRequired}
+                disabled={sendDisabled}
                 style={{
                   width: '100%',
                   height: '48px',
@@ -389,8 +488,8 @@ export default function TeamPage() {
                   borderRadius: '10px',
                   fontWeight: 600,
                   fontSize: '0.9375rem',
-                  cursor: inviteLoading || noManagersInDept || deptRequired ? 'not-allowed' : 'pointer',
-                  opacity: inviteLoading || noManagersInDept || deptRequired ? 0.5 : 1,
+                  cursor: sendDisabled ? 'not-allowed' : 'pointer',
+                  opacity: sendDisabled ? 0.5 : 1,
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',

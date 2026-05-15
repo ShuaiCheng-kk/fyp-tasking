@@ -369,18 +369,34 @@ export default function GetStartedPage() {
     }
     setIsLoading(true);
     try {
-      const res = await fetch('/api/auth/check-email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: ownerAccount.email }),
-      });
-      const data = await res.json();
-      if (data.exists) {
+      const [emailRes, phoneRes] = await Promise.all([
+        fetch('/api/auth/check-email', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: ownerAccount.email }),
+        }),
+        ownerAccount.phone
+          ? fetch('/api/auth/check-phone', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ phone: ownerAccount.phone }),
+            })
+          : Promise.resolve(null),
+      ]);
+      const emailData = await emailRes.json();
+      if (emailData.exists) {
         setError('An account with this email already exists. Please sign in instead.');
         return;
       }
+      if (phoneRes) {
+        const phoneData = await phoneRes.json();
+        if (phoneData.exists) {
+          setError('This phone number is already registered to another account. Please use a different number.');
+          return;
+        }
+      }
     } catch {
-      // 检查失败则允许继续，complete-owner-setup 会做最终验证
+      // check failed — let complete-owner-setup do final validation
     } finally {
       setIsLoading(false);
     }

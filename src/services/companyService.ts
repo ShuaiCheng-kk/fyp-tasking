@@ -60,6 +60,17 @@ export const companyService = {
     return await companyRepository.updateCompany(id, data)
   },
 
+  async deleteCompany(company_id: string): Promise<void> {
+    const company = await companyRepository.findById(company_id)
+    if (company) {
+      const owner = await userRepository.findById(company.owner_id)
+      if (owner?.company_id === company_id) {
+        throw new Error('This is your primary company created during registration and cannot be deleted.')
+      }
+    }
+    await companyRepository.deleteById(company_id)
+  },
+
   async createAdditionalCompany(data: {
     owner_id: string
     name: string
