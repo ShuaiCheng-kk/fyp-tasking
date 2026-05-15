@@ -9,6 +9,8 @@ export interface User {
   email_address: string
   phone_number: string | null
   role: 'Owner' | 'Manager' | 'Employee' | 'Casual Worker' | 'Guest User'
+  company_id: string | null
+  department_id: string | null
   created_at: string
 }
 

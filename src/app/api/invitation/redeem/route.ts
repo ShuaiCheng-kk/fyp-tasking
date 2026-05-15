@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const result = await invitationService.redeemCode({ code: code.trim().toUpperCase(), user_id })
-    return NextResponse.json({ success: true, role: result.role }, { status: 200 })
+    return NextResponse.json({ success: true, role: result.role, company_id: result.company_id, department_id: result.department_id }, { status: 200 })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Invitation redemption failed'
     return NextResponse.json({ success: false, message }, { status: 400 })

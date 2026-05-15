@@ -1,21 +1,9 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import {
-  LayoutDashboard,
-  UserPlus,
-  Users,
-  Plus,
-  Search,
-  Pencil,
-  Trash2,
-  X,
-  Copy,
-  Check,
-  LogOut,
-  ChevronDown,
-} from 'lucide-react'
+import { Plus, Search, Pencil, Trash2, X, ChevronDown } from 'lucide-react'
+import OwnerSidebar from '@/components/OwnerSidebar'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,26 +12,6 @@ type Department = {
   name: string
   company_id: string
   created_at: string
-}
-
-// ─── Tasking Logo ─────────────────────────────────────────────────────────────
-
-function TaskingLogo() {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-      <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
-        <rect width="32" height="32" rx="8" fill="#F97316" />
-        <rect x="8" y="9" width="9" height="2.5" rx="1.25" fill="white" />
-        <rect x="8" y="14.75" width="16" height="2.5" rx="1.25" fill="white" />
-        <rect x="8" y="20.5" width="12" height="2.5" rx="1.25" fill="white" />
-        <circle cx="22" cy="10.25" r="3.5" fill="#10B981" />
-        <path d="M20.3 10.25L21.5 11.5L23.8 9" stroke="white" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-      <span style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827', letterSpacing: '-0.01em' }}>
-        Tasking
-      </span>
-    </div>
-  )
 }
 
 // ─── Spinner ──────────────────────────────────────────────────────────────────
@@ -201,6 +169,7 @@ function CodeActions({ code, loading, copied, onCopy }: {
   )
 }
 
+
 // ─── Shared modal input style ─────────────────────────────────────────────────
 
 const modalInputStyle: React.CSSProperties = {
@@ -234,18 +203,13 @@ export default function OwnerDashboard() {
   const [companyStatus, setCompanyStatus] = useState<'loading' | 'found' | 'not-found'>('loading')
 
   // Top-bar data
-  const [ownerName, setOwnerName] = useState('')
+  const [companies, setCompanies] = useState<{ id: string; name: string }[]>([])
+  const [dropdownOpen, setDropdownOpen] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
 
   // Departments
   const [departments, setDepartments] = useState<Department[]>([])
   const [deptSearch, setDeptSearch] = useState('')
-
-  // Invite modal state
-  const [inviteModal, setInviteModal] = useState<'manager' | 'employee' | 'owner' | null>(null)
-  const [inviteCode, setInviteCode] = useState('')
-  const [inviteLoading, setInviteLoading] = useState(false)
-  const [copied, setCopied] = useState(false)
-  const [selectedDeptId, setSelectedDeptId] = useState('')
 
   // Department CRUD modal state
   const [addModal, setAddModal] = useState(false)
@@ -258,7 +222,6 @@ export default function OwnerDashboard() {
   // ── Close all modals ───────────────────────────────────────────────────────
 
   const closeAll = useCallback(() => {
-    setInviteModal(null)
     setAddModal(false)
     setEditModal(null)
     setDeleteModal(null)
@@ -272,13 +235,25 @@ export default function OwnerDashboard() {
     return () => document.removeEventListener('keydown', onKey)
   }, [closeAll])
 
+  // ── Click outside company dropdown ─────────────────────────────────────────
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
   // ── Mount: read localStorage, fetch data ───────────────────────────────────
 
   useEffect(() => {
     const uid = localStorage.getItem('tasking_user_id') || ''
     const cid = localStorage.getItem('tasking_company_id') || ''
     setUserId(uid)
-    if (uid) fetchOwnerName(uid)
+    if (uid) fetchAllCompanies(uid)
 
     if (cid) {
       setCompanyId(cid)
@@ -293,11 +268,11 @@ export default function OwnerDashboard() {
 
   // ── Data fetchers ──────────────────────────────────────────────────────────
 
-  const fetchOwnerName = async (uid: string) => {
+  const fetchAllCompanies = async (uid: string) => {
     try {
-      const res = await fetch(`/api/user/me?user_id=${uid}`)
+      const res = await fetch(`/api/company/my-companies?owner_id=${uid}`)
       const data = await res.json()
-      if (data.success) setOwnerName(data.user.full_name)
+      if (data.success) setCompanies(data.companies)
     } catch {}
   }
 
@@ -404,6 +379,7 @@ export default function OwnerDashboard() {
     fetch('/api/auth/signout', { method: 'POST' })
     window.location.href = '/signout'
   }
+
 
   // ── Department CRUD ────────────────────────────────────────────────────────
 
@@ -531,78 +507,14 @@ export default function OwnerDashboard() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
+  const currentCompany = companies.find((c) => c.id === companyId) ?? companies[0]
+
   return (
     <div style={{ display: 'flex', height: '100vh', background: '#F3F4F6', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
-
-      {/* ── SIDEBAR ────────────────────────────────────────────────────────── */}
-      <aside style={{
-        width: '232px',
-        minWidth: '232px',
-        background: '#FFFFFF',
-        borderRight: '1px solid #E5E7EB',
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100vh',
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        zIndex: 20,
-      }}>
-        {/* Logo */}
-        <div style={{ padding: '22px 20px 18px', borderBottom: '1px solid #F3F4F6' }}>
-          <TaskingLogo />
-        </div>
-
-        {/* Nav */}
-        <nav style={{ flex: 1, padding: '12px 10px', overflowY: 'auto' }}>
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '10px',
-            padding: '9px 12px',
-            borderRadius: '8px',
-            background: '#FFF7ED',
-            color: '#C2410C',
-            fontWeight: 600,
-            fontSize: '0.9rem',
-            cursor: 'default',
-            userSelect: 'none',
-          }}>
-            <LayoutDashboard size={17} strokeWidth={2.2} />
-            Dashboard
-          </div>
-        </nav>
-
-        {/* Logout */}
-        <div style={{ padding: '12px 10px', borderTop: '1px solid #F3F4F6' }}>
-          <button
-            onClick={handleSignOut}
-            style={{
-              width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '10px',
-              padding: '9px 12px',
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-              borderRadius: '8px',
-              color: '#6B7280',
-              fontWeight: 500,
-              fontSize: '0.9rem',
-              transition: 'background 0.12s',
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = '#F9FAFB')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
-          >
-            <LogOut size={17} strokeWidth={2} />
-            Logout
-          </button>
-        </div>
-      </aside>
+      <OwnerSidebar />
 
       {/* ── MAIN ───────────────────────────────────────────────────────────── */}
-      <main style={{ marginLeft: '232px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+      <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
 
         {/* Top bar */}
         <div style={{
@@ -616,11 +528,58 @@ export default function OwnerDashboard() {
           top: 0,
           zIndex: 10,
         }}>
-          <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#111827', margin: 0 }}>Dashboard</h1>
-          {ownerName && (
-            <span style={{ fontSize: '0.9rem', color: '#6B7280' }}>
-              Welcome, <strong style={{ color: '#374151', fontWeight: 600 }}>{ownerName}</strong>
-            </span>
+          {companies.length > 1 ? (
+            <div ref={dropdownRef} style={{ position: 'relative', display: 'inline-block' }}>
+              <button
+                onClick={() => setDropdownOpen((o) => !o)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '6px',
+                  background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                  fontWeight: 700, fontSize: '1.1875rem', color: '#111827',
+                  userSelect: 'none',
+                }}
+              >
+                {currentCompany ? `${currentCompany.name} Overview` : 'Overview'}
+                <ChevronDown
+                  size={16}
+                  strokeWidth={2.5}
+                  style={{ color: '#6B7280', transition: 'transform 0.15s', transform: dropdownOpen ? 'rotate(180deg)' : 'none' }}
+                />
+              </button>
+              {dropdownOpen && (
+                <div style={{
+                  position: 'absolute', top: '100%', left: 0, marginTop: '6px',
+                  background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: '10px',
+                  boxShadow: '0 4px 16px rgba(0,0,0,0.1)', minWidth: '200px', zIndex: 50, overflow: 'hidden',
+                }}>
+                  {companies.map((c) => (
+                    <button
+                      key={c.id}
+                      onClick={() => {
+                        localStorage.setItem('tasking_company_id', c.id)
+                        setDropdownOpen(false)
+                        window.location.reload()
+                      }}
+                      style={{
+                        width: '100%', textAlign: 'left', padding: '10px 14px',
+                        background: c.id === companyId ? '#FFF7ED' : 'none',
+                        border: 'none', cursor: 'pointer', fontSize: '0.9rem',
+                        color: c.id === companyId ? '#EA580C' : '#374151',
+                        fontWeight: c.id === companyId ? 600 : 400, transition: 'background 0.1s',
+                      }}
+                      onMouseEnter={(e) => { if (c.id !== companyId) e.currentTarget.style.background = '#F3F4F6' }}
+                      onMouseLeave={(e) => { if (c.id !== companyId) e.currentTarget.style.background = 'none' }}
+                    >
+                      {c.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#111827', margin: 0 }}>
+              {currentCompany ? `${currentCompany.name} Overview` : 'Overview'}
+            </h1>
           )}
         </div>
 
@@ -663,46 +622,7 @@ export default function OwnerDashboard() {
             </div>
           )}
 
-          {/* ── Section 1: Invite ──────────────────────────────────────────── */}
-          <div style={{ display: 'flex', gap: '10px', marginBottom: '44px', flexWrap: 'wrap' }}>
-            {[
-              { label: 'Invite Partner', Icon: Users, onClick: openOwnerModal },
-              { label: 'Invite Manager', Icon: UserPlus, onClick: openManagerModal },
-              { label: 'Invite Employee', Icon: UserPlus, onClick: openEmployeeModal },
-            ].map(({ label, Icon, onClick }) => (
-              <button
-                key={label}
-                onClick={onClick}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  padding: '9px 16px',
-                  background: '#FFFFFF',
-                  border: '1.5px solid #E5E7EB',
-                  borderRadius: '9px',
-                  fontWeight: 600,
-                  fontSize: '0.9rem',
-                  color: '#374151',
-                  cursor: 'pointer',
-                  transition: 'border-color 0.12s, box-shadow 0.12s',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = '#F97316'
-                  e.currentTarget.style.boxShadow = '0 2px 10px rgba(249,115,22,0.12)'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.borderColor = '#E5E7EB'
-                  e.currentTarget.style.boxShadow = 'none'
-                }}
-              >
-                <Icon size={16} strokeWidth={2.2} color="#F97316" />
-                {label}
-              </button>
-            ))}
-          </div>
-
-          {/* ── Section 2: Departments ─────────────────────────────────────── */}
+          {/* ── Section: Departments ─────────────────────────────────────── */}
           <div>
             {/* Header row */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
@@ -1024,6 +944,7 @@ export default function OwnerDashboard() {
           </ModalBox>
         </ModalOverlay>
       )}
+
 
       {/* ── Add Department ────────────────────────────────────────────────── */}
       {addModal && (

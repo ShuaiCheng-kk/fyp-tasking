@@ -49,4 +49,39 @@ export const companyRepository = {
     return data
   },
 
+  async findAllByOwnerId(owner_id: string): Promise<Company[]> {
+    const { data, error } = await supabase
+      .from('companies')
+      .select('id, name, description, plan')
+      .eq('owner_id', owner_id)
+    if (error) throw error
+    return data || []
+  },
+
+  async updateCompany(id: string, data: { name: string; description: string | null }): Promise<Company> {
+    const { data: company, error } = await supabase
+      .from('companies')
+      .update(data)
+      .eq('id', id)
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return company
+  },
+
+  async createCompanyForOwner(data: {
+    name: string
+    description: string | null
+    owner_id: string
+    plan: Company['plan']
+  }): Promise<Company> {
+    const { data: company, error } = await supabase
+      .from('companies')
+      .insert(data)
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return company
+  },
+
 }

@@ -253,32 +253,13 @@ export default function SignInPage() {
           </button>
         </form>
 
-        {/* Divider + sign-up link */}
-        <div style={{ marginTop: '28px', textAlign: 'center' }}>
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '12px',
-            marginBottom: '20px',
-          }}>
-            <div style={{ flex: 1, height: '1px', background: '#F0E8D8' }} />
-            <span style={{ fontFamily: fB, fontSize: '0.875rem', color: '#9CA3AF' }}>
-              {c.dividerText}
-            </span>
-            <div style={{ flex: 1, height: '1px', background: '#F0E8D8' }} />
-          </div>
-          <Link
-            href={c.getStartedHref}
-            style={{
-              fontFamily: fB,
-              fontWeight: 700,
-              fontSize: '0.9375rem',
-              color: '#F97316',
-            }}
-          >
-            {c.getStartedLabel}
+        {/* Get started link */}
+        <p style={{ marginTop: '24px', textAlign: 'center', fontFamily: fB, fontSize: '0.9375rem', color: '#78716C' }}>
+          Don&apos;t have an account?{' '}
+          <Link href="/get-started" style={{ color: '#F97316', fontWeight: 600 }}>
+            Get Started →
           </Link>
-        </div>
+        </p>
       </div>
     </div>
   );

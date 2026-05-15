@@ -3,6 +3,7 @@
 
 import { companyRepository } from '@/repositories/companyRepository'
 import { departmentRepository } from '@/repositories/departmentRepository'
+import { userRepository } from '@/repositories/userRepository'
 import { Company, Department } from '@/types'
 
 export const companyService = {
@@ -15,7 +16,9 @@ export const companyService = {
   }): Promise<Company> {
     const existing = await companyRepository.findByOwnerId(data.owner_id)
     if (existing) throw new Error('Company already exists for this owner')
-    return await companyRepository.createCompany(data)
+    const company = await companyRepository.createCompany(data)
+    await userRepository.updateCompanyId(data.owner_id, company.id)
+    return company
   },
 
   async createDepartment(data: {
@@ -43,6 +46,37 @@ export const companyService = {
 
   async getCompanyByOwnerId(owner_id: string): Promise<Company | null> {
     return await companyRepository.findByOwnerId(owner_id)
+  },
+
+  async getManagersByDepartment(company_id: string, department_id: string): Promise<{ id: string; full_name: string }[]> {
+    return await userRepository.findManagersByDepartment(company_id, department_id)
+  },
+
+  async getCompaniesByOwner(owner_id: string): Promise<Company[]> {
+    return await companyRepository.findAllByOwnerId(owner_id)
+  },
+
+  async updateCompany(id: string, data: { name: string; description: string | null }): Promise<Company> {
+    return await companyRepository.updateCompany(id, data)
+  },
+
+  async createAdditionalCompany(data: {
+    owner_id: string
+    name: string
+    description: string | null
+    plan: Company['plan']
+    departments: string[]
+  }): Promise<Company> {
+    const company = await companyRepository.createCompanyForOwner({
+      name: data.name,
+      description: data.description,
+      owner_id: data.owner_id,
+      plan: data.plan,
+    })
+    for (const deptName of data.departments.filter((d) => d.trim())) {
+      await departmentRepository.createDepartment({ name: deptName.trim(), company_id: company.id })
+    }
+    return company
   },
 
 }

@@ -15,7 +15,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { email_address, password, full_name, phone_number, role } = body as Record<string, unknown>
+  const { email_address, password, full_name, phone_number, role, is_invitation_path } =
+    body as Record<string, unknown>
 
   if (!email_address || typeof email_address !== 'string') {
     return NextResponse.json({ success: false, message: 'email_address is required' }, { status: 400 })
@@ -26,6 +27,26 @@ export async function POST(req: NextRequest) {
   if (!full_name || typeof full_name !== 'string') {
     return NextResponse.json({ success: false, message: 'full_name is required' }, { status: 400 })
   }
+
+  // Invitation path: only create the Auth user, skip the users table insert
+  if (is_invitation_path === true) {
+    try {
+      const user_id = await authService.registerAuthOnly({ email_address, password })
+      return NextResponse.json({ success: true, user_id }, { status: 201 })
+    } catch (error: any) {
+      console.error('REGISTER (invitation) ERROR:', JSON.stringify(error, null, 2))
+      const msg = (error?.message || '').toLowerCase()
+      if (msg.includes('user already registered') || msg.includes('already registered')) {
+        return NextResponse.json({
+          success: false,
+          message: 'This email is already registered. Please sign in instead.',
+        }, { status: 400 })
+      }
+      return NextResponse.json({ success: false, message: 'Something went wrong. Please try again.' }, { status: 500 })
+    }
+  }
+
+  // Owner path: create Auth user + users table record
   if (!role || !VALID_ROLES.includes(role as User['role'])) {
     return NextResponse.json(
       { success: false, message: `role must be one of: ${VALID_ROLES.join(', ')}` },
@@ -46,29 +67,39 @@ export async function POST(req: NextRequest) {
       { status: 201 },
     )
   } catch (error: any) {
-    console.error('REGISTER ERROR:', JSON.stringify(error, null, 2))
+    console.error('Register error full:', error)
+    console.log('Register error:', JSON.stringify(error, null, 2))
+    console.log('Register error message:', error?.message)
+    console.log('Register error code:', error?.code)
 
-    const msg = (error?.message || '').toLowerCase()
+    const msg = error?.message || ''
+    const details = error?.details || ''
+    const combined = msg + details
 
     if (msg.includes('user already registered') || msg.includes('already registered')) {
+      const existingUser = await import('@/repositories/userRepository')
+        .then((m) => m.userRepository.findByEmail(email_address as string))
+      if (!existingUser) {
+        await import('@/services/authService')
+          .then((m) => m.authService.deleteOrphanedAuthUser(email_address as string))
+        return NextResponse.json({
+          success: false,
+          message: 'Registration incomplete. Please try again.',
+        }, { status: 400 })
+      }
       return NextResponse.json({
         success: false,
         message: 'This email is already registered. Please sign in instead.',
       }, { status: 400 })
     }
-
-    if (msg.includes('phone') && (msg.includes('unique') || msg.includes('duplicate') || msg.includes('already'))) {
-      return NextResponse.json({
-        success: false,
-        message: 'This phone number is already registered. Please use a different number.',
-      }, { status: 400 })
+    if (combined.includes('phone_number') || combined.includes('users_phone_number_key')) {
+      return NextResponse.json({ success: false, message: 'This phone number is already in use.' }, { status: 400 })
     }
-
+    if (combined.includes('email') && (combined.includes('unique') || combined.includes('duplicate'))) {
+      return NextResponse.json({ success: false, message: 'This email is already registered.' }, { status: 400 })
+    }
     if (error?.code === '23505') {
-      return NextResponse.json({
-        success: false,
-        message: 'An account with these details already exists.',
-      }, { status: 400 })
+      return NextResponse.json({ success: false, message: 'This account already exists.' }, { status: 400 })
     }
 
     return NextResponse.json({ success: false, message: 'Something went wrong. Please try again.' }, { status: 500 })
