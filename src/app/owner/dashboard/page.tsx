@@ -218,6 +218,7 @@ export default function OwnerDashboard() {
   const [deptFormName, setDeptFormName] = useState('')
   const [deptLoading, setDeptLoading] = useState(false)
   const [deptError, setDeptError] = useState('')
+  const [inviteLoading, setInviteLoading] = useState(false)
 
   // ── Close all modals ───────────────────────────────────────────────────────
 
