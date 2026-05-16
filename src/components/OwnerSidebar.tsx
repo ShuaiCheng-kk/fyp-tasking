@@ -39,17 +39,6 @@ export default function OwnerSidebar() {
         window.location.href = '/signin'
         return
       }
-
-      const sessionMarker = sessionStorage.getItem('tasking_session_active')
-      if (!sessionMarker) {
-        await supabase.auth.signOut()
-        localStorage.removeItem('tasking_user_id')
-        localStorage.removeItem('tasking_company_id')
-        localStorage.removeItem('tasking_active_session')
-        sessionStorage.removeItem('tasking_session_active')
-        window.location.href = '/signin'
-        return
-      }
     }
 
     checkSession()

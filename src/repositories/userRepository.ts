@@ -17,6 +17,13 @@ export const userRepository = {
     return data
   },
 
+  /** Accept Supabase Auth id or public.users id */
+  async findByAuthIdOrInternalId(ref: string): Promise<User | null> {
+    const byAuth = await this.findByAuthId(ref)
+    if (byAuth) return byAuth
+    return await this.findById(ref)
+  },
+
   async findByEmail(email_address: string): Promise<User | null> {
     const { data, error } = await supabase
       .from('users')
@@ -35,6 +42,23 @@ export const userRepository = {
       .single()
     if (error) return null
     return data
+  },
+
+  /** Match stored phone despite formatting (+65 / spaces / leading 0). */
+  async findByPhoneAnyFormat(raw: string): Promise<User | null> {
+    const trimmed = raw.trim()
+    if (!trimmed) return null
+    const digits = trimmed.replace(/\D/g, '')
+    const variants = new Set<string>([trimmed])
+    if (digits.length >= 8) {
+      variants.add(digits)
+      variants.add(`+${digits}`)
+    }
+    for (const v of variants) {
+      const u = await this.findByPhone(v)
+      if (u) return u
+    }
+    return null
   },
 
   async createUser(data: {
@@ -143,6 +167,14 @@ export const userRepository = {
       .from('users')
       .delete()
       .eq('id', user_id)
+    if (error) throw new Error(error.message)
+  },
+
+  async deleteBySupabaseAuthId(supabase_auth_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('users')
+      .delete()
+      .eq('supabase_auth_id', supabase_auth_id)
     if (error) throw new Error(error.message)
   },
 

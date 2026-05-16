@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { Plus, X, Pencil, Trash2 } from 'lucide-react'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import { createClient } from '@/lib/supabase'
@@ -86,6 +87,7 @@ const labelStyle: React.CSSProperties = {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
+  const router = useRouter()
   const [userId, setUserId] = useState('')
   const [companies, setCompanies] = useState<Company[]>([])
   const [loading, setLoading] = useState(true)
@@ -116,12 +118,15 @@ export default function SettingsPage() {
       const supabase = createClient()
       const { data: { session } } = await supabase.auth.getSession()
       const uid = session?.user?.id
-      if (!uid) { window.location.href = '/signin'; return }
+      if (!uid) {
+        router.replace('/signin')
+        return
+      }
       setUserId(uid)
       fetchCompanies(uid)
     }
-    resolve()
-  }, [])
+    void resolve()
+  }, [router])
 
   const handleDelete = async () => {
     if (!deleteTarget) return

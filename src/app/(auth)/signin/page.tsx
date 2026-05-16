@@ -52,9 +52,9 @@ function TaskingLogo() {
 
 const ROLE_ROUTES: Record<string, string> = {
   'Owner': '/owner/dashboard',
-  'Manager': '/manager/dashboard',
-  'Employee': '/employee/dashboard',
-  'Casual Worker': '/casual/dashboard',
+  'Manager': '/owner/dashboard',
+  'Employee': '/owner/dashboard',
+  'Casual Worker': '/owner/dashboard',
   'Guest User': '/job-board',
 };
 
@@ -75,11 +75,14 @@ export default function SignInPage() {
     try {
       // Sign in via Supabase client so the browser session cookie is set
       const supabase = createClient();
-      const { error: authError } = await supabase.auth.signInWithPassword({
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
       if (authError) throw new Error(authError.message);
+
+      const authUid = authData.user?.id;
+      if (!authUid) throw new Error('Sign in failed');
 
       // Fetch user profile (role, id) from API
       const res = await fetch('/api/auth/signin', {
@@ -90,8 +93,11 @@ export default function SignInPage() {
       const data = await res.json();
       if (!data.success) throw new Error(data.message);
 
-      localStorage.setItem('tasking_user_id', data.user.id);
-      if (data.user.company_id) localStorage.setItem('tasking_company_id', data.user.company_id);
+      localStorage.setItem('tasking_user_id', authUid);
+      localStorage.removeItem('tasking_company_id');
+      if (data.user.company_id) {
+        localStorage.setItem(`tasking_company_id_${authUid}`, data.user.company_id);
+      }
       localStorage.setItem('tasking_user_role', data.user.role);
       localStorage.setItem('tasking_active_session', 'true');
       sessionStorage.setItem('tasking_session_active', 'true');

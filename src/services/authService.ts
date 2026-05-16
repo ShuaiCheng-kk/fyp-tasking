@@ -187,7 +187,7 @@ export const authService = {
 
       if (authUserId) {
         try {
-          await userRepository.deleteById(authUserId)
+          await userRepository.deleteBySupabaseAuthId(authUserId)
         } catch (e) {
           console.error('Rollback: failed to delete users record:', e)
         }

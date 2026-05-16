@@ -9,7 +9,7 @@ const ROLE_ORDER: Record<string, number> = { Owner: 0, Manager: 1, Employee: 2, 
 export const userService = {
 
   async getUserById(id: string): Promise<User> {
-    const user = await userRepository.findById(id)
+    const user = await userRepository.findByAuthIdOrInternalId(id)
     if (!user) throw new Error('User not found')
     return user
   },

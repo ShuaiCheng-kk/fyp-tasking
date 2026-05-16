@@ -189,6 +189,14 @@ const MobileNavLink = ({ label, href, onClick }: { label: string; href: string; 
   </Link>
 );
 
+const DASHBOARD_ROUTE_BY_ROLE: Record<string, string> = {
+  'Owner': '/owner/dashboard',
+  'Manager': '/owner/dashboard',
+  'Employee': '/owner/dashboard',
+  'Casual Worker': '/owner/dashboard',
+  'Guest User': '/job-board',
+};
+
 // ─── Navbar ──────────────────────────────────────────────────────────────────
 
 export default function Navbar() {
@@ -215,7 +223,6 @@ export default function Navbar() {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (!session) {
         localStorage.removeItem('tasking_user_id')
-        localStorage.removeItem('tasking_company_id')
       }
       setIsLoggedIn(!!session)
       setAuthReady(true)
@@ -225,7 +232,6 @@ export default function Navbar() {
       (_event, session) => {
         if (!session) {
           localStorage.removeItem('tasking_user_id')
-          localStorage.removeItem('tasking_company_id')
         }
         setIsLoggedIn(!!session)
         setAuthReady(true)
@@ -239,7 +245,9 @@ export default function Navbar() {
     const supabase = createClient();
     const { data: { session } } = await supabase.auth.getSession();
     if (session) {
-      router.push('/owner/dashboard');
+      const role = typeof window !== 'undefined' ? localStorage.getItem('tasking_user_role') : null;
+      const dest = (role && DASHBOARD_ROUTE_BY_ROLE[role]) || '/owner/dashboard';
+      router.push(dest);
     } else {
       setIsLoggedIn(false);
       router.push('/signin');
@@ -352,9 +360,7 @@ export default function Navbar() {
                 onClick={async () => {
                   const supabase = createClient()
                   await supabase.auth.signOut()
-                  localStorage.removeItem('tasking_user_id');
-                  localStorage.removeItem('tasking_company_id');
-                  localStorage.removeItem('tasking_active_session');
+                  localStorage.removeItem('tasking_user_id')
                   window.location.href = '/signout';
                 }}
                 style={{
@@ -472,9 +478,7 @@ export default function Navbar() {
                 onClick={async () => {
                   const supabase = createClient()
                   await supabase.auth.signOut()
-                  localStorage.removeItem('tasking_user_id');
-                  localStorage.removeItem('tasking_company_id');
-                  localStorage.removeItem('tasking_active_session');
+                  localStorage.removeItem('tasking_user_id')
                   window.location.href = '/signout';
                 }}
                 style={{

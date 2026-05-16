@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import { Plus, X, ChevronDown } from 'lucide-react'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import { createClient } from '@/lib/supabase'
@@ -112,6 +113,7 @@ const ROLE_LABEL: Record<string, string> = {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function TeamPage() {
+  const router = useRouter()
   const [userId, setUserId] = useState('')
   const [companyId, setCompanyId] = useState('')
   const [ownerEmail, setOwnerEmail] = useState('')
@@ -180,11 +182,16 @@ export default function TeamPage() {
   }, [])
 
   useEffect(() => {
-    const supabase = createClient()
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      const uid = session?.user?.id || localStorage.getItem('tasking_user_id') || ''
-      if (!uid) return
-      localStorage.setItem('tasking_user_id', uid)
+    let cancelled = false
+    const run = async () => {
+      const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
+      const uid = session?.user?.id
+      if (!uid) {
+        router.replace('/signin')
+        return
+      }
+      if (cancelled) return
       setUserId(uid)
 
       fetch(`/api/user/me?user_id=${uid}`)
@@ -198,21 +205,21 @@ export default function TeamPage() {
         fetchCompanyName(uid, storedCid)
         fetchTeamMembers(storedCid)
       } else {
-        fetch(`/api/company/by-owner?owner_id=${uid}`)
-          .then(r => r.json())
-          .then(d => {
-            if (d.success && d.company) {
-              const cid = d.company.id
-              localStorage.setItem(`tasking_company_id_${uid}`, cid)
-              setCompanyId(cid)
-              setCompanyName(d.company.name)
-              fetchTeamMembers(cid)
-            }
-          })
-          .catch(() => {})
+        const res = await fetch(`/api/company/by-owner?owner_id=${uid}`)
+        const d = await res.json()
+        if (cancelled) return
+        if (d.success && d.company) {
+          const cid = d.company.id
+          localStorage.setItem(`tasking_company_id_${uid}`, cid)
+          setCompanyId(cid)
+          setCompanyName(d.company.name)
+          fetchTeamMembers(cid)
+        }
       }
-    })
-  }, [fetchTeamMembers])
+    }
+    void run()
+    return () => { cancelled = true }
+  }, [fetchTeamMembers, router])
 
   const fetchCompanyName = async (uid: string, cid: string) => {
     try {
@@ -224,6 +231,38 @@ export default function TeamPage() {
     } catch {}
   }
 
+  // When invite modal opens: fetch companies for owner (session); default to active company
+  useEffect(() => {
+    if (!inviteOpen) return
+    let cancelled = false
+    const load = async () => {
+      const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
+      const uid = session?.user?.id
+      if (!uid || cancelled) return
+      setCompaniesLoading(true)
+      try {
+        const res = await fetch(`/api/company/my-companies?owner_id=${uid}`)
+        const data = await res.json()
+        if (cancelled || !data.success || !data.companies) return
+        setOwnedCompanies(
+          data.companies.map((c: { id: string; name: string }) => ({ id: c.id, name: c.name }))
+        )
+        const currentCid = localStorage.getItem(`tasking_company_id_${uid}`) || companyId
+        if (currentCid && data.companies.some((c: { id: string }) => c.id === currentCid)) {
+          setSelectedCompanyId(currentCid)
+        } else if (data.companies.length === 1) {
+          setSelectedCompanyId(data.companies[0].id)
+        }
+      } catch {}
+      finally {
+        if (!cancelled) setCompaniesLoading(false)
+      }
+    }
+    void load()
+    return () => { cancelled = true }
+  }, [inviteOpen, companyId])
+
   // Group members by role in display order
   const groupedMembers = (['Owner', 'Manager', 'Employee', 'Casual Worker'] as const).reduce(
     (acc, role) => {
@@ -234,28 +273,8 @@ export default function TeamPage() {
     [] as { role: string; members: TeamMember[] }[]
   )
 
-  const openInviteModal = async () => {
+  const openInviteModal = () => {
     setInviteOpen(true)
-    const supabase = createClient()
-    const { data: { session } } = await supabase.auth.getSession()
-    const uid = session?.user?.id
-    if (!uid) return
-    setCompaniesLoading(true)
-    try {
-      const res = await fetch(`/api/company/my-companies?owner_id=${uid}`)
-      const data = await res.json()
-      if (data.success && data.companies) {
-        setOwnedCompanies(data.companies)
-        // Auto-select current active company
-        const currentCid = localStorage.getItem(`tasking_company_id_${uid}`) || companyId
-        if (currentCid && data.companies.some((c: OwnedCompany) => c.id === currentCid)) {
-          setSelectedCompanyId(currentCid)
-        } else if (data.companies.length === 1) {
-          setSelectedCompanyId(data.companies[0].id)
-        }
-      }
-    } catch {}
-    finally { setCompaniesLoading(false) }
   }
 
   const fetchDepts = async (companyId: string) => {

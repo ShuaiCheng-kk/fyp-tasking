@@ -4,7 +4,15 @@
 import { companyRepository } from '@/repositories/companyRepository'
 import { departmentRepository } from '@/repositories/departmentRepository'
 import { userRepository } from '@/repositories/userRepository'
-import { Company, Department } from '@/types'
+import { Company, Department, User } from '@/types'
+
+/** Owner APIs receive Supabase Auth id (session.user.id); companies.owner_id is public.users.id. */
+async function resolveInternalOwnerUserId(ownerRef: string): Promise<string | null> {
+  const byAuth = await userRepository.findByAuthId(ownerRef)
+  if (byAuth) return byAuth.id
+  const byPk = await userRepository.findById(ownerRef)
+  return byPk?.id ?? null
+}
 
 export const companyService = {
 
@@ -14,10 +22,18 @@ export const companyService = {
     owner_id: string
     plan: Company['plan']
   }): Promise<Company> {
-    const existing = await companyRepository.findByOwnerId(data.owner_id)
+    const internalOwnerId = await resolveInternalOwnerUserId(data.owner_id)
+    if (!internalOwnerId) throw new Error('Owner profile not found')
+
+    const existing = await companyRepository.findByOwnerId(internalOwnerId)
     if (existing) throw new Error('Company already exists for this owner')
-    const company = await companyRepository.createCompany(data)
-    await userRepository.updateCompanyId(data.owner_id, company.id)
+    const company = await companyRepository.createCompany({
+      name: data.name,
+      description: data.description,
+      owner_id: internalOwnerId,
+      plan: data.plan,
+    })
+    await userRepository.updateCompanyId(internalOwnerId, company.id)
     return company
   },
 
@@ -45,7 +61,9 @@ export const companyService = {
   },
 
   async getCompanyByOwnerId(owner_id: string): Promise<Company | null> {
-    return await companyRepository.findByOwnerId(owner_id)
+    const internalOwnerId = await resolveInternalOwnerUserId(owner_id)
+    if (!internalOwnerId) return null
+    return await companyRepository.findByOwnerId(internalOwnerId)
   },
 
   async getManagersByDepartment(company_id: string, department_id: string): Promise<{ id: string; full_name: string }[]> {
@@ -53,7 +71,38 @@ export const companyService = {
   },
 
   async getCompaniesByOwner(owner_id: string): Promise<Company[]> {
-    return await companyRepository.findAllByOwnerId(owner_id)
+    const internalOwnerId = await resolveInternalOwnerUserId(owner_id)
+    if (!internalOwnerId) return []
+    return await companyRepository.findAllByOwnerId(internalOwnerId)
+  },
+
+  /**
+   * Resolve active company for dashboard: owners see owned companies (+ switcher);
+   * managers/employees see their assigned users.company_id row.
+   */
+  async getCurrentCompanyContext(
+    userRef: string,
+    preferredCompanyId?: string | null,
+  ): Promise<{ role: User['role']; company: Company | null; companies: Company[] }> {
+    const user = await userRepository.findByAuthIdOrInternalId(userRef)
+    if (!user) throw new Error('User profile not found')
+
+    const owned = await companyRepository.findAllByOwnerId(user.id)
+    if (owned.length > 0) {
+      let selected = owned[0]
+      if (preferredCompanyId) {
+        const match = owned.find((c) => c.id === preferredCompanyId)
+        if (match) selected = match
+      }
+      return { role: user.role, company: selected, companies: owned }
+    }
+
+    if (user.company_id) {
+      const c = await companyRepository.findById(user.company_id)
+      return { role: user.role, company: c, companies: c ? [c] : [] }
+    }
+
+    return { role: user.role, company: null, companies: [] }
   },
 
   async updateCompany(id: string, data: { name: string; description: string | null }): Promise<Company> {
@@ -78,10 +127,13 @@ export const companyService = {
     plan: Company['plan']
     departments: string[]
   }): Promise<Company> {
+    const internalOwnerId = await resolveInternalOwnerUserId(data.owner_id)
+    if (!internalOwnerId) throw new Error('Owner profile not found')
+
     const company = await companyRepository.createCompanyForOwner({
       name: data.name,
       description: data.description,
-      owner_id: data.owner_id,
+      owner_id: internalOwnerId,
       plan: data.plan,
     })
     for (const deptName of data.departments.filter((d) => d.trim())) {

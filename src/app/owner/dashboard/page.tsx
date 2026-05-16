@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import { Plus, Search, Pencil, Trash2, X, ChevronDown, Check, Copy } from 'lucide-react'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import { createClient } from '@/lib/supabase'
@@ -195,6 +196,7 @@ const modalLabelStyle: React.CSSProperties = {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function OwnerDashboard() {
+  const router = useRouter()
   // Auth / company IDs read once on mount
   const [userId, setUserId] = useState('')
   const [companyId, setCompanyId] = useState('')
@@ -223,6 +225,10 @@ export default function OwnerDashboard() {
   const [copied, setCopied] = useState(false)
   const [ownerName, setOwnerName] = useState('')
   const [companyName, setCompanyName] = useState('')
+  const [dashboardRole, setDashboardRole] = useState<string>('')
+  const [initialReady, setInitialReady] = useState(false)
+
+  const canManageDepartments = dashboardRole === 'Owner'
 
   // ── Close all modals ───────────────────────────────────────────────────────
 
@@ -252,55 +258,70 @@ export default function OwnerDashboard() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  // ── Mount: resolve user from Supabase session, then fetch companies/departments ──
+  // ── Mount: session → company context (owner-owned OR membership) ───────────
 
   useEffect(() => {
-    const supabase = createClient()
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      const uid = session?.user?.id
-      if (!uid) { window.location.href = '/signin'; return }
-      setUserId(uid)
-      fetchAllCompanies(uid)
+    let cancelled = false
+    const run = async () => {
+      const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
+      const userIdResolved = session?.user?.id
+      if (!userIdResolved) {
+        router.replace('/signin')
+        return
+      }
+      if (cancelled) return
+      setUserId(userIdResolved)
 
-      fetch(`/api/company/by-owner?owner_id=${uid}`)
-        .then((r) => r.json())
-        .then((data) => {
-          if (data.success && data.company) {
-            const company = data.company
-            localStorage.setItem(`tasking_company_id_${uid}`, company.id)
-            setCompanyId(company.id)
-            setCompanyName(company.name)
-            fetchDeptsById(company.id)
-          }
-        })
-        .catch(() => {})
-    })
-  }, [])
+      const storedCid =
+        typeof localStorage !== 'undefined'
+          ? localStorage.getItem(`tasking_company_id_${userIdResolved}`)
+          : null
+
+      const qs = new URLSearchParams({ user_id: userIdResolved })
+      if (storedCid) qs.set('company_id', storedCid)
+
+      const res = await fetch(`/api/company/current?${qs}`)
+      if (!res.ok) {
+        if (res.status === 404) router.replace('/signin')
+        if (!cancelled) setInitialReady(true)
+        return
+      }
+      const data = await res.json()
+      if (cancelled) return
+      if (!data.success) {
+        setInitialReady(true)
+        return
+      }
+
+      setDashboardRole(data.role || '')
+      const list = (data.companies || []).map((c: { id: string; name: string; plan: string }) => ({
+        id: c.id,
+        name: c.name,
+        plan: c.plan,
+      }))
+      setCompanies(list)
+
+      if (data.company) {
+        const company = data.company
+        localStorage.setItem(`tasking_company_id_${userIdResolved}`, company.id)
+        setCompanyId(company.id)
+        setCompanyName(company.name)
+        setOwnerPlan(company.plan === 'Paid' ? 'Pro' : 'Free')
+        await fetchDeptsById(company.id)
+      } else {
+        setCompanyId('')
+        setCompanyName('')
+        setOwnerPlan('')
+        setDepartments([])
+      }
+      setInitialReady(true)
+    }
+    void run()
+    return () => { cancelled = true }
+  }, [router])
 
   // ── Data fetchers ──────────────────────────────────────────────────────────
-
-  const fetchAllCompanies = async (uid: string) => {
-    try {
-      const res = await fetch(`/api/company/my-companies?owner_id=${uid}`)
-      const data = await res.json()
-      if (data.success) {
-        setCompanies(data.companies)
-        if (data.companies.length > 0) {
-          setOwnerPlan(data.companies[0].plan === 'Paid' ? 'Pro' : 'Free')
-        }
-      }
-    } catch {}
-  }
-
-  const fetchCompanyName = async (uid: string, cid: string) => {
-    try {
-      const params = new URLSearchParams({ owner_id: uid })
-      if (cid) params.set('company_id', cid)
-      const res = await fetch(`/api/company/by-owner?${params}`)
-      const data = await res.json()
-      if (data.success && data.company?.name) setCompanyName(data.company.name)
-    } catch {}
-  }
 
   const fetchDeptsById = async (cid: string) => {
     if (!cid) return
@@ -577,10 +598,15 @@ export default function OwnerDashboard() {
                   {companies.map((c) => (
                     <button
                       key={c.id}
+                      type="button"
                       onClick={() => {
-                        if (userId) localStorage.setItem(`tasking_company_id_${userId}`, c.id)
+                        if (!userId) return
+                        localStorage.setItem(`tasking_company_id_${userId}`, c.id)
                         setDropdownOpen(false)
-                        window.location.reload()
+                        setCompanyId(c.id)
+                        setCompanyName(c.name)
+                        setOwnerPlan(c.plan === 'Paid' ? 'Pro' : 'Free')
+                        void fetchDeptsById(c.id)
                       }}
                       style={{
                         width: '100%', textAlign: 'left', padding: '10px 14px',
@@ -620,11 +646,26 @@ export default function OwnerDashboard() {
         {/* Content */}
         <div style={{ padding: '28px 32px', flex: 1 }}>
 
+          {initialReady && !companyId && (
+            <div style={{
+              background: '#FFFBEB',
+              border: '1px solid #FDE68A',
+              borderRadius: '10px',
+              padding: '14px 18px',
+              fontSize: '0.9rem',
+              color: '#92400E',
+              marginBottom: '20px',
+            }}>
+              No company is linked to your profile yet. If you just accepted an invitation, try signing out and signing in again, or contact your administrator.
+            </div>
+          )}
+
           {/* ── Section: Departments ─────────────────────────────────────── */}
           <div>
             {/* Header row */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
               <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0 }}>Departments</h2>
+              {canManageDepartments && (
               <button
                 onClick={() => { setAddModal(true); setDeptFormName(''); setDeptError('') }}
                 style={{
@@ -647,6 +688,7 @@ export default function OwnerDashboard() {
                 <Plus size={14} strokeWidth={2.5} />
                 Add Department
               </button>
+              )}
             </div>
 
             {/* Search */}
@@ -676,7 +718,11 @@ export default function OwnerDashboard() {
             {/* Cards */}
             {filteredDepts.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '56px 0', color: '#9CA3AF', fontSize: '0.9375rem' }}>
-                {deptSearch ? 'No departments match your search.' : 'No departments yet. Add your first one.'}
+                {deptSearch
+                  ? 'No departments match your search.'
+                  : canManageDepartments
+                    ? 'No departments yet. Add your first one.'
+                    : 'No departments in this company yet.'}
               </div>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px' }}>
@@ -698,6 +744,8 @@ export default function OwnerDashboard() {
                       <p style={{ fontSize: '0.8125rem', color: '#9CA3AF', margin: '4px 0 0' }}>No managers yet</p>
                     </div>
                     <div style={{ display: 'flex', gap: '8px' }}>
+                      {canManageDepartments && (
+                      <>
                       {/* Edit */}
                       <button
                         onClick={() => { setEditModal(dept); setDeptFormName(dept.name); setDeptError('') }}
@@ -742,6 +790,8 @@ export default function OwnerDashboard() {
                         <Trash2 size={12} strokeWidth={2} />
                         Delete
                       </button>
+                      </>
+                      )}
                     </div>
                   </div>
                 ))}

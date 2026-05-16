@@ -42,12 +42,15 @@ export const invitationService = {
 
     const expired_at = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
 
+    const generator = await userRepository.findByAuthIdOrInternalId(data.generated_by)
+    if (!generator) throw new Error('User not found')
+
     return await invitationRepository.createCode({
       code,
       company_id: data.company_id,
       department_id: data.department_id,
       role: data.role,
-      generated_by: data.generated_by,
+      generated_by: generator.id,
       expired_at,
     })
   },
@@ -60,8 +63,9 @@ export const invitationService = {
     invited_by: string
     reporting_manager_id?: string | null
   }): Promise<void> {
-    const inviter = await userRepository.findById(data.invited_by)
-    if (inviter?.email_address.toLowerCase() === data.email.toLowerCase()) {
+    const inviter = await userRepository.findByAuthIdOrInternalId(data.invited_by)
+    if (!inviter) throw new Error('User not found')
+    if (inviter.email_address.toLowerCase() === data.email.toLowerCase()) {
       throw new Error('You cannot send an invitation to yourself.')
     }
 
@@ -71,7 +75,7 @@ export const invitationService = {
       company_id: data.company_id,
       department_id: data.department_id,
       role: data.role as InvitationCode['role'],
-      generated_by: data.invited_by,
+      generated_by: inviter.id,
       expired_at,
       reporting_manager_id: data.reporting_manager_id || null,
     })
@@ -110,9 +114,9 @@ export const invitationService = {
       throw new Error('An account with this email already exists. Please sign in instead.')
     }
 
-    // 3. Check phone not already registered
-    if (data.phone_number) {
-      const existingByPhone = await userRepository.findByPhone(data.phone_number)
+    // 3. Check phone not already registered (flexible formatting vs existing rows)
+    if (data.phone_number && data.phone_number.trim()) {
+      const existingByPhone = await userRepository.findByPhoneAnyFormat(data.phone_number)
       if (existingByPhone) {
         throw new Error('This phone number is already registered')
       }

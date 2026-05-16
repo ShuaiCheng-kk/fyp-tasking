@@ -331,6 +331,23 @@ export default function GetStartedPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (path !== 'invitation') return
+    let cancelled = false
+    const clearPrevSession = async () => {
+      const supabase = createClient()
+      await supabase.auth.signOut()
+      if (cancelled) return
+      localStorage.removeItem('tasking_user_id')
+      localStorage.removeItem('tasking_company_id')
+      localStorage.removeItem('tasking_active_session')
+      localStorage.removeItem('tasking_user_role')
+      sessionStorage.removeItem('tasking_session_active')
+    }
+    void clearPrevSession()
+    return () => { cancelled = true }
+  }, [path])
+
   // ── Transitions ───────────────────────────────────────────────────────────
 
   const transition = (fn: () => void) => {
@@ -455,12 +472,14 @@ export default function GetStartedPage() {
         password: ownerPassword,
       });
 
-      // Store user id and company_id under user-specific key
       const authUserId = signInData?.user?.id || '';
-      if (authUserId) {
-        localStorage.setItem('tasking_user_id', authUserId);
-        localStorage.setItem(`tasking_company_id_${authUserId}`, data.company_id);
-      }
+      if (!authUserId) throw new Error('Sign in failed');
+
+      localStorage.setItem(`tasking_company_id_${authUserId}`, data.company_id);
+      localStorage.setItem('tasking_user_role', 'Owner');
+      localStorage.setItem('tasking_user_id', authUserId);
+      sessionStorage.setItem('tasking_session_active', 'true');
+      localStorage.setItem('tasking_active_session', 'true');
 
       ['owner_full_name', 'owner_email', 'owner_password', 'owner_phone',
         'company_name', 'company_description', 'departments'].forEach((k) =>
@@ -469,7 +488,7 @@ export default function GetStartedPage() {
       if (plan === 'Paid') {
         setShowProMsg(true);
       } else {
-        router.push('/owner/dashboard');
+        router.replace('/owner/dashboard');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Setup failed');
@@ -514,7 +533,6 @@ export default function GetStartedPage() {
       const redeemData = await redeemRes.json();
       if (!redeemData.success) throw new Error(redeemData.message);
 
-      // Establish browser session via client-side Supabase
       const supabase = createClient();
       const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
         email: invitedAccount.email,
@@ -522,22 +540,30 @@ export default function GetStartedPage() {
       });
       if (signInError) throw new Error(signInError.message);
 
-      // Store user id and company_id under user-specific key
-      const authUserId = signInData.user?.id || '';
-      if (authUserId) {
-        localStorage.setItem('tasking_user_id', authUserId);
-        localStorage.setItem(`tasking_company_id_${authUserId}`, redeemData.company_id);
-      }
+      const authUser = signInData.user;
+      if (!authUser?.id) throw new Error('Sign in failed');
+
+      localStorage.setItem(`tasking_company_id_${authUser.id}`, redeemData.company_id);
+
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('Session not established');
+
+      localStorage.setItem('tasking_user_role', redeemData.user.role);
+      localStorage.setItem('tasking_user_id', authUser.id);
+
+      sessionStorage.setItem('tasking_session_active', 'true');
+      localStorage.setItem('tasking_active_session', 'true');
 
       sessionStorage.removeItem('invite_code');
 
       const roleRoutes: Record<string, string> = {
         'Owner': '/owner/dashboard',
-        'Manager': '/manager/dashboard',
-        'Employee': '/employee/dashboard',
-        'Casual Worker': '/casual/dashboard',
+        'Manager': '/owner/dashboard',
+        'Employee': '/owner/dashboard',
+        'Casual Worker': '/owner/dashboard',
       };
-      window.location.href = roleRoutes[redeemData.user.role] || '/owner/dashboard';
+      setIsLoading(false);
+      router.replace(roleRoutes[redeemData.user.role] || '/owner/dashboard');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Invalid or expired invitation code');
       setIsLoading(false);
