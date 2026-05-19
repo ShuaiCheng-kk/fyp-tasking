@@ -7,60 +7,126 @@ import {
   LayoutDashboard,
   BarChart2,
   Users,
-  Inbox,
+  MessageSquare,
+  Megaphone,
   Settings,
   LogOut,
 } from 'lucide-react'
-import { createClient } from '@/lib/supabase'
+import { createBrowserClient } from '@supabase/ssr'
 
 const NAV_ITEMS = [
-  { label: 'Dashboard', Icon: LayoutDashboard, href: '/owner/dashboard' },
-  { label: 'Report',    Icon: BarChart2,       href: '/owner/report'    },
-  { label: 'Team',      Icon: Users,           href: '/owner/team'      },
-  { label: 'Inbox',     Icon: Inbox,           href: '/owner/inbox'     },
-  { label: 'Settings',  Icon: Settings,        href: '/owner/settings'  },
+  { label: 'Dashboard',     Icon: LayoutDashboard, href: '/owner/dashboard',       dot: null as 'messages' | 'announcements' | null },
+  { label: 'Report',        Icon: BarChart2,        href: '/owner/report',          dot: null },
+  { label: 'Team',          Icon: Users,            href: '/owner/team',            dot: null },
+  { label: 'Announcements', Icon: Megaphone,        href: '/owner/announcements',   dot: 'announcements' as const },
+  { label: 'Inbox',         Icon: MessageSquare,    href: '/owner/inbox',           dot: 'messages' as const },
+  { label: 'Settings',      Icon: Settings,         href: '/owner/settings',        dot: null },
 ]
 
-export default function OwnerSidebar() {
+export default function OwnerSidebar({
+  unreadMessages,
+  unreadAnnouncements,
+}: {
+  unreadMessages?: number
+  unreadAnnouncements?: number
+}) {
   const pathname = usePathname()
   const [expanded, setExpanded] = useState(false)
+  const [userRole, setUserRole] = useState('')
+  const [msgCount, setMsgCount] = useState(unreadMessages ?? 0)
+  const [annCount, setAnnCount] = useState(unreadAnnouncements ?? 0)
 
   useEffect(() => {
-    const checkSession = async () => {
-      const supabase = createClient()
+    const authUid = typeof localStorage !== 'undefined' ? localStorage.getItem('tasking_user_id') : null
+    if (!authUid) return
 
-      const { data: { session } } = await supabase.auth.getSession()
+    fetch(`/api/user/me?user_id=${authUid}`)
+      .then(r => r.json())
+      .then(d => {
+        if (!d.success) return
+        setUserRole(d.user.role)
+        const internalId: string = d.user.id
+        const cid = localStorage.getItem('tasking_company_id') ?? localStorage.getItem(`tasking_company_id_${authUid}`)
+        if (!cid) return
 
-      if (!session) {
-        localStorage.removeItem('tasking_user_id')
-        localStorage.removeItem('tasking_company_id')
-        localStorage.removeItem('tasking_active_session')
-        sessionStorage.removeItem('tasking_session_active')
-        window.location.href = '/signin'
-        return
-      }
+        // Unread messages: from API (DB-backed, accurate)
+        fetch(`/api/inbox/unread-count?user_id=${internalId}&company_id=${cid}`)
+          .then(r => r.json())
+          .then(data => { if (data.success) setMsgCount(data.unread_messages ?? 0) })
+          .catch(() => {})
 
-      const sessionMarker = sessionStorage.getItem('tasking_session_active')
-      if (!sessionMarker) {
-        await supabase.auth.signOut()
-        localStorage.removeItem('tasking_user_id')
-        localStorage.removeItem('tasking_company_id')
-        localStorage.removeItem('tasking_active_session')
-        sessionStorage.removeItem('tasking_session_active')
-        window.location.href = '/signin'
-        return
-      }
-    }
+        // Unread announcements: from localStorage per-ID read set (page writes this)
+        // We fetch the announcement list to know total count, then subtract read IDs
+        const readKey = `ann_read_ids_${cid}_${internalId}`
+        let readIds: Set<string> = new Set()
+        try {
+          const raw = localStorage.getItem(readKey)
+          if (raw) readIds = new Set(JSON.parse(raw))
+        } catch {}
 
-    checkSession()
+        fetch(`/api/inbox/announcements?company_id=${cid}&role=owner`)
+          .then(r => r.json())
+          .then(data => {
+            if (data.success) {
+              const unread = (data.announcements as { id: string }[]).filter(a => !readIds.has(a.id)).length
+              setAnnCount(unread)
+            }
+          })
+          .catch(() => {})
+
+        const supabase = createBrowserClient(
+          process.env.NEXT_PUBLIC_SUPABASE_URL!,
+          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+        )
+
+        const msgChannel = supabase
+          .channel('owner-sidebar-messages')
+          .on('postgres_changes', {
+            event: 'INSERT', schema: 'public', table: 'messages',
+            filter: `to_user_id=eq.${internalId}`,
+          }, () => { setMsgCount(c => c + 1) })
+          .subscribe()
+
+        const annChannel = supabase
+          .channel('owner-sidebar-announcements')
+          .on('postgres_changes', {
+            event: 'INSERT', schema: 'public', table: 'announcements',
+            filter: `company_id=eq.${cid}`,
+          }, () => { setAnnCount(c => c + 1) })
+          .subscribe()
+
+        return () => {
+          supabase.removeChannel(msgChannel)
+          supabase.removeChannel(annChannel)
+        }
+      })
+      .catch(() => {})
   }, [])
 
+  // Clear message dot immediately when user opens inbox
+  useEffect(() => {
+    if (pathname === '/owner/inbox') setMsgCount(0)
+  }, [pathname])
+
+  useEffect(() => {
+    if (unreadMessages !== undefined) setMsgCount(unreadMessages)
+  }, [unreadMessages])
+  useEffect(() => {
+    if (unreadAnnouncements !== undefined) setAnnCount(unreadAnnouncements)
+  }, [unreadAnnouncements])
+
+  const visibleNavItems = userRole === 'Manager'
+    ? NAV_ITEMS.filter(item => item.label !== 'Report')
+    : NAV_ITEMS
+
   const handleLogout = async () => {
-    const supabase = createClient()
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    )
     await supabase.auth.signOut()
     localStorage.removeItem('tasking_user_id')
     localStorage.removeItem('tasking_company_id')
-    localStorage.removeItem('tasking_active_session')
     window.location.href = '/signout'
   }
 
@@ -98,7 +164,7 @@ export default function OwnerSidebar() {
         }}
       >
         <svg width="28" height="28" viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
-          <rect width="32" height="32" rx="8" fill="#F97316" />
+          <rect width="32" height="32" rx="8" fill={userRole === 'Manager' ? '#3B82F6' : '#F97316'} />
           <rect x="8" y="9" width="9" height="2.5" rx="1.25" fill="white" />
           <rect x="8" y="14.75" width="16" height="2.5" rx="1.25" fill="white" />
           <rect x="8" y="20.5" width="12" height="2.5" rx="1.25" fill="white" />
@@ -120,8 +186,11 @@ export default function OwnerSidebar() {
 
       {/* Nav */}
       <nav style={{ flex: 1, padding: '12px 8px', overflow: 'hidden' }}>
-        {NAV_ITEMS.map(({ label, Icon, href }) => {
+        {visibleNavItems.map(({ label, Icon, href, dot }) => {
           const active = pathname === href
+          const showDot = dot === 'messages' ? msgCount > 0 : dot === 'announcements' ? annCount > 0 : false
+          const ACCENT = '#EA580C'
+          const ACTIVE_BG = '#FFF7ED'
           return (
             <a
               key={label}
@@ -132,8 +201,8 @@ export default function OwnerSidebar() {
                 gap: '10px',
                 padding: '10px 12px',
                 borderRadius: '8px',
-                background: active ? '#FFF7ED' : 'transparent',
-                color: active ? '#EA580C' : '#6B7280',
+                background: active ? ACTIVE_BG : 'transparent',
+                color: active ? ACCENT : '#6B7280',
                 fontWeight: active ? 600 : 500,
                 fontSize: '0.9rem',
                 cursor: 'pointer',
@@ -141,15 +210,25 @@ export default function OwnerSidebar() {
                 whiteSpace: 'nowrap',
                 marginBottom: '2px',
                 transition: 'background 0.12s, color 0.12s',
+                position: 'relative',
               }}
               onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = '#F3F4F6' }}
               onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent' }}
             >
-              <Icon
-                size={18}
-                strokeWidth={2.1}
-                style={{ flexShrink: 0, color: active ? '#EA580C' : 'currentColor' }}
-              />
+              <span style={{ position: 'relative', flexShrink: 0 }}>
+                <Icon
+                  size={18}
+                  strokeWidth={2.1}
+                  style={{ display: 'block', color: active ? ACCENT : 'currentColor' }}
+                />
+                {showDot && (
+                  <span style={{
+                    position: 'absolute', top: -3, right: -3,
+                    width: 8, height: 8, borderRadius: '50%',
+                    background: '#EF4444', border: '1.5px solid #fff',
+                  }} />
+                )}
+              </span>
               <span style={{ opacity: expanded ? 1 : 0, transition: 'opacity 0.15s' }}>
                 {label}
               </span>

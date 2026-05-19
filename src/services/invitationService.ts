@@ -1,11 +1,19 @@
 // LAYER: Service
 // RULE: Only contains business logic. No HTTP handling. No direct DB access.
 
+import { createClient } from '@supabase/supabase-js'
 import { invitationRepository } from '@/repositories/invitationRepository'
 import { userRepository } from '@/repositories/userRepository'
 import { companyRepository } from '@/repositories/companyRepository'
 import { emailService } from '@/services/emailService'
 import { InvitationCode, User } from '@/types'
+
+function getAdminClient() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  )
+}
 
 function generateRandomCode(role: string): string {
   if (role === 'Owner') {
@@ -34,12 +42,15 @@ export const invitationService = {
 
     const expired_at = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
 
+    const generator = await userRepository.findByAuthIdOrInternalId(data.generated_by)
+    if (!generator) throw new Error('User not found')
+
     return await invitationRepository.createCode({
       code,
       company_id: data.company_id,
       department_id: data.department_id,
       role: data.role,
-      generated_by: data.generated_by,
+      generated_by: generator.id,
       expired_at,
     })
   },
@@ -52,9 +63,15 @@ export const invitationService = {
     invited_by: string
     reporting_manager_id?: string | null
   }): Promise<void> {
-    const inviter = await userRepository.findById(data.invited_by)
-    if (inviter?.email_address.toLowerCase() === data.email.toLowerCase()) {
+    const inviter = await userRepository.findByAuthIdOrInternalId(data.invited_by)
+    if (!inviter) throw new Error('User not found')
+    if (inviter.email_address.toLowerCase() === data.email.toLowerCase()) {
       throw new Error('You cannot send an invitation to yourself.')
+    }
+
+    const existingInvitation = await invitationRepository.findActiveInvitation(data.company_id, data.role)
+    if (existingInvitation) {
+      throw new Error('An active invitation already exists for this email. Please wait for them to accept or the invitation to expire.')
     }
 
     const expired_at = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
@@ -63,7 +80,7 @@ export const invitationService = {
       company_id: data.company_id,
       department_id: data.department_id,
       role: data.role as InvitationCode['role'],
-      generated_by: data.invited_by,
+      generated_by: inviter.id,
       expired_at,
       reporting_manager_id: data.reporting_manager_id || null,
     })
@@ -83,34 +100,75 @@ export const invitationService = {
 
   async redeemCode(data: {
     code: string
-    supabase_auth_id: string
     full_name: string
     email_address: string
+    password: string
     phone_number: string | null
-  }): Promise<{ role: User['role']; company_id: string; department_id: string | null }> {
+  }): Promise<{ user: User; company_id: string }> {
+    // 1. Validate invitation code (not expired, not used)
     const invitation = await invitationRepository.findByCode(data.code)
     if (!invitation) throw new Error('Invalid or expired invitation code')
 
-    const now = new Date()
-    if (now > new Date(invitation.expired_at)) {
-      throw new Error('Invitation code has expired')
+    if (new Date() > new Date(invitation.expired_at)) {
+      throw new Error('This invitation has expired')
     }
 
-    // Create the public.users record with role/company from the invitation.
-    // This must happen before markAsUsed because invitation_code.used_by
-    // has a FK constraint referencing public.users.id.
-    const user = await userRepository.createUser({
-      supabase_auth_id: data.supabase_auth_id,
-      full_name: data.full_name,
-      email_address: data.email_address,
-      phone_number: data.phone_number,
-      role: invitation.role,
-      company_id: invitation.company_id,
-      department_id: invitation.department_id,
-    })
+    // 2. Check email not already registered
+    const existingByEmail = await userRepository.findByEmail(data.email_address)
+    if (existingByEmail) {
+      throw new Error('An account with this email already exists. Please sign in instead.')
+    }
 
-    await invitationRepository.markAsUsed(data.code, user.id)
-    return { role: invitation.role, company_id: invitation.company_id, department_id: invitation.department_id }
+    // 3. Check phone not already registered (flexible formatting vs existing rows)
+    if (data.phone_number && data.phone_number.trim()) {
+      const existingByPhone = await userRepository.findByPhoneAnyFormat(data.phone_number)
+      if (existingByPhone) {
+        throw new Error('This phone number is already registered')
+      }
+    }
+
+    // 4. Create Supabase Auth user
+    let authUserId: string
+    try {
+      const authUser = await userRepository.createAuthUser(data.email_address, data.password)
+      authUserId = authUser.id
+    } catch (err) {
+      const msg = (err instanceof Error ? err.message : '').toLowerCase()
+      if (msg.includes('already') || msg.includes('duplicate') || msg.includes('unique')) {
+        throw new Error('An account with this email already exists. Please sign in instead.')
+      }
+      throw err
+    }
+
+    try {
+      // 5. Insert into users table
+      const user = await userRepository.createUser({
+        supabase_auth_id: authUserId,
+        full_name: data.full_name,
+        email_address: data.email_address,
+        phone_number: data.phone_number,
+        role: invitation.role,
+        company_id: invitation.company_id,
+        department_id: invitation.department_id,
+      })
+
+      // 6. Mark invitation code as used
+      await invitationRepository.markAsUsed(data.code, user.id)
+
+      return { user, company_id: invitation.company_id }
+    } catch (error) {
+      // Rollback: delete the auth user just created
+      try { await getAdminClient().auth.admin.deleteUser(authUserId) } catch { /* ignore */ }
+
+      const msg = (error instanceof Error ? error.message : '').toLowerCase()
+      if (msg.includes('phone') && (msg.includes('duplicate') || msg.includes('unique'))) {
+        throw new Error('This phone number is already registered')
+      }
+      if (msg.includes('foreign key')) {
+        throw new Error('Setup failed. Please try again.')
+      }
+      throw error
+    }
   },
 
 }

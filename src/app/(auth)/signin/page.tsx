@@ -3,8 +3,8 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { Eye, EyeOff } from 'lucide-react';
+import { createBrowserClient } from '@supabase/ssr';
 import { page as c } from './content';
-import { createClient } from '@/lib/supabase';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 
@@ -72,16 +72,16 @@ export default function SignInPage() {
     e.preventDefault();
     setShowError(false);
     setIsLoading(true);
-    try {
-      // Sign in via Supabase client so the browser session cookie is set
-      const supabase = createClient();
-      const { error: authError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-      if (authError) throw new Error(authError.message);
 
-      // Fetch user profile (role, id) from API
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+
+    try {
+      // Clear any stale session so its SIGNED_OUT event cannot race the new sign-in
+      await supabase.auth.signOut();
+
       const res = await fetch('/api/auth/signin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -90,9 +90,16 @@ export default function SignInPage() {
       const data = await res.json();
       if (!data.success) throw new Error(data.message);
 
-      localStorage.setItem('tasking_user_id', data.user.id);
-      localStorage.setItem('tasking_active_session', 'true');
-      sessionStorage.setItem('tasking_session_active', 'true');
+      // API route already signed in server-side and set sb-* cookies.
+      // Store user identifiers for client-side lookups then navigate.
+      const authUid = data.user.auth_id;
+      localStorage.setItem('tasking_user_id', authUid);
+      localStorage.removeItem('tasking_company_id');
+      if (data.user.company_id) {
+        localStorage.setItem(`tasking_company_id_${authUid}`, data.user.company_id);
+      }
+      localStorage.setItem('tasking_user_role', data.user.role);
+
       const route = ROLE_ROUTES[data.user.role] || '/owner/dashboard';
       window.location.href = route;
     } catch {

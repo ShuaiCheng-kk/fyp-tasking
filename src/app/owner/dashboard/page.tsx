@@ -1,7 +1,9 @@
 'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import { Plus, Search, Pencil, Trash2, X, ChevronDown, Check, Copy } from 'lucide-react'
+import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -12,6 +14,8 @@ type Department = {
   company_id: string
   created_at: string
 }
+
+type ManagerInfo = { id: string; full_name: string; department_id: string | null }
 
 // ─── Spinner ──────────────────────────────────────────────────────────────────
 
@@ -194,6 +198,7 @@ const modalLabelStyle: React.CSSProperties = {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function OwnerDashboard() {
+  const router = useRouter()
   // Auth / company IDs read once on mount
   const [userId, setUserId] = useState('')
   const [companyId, setCompanyId] = useState('')
@@ -221,6 +226,20 @@ export default function OwnerDashboard() {
   const [selectedDeptId, setSelectedDeptId] = useState('')
   const [copied, setCopied] = useState(false)
   const [ownerName, setOwnerName] = useState('')
+  const [companyName, setCompanyName] = useState('')
+  const [dashboardRole, setDashboardRole] = useState<string>('')
+  const [userDeptId, setUserDeptId] = useState<string>('')
+  const [initialReady, setInitialReady] = useState(false)
+
+  // Manager data for department cards
+  const [deptManagerMap, setDeptManagerMap] = useState<Record<string, string>>({})
+  const [allCompanyManagers, setAllCompanyManagers] = useState<ManagerInfo[]>([])
+  const [editManagerModal, setEditManagerModal] = useState<Department | null>(null)
+  const [editManagerSelectedId, setEditManagerSelectedId] = useState('')
+  const [editManagerLoading, setEditManagerLoading] = useState(false)
+  const [editManagerError, setEditManagerError] = useState('')
+
+  const canManageDepartments = dashboardRole === 'Owner' || dashboardRole === 'Partner'
 
   // ── Close all modals ───────────────────────────────────────────────────────
 
@@ -228,6 +247,7 @@ export default function OwnerDashboard() {
     setAddModal(false)
     setEditModal(null)
     setDeleteModal(null)
+    setEditManagerModal(null)
   }, [])
 
   // ── Escape key ─────────────────────────────────────────────────────────────
@@ -250,62 +270,103 @@ export default function OwnerDashboard() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  // ── Mount: read localStorage, resolve company then fetch departments ──────
+  // ── Mount: session → company context (owner-owned OR membership) ───────────
 
   useEffect(() => {
-    const uid = localStorage.getItem('tasking_user_id') || ''
-    const cid = localStorage.getItem('tasking_company_id') || ''
-    setUserId(uid)
-    if (uid) fetchAllCompanies(uid)
+    let cancelled = false
+    const run = async () => {
+      let userIdResolved = localStorage.getItem('tasking_user_id')
+      if (!userIdResolved) {
+        const supabase = createBrowserClient(
+          process.env.NEXT_PUBLIC_SUPABASE_URL!,
+          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+        )
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.user?.id) {
+          userIdResolved = session.user.id
+          localStorage.setItem('tasking_user_id', userIdResolved)
+        }
+      }
+      if (!userIdResolved) {
+        router.replace('/signin')
+        return
+      }
+      if (cancelled) return
+      setUserId(userIdResolved)
 
-    if (cid) {
-      setCompanyId(cid)
-      fetchDeptsById(cid)
-    } else if (uid) {
-      fetch(`/api/company/my-companies?owner_id=${uid}`)
-        .then((r) => r.json())
-        .then((data) => {
-          if (data.success && data.companies?.length > 0) {
-            const resolvedId = data.companies[0].id
-            localStorage.setItem('tasking_company_id', resolvedId)
-            setCompanyId(resolvedId)
-            fetchDeptsById(resolvedId)
+      fetch(`/api/user/me?user_id=${userIdResolved}`)
+        .then(r => r.json())
+        .then(d => {
+          if (!cancelled && d.success) {
+            if (d.user?.full_name) setOwnerName(d.user.full_name)
+            if (d.user?.department_id) setUserDeptId(d.user.department_id)
           }
         })
         .catch(() => {})
+
+      const storedCid =
+        typeof localStorage !== 'undefined'
+          ? localStorage.getItem(`tasking_company_id_${userIdResolved}`)
+          : null
+
+      const qs = new URLSearchParams({ user_id: userIdResolved })
+      if (storedCid) qs.set('company_id', storedCid)
+
+      const res = await fetch(`/api/company/current?${qs}`)
+      if (!res.ok) {
+        if (!cancelled) setInitialReady(true)
+        return
+      }
+      const data = await res.json()
+      if (cancelled) return
+      if (!data.success) {
+        setInitialReady(true)
+        return
+      }
+
+      setDashboardRole(data.role || '')
+      const list = (data.companies || []).map((c: { id: string; name: string; plan: string }) => ({
+        id: c.id,
+        name: c.name,
+        plan: c.plan,
+      }))
+      setCompanies(list)
+
+      if (data.company) {
+        const company = data.company
+        localStorage.setItem(`tasking_company_id_${userIdResolved}`, company.id)
+        setCompanyId(company.id)
+        setCompanyName(company.name)
+        setOwnerPlan(company.plan === 'Paid' ? 'Pro' : 'Free')
+        await fetchDeptsById(company.id)
+      } else {
+        setCompanyId('')
+        setCompanyName('')
+        setOwnerPlan('')
+        setDepartments([])
+      }
+      setInitialReady(true)
     }
-  }, [])
+    void run()
+    return () => { cancelled = true }
+  }, [router])
 
   // ── Data fetchers ──────────────────────────────────────────────────────────
 
-  const fetchAllCompanies = async (uid: string) => {
+  const fetchManagersForCompany = async (cid: string) => {
+    if (!cid) return
     try {
-      const res = await fetch(`/api/company/my-companies?owner_id=${uid}`)
+      const res = await fetch(`/api/company/managers?company_id=${cid}`)
       const data = await res.json()
       if (data.success) {
-        setCompanies(data.companies)
-        if (data.companies.length > 0) {
-          setOwnerPlan(data.companies[0].plan === 'Paid' ? 'Pro' : 'Free')
-        }
-        // If companyId isn't set yet, fall back to the first company in the list
-        setCompanyId((prev) => {
-          if (!prev && data.companies.length > 0) {
-            return data.companies[0].id
+        setAllCompanyManagers(data.managers)
+        const map: Record<string, string> = {}
+        for (const mgr of data.managers as ManagerInfo[]) {
+          if (mgr.department_id && !map[mgr.department_id]) {
+            map[mgr.department_id] = mgr.full_name
           }
-          return prev
-        })
-      }
-    } catch {}
-  }
-
-  const fetchCompanyByOwner = async (uid: string) => {
-    try {
-      const res = await fetch(`/api/company/my-companies?owner_id=${uid}`)
-      const data = await res.json()
-      if (data.success && data.company?.id) {
-        const cid = data.company.id
-        localStorage.setItem('tasking_company_id', cid)
-        setCompanyId(cid)
+        }
+        setDeptManagerMap(map)
       }
     } catch {}
   }
@@ -317,19 +378,19 @@ export default function OwnerDashboard() {
       const data = await res.json()
       if (data.success) setDepartments(data.departments)
     } catch {}
+    await fetchManagersForCompany(cid)
   }
 
   const fetchDepts = async () => {
-    const cid = localStorage.getItem('tasking_company_id')
-    if (!cid) return
-    fetchDeptsById(cid)
+    if (!companyId) return
+    fetchDeptsById(companyId)
   }
 
   // ── Invite code generation ─────────────────────────────────────────────────
 
   const generateCode = async (role: 'Manager' | 'Employee' | 'Owner', deptId?: string) => {
-    const cid = localStorage.getItem('tasking_company_id') || ''
-    const uid = localStorage.getItem('tasking_user_id') || ''
+    const cid = companyId || ''
+    const uid = userId || ''
     setInviteLoading(true)
     setInviteCode('')
     try {
@@ -401,9 +462,7 @@ export default function OwnerDashboard() {
   // ── Sign out ───────────────────────────────────────────────────────────────
 
   const handleSignOut = () => {
-    localStorage.removeItem('tasking_user_id')
-    localStorage.removeItem('tasking_company_id')
-    localStorage.removeItem('tasking_active_session')
+    if (userId) localStorage.removeItem(`tasking_company_id_${userId}`)
     fetch('/api/auth/signout', { method: 'POST' })
     window.location.href = '/signout'
   }
@@ -413,7 +472,7 @@ export default function OwnerDashboard() {
 
   const handleAddDept = async () => {
     if (!deptFormName.trim()) return
-    const cid = localStorage.getItem('tasking_company_id')
+    const cid = companyId
     if (!cid) { setDeptError('Company not found, please refresh'); return }
     setDeptLoading(true)
     setDeptError('')
@@ -478,10 +537,39 @@ export default function OwnerDashboard() {
     }
   }
 
+  const handleEditDeptManager = async () => {
+    if (!editManagerModal || !editManagerSelectedId) return
+    setEditManagerLoading(true)
+    setEditManagerError('')
+    try {
+      const res = await fetch('/api/user/update-department', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: editManagerSelectedId, department_id: editManagerModal.id }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      setEditManagerModal(null)
+      setEditManagerSelectedId('')
+      await fetchManagersForCompany(companyId)
+    } catch (err) {
+      setEditManagerError(err instanceof Error ? err.message : 'Failed to update manager')
+    } finally {
+      setEditManagerLoading(false)
+    }
+  }
+
   // ── Derived ────────────────────────────────────────────────────────────────
 
+  const departmentName = userDeptId
+    ? departments.find(d => d.id === userDeptId)?.name ?? ''
+    : ''
+
   const startsWithDigit = (s: string) => /^\d/.test(s)
-  const filteredDepts = departments
+  const visibleDepts = dashboardRole === 'Manager' && userDeptId
+    ? departments.filter(d => d.id === userDeptId)
+    : departments
+  const filteredDepts = visibleDepts
     .filter((d) => d.name.toLowerCase().includes(deptSearch.toLowerCase()))
     .sort((a, b) => {
       const aNum = startsWithDigit(a.name)
@@ -561,7 +649,7 @@ export default function OwnerDashboard() {
           top: 0,
           zIndex: 10,
         }}>
-          {companies.length > 1 ? (
+          {dashboardRole !== 'Manager' && companies.length > 1 ? (
             <div ref={dropdownRef} style={{ position: 'relative', display: 'inline-block' }}>
               <button
                 onClick={() => setDropdownOpen((o) => !o)}
@@ -572,7 +660,7 @@ export default function OwnerDashboard() {
                   userSelect: 'none',
                 }}
               >
-                {currentCompany ? `${currentCompany.name} Overview` : 'Overview'}
+                {companyName ? `${companyName} — Overview` : 'Overview'}
                 <ChevronDown
                   size={16}
                   strokeWidth={2.5}
@@ -588,10 +676,15 @@ export default function OwnerDashboard() {
                   {companies.map((c) => (
                     <button
                       key={c.id}
+                      type="button"
                       onClick={() => {
-                        localStorage.setItem('tasking_company_id', c.id)
+                        if (!userId) return
+                        localStorage.setItem(`tasking_company_id_${userId}`, c.id)
                         setDropdownOpen(false)
-                        window.location.reload()
+                        setCompanyId(c.id)
+                        setCompanyName(c.name)
+                        setOwnerPlan(c.plan === 'Paid' ? 'Pro' : 'Free')
+                        void fetchDeptsById(c.id)
                       }}
                       style={{
                         width: '100%', textAlign: 'left', padding: '10px 14px',
@@ -611,31 +704,56 @@ export default function OwnerDashboard() {
             </div>
           ) : (
             <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#111827', margin: 0 }}>
-              {currentCompany ? `${currentCompany.name} Overview` : 'Overview'}
+              {dashboardRole === 'Manager' && departmentName
+                ? `${companyName} — ${departmentName}`
+                : companyName ? `${companyName} — Overview` : 'Overview'}
             </h1>
           )}
-          {ownerPlan && (
-            <span style={{
-              padding: '4px 10px',
-              borderRadius: '99px',
-              fontSize: '0.8rem',
-              fontWeight: 600,
-              background: ownerPlan === 'Pro' ? '#EDE9FE' : '#F3F4F6',
-              color: ownerPlan === 'Pro' ? '#7C3AED' : '#6B7280',
-            }}>
-              {ownerPlan} user
-            </span>
-          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            {ownerName && (
+              <span style={{ fontSize: '0.9rem', color: '#374151' }}>{ownerName}</span>
+            )}
+            {ownerPlan && (
+              <span style={{
+                padding: '4px 10px',
+                borderRadius: '99px',
+                fontSize: '0.8rem',
+                fontWeight: 600,
+                background: ownerPlan === 'Pro' ? '#EDE9FE' : '#F3F4F6',
+                color: ownerPlan === 'Pro' ? '#7C3AED' : '#6B7280',
+              }}>
+                {ownerPlan} user
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Content */}
         <div style={{ padding: '28px 32px', flex: 1 }}>
 
+          {initialReady && !companyId && (
+            <div style={{
+              background: '#FFFBEB',
+              border: '1px solid #FDE68A',
+              borderRadius: '10px',
+              padding: '14px 18px',
+              fontSize: '0.9rem',
+              color: '#92400E',
+              marginBottom: '20px',
+            }}>
+              No company is linked to your profile yet. If you just accepted an invitation, try signing out and signing in again, or contact your administrator.
+            </div>
+          )}
+
           {/* ── Section: Departments ─────────────────────────────────────── */}
+          {dashboardRole === 'Manager' ? (
+            <p style={{ color: '#9CA3AF', fontSize: '0.9375rem' }}>Your team and schedule will appear here.</p>
+          ) : (
           <div>
             {/* Header row */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
               <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0 }}>Departments</h2>
+              {canManageDepartments && (
               <button
                 onClick={() => { setAddModal(true); setDeptFormName(''); setDeptError('') }}
                 style={{
@@ -658,6 +776,7 @@ export default function OwnerDashboard() {
                 <Plus size={14} strokeWidth={2.5} />
                 Add Department
               </button>
+              )}
             </div>
 
             {/* Search */}
@@ -670,7 +789,7 @@ export default function OwnerDashboard() {
                 style={{
                   width: '100%',
                   paddingLeft: '34px',
-                  paddingRight: '12px',
+                  paddingRight: deptSearch ? '30px' : '12px',
                   paddingTop: '8px',
                   paddingBottom: '8px',
                   border: '1.5px solid #E5E7EB',
@@ -682,12 +801,36 @@ export default function OwnerDashboard() {
                   boxSizing: 'border-box',
                 }}
               />
+              {deptSearch && (
+                <button
+                  onClick={() => setDeptSearch('')}
+                  style={{
+                    position: 'absolute',
+                    right: '8px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: '#9CA3AF',
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: 0,
+                  }}
+                >
+                  <X size={14} />
+                </button>
+              )}
             </div>
 
             {/* Cards */}
             {filteredDepts.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '56px 0', color: '#9CA3AF', fontSize: '0.9375rem' }}>
-                {deptSearch ? 'No departments match your search.' : 'No departments yet. Add your first one.'}
+                {deptSearch
+                  ? 'No departments match your search.'
+                  : canManageDepartments
+                    ? 'No departments yet. Add your first one.'
+                    : 'No departments in this company yet.'}
               </div>
             ) : (
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px' }}>
@@ -706,10 +849,14 @@ export default function OwnerDashboard() {
                   >
                     <div>
                       <p style={{ fontWeight: 700, fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{dept.name}</p>
-                      <p style={{ fontSize: '0.8125rem', color: '#9CA3AF', margin: '4px 0 0' }}>No managers yet</p>
+                      <p style={{ fontSize: '0.8125rem', color: deptManagerMap[dept.id] ? '#374151' : '#9CA3AF', margin: '4px 0 0' }}>
+                        {deptManagerMap[dept.id] ?? 'No managers yet'}
+                      </p>
                     </div>
                     <div style={{ display: 'flex', gap: '8px' }}>
-                      {/* Edit */}
+                      {canManageDepartments && (
+                      <>
+                      {/* Edit Department Name */}
                       <button
                         onClick={() => { setEditModal(dept); setDeptFormName(dept.name); setDeptError('') }}
                         style={{
@@ -733,9 +880,9 @@ export default function OwnerDashboard() {
                         Edit
                       </button>
 
-                      {/* Delete */}
+                      {/* Edit Manager */}
                       <button
-                        onClick={() => { setDeleteModal(dept); setDeptError('') }}
+                        onClick={() => { setEditManagerModal(dept); setEditManagerSelectedId(''); setEditManagerError('') }}
                         style={{
                           display: 'flex',
                           alignItems: 'center',
@@ -746,19 +893,49 @@ export default function OwnerDashboard() {
                           background: 'none',
                           cursor: 'pointer',
                           fontSize: '0.8125rem',
+                          color: '#6B7280',
+                          fontWeight: 500,
+                          transition: 'border-color 0.1s',
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#9CA3AF')}
+                        onMouseLeave={(e) => (e.currentTarget.style.borderColor = '#E5E7EB')}
+                      >
+                        <Pencil size={12} strokeWidth={2} />
+                        Manager
+                      </button>
+
+                      {/* Delete */}
+                      <button
+                        onClick={() => { if (departments.length > 1) { setDeleteModal(dept); setDeptError('') } }}
+                        disabled={departments.length === 1}
+                        title={departments.length === 1 ? 'A company must have at least one department' : undefined}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '5px',
+                          padding: '6px 10px',
+                          border: '1px solid #E5E7EB',
+                          borderRadius: '7px',
+                          background: 'none',
+                          cursor: departments.length === 1 ? 'not-allowed' : 'pointer',
+                          fontSize: '0.8125rem',
                           color: '#EF4444',
                           fontWeight: 500,
+                          opacity: departments.length === 1 ? 0.4 : 1,
                         }}
                       >
                         <Trash2 size={12} strokeWidth={2} />
                         Delete
                       </button>
+                      </>
+                      )}
                     </div>
                   </div>
                 ))}
               </div>
             )}
           </div>
+          )}
         </div>
       </main>
 
@@ -988,6 +1165,55 @@ export default function OwnerDashboard() {
               <button style={dangerBtn(deptLoading)} onClick={handleDeleteDept} disabled={deptLoading}>
                 {deptLoading && <Spinner size={14} />}
                 Delete
+              </button>
+            </div>
+          </ModalBox>
+        </ModalOverlay>
+      )}
+
+      {/* ── Edit Department Manager ───────────────────────────────────────── */}
+      {editManagerModal && (
+        <ModalOverlay onClose={() => { setEditManagerModal(null); setEditManagerSelectedId(''); setEditManagerError('') }}>
+          <ModalBox>
+            <ModalHeader
+              title="Edit Department Manager"
+              onClose={() => { setEditManagerModal(null); setEditManagerSelectedId(''); setEditManagerError('') }}
+            />
+            <p style={{ fontSize: '0.875rem', color: '#6B7280', margin: '0 0 16px', lineHeight: 1.55 }}>
+              Assign a manager to <strong>{editManagerModal.name}</strong>.
+            </p>
+            {allCompanyManagers.length === 0 ? (
+              <p style={{ fontSize: '0.875rem', color: '#9CA3AF', textAlign: 'center', margin: '8px 0 16px' }}>
+                No managers in this company yet.
+              </p>
+            ) : (
+              <>
+                <label style={modalLabelStyle}>Manager</label>
+                <div style={{ position: 'relative' }}>
+                  <select
+                    value={editManagerSelectedId}
+                    onChange={(e) => setEditManagerSelectedId(e.target.value)}
+                    style={{ ...modalInputStyle, paddingRight: '36px', appearance: 'none', cursor: 'pointer' }}
+                  >
+                    <option value="">Select a manager</option>
+                    {allCompanyManagers.map((m) => (
+                      <option key={m.id} value={m.id}>{m.full_name}</option>
+                    ))}
+                  </select>
+                  <ChevronDown size={15} style={{ position: 'absolute', right: '11px', top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
+                </div>
+              </>
+            )}
+            <InlineError message={editManagerError} />
+            <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+              <button style={ghostBtn} onClick={() => { setEditManagerModal(null); setEditManagerSelectedId(''); setEditManagerError('') }}>Cancel</button>
+              <button
+                style={primaryBtn(editManagerLoading)}
+                onClick={handleEditDeptManager}
+                disabled={editManagerLoading || !editManagerSelectedId}
+              >
+                {editManagerLoading && <Spinner size={14} />}
+                Save
               </button>
             </div>
           </ModalBox>

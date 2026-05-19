@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { createClient } from '@/lib/supabase';
 import { Building2, UserPlus, Eye, EyeOff, ChevronLeft, Check } from 'lucide-react';
 import {
   step1,
@@ -242,9 +243,11 @@ function InlineError({ message }: { message: string }) {
 
 // ─── Account form fields (shared between owner and invited) ───────────────────
 
-function AccountFields({ form, setForm }: {
+function AccountFields({ form, setForm, phoneError, clearPhoneError }: {
   form: { fullName: string; email: string; password: string; phone: string };
   setForm: (f: typeof form) => void;
+  phoneError?: string;
+  clearPhoneError?: () => void;
 }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -263,9 +266,19 @@ function AccountFields({ form, setForm }: {
         <PasswordInput value={form.password} onChange={(v) => setForm({ ...form, password: v })} placeholder="Create a password" />
       </div>
       <div>
-        <label style={labelStyle}>Phone Number</label>
+        <label style={labelStyle}>
+          Phone Number <span style={{ color: '#DC2626' }}>*</span>
+        </label>
         <input type="tel" placeholder="+65 9123 4567" value={form.phone}
-          onChange={(e) => setForm({ ...form, phone: e.target.value.replace(/[^0-9+]/g, '') })} style={inputStyle} />
+          onChange={(e) => {
+            setForm({ ...form, phone: e.target.value.replace(/[^0-9+]/g, '') });
+            clearPhoneError?.();
+          }} style={inputStyle} />
+        {phoneError && (
+          <p style={{ fontFamily: fB, fontSize: '0.875rem', color: '#DC2626', marginTop: '6px' }}>
+            {phoneError}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -303,11 +316,16 @@ export default function GetStartedPage() {
   const [showProMsg, setShowProMsg] = useState(false);
   const [error, setError] = useState('');
   const [companyNameError, setCompanyNameError] = useState('');
+  const [ownerPhoneError, setOwnerPhoneError] = useState('');
+  const [invitedPhoneError, setInvitedPhoneError] = useState('');
 
   // Owner form state
   const [ownerAccount, setOwnerAccount] = useState({ fullName: '', email: '', password: '', phone: '' });
   const [companyName, setCompanyName] = useState('');
   const [companyDesc, setCompanyDesc] = useState('');
+  const [companyLocation, setCompanyLocation] = useState('');
+  const [companyIndustry, setCompanyIndustry] = useState('');
+  const [companySize, setCompanySize] = useState('');
   const [departments, setDepartments] = useState<string[]>(['']);
 
   // Invited form state
@@ -329,6 +347,23 @@ export default function GetStartedPage() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (path !== 'invitation') return
+    let cancelled = false
+    const clearPrevSession = async () => {
+      const supabase = createClient()
+      await supabase.auth.signOut()
+      if (cancelled) return
+      localStorage.removeItem('tasking_user_id')
+      localStorage.removeItem('tasking_company_id')
+      localStorage.removeItem('tasking_active_session')
+      localStorage.removeItem('tasking_user_role')
+      sessionStorage.removeItem('tasking_session_active')
+    }
+    void clearPrevSession()
+    return () => { cancelled = true }
+  }, [path])
 
   // ── Transitions ───────────────────────────────────────────────────────────
 
@@ -360,11 +395,13 @@ export default function GetStartedPage() {
 
   const handleOwnerRegister = async () => {
     setError('');
+    setOwnerPhoneError('');
     if (!ownerAccount.fullName.trim()) { setError('Please enter your full name.'); return; }
     if (!ownerAccount.email.trim()) { setError('Please enter your email.'); return; }
     if (!ownerAccount.password) { setError('Please create a password.'); return; }
-    if (ownerAccount.phone && ownerAccount.phone.replace('+', '').length < 8) {
-      setError('Please enter a valid phone number.');
+    if (!ownerAccount.phone.trim()) { setOwnerPhoneError('Phone number is required.'); return; }
+    if (ownerAccount.phone.replace('+', '').length < 8) {
+      setOwnerPhoneError('Please enter a valid phone number.');
       return;
     }
     setIsLoading(true);
@@ -412,9 +449,16 @@ export default function GetStartedPage() {
       setCompanyNameError('Company name is required.');
       return;
     }
+    if (!companyLocation.trim()) { setError('Location is required.'); return; }
+    if (!companyIndustry) { setError('Please select an industry.'); return; }
+    if (!companySize) { setError('Please select a company size.'); return; }
     setCompanyNameError('');
+    setError('');
     sessionStorage.setItem('company_name', companyName);
     sessionStorage.setItem('company_description', companyDesc);
+    sessionStorage.setItem('company_location', companyLocation);
+    sessionStorage.setItem('company_industry', companyIndustry);
+    sessionStorage.setItem('company_size', companySize);
     goNext();
   };
 
@@ -427,16 +471,24 @@ export default function GetStartedPage() {
     setIsLoading(true);
     setError('');
     try {
+      const ownerEmail = sessionStorage.getItem('owner_email') || '';
+      const ownerPassword = sessionStorage.getItem('owner_password') || '';
+
       const res = await fetch('/api/auth/complete-owner-setup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           full_name: sessionStorage.getItem('owner_full_name'),
-          email: sessionStorage.getItem('owner_email'),
-          password: sessionStorage.getItem('owner_password'),
+          email: ownerEmail,
+          password: ownerPassword,
           phone: sessionStorage.getItem('owner_phone'),
           company_name: sessionStorage.getItem('company_name'),
           company_description: sessionStorage.getItem('company_description'),
+          company_location: sessionStorage.getItem('company_location'),
+          company_industry: sessionStorage.getItem('company_industry'),
+          company_size: sessionStorage.getItem('company_size'),
+          company_website: null,
+          company_logo_url: null,
           departments: JSON.parse(sessionStorage.getItem('departments') || '[]'),
           plan,
         }),
@@ -444,17 +496,31 @@ export default function GetStartedPage() {
       const data = await res.json();
       if (!data.success) throw new Error(data.message);
 
-      localStorage.setItem('tasking_user_id', data.user_id);
-      localStorage.setItem('tasking_company_id', data.company_id);
+      // Establish browser session
+      const supabase = createClient();
+      const { data: signInData } = await supabase.auth.signInWithPassword({
+        email: ownerEmail,
+        password: ownerPassword,
+      });
+
+      const authUserId = signInData?.user?.id || '';
+      if (!authUserId) throw new Error('Sign in failed');
+
+      localStorage.setItem(`tasking_company_id_${authUserId}`, data.company_id);
+      localStorage.setItem('tasking_user_role', 'Owner');
+      localStorage.setItem('tasking_user_id', authUserId);
+      sessionStorage.setItem('tasking_session_active', 'true');
+      localStorage.setItem('tasking_active_session', 'true');
 
       ['owner_full_name', 'owner_email', 'owner_password', 'owner_phone',
-        'company_name', 'company_description', 'departments'].forEach((k) =>
+        'company_name', 'company_description', 'company_location', 'company_industry',
+        'company_size', 'departments'].forEach((k) =>
         sessionStorage.removeItem(k));
 
       if (plan === 'Paid') {
         setShowProMsg(true);
       } else {
-        router.push('/owner/dashboard');
+        router.replace('/owner/dashboard');
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Setup failed');
@@ -466,64 +532,72 @@ export default function GetStartedPage() {
   const handleFreePlan = () => handleCompletSetup('Free');
   const handleProPlan = () => handleCompletSetup('Paid');
 
-  const handleInvitedRegister = async () => {
-    setIsLoading(true);
+  const handleInvitedRegister = () => {
     setError('');
-    try {
-      const res = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          full_name: invitedAccount.fullName,
-          email_address: invitedAccount.email,
-          password: invitedAccount.password,
-          phone_number: invitedAccount.phone || null,
-          is_invitation_path: true,
-        }),
-      });
-      const data = await res.json();
-      if (!data.success) {
-        setError(data.message || 'Something went wrong. Please try again.');
-        return;
-      }
-      sessionStorage.setItem('pending_user_id', data.user_id);
-      sessionStorage.setItem('pending_full_name', invitedAccount.fullName);
-      sessionStorage.setItem('pending_email', invitedAccount.email);
-      sessionStorage.setItem('pending_phone', invitedAccount.phone || '');
-      goNext();
-    } catch {
-      setError('Something went wrong. Please try again.');
-    } finally {
-      setIsLoading(false);
+    setInvitedPhoneError('');
+    if (!invitedAccount.fullName.trim()) { setError('Please enter your full name.'); return; }
+    if (!invitedAccount.email.trim()) { setError('Please enter your email.'); return; }
+    if (!invitedAccount.password) { setError('Please create a password.'); return; }
+    if (!invitedAccount.phone.trim()) { setInvitedPhoneError('Phone number is required.'); return; }
+    if (invitedAccount.phone.replace('+', '').length < 8) {
+      setInvitedPhoneError('Please enter a valid phone number.');
+      return;
     }
+    goNext();
   };
 
   const handleRedeemCode = async () => {
     setIsLoading(true);
     setError('');
     try {
-      const user_id = sessionStorage.getItem('pending_user_id') || '';
       const code = inviteCode || sessionStorage.getItem('invite_code') || '';
+      if (!code.trim()) { setError('Please enter your invitation code.'); setIsLoading(false); return; }
+
       const redeemRes = await fetch('/api/invitation/redeem', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           code: code.trim().toUpperCase(),
-          user_id,
-          full_name: sessionStorage.getItem('pending_full_name') || '',
-          email_address: sessionStorage.getItem('pending_email') || '',
-          phone_number: sessionStorage.getItem('pending_phone') || null,
+          full_name: invitedAccount.fullName,
+          email: invitedAccount.email,
+          password: invitedAccount.password,
+          phone_number: invitedAccount.phone || null,
         }),
       });
       const redeemData = await redeemRes.json();
       if (!redeemData.success) throw new Error(redeemData.message);
 
+      const supabase = createClient();
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+        email: invitedAccount.email,
+        password: invitedAccount.password,
+      });
+      if (signInError) throw new Error(signInError.message);
+
+      const authUser = signInData.user;
+      if (!authUser?.id) throw new Error('Sign in failed');
+
+      localStorage.setItem(`tasking_company_id_${authUser.id}`, redeemData.company_id);
+
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('Session not established');
+
+      localStorage.setItem('tasking_user_role', redeemData.user.role);
+      localStorage.setItem('tasking_user_id', authUser.id);
+
+      sessionStorage.setItem('tasking_session_active', 'true');
+      localStorage.setItem('tasking_active_session', 'true');
+
+      sessionStorage.removeItem('invite_code');
+
       const roleRoutes: Record<string, string> = {
         'Owner': '/owner/dashboard',
         'Manager': '/manager/dashboard',
         'Employee': '/employee/dashboard',
+        'Casual Worker': '/casual/dashboard',
       };
-      router.push(roleRoutes[redeemData.role] || '/owner/dashboard');
+      setIsLoading(false);
+      router.replace(roleRoutes[redeemData.user.role] || '/owner/dashboard');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Invalid or expired invitation code');
       setIsLoading(false);
@@ -627,7 +701,7 @@ export default function GetStartedPage() {
             <ProgressBar current={1} total={4} />
             <BackButton onClick={goBack} />
             <StepHeading headline={ownerStep2.headline} subheadline={ownerStep2.subheadline} />
-            <AccountFields form={ownerAccount} setForm={setOwnerAccount} />
+            <AccountFields form={ownerAccount} setForm={setOwnerAccount} phoneError={ownerPhoneError} clearPhoneError={() => setOwnerPhoneError('')} />
             <div style={{ marginTop: '28px' }}>
               <InlineError message={error} />
               <PrimaryButton loading={isLoading} onClick={handleOwnerRegister}>
@@ -666,6 +740,44 @@ export default function GetStartedPage() {
                   rows={4}
                   style={{ ...inputStyle, resize: 'vertical', minHeight: '110px', lineHeight: 1.65 }}
                 />
+              </div>
+              <div>
+                <label style={labelStyle}>Location <span style={{ color: '#DC2626' }}>*</span></label>
+                <input
+                  type="text"
+                  placeholder="e.g. Singapore, Orchard Road"
+                  value={companyLocation}
+                  onChange={(e) => setCompanyLocation(e.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Industry <span style={{ color: '#DC2626' }}>*</span></label>
+                <select
+                  value={companyIndustry}
+                  onChange={(e) => setCompanyIndustry(e.target.value)}
+                  style={{ ...inputStyle, appearance: 'auto' }}
+                >
+                  <option value="">Select industry…</option>
+                  <option value="Retail">Retail</option>
+                  <option value="F&B">F&amp;B</option>
+                  <option value="Logistics">Logistics</option>
+                  <option value="Event Management">Event Management</option>
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Company Size <span style={{ color: '#DC2626' }}>*</span></label>
+                <select
+                  value={companySize}
+                  onChange={(e) => setCompanySize(e.target.value)}
+                  style={{ ...inputStyle, appearance: 'auto' }}
+                >
+                  <option value="">Select size…</option>
+                  <option value="1-10">1–10</option>
+                  <option value="11-50">11–50</option>
+                  <option value="51-200">51–200</option>
+                  <option value="200+">200+</option>
+                </select>
               </div>
             </div>
             <div style={{ marginTop: '28px' }}>
@@ -947,7 +1059,7 @@ export default function GetStartedPage() {
             <ProgressBar current={1} total={2} />
             <BackButton onClick={goBack} />
             <StepHeading headline={invitedStep2.headline} subheadline={invitedStep2.subheadline} />
-            <AccountFields form={invitedAccount} setForm={setInvitedAccount} />
+            <AccountFields form={invitedAccount} setForm={setInvitedAccount} phoneError={invitedPhoneError} clearPhoneError={() => setInvitedPhoneError('')} />
             <div style={{ marginTop: '28px' }}>
               <InlineError message={error} />
               <PrimaryButton loading={isLoading} onClick={handleInvitedRegister}>

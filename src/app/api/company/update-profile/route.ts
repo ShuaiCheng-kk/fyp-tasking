@@ -10,7 +10,7 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { company_id, name, description } = body as Record<string, unknown>
+  const { company_id, name, description, location, industry, size, logo_url, website } = body as Record<string, unknown>
 
   if (!company_id || typeof company_id !== 'string') {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
@@ -23,6 +23,11 @@ export async function PATCH(req: NextRequest) {
     const company = await companyService.updateCompany(company_id, {
       name: name.trim(),
       description: typeof description === 'string' ? description.trim() || null : null,
+      location: typeof location === 'string' ? location.trim() || null : null,
+      industry: typeof industry === 'string' ? industry.trim() || null : null,
+      size: typeof size === 'string' ? size.trim() || null : null,
+      logo_url: typeof logo_url === 'string' ? logo_url.trim() || null : null,
+      website: typeof website === 'string' ? website.trim() || null : null,
     })
     return NextResponse.json({ success: true, company })
   } catch (err) {

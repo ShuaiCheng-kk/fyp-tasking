@@ -2,8 +2,14 @@
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { createClient } from '@/lib/supabase';
+import { usePathname, useRouter } from 'next/navigation';
+import type { Session } from '@supabase/supabase-js';
+import { createBrowserClient } from '@supabase/ssr';
+
+const supabase = createBrowserClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
 // ─── Logo ────────────────────────────────────────────────────────────────────
 
@@ -189,13 +195,25 @@ const MobileNavLink = ({ label, href, onClick }: { label: string; href: string; 
   </Link>
 );
 
+const DASHBOARD_ROUTE_BY_ROLE: Record<string, string> = {
+  'Owner': '/owner/dashboard',
+  'Manager': '/owner/dashboard',
+  'Employee': '/owner/dashboard',
+  'Casual Worker': '/owner/dashboard',
+  'Guest User': '/job-board',
+};
+
 // ─── Navbar ──────────────────────────────────────────────────────────────────
 
 export default function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [session, setSession] = useState<Session | null>(null);
+  // true = "don't know yet, show nothing". Only ever set to false inside
+  // a useEffect, which never runs during SSR or the hydration pass.
+  const [authLoading, setAuthLoading] = useState(true);
   const pathname = usePathname();
+  const router = useRouter();
 
   useEffect(() => {
     const handler = () => setScrolled(window.scrollY > 50);
@@ -208,20 +226,28 @@ export default function Navbar() {
   }, [pathname]);
 
   useEffect(() => {
-    const supabase = createClient()
-
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setIsLoggedIn(!!session)
+      setSession(session)
+      setAuthLoading(false)
     })
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        setIsLoggedIn(!!session)
-      }
-    )
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session)
+      setAuthLoading(false)
+    })
 
     return () => subscription.unsubscribe()
   }, []);
+
+  const handleDashboardClick = () => {
+    if (session) {
+      const role = typeof window !== 'undefined' ? localStorage.getItem('tasking_user_role') : null;
+      const dest = (role && DASHBOARD_ROUTE_BY_ROLE[role]) || '/owner/dashboard';
+      router.push(dest);
+    } else {
+      router.push('/signin');
+    }
+  };
 
   const isActive = (href: string) =>
     href === '/' ? pathname === '/' : pathname.startsWith(href);
@@ -305,11 +331,11 @@ export default function Navbar() {
 
         {/* Right CTAs — hidden on mobile */}
         <div className="nav-cta" style={{ display: 'flex', alignItems: 'center', gap: '10px', justifyContent: 'flex-end' }}>
-          {isLoggedIn ? (
+          {authLoading ? null : session ? (
             <>
-              <Link
-                href="/owner/dashboard"
+              <button
                 className="btn-press"
+                onClick={handleDashboardClick}
                 style={{
                   padding: '8px 18px',
                   color: '#FFFBF5',
@@ -318,18 +344,17 @@ export default function Navbar() {
                   fontWeight: 500,
                   border: '1px solid rgba(255,251,245,0.25)',
                   borderRadius: '8px',
+                  background: 'none',
+                  cursor: 'pointer',
                 }}
               >
                 Dashboard
-              </Link>
+              </button>
               <button
                 className="btn-press"
                 onClick={async () => {
-                  const supabase = createClient()
                   await supabase.auth.signOut()
-                  localStorage.removeItem('tasking_user_id');
-                  localStorage.removeItem('tasking_company_id');
-                  localStorage.removeItem('tasking_active_session');
+                  localStorage.removeItem('tasking_user_id')
                   window.location.href = '/signout';
                 }}
                 style={{
@@ -423,11 +448,10 @@ export default function Navbar() {
         <MobileNavLink label="About" href="/about" onClick={close} />
         <MobileNavLink label="Job Board" href="/job-board" onClick={close} />
         <div style={{ padding: '16px 20px', display: 'flex', gap: '10px' }}>
-          {isLoggedIn ? (
+          {authLoading ? null : session ? (
             <>
-              <Link
-                href="/owner/dashboard"
-                onClick={close}
+              <button
+                onClick={() => { close(); handleDashboardClick(); }}
                 style={{
                   flex: 1,
                   textAlign: 'center',
@@ -438,17 +462,16 @@ export default function Navbar() {
                   fontSize: '0.9375rem',
                   border: '1px solid #F0E8D8',
                   borderRadius: '8px',
+                  background: 'none',
+                  cursor: 'pointer',
                 }}
               >
                 Dashboard
-              </Link>
+              </button>
               <button
                 onClick={async () => {
-                  const supabase = createClient()
                   await supabase.auth.signOut()
-                  localStorage.removeItem('tasking_user_id');
-                  localStorage.removeItem('tasking_company_id');
-                  localStorage.removeItem('tasking_active_session');
+                  localStorage.removeItem('tasking_user_id')
                   window.location.href = '/signout';
                 }}
                 style={{

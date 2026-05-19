@@ -8,12 +8,17 @@ import { authService } from '@/services/authService'
 
 export async function POST(req: NextRequest) {
   const body = await req.json()
-  const { full_name, email, password, phone, company_name, company_description, departments, plan } = body
+  const { full_name, email, password, phone, company_name, company_description,
+    company_location, company_industry, company_size, company_website, company_logo_url,
+    departments, plan } = body
 
   console.log('complete-owner-setup called with:', email)
 
   if (!full_name || !email || !password || !company_name) {
     return NextResponse.json({ success: false, message: 'Missing required fields' }, { status: 400 })
+  }
+  if (!phone || !String(phone).trim()) {
+    return NextResponse.json({ success: false, message: 'phone_number is required' }, { status: 400 })
   }
 
   const adminClient = createClient(
@@ -87,6 +92,11 @@ export async function POST(req: NextRequest) {
       phone: phone || '',
       company_name,
       company_description: company_description || '',
+      company_location: company_location || null,
+      company_industry: company_industry || null,
+      company_size: company_size || null,
+      company_website: company_website || null,
+      company_logo_url: company_logo_url || null,
       departments: Array.isArray(departments) ? departments : [],
       plan: plan || 'Free',
     })
