@@ -19,4 +19,12 @@ export const userService = {
     return members.sort((a, b) => (ROLE_ORDER[a.role] ?? 99) - (ROLE_ORDER[b.role] ?? 99))
   },
 
+  async updateUserDepartment(user_id: string, department_id: string | null): Promise<void> {
+    await userRepository.updateDepartmentId(user_id, department_id)
+  },
+
+  async countMembersForOwner(internal_owner_id: string): Promise<number> {
+    return userRepository.countMembersAcrossOwnedCompanies(internal_owner_id)
+  },
+
 }

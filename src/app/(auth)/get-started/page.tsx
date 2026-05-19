@@ -243,9 +243,11 @@ function InlineError({ message }: { message: string }) {
 
 // ─── Account form fields (shared between owner and invited) ───────────────────
 
-function AccountFields({ form, setForm }: {
+function AccountFields({ form, setForm, phoneError, clearPhoneError }: {
   form: { fullName: string; email: string; password: string; phone: string };
   setForm: (f: typeof form) => void;
+  phoneError?: string;
+  clearPhoneError?: () => void;
 }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -264,9 +266,19 @@ function AccountFields({ form, setForm }: {
         <PasswordInput value={form.password} onChange={(v) => setForm({ ...form, password: v })} placeholder="Create a password" />
       </div>
       <div>
-        <label style={labelStyle}>Phone Number</label>
+        <label style={labelStyle}>
+          Phone Number <span style={{ color: '#DC2626' }}>*</span>
+        </label>
         <input type="tel" placeholder="+65 9123 4567" value={form.phone}
-          onChange={(e) => setForm({ ...form, phone: e.target.value.replace(/[^0-9+]/g, '') })} style={inputStyle} />
+          onChange={(e) => {
+            setForm({ ...form, phone: e.target.value.replace(/[^0-9+]/g, '') });
+            clearPhoneError?.();
+          }} style={inputStyle} />
+        {phoneError && (
+          <p style={{ fontFamily: fB, fontSize: '0.875rem', color: '#DC2626', marginTop: '6px' }}>
+            {phoneError}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -304,11 +316,16 @@ export default function GetStartedPage() {
   const [showProMsg, setShowProMsg] = useState(false);
   const [error, setError] = useState('');
   const [companyNameError, setCompanyNameError] = useState('');
+  const [ownerPhoneError, setOwnerPhoneError] = useState('');
+  const [invitedPhoneError, setInvitedPhoneError] = useState('');
 
   // Owner form state
   const [ownerAccount, setOwnerAccount] = useState({ fullName: '', email: '', password: '', phone: '' });
   const [companyName, setCompanyName] = useState('');
   const [companyDesc, setCompanyDesc] = useState('');
+  const [companyLocation, setCompanyLocation] = useState('');
+  const [companyIndustry, setCompanyIndustry] = useState('');
+  const [companySize, setCompanySize] = useState('');
   const [departments, setDepartments] = useState<string[]>(['']);
 
   // Invited form state
@@ -378,11 +395,13 @@ export default function GetStartedPage() {
 
   const handleOwnerRegister = async () => {
     setError('');
+    setOwnerPhoneError('');
     if (!ownerAccount.fullName.trim()) { setError('Please enter your full name.'); return; }
     if (!ownerAccount.email.trim()) { setError('Please enter your email.'); return; }
     if (!ownerAccount.password) { setError('Please create a password.'); return; }
-    if (ownerAccount.phone && ownerAccount.phone.replace('+', '').length < 8) {
-      setError('Please enter a valid phone number.');
+    if (!ownerAccount.phone.trim()) { setOwnerPhoneError('Phone number is required.'); return; }
+    if (ownerAccount.phone.replace('+', '').length < 8) {
+      setOwnerPhoneError('Please enter a valid phone number.');
       return;
     }
     setIsLoading(true);
@@ -430,9 +449,16 @@ export default function GetStartedPage() {
       setCompanyNameError('Company name is required.');
       return;
     }
+    if (!companyLocation.trim()) { setError('Location is required.'); return; }
+    if (!companyIndustry) { setError('Please select an industry.'); return; }
+    if (!companySize) { setError('Please select a company size.'); return; }
     setCompanyNameError('');
+    setError('');
     sessionStorage.setItem('company_name', companyName);
     sessionStorage.setItem('company_description', companyDesc);
+    sessionStorage.setItem('company_location', companyLocation);
+    sessionStorage.setItem('company_industry', companyIndustry);
+    sessionStorage.setItem('company_size', companySize);
     goNext();
   };
 
@@ -458,6 +484,11 @@ export default function GetStartedPage() {
           phone: sessionStorage.getItem('owner_phone'),
           company_name: sessionStorage.getItem('company_name'),
           company_description: sessionStorage.getItem('company_description'),
+          company_location: sessionStorage.getItem('company_location'),
+          company_industry: sessionStorage.getItem('company_industry'),
+          company_size: sessionStorage.getItem('company_size'),
+          company_website: null,
+          company_logo_url: null,
           departments: JSON.parse(sessionStorage.getItem('departments') || '[]'),
           plan,
         }),
@@ -482,7 +513,8 @@ export default function GetStartedPage() {
       localStorage.setItem('tasking_active_session', 'true');
 
       ['owner_full_name', 'owner_email', 'owner_password', 'owner_phone',
-        'company_name', 'company_description', 'departments'].forEach((k) =>
+        'company_name', 'company_description', 'company_location', 'company_industry',
+        'company_size', 'departments'].forEach((k) =>
         sessionStorage.removeItem(k));
 
       if (plan === 'Paid') {
@@ -502,11 +534,13 @@ export default function GetStartedPage() {
 
   const handleInvitedRegister = () => {
     setError('');
+    setInvitedPhoneError('');
     if (!invitedAccount.fullName.trim()) { setError('Please enter your full name.'); return; }
     if (!invitedAccount.email.trim()) { setError('Please enter your email.'); return; }
     if (!invitedAccount.password) { setError('Please create a password.'); return; }
-    if (invitedAccount.phone && invitedAccount.phone.replace('+', '').length < 8) {
-      setError('Please enter a valid phone number.');
+    if (!invitedAccount.phone.trim()) { setInvitedPhoneError('Phone number is required.'); return; }
+    if (invitedAccount.phone.replace('+', '').length < 8) {
+      setInvitedPhoneError('Please enter a valid phone number.');
       return;
     }
     goNext();
@@ -558,9 +592,9 @@ export default function GetStartedPage() {
 
       const roleRoutes: Record<string, string> = {
         'Owner': '/owner/dashboard',
-        'Manager': '/owner/dashboard',
-        'Employee': '/owner/dashboard',
-        'Casual Worker': '/owner/dashboard',
+        'Manager': '/manager/dashboard',
+        'Employee': '/employee/dashboard',
+        'Casual Worker': '/casual/dashboard',
       };
       setIsLoading(false);
       router.replace(roleRoutes[redeemData.user.role] || '/owner/dashboard');
@@ -667,7 +701,7 @@ export default function GetStartedPage() {
             <ProgressBar current={1} total={4} />
             <BackButton onClick={goBack} />
             <StepHeading headline={ownerStep2.headline} subheadline={ownerStep2.subheadline} />
-            <AccountFields form={ownerAccount} setForm={setOwnerAccount} />
+            <AccountFields form={ownerAccount} setForm={setOwnerAccount} phoneError={ownerPhoneError} clearPhoneError={() => setOwnerPhoneError('')} />
             <div style={{ marginTop: '28px' }}>
               <InlineError message={error} />
               <PrimaryButton loading={isLoading} onClick={handleOwnerRegister}>
@@ -706,6 +740,44 @@ export default function GetStartedPage() {
                   rows={4}
                   style={{ ...inputStyle, resize: 'vertical', minHeight: '110px', lineHeight: 1.65 }}
                 />
+              </div>
+              <div>
+                <label style={labelStyle}>Location <span style={{ color: '#DC2626' }}>*</span></label>
+                <input
+                  type="text"
+                  placeholder="e.g. Singapore, Orchard Road"
+                  value={companyLocation}
+                  onChange={(e) => setCompanyLocation(e.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Industry <span style={{ color: '#DC2626' }}>*</span></label>
+                <select
+                  value={companyIndustry}
+                  onChange={(e) => setCompanyIndustry(e.target.value)}
+                  style={{ ...inputStyle, appearance: 'auto' }}
+                >
+                  <option value="">Select industry…</option>
+                  <option value="Retail">Retail</option>
+                  <option value="F&B">F&amp;B</option>
+                  <option value="Logistics">Logistics</option>
+                  <option value="Event Management">Event Management</option>
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Company Size <span style={{ color: '#DC2626' }}>*</span></label>
+                <select
+                  value={companySize}
+                  onChange={(e) => setCompanySize(e.target.value)}
+                  style={{ ...inputStyle, appearance: 'auto' }}
+                >
+                  <option value="">Select size…</option>
+                  <option value="1-10">1–10</option>
+                  <option value="11-50">11–50</option>
+                  <option value="51-200">51–200</option>
+                  <option value="200+">200+</option>
+                </select>
               </div>
             </div>
             <div style={{ marginTop: '28px' }}>
@@ -987,7 +1059,7 @@ export default function GetStartedPage() {
             <ProgressBar current={1} total={2} />
             <BackButton onClick={goBack} />
             <StepHeading headline={invitedStep2.headline} subheadline={invitedStep2.subheadline} />
-            <AccountFields form={invitedAccount} setForm={setInvitedAccount} />
+            <AccountFields form={invitedAccount} setForm={setInvitedAccount} phoneError={invitedPhoneError} clearPhoneError={() => setInvitedPhoneError('')} />
             <div style={{ marginTop: '28px' }}>
               <InlineError message={error} />
               <PrimaryButton loading={isLoading} onClick={handleInvitedRegister}>

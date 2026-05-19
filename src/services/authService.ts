@@ -105,6 +105,12 @@ export const authService = {
     return user
   },
 
+  async getUserProfile(authId: string): Promise<User> {
+    const user = await userRepository.findByAuthId(authId)
+    if (!user) throw new Error('User profile not found')
+    return user
+  },
+
   async signOut(): Promise<void> {
     const { error } = await supabase.auth.signOut()
     if (error) throw new Error(error.message)
@@ -130,6 +136,11 @@ export const authService = {
     phone: string
     company_name: string
     company_description: string
+    company_location: string | null
+    company_industry: string | null
+    company_size: string | null
+    company_website: string | null
+    company_logo_url: string | null
     departments: string[]
     plan: string
   }): Promise<{ user_id: string; company_id: string }> {
@@ -164,6 +175,11 @@ export const authService = {
         description: data.company_description || null,
         owner_id: user.id,
         plan: data.plan === 'Paid' ? 'Paid' : 'Free',
+        location: data.company_location,
+        industry: data.company_industry,
+        size: data.company_size,
+        logo_url: data.company_logo_url,
+        website: data.company_website,
       })
 
       console.log('Step 4: Updating company_id...')

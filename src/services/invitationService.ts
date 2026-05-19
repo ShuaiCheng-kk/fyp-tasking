@@ -69,6 +69,11 @@ export const invitationService = {
       throw new Error('You cannot send an invitation to yourself.')
     }
 
+    const existingInvitation = await invitationRepository.findActiveInvitation(data.company_id, data.role)
+    if (existingInvitation) {
+      throw new Error('An active invitation already exists for this email. Please wait for them to accept or the invitation to expire.')
+    }
+
     const expired_at = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
     const invitation = await invitationRepository.createCode({
       code: generateRandomCode(data.role),

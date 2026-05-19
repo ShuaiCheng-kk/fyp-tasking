@@ -3,8 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { Plus, Search, Pencil, Trash2, X, ChevronDown, Check, Copy } from 'lucide-react'
+import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
-import { createClient } from '@/lib/supabase'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -14,6 +14,8 @@ type Department = {
   company_id: string
   created_at: string
 }
+
+type ManagerInfo = { id: string; full_name: string; department_id: string | null }
 
 // ─── Spinner ──────────────────────────────────────────────────────────────────
 
@@ -226,9 +228,18 @@ export default function OwnerDashboard() {
   const [ownerName, setOwnerName] = useState('')
   const [companyName, setCompanyName] = useState('')
   const [dashboardRole, setDashboardRole] = useState<string>('')
+  const [userDeptId, setUserDeptId] = useState<string>('')
   const [initialReady, setInitialReady] = useState(false)
 
-  const canManageDepartments = dashboardRole === 'Owner'
+  // Manager data for department cards
+  const [deptManagerMap, setDeptManagerMap] = useState<Record<string, string>>({})
+  const [allCompanyManagers, setAllCompanyManagers] = useState<ManagerInfo[]>([])
+  const [editManagerModal, setEditManagerModal] = useState<Department | null>(null)
+  const [editManagerSelectedId, setEditManagerSelectedId] = useState('')
+  const [editManagerLoading, setEditManagerLoading] = useState(false)
+  const [editManagerError, setEditManagerError] = useState('')
+
+  const canManageDepartments = dashboardRole === 'Owner' || dashboardRole === 'Partner'
 
   // ── Close all modals ───────────────────────────────────────────────────────
 
@@ -236,6 +247,7 @@ export default function OwnerDashboard() {
     setAddModal(false)
     setEditModal(null)
     setDeleteModal(null)
+    setEditManagerModal(null)
   }, [])
 
   // ── Escape key ─────────────────────────────────────────────────────────────
@@ -263,15 +275,34 @@ export default function OwnerDashboard() {
   useEffect(() => {
     let cancelled = false
     const run = async () => {
-      const supabase = createClient()
-      const { data: { session } } = await supabase.auth.getSession()
-      const userIdResolved = session?.user?.id
+      let userIdResolved = localStorage.getItem('tasking_user_id')
+      if (!userIdResolved) {
+        const supabase = createBrowserClient(
+          process.env.NEXT_PUBLIC_SUPABASE_URL!,
+          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+        )
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.user?.id) {
+          userIdResolved = session.user.id
+          localStorage.setItem('tasking_user_id', userIdResolved)
+        }
+      }
       if (!userIdResolved) {
         router.replace('/signin')
         return
       }
       if (cancelled) return
       setUserId(userIdResolved)
+
+      fetch(`/api/user/me?user_id=${userIdResolved}`)
+        .then(r => r.json())
+        .then(d => {
+          if (!cancelled && d.success) {
+            if (d.user?.full_name) setOwnerName(d.user.full_name)
+            if (d.user?.department_id) setUserDeptId(d.user.department_id)
+          }
+        })
+        .catch(() => {})
 
       const storedCid =
         typeof localStorage !== 'undefined'
@@ -283,7 +314,6 @@ export default function OwnerDashboard() {
 
       const res = await fetch(`/api/company/current?${qs}`)
       if (!res.ok) {
-        if (res.status === 404) router.replace('/signin')
         if (!cancelled) setInitialReady(true)
         return
       }
@@ -323,6 +353,24 @@ export default function OwnerDashboard() {
 
   // ── Data fetchers ──────────────────────────────────────────────────────────
 
+  const fetchManagersForCompany = async (cid: string) => {
+    if (!cid) return
+    try {
+      const res = await fetch(`/api/company/managers?company_id=${cid}`)
+      const data = await res.json()
+      if (data.success) {
+        setAllCompanyManagers(data.managers)
+        const map: Record<string, string> = {}
+        for (const mgr of data.managers as ManagerInfo[]) {
+          if (mgr.department_id && !map[mgr.department_id]) {
+            map[mgr.department_id] = mgr.full_name
+          }
+        }
+        setDeptManagerMap(map)
+      }
+    } catch {}
+  }
+
   const fetchDeptsById = async (cid: string) => {
     if (!cid) return
     try {
@@ -330,6 +378,7 @@ export default function OwnerDashboard() {
       const data = await res.json()
       if (data.success) setDepartments(data.departments)
     } catch {}
+    await fetchManagersForCompany(cid)
   }
 
   const fetchDepts = async () => {
@@ -488,10 +537,39 @@ export default function OwnerDashboard() {
     }
   }
 
+  const handleEditDeptManager = async () => {
+    if (!editManagerModal || !editManagerSelectedId) return
+    setEditManagerLoading(true)
+    setEditManagerError('')
+    try {
+      const res = await fetch('/api/user/update-department', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: editManagerSelectedId, department_id: editManagerModal.id }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      setEditManagerModal(null)
+      setEditManagerSelectedId('')
+      await fetchManagersForCompany(companyId)
+    } catch (err) {
+      setEditManagerError(err instanceof Error ? err.message : 'Failed to update manager')
+    } finally {
+      setEditManagerLoading(false)
+    }
+  }
+
   // ── Derived ────────────────────────────────────────────────────────────────
 
+  const departmentName = userDeptId
+    ? departments.find(d => d.id === userDeptId)?.name ?? ''
+    : ''
+
   const startsWithDigit = (s: string) => /^\d/.test(s)
-  const filteredDepts = departments
+  const visibleDepts = dashboardRole === 'Manager' && userDeptId
+    ? departments.filter(d => d.id === userDeptId)
+    : departments
+  const filteredDepts = visibleDepts
     .filter((d) => d.name.toLowerCase().includes(deptSearch.toLowerCase()))
     .sort((a, b) => {
       const aNum = startsWithDigit(a.name)
@@ -571,7 +649,7 @@ export default function OwnerDashboard() {
           top: 0,
           zIndex: 10,
         }}>
-          {companies.length > 1 ? (
+          {dashboardRole !== 'Manager' && companies.length > 1 ? (
             <div ref={dropdownRef} style={{ position: 'relative', display: 'inline-block' }}>
               <button
                 onClick={() => setDropdownOpen((o) => !o)}
@@ -626,21 +704,28 @@ export default function OwnerDashboard() {
             </div>
           ) : (
             <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#111827', margin: 0 }}>
-              {companyName ? `${companyName} — Overview` : 'Overview'}
+              {dashboardRole === 'Manager' && departmentName
+                ? `${companyName} — ${departmentName}`
+                : companyName ? `${companyName} — Overview` : 'Overview'}
             </h1>
           )}
-          {ownerPlan && (
-            <span style={{
-              padding: '4px 10px',
-              borderRadius: '99px',
-              fontSize: '0.8rem',
-              fontWeight: 600,
-              background: ownerPlan === 'Pro' ? '#EDE9FE' : '#F3F4F6',
-              color: ownerPlan === 'Pro' ? '#7C3AED' : '#6B7280',
-            }}>
-              {ownerPlan} user
-            </span>
-          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            {ownerName && (
+              <span style={{ fontSize: '0.9rem', color: '#374151' }}>{ownerName}</span>
+            )}
+            {ownerPlan && (
+              <span style={{
+                padding: '4px 10px',
+                borderRadius: '99px',
+                fontSize: '0.8rem',
+                fontWeight: 600,
+                background: ownerPlan === 'Pro' ? '#EDE9FE' : '#F3F4F6',
+                color: ownerPlan === 'Pro' ? '#7C3AED' : '#6B7280',
+              }}>
+                {ownerPlan} user
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Content */}
@@ -661,6 +746,9 @@ export default function OwnerDashboard() {
           )}
 
           {/* ── Section: Departments ─────────────────────────────────────── */}
+          {dashboardRole === 'Manager' ? (
+            <p style={{ color: '#9CA3AF', fontSize: '0.9375rem' }}>Your team and schedule will appear here.</p>
+          ) : (
           <div>
             {/* Header row */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
@@ -701,7 +789,7 @@ export default function OwnerDashboard() {
                 style={{
                   width: '100%',
                   paddingLeft: '34px',
-                  paddingRight: '12px',
+                  paddingRight: deptSearch ? '30px' : '12px',
                   paddingTop: '8px',
                   paddingBottom: '8px',
                   border: '1.5px solid #E5E7EB',
@@ -713,6 +801,26 @@ export default function OwnerDashboard() {
                   boxSizing: 'border-box',
                 }}
               />
+              {deptSearch && (
+                <button
+                  onClick={() => setDeptSearch('')}
+                  style={{
+                    position: 'absolute',
+                    right: '8px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: '#9CA3AF',
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: 0,
+                  }}
+                >
+                  <X size={14} />
+                </button>
+              )}
             </div>
 
             {/* Cards */}
@@ -741,12 +849,14 @@ export default function OwnerDashboard() {
                   >
                     <div>
                       <p style={{ fontWeight: 700, fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{dept.name}</p>
-                      <p style={{ fontSize: '0.8125rem', color: '#9CA3AF', margin: '4px 0 0' }}>No managers yet</p>
+                      <p style={{ fontSize: '0.8125rem', color: deptManagerMap[dept.id] ? '#374151' : '#9CA3AF', margin: '4px 0 0' }}>
+                        {deptManagerMap[dept.id] ?? 'No managers yet'}
+                      </p>
                     </div>
                     <div style={{ display: 'flex', gap: '8px' }}>
                       {canManageDepartments && (
                       <>
-                      {/* Edit */}
+                      {/* Edit Department Name */}
                       <button
                         onClick={() => { setEditModal(dept); setDeptFormName(dept.name); setDeptError('') }}
                         style={{
@@ -770,9 +880,9 @@ export default function OwnerDashboard() {
                         Edit
                       </button>
 
-                      {/* Delete */}
+                      {/* Edit Manager */}
                       <button
-                        onClick={() => { setDeleteModal(dept); setDeptError('') }}
+                        onClick={() => { setEditManagerModal(dept); setEditManagerSelectedId(''); setEditManagerError('') }}
                         style={{
                           display: 'flex',
                           alignItems: 'center',
@@ -783,8 +893,35 @@ export default function OwnerDashboard() {
                           background: 'none',
                           cursor: 'pointer',
                           fontSize: '0.8125rem',
+                          color: '#6B7280',
+                          fontWeight: 500,
+                          transition: 'border-color 0.1s',
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#9CA3AF')}
+                        onMouseLeave={(e) => (e.currentTarget.style.borderColor = '#E5E7EB')}
+                      >
+                        <Pencil size={12} strokeWidth={2} />
+                        Manager
+                      </button>
+
+                      {/* Delete */}
+                      <button
+                        onClick={() => { if (departments.length > 1) { setDeleteModal(dept); setDeptError('') } }}
+                        disabled={departments.length === 1}
+                        title={departments.length === 1 ? 'A company must have at least one department' : undefined}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '5px',
+                          padding: '6px 10px',
+                          border: '1px solid #E5E7EB',
+                          borderRadius: '7px',
+                          background: 'none',
+                          cursor: departments.length === 1 ? 'not-allowed' : 'pointer',
+                          fontSize: '0.8125rem',
                           color: '#EF4444',
                           fontWeight: 500,
+                          opacity: departments.length === 1 ? 0.4 : 1,
                         }}
                       >
                         <Trash2 size={12} strokeWidth={2} />
@@ -798,6 +935,7 @@ export default function OwnerDashboard() {
               </div>
             )}
           </div>
+          )}
         </div>
       </main>
 
@@ -1027,6 +1165,55 @@ export default function OwnerDashboard() {
               <button style={dangerBtn(deptLoading)} onClick={handleDeleteDept} disabled={deptLoading}>
                 {deptLoading && <Spinner size={14} />}
                 Delete
+              </button>
+            </div>
+          </ModalBox>
+        </ModalOverlay>
+      )}
+
+      {/* ── Edit Department Manager ───────────────────────────────────────── */}
+      {editManagerModal && (
+        <ModalOverlay onClose={() => { setEditManagerModal(null); setEditManagerSelectedId(''); setEditManagerError('') }}>
+          <ModalBox>
+            <ModalHeader
+              title="Edit Department Manager"
+              onClose={() => { setEditManagerModal(null); setEditManagerSelectedId(''); setEditManagerError('') }}
+            />
+            <p style={{ fontSize: '0.875rem', color: '#6B7280', margin: '0 0 16px', lineHeight: 1.55 }}>
+              Assign a manager to <strong>{editManagerModal.name}</strong>.
+            </p>
+            {allCompanyManagers.length === 0 ? (
+              <p style={{ fontSize: '0.875rem', color: '#9CA3AF', textAlign: 'center', margin: '8px 0 16px' }}>
+                No managers in this company yet.
+              </p>
+            ) : (
+              <>
+                <label style={modalLabelStyle}>Manager</label>
+                <div style={{ position: 'relative' }}>
+                  <select
+                    value={editManagerSelectedId}
+                    onChange={(e) => setEditManagerSelectedId(e.target.value)}
+                    style={{ ...modalInputStyle, paddingRight: '36px', appearance: 'none', cursor: 'pointer' }}
+                  >
+                    <option value="">Select a manager</option>
+                    {allCompanyManagers.map((m) => (
+                      <option key={m.id} value={m.id}>{m.full_name}</option>
+                    ))}
+                  </select>
+                  <ChevronDown size={15} style={{ position: 'absolute', right: '11px', top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
+                </div>
+              </>
+            )}
+            <InlineError message={editManagerError} />
+            <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+              <button style={ghostBtn} onClick={() => { setEditManagerModal(null); setEditManagerSelectedId(''); setEditManagerError('') }}>Cancel</button>
+              <button
+                style={primaryBtn(editManagerLoading)}
+                onClick={handleEditDeptManager}
+                disabled={editManagerLoading || !editManagerSelectedId}
+              >
+                {editManagerLoading && <Spinner size={14} />}
+                Save
               </button>
             </div>
           </ModalBox>

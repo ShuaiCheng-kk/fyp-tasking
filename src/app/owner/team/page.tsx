@@ -3,8 +3,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Plus, X, ChevronDown } from 'lucide-react'
+import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
-import { createClient } from '@/lib/supabase'
 
 // ─── Spinner ──────────────────────────────────────────────────────────────────
 
@@ -102,12 +102,15 @@ type TeamMember = {
   role: string
   department_id: string | null
 }
+type ChangeDeptModal = { member: TeamMember } | null
+type ManageDeptModal = { member: TeamMember } | null
+type EditManagerModal = { member: TeamMember } | null
 
 const ROLE_LABEL: Record<string, string> = {
-  Owner: 'Owner / Partner',
-  Manager: 'Manager',
-  Employee: 'Employee',
-  'Casual Worker': 'Casual Worker',
+  Owner: 'OWNER',
+  Manager: 'MANAGER',
+  Employee: 'EMPLOYEE',
+  'Casual Worker': 'CASUAL WORKER',
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -115,7 +118,9 @@ const ROLE_LABEL: Record<string, string> = {
 export default function TeamPage() {
   const router = useRouter()
   const [userId, setUserId] = useState('')
+  const [internalUserId, setInternalUserId] = useState('')
   const [companyId, setCompanyId] = useState('')
+  const [companyOwnerId, setCompanyOwnerId] = useState('')
   const [ownerEmail, setOwnerEmail] = useState('')
   const [companyName, setCompanyName] = useState('')
 
@@ -145,6 +150,41 @@ export default function TeamPage() {
   const [inviteLoading, setInviteLoading] = useState(false)
   const [inviteError, setInviteError] = useState('')
   const [inviteSuccess, setInviteSuccess] = useState('')
+
+  // Current user's role (to gate Edit buttons)
+  const [currentUserRole, setCurrentUserRole] = useState('')
+  const [userDeptId, setUserDeptId] = useState('')
+
+  // Departments for the whole company (for display + change dept modal)
+  const [companyDepartments, setCompanyDepartments] = useState<Department[]>([])
+
+  // Change Department modal
+  const [changeDeptModal, setChangeDeptModal] = useState<ChangeDeptModal>(null)
+  const [changeDeptSelectedId, setChangeDeptSelectedId] = useState('')
+  const [changeDeptLoading, setChangeDeptLoading] = useState(false)
+  const [changeDeptError, setChangeDeptError] = useState('')
+
+  // Remove Member modal
+  const [removeModal, setRemoveModal] = useState<TeamMember | null>(null)
+  const [removeLoading, setRemoveLoading] = useState(false)
+  const [removeError, setRemoveError] = useState('')
+
+  // Manage Departments modal (legacy — kept for internal logic reuse)
+  const [manageDeptModal, setManageDeptModal] = useState<ManageDeptModal>(null)
+  const [manageDeptAssigned, setManageDeptAssigned] = useState<{ department_id: string; department_name: string }[]>([])
+  const [manageDeptChecked, setManageDeptChecked] = useState<Set<string>>(new Set())
+  const [manageDeptLoading, setManageDeptLoading] = useState(false)
+  const [manageDeptSaving, setManageDeptSaving] = useState(false)
+  const [manageDeptToast, setManageDeptToast] = useState('')
+
+  // Edit Manager modal (combined home dept + dept access)
+  const [editManagerModal, setEditManagerModal] = useState<EditManagerModal>(null)
+  const [editHomeDeptId, setEditHomeDeptId] = useState('')
+  const [editDeptChecked, setEditDeptChecked] = useState<Set<string>>(new Set())
+  const [editDeptAssigned, setEditDeptAssigned] = useState<{ department_id: string; department_name: string }[]>([])
+  const [editDeptLoading, setEditDeptLoading] = useState(false)
+  const [editManagerSaving, setEditManagerSaving] = useState(false)
+  const [editManagerError, setEditManagerError] = useState('')
 
   const resetModal = useCallback(() => {
     setInviteEmail('')
@@ -184,9 +224,18 @@ export default function TeamPage() {
   useEffect(() => {
     let cancelled = false
     const run = async () => {
-      const supabase = createClient()
-      const { data: { session } } = await supabase.auth.getSession()
-      const uid = session?.user?.id
+      let uid = localStorage.getItem('tasking_user_id')
+      if (!uid) {
+        const supabase = createBrowserClient(
+          process.env.NEXT_PUBLIC_SUPABASE_URL!,
+          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+        )
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.user?.id) {
+          uid = session.user.id
+          localStorage.setItem('tasking_user_id', uid)
+        }
+      }
       if (!uid) {
         router.replace('/signin')
         return
@@ -196,25 +245,48 @@ export default function TeamPage() {
 
       fetch(`/api/user/me?user_id=${uid}`)
         .then(r => r.json())
-        .then(d => { if (d.success) setOwnerEmail(d.user.email_address) })
+        .then(d => {
+          if (d.success) {
+            setInternalUserId(d.user.id)
+            setOwnerEmail(d.user.email_address)
+            setCurrentUserRole(d.user.role)
+            setUserDeptId(d.user.department_id || '')
+          }
+        })
         .catch(() => {})
 
-      const storedCid = localStorage.getItem(`tasking_company_id_${uid}`) || ''
+      let storedCid = localStorage.getItem(`tasking_company_id_${uid}`) || ''
+
+      if (!storedCid) {
+        // Fallback 1: fetch from /api/user/me (works for invited users)
+        try {
+          const meRes = await fetch(`/api/user/me?user_id=${uid}`)
+          const meData = await meRes.json()
+          if (meData.success && meData.user?.company_id) {
+            storedCid = meData.user.company_id
+            localStorage.setItem(`tasking_company_id_${uid}`, storedCid)
+          }
+        } catch {}
+      }
+
+      if (!storedCid) {
+        // Fallback 2: fetch default company for owner
+        try {
+          const res = await fetch(`/api/company/by-owner?owner_id=${uid}`)
+          const d = await res.json()
+          if (cancelled) return
+          if (d.success && d.company) {
+            storedCid = d.company.id
+            localStorage.setItem(`tasking_company_id_${uid}`, storedCid)
+          }
+        } catch {}
+      }
+
       if (storedCid) {
         setCompanyId(storedCid)
         fetchCompanyName(uid, storedCid)
         fetchTeamMembers(storedCid)
-      } else {
-        const res = await fetch(`/api/company/by-owner?owner_id=${uid}`)
-        const d = await res.json()
-        if (cancelled) return
-        if (d.success && d.company) {
-          const cid = d.company.id
-          localStorage.setItem(`tasking_company_id_${uid}`, cid)
-          setCompanyId(cid)
-          setCompanyName(d.company.name)
-          fetchTeamMembers(cid)
-        }
+        fetchCompanyDepartments(storedCid)
       }
     }
     void run()
@@ -223,11 +295,21 @@ export default function TeamPage() {
 
   const fetchCompanyName = async (uid: string, cid: string) => {
     try {
-      const params = new URLSearchParams({ owner_id: uid })
-      if (cid) params.set('company_id', cid)
-      const res = await fetch(`/api/company/by-owner?${params}`)
+      const params = new URLSearchParams({ user_id: uid, company_id: cid })
+      const res = await fetch(`/api/company/current?${params}`)
       const data = await res.json()
-      if (data.success && data.company?.name) setCompanyName(data.company.name)
+      if (data.success && data.company?.name) {
+        setCompanyName(data.company.name)
+        setCompanyOwnerId(data.company.owner_id || '')
+      }
+    } catch {}
+  }
+
+  const fetchCompanyDepartments = async (cid: string) => {
+    try {
+      const res = await fetch(`/api/company/departments?company_id=${cid}`)
+      const data = await res.json()
+      if (data.success) setCompanyDepartments(data.departments)
     } catch {}
   }
 
@@ -236,9 +318,18 @@ export default function TeamPage() {
     if (!inviteOpen) return
     let cancelled = false
     const load = async () => {
-      const supabase = createClient()
-      const { data: { session } } = await supabase.auth.getSession()
-      const uid = session?.user?.id
+      let uid = localStorage.getItem('tasking_user_id')
+      if (!uid) {
+        const supabase = createBrowserClient(
+          process.env.NEXT_PUBLIC_SUPABASE_URL!,
+          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+        )
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.user?.id) {
+          uid = session.user.id
+          localStorage.setItem('tasking_user_id', uid)
+        }
+      }
       if (!uid || cancelled) return
       setCompaniesLoading(true)
       try {
@@ -274,6 +365,12 @@ export default function TeamPage() {
   )
 
   const openInviteModal = () => {
+    if (currentUserRole === 'Manager') {
+      setInviteRole('Employee')
+      setSelectedCompanyId(companyId)
+      setInviteDeptId(userDeptId)
+      if (companyId && userDeptId) fetchManagers(companyId, userDeptId)
+    }
     setInviteOpen(true)
   }
 
@@ -379,6 +476,191 @@ export default function TeamPage() {
     }
   }
 
+  const handleChangeDept = async () => {
+    if (!changeDeptModal || !changeDeptSelectedId) return
+    setChangeDeptLoading(true)
+    setChangeDeptError('')
+    try {
+      const res = await fetch('/api/user/update-department', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: changeDeptModal.member.id, department_id: changeDeptSelectedId }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      setChangeDeptModal(null)
+      setChangeDeptSelectedId('')
+      fetchTeamMembers(companyId)
+    } catch (err) {
+      setChangeDeptError(err instanceof Error ? err.message : 'Failed to update department')
+    } finally {
+      setChangeDeptLoading(false)
+    }
+  }
+
+  const handleRemoveMember = async () => {
+    if (!removeModal) return
+    setRemoveLoading(true)
+    setRemoveError('')
+    try {
+      const res = await fetch('/api/team/remove-member', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          company_id: companyId,
+          user_id_to_remove: removeModal.id,
+          requesting_user_id: userId,
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      setRemoveModal(null)
+      fetchTeamMembers(companyId)
+    } catch (err) {
+      setRemoveError(err instanceof Error ? err.message : 'Failed to remove member')
+    } finally {
+      setRemoveLoading(false)
+    }
+  }
+
+  const openManageDeptModal = async (member: TeamMember) => {
+    setManageDeptModal({ member })
+    setManageDeptToast('')
+    setManageDeptLoading(true)
+    try {
+      const res = await fetch(`/api/manager/departments?manager_id=${member.id}&company_id=${companyId}`)
+      const data = await res.json()
+      if (data.success) {
+        setManageDeptAssigned(data.departments)
+        setManageDeptChecked(new Set(data.departments.map((d: { department_id: string }) => d.department_id)))
+      }
+    } catch {}
+    finally { setManageDeptLoading(false) }
+  }
+
+  const handleManageDeptToggle = (deptId: string) => {
+    if (!manageDeptModal) return
+    if (deptId === manageDeptModal.member.department_id) return // primary — cannot uncheck
+    setManageDeptChecked(prev => {
+      const next = new Set(prev)
+      if (next.has(deptId)) next.delete(deptId)
+      else next.add(deptId)
+      return next
+    })
+  }
+
+  const handleManageDeptSave = async () => {
+    if (!manageDeptModal) return
+    const member = manageDeptModal.member
+    const originalIds = new Set(manageDeptAssigned.map(d => d.department_id))
+    const toAdd = [...manageDeptChecked].filter(id => !originalIds.has(id))
+    const toRemove = [...originalIds].filter(id => !manageDeptChecked.has(id))
+    setManageDeptSaving(true)
+    try {
+      await Promise.all([
+        ...toAdd.map(dept_id =>
+          fetch('/api/manager/departments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ manager_id: member.id, company_id: companyId, department_id: dept_id, assigned_by: internalUserId }),
+          })
+        ),
+        ...toRemove.map(dept_id =>
+          fetch('/api/manager/departments', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ manager_id: member.id, department_id: dept_id }),
+          })
+        ),
+      ])
+      setManageDeptToast('Departments updated')
+      setTimeout(() => {
+        setManageDeptModal(null)
+        setManageDeptToast('')
+      }, 1200)
+    } catch {}
+    finally { setManageDeptSaving(false) }
+  }
+
+  const openEditManagerModal = async (member: TeamMember) => {
+    setEditManagerModal({ member })
+    setEditHomeDeptId(member.department_id ?? '')
+    setEditManagerError('')
+    setEditDeptLoading(true)
+    try {
+      const res = await fetch(`/api/manager/departments?manager_id=${member.id}&company_id=${companyId}`)
+      const data = await res.json()
+      if (data.success) {
+        setEditDeptAssigned(data.departments)
+        setEditDeptChecked(new Set(data.departments.map((d: { department_id: string }) => d.department_id)))
+      }
+    } catch {}
+    finally { setEditDeptLoading(false) }
+  }
+
+  const handleEditDeptToggle = (deptId: string) => {
+    setEditDeptChecked(prev => {
+      const next = new Set(prev)
+      if (next.has(deptId)) next.delete(deptId)
+      else next.add(deptId)
+      return next
+    })
+  }
+
+  const handleEditManagerSave = async () => {
+    if (!editManagerModal) return
+    const member = editManagerModal.member
+    setEditManagerSaving(true)
+    setEditManagerError('')
+    try {
+      const originalIds = new Set(editDeptAssigned.map(d => d.department_id))
+      const toAdd = [...editDeptChecked].filter(id => !originalIds.has(id))
+      const toRemove = [...originalIds].filter(id => !editDeptChecked.has(id))
+
+      await Promise.all([
+        // Home department
+        fetch('/api/user/update-department', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: member.id, department_id: editHomeDeptId }),
+        }),
+        // Department access additions
+        ...toAdd.map(dept_id =>
+          fetch('/api/manager/departments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ manager_id: member.id, company_id: companyId, department_id: dept_id, assigned_by: internalUserId }),
+          })
+        ),
+        // Department access removals
+        ...toRemove.map(dept_id =>
+          fetch('/api/manager/departments', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ manager_id: member.id, department_id: dept_id }),
+          })
+        ),
+      ])
+      setEditManagerModal(null)
+      fetchTeamMembers(companyId)
+    } catch (err) {
+      setEditManagerError(err instanceof Error ? err.message : 'Failed to save changes')
+    } finally {
+      setEditManagerSaving(false)
+    }
+  }
+
+  const isCreator = !!internalUserId && !!companyOwnerId && internalUserId === companyOwnerId
+
+  const canRemove = (member: TeamMember): boolean => {
+    if (member.id === internalUserId) return false
+    if (member.id === companyOwnerId) return false
+    if (isCreator) return true
+    // Partner (Owner role but not creator) can only remove Manager/Employee
+    if (currentUserRole === 'Owner' && member.role !== 'Owner') return true
+    return false
+  }
+
   const sendDisabled = inviteLoading || !!noManagersInDept ||
     ((inviteRole === 'Manager' || inviteRole === 'Employee') && !inviteDeptId)
 
@@ -409,7 +691,7 @@ export default function TeamPage() {
               alignItems: 'center',
               gap: '6px',
               padding: '9px 16px',
-              background: '#F97316',
+              background: currentUserRole === 'Manager' ? '#3B82F6' : '#F97316',
               border: 'none',
               borderRadius: '9px',
               fontWeight: 600,
@@ -417,11 +699,11 @@ export default function TeamPage() {
               color: '#FFFFFF',
               cursor: 'pointer',
             }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = '#EA6C0A')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = '#F97316')}
+            onMouseEnter={(e) => (e.currentTarget.style.background = currentUserRole === 'Manager' ? '#2563EB' : '#EA6C0A')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = currentUserRole === 'Manager' ? '#3B82F6' : '#F97316')}
           >
             <Plus size={15} strokeWidth={2.5} />
-            Invite Member
+            {currentUserRole === 'Manager' ? 'Invite Employee' : 'Invite Member'}
           </button>
         </div>
 
@@ -442,51 +724,99 @@ export default function TeamPage() {
                     {ROLE_LABEL[role] || role}
                   </p>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                    {members.map((member) => (
-                      <div key={member.id} style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        padding: '12px 16px',
-                        background: '#FFFFFF',
-                        borderRadius: '10px',
-                        border: '1px solid #F3F4F6',
-                      }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                          <div style={{
-                            width: 36,
-                            height: 36,
-                            borderRadius: '50%',
-                            background: '#FFF7ED',
-                            border: '1.5px solid #FED7AA',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            fontWeight: 700,
-                            fontSize: '0.875rem',
-                            color: '#F97316',
-                            flexShrink: 0,
-                          }}>
-                            {member.full_name.charAt(0).toUpperCase()}
+                    {members.map((member) => {
+                      const deptName = member.department_id
+                        ? companyDepartments.find((d) => d.id === member.department_id)?.name
+                        : undefined
+                      const canEdit = currentUserRole === 'Owner' && (member.role === 'Manager' || member.role === 'Employee')
+                      const showRemove = canRemove(member)
+                      return (
+                        <div key={member.id} style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '12px 16px',
+                          background: '#FFFFFF',
+                          borderRadius: '10px',
+                          border: '1px solid #F3F4F6',
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <div style={{
+                              width: 36,
+                              height: 36,
+                              borderRadius: '50%',
+                              background: '#FFF7ED',
+                              border: '1.5px solid #FED7AA',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontWeight: 700,
+                              fontSize: '0.875rem',
+                              color: '#F97316',
+                              flexShrink: 0,
+                            }}>
+                              {member.full_name.charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                              <p style={{ fontWeight: 600, fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{member.full_name}</p>
+                              <p style={{ fontSize: '0.8125rem', color: '#6B7280', margin: 0 }}>{member.email_address}</p>
+                              {deptName && (
+                                <p style={{ fontSize: '0.75rem', color: '#9CA3AF', margin: '2px 0 0' }}>{deptName}</p>
+                              )}
+                            </div>
                           </div>
-                          <div>
-                            <p style={{ fontWeight: 600, fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{member.full_name}</p>
-                            <p style={{ fontSize: '0.8125rem', color: '#6B7280', margin: 0 }}>{member.email_address}</p>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            {canEdit && (
+                              <button
+                                onClick={() => {
+                                  if (member.role === 'Manager') {
+                                    openEditManagerModal(member)
+                                  } else {
+                                    setChangeDeptModal({ member }); setChangeDeptSelectedId(member.department_id ?? ''); setChangeDeptError('')
+                                  }
+                                }}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  padding: '5px 10px',
+                                  border: '1px solid #E5E7EB',
+                                  borderRadius: '7px',
+                                  background: 'none',
+                                  cursor: 'pointer',
+                                  fontSize: '0.8125rem',
+                                  color: '#6B7280',
+                                  fontWeight: 500,
+                                }}
+                                onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#9CA3AF')}
+                                onMouseLeave={(e) => (e.currentTarget.style.borderColor = '#E5E7EB')}
+                              >
+                                Edit
+                              </button>
+                            )}
+                            {showRemove && (
+                              <button
+                                onClick={() => { setRemoveModal(member); setRemoveError('') }}
+                                style={{
+                                  padding: '5px 10px',
+                                  border: '1px solid #FECACA',
+                                  borderRadius: '7px',
+                                  background: 'none',
+                                  cursor: 'pointer',
+                                  fontSize: '0.8125rem',
+                                  color: '#DC2626',
+                                  fontWeight: 500,
+                                }}
+                                onMouseEnter={(e) => { e.currentTarget.style.background = '#FEF2F2'; e.currentTarget.style.borderColor = '#FCA5A5' }}
+                                onMouseLeave={(e) => { e.currentTarget.style.background = 'none'; e.currentTarget.style.borderColor = '#FECACA' }}
+                              >
+                                Remove
+                              </button>
+                            )}
                           </div>
                         </div>
-                        <span style={{
-                          fontSize: '0.75rem',
-                          fontWeight: 600,
-                          color: '#F97316',
-                          background: '#FFF7ED',
-                          border: '1px solid #FED7AA',
-                          borderRadius: '6px',
-                          padding: '3px 10px',
-                        }}>
-                          {ROLE_LABEL[member.role] || member.role}
-                        </span>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 </div>
               ))}
@@ -494,6 +824,313 @@ export default function TeamPage() {
           )}
         </div>
       </main>
+
+      {/* ── Edit Manager Modal ──────────────────────────────────────────── */}
+      {editManagerModal && (
+        <ModalOverlay onClose={() => { if (!editManagerSaving) { setEditManagerModal(null); setEditManagerError('') } }}>
+          <ModalBox>
+            <ModalHeader
+              title="Edit Manager"
+              onClose={() => { if (!editManagerSaving) { setEditManagerModal(null); setEditManagerError('') } }}
+            />
+
+            {/* Section 1 — Home Department */}
+            <div style={{ marginBottom: '24px' }}>
+              <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#374151', margin: '0 0 2px' }}>Home Department</p>
+              <p style={{ fontSize: '0.8125rem', color: '#9CA3AF', margin: '0 0 10px' }}>The department this manager belongs to</p>
+              <div style={{ position: 'relative' }}>
+                <select
+                  value={editHomeDeptId}
+                  onChange={(e) => setEditHomeDeptId(e.target.value)}
+                  style={{ ...modalInputStyle, paddingRight: '36px', appearance: 'none', cursor: 'pointer' }}
+                >
+                  <option value="">Select a department</option>
+                  {companyDepartments.map((d) => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </select>
+                <ChevronDown size={15} style={{ position: 'absolute', right: '11px', top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
+              </div>
+            </div>
+
+            {/* Section 2 — Department Access */}
+            <div style={{ marginBottom: '20px' }}>
+              <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#374151', margin: '0 0 2px' }}>Department Access</p>
+              <p style={{ fontSize: '0.8125rem', color: '#9CA3AF', margin: '0 0 10px' }}>Departments this manager can view and manage</p>
+              {editDeptLoading ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#9CA3AF', fontSize: '0.875rem', padding: '8px 0' }}>
+                  <Spinner size={14} dark /> Loading…
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {companyDepartments.map((dept) => {
+                    const checked = editDeptChecked.has(dept.id)
+                    return (
+                      <label key={dept.id} style={{
+                        display: 'flex', alignItems: 'center', gap: '10px',
+                        padding: '10px 12px', borderRadius: '8px',
+                        border: `1.5px solid ${checked ? '#BFDBFE' : '#E5E7EB'}`,
+                        background: checked ? '#F0F9FF' : '#FFFFFF',
+                        cursor: 'pointer',
+                      }}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => handleEditDeptToggle(dept.id)}
+                          style={{ width: 16, height: 16, cursor: 'pointer', accentColor: '#3B82F6' }}
+                        />
+                        <span style={{ fontSize: '0.9rem', color: '#111827', fontWeight: checked ? 600 : 400 }}>
+                          {dept.name}
+                        </span>
+                      </label>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            {editManagerError && (
+              <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626', marginBottom: '12px' }}>
+                {editManagerError}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button
+                onClick={() => { setEditManagerModal(null); setEditManagerError('') }}
+                disabled={editManagerSaving}
+                style={{ flex: 1, padding: '10px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: '8px', fontWeight: 600, fontSize: '0.9375rem', color: '#6B7280', cursor: editManagerSaving ? 'not-allowed' : 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleEditManagerSave}
+                disabled={editManagerSaving || editDeptLoading || !editHomeDeptId}
+                style={{
+                  flex: 1, padding: '10px', background: '#111827', border: 'none', borderRadius: '8px',
+                  fontWeight: 600, fontSize: '0.9375rem', color: '#FFFFFF',
+                  cursor: (editManagerSaving || editDeptLoading || !editHomeDeptId) ? 'not-allowed' : 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '7px',
+                  opacity: (editManagerSaving || editDeptLoading || !editHomeDeptId) ? 0.65 : 1,
+                }}
+              >
+                {editManagerSaving && <Spinner size={14} />}
+                Save Changes
+              </button>
+            </div>
+          </ModalBox>
+        </ModalOverlay>
+      )}
+
+      {/* ── Change Department Modal ──────────────────────────────────────── */}
+      {changeDeptModal && (
+        <ModalOverlay onClose={() => { setChangeDeptModal(null); setChangeDeptSelectedId(''); setChangeDeptError('') }}>
+          <ModalBox>
+            <ModalHeader
+              title="Change Department"
+              onClose={() => { setChangeDeptModal(null); setChangeDeptSelectedId(''); setChangeDeptError('') }}
+            />
+            <p style={{ fontSize: '0.875rem', color: '#6B7280', margin: '0 0 16px', lineHeight: 1.55 }}>
+              Move <strong>{changeDeptModal.member.full_name}</strong> to a different department.
+            </p>
+            {companyDepartments.length === 0 ? (
+              <p style={{ fontSize: '0.875rem', color: '#9CA3AF', textAlign: 'center', margin: '8px 0 16px' }}>
+                No departments found.
+              </p>
+            ) : (
+              <>
+                <label style={modalLabelStyle}>Department</label>
+                <div style={{ position: 'relative' }}>
+                  <select
+                    value={changeDeptSelectedId}
+                    onChange={(e) => setChangeDeptSelectedId(e.target.value)}
+                    style={{ ...modalInputStyle, paddingRight: '36px', appearance: 'none', cursor: 'pointer' }}
+                  >
+                    <option value="">Select a department</option>
+                    {companyDepartments.map((d) => (
+                      <option key={d.id} value={d.id}>{d.name}</option>
+                    ))}
+                  </select>
+                  <ChevronDown size={15} style={{ position: 'absolute', right: '11px', top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
+                </div>
+              </>
+            )}
+            {changeDeptError && (
+              <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626', marginTop: '12px' }}>
+                {changeDeptError}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+              <button
+                onClick={() => { setChangeDeptModal(null); setChangeDeptSelectedId(''); setChangeDeptError('') }}
+                style={{ flex: 1, padding: '10px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: '8px', fontWeight: 600, fontSize: '0.9375rem', color: '#6B7280', cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleChangeDept}
+                disabled={changeDeptLoading || !changeDeptSelectedId}
+                style={{
+                  flex: 1, padding: '10px', background: '#111827', border: 'none', borderRadius: '8px',
+                  fontWeight: 600, fontSize: '0.9375rem', color: '#FFFFFF',
+                  cursor: (changeDeptLoading || !changeDeptSelectedId) ? 'not-allowed' : 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '7px',
+                  opacity: (changeDeptLoading || !changeDeptSelectedId) ? 0.65 : 1,
+                }}
+              >
+                {changeDeptLoading && <Spinner size={14} />}
+                Save
+              </button>
+            </div>
+          </ModalBox>
+        </ModalOverlay>
+      )}
+
+      {/* ── Manage Departments Modal ─────────────────────────────────────── */}
+      {manageDeptModal && (
+        <div
+          onClick={() => { if (!manageDeptSaving) { setManageDeptModal(null); setManageDeptToast('') } }}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}
+        >
+          <div onClick={(e) => e.stopPropagation()} style={{ width: '560px' }}>
+            <ModalBox>
+              <ModalHeader
+                title={`Manage Departments — ${manageDeptModal.member.full_name}`}
+                onClose={() => { if (!manageDeptSaving) { setManageDeptModal(null); setManageDeptToast('') } }}
+              />
+              <p style={{ fontSize: '0.875rem', color: '#6B7280', margin: '0 0 16px', lineHeight: 1.55 }}>
+                Select which departments this manager can access. The primary department cannot be removed.
+              </p>
+
+              {manageDeptLoading ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#9CA3AF', fontSize: '0.875rem', padding: '8px 0' }}>
+                  <Spinner size={14} dark /> Loading…
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
+                    {companyDepartments.map((dept) => {
+                      const isPrimary = dept.id === manageDeptModal.member.department_id
+                      const checked = manageDeptChecked.has(dept.id)
+                      return (
+                        <label key={dept.id} style={{
+                          display: 'flex', alignItems: 'center', gap: '10px',
+                          padding: '10px 12px', borderRadius: '8px',
+                          border: `1.5px solid ${checked ? '#BFDBFE' : '#E5E7EB'}`,
+                          background: checked ? '#F0F9FF' : '#FFFFFF',
+                          cursor: isPrimary ? 'not-allowed' : 'pointer',
+                          opacity: isPrimary ? 0.8 : 1,
+                        }}>
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            disabled={isPrimary}
+                            onChange={() => handleManageDeptToggle(dept.id)}
+                            style={{ width: 16, height: 16, cursor: isPrimary ? 'not-allowed' : 'pointer', accentColor: '#3B82F6' }}
+                          />
+                          <span style={{ fontSize: '0.9rem', color: '#111827', fontWeight: checked ? 600 : 400 }}>
+                            {dept.name}
+                            {isPrimary && (
+                              <span style={{ marginLeft: '8px', fontSize: '0.75rem', color: '#6B7280', fontWeight: 400 }}>(Primary)</span>
+                            )}
+                          </span>
+                        </label>
+                      )
+                    })}
+                  </div>
+
+                  <div style={{ background: '#F9FAFB', borderRadius: '8px', padding: '10px 14px', marginBottom: '16px' }}>
+                    <p style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: '0 0 6px' }}>Currently assigned:</p>
+                    {companyDepartments.filter(d => manageDeptChecked.has(d.id)).length === 0 ? (
+                      <p style={{ fontSize: '0.8125rem', color: '#9CA3AF', margin: 0 }}>None</p>
+                    ) : (
+                      <p style={{ fontSize: '0.8125rem', color: '#374151', margin: 0 }}>
+                        {companyDepartments
+                          .filter(d => manageDeptChecked.has(d.id))
+                          .map(d => d.id === manageDeptModal.member.department_id ? `${d.name} (Primary)` : d.name)
+                          .join(', ')}
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {manageDeptToast && (
+                <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem', color: '#15803D', marginBottom: '12px' }}>
+                  {manageDeptToast}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  onClick={() => { setManageDeptModal(null); setManageDeptToast('') }}
+                  disabled={manageDeptSaving}
+                  style={{ flex: 1, padding: '10px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: '8px', fontWeight: 600, fontSize: '0.9375rem', color: '#6B7280', cursor: manageDeptSaving ? 'not-allowed' : 'pointer' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleManageDeptSave}
+                  disabled={manageDeptSaving || manageDeptLoading}
+                  style={{
+                    flex: 1, padding: '10px', background: '#3B82F6', border: 'none', borderRadius: '8px',
+                    fontWeight: 600, fontSize: '0.9375rem', color: '#FFFFFF',
+                    cursor: (manageDeptSaving || manageDeptLoading) ? 'not-allowed' : 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '7px',
+                    opacity: (manageDeptSaving || manageDeptLoading) ? 0.65 : 1,
+                  }}
+                >
+                  {manageDeptSaving && <Spinner size={14} />}
+                  Save
+                </button>
+              </div>
+            </ModalBox>
+          </div>
+        </div>
+      )}
+
+      {/* ── Remove Member Modal ──────────────────────────────────────────── */}
+      {removeModal && (
+        <ModalOverlay onClose={() => { if (!removeLoading) { setRemoveModal(null); setRemoveError('') } }}>
+          <ModalBox>
+            <ModalHeader
+              title="Remove Member"
+              onClose={() => { if (!removeLoading) { setRemoveModal(null); setRemoveError('') } }}
+            />
+            <p style={{ fontSize: '0.875rem', color: '#6B7280', margin: '0 0 16px', lineHeight: 1.55 }}>
+              Remove <strong>{removeModal.full_name}</strong> from <strong>{companyName}</strong>? They will lose access to this company.
+            </p>
+            {removeError && (
+              <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626', marginBottom: '12px' }}>
+                {removeError}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
+              <button
+                onClick={() => { setRemoveModal(null); setRemoveError('') }}
+                disabled={removeLoading}
+                style={{ flex: 1, padding: '10px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: '8px', fontWeight: 600, fontSize: '0.9375rem', color: '#6B7280', cursor: removeLoading ? 'not-allowed' : 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRemoveMember}
+                disabled={removeLoading}
+                style={{
+                  flex: 1, padding: '10px', background: '#DC2626', border: 'none', borderRadius: '8px',
+                  fontWeight: 600, fontSize: '0.9375rem', color: '#FFFFFF',
+                  cursor: removeLoading ? 'not-allowed' : 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '7px',
+                  opacity: removeLoading ? 0.65 : 1,
+                }}
+              >
+                {removeLoading && <Spinner size={14} />}
+                Remove
+              </button>
+            </div>
+          </ModalBox>
+        </ModalOverlay>
+      )}
 
       {/* ── Invite Member Modal ───────────────────────────────────────────── */}
       {inviteOpen && (
@@ -517,6 +1154,7 @@ export default function TeamPage() {
             </div>
 
             {/* Role */}
+            {currentUserRole !== 'Manager' && (
             <div style={{ marginBottom: '16px' }}>
               <label style={modalLabelStyle}>Role</label>
               <div style={{ position: 'relative' }}>
@@ -533,9 +1171,10 @@ export default function TeamPage() {
                 <ChevronDown size={15} style={{ position: 'absolute', right: '11px', top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
               </div>
             </div>
+            )}
 
             {/* Company (always shown once role is selected) */}
-            {inviteRole && (
+            {inviteRole && currentUserRole !== 'Manager' && (
               <div style={{ marginBottom: '16px' }}>
                 <label style={modalLabelStyle}>Company</label>
                 <div style={{ position: 'relative' }}>
@@ -562,8 +1201,15 @@ export default function TeamPage() {
               </div>
             )}
 
-            {/* Department (Manager or Employee, after company selected) */}
-            {showDept && (
+            {/* Department */}
+            {currentUserRole === 'Manager' ? (
+              <div style={{ marginBottom: '16px' }}>
+                <label style={modalLabelStyle}>Department</label>
+                <div style={{ ...modalInputStyle, color: '#6B7280', background: '#F9FAFB' }}>
+                  {companyDepartments.find(d => d.id === userDeptId)?.name || 'Your department'}
+                </div>
+              </div>
+            ) : showDept && (
               <div style={{ marginBottom: '16px' }}>
                 <label style={modalLabelStyle}>Department</label>
                 <div style={{ position: 'relative' }}>
@@ -641,7 +1287,7 @@ export default function TeamPage() {
                 style={{
                   width: '100%',
                   height: '48px',
-                  background: '#F97316',
+                  background: currentUserRole === 'Manager' ? '#3B82F6' : '#F97316',
                   color: '#FFFFFF',
                   border: 'none',
                   borderRadius: '10px',

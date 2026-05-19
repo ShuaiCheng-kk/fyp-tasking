@@ -21,6 +21,11 @@ export const companyService = {
     description: string | null
     owner_id: string
     plan: Company['plan']
+    location?: string | null
+    industry?: string | null
+    size?: string | null
+    logo_url?: string | null
+    website?: string | null
   }): Promise<Company> {
     const internalOwnerId = await resolveInternalOwnerUserId(data.owner_id)
     if (!internalOwnerId) throw new Error('Owner profile not found')
@@ -32,6 +37,11 @@ export const companyService = {
       description: data.description,
       owner_id: internalOwnerId,
       plan: data.plan,
+      location: data.location,
+      industry: data.industry,
+      size: data.size,
+      logo_url: data.logo_url,
+      website: data.website,
     })
     await userRepository.updateCompanyId(internalOwnerId, company.id)
     return company
@@ -49,7 +59,9 @@ export const companyService = {
   },
 
   async updatePlan(company_id: string, plan: Company['plan']): Promise<void> {
-    await companyRepository.updatePlan(company_id, plan)
+    const company = await companyRepository.findById(company_id)
+    if (!company) throw new Error('Company not found')
+    await companyRepository.updatePlanByOwnerId(company.owner_id, plan)
   },
 
   async updateDepartment(department_id: string, name: string): Promise<void> {
@@ -68,6 +80,10 @@ export const companyService = {
 
   async getManagersByDepartment(company_id: string, department_id: string): Promise<{ id: string; full_name: string }[]> {
     return await userRepository.findManagersByDepartment(company_id, department_id)
+  },
+
+  async getAllManagersByCompany(company_id: string): Promise<{ id: string; full_name: string; department_id: string | null }[]> {
+    return await userRepository.findManagersByCompany(company_id)
   },
 
   async getCompaniesByOwner(owner_id: string): Promise<Company[]> {
@@ -105,7 +121,15 @@ export const companyService = {
     return { role: user.role, company: null, companies: [] }
   },
 
-  async updateCompany(id: string, data: { name: string; description: string | null }): Promise<Company> {
+  async updateCompany(id: string, data: {
+    name: string
+    description: string | null
+    location?: string | null
+    industry?: string | null
+    size?: string | null
+    logo_url?: string | null
+    website?: string | null
+  }): Promise<Company> {
     return await companyRepository.updateCompany(id, data)
   },
 
@@ -126,6 +150,11 @@ export const companyService = {
     description: string | null
     plan: Company['plan']
     departments: string[]
+    location?: string | null
+    industry?: string | null
+    size?: string | null
+    logo_url?: string | null
+    website?: string | null
   }): Promise<Company> {
     const internalOwnerId = await resolveInternalOwnerUserId(data.owner_id)
     if (!internalOwnerId) throw new Error('Owner profile not found')
@@ -135,6 +164,11 @@ export const companyService = {
       description: data.description,
       owner_id: internalOwnerId,
       plan: data.plan,
+      location: data.location,
+      industry: data.industry,
+      size: data.size,
+      logo_url: data.logo_url,
+      website: data.website,
     })
     for (const deptName of data.departments.filter((d) => d.trim())) {
       await departmentRepository.createDepartment({ name: deptName.trim(), company_id: company.id })

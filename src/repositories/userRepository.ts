@@ -117,6 +117,24 @@ export const userRepository = {
     return data || []
   },
 
+  async findManagersByCompany(company_id: string): Promise<{ id: string; full_name: string; department_id: string | null }[]> {
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, full_name, department_id')
+      .eq('company_id', company_id)
+      .eq('role', 'Manager')
+    if (error) throw new Error(error.message)
+    return data || []
+  },
+
+  async updateDepartmentId(user_id: string, department_id: string | null): Promise<void> {
+    const { error } = await supabase
+      .from('users')
+      .update({ department_id })
+      .eq('id', user_id)
+    if (error) throw new Error(error.message)
+  },
+
   async updateCompanyId(user_id: string, company_id: string): Promise<void> {
     const { error } = await supabase
       .from('users')
@@ -159,7 +177,49 @@ export const userRepository = {
       .eq('company_id', company_id)
       .order('role', { ascending: true })
     if (error) throw new Error(error.message)
-    return data || []
+    const members: User[] = data || []
+
+    const { data: companyData } = await supabase
+      .from('companies')
+      .select('owner_id')
+      .eq('id', company_id)
+      .single()
+
+    if (companyData?.owner_id) {
+      const { data: ownerUser } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', companyData.owner_id)
+        .single()
+
+      if (ownerUser && !members.some((m) => m.id === ownerUser.id)) {
+        members.unshift(ownerUser)
+      }
+    }
+
+    return members
+  },
+
+  async countMembersAcrossOwnedCompanies(internal_owner_id: string): Promise<number> {
+    const { data: ownedCompanies, error: compErr } = await supabase
+      .from('companies')
+      .select('id')
+      .eq('owner_id', internal_owner_id)
+    if (compErr || !ownedCompanies || ownedCompanies.length === 0) return 0
+
+    const companyIds = ownedCompanies.map((c) => c.id)
+
+    // Count all non-owner members (users whose company_id is one of the owned companies,
+    // excluding the owner themselves who is linked via companies.owner_id, not users.company_id)
+    const { count: memberCount, error: memberErr } = await supabase
+      .from('users')
+      .select('*', { count: 'exact', head: true })
+      .in('company_id', companyIds)
+      .neq('id', internal_owner_id)
+    if (memberErr) throw new Error(memberErr.message)
+
+    // Add 1 for the owner themselves
+    return (memberCount ?? 0) + 1
   },
 
   async deleteById(user_id: string): Promise<void> {

@@ -1,0 +1,22 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { userService } from '@/services/userService'
+import { userRepository } from '@/repositories/userRepository'
+
+export async function GET(req: NextRequest) {
+  const owner_id = req.nextUrl.searchParams.get('owner_id')
+  if (!owner_id) {
+    return NextResponse.json({ success: false, message: 'owner_id is required' }, { status: 400 })
+  }
+
+  try {
+    // owner_id may be auth UID or internal ID — resolve to internal
+    const user = await userRepository.findByAuthIdOrInternalId(owner_id)
+    if (!user) return NextResponse.json({ success: false, message: 'User not found' }, { status: 404 })
+
+    const count = await userService.countMembersForOwner(user.id)
+    return NextResponse.json({ success: true, count })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to count members'
+    return NextResponse.json({ success: false, message }, { status: 500 })
+  }
+}

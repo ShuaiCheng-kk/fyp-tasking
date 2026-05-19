@@ -1,0 +1,44 @@
+'use client'
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { createBrowserClient } from '@supabase/ssr'
+
+const ROLE_DASHBOARD: Record<string, string> = {
+  Owner: '/owner/dashboard',
+  Employee: '/employee/dashboard',
+  'Casual Worker': '/casual/dashboard',
+}
+
+export default function ManagerLayout({
+  children,
+}: {
+  children: React.ReactNode
+}) {
+  const router = useRouter()
+  const [checking, setChecking] = useState(true)
+
+  useEffect(() => {
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    )
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (!session) {
+        router.replace('/signin')
+        return
+      }
+      const res = await fetch(`/api/user/me?user_id=${session.user.id}`)
+      const data = await res.json()
+      const role: string = data.success ? (data.user?.role ?? '') : ''
+      if (role === 'Manager') {
+        setChecking(false)
+      } else {
+        router.replace(ROLE_DASHBOARD[role] ?? '/signin')
+      }
+    })
+  }, [router])
+
+  if (checking) return null
+
+  return <>{children}</>
+}

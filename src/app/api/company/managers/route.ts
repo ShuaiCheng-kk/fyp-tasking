@@ -10,14 +10,17 @@ export async function GET(req: NextRequest) {
     const company_id = searchParams.get('company_id')
     const department_id = searchParams.get('department_id')
 
-    if (!company_id || !department_id) {
+    if (!company_id) {
       return NextResponse.json(
-        { success: false, message: 'company_id and department_id are required' },
+        { success: false, message: 'company_id is required' },
         { status: 400 },
       )
     }
 
-    const managers = await companyService.getManagersByDepartment(company_id, department_id)
+    const managers = department_id
+      ? await companyService.getManagersByDepartment(company_id, department_id)
+      : await companyService.getAllManagersByCompany(company_id)
+
     return NextResponse.json({ success: true, managers })
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Something went wrong'

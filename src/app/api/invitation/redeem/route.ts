@@ -26,6 +26,9 @@ export async function POST(req: NextRequest) {
   if (!password || typeof password !== 'string') {
     return NextResponse.json({ success: false, message: 'password is required' }, { status: 400 })
   }
+  if (!phone_number || typeof phone_number !== 'string' || !phone_number.trim()) {
+    return NextResponse.json({ success: false, message: 'phone_number is required' }, { status: 400 })
+  }
 
   try {
     const result = await invitationService.redeemCode({
@@ -33,7 +36,7 @@ export async function POST(req: NextRequest) {
       full_name,
       email_address: email,
       password,
-      phone_number: typeof phone_number === 'string' ? phone_number : null,
+      phone_number,
     })
 
     return NextResponse.json({

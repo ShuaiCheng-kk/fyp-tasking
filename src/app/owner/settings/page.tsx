@@ -1,10 +1,13 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Plus, X, Pencil, Trash2 } from 'lucide-react'
+import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
-import { createClient } from '@/lib/supabase'
+
+const INDUSTRIES = ['Retail', 'F&B', 'Logistics', 'Event Management']
+const SIZES = ['1-10', '11-50', '51-200', '200+']
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -12,7 +15,13 @@ type Company = {
   id: string
   name: string
   description: string | null
+  owner_id: string
   plan: 'Free' | 'Paid'
+  location: string | null
+  industry: string | null
+  size: string | null
+  logo_url: string | null
+  website: string | null
 }
 
 
@@ -88,15 +97,21 @@ const labelStyle: React.CSSProperties = {
 
 export default function SettingsPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [userId, setUserId] = useState('')
+  const [internalUserId, setInternalUserId] = useState('')
   const [companies, setCompanies] = useState<Company[]>([])
   const [loading, setLoading] = useState(true)
   const [userIdError, setUserIdError] = useState('')
+  const [userRole, setUserRole] = useState('')
 
   // Edit modal
   const [editTarget, setEditTarget] = useState<Company | null>(null)
   const [editName, setEditName] = useState('')
   const [editDesc, setEditDesc] = useState('')
+  const [editLocation, setEditLocation] = useState('')
+  const [editIndustry, setEditIndustry] = useState('')
+  const [editSize, setEditSize] = useState('')
   const [editLoading, setEditLoading] = useState(false)
   const [editError, setEditError] = useState('')
 
@@ -109,20 +124,51 @@ export default function SettingsPage() {
   const [addOpen, setAddOpen] = useState(false)
   const [addName, setAddName] = useState('')
   const [addDesc, setAddDesc] = useState('')
+  const [addLocation, setAddLocation] = useState('')
+  const [addIndustry, setAddIndustry] = useState('')
+  const [addSize, setAddSize] = useState('')
   const [addDepts, setAddDepts] = useState([''])
   const [addLoading, setAddLoading] = useState(false)
   const [addError, setAddError] = useState('')
 
+  // Active tab
+  const [activeTab, setActiveTab] = useState<'company' | 'subscription'>(
+    searchParams.get('tab') === 'subscription' ? 'subscription' : 'company'
+  )
+
+  // Plan tab
+  const [planModalTarget, setPlanModalTarget] = useState<Company | null>(null)
+  const [planModalType, setPlanModalType] = useState<'upgrade' | 'downgrade' | null>(null)
+  const [memberCount, setMemberCount] = useState(0)
+  const [memberCountLoading, setMemberCountLoading] = useState(false)
+  const [planChangeLoading, setPlanChangeLoading] = useState(false)
+  const [planChangeError, setPlanChangeError] = useState('')
+
   useEffect(() => {
     const resolve = async () => {
-      const supabase = createClient()
-      const { data: { session } } = await supabase.auth.getSession()
-      const uid = session?.user?.id
+      let uid = localStorage.getItem('tasking_user_id')
+      if (!uid) {
+        const supabase = createBrowserClient(
+          process.env.NEXT_PUBLIC_SUPABASE_URL!,
+          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+        )
+        const { data: { session } } = await supabase.auth.getSession()
+        if (session?.user?.id) {
+          uid = session.user.id
+          localStorage.setItem('tasking_user_id', uid)
+        }
+      }
       if (!uid) {
         router.replace('/signin')
         return
       }
       setUserId(uid)
+      const meRes = await fetch(`/api/user/me?user_id=${uid}`)
+      const meData = await meRes.json()
+      if (meData.success) {
+        setInternalUserId(meData.user.id)
+        setUserRole(meData.user.role || '')
+      }
       fetchCompanies(uid)
     }
     void resolve()
@@ -151,7 +197,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { setEditTarget(null); setAddOpen(false); setDeleteTarget(null) }
+      if (e.key === 'Escape') { setEditTarget(null); setAddOpen(false); setDeleteTarget(null); setPlanModalTarget(null) }
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
@@ -182,18 +228,33 @@ export default function SettingsPage() {
     setEditTarget(c)
     setEditName(c.name)
     setEditDesc(c.description ?? '')
+    setEditLocation(c.location ?? '')
+    setEditIndustry(c.industry ?? '')
+    setEditSize(c.size ?? '')
     setEditError('')
   }
 
   const handleEdit = async () => {
     if (!editTarget || !editName.trim()) return
+    if (!editLocation.trim()) { setEditError('Location is required.'); return }
+    if (!editIndustry) { setEditError('Please select an industry.'); return }
+    if (!editSize) { setEditError('Please select a company size.'); return }
     setEditLoading(true)
     setEditError('')
     try {
       const res = await fetch('/api/company/update-profile', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company_id: editTarget.id, name: editName, description: editDesc }),
+        body: JSON.stringify({
+          company_id: editTarget.id,
+          name: editName,
+          description: editDesc,
+          location: editLocation,
+          industry: editIndustry,
+          size: editSize,
+          website: null,
+          logo_url: null,
+        }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
@@ -209,11 +270,15 @@ export default function SettingsPage() {
   // ── Add company ────────────────────────────────────────────────────────────
 
   const openAdd = () => {
-    setAddName(''); setAddDesc(''); setAddDepts(['']); setAddError(''); setAddOpen(true)
+    setAddName(''); setAddDesc(''); setAddLocation(''); setAddIndustry(''); setAddSize('')
+    setAddDepts(['']); setAddError(''); setAddOpen(true)
   }
 
   const handleAdd = async () => {
     if (!addName.trim()) { setAddError('Company name is required.'); return }
+    if (!addLocation.trim()) { setAddError('Location is required.'); return }
+    if (!addIndustry) { setAddError('Please select an industry.'); return }
+    if (!addSize) { setAddError('Please select a company size.'); return }
     setAddLoading(true)
     setAddError('')
     try {
@@ -224,6 +289,11 @@ export default function SettingsPage() {
           owner_id: userId,
           name: addName,
           description: addDesc || null,
+          location: addLocation,
+          industry: addIndustry,
+          size: addSize,
+          website: null,
+          logo_url: null,
           departments: addDepts.filter((d) => d.trim()),
         }),
       })
@@ -236,6 +306,49 @@ export default function SettingsPage() {
       setAddError(err instanceof Error ? err.message : 'Failed to create company')
     } finally {
       setAddLoading(false)
+    }
+  }
+
+  // ── Plan tab helpers ───────────────────────────────────────────────────────
+
+  const isOwnerOfAny = companies.some((c) => c.owner_id === internalUserId)
+
+  const openPlanModal = async (c: Company, type: 'upgrade' | 'downgrade') => {
+    setPlanModalTarget(c)
+    setPlanModalType(type)
+    setPlanChangeError('')
+    setMemberCount(0)
+    if (type === 'upgrade') {
+      setMemberCountLoading(true)
+      try {
+        const res = await fetch(`/api/team/member-count?owner_id=${userId}`)
+        const data = await res.json()
+        if (data.success) setMemberCount(data.count)
+      } catch {}
+      finally { setMemberCountLoading(false) }
+    }
+  }
+
+  const handlePlanChange = async () => {
+    if (!planModalTarget || !planModalType) return
+    const newPlan: Company['plan'] = planModalType === 'upgrade' ? 'Paid' : 'Free'
+    setPlanChangeLoading(true)
+    setPlanChangeError('')
+    try {
+      const res = await fetch('/api/company/update-plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company_id: planModalTarget.id, plan: newPlan }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      setPlanModalTarget(null)
+      setPlanModalType(null)
+      fetchCompanies(userId)
+    } catch (err) {
+      setPlanChangeError(err instanceof Error ? err.message : 'Failed to update plan')
+    } finally {
+      setPlanChangeLoading(false)
     }
   }
 
@@ -269,23 +382,43 @@ export default function SettingsPage() {
         </div>
 
         {/* Body: vertical tab layout */}
+        {userRole !== 'Manager' && (
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
 
           {/* Left tab list */}
           <div style={{ width: '200px', borderRight: '1px solid #E5E7EB', background: '#FFFFFF', padding: '20px 12px', flexShrink: 0 }}>
             <button
+              onClick={() => setActiveTab('company')}
               style={{
                 width: '100%', textAlign: 'left', padding: '9px 12px', borderRadius: '8px',
-                background: '#FFF7ED', color: '#EA580C', fontWeight: 600, fontSize: '0.9rem',
-                border: 'none', cursor: 'pointer',
+                background: activeTab === 'company' ? '#FFF7ED' : 'none',
+                color: activeTab === 'company' ? '#EA580C' : '#374151',
+                fontWeight: activeTab === 'company' ? 600 : 400,
+                fontSize: '0.9rem', border: 'none', cursor: 'pointer',
               }}
             >
               My Company
             </button>
+            {isOwnerOfAny && (
+              <button
+                onClick={() => setActiveTab('subscription')}
+                style={{
+                  width: '100%', textAlign: 'left', padding: '9px 12px', borderRadius: '8px',
+                  background: activeTab === 'subscription' ? '#FFF7ED' : 'none',
+                  color: activeTab === 'subscription' ? '#EA580C' : '#374151',
+                  fontWeight: activeTab === 'subscription' ? 600 : 400,
+                  fontSize: '0.9rem', border: 'none', cursor: 'pointer', marginTop: '2px',
+                }}
+              >
+                Subscription
+              </button>
+            )}
           </div>
 
           {/* Right content */}
           <div style={{ flex: 1, overflowY: 'auto', padding: '28px 32px' }}>
+            {activeTab !== 'subscription' ? (
+            <>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
               <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0 }}>My Companies</h2>
             </div>
@@ -301,54 +434,66 @@ export default function SettingsPage() {
             ) : (
               <>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '20px' }}>
-                  {companies.map((c) => (
+                  {companies.map((c) => {
+                    const isOwner = c.owner_id === internalUserId
+                    const initial = c.name.charAt(0).toUpperCase()
+                    return (
                     <div key={c.id} style={{
                       background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: '12px',
-                      padding: '20px 24px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px',
+                      padding: '20px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px',
                     }}>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px' }}>
-                          <p style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0 }}>{c.name}</p>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1, minWidth: 0 }}>
+                        <div style={{
+                          width: 40, height: 40, borderRadius: '10px', background: '#F3F4F6',
+                          border: '1px solid #E5E7EB', flexShrink: 0,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontWeight: 700, fontSize: '1rem', color: '#9CA3AF',
+                        }}>
+                          {initial}
                         </div>
-                        {c.description && (
-                          <p style={{ fontSize: '0.875rem', color: '#6B7280', margin: 0 }}>{c.description}</p>
-                        )}
+                        <p style={{ fontWeight: 600, fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{c.name}</p>
                       </div>
+                      {/* Bottom-right action buttons (only for owner) */}
                       <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
-                        <button
-                          onClick={() => openEdit(c)}
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: '5px',
-                            padding: '7px 12px', border: '1px solid #E5E7EB', borderRadius: '7px',
-                            background: 'none', cursor: 'pointer', fontSize: '0.8125rem', color: '#374151', fontWeight: 500,
-                          }}
-                          onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#9CA3AF')}
-                          onMouseLeave={(e) => (e.currentTarget.style.borderColor = '#E5E7EB')}
-                        >
-                          <Pencil size={12} strokeWidth={2} />
-                          Edit
-                        </button>
-                        <div title={companies.length <= 1 ? 'You must have at least one company' : undefined}>
+                        {isOwner && (
                           <button
-                            onClick={() => { if (companies.length > 1) { setDeleteTarget(c); setDeleteError('') } }}
-                            disabled={companies.length <= 1}
+                            onClick={() => openEdit(c)}
                             style={{
                               display: 'flex', alignItems: 'center', gap: '5px',
                               padding: '7px 12px', border: '1px solid #E5E7EB', borderRadius: '7px',
-                              background: 'none', cursor: companies.length <= 1 ? 'not-allowed' : 'pointer',
-                              fontSize: '0.8125rem', color: companies.length <= 1 ? '#D1D5DB' : '#EF4444', fontWeight: 500,
-                              opacity: companies.length <= 1 ? 0.5 : 1,
+                              background: 'none', cursor: 'pointer', fontSize: '0.8125rem', color: '#374151', fontWeight: 500,
                             }}
-                            onMouseEnter={(e) => { if (companies.length > 1) e.currentTarget.style.borderColor = '#FCA5A5' }}
-                            onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#E5E7EB' }}
+                            onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#9CA3AF')}
+                            onMouseLeave={(e) => (e.currentTarget.style.borderColor = '#E5E7EB')}
                           >
-                            <Trash2 size={12} strokeWidth={2} />
-                            Delete
+                            <Pencil size={12} strokeWidth={2} />
+                            Edit
                           </button>
-                        </div>
+                        )}
+                        {isOwner && (
+                          <div title={companies.filter((x) => x.owner_id === internalUserId).length <= 1 ? 'You must have at least one company' : undefined}>
+                            <button
+                              onClick={() => { if (companies.filter((x) => x.owner_id === internalUserId).length > 1) { setDeleteTarget(c); setDeleteError('') } }}
+                              disabled={companies.filter((x) => x.owner_id === internalUserId).length <= 1}
+                              style={{
+                                display: 'flex', alignItems: 'center', gap: '5px',
+                                padding: '7px 12px', border: '1px solid #E5E7EB', borderRadius: '7px',
+                                background: 'none', cursor: companies.filter((x) => x.owner_id === internalUserId).length <= 1 ? 'not-allowed' : 'pointer',
+                                fontSize: '0.8125rem', color: companies.filter((x) => x.owner_id === internalUserId).length <= 1 ? '#D1D5DB' : '#EF4444', fontWeight: 500,
+                                opacity: companies.filter((x) => x.owner_id === internalUserId).length <= 1 ? 0.5 : 1,
+                              }}
+                              onMouseEnter={(e) => { if (companies.filter((x) => x.owner_id === internalUserId).length > 1) e.currentTarget.style.borderColor = '#FCA5A5' }}
+                              onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#E5E7EB' }}
+                            >
+                              <Trash2 size={12} strokeWidth={2} />
+                              Delete
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
-                  ))}
+                    )
+                  })}
                 </div>
 
                 {/* Add New Company */}
@@ -369,8 +514,68 @@ export default function SettingsPage() {
                 </button>
               </>
             )}
+            </>
+            ) : (
+            <>
+            <div style={{ marginBottom: '20px' }}>
+              <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0 }}>Subscription</h2>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              {companies.filter((c) => c.owner_id === internalUserId).map((c) => {
+                const isPro = c.plan === 'Paid'
+                return (
+                  <div key={c.id} style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: '12px', padding: '20px 24px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+                      <p style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0 }}>{c.name}</p>
+                      <span style={{
+                        padding: '3px 10px', borderRadius: '99px', fontSize: '0.78rem', fontWeight: 600,
+                        background: isPro ? '#EDE9FE' : '#F3F4F6',
+                        color: isPro ? '#7C3AED' : '#6B7280',
+                      }}>
+                        {isPro ? 'Pro' : 'Free'}
+                      </span>
+                    </div>
+                    <p style={{ fontSize: '0.875rem', color: '#6B7280', margin: '0 0 16px', lineHeight: 1.5 }}>
+                      {isPro
+                        ? 'All features including advanced analytics and priority support'
+                        : 'Basic features for small teams'}
+                    </p>
+                    {isPro ? (
+                      <button
+                        onClick={() => openPlanModal(c, 'downgrade')}
+                        style={{
+                          padding: '8px 16px', background: 'none', border: '1.5px solid #E5E7EB',
+                          borderRadius: '8px', fontWeight: 600, fontSize: '0.875rem', color: '#6B7280',
+                          cursor: 'pointer',
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#9CA3AF')}
+                        onMouseLeave={(e) => (e.currentTarget.style.borderColor = '#E5E7EB')}
+                      >
+                        Downgrade to Free
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => router.push(`/pricing?upgrade=1&company_id=${c.id}`)}
+                        style={{
+                          padding: '8px 16px', background: '#111827', border: 'none',
+                          borderRadius: '8px', fontWeight: 600, fontSize: '0.875rem', color: '#FFFFFF',
+                          cursor: 'pointer',
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = '#1F2937')}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = '#111827')}
+                      >
+                        Upgrade to Pro — $6/user/month
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+            </>
+            )}
           </div>
         </div>
+        )}
       </main>
 
       {/* ── Edit Company Modal ─────────────────────────────────────────────── */}
@@ -379,26 +584,50 @@ export default function SettingsPage() {
           <ModalBox>
             <ModalHeader title="Edit Company" onClose={() => setEditTarget(null)} />
 
-            <div style={{ marginBottom: '16px' }}>
-              <label style={labelStyle}>Company Name <span style={{ color: '#EF4444' }}>*</span></label>
-              <input
-                autoFocus
-                type="text"
-                value={editName}
-                onChange={(e) => setEditName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') handleEdit() }}
-                style={inputStyle}
-              />
-            </div>
-
-            <div style={{ marginBottom: '4px' }}>
-              <label style={labelStyle}>Company Description</label>
-              <textarea
-                value={editDesc}
-                onChange={(e) => setEditDesc(e.target.value)}
-                rows={3}
-                style={{ ...inputStyle, resize: 'vertical' }}
-              />
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div>
+                <label style={labelStyle}>Company Name <span style={{ color: '#EF4444' }}>*</span></label>
+                <input
+                  autoFocus
+                  type="text"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Company Description</label>
+                <textarea
+                  value={editDesc}
+                  onChange={(e) => setEditDesc(e.target.value)}
+                  rows={2}
+                  style={{ ...inputStyle, resize: 'vertical' }}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Location <span style={{ color: '#EF4444' }}>*</span></label>
+                <input
+                  type="text"
+                  placeholder="e.g. Singapore, Orchard Road"
+                  value={editLocation}
+                  onChange={(e) => setEditLocation(e.target.value)}
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Industry <span style={{ color: '#EF4444' }}>*</span></label>
+                <select value={editIndustry} onChange={(e) => setEditIndustry(e.target.value)} style={{ ...inputStyle, appearance: 'auto' }}>
+                  <option value="">Select industry…</option>
+                  {INDUSTRIES.map((i) => <option key={i} value={i}>{i}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Company Size <span style={{ color: '#EF4444' }}>*</span></label>
+                <select value={editSize} onChange={(e) => setEditSize(e.target.value)} style={{ ...inputStyle, appearance: 'auto' }}>
+                  <option value="">Select size…</option>
+                  {SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
             </div>
 
             <InlineError message={editError} />
@@ -447,6 +676,59 @@ export default function SettingsPage() {
         </ModalOverlay>
       )}
 
+      {/* ── Plan Change Confirmation Modal ────────────────────────────────── */}
+      {planModalTarget && planModalType && (
+        <ModalOverlay onClose={() => { setPlanModalTarget(null); setPlanModalType(null) }}>
+          <ModalBox>
+            <ModalHeader
+              title={planModalType === 'upgrade' ? 'Upgrade to Pro?' : 'Downgrade to Free?'}
+              onClose={() => { setPlanModalTarget(null); setPlanModalType(null) }}
+            />
+            {planModalType === 'upgrade' ? (
+              <div style={{ fontSize: '0.9375rem', color: '#374151', margin: '0 0 4px', lineHeight: 1.6 }}>
+                <p style={{ margin: '0 0 12px' }}>
+                  All your companies will be upgraded to Pro.
+                </p>
+                {memberCountLoading
+                  ? <span style={{ color: '#9CA3AF' }}>Calculating cost…</span>
+                  : (
+                    <div style={{ background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: '10px', padding: '14px 18px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                        <span style={{ color: '#6B7280' }}>Users</span>
+                        <span style={{ fontWeight: 600 }}>{memberCount}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+                        <span style={{ color: '#6B7280' }}>Price per user</span>
+                        <span style={{ fontWeight: 600 }}>$6 / month</span>
+                      </div>
+                      <div style={{ borderTop: '1px solid #FED7AA', paddingTop: '10px', display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ fontWeight: 700 }}>Total</span>
+                        <span style={{ fontWeight: 700, color: '#F97316', fontSize: '1rem' }}>${6 * memberCount}/month</span>
+                      </div>
+                    </div>
+                  )}
+              </div>
+            ) : (
+              <p style={{ fontSize: '0.9375rem', color: '#374151', margin: '0 0 4px', lineHeight: 1.6 }}>
+                All your companies and their members will be downgraded to Free.
+              </p>
+            )}
+            <InlineError message={planChangeError} />
+            <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+              <button style={ghostBtn} onClick={() => { setPlanModalTarget(null); setPlanModalType(null) }}>Cancel</button>
+              <button
+                style={primaryBtn(planChangeLoading)}
+                onClick={handlePlanChange}
+                disabled={planChangeLoading}
+              >
+                {planChangeLoading && <Spinner size={14} />}
+                {planModalType === 'upgrade' ? 'Confirm Upgrade' : 'Confirm Downgrade'}
+              </button>
+            </div>
+          </ModalBox>
+        </ModalOverlay>
+      )}
+
       {/* ── Add Company Modal ──────────────────────────────────────────────── */}
       {addOpen && (
         <ModalOverlay onClose={() => setAddOpen(false)}>
@@ -474,6 +756,33 @@ export default function SettingsPage() {
                 rows={2}
                 style={{ ...inputStyle, resize: 'vertical' }}
               />
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label style={labelStyle}>Location <span style={{ color: '#EF4444' }}>*</span></label>
+              <input
+                type="text"
+                placeholder="e.g. Singapore, Orchard Road"
+                value={addLocation}
+                onChange={(e) => setAddLocation(e.target.value)}
+                style={inputStyle}
+              />
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label style={labelStyle}>Industry <span style={{ color: '#EF4444' }}>*</span></label>
+              <select value={addIndustry} onChange={(e) => setAddIndustry(e.target.value)} style={{ ...inputStyle, appearance: 'auto' }}>
+                <option value="">Select industry…</option>
+                {INDUSTRIES.map((i) => <option key={i} value={i}>{i}</option>)}
+              </select>
+            </div>
+
+            <div style={{ marginBottom: '16px' }}>
+              <label style={labelStyle}>Company Size <span style={{ color: '#EF4444' }}>*</span></label>
+              <select value={addSize} onChange={(e) => setAddSize(e.target.value)} style={{ ...inputStyle, appearance: 'auto' }}>
+                <option value="">Select size…</option>
+                {SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
             </div>
 
             {/* Departments */}

@@ -3,7 +3,13 @@
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase';
+import type { Session } from '@supabase/supabase-js';
+import { createBrowserClient } from '@supabase/ssr';
+
+const supabase = createBrowserClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
 // ─── Logo ────────────────────────────────────────────────────────────────────
 
@@ -202,8 +208,10 @@ const DASHBOARD_ROUTE_BY_ROLE: Record<string, string> = {
 export default function Navbar() {
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [authReady, setAuthReady] = useState(false);
+  const [session, setSession] = useState<Session | null>(null);
+  // true = "don't know yet, show nothing". Only ever set to false inside
+  // a useEffect, which never runs during SSR or the hydration pass.
+  const [authLoading, setAuthLoading] = useState(true);
   const pathname = usePathname();
   const router = useRouter();
 
@@ -218,38 +226,25 @@ export default function Navbar() {
   }, [pathname]);
 
   useEffect(() => {
-    const supabase = createClient()
-
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!session) {
-        localStorage.removeItem('tasking_user_id')
-      }
-      setIsLoggedIn(!!session)
-      setAuthReady(true)
+      setSession(session)
+      setAuthLoading(false)
     })
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        if (!session) {
-          localStorage.removeItem('tasking_user_id')
-        }
-        setIsLoggedIn(!!session)
-        setAuthReady(true)
-      }
-    )
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session)
+      setAuthLoading(false)
+    })
 
     return () => subscription.unsubscribe()
   }, []);
 
-  const handleDashboardClick = async () => {
-    const supabase = createClient();
-    const { data: { session } } = await supabase.auth.getSession();
+  const handleDashboardClick = () => {
     if (session) {
       const role = typeof window !== 'undefined' ? localStorage.getItem('tasking_user_role') : null;
       const dest = (role && DASHBOARD_ROUTE_BY_ROLE[role]) || '/owner/dashboard';
       router.push(dest);
     } else {
-      setIsLoggedIn(false);
       router.push('/signin');
     }
   };
@@ -336,7 +331,7 @@ export default function Navbar() {
 
         {/* Right CTAs — hidden on mobile */}
         <div className="nav-cta" style={{ display: 'flex', alignItems: 'center', gap: '10px', justifyContent: 'flex-end' }}>
-          {!authReady ? null : isLoggedIn ? (
+          {authLoading ? null : session ? (
             <>
               <button
                 className="btn-press"
@@ -358,7 +353,6 @@ export default function Navbar() {
               <button
                 className="btn-press"
                 onClick={async () => {
-                  const supabase = createClient()
                   await supabase.auth.signOut()
                   localStorage.removeItem('tasking_user_id')
                   window.location.href = '/signout';
@@ -454,7 +448,7 @@ export default function Navbar() {
         <MobileNavLink label="About" href="/about" onClick={close} />
         <MobileNavLink label="Job Board" href="/job-board" onClick={close} />
         <div style={{ padding: '16px 20px', display: 'flex', gap: '10px' }}>
-          {!authReady ? null : isLoggedIn ? (
+          {authLoading ? null : session ? (
             <>
               <button
                 onClick={() => { close(); handleDashboardClick(); }}
@@ -476,7 +470,6 @@ export default function Navbar() {
               </button>
               <button
                 onClick={async () => {
-                  const supabase = createClient()
                   await supabase.auth.signOut()
                   localStorage.removeItem('tasking_user_id')
                   window.location.href = '/signout';
