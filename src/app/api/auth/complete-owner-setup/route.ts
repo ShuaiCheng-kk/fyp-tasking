@@ -103,17 +103,28 @@ export async function POST(req: NextRequest) {
     })
 
     try {
-      console.log('Sending confirmation email to:', email)
-      await emailService.sendAccountConfirmationEmail({
-        to: email,
-        fullName: full_name,
-        companyName: company_name,
-        companyDescription: company_description || null,
-        plan: plan || 'Free',
+      const { data: linkData } = await adminClient.auth.admin.generateLink({
+        type: 'signup',
+        email: email,
+        password: password,
+        options: {
+          redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`,
+        },
       })
-      console.log('Confirmation email sent successfully')
+      const confirmLink = linkData?.properties?.action_link
+      if (confirmLink) {
+        console.log('Sending confirmation request email to:', email)
+        await emailService.sendConfirmationRequestEmail({
+          to: email,
+          fullName: full_name,
+          confirmLink,
+        })
+        console.log('Confirmation request email sent successfully')
+      } else {
+        console.error('No action_link returned from generateLink')
+      }
     } catch (emailError) {
-      console.error('Failed to send confirmation email:', emailError)
+      console.error('Failed to send confirmation request email:', emailError)
     }
 
     return NextResponse.json({ success: true, requiresConfirmation: true, ...result })
