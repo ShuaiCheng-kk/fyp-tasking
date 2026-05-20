@@ -12,7 +12,7 @@ export const emailService = {
     confirmLink: string
   }): Promise<void> {
     await resend.emails.send({
-      from: 'Tasking <onboarding@resend.dev>',
+      from: 'Tasking <noreply@gettasking.com>',
       to: data.to,
       subject: 'Confirm your Tasking account',
       html: `
@@ -49,7 +49,7 @@ export const emailService = {
       ? `<p style="font-size: 15px; color: #6B7280; margin: 0 0 4px 0;"><strong>Description:</strong> ${data.companyDescription}</p>`
       : ''
     await resend.emails.send({
-      from: 'Tasking <onboarding@resend.dev>',
+      from: 'Tasking <noreply@gettasking.com>',
       to: data.to,
       subject: 'Welcome to Tasking — Your account is ready',
       html: `
@@ -82,7 +82,7 @@ export const emailService = {
     inviterName: string
   }): Promise<void> {
     await resend.emails.send({
-      from: 'Tasking <onboarding@resend.dev>',
+      from: 'Tasking <noreply@gettasking.com>',
       to: data.to,
       subject: `You've been invited to join ${data.companyName} on Tasking`,
       html: `
