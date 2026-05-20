@@ -9,17 +9,22 @@ export async function getConversations(userId: string, companyId: string) {
     lastMessage: string
     lastTime: string
     unreadCount: number
+    lastKnownSenderName: string | null
   }>()
 
   for (const msg of messages) {
     const partnerId = msg.from_user_id === userId ? msg.to_user_id : msg.from_user_id
+    const senderIsPartner = msg.from_user_id === partnerId
     if (!partnerMap.has(partnerId)) {
       partnerMap.set(partnerId, {
         partnerId,
         lastMessage: msg.content,
         lastTime: msg.created_at,
         unreadCount: 0,
+        lastKnownSenderName: senderIsPartner ? ((msg as any).sender_name ?? null) : null,
       })
+    } else if (senderIsPartner && (msg as any).sender_name && !(partnerMap.get(partnerId)!.lastKnownSenderName)) {
+      partnerMap.get(partnerId)!.lastKnownSenderName = (msg as any).sender_name
     }
     if (msg.to_user_id === userId && !msg.is_read) {
       const entry = partnerMap.get(partnerId)!
@@ -31,14 +36,22 @@ export async function getConversations(userId: string, companyId: string) {
     Array.from(partnerMap.values()).map(async (conv) => {
       let partnerName = 'Unknown'
       let partnerRole = ''
+      let partnerDeleted = false
       try {
         const user = await userRepository.findById(conv.partnerId)
         if (user) {
-          partnerName = (user as any).name ?? (user as any).email_address ?? 'Unknown'
+          partnerName = (user as any).full_name ?? (user as any).name ?? (user as any).email_address ?? 'Unknown'
           partnerRole = (user as any).role ?? ''
+        } else {
+          partnerDeleted = true
+          partnerName = conv.lastKnownSenderName ?? 'Deleted User'
         }
-      } catch {}
-      return { ...conv, partnerName, partnerRole }
+      } catch {
+        partnerDeleted = true
+        partnerName = conv.lastKnownSenderName ?? 'Deleted User'
+      }
+      const { lastKnownSenderName, ...rest } = conv
+      return { ...rest, partnerName, partnerRole, partnerDeleted }
     })
   )
 
@@ -53,7 +66,12 @@ export async function getMessages(userId: string, otherUserId: string, companyId
 
 export async function sendMessage(fromUserId: string, toUserId: string, companyId: string, content: string) {
   if (!content || !content.trim()) throw new Error('Message content cannot be empty')
-  return inboxRepo.insertMessage(fromUserId, toUserId, companyId, content.trim())
+  let senderName: string | undefined
+  try {
+    const sender = await userRepository.findById(fromUserId)
+    if (sender) senderName = (sender as any).full_name ?? undefined
+  } catch {}
+  return inboxRepo.insertMessage(fromUserId, toUserId, companyId, content.trim(), senderName)
 }
 
 export async function getAnnouncements(
@@ -66,6 +84,18 @@ export async function getAnnouncements(
 
 export async function deleteAnnouncement(announcementId: string, requestingUserId: string) {
   await inboxRepo.deleteAnnouncement(announcementId, requestingUserId)
+}
+
+export async function updateAnnouncement(
+  announcementId: string,
+  requestingUserId: string,
+  title: string,
+  content: string,
+  departmentId: string | null
+) {
+  if (!title || !title.trim()) throw new Error('Title cannot be empty')
+  if (!content || !content.trim()) throw new Error('Content cannot be empty')
+  return inboxRepo.updateAnnouncement(announcementId, requestingUserId, title.trim(), content.trim(), departmentId)
 }
 
 export async function postAnnouncement(

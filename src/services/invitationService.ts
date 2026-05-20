@@ -6,6 +6,7 @@ import { invitationRepository } from '@/repositories/invitationRepository'
 import { userRepository } from '@/repositories/userRepository'
 import { companyRepository } from '@/repositories/companyRepository'
 import { emailService } from '@/services/emailService'
+import { createInviteNotification } from '@/repositories/inboxRepository'
 import { InvitationCode, User } from '@/types'
 
 function getAdminClient() {
@@ -69,6 +70,21 @@ export const invitationService = {
       throw new Error('You cannot send an invitation to yourself.')
     }
 
+    const existingUser = await userRepository.findByEmail(data.email)
+
+    if (existingUser) {
+      await createInviteNotification({
+        recipient_user_id: existingUser.id,
+        sender_user_id: inviter.id,
+        company_id: data.company_id,
+        role: data.role,
+        department_id: data.department_id,
+        type: 'company_invite',
+        status: 'pending',
+      })
+      return
+    }
+
     const existingInvitation = await invitationRepository.findActiveInvitation(data.company_id, data.role)
     if (existingInvitation) {
       throw new Error('An active invitation already exists for this email. Please wait for them to accept or the invitation to expire.')
@@ -95,6 +111,7 @@ export const invitationService = {
       role: data.role,
       companyName,
       inviteLink,
+      inviterName: inviter.full_name,
     })
   },
 

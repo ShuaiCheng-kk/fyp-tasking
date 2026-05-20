@@ -3,6 +3,7 @@
 
 import { companyRepository } from '@/repositories/companyRepository'
 import { userRepository } from '@/repositories/userRepository'
+import { supabaseAdmin } from '@/lib/supabaseAdmin'
 
 export const teamService = {
 
@@ -32,7 +33,17 @@ export const teamService = {
       throw new Error('Insufficient permissions to remove a Partner')
     }
 
-    await companyRepository.removeUserFromCompany(user_id_to_remove, company_id)
+    // STEP 1: get the Supabase Auth id before deleting the users row
+    const supabaseAuthId = target.supabase_auth_id
+
+    // STEP 2: delete from public.users
+    await userRepository.deleteById(user_id_to_remove)
+
+    // STEP 3: delete from Supabase Auth
+    if (supabaseAuthId) {
+      const { error } = await supabaseAdmin.auth.admin.deleteUser(supabaseAuthId)
+      if (error) throw new Error(`Failed to delete auth user: ${error.message}`)
+    }
   },
 
   async getManagerDepartments(

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getAnnouncements, postAnnouncement, deleteAnnouncement } from '@/services/inboxService'
+import { getAnnouncements, postAnnouncement, deleteAnnouncement, updateAnnouncement } from '@/services/inboxService'
 
 export async function GET(req: NextRequest) {
   try {
@@ -26,6 +26,26 @@ export async function DELETE(req: NextRequest) {
     }
     await deleteAnnouncement(announcement_id, requesting_user_id)
     return NextResponse.json({ success: true })
+  } catch (error: any) {
+    return NextResponse.json({ success: false, error: error.message }, { status: 400 })
+  }
+}
+
+export async function PATCH(req: NextRequest) {
+  try {
+    const body = await req.json()
+    const { announcement_id, requesting_user_id, title, content, department_id } = body
+    if (!announcement_id || !requesting_user_id || !title || !content) {
+      return NextResponse.json({ success: false, error: 'Missing required fields' }, { status: 400 })
+    }
+    const announcement = await updateAnnouncement(
+      announcement_id,
+      requesting_user_id,
+      title,
+      content,
+      department_id ?? null
+    )
+    return NextResponse.json({ success: true, announcement })
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 400 })
   }

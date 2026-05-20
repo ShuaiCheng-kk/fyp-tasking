@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 import { authService } from '@/services/authService'
+import { emailService } from '@/services/emailService'
 
 export async function POST(req: NextRequest) {
   const body = await req.json()
@@ -100,7 +101,22 @@ export async function POST(req: NextRequest) {
       departments: Array.isArray(departments) ? departments : [],
       plan: plan || 'Free',
     })
-    return NextResponse.json({ success: true, ...result })
+
+    try {
+      console.log('Sending confirmation email to:', email)
+      await emailService.sendAccountConfirmationEmail({
+        to: email,
+        fullName: full_name,
+        companyName: company_name,
+        companyDescription: company_description || null,
+        plan: plan || 'Free',
+      })
+      console.log('Confirmation email sent successfully')
+    } catch (emailError) {
+      console.error('Failed to send confirmation email:', emailError)
+    }
+
+    return NextResponse.json({ success: true, requiresConfirmation: true, ...result })
   } catch (error: unknown) {
     const msg = (error instanceof Error ? error.message : '').toLowerCase()
     if (msg.includes('phone') && (msg.includes('duplicate') || msg.includes('unique'))) {

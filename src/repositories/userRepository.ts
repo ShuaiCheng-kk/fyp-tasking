@@ -163,7 +163,7 @@ export const userRepository = {
     const { data, error } = await adminClient.auth.admin.createUser({
       email,
       password,
-      email_confirm: true,
+      email_confirm: false,
     })
     if (error) throw new Error(error.message)
     if (!data.user) throw new Error('Registration failed')
@@ -220,6 +220,16 @@ export const userRepository = {
 
     // Add 1 for the owner themselves
     return (memberCount ?? 0) + 1
+  },
+
+  async findNonOwnersByCompanyId(company_id: string): Promise<Pick<User, 'id' | 'supabase_auth_id'>[]> {
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, supabase_auth_id')
+      .eq('company_id', company_id)
+      .neq('role', 'Owner')
+    if (error) throw new Error(error.message)
+    return data || []
   },
 
   async deleteById(user_id: string): Promise<void> {
