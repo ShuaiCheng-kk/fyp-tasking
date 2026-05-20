@@ -4,7 +4,6 @@
 import { companyRepository } from '@/repositories/companyRepository'
 import { departmentRepository } from '@/repositories/departmentRepository'
 import { userRepository } from '@/repositories/userRepository'
-import { emailService } from '@/services/emailService'
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
 import { Company, Department, User } from '@/types'
 
@@ -46,21 +45,6 @@ export const companyService = {
       website: data.website,
     })
     await userRepository.updateCompanyId(internalOwnerId, company.id)
-
-    try {
-      const owner = await userRepository.findById(internalOwnerId)
-      if (owner) {
-        await emailService.sendAccountConfirmationEmail({
-          to: owner.email_address,
-          fullName: owner.full_name,
-          companyName: company.name,
-          companyDescription: company.description ?? null,
-          plan: company.plan,
-        })
-      }
-    } catch (err) {
-      console.error('Failed to send account confirmation email:', err)
-    }
 
     return company
   },
