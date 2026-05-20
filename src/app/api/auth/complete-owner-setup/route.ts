@@ -104,14 +104,14 @@ export async function POST(req: NextRequest) {
 
     try {
       const { data: linkData } = await adminClient.auth.admin.generateLink({
-        type: 'signup',
+        type: 'magiclink',
         email: email,
-        password: password,
         options: {
           redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`,
         },
       })
       const confirmLink = linkData?.properties?.action_link
+      console.log('Generated confirm link:', confirmLink)
       if (confirmLink) {
         console.log('Sending Email 1 (confirmation request) to:', email)
         await emailService.sendConfirmationRequestEmail({
