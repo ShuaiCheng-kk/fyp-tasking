@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Eye, EyeOff } from 'lucide-react';
@@ -61,7 +61,7 @@ const ROLE_ROUTES: Record<string, string> = {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function SignInPage() {
+function SignInContent() {
   const searchParams = useSearchParams();
   const isRemoved = searchParams.get('removed') === 'true';
   const isConfirmed = searchParams.get('confirmed') === 'true';
@@ -322,5 +322,13 @@ export default function SignInPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+export default function SignInPage() {
+  return (
+    <Suspense fallback={null}>
+      <SignInContent />
+    </Suspense>
   );
 }
