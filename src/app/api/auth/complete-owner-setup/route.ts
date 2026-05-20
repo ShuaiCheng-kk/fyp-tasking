@@ -113,18 +113,32 @@ export async function POST(req: NextRequest) {
       })
       const confirmLink = linkData?.properties?.action_link
       if (confirmLink) {
-        console.log('Sending confirmation request email to:', email)
+        console.log('Sending Email 1 (confirmation request) to:', email)
         await emailService.sendConfirmationRequestEmail({
           to: email,
           fullName: full_name,
           confirmLink,
         })
-        console.log('Confirmation request email sent successfully')
+        console.log('Email 1 sent successfully')
       } else {
         console.error('No action_link returned from generateLink')
       }
     } catch (emailError) {
-      console.error('Failed to send confirmation request email:', emailError)
+      console.error('Failed to send Email 1:', emailError)
+    }
+
+    try {
+      console.log('Sending Email 2 (account ready) to:', email)
+      await emailService.sendAccountConfirmationEmail({
+        to: email,
+        fullName: full_name,
+        companyName: company_name,
+        companyDescription: company_description || null,
+        plan: 'Free',
+      })
+      console.log('Email 2 sent successfully')
+    } catch (emailError) {
+      console.error('Failed to send Email 2:', emailError)
     }
 
     return NextResponse.json({ success: true, requiresConfirmation: true, ...result })
