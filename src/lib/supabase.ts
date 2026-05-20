@@ -24,3 +24,4 @@ export const createClient = (): SupabaseClient<any, any, any> => {
 
 // Legacy singleton for server-side code that still imports `supabase` directly
 export const supabase = createClient()
+

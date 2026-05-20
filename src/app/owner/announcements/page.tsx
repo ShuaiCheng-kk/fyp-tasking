@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import { createClient } from '@/lib/supabase'
-import { Plus, X, Trash2 } from 'lucide-react'
+import { Plus, X, Trash2, Pencil } from 'lucide-react'
 
 const ACCENT = '#F97316'
 const ACCENT_LIGHT = '#FFF7ED'
@@ -16,6 +16,7 @@ type Announcement = {
   title: string
   content: string
   created_at: string
+  created_by_name?: string | null
 }
 
 type Department = { id: string; name: string }
@@ -67,6 +68,14 @@ export default function OwnerAnnouncementsPage() {
   const [posting, setPosting] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
+
+  const [showEditModal, setShowEditModal] = useState(false)
+  const [editTitle, setEditTitle] = useState('')
+  const [editContent, setEditContent] = useState('')
+  const [editAudience, setEditAudience] = useState<string | 'company-wide'>('company-wide')
+  const [editDeptId, setEditDeptId] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [editError, setEditError] = useState<string | null>(null)
 
   const supabase = createClient()
 
@@ -190,6 +199,49 @@ export default function OwnerAnnouncementsPage() {
     finally { setDeleting(false) }
   }
 
+  function handleOpenEdit(ann: Announcement) {
+    setEditTitle(ann.title)
+    setEditContent(ann.content)
+    if (ann.department_id) {
+      setEditAudience('specific-dept')
+      setEditDeptId(ann.department_id)
+    } else {
+      setEditAudience('company-wide')
+      setEditDeptId(null)
+    }
+    setEditError(null)
+    setShowEditModal(true)
+  }
+
+  async function handleSaveEdit() {
+    if (!selectedAnn || !internalUserId) return
+    setSaving(true)
+    setEditError(null)
+    try {
+      const deptId = editAudience === 'specific-dept' ? editDeptId : null
+      const res = await fetch('/api/inbox/announcements', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          announcement_id: selectedAnn.id,
+          requesting_user_id: internalUserId,
+          title: editTitle,
+          content: editContent,
+          department_id: deptId,
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.error ?? 'Failed to save')
+      setShowEditModal(false)
+      fetchAnnouncements()
+      setSelectedAnn(prev => prev ? { ...prev, title: editTitle, content: editContent, department_id: deptId } : prev)
+    } catch (err: any) {
+      setEditError(err.message ?? 'An error occurred')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const canPostCompanyWide = ['owner', 'partner'].includes(userRole?.toLowerCase())
 
   return (
@@ -235,6 +287,11 @@ export default function OwnerAnnouncementsPage() {
                       <span style={{ fontWeight: unread ? 700 : 500, fontSize: '0.875rem', color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                         {ann.title}
                       </span>
+                      {ann.created_by_name && (
+                        <span style={{ fontSize: '12px', color: '#6B7280', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                          {ann.created_by_name}
+                        </span>
+                      )}
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontSize: '0.75rem', color: '#9CA3AF' }}>{formatTime(ann.created_at)}</span>
@@ -263,21 +320,38 @@ export default function OwnerAnnouncementsPage() {
                         {selectedAnn.department_id ? (departments.find(d => d.id === selectedAnn.department_id)?.name ?? 'Department') : 'Company-wide'}
                       </span>
                       {selectedAnn.from_user_id === internalUserId && (
-                        <button
-                          onClick={() => setDeleteConfirmId(selectedAnn.id)}
-                          title="Delete announcement"
-                          style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: 'none', border: '1px solid #FECACA', borderRadius: 6, cursor: 'pointer', color: '#DC2626', fontSize: '0.8rem', fontWeight: 500 }}
-                          onMouseEnter={e => { e.currentTarget.style.background = '#FEF2F2' }}
-                          onMouseLeave={e => { e.currentTarget.style.background = 'none' }}
-                        >
-                          <Trash2 size={13} /> Delete
-                        </button>
+                        <>
+                          <button
+                            onClick={() => handleOpenEdit(selectedAnn)}
+                            title="Edit announcement"
+                            style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: 'none', border: '1px solid #E5E7EB', borderRadius: 6, cursor: 'pointer', color: '#374151', fontSize: '0.8rem', fontWeight: 500 }}
+                            onMouseEnter={e => { e.currentTarget.style.background = '#F9FAFB' }}
+                            onMouseLeave={e => { e.currentTarget.style.background = 'none' }}
+                          >
+                            <Pencil size={13} /> Edit
+                          </button>
+                          <button
+                            onClick={() => setDeleteConfirmId(selectedAnn.id)}
+                            title="Delete announcement"
+                            style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: 'none', border: '1px solid #FECACA', borderRadius: 6, cursor: 'pointer', color: '#DC2626', fontSize: '0.8rem', fontWeight: 500 }}
+                            onMouseEnter={e => { e.currentTarget.style.background = '#FEF2F2' }}
+                            onMouseLeave={e => { e.currentTarget.style.background = 'none' }}
+                          >
+                            <Trash2 size={13} /> Delete
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>
-                  <div style={{ fontSize: '0.8125rem', color: '#9CA3AF', marginBottom: 20 }}>
+                  <div style={{ fontSize: '0.8125rem', color: '#9CA3AF', marginBottom: 4 }}>
                     {new Date(selectedAnn.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
                   </div>
+                  {selectedAnn.created_by_name && (
+                    <div style={{ fontSize: '13px', color: '#9CA3AF', marginBottom: 20 }}>
+                      Posted by {selectedAnn.created_by_name}
+                    </div>
+                  )}
+                  {!selectedAnn.created_by_name && <div style={{ marginBottom: 20 }} />}
                   <p style={{ fontSize: '0.9375rem', color: '#374151', lineHeight: 1.7, whiteSpace: 'pre-wrap', margin: 0 }}>{selectedAnn.content}</p>
                 </div>
               </div>
@@ -314,6 +388,93 @@ export default function OwnerAnnouncementsPage() {
               >
                 {deleting ? 'Deleting…' : 'Delete'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Announcement Modal */}
+      {showEditModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: '#fff', borderRadius: 12, padding: 28, width: 480, maxWidth: '90vw', boxShadow: '0 8px 32px rgba(0,0,0,0.15)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <h3 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0 }}>Edit Announcement</h3>
+              <button onClick={() => setShowEditModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF' }}>
+                <X size={18} />
+              </button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div>
+                <label style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 }}>Title *</label>
+                <input
+                  value={editTitle}
+                  onChange={e => setEditTitle(e.target.value)}
+                  placeholder="Announcement title"
+                  style={{ width: '100%', padding: '9px 12px', border: '1px solid #E5E7EB', borderRadius: 7, fontSize: '0.875rem', outline: 'none', boxSizing: 'border-box' }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 }}>Content *</label>
+                <textarea
+                  value={editContent}
+                  onChange={e => setEditContent(e.target.value)}
+                  placeholder="Write your announcement..."
+                  rows={5}
+                  style={{ width: '100%', padding: '9px 12px', border: '1px solid #E5E7EB', borderRadius: 7, fontSize: '0.875rem', outline: 'none', resize: 'vertical', boxSizing: 'border-box' }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 }}>Audience</label>
+                <select
+                  value={editAudience}
+                  onChange={e => {
+                    setEditAudience(e.target.value)
+                    if (e.target.value === 'company-wide') setEditDeptId(null)
+                    else if (departments.length > 0) setEditDeptId(departments[0].id)
+                  }}
+                  style={{ width: '100%', padding: '9px 12px', border: '1px solid #E5E7EB', borderRadius: 7, fontSize: '0.875rem', outline: 'none', background: '#fff' }}
+                >
+                  <option value="company-wide">Company-wide</option>
+                  <option value="specific-dept">Specific Department</option>
+                </select>
+              </div>
+              {editAudience === 'specific-dept' && (
+                <div>
+                  <label style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 }}>Department</label>
+                  <select
+                    value={editDeptId ?? ''}
+                    onChange={e => setEditDeptId(e.target.value)}
+                    disabled={departments.length === 0}
+                    style={{ width: '100%', padding: '9px 12px', border: '1px solid #E5E7EB', borderRadius: 7, fontSize: '0.875rem', outline: 'none', background: '#fff', opacity: departments.length === 0 ? 0.6 : 1 }}
+                  >
+                    {departments.length === 0
+                      ? <option value="">No departments available</option>
+                      : departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)
+                    }
+                  </select>
+                </div>
+              )}
+              {editError && (
+                <div style={{ fontSize: '0.8125rem', color: '#DC2626', background: '#FEF2F2', padding: '8px 12px', borderRadius: 6 }}>
+                  {editError}
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button
+                  onClick={() => setShowEditModal(false)}
+                  disabled={saving}
+                  style={{ flex: 1, padding: '9px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: 8, fontWeight: 600, fontSize: '0.9rem', color: '#6B7280', cursor: 'pointer' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveEdit}
+                  disabled={saving || !editTitle.trim() || !editContent.trim()}
+                  style={{ flex: 1, padding: '9px', background: ACCENT, border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.9rem', color: '#fff', cursor: saving || !editTitle.trim() || !editContent.trim() ? 'not-allowed' : 'pointer', opacity: saving || !editTitle.trim() || !editContent.trim() ? 0.6 : 1 }}
+                >
+                  {saving ? 'Saving…' : 'Save Changes'}
+                </button>
+              </div>
             </div>
           </div>
         </div>

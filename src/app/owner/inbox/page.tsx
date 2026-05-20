@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import { createClient } from '@/lib/supabase'
-import { Send, Search, SquarePen, X, Check } from 'lucide-react'
+import { Send, Search, SquarePen, X, Check, Bell } from 'lucide-react'
 
 const ACCENT = '#F97316'
 const ACCENT_LIGHT = '#FFF7ED'
@@ -33,6 +33,7 @@ type Conversation = {
   lastMessage: string
   lastTime: string
   unreadCount: number
+  partnerDeleted?: boolean
 }
 
 type Message = {
@@ -43,6 +44,16 @@ type Message = {
   created_at: string
   is_read: boolean
 }
+
+type InboxInvite = {
+  id: string
+  role: string
+  created_at: string
+  sender_name: string
+  company_name: string
+}
+
+type InviteFlash = { id: string; message: string }
 
 function formatTime(iso: string) {
   const d = new Date(iso)
@@ -82,6 +93,13 @@ export default function OwnerInboxPage() {
   const [messages, setMessages] = useState<Message[]>([])
   const [msgInput, setMsgInput] = useState('')
   const [sendingMsg, setSendingMsg] = useState(false)
+
+  // Invitations
+  const [activeTab, setActiveTab] = useState<'messages' | 'invites'>('messages')
+  const [invites, setInvites] = useState<InboxInvite[]>([])
+  const [inviteFlashes, setInviteFlashes] = useState<InviteFlash[]>([])
+  const [inviteLoading, setInviteLoading] = useState(false)
+  const [inviteActing, setInviteActing] = useState<string | null>(null)
 
   // Compose modal
   const [composeOpen, setComposeOpen] = useState(false)
@@ -123,11 +141,25 @@ export default function OwnerInboxPage() {
       .then(d => { if (d.success) setConversations(d.conversations ?? []) })
   }, [internalUserId, companyId])
 
+  const fetchInvites = useCallback(() => {
+    if (!internalUserId) return
+    setInviteLoading(true)
+    fetch(`/api/inbox/invites?user_id=${internalUserId}`)
+      .then(r => r.json())
+      .then(d => { if (d.success) setInvites(d.invites ?? []) })
+      .finally(() => setInviteLoading(false))
+  }, [internalUserId])
+
   useEffect(() => {
     if (!internalUserId || !companyId) return
     fetchConversations()
     fetchUnreadCount()
   }, [internalUserId, companyId, fetchConversations, fetchUnreadCount])
+
+  useEffect(() => {
+    if (!internalUserId) return
+    fetchInvites()
+  }, [internalUserId, fetchInvites])
 
   useEffect(() => {
     const q = search.toLowerCase()
@@ -192,6 +224,49 @@ export default function OwnerInboxPage() {
         }
       })
   }, [companyId, internalUserId])
+
+  async function handleAcceptInvite(invite: InboxInvite) {
+    if (!internalUserId) return
+    setInviteActing(invite.id)
+    try {
+      const res = await fetch('/api/inbox/invites/accept', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inbox_id: invite.id, user_id: internalUserId }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.error ?? 'Failed to accept')
+      setInvites(prev => prev.filter(i => i.id !== invite.id))
+      const flash: InviteFlash = { id: invite.id, message: `You have joined ${invite.company_name}` }
+      setInviteFlashes(prev => [...prev, flash])
+      setTimeout(() => setInviteFlashes(prev => prev.filter(f => f.id !== flash.id)), 4000)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Something went wrong')
+    } finally {
+      setInviteActing(null)
+    }
+  }
+
+  async function handleDeclineInvite(invite: InboxInvite) {
+    setInviteActing(invite.id)
+    try {
+      const res = await fetch('/api/inbox/invites/decline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inbox_id: invite.id }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.error ?? 'Failed to decline')
+      setInvites(prev => prev.filter(i => i.id !== invite.id))
+      const flash: InviteFlash = { id: invite.id, message: 'Invitation declined' }
+      setInviteFlashes(prev => [...prev, flash])
+      setTimeout(() => setInviteFlashes(prev => prev.filter(f => f.id !== flash.id)), 3000)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Something went wrong')
+    } finally {
+      setInviteActing(null)
+    }
+  }
 
   async function handleComposeSend() {
     if (!selectedRecipient || !composeText.trim() || !internalUserId || !companyId) return
@@ -276,87 +351,196 @@ export default function OwnerInboxPage() {
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
           {/* Left: conversation list */}
           <div style={{ width: '33%', minWidth: 260, maxWidth: 360, background: '#FFFFFF', borderRight: '1px solid #E5E7EB', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-            {/* New Message button */}
-            <div style={{ padding: '12px 14px', borderBottom: '1px solid #F3F4F6' }}>
+            {/* Tabs */}
+            <div style={{ display: 'flex', borderBottom: '1px solid #E5E7EB' }}>
               <button
-                onClick={openCompose}
+                onClick={() => setActiveTab('messages')}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: 6, width: '100%',
-                  padding: '8px 14px', background: ACCENT, border: 'none', borderRadius: 8,
-                  color: '#fff', fontWeight: 600, fontSize: '0.875rem', cursor: 'pointer',
-                  justifyContent: 'center',
+                  flex: 1, padding: '11px 0', background: 'none', border: 'none', cursor: 'pointer',
+                  fontWeight: activeTab === 'messages' ? 700 : 500, fontSize: '0.875rem',
+                  color: activeTab === 'messages' ? ACCENT : '#6B7280',
+                  borderBottom: activeTab === 'messages' ? `2px solid ${ACCENT}` : '2px solid transparent',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                 }}
-                onMouseEnter={e => (e.currentTarget.style.background = '#EA6C0A')}
-                onMouseLeave={e => (e.currentTarget.style.background = ACCENT)}
               >
-                <SquarePen size={14} strokeWidth={2.5} />
-                New Message
+                <SquarePen size={14} /> Messages
+              </button>
+              <button
+                onClick={() => setActiveTab('invites')}
+                style={{
+                  flex: 1, padding: '11px 0', background: 'none', border: 'none', cursor: 'pointer',
+                  fontWeight: activeTab === 'invites' ? 700 : 500, fontSize: '0.875rem',
+                  color: activeTab === 'invites' ? ACCENT : '#6B7280',
+                  borderBottom: activeTab === 'invites' ? `2px solid ${ACCENT}` : '2px solid transparent',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  position: 'relative',
+                }}
+              >
+                <Bell size={14} /> Invitations
+                {invites.length > 0 && (
+                  <span style={{
+                    position: 'absolute', top: 6, right: 18,
+                    background: ACCENT, color: '#fff', borderRadius: '50%',
+                    width: 16, height: 16, fontSize: '0.65rem', fontWeight: 700,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>{invites.length}</span>
+                )}
               </button>
             </div>
 
-            {/* Search */}
-            <div style={{ padding: '10px 14px', borderBottom: '1px solid #F3F4F6' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 8, padding: '7px 12px' }}>
-                <Search size={14} color="#9CA3AF" />
-                <input
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  placeholder="Search conversations..."
-                  style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: '0.875rem', color: '#374151' }}
-                />
-              </div>
-            </div>
-
-            <div style={{ overflowY: 'auto', flex: 1 }}>
-              {filteredConversations.length === 0 ? (
-                <div style={{ padding: 24, color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>
-                  {search ? 'No results' : 'No conversations yet'}
+            {activeTab === 'messages' ? (
+              <>
+                {/* New Message button */}
+                <div style={{ padding: '12px 14px', borderBottom: '1px solid #F3F4F6' }}>
+                  <button
+                    onClick={openCompose}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+                      padding: '8px 14px', background: ACCENT, border: 'none', borderRadius: 8,
+                      color: '#fff', fontWeight: 600, fontSize: '0.875rem', cursor: 'pointer',
+                      justifyContent: 'center',
+                    }}
+                    onMouseEnter={e => (e.currentTarget.style.background = '#EA6C0A')}
+                    onMouseLeave={e => (e.currentTarget.style.background = ACCENT)}
+                  >
+                    <SquarePen size={14} strokeWidth={2.5} />
+                    New Message
+                  </button>
                 </div>
-              ) : filteredConversations.map(conv => (
-                <button
-                  key={conv.partnerId}
-                  onClick={() => setSelectedConv(conv)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 10, padding: '13px 16px',
-                    background: selectedConv?.partnerId === conv.partnerId ? ACCENT_LIGHT : 'transparent',
-                    border: 'none', cursor: 'pointer', textAlign: 'left', width: '100%',
-                    borderBottom: '1px solid #F9FAFB', transition: 'background 0.1s',
-                  }}
-                >
-                  <Avatar name={conv.partnerName} size={38} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontWeight: conv.unreadCount > 0 ? 700 : 500, fontSize: '0.875rem', color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {conv.partnerName}
-                      </span>
-                      <span style={{ fontSize: '0.7rem', color: '#9CA3AF', flexShrink: 0, marginLeft: 6 }}>{formatTime(conv.lastTime)}</span>
+
+                {/* Search */}
+                <div style={{ padding: '10px 14px', borderBottom: '1px solid #F3F4F6' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 8, padding: '7px 12px' }}>
+                    <Search size={14} color="#9CA3AF" />
+                    <input
+                      value={search}
+                      onChange={e => setSearch(e.target.value)}
+                      placeholder="Search conversations..."
+                      style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: '0.875rem', color: '#374151' }}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ overflowY: 'auto', flex: 1 }}>
+                  {filteredConversations.length === 0 ? (
+                    <div style={{ padding: 24, color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>
+                      {search ? 'No results' : 'No conversations yet'}
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 1 }}>
-                      {conv.partnerRole && (
-                        <span style={{ fontSize: '0.7rem', color: ACCENT, fontWeight: 500 }}>{conv.partnerRole}</span>
-                      )}
-                      {conv.partnerRole && <span style={{ fontSize: '0.7rem', color: '#D1D5DB' }}>·</span>}
-                      <span style={{ fontSize: '0.8125rem', color: conv.unreadCount > 0 ? '#111827' : '#9CA3AF', fontWeight: conv.unreadCount > 0 ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                        {conv.lastMessage}
-                      </span>
-                      {conv.unreadCount > 0 && (
-                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: ACCENT, flexShrink: 0 }} />
-                      )}
+                  ) : filteredConversations.map(conv => (
+                    <button
+                      key={conv.partnerId}
+                      onClick={() => setSelectedConv(conv)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10, padding: '13px 16px',
+                        background: selectedConv?.partnerId === conv.partnerId ? ACCENT_LIGHT : 'transparent',
+                        border: 'none', cursor: 'pointer', textAlign: 'left', width: '100%',
+                        borderBottom: '1px solid #F9FAFB', transition: 'background 0.1s',
+                      }}
+                    >
+                      <Avatar name={conv.partnerName} size={38} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
+                            <span style={{ fontWeight: conv.unreadCount > 0 ? 700 : 500, fontSize: '0.875rem', color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {conv.partnerName}
+                            </span>
+                            {conv.partnerDeleted && (
+                              <span style={{ background: '#F3F4F6', color: '#6B7280', fontSize: '11px', padding: '2px 8px', borderRadius: '20px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                                Account removed
+                              </span>
+                            )}
+                          </div>
+                          <span style={{ fontSize: '0.7rem', color: '#9CA3AF', flexShrink: 0, marginLeft: 6 }}>{formatTime(conv.lastTime)}</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 1 }}>
+                          {conv.partnerRole && (
+                            <span style={{ fontSize: '0.7rem', color: ACCENT, fontWeight: 500 }}>{conv.partnerRole}</span>
+                          )}
+                          {conv.partnerRole && <span style={{ fontSize: '0.7rem', color: '#D1D5DB' }}>·</span>}
+                          <span style={{ fontSize: '0.8125rem', color: conv.unreadCount > 0 ? '#111827' : '#9CA3AF', fontWeight: conv.unreadCount > 0 ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                            {conv.lastMessage}
+                          </span>
+                          {conv.unreadCount > 0 && (
+                            <div style={{ width: 8, height: 8, borderRadius: '50%', background: ACCENT, flexShrink: 0 }} />
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : (
+              /* Invites list */
+              <div style={{ overflowY: 'auto', flex: 1, padding: '8px 0' }}>
+                {inviteLoading ? (
+                  <div style={{ padding: 24, color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>Loading…</div>
+                ) : invites.length === 0 ? (
+                  <div style={{ padding: 24, color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>No pending invitations</div>
+                ) : invites.map(invite => (
+                  <div
+                    key={invite.id}
+                    style={{
+                      margin: '8px 12px', padding: '14px 16px',
+                      background: '#FAFAFA', border: '1px solid #E5E7EB', borderRadius: 12,
+                    }}
+                  >
+                    <p style={{ margin: '0 0 4px', fontSize: '0.875rem', color: '#111827', fontWeight: 500 }}>
+                      <strong>{invite.sender_name}</strong> invited you to join{' '}
+                      <strong>{invite.company_name}</strong> as{' '}
+                      <span style={{ color: ACCENT }}>{invite.role}</span>
+                    </p>
+                    <p style={{ margin: '0 0 12px', fontSize: '0.75rem', color: '#9CA3AF' }}>
+                      {formatTime(invite.created_at)}
+                    </p>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button
+                        onClick={() => handleAcceptInvite(invite)}
+                        disabled={inviteActing === invite.id}
+                        style={{
+                          flex: 1, padding: '7px 0', background: '#10B981', color: '#fff',
+                          border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem',
+                          cursor: inviteActing === invite.id ? 'not-allowed' : 'pointer',
+                          opacity: inviteActing === invite.id ? 0.6 : 1,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                        }}
+                      >
+                        <Check size={13} /> Accept
+                      </button>
+                      <button
+                        onClick={() => handleDeclineInvite(invite)}
+                        disabled={inviteActing === invite.id}
+                        style={{
+                          flex: 1, padding: '7px 0', background: '#fff', color: '#6B7280',
+                          border: '1.5px solid #E5E7EB', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem',
+                          cursor: inviteActing === invite.id ? 'not-allowed' : 'pointer',
+                          opacity: inviteActing === invite.id ? 0.6 : 1,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                        }}
+                      >
+                        <X size={13} /> Decline
+                      </button>
                     </div>
                   </div>
-                </button>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
 
-          {/* Right: chat view */}
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#F9FAFB' }}>
+          {/* Right: chat view (hidden when on invites tab) */}
+          <div style={{ flex: 1, display: activeTab === 'invites' ? 'none' : 'flex', flexDirection: 'column', overflow: 'hidden', background: '#F9FAFB' }}>
             {selectedConv ? (
               <>
                 <div style={{ padding: '14px 24px', background: '#FFFFFF', borderBottom: '1px solid #E5E7EB', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
                   <Avatar name={selectedConv.partnerName} size={36} />
                   <div>
-                    <div style={{ fontWeight: 600, fontSize: '0.9375rem', color: '#111827' }}>{selectedConv.partnerName}</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontWeight: 600, fontSize: '0.9375rem', color: '#111827' }}>{selectedConv.partnerName}</span>
+                      {selectedConv.partnerDeleted && (
+                        <span style={{ background: '#F3F4F6', color: '#6B7280', fontSize: '11px', padding: '2px 8px', borderRadius: '20px' }}>
+                          Account removed
+                        </span>
+                      )}
+                    </div>
                     {selectedConv.partnerRole && (
                       <div style={{ fontSize: '0.75rem', color: '#9CA3AF' }}>{selectedConv.partnerRole}</div>
                     )}
@@ -390,17 +574,20 @@ export default function OwnerInboxPage() {
                   <input
                     value={msgInput}
                     onChange={e => setMsgInput(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage() } }}
-                    placeholder="Type a message..."
-                    style={{ flex: 1, padding: '9px 14px', border: '1px solid #E5E7EB', borderRadius: 8, fontSize: '0.875rem', outline: 'none' }}
+                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !selectedConv.partnerDeleted) { e.preventDefault(); handleSendMessage() } }}
+                    placeholder={selectedConv.partnerDeleted ? "This user's account no longer exists." : "Type a message..."}
+                    disabled={selectedConv.partnerDeleted}
+                    style={{ flex: 1, padding: '9px 14px', border: '1px solid #E5E7EB', borderRadius: 8, fontSize: '0.875rem', outline: 'none', background: selectedConv.partnerDeleted ? '#F9FAFB' : undefined, color: selectedConv.partnerDeleted ? '#9CA3AF' : undefined, cursor: selectedConv.partnerDeleted ? 'not-allowed' : undefined }}
                   />
-                  <button
-                    onClick={handleSendMessage}
-                    disabled={sendingMsg || !msgInput.trim()}
-                    style={{ padding: '9px 18px', background: ACCENT, color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: '0.875rem', opacity: sendingMsg || !msgInput.trim() ? 0.6 : 1 }}
-                  >
-                    <Send size={15} /> Send
-                  </button>
+                  {!selectedConv.partnerDeleted && (
+                    <button
+                      onClick={handleSendMessage}
+                      disabled={sendingMsg || !msgInput.trim()}
+                      style={{ padding: '9px 18px', background: ACCENT, color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: '0.875rem', opacity: sendingMsg || !msgInput.trim() ? 0.6 : 1 }}
+                    >
+                      <Send size={15} /> Send
+                    </button>
+                  )}
                 </div>
               </>
             ) : (
@@ -412,6 +599,23 @@ export default function OwnerInboxPage() {
           </div>
         </div>
       </main>
+
+      {/* Invite flash toasts */}
+      {inviteFlashes.length > 0 && (
+        <div style={{ position: 'fixed', bottom: 24, right: 24, display: 'flex', flexDirection: 'column', gap: 10, zIndex: 200 }}>
+          {inviteFlashes.map(f => (
+            <div key={f.id} style={{
+              background: '#111827', color: '#fff', padding: '12px 18px',
+              borderRadius: 10, fontSize: '0.875rem', fontWeight: 500,
+              boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
+              display: 'flex', alignItems: 'center', gap: 8,
+            }}>
+              <Check size={14} color="#10B981" />
+              {f.message}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Compose Modal */}
       {composeOpen && (

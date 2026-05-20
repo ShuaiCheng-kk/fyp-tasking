@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 import { authService } from '@/services/authService'
+import { emailService } from '@/services/emailService'
 
 export async function POST(req: NextRequest) {
   const body = await req.json()
@@ -100,7 +101,33 @@ export async function POST(req: NextRequest) {
       departments: Array.isArray(departments) ? departments : [],
       plan: plan || 'Free',
     })
-    return NextResponse.json({ success: true, ...result })
+
+    try {
+      const { data: linkData } = await adminClient.auth.admin.generateLink({
+        type: 'magiclink',
+        email: email,
+        options: {
+          redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`,
+        },
+      })
+      const confirmLink = linkData?.properties?.action_link
+      console.log('Generated confirm link:', confirmLink)
+      if (confirmLink) {
+        console.log('Sending Email 1 (confirmation request) to:', email)
+        await emailService.sendConfirmationRequestEmail({
+          to: email,
+          fullName: full_name,
+          confirmLink,
+        })
+        console.log('Email 1 sent successfully')
+      } else {
+        console.error('No action_link returned from generateLink')
+      }
+    } catch (emailError) {
+      console.error('Failed to send Email 1:', emailError)
+    }
+
+    return NextResponse.json({ success: true, requiresConfirmation: true, ...result })
   } catch (error: unknown) {
     const msg = (error instanceof Error ? error.message : '').toLowerCase()
     if (msg.includes('phone') && (msg.includes('duplicate') || msg.includes('unique'))) {

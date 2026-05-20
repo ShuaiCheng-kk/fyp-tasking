@@ -4,6 +4,7 @@
 import { companyRepository } from '@/repositories/companyRepository'
 import { departmentRepository } from '@/repositories/departmentRepository'
 import { userRepository } from '@/repositories/userRepository'
+import { supabaseAdmin } from '@/lib/supabaseAdmin'
 import { Company, Department, User } from '@/types'
 
 /** Owner APIs receive Supabase Auth id (session.user.id); companies.owner_id is public.users.id. */
@@ -44,6 +45,7 @@ export const companyService = {
       website: data.website,
     })
     await userRepository.updateCompanyId(internalOwnerId, company.id)
+
     return company
   },
 
@@ -141,6 +143,19 @@ export const companyService = {
         throw new Error('This is your primary company created during registration and cannot be deleted.')
       }
     }
+
+    // Step 1: fetch all non-Owner members of this company
+    const nonOwnerMembers = await userRepository.findNonOwnersByCompanyId(company_id)
+
+    // Step 2: delete each non-Owner member from users table and Supabase Auth
+    for (const member of nonOwnerMembers) {
+      await userRepository.deleteById(member.id)
+      if (member.supabase_auth_id) {
+        await supabaseAdmin.auth.admin.deleteUser(member.supabase_auth_id)
+      }
+    }
+
+    // Step 3: proceed with existing company deletion
     await companyRepository.deleteById(company_id)
   },
 

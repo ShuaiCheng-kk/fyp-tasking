@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase';
-import { Building2, UserPlus, Eye, EyeOff, ChevronLeft, Check } from 'lucide-react';
+import { Building2, UserPlus, Eye, EyeOff, ChevronLeft, Check, X } from 'lucide-react';
 import {
   step1,
   ownerStep2,
@@ -253,13 +253,27 @@ function AccountFields({ form, setForm, phoneError, clearPhoneError }: {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
       <div>
         <label style={labelStyle}>Full Name</label>
-        <input type="text" placeholder="John Smith" value={form.fullName}
-          onChange={(e) => setForm({ ...form, fullName: e.target.value })} style={inputStyle} />
+        <input
+          type="text"
+          placeholder="John Smith"
+          value={form.fullName}
+          onChange={(e) => {
+            const raw = e.target.value;
+            if (/^ /.test(raw) || /  /.test(raw)) return;
+            setForm({ ...form, fullName: raw });
+          }}
+          style={inputStyle}
+        />
       </div>
       <div>
         <label style={labelStyle}>Email</label>
-        <input type="email" placeholder="you@company.com" value={form.email}
-          onChange={(e) => setForm({ ...form, email: e.target.value })} style={inputStyle} />
+        <input
+          type="text"
+          placeholder="you@company.com"
+          value={form.email}
+          onChange={(e) => setForm({ ...form, email: e.target.value })}
+          style={inputStyle}
+        />
       </div>
       <div>
         <label style={labelStyle}>Password</label>
@@ -269,11 +283,19 @@ function AccountFields({ form, setForm, phoneError, clearPhoneError }: {
         <label style={labelStyle}>
           Phone Number <span style={{ color: '#DC2626' }}>*</span>
         </label>
-        <input type="tel" placeholder="+65 9123 4567" value={form.phone}
+        <input
+          type="tel"
+          placeholder="91234567"
+          value={form.phone}
           onChange={(e) => {
-            setForm({ ...form, phone: e.target.value.replace(/[^0-9+]/g, '') });
+            // Digits only, no symbols
+            const digits = e.target.value.replace(/\D/g, '');
+            setForm({ ...form, phone: digits });
             clearPhoneError?.();
-          }} style={inputStyle} />
+          }}
+          maxLength={8}
+          style={inputStyle}
+        />
         {phoneError && (
           <p style={{ fontFamily: fB, fontSize: '0.875rem', color: '#DC2626', marginTop: '6px' }}>
             {phoneError}
@@ -312,6 +334,8 @@ export default function GetStartedPage() {
   const [path, setPath] = useState<Path>(null);
   const [step, setStep] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
+  const [confirmationEmail, setConfirmationEmail] = useState<string | null>(null);
+  const [planLoading, setPlanLoading] = useState<'free' | 'pro' | null>(null);
   const [visible, setVisible] = useState(true);
   const [showProMsg, setShowProMsg] = useState(false);
   const [error, setError] = useState('');
@@ -396,13 +420,19 @@ export default function GetStartedPage() {
   const handleOwnerRegister = async () => {
     setError('');
     setOwnerPhoneError('');
-    if (!ownerAccount.fullName.trim()) { setError('Please enter your full name.'); return; }
+    const trimmedName = ownerAccount.fullName.trim();
+    if (!trimmedName) { setError('Please enter your full name.'); return; }
+    if (/\s{2,}/.test(ownerAccount.fullName) || ownerAccount.fullName !== ownerAccount.fullName.trimEnd()) {
+      setError('Full name cannot have consecutive spaces or trailing spaces.'); return;
+    }
     if (!ownerAccount.email.trim()) { setError('Please enter your email.'); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ownerAccount.email.trim())) {
+      setError('Please enter a valid email address (e.g. you@company.com).'); return;
+    }
     if (!ownerAccount.password) { setError('Please create a password.'); return; }
-    if (!ownerAccount.phone.trim()) { setOwnerPhoneError('Phone number is required.'); return; }
-    if (ownerAccount.phone.replace('+', '').length < 8) {
-      setOwnerPhoneError('Please enter a valid phone number.');
-      return;
+    if (!ownerAccount.phone) { setOwnerPhoneError('Phone number is required.'); return; }
+    if (ownerAccount.phone.length !== 8) {
+      setOwnerPhoneError('Phone number must be exactly 8 digits.'); return;
     }
     setIsLoading(true);
     try {
@@ -450,7 +480,7 @@ export default function GetStartedPage() {
       return;
     }
     if (!companyLocation.trim()) { setError('Location is required.'); return; }
-    if (!companyIndustry) { setError('Please select an industry.'); return; }
+    if (!companyIndustry.trim()) { setError('Industry is required.'); return; }
     if (!companySize) { setError('Please select a company size.'); return; }
     setCompanyNameError('');
     setError('');
@@ -468,7 +498,7 @@ export default function GetStartedPage() {
   };
 
   const handleCompletSetup = async (plan: 'Free' | 'Paid') => {
-    setIsLoading(true);
+    setPlanLoading(plan === 'Free' ? 'free' : 'pro');
     setError('');
     try {
       const ownerEmail = sessionStorage.getItem('owner_email') || '';
@@ -496,28 +526,14 @@ export default function GetStartedPage() {
       const data = await res.json();
       if (!data.success) throw new Error(data.message);
 
-      // Establish browser session
-      const supabase = createClient();
-      const { data: signInData } = await supabase.auth.signInWithPassword({
-        email: ownerEmail,
-        password: ownerPassword,
-      });
-
-      const authUserId = signInData?.user?.id || '';
-      if (!authUserId) throw new Error('Sign in failed');
-
-      localStorage.setItem(`tasking_company_id_${authUserId}`, data.company_id);
-      localStorage.setItem('tasking_user_role', 'Owner');
-      localStorage.setItem('tasking_user_id', authUserId);
-      sessionStorage.setItem('tasking_session_active', 'true');
-      localStorage.setItem('tasking_active_session', 'true');
-
       ['owner_full_name', 'owner_email', 'owner_password', 'owner_phone',
         'company_name', 'company_description', 'company_location', 'company_industry',
         'company_size', 'departments'].forEach((k) =>
         sessionStorage.removeItem(k));
 
-      if (plan === 'Paid') {
+      if (data.requiresConfirmation) {
+        setConfirmationEmail(ownerEmail);
+      } else if (plan === 'Paid') {
         setShowProMsg(true);
       } else {
         router.replace('/owner/dashboard');
@@ -525,7 +541,7 @@ export default function GetStartedPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Setup failed');
     } finally {
-      setIsLoading(false);
+      setPlanLoading(null);
     }
   };
 
@@ -536,12 +552,17 @@ export default function GetStartedPage() {
     setError('');
     setInvitedPhoneError('');
     if (!invitedAccount.fullName.trim()) { setError('Please enter your full name.'); return; }
+    if (/\s{2,}/.test(invitedAccount.fullName) || invitedAccount.fullName !== invitedAccount.fullName.trimEnd()) {
+      setError('Full name cannot have consecutive spaces or trailing spaces.'); return;
+    }
     if (!invitedAccount.email.trim()) { setError('Please enter your email.'); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(invitedAccount.email.trim())) {
+      setError('Please enter a valid email address (e.g. you@company.com).'); return;
+    }
     if (!invitedAccount.password) { setError('Please create a password.'); return; }
-    if (!invitedAccount.phone.trim()) { setInvitedPhoneError('Phone number is required.'); return; }
-    if (invitedAccount.phone.replace('+', '').length < 8) {
-      setInvitedPhoneError('Please enter a valid phone number.');
-      return;
+    if (!invitedAccount.phone) { setInvitedPhoneError('Phone number is required.'); return; }
+    if (invitedAccount.phone.length !== 8) {
+      setInvitedPhoneError('Phone number must be exactly 8 digits.'); return;
     }
     goNext();
   };
@@ -592,6 +613,7 @@ export default function GetStartedPage() {
 
       const roleRoutes: Record<string, string> = {
         'Owner': '/owner/dashboard',
+        'partner': '/owner/dashboard',
         'Manager': '/manager/dashboard',
         'Employee': '/employee/dashboard',
         'Casual Worker': '/casual/dashboard',
@@ -624,8 +646,46 @@ export default function GetStartedPage() {
         justifyContent: 'center',
       }}>
 
+        {/* ──────── EMAIL CONFIRMATION SCREEN ──────── */}
+        {confirmationEmail && (
+          <Card maxWidth="480px">
+            <TaskingLogo />
+            <div style={{ textAlign: 'center' }}>
+              <div style={{
+                width: 64,
+                height: 64,
+                background: 'rgba(249,115,22,0.1)',
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto 24px',
+              }}>
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#F97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="2" y="4" width="20" height="16" rx="2" />
+                  <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+                </svg>
+              </div>
+              <h1 style={{ fontFamily: fH, fontWeight: 700, fontSize: '1.75rem', color: '#1C1917', marginBottom: '16px' }}>
+                Check your email
+              </h1>
+              <p style={{ fontFamily: fB, fontSize: '1rem', color: '#374151', lineHeight: 1.65, marginBottom: '12px' }}>
+                We&apos;ve sent a confirmation link to{' '}
+                <strong>{confirmationEmail}</strong>.{' '}
+                Please click the link in the email to activate your account and get started.
+              </p>
+              <p style={{ fontFamily: fB, fontSize: '0.875rem', color: '#9CA3AF', marginBottom: '32px' }}>
+                Didn&apos;t receive it? Check your spam folder.
+              </p>
+              <Link href="/signin" style={{ fontFamily: fB, fontSize: '0.9375rem', color: '#F97316', fontWeight: 600 }}>
+                Back to Sign In
+              </Link>
+            </div>
+          </Card>
+        )}
+
         {/* ──────── STEP 0 — Choose path ──────── */}
-        {step === 0 && (
+        {!confirmationEmail && step === 0 && (
           <div style={{ width: '100%', maxWidth: '800px' }}>
             <div style={{ textAlign: 'center', marginBottom: '48px' }}>
               <TaskingLogo />
@@ -695,7 +755,7 @@ export default function GetStartedPage() {
         {/* ──────── OWNER PATH ──────── */}
 
         {/* Step 2A — Create account */}
-        {path === 'owner' && step === 1 && (
+        {!confirmationEmail && path === 'owner' && step === 1 && (
           <Card>
             <TaskingLogo />
             <ProgressBar current={1} total={4} />
@@ -713,7 +773,7 @@ export default function GetStartedPage() {
         )}
 
         {/* Step 3A — Company profile */}
-        {path === 'owner' && step === 2 && (
+        {!confirmationEmail && path === 'owner' && step === 2 && (
           <Card>
             <TaskingLogo />
             <ProgressBar current={2} total={4} />
@@ -723,7 +783,12 @@ export default function GetStartedPage() {
               <div>
                 <label style={labelStyle}>Company Name</label>
                 <input type="text" placeholder="Acme Pte Ltd" value={companyName}
-                  onChange={(e) => { setCompanyName(e.target.value); if (e.target.value.trim()) setCompanyNameError(''); }}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (/^ /.test(v) || /  /.test(v)) return;
+                    setCompanyName(v);
+                    if (v.trim()) setCompanyNameError('');
+                  }}
                   style={inputStyle} />
                 {companyNameError && (
                   <p style={{ fontFamily: fB, fontSize: '0.875rem', color: '#DC2626', marginTop: '6px' }}>
@@ -736,7 +801,11 @@ export default function GetStartedPage() {
                 <textarea
                   placeholder="Brief description of your company..."
                   value={companyDesc}
-                  onChange={(e) => setCompanyDesc(e.target.value)}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (/^ /.test(v) || /  /.test(v)) return;
+                    setCompanyDesc(v);
+                  }}
                   rows={4}
                   style={{ ...inputStyle, resize: 'vertical', minHeight: '110px', lineHeight: 1.65 }}
                 />
@@ -747,26 +816,22 @@ export default function GetStartedPage() {
                   type="text"
                   placeholder="e.g. Singapore, Orchard Road"
                   value={companyLocation}
-                  onChange={(e) => setCompanyLocation(e.target.value)}
+                  onChange={(e) => { const v = e.target.value; if (/^ /.test(v) || /  /.test(v)) return; setCompanyLocation(v); }}
                   style={inputStyle}
                 />
               </div>
               <div>
                 <label style={labelStyle}>Industry <span style={{ color: '#DC2626' }}>*</span></label>
-                <select
+                <input
+                  type="text"
+                  placeholder="e.g. Retail, Logistics, Healthcare"
                   value={companyIndustry}
-                  onChange={(e) => setCompanyIndustry(e.target.value)}
-                  style={{ ...inputStyle, appearance: 'auto' }}
-                >
-                  <option value="">Select industry…</option>
-                  <option value="Retail">Retail</option>
-                  <option value="F&B">F&amp;B</option>
-                  <option value="Logistics">Logistics</option>
-                  <option value="Event Management">Event Management</option>
-                </select>
+                  onChange={(e) => { const v = e.target.value; if (/^ /.test(v) || /  /.test(v)) return; setCompanyIndustry(v); }}
+                  style={inputStyle}
+                />
               </div>
               <div>
-                <label style={labelStyle}>Company Size <span style={{ color: '#DC2626' }}>*</span></label>
+                <label style={labelStyle}>Number of Staff <span style={{ color: '#DC2626' }}>*</span></label>
                 <select
                   value={companySize}
                   onChange={(e) => setCompanySize(e.target.value)}
@@ -791,7 +856,7 @@ export default function GetStartedPage() {
         )}
 
         {/* Step 4A — Departments */}
-        {path === 'owner' && step === 3 && (
+        {!confirmationEmail && path === 'owner' && step === 3 && (
           <Card>
             <TaskingLogo />
             <ProgressBar current={3} total={4} />
@@ -800,9 +865,25 @@ export default function GetStartedPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               {departments.map((dep, i) => (
                 <div key={i}>
-                  <label style={labelStyle}>Department {departments.length > 1 ? i + 1 : ''}</label>
-                  <input type="text" placeholder="Operations" value={dep}
-                    onChange={(e) => updateDepartment(i, e.target.value)} style={inputStyle} />
+                  <label style={labelStyle}>Department {i + 1}</label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <input type="text" placeholder="Operations" value={dep}
+                      onChange={(e) => updateDepartment(i, e.target.value)} style={{ ...inputStyle, flex: 1 }} />
+                    {i > 0 && (
+                      <button
+                        onClick={() => setDepartments((d) => d.filter((_, j) => j !== i))}
+                        style={{
+                          flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          width: '36px', height: '36px', border: '1.5px solid #E5E7EB', borderRadius: '8px',
+                          background: 'none', cursor: 'pointer', color: '#9CA3AF',
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#FCA5A5'; e.currentTarget.style.color = '#EF4444'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.color = '#9CA3AF'; }}
+                      >
+                        <X size={14} />
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
               {departments.length < 5 && (
@@ -854,7 +935,7 @@ export default function GetStartedPage() {
         )}
 
         {/* Step 5A — Choose plan */}
-        {path === 'owner' && step === 4 && (
+        {!confirmationEmail && path === 'owner' && step === 4 && (
           <Card maxWidth="900px">
             <TaskingLogo />
             <ProgressBar current={4} total={4} />
@@ -948,7 +1029,7 @@ export default function GetStartedPage() {
                     </ul>
                     <button
                       onClick={handleFreePlan}
-                      disabled={isLoading}
+                      disabled={planLoading !== null}
                       className="btn-press"
                       style={{
                         width: '100%',
@@ -960,15 +1041,15 @@ export default function GetStartedPage() {
                         fontWeight: 700,
                         fontSize: '0.9375rem',
                         color: '#F97316',
-                        cursor: isLoading ? 'default' : 'pointer',
-                        opacity: isLoading ? 0.7 : 1,
+                        cursor: planLoading !== null ? 'default' : 'pointer',
+                        opacity: planLoading !== null ? 0.7 : 1,
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
                         gap: '8px',
                       }}
                     >
-                      {isLoading && <Spinner />}
+                      {planLoading === 'free' && <Spinner />}
                       {ownerStep5.freePlan.button}
                     </button>
                   </div>
@@ -1016,7 +1097,7 @@ export default function GetStartedPage() {
                     </ul>
                     <button
                       onClick={handleProPlan}
-                      disabled={isLoading}
+                      disabled={planLoading !== null}
                       className="btn-press cta-shimmer"
                       style={{
                         width: '100%',
@@ -1028,15 +1109,15 @@ export default function GetStartedPage() {
                         fontWeight: 700,
                         fontSize: '0.9375rem',
                         color: '#FFFFFF',
-                        cursor: isLoading ? 'default' : 'pointer',
-                        opacity: isLoading ? 0.7 : 1,
+                        cursor: planLoading !== null ? 'default' : 'pointer',
+                        opacity: planLoading !== null ? 0.7 : 1,
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
                         gap: '8px',
                       }}
                     >
-                      {isLoading && <Spinner />}
+                      {planLoading === 'pro' && <Spinner />}
                       {ownerStep5.proPlan.button}
                     </button>
                   </div>
@@ -1053,7 +1134,7 @@ export default function GetStartedPage() {
         {/* ──────── INVITATION PATH ──────── */}
 
         {/* Step 2B — Create account */}
-        {path === 'invitation' && step === 1 && (
+        {!confirmationEmail && path === 'invitation' && step === 1 && (
           <Card>
             <TaskingLogo />
             <ProgressBar current={1} total={2} />
@@ -1071,7 +1152,7 @@ export default function GetStartedPage() {
         )}
 
         {/* Step 3B — Invitation code */}
-        {path === 'invitation' && step === 2 && (() => {
+        {!confirmationEmail && path === 'invitation' && step === 2 && (() => {
           const storedCode = sessionStorage.getItem('invite_code');
           if (storedCode && !inviteCode) setInviteCode(storedCode);
           return (

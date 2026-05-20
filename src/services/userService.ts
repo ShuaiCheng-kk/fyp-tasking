@@ -27,4 +27,12 @@ export const userService = {
     return userRepository.countMembersAcrossOwnedCompanies(internal_owner_id)
   },
 
+  async leaveCompany(user_id: string): Promise<void> {
+    const user = await userRepository.findById(user_id)
+    if (!user) throw new Error('User not found')
+    const supabase_auth_id = user.supabase_auth_id
+    await userRepository.deleteById(user_id)
+    await userRepository.deleteAuthUser(supabase_auth_id)
+  },
+
 }

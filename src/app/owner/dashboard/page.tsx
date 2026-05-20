@@ -833,7 +833,7 @@ export default function OwnerDashboard() {
                     : 'No departments in this company yet.'}
               </div>
             ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '14px' }}>
                 {filteredDepts.map((dept) => (
                   <div
                     key={dept.id}
@@ -906,9 +906,7 @@ export default function OwnerDashboard() {
 
                       {/* Delete */}
                       <button
-                        onClick={() => { if (departments.length > 1) { setDeleteModal(dept); setDeptError('') } }}
-                        disabled={departments.length === 1}
-                        title={departments.length === 1 ? 'A company must have at least one department' : undefined}
+                        onClick={() => { setDeleteModal(dept); setDeptError('') }}
                         style={{
                           display: 'flex',
                           alignItems: 'center',
@@ -917,11 +915,10 @@ export default function OwnerDashboard() {
                           border: '1px solid #E5E7EB',
                           borderRadius: '7px',
                           background: 'none',
-                          cursor: departments.length === 1 ? 'not-allowed' : 'pointer',
+                          cursor: 'pointer',
                           fontSize: '0.8125rem',
                           color: '#EF4444',
                           fontWeight: 500,
-                          opacity: departments.length === 1 ? 0.4 : 1,
                         }}
                       >
                         <Trash2 size={12} strokeWidth={2} />

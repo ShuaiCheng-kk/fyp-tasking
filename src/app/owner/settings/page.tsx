@@ -120,6 +120,11 @@ export default function SettingsPage() {
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [deleteError, setDeleteError] = useState('')
 
+  // Leave company modal
+  const [leaveTarget, setLeaveTarget] = useState<Company | null>(null)
+  const [leaveLoading, setLeaveLoading] = useState(false)
+  const [leaveError, setLeaveError] = useState('')
+
   // Add modal
   const [addOpen, setAddOpen] = useState(false)
   const [addName, setAddName] = useState('')
@@ -163,11 +168,12 @@ export default function SettingsPage() {
         return
       }
       setUserId(uid)
+      const role = localStorage.getItem('tasking_user_role') || ''
+      setUserRole(role)
       const meRes = await fetch(`/api/user/me?user_id=${uid}`)
       const meData = await meRes.json()
       if (meData.success) {
         setInternalUserId(meData.user.id)
-        setUserRole(meData.user.role || '')
       }
       fetchCompanies(uid)
     }
@@ -195,9 +201,34 @@ export default function SettingsPage() {
     }
   }
 
+  const handleLeave = async () => {
+    if (!leaveTarget) return
+    setLeaveLoading(true)
+    setLeaveError('')
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    )
+    try {
+      const res = await fetch('/api/user/leave-company', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: internalUserId }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      await supabase.auth.signOut()
+      router.replace('/signin')
+    } catch (err) {
+      setLeaveError(err instanceof Error ? err.message : 'Failed to leave company')
+    } finally {
+      setLeaveLoading(false)
+    }
+  }
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { setEditTarget(null); setAddOpen(false); setDeleteTarget(null); setPlanModalTarget(null) }
+      if (e.key === 'Escape') { setEditTarget(null); setAddOpen(false); setDeleteTarget(null); setPlanModalTarget(null); setLeaveTarget(null) }
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
@@ -237,7 +268,7 @@ export default function SettingsPage() {
   const handleEdit = async () => {
     if (!editTarget || !editName.trim()) return
     if (!editLocation.trim()) { setEditError('Location is required.'); return }
-    if (!editIndustry) { setEditError('Please select an industry.'); return }
+    if (!editIndustry.trim()) { setEditError('Industry is required.'); return }
     if (!editSize) { setEditError('Please select a company size.'); return }
     setEditLoading(true)
     setEditError('')
@@ -399,7 +430,7 @@ export default function SettingsPage() {
             >
               My Company
             </button>
-            {isOwnerOfAny && (
+            {userRole === 'Owner' && (
               <button
                 onClick={() => setActiveTab('subscription')}
                 style={{
@@ -451,44 +482,74 @@ export default function SettingsPage() {
                         }}>
                           {initial}
                         </div>
-                        <p style={{ fontWeight: 600, fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{c.name}</p>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <p style={{ fontWeight: 600, fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{c.name}</p>
+                          {c.industry && (
+                            <span style={{
+                              background: '#F97316', color: '#FFFFFF',
+                              fontSize: '12px', fontWeight: 600,
+                              padding: '2px 10px', borderRadius: '20px',
+                              display: 'inline-block', flexShrink: 0,
+                            }}>
+                              {c.industry}
+                            </span>
+                          )}
+                        </div>
                       </div>
-                      {/* Bottom-right action buttons (only for owner) */}
+                      {/* Bottom-right action buttons */}
                       <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
-                        {isOwner && (
+                        {userRole === 'Partner' ? (
                           <button
-                            onClick={() => openEdit(c)}
+                            onClick={() => { setLeaveTarget(c); setLeaveError('') }}
                             style={{
                               display: 'flex', alignItems: 'center', gap: '5px',
-                              padding: '7px 12px', border: '1px solid #E5E7EB', borderRadius: '7px',
-                              background: 'none', cursor: 'pointer', fontSize: '0.8125rem', color: '#374151', fontWeight: 500,
+                              padding: '7px 12px', border: '1px solid #FECACA', borderRadius: '7px',
+                              background: 'none', cursor: 'pointer', fontSize: '0.8125rem', color: '#EF4444', fontWeight: 500,
                             }}
-                            onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#9CA3AF')}
-                            onMouseLeave={(e) => (e.currentTarget.style.borderColor = '#E5E7EB')}
+                            onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#FCA5A5')}
+                            onMouseLeave={(e) => (e.currentTarget.style.borderColor = '#FECACA')}
                           >
-                            <Pencil size={12} strokeWidth={2} />
-                            Edit
+                            <Trash2 size={12} strokeWidth={2} />
+                            Leave Company
                           </button>
-                        )}
-                        {isOwner && (
-                          <div title={companies.filter((x) => x.owner_id === internalUserId).length <= 1 ? 'You must have at least one company' : undefined}>
-                            <button
-                              onClick={() => { if (companies.filter((x) => x.owner_id === internalUserId).length > 1) { setDeleteTarget(c); setDeleteError('') } }}
-                              disabled={companies.filter((x) => x.owner_id === internalUserId).length <= 1}
-                              style={{
-                                display: 'flex', alignItems: 'center', gap: '5px',
-                                padding: '7px 12px', border: '1px solid #E5E7EB', borderRadius: '7px',
-                                background: 'none', cursor: companies.filter((x) => x.owner_id === internalUserId).length <= 1 ? 'not-allowed' : 'pointer',
-                                fontSize: '0.8125rem', color: companies.filter((x) => x.owner_id === internalUserId).length <= 1 ? '#D1D5DB' : '#EF4444', fontWeight: 500,
-                                opacity: companies.filter((x) => x.owner_id === internalUserId).length <= 1 ? 0.5 : 1,
-                              }}
-                              onMouseEnter={(e) => { if (companies.filter((x) => x.owner_id === internalUserId).length > 1) e.currentTarget.style.borderColor = '#FCA5A5' }}
-                              onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#E5E7EB' }}
-                            >
-                              <Trash2 size={12} strokeWidth={2} />
-                              Delete
-                            </button>
-                          </div>
+                        ) : (
+                          <>
+                            {isOwner && (
+                              <button
+                                onClick={() => openEdit(c)}
+                                style={{
+                                  display: 'flex', alignItems: 'center', gap: '5px',
+                                  padding: '7px 12px', border: '1px solid #E5E7EB', borderRadius: '7px',
+                                  background: 'none', cursor: 'pointer', fontSize: '0.8125rem', color: '#374151', fontWeight: 500,
+                                }}
+                                onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#9CA3AF')}
+                                onMouseLeave={(e) => (e.currentTarget.style.borderColor = '#E5E7EB')}
+                              >
+                                <Pencil size={12} strokeWidth={2} />
+                                Edit
+                              </button>
+                            )}
+                            {isOwner && (
+                              <div title={companies.filter((x) => x.owner_id === internalUserId).length <= 1 ? 'You must have at least one company' : undefined}>
+                                <button
+                                  onClick={() => { if (companies.filter((x) => x.owner_id === internalUserId).length > 1) { setDeleteTarget(c); setDeleteError('') } }}
+                                  disabled={companies.filter((x) => x.owner_id === internalUserId).length <= 1}
+                                  style={{
+                                    display: 'flex', alignItems: 'center', gap: '5px',
+                                    padding: '7px 12px', border: '1px solid #E5E7EB', borderRadius: '7px',
+                                    background: 'none', cursor: companies.filter((x) => x.owner_id === internalUserId).length <= 1 ? 'not-allowed' : 'pointer',
+                                    fontSize: '0.8125rem', color: companies.filter((x) => x.owner_id === internalUserId).length <= 1 ? '#D1D5DB' : '#EF4444', fontWeight: 500,
+                                    opacity: companies.filter((x) => x.owner_id === internalUserId).length <= 1 ? 0.5 : 1,
+                                  }}
+                                  onMouseEnter={(e) => { if (companies.filter((x) => x.owner_id === internalUserId).length > 1) e.currentTarget.style.borderColor = '#FCA5A5' }}
+                                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#E5E7EB' }}
+                                >
+                                  <Trash2 size={12} strokeWidth={2} />
+                                  Delete
+                                </button>
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                     </div>
@@ -496,7 +557,8 @@ export default function SettingsPage() {
                   })}
                 </div>
 
-                {/* Add New Company */}
+                {/* Add New Company — only for Owner role */}
+                {userRole === 'Owner' && (
                 <button
                   onClick={openAdd}
                   style={{
@@ -512,6 +574,7 @@ export default function SettingsPage() {
                   <Plus size={14} strokeWidth={2.5} />
                   Add New Company
                 </button>
+                )}
               </>
             )}
             </>
@@ -616,10 +679,13 @@ export default function SettingsPage() {
               </div>
               <div>
                 <label style={labelStyle}>Industry <span style={{ color: '#EF4444' }}>*</span></label>
-                <select value={editIndustry} onChange={(e) => setEditIndustry(e.target.value)} style={{ ...inputStyle, appearance: 'auto' }}>
-                  <option value="">Select industry…</option>
-                  {INDUSTRIES.map((i) => <option key={i} value={i}>{i}</option>)}
-                </select>
+                <input
+                  type="text"
+                  placeholder="e.g. Retail, Logistics, Healthcare"
+                  value={editIndustry}
+                  onChange={(e) => setEditIndustry(e.target.value)}
+                  style={inputStyle}
+                />
               </div>
               <div>
                 <label style={labelStyle}>Company Size <span style={{ color: '#EF4444' }}>*</span></label>
@@ -670,6 +736,39 @@ export default function SettingsPage() {
               >
                 {deleteLoading && <Spinner size={14} />}
                 Delete Company
+              </button>
+            </div>
+          </ModalBox>
+        </ModalOverlay>
+      )}
+
+      {/* ── Leave Company Confirmation Modal ──────────────────────────────── */}
+      {leaveTarget && (
+        <ModalOverlay onClose={() => setLeaveTarget(null)}>
+          <ModalBox>
+            <ModalHeader title="Leave Company" onClose={() => setLeaveTarget(null)} />
+
+            <p style={{ fontSize: '0.9375rem', color: '#374151', marginBottom: '4px', lineHeight: 1.6 }}>
+              Are you sure you want to leave <strong>{leaveTarget.name}</strong>?{' '}
+              Your account will be permanently deleted and you will be signed out immediately. This cannot be undone.
+            </p>
+
+            <InlineError message={leaveError} />
+
+            <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+              <button style={ghostBtn} onClick={() => setLeaveTarget(null)}>Cancel</button>
+              <button
+                onClick={handleLeave}
+                disabled={leaveLoading}
+                style={{
+                  flex: 1, padding: '10px', background: '#EF4444', border: 'none', borderRadius: '8px',
+                  fontWeight: 600, fontSize: '0.9375rem', color: '#FFFFFF',
+                  cursor: leaveLoading ? 'default' : 'pointer', display: 'flex', alignItems: 'center',
+                  justifyContent: 'center', gap: '7px', opacity: leaveLoading ? 0.65 : 1,
+                }}
+              >
+                {leaveLoading && <Spinner size={14} />}
+                Leave Company
               </button>
             </div>
           </ModalBox>

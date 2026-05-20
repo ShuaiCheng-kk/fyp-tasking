@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Eye, EyeOff } from 'lucide-react';
 import { createBrowserClient } from '@supabase/ssr';
@@ -52,6 +53,7 @@ function TaskingLogo() {
 
 const ROLE_ROUTES: Record<string, string> = {
   'Owner': '/owner/dashboard',
+  'partner': '/owner/dashboard',
   'Manager': '/manager/dashboard',
   'Employee': '/employee/dashboard',
   'Casual Worker': '/casual/dashboard',
@@ -60,7 +62,11 @@ const ROLE_ROUTES: Record<string, string> = {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function SignInPage() {
+function SignInContent() {
+  const searchParams = useSearchParams();
+  const isRemoved = searchParams.get('removed') === 'true';
+  const isConfirmed = searchParams.get('confirmed') === 'true';
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -102,8 +108,13 @@ export default function SignInPage() {
 
       const route = ROLE_ROUTES[data.user.role] || '/owner/dashboard';
       window.location.href = route;
-    } catch {
-      setErrorMessage('Invalid email or password');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '';
+      if (msg.toLowerCase().includes('email not confirmed')) {
+        setErrorMessage('Please confirm your email address before signing in. Check your inbox for the confirmation link.');
+      } else {
+        setErrorMessage('Invalid email or password');
+      }
       setIsLoading(false);
       setShowError(true);
     }
@@ -167,6 +178,38 @@ export default function SignInPage() {
             {c.subheadline}
           </p>
         </div>
+
+        {isConfirmed && (
+          <div style={{
+            background: '#F0FDF4',
+            border: '1px solid #BBF7D0',
+            borderRadius: '10px',
+            padding: '12px 16px',
+            fontFamily: fB,
+            fontSize: '0.875rem',
+            color: '#15803D',
+            lineHeight: 1.5,
+            marginBottom: '20px',
+          }}>
+            Email confirmed! You can now sign in.
+          </div>
+        )}
+
+        {isRemoved && (
+          <div style={{
+            background: '#FEF2F2',
+            border: '1px solid #FECACA',
+            borderRadius: '10px',
+            padding: '12px 16px',
+            fontFamily: fB,
+            fontSize: '0.875rem',
+            color: '#DC2626',
+            lineHeight: 1.5,
+            marginBottom: '20px',
+          }}>
+            Your account has been removed. Please contact your administrator or sign up with a new account.
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
 
@@ -280,5 +323,13 @@ export default function SignInPage() {
         </p>
       </div>
     </div>
+  );
+}
+
+export default function SignInPage() {
+  return (
+    <Suspense fallback={null}>
+      <SignInContent />
+    </Suspense>
   );
 }

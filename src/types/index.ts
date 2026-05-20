@@ -8,7 +8,7 @@ export interface User {
   full_name: string
   email_address: string
   phone_number: string | null
-  role: 'Owner' | 'Manager' | 'Employee' | 'Casual Worker' | 'Guest User'
+  role: 'Owner' | 'partner' | 'Manager' | 'Employee' | 'Casual Worker' | 'Guest User'
   company_id: string | null
   department_id: string | null
   created_at: string
@@ -53,7 +53,7 @@ export interface InvitationCode {
   code: string
   company_id: string
   department_id: string | null
-  role: 'Owner' | 'Manager' | 'Employee'
+  role: 'Owner' | 'partner' | 'Manager' | 'Employee'
   status: 'Active' | 'Expired'
   generated_by: string
   used_by: string | null
