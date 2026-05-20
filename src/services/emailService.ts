@@ -44,7 +44,6 @@ export const emailService = {
     companyDescription: string | null
     plan: 'Free' | 'Paid'
   }): Promise<void> {
-    const signInUrl = (process.env.NEXT_PUBLIC_APP_URL ?? '') + '/signin'
     const descriptionRow = data.companyDescription
       ? `<p style="font-size: 15px; color: #6B7280; margin: 0 0 4px 0;"><strong>Description:</strong> ${data.companyDescription}</p>`
       : ''
@@ -64,9 +63,7 @@ export const emailService = {
           <p style="font-size: 15px; color: #6B7280; margin: 0 0 4px 0;"><strong>Company:</strong> ${data.companyName}</p>
           ${descriptionRow}
           <p style="font-size: 15px; color: #6B7280; margin: 0 0 16px 0;"><strong>Plan:</strong> ${data.plan}</p>
-          <a href="${signInUrl}" style="display: inline-block; background: #F97316; color: #ffffff; font-weight: 600; font-size: 15px; padding: 12px 28px; border-radius: 8px; text-decoration: none; margin: 24px 0;">
-            Sign In to Tasking
-          </a>
+          <p style="font-size: 15px; color: #6B7280; margin: 24px 0 0 0;">You can now sign in to access your dashboard.</p>
           <hr style="border: none; border-top: 1px solid #F3F4F6; margin: 24px 0;">
           <p style="font-size: 12px; color: #9CA3AF; margin: 0;">© 2025 Tasking. All rights reserved.</p>
         </div>

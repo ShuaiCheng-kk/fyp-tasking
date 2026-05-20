@@ -127,20 +127,6 @@ export async function POST(req: NextRequest) {
       console.error('Failed to send Email 1:', emailError)
     }
 
-    try {
-      console.log('Sending Email 2 (account ready) to:', email)
-      await emailService.sendAccountConfirmationEmail({
-        to: email,
-        fullName: full_name,
-        companyName: company_name,
-        companyDescription: company_description || null,
-        plan: 'Free',
-      })
-      console.log('Email 2 sent successfully')
-    } catch (emailError) {
-      console.error('Failed to send Email 2:', emailError)
-    }
-
     return NextResponse.json({ success: true, requiresConfirmation: true, ...result })
   } catch (error: unknown) {
     const msg = (error instanceof Error ? error.message : '').toLowerCase()
