@@ -53,6 +53,7 @@ function TaskingLogo() {
 
 const ROLE_ROUTES: Record<string, string> = {
   'Owner': '/owner/dashboard',
+  'partner': '/owner/dashboard',
   'Manager': '/manager/dashboard',
   'Employee': '/employee/dashboard',
   'Casual Worker': '/casual/dashboard',

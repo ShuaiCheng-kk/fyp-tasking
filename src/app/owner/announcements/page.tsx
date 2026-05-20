@@ -287,6 +287,11 @@ export default function OwnerAnnouncementsPage() {
                       <span style={{ fontWeight: unread ? 700 : 500, fontSize: '0.875rem', color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                         {ann.title}
                       </span>
+                      {ann.created_by_name && (
+                        <span style={{ fontSize: '12px', color: '#6B7280', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                          {ann.created_by_name}
+                        </span>
+                      )}
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontSize: '0.75rem', color: '#9CA3AF' }}>{formatTime(ann.created_at)}</span>

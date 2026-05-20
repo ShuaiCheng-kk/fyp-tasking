@@ -168,11 +168,12 @@ export default function SettingsPage() {
         return
       }
       setUserId(uid)
+      const role = localStorage.getItem('tasking_user_role') || ''
+      setUserRole(role)
       const meRes = await fetch(`/api/user/me?user_id=${uid}`)
       const meData = await meRes.json()
       if (meData.success) {
         setInternalUserId(meData.user.id)
-        setUserRole(meData.user.role || '')
       }
       fetchCompanies(uid)
     }
@@ -481,7 +482,19 @@ export default function SettingsPage() {
                         }}>
                           {initial}
                         </div>
-                        <p style={{ fontWeight: 600, fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{c.name}</p>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <p style={{ fontWeight: 600, fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{c.name}</p>
+                          {c.industry && (
+                            <span style={{
+                              background: '#F97316', color: '#FFFFFF',
+                              fontSize: '12px', fontWeight: 600,
+                              padding: '2px 10px', borderRadius: '20px',
+                              display: 'inline-block', flexShrink: 0,
+                            }}>
+                              {c.industry}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       {/* Bottom-right action buttons */}
                       <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>

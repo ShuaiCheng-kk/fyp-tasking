@@ -613,6 +613,7 @@ export default function GetStartedPage() {
 
       const roleRoutes: Record<string, string> = {
         'Owner': '/owner/dashboard',
+        'partner': '/owner/dashboard',
         'Manager': '/manager/dashboard',
         'Employee': '/employee/dashboard',
         'Casual Worker': '/casual/dashboard',

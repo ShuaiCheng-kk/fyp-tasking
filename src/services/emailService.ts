@@ -37,40 +37,6 @@ export const emailService = {
     })
   },
 
-  async sendAccountConfirmationEmail(data: {
-    to: string
-    fullName: string
-    companyName: string
-    companyDescription: string | null
-    plan: 'Free' | 'Paid'
-  }): Promise<void> {
-    const descriptionRow = data.companyDescription
-      ? `<p style="font-size: 15px; color: #6B7280; margin: 0 0 4px 0;"><strong>Description:</strong> ${data.companyDescription}</p>`
-      : ''
-    await resend.emails.send({
-      from: 'Tasking <noreply@gettasking.com>',
-      to: data.to,
-      subject: 'Welcome to Tasking — Your account is ready',
-      html: `
-        <div style="font-family: Inter, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px 24px; background: #ffffff;">
-          <span style="font-size: 20px; font-weight: 700; color: #F97316;">Tasking</span>
-          <h2 style="font-size: 22px; font-weight: 700; color: #1C1C1E; margin: 24px 0 8px 0;">
-            Your account is ready
-          </h2>
-          <p style="font-size: 15px; color: #6B7280; margin: 0 0 16px 0;">
-            Hi ${data.fullName}, your Tasking account has been created successfully.
-          </p>
-          <p style="font-size: 15px; color: #6B7280; margin: 0 0 4px 0;"><strong>Company:</strong> ${data.companyName}</p>
-          ${descriptionRow}
-          <p style="font-size: 15px; color: #6B7280; margin: 0 0 16px 0;"><strong>Plan:</strong> ${data.plan}</p>
-          <p style="font-size: 15px; color: #6B7280; margin: 24px 0 0 0;">You can now sign in to access your dashboard.</p>
-          <hr style="border: none; border-top: 1px solid #F3F4F6; margin: 24px 0;">
-          <p style="font-size: 12px; color: #9CA3AF; margin: 0;">© 2025 Tasking. All rights reserved.</p>
-        </div>
-      `,
-    })
-  },
-
   async sendInviteEmail(data: {
     to: string
     role: string
@@ -81,7 +47,7 @@ export const emailService = {
     await resend.emails.send({
       from: 'Tasking <noreply@gettasking.com>',
       to: data.to,
-      subject: `You've been invited to join ${data.companyName} on Tasking`,
+      subject: `${data.inviterName} has invited you to join ${data.companyName} as ${data.role} on Tasking`,
       html: `
         <div style="font-family: Inter, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px 24px; background: #ffffff;">
           <span style="font-size: 20px; font-weight: 700; color: #F97316;">Tasking</span>
@@ -89,7 +55,6 @@ export const emailService = {
             You've been invited to join ${data.companyName}
           </h2>
           <p style="font-size: 15px; color: #6B7280; margin: 0 0 8px 0;">
-            ${data.inviterName} has invited you to join as <strong>${data.role}</strong>.
             Click the button below to create your account and get started.
           </p>
           <a href="${data.inviteLink}" style="display: inline-block; background: #F97316; color: #ffffff; font-weight: 600; font-size: 15px; padding: 12px 28px; border-radius: 8px; text-decoration: none; margin: 24px 0;">

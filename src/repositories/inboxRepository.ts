@@ -78,14 +78,14 @@ export async function createInviteNotification(data: {
 export async function getMessagesBetweenUsers(userId: string, otherUserId: string, companyId: string) {
   const { data, error } = await supabase
     .from('messages')
-    .select('*')
+    .select('id, from_user_id, to_user_id, content, created_at, is_read, company_id, sender_name, sender:users!messages_from_user_id_fkey!left(full_name)')
     .eq('company_id', companyId)
     .or(
       `and(from_user_id.eq.${userId},to_user_id.eq.${otherUserId}),and(from_user_id.eq.${otherUserId},to_user_id.eq.${userId})`
     )
     .order('created_at', { ascending: true })
   if (error) throw error
-  return data
+  return (data ?? []).map(({ sender, ...msg }: any) => msg)
 }
 
 export async function getConversationPartners(userId: string, companyId: string) {
@@ -183,7 +183,7 @@ export async function getAnnouncements(
     .order('created_at', { ascending: false })
 
   if (roleLower === 'owner' || roleLower === 'partner') {
-    query = query.is('department_id', null)
+    // no audience filter — return all announcements for the company
   } else if (roleLower === 'manager') {
     if (departmentId) {
       query = query.or(`department_id.is.null,department_id.eq.${departmentId}`)

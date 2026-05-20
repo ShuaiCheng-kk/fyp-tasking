@@ -461,7 +461,7 @@ export default function TeamPage() {
           email: inviteEmail,
           role: inviteRole,
           company_id: selectedCompanyId,
-          department_id: inviteRole === 'Owner' ? null : (inviteDeptId || null),
+          department_id: inviteRole === 'partner' ? null : (inviteDeptId || null),
           invited_by: userId,
           reporting_manager_id: inviteRole === 'Employee' ? (inviteManagerId || null) : null,
         }),
@@ -1164,7 +1164,7 @@ export default function TeamPage() {
                   style={{ ...modalInputStyle, paddingRight: '36px', appearance: 'none', cursor: 'pointer' }}
                 >
                   <option value="">Select a role</option>
-                  <option value="Owner">Partner</option>
+                  <option value="partner">Partner</option>
                   <option value="Manager">Manager</option>
                   <option value="Employee">Employee</option>
                 </select>
@@ -1258,7 +1258,7 @@ export default function TeamPage() {
             )}
 
             {/* Partner warning */}
-            {inviteRole === 'Owner' && (
+            {inviteRole === 'partner' && (
               <p style={{ fontSize: '0.8125rem', color: '#F97316', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: '8px', padding: '10px 12px', margin: '4px 0 0' }}>
                 This person will have full Partner access to your company.
               </p>
