@@ -533,11 +533,7 @@ export default function TeamPage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
       setRemoveModal(null)
-      if (data.accountDeleted) {
-        setAccountDeletedModal(true)
-      } else {
-        fetchTeamMembers(companyId)
-      }
+      fetchTeamMembers(companyId)
     } catch (err) {
       setRemoveError(err instanceof Error ? err.message : 'Failed to remove member')
     } finally {

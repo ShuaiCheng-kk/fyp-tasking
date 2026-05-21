@@ -50,8 +50,8 @@ export default function OwnerLayout({
         return
       }
       const res = await fetch(`/api/user/me?user_id=${session.user.id}`)
-      if (res.status === 401) {
-        // Session exists but user not found in DB — account was deleted
+      if (res.status === 404) {
+        // User's own account no longer exists in DB — account was deleted
         setShowDeletedModal(true)
         setChecking(false)
         return
