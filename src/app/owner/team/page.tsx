@@ -108,6 +108,7 @@ type EditManagerModal = { member: TeamMember } | null
 
 const ROLE_LABEL: Record<string, string> = {
   Owner: 'OWNER',
+  Partner: 'PARTNER',
   Manager: 'MANAGER',
   Employee: 'EMPLOYEE',
   'Casual Worker': 'CASUAL WORKER',
@@ -151,6 +152,11 @@ export default function TeamPage() {
   const [inviteError, setInviteError] = useState('')
   const [inviteSuccess, setInviteSuccess] = useState('')
 
+  // Header theme based on localStorage role
+  const [headerTheme, setHeaderTheme] = useState<{ bg: string; text: string; border: string }>({
+    bg: '#1C1C1E', text: '#FFFFFF', border: 'none',
+  })
+
   // Current user's role (to gate Edit buttons)
   const [currentUserRole, setCurrentUserRole] = useState('')
   const [userDeptId, setUserDeptId] = useState('')
@@ -168,6 +174,9 @@ export default function TeamPage() {
   const [removeModal, setRemoveModal] = useState<TeamMember | null>(null)
   const [removeLoading, setRemoveLoading] = useState(false)
   const [removeError, setRemoveError] = useState('')
+
+  // Account deleted modal (shown when removed from last company)
+  const [accountDeletedModal, setAccountDeletedModal] = useState(false)
 
   // Manage Departments modal (legacy — kept for internal logic reuse)
   const [manageDeptModal, setManageDeptModal] = useState<ManageDeptModal>(null)
@@ -209,6 +218,15 @@ export default function TeamPage() {
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [closeModal])
+
+  useEffect(() => {
+    const role = localStorage.getItem('tasking_user_role')
+    if (role === 'Partner') {
+      setHeaderTheme({ bg: '#FFFFFF', text: '#1C1C1E', border: '1px solid #E5E7EB' })
+    } else {
+      setHeaderTheme({ bg: '#1C1C1E', text: '#FFFFFF', border: 'none' })
+    }
+  }, [])
 
   const fetchTeamMembers = useCallback(async (cid: string) => {
     if (!cid) return
@@ -355,7 +373,7 @@ export default function TeamPage() {
   }, [inviteOpen, companyId])
 
   // Group members by role in display order
-  const groupedMembers = (['Owner', 'Manager', 'Employee', 'Casual Worker'] as const).reduce(
+  const groupedMembers = (['Owner', 'Partner', 'Manager', 'Employee', 'Casual Worker'] as const).reduce(
     (acc, role) => {
       const group = teamMembers.filter((m) => m.role === role)
       if (group.length > 0) acc.push({ role, members: group })
@@ -523,6 +541,16 @@ export default function TeamPage() {
     }
   }
 
+  const handleAccountDeletedExit = async () => {
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    )
+    localStorage.clear()
+    await supabase.auth.signOut()
+    router.replace('/')
+  }
+
   const openManageDeptModal = async (member: TeamMember) => {
     setManageDeptModal({ member })
     setManageDeptToast('')
@@ -672,8 +700,8 @@ export default function TeamPage() {
       <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
         <div style={{
           padding: '18px 32px',
-          background: '#FFFFFF',
-          borderBottom: '1px solid #E5E7EB',
+          background: headerTheme.bg,
+          borderBottom: headerTheme.border,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
@@ -681,7 +709,7 @@ export default function TeamPage() {
           top: 0,
           zIndex: 10,
         }}>
-          <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#111827', margin: 0 }}>
+          <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: headerTheme.text, margin: 0 }}>
             {companyName ? `${companyName} — Team` : 'Team'}
           </h1>
           <button
@@ -1130,6 +1158,47 @@ export default function TeamPage() {
             </div>
           </ModalBox>
         </ModalOverlay>
+      )}
+
+      {/* ── Account Deleted Modal ────────────────────────────────────────── */}
+      {accountDeletedModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.5)',
+            backdropFilter: 'blur(2px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 200,
+          }}
+        >
+          <div style={{ width: '440px', background: '#FFFFFF', borderRadius: '16px', padding: '36px 32px', boxShadow: '0 8px 40px rgba(0,0,0,0.16)' }}>
+            <h2 style={{ fontWeight: 700, fontSize: '1.125rem', color: '#111827', margin: '0 0 12px' }}>
+              Your account has been removed
+            </h2>
+            <p style={{ fontSize: '0.9375rem', color: '#6B7280', lineHeight: 1.6, margin: '0 0 28px' }}>
+              You have been removed from your last company. Your account has been permanently deleted.
+            </p>
+            <button
+              onClick={handleAccountDeletedExit}
+              style={{
+                width: '100%',
+                height: '48px',
+                background: '#F97316',
+                color: '#FFFFFF',
+                border: 'none',
+                borderRadius: '10px',
+                fontWeight: 600,
+                fontSize: '0.9375rem',
+                cursor: 'pointer',
+              }}
+            >
+              Exit
+            </button>
+          </div>
+        </div>
       )}
 
       {/* ── Invite Member Modal ───────────────────────────────────────────── */}

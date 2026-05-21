@@ -9,6 +9,7 @@ import { emailService } from '@/services/emailService'
 import { createInviteNotification } from '@/repositories/inboxRepository'
 import { InvitationCode, User } from '@/types'
 
+
 function getAdminClient() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -73,6 +74,10 @@ export const invitationService = {
     const existingUser = await userRepository.findByEmail(data.email)
 
     if (existingUser) {
+      const alreadyMember = await companyRepository.findCompanyMember(existingUser.id, data.company_id)
+      if (alreadyMember) {
+        throw new Error('This user is already a member of this company.')
+      }
       await createInviteNotification({
         recipient_user_id: existingUser.id,
         sender_user_id: inviter.id,
@@ -147,7 +152,7 @@ export const invitationService = {
     // 4. Create Supabase Auth user
     let authUserId: string
     try {
-      const authUser = await userRepository.createAuthUser(data.email_address, data.password)
+      const authUser = await userRepository.createAuthUser(data.email_address, data.password, true)
       authUserId = authUser.id
     } catch (err) {
       const msg = (err instanceof Error ? err.message : '').toLowerCase()
@@ -157,6 +162,15 @@ export const invitationService = {
       throw err
     }
 
+    const roleMap: Record<string, User['role']> = {
+      partner: 'Partner',
+      manager: 'Manager',
+      employee: 'Employee',
+      casual_worker: 'Casual Worker',
+      owner: 'Owner',
+    }
+    const normalizedRole = roleMap[invitation.role.toLowerCase()] ?? invitation.role
+
     try {
       // 5. Insert into users table
       const user = await userRepository.createUser({
@@ -164,12 +178,15 @@ export const invitationService = {
         full_name: data.full_name,
         email_address: data.email_address,
         phone_number: data.phone_number,
-        role: invitation.role,
+        role: normalizedRole,
         company_id: invitation.company_id,
         department_id: invitation.department_id,
       })
 
-      // 6. Mark invitation code as used
+      // 6. Insert into company_members
+      await companyRepository.insertCompanyMember(user.id, invitation.company_id, normalizedRole)
+
+      // 7. Mark invitation code as used
       await invitationRepository.markAsUsed(data.code, user.id)
 
       return { user, company_id: invitation.company_id }

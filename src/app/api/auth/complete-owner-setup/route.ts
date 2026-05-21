@@ -85,6 +85,8 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  let authUserId: string | undefined
+
   try {
     const result = await authService.completeOwnerSetup({
       full_name,
@@ -102,33 +104,41 @@ export async function POST(req: NextRequest) {
       plan: plan || 'Free',
     })
 
-    try {
-      const { data: linkData } = await adminClient.auth.admin.generateLink({
-        type: 'magiclink',
-        email: email,
-        options: {
-          redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`,
-        },
-      })
+    authUserId = result.user_id
+
+    adminClient.auth.admin.generateLink({
+      type: 'magiclink',
+      email: email,
+      options: {
+        redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`,
+      },
+    }).then(({ data: linkData }) => {
       const confirmLink = linkData?.properties?.action_link
       console.log('Generated confirm link:', confirmLink)
       if (confirmLink) {
         console.log('Sending Email 1 (confirmation request) to:', email)
-        await emailService.sendConfirmationRequestEmail({
+        // Fire and forget — don't await
+        emailService.sendConfirmationRequestEmail({
           to: email,
           fullName: full_name,
           confirmLink,
-        })
-        console.log('Email 1 sent successfully')
+        }).catch(err => console.error('Email failed:', err))
       } else {
         console.error('No action_link returned from generateLink')
       }
-    } catch (emailError) {
-      console.error('Failed to send Email 1:', emailError)
-    }
+    }).catch(err => console.error('Failed to generate confirm link:', err))
 
     return NextResponse.json({ success: true, requiresConfirmation: true, ...result })
   } catch (error: unknown) {
+    try {
+      if (authUserId) {
+        await adminClient.auth.admin.deleteUser(authUserId)
+        console.log('Rolled back auth user:', authUserId)
+      }
+    } catch (rollbackErr) {
+      console.error('Rollback failed:', rollbackErr)
+    }
+
     const msg = (error instanceof Error ? error.message : '').toLowerCase()
     if (msg.includes('phone') && (msg.includes('duplicate') || msg.includes('unique'))) {
       return NextResponse.json(

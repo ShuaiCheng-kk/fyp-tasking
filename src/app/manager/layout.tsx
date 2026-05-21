@@ -22,12 +22,26 @@ export default function ManagerLayout({
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
     )
+
+    // Detect session invalidation (e.g. account deleted by owner)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') {
+        localStorage.clear()
+        router.replace('/signin')
+      }
+    })
+
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session) {
         router.replace('/signin')
         return
       }
       const res = await fetch(`/api/user/me?user_id=${session.user.id}`)
+      if (res.status === 401) {
+        localStorage.clear()
+        router.replace('/signin')
+        return
+      }
       const data = await res.json()
       const role: string = data.success ? (data.user?.role ?? '') : ''
       if (role === 'Manager') {
@@ -36,6 +50,8 @@ export default function ManagerLayout({
         router.replace(ROLE_DASHBOARD[role] ?? '/signin')
       }
     })
+
+    return () => subscription.unsubscribe()
   }, [router])
 
   if (checking) return null

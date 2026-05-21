@@ -23,6 +23,36 @@ const NAV_ITEMS = [
   { label: 'Settings',      Icon: Settings,         href: '/owner/settings',        dot: null },
 ]
 
+type Theme = {
+  sidebarBg: string
+  sidebarText: string
+  sidebarActiveBg: string
+  sidebarActiveText: string
+  sidebarHoverBg: string
+  sidebarBorder: string
+  logoBorder: string
+}
+
+const OWNER_THEME: Theme = {
+  sidebarBg: '#1C1C1E',
+  sidebarText: '#FFFFFF',
+  sidebarActiveBg: '#F97316',
+  sidebarActiveText: '#FFFFFF',
+  sidebarHoverBg: 'rgba(255,255,255,0.1)',
+  sidebarBorder: 'rgba(255,255,255,0.08)',
+  logoBorder: 'rgba(255,255,255,0.08)',
+}
+
+const PARTNER_THEME: Theme = {
+  sidebarBg: '#FFFFFF',
+  sidebarText: '#1C1C1E',
+  sidebarActiveBg: '#F97316',
+  sidebarActiveText: '#FFFFFF',
+  sidebarHoverBg: '#F3F4F6',
+  sidebarBorder: '#E5E7EB',
+  logoBorder: '#F3F4F6',
+}
+
 export default function OwnerSidebar({
   unreadMessages,
   unreadAnnouncements,
@@ -33,8 +63,14 @@ export default function OwnerSidebar({
   const pathname = usePathname()
   const [expanded, setExpanded] = useState(false)
   const [userRole, setUserRole] = useState('')
+  const [theme, setTheme] = useState<Theme>(OWNER_THEME)
   const [msgCount, setMsgCount] = useState(unreadMessages ?? 0)
   const [annCount, setAnnCount] = useState(unreadAnnouncements ?? 0)
+
+  useEffect(() => {
+    const role = typeof localStorage !== 'undefined' ? localStorage.getItem('tasking_user_role') : null
+    setTheme(role === 'Partner' ? PARTNER_THEME : OWNER_THEME)
+  }, [])
 
   useEffect(() => {
     const authUid = typeof localStorage !== 'undefined' ? localStorage.getItem('tasking_user_id') : null
@@ -136,8 +172,8 @@ export default function OwnerSidebar({
       onMouseLeave={() => setExpanded(false)}
       style={{
         width: expanded ? '220px' : '64px',
-        background: '#FFFFFF',
-        borderRight: '1px solid #E5E7EB',
+        background: theme.sidebarBg,
+        borderRight: `1px solid ${theme.sidebarBorder}`,
         display: 'flex',
         flexDirection: 'column',
         height: '100vh',
@@ -158,7 +194,7 @@ export default function OwnerSidebar({
           alignItems: 'center',
           gap: '10px',
           padding: '20px 18px 18px',
-          borderBottom: '1px solid #F3F4F6',
+          borderBottom: `1px solid ${theme.logoBorder}`,
           textDecoration: 'none',
           flexShrink: 0,
         }}
@@ -174,7 +210,7 @@ export default function OwnerSidebar({
         <span style={{
           fontWeight: 700,
           fontSize: '1.0625rem',
-          color: '#111827',
+          color: theme.sidebarText,
           letterSpacing: '-0.01em',
           whiteSpace: 'nowrap',
           opacity: expanded ? 1 : 0,
@@ -189,8 +225,6 @@ export default function OwnerSidebar({
         {visibleNavItems.map(({ label, Icon, href, dot }) => {
           const active = pathname === href
           const showDot = dot === 'messages' ? msgCount > 0 : dot === 'announcements' ? annCount > 0 : false
-          const ACCENT = '#EA580C'
-          const ACTIVE_BG = '#FFF7ED'
           return (
             <a
               key={label}
@@ -201,8 +235,8 @@ export default function OwnerSidebar({
                 gap: '10px',
                 padding: '10px 12px',
                 borderRadius: '8px',
-                background: active ? ACTIVE_BG : 'transparent',
-                color: active ? ACCENT : '#6B7280',
+                background: active ? theme.sidebarActiveBg : 'transparent',
+                color: active ? theme.sidebarActiveText : theme.sidebarText,
                 fontWeight: active ? 600 : 500,
                 fontSize: '0.9rem',
                 cursor: 'pointer',
@@ -212,14 +246,14 @@ export default function OwnerSidebar({
                 transition: 'background 0.12s, color 0.12s',
                 position: 'relative',
               }}
-              onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = '#F3F4F6' }}
-              onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent' }}
+              onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = theme.sidebarHoverBg } }}
+              onMouseLeave={(e) => { if (!active) { e.currentTarget.style.background = 'transparent' } }}
             >
               <span style={{ position: 'relative', flexShrink: 0 }}>
                 <Icon
                   size={18}
                   strokeWidth={2.1}
-                  style={{ display: 'block', color: active ? ACCENT : 'currentColor' }}
+                  style={{ display: 'block', color: 'currentColor' }}
                 />
                 {showDot && (
                   <span style={{
@@ -238,8 +272,8 @@ export default function OwnerSidebar({
       </nav>
 
       {/* Logout */}
-      <div style={{ padding: '12px 8px', borderTop: '1px solid #F3F4F6', flexShrink: 0 }}>
-        <div style={{ borderTop: '1px solid #E5E7EB', paddingTop: '8px', marginTop: '2px' }}>
+      <div style={{ padding: '12px 8px', borderTop: `1px solid ${theme.logoBorder}`, flexShrink: 0 }}>
+        <div style={{ borderTop: `1px solid ${theme.sidebarBorder}`, paddingTop: '8px', marginTop: '2px' }}>
           <button
             onClick={handleLogout}
             style={{

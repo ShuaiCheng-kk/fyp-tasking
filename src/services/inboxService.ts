@@ -127,13 +127,14 @@ export async function updateNotificationStatus(notificationId: string, status: s
 }
 
 export async function getUnreadCount(userId: string, companyId: string, lastAnnouncementReadAt?: string | null) {
-  const [unreadMessages, unreadAnnouncements] = await Promise.all([
+  const [unreadMessages, unreadAnnouncements, pendingInvitations] = await Promise.all([
     inboxRepo.countUnreadMessages(userId, companyId),
     inboxRepo.countUnreadAnnouncements(companyId, lastAnnouncementReadAt ?? null),
+    inboxRepo.countPendingInvitations(userId),
   ])
   return {
-    unread_messages: Number(unreadMessages),
+    unread_messages: Number(unreadMessages) + Number(pendingInvitations),
     unread_announcements: Number(unreadAnnouncements),
-    count: Number(unreadMessages) + Number(unreadAnnouncements),
+    count: Number(unreadMessages) + Number(pendingInvitations) + Number(unreadAnnouncements),
   }
 }

@@ -611,15 +611,8 @@ export default function GetStartedPage() {
 
       sessionStorage.removeItem('invite_code');
 
-      const roleRoutes: Record<string, string> = {
-        'Owner': '/owner/dashboard',
-        'partner': '/owner/dashboard',
-        'Manager': '/manager/dashboard',
-        'Employee': '/employee/dashboard',
-        'Casual Worker': '/casual/dashboard',
-      };
       setIsLoading(false);
-      router.replace(roleRoutes[redeemData.user.role] || '/owner/dashboard');
+      router.replace('/signin?joined=true');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Invalid or expired invitation code');
       setIsLoading(false);

@@ -278,6 +278,16 @@ export async function countPendingNotifications(userId: string) {
   return count ?? 0
 }
 
+export async function countPendingInvitations(userId: string) {
+  const { count, error } = await supabase
+    .from('inbox')
+    .select('*', { count: 'exact', head: true })
+    .eq('recipient_user_id', userId)
+    .eq('status', 'pending')
+  if (error) throw error
+  return count ?? 0
+}
+
 export async function updateNotificationStatus(notificationId: string, status: string) {
   const { data, error } = await supabase
     .from('notifications')

@@ -155,7 +155,7 @@ export const userRepository = {
     if (error) throw new Error(error.message)
   },
 
-  async createAuthUser(email: string, password: string) {
+  async createAuthUser(email: string, password: string, emailConfirm = false) {
     const adminClient = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -163,7 +163,7 @@ export const userRepository = {
     const { data, error } = await adminClient.auth.admin.createUser({
       email,
       password,
-      email_confirm: false,
+      email_confirm: emailConfirm,
     })
     if (error) throw new Error(error.message)
     if (!data.user) throw new Error('Registration failed')
@@ -172,32 +172,12 @@ export const userRepository = {
 
   async findMembersByCompanyId(company_id: string): Promise<User[]> {
     const { data, error } = await supabase
-      .from('users')
-      .select('*')
+      .from('company_members')
+      .select('users(*)')
       .eq('company_id', company_id)
-      .order('role', { ascending: true })
     if (error) throw new Error(error.message)
-    const members: User[] = data || []
-
-    const { data: companyData } = await supabase
-      .from('companies')
-      .select('owner_id')
-      .eq('id', company_id)
-      .single()
-
-    if (companyData?.owner_id) {
-      const { data: ownerUser } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', companyData.owner_id)
-        .single()
-
-      if (ownerUser && !members.some((m) => m.id === ownerUser.id)) {
-        members.unshift(ownerUser)
-      }
-    }
-
-    return members
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (data || []).map((row: any) => row.users).filter(Boolean) as User[]
   },
 
   async countMembersAcrossOwnedCompanies(internal_owner_id: string): Promise<number> {
@@ -254,6 +234,38 @@ export const userRepository = {
       process.env.SUPABASE_SERVICE_ROLE_KEY!,
     )
     const { error } = await adminClient.auth.admin.deleteUser(user_id)
+    if (error) throw new Error(error.message)
+  },
+
+  async deleteInboxByUserId(user_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('inbox')
+      .delete()
+      .or(`recipient_user_id.eq.${user_id},sender_user_id.eq.${user_id}`)
+    if (error) throw new Error(error.message)
+  },
+
+  async deleteMessagesByUserId(user_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('messages')
+      .delete()
+      .or(`from_user_id.eq.${user_id},to_user_id.eq.${user_id}`)
+    if (error) throw new Error(error.message)
+  },
+
+  async deleteNotificationsByUserId(user_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('notifications')
+      .delete()
+      .or(`to_user_id.eq.${user_id},from_user_id.eq.${user_id}`)
+    if (error) throw new Error(error.message)
+  },
+
+  async deleteManagerDepartmentsByUserId(user_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('manager_departments')
+      .delete()
+      .eq('manager_id', user_id)
     if (error) throw new Error(error.message)
   },
 
