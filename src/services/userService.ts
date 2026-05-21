@@ -35,6 +35,7 @@ export const userService = {
     // Step 1: remove from this company; also null out users.company_id if it matches
     await companyRepository.removeCompanyMember(user_id, company_id)
     await companyRepository.nullifyUserCompanyId(user_id, company_id)
+    await companyRepository.expireInvitationCodesForUser(user_id, company_id)
 
     // Step 2: count remaining memberships
     const remaining = await companyRepository.countMemberCompanies(user_id)

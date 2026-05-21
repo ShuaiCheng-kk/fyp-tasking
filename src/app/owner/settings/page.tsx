@@ -223,12 +223,27 @@ export default function SettingsPage() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
-      await supabase.auth.signOut()
+
       if (data.accountDeleted) {
+        await supabase.auth.signOut()
         setLeaveTarget(null)
         setAccountRemovedOverlay(true)
       } else {
-        router.replace('/signin')
+        // Remove the left company from localStorage
+        localStorage.removeItem(`tasking_company_id_${userId}`)
+        localStorage.removeItem(`tasking_last_company_name_${leaveTarget.id}`)
+
+        // Fetch remaining companies and switch to the first one
+        const companiesRes = await fetch(`/api/company/my-companies?owner_id=${userId}`)
+        const companiesData = await companiesRes.json()
+        if (companiesData.success && companiesData.companies.length > 0) {
+          const next = companiesData.companies[0]
+          localStorage.setItem(`tasking_company_id_${userId}`, next.id)
+          localStorage.setItem(`tasking_last_company_name_${next.id}`, next.name)
+        }
+
+        setLeaveTarget(null)
+        router.replace('/owner/dashboard')
       }
     } catch (err) {
       setLeaveError(err instanceof Error ? err.message : 'Failed to leave company')

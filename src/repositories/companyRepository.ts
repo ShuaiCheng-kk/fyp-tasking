@@ -283,6 +283,16 @@ export const companyRepository = {
     if (error) throw new Error(error.message)
   },
 
+  async expireInvitationCodesForUser(user_id: string, company_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('invitation_code')
+      .update({ status: 'Expired' })
+      .eq('company_id', company_id)
+      .eq('used_by', user_id)
+      .eq('status', 'Active')
+    if (error) throw new Error(error.message)
+  },
+
   async deleteInvitationCodeByCompanyId(company_id: string): Promise<void> {
     const { error } = await supabase
       .from('invitation_code')
