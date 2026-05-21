@@ -124,6 +124,8 @@ export default function SettingsPage() {
   const [leaveTarget, setLeaveTarget] = useState<Company | null>(null)
   const [leaveLoading, setLeaveLoading] = useState(false)
   const [leaveError, setLeaveError] = useState('')
+  const [leaveCompanyCount, setLeaveCompanyCount] = useState<number | null>(null)
+  const [leaveCountLoading, setLeaveCountLoading] = useState(false)
 
   // Add modal
   const [addOpen, setAddOpen] = useState(false)
@@ -254,7 +256,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { setEditTarget(null); setAddOpen(false); setDeleteTarget(null); setPlanModalTarget(null); setLeaveTarget(null) }
+      if (e.key === 'Escape') { setEditTarget(null); setAddOpen(false); setDeleteTarget(null); setPlanModalTarget(null); setLeaveTarget(null); setLeaveCompanyCount(null) }
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
@@ -382,6 +384,19 @@ export default function SettingsPage() {
     } finally {
       setAddLoading(false)
     }
+  }
+
+  const openLeave = async (c: Company) => {
+    setLeaveError('')
+    setLeaveCompanyCount(null)
+    setLeaveTarget(c)
+    setLeaveCountLoading(true)
+    try {
+      const res = await fetch(`/api/company/my-companies?owner_id=${userId}`)
+      const data = await res.json()
+      if (data.success) setLeaveCompanyCount(data.companies.length)
+    } catch {}
+    finally { setLeaveCountLoading(false) }
   }
 
   // ── Plan tab helpers ───────────────────────────────────────────────────────
@@ -544,7 +559,7 @@ export default function SettingsPage() {
                       <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
                         {userRole === 'Partner' ? (
                           <button
-                            onClick={() => { setLeaveTarget(c); setLeaveError('') }}
+                            onClick={() => openLeave(c)}
                             style={{
                               display: 'flex', alignItems: 'center', gap: '5px',
                               padding: '7px 12px', border: '1px solid #FECACA', borderRadius: '7px',
@@ -788,30 +803,48 @@ export default function SettingsPage() {
 
       {/* ── Leave Company Confirmation Modal ──────────────────────────────── */}
       {leaveTarget && (
-        <ModalOverlay onClose={() => setLeaveTarget(null)}>
+        <ModalOverlay onClose={() => { setLeaveTarget(null); setLeaveCompanyCount(null) }}>
           <ModalBox>
-            <ModalHeader title="Leave Company" onClose={() => setLeaveTarget(null)} />
+            <ModalHeader title="Leave Company" onClose={() => { setLeaveTarget(null); setLeaveCompanyCount(null) }} />
 
-            <p style={{ fontSize: '0.9375rem', color: '#374151', marginBottom: '4px', lineHeight: 1.6 }}>
-              Are you sure you want to leave <strong>{leaveTarget.name}</strong>?{' '}
-              Your account will be permanently deleted and you will be signed out immediately. This cannot be undone.
-            </p>
+            {leaveCountLoading ? (
+              <div style={{ display: 'flex', justifyContent: 'center', padding: '16px 0' }}>
+                <Spinner size={20} dark />
+              </div>
+            ) : leaveCompanyCount === 1 ? (
+              <p style={{ fontSize: '0.9375rem', color: '#374151', marginBottom: '4px', lineHeight: 1.6 }}>
+                Are you sure you want to leave <strong>{leaveTarget.name}</strong>?{' '}
+                Since this is your only company, your account will be permanently deleted and you will be signed out.{' '}
+                This cannot be undone.
+              </p>
+            ) : (
+              <p style={{ fontSize: '0.9375rem', color: '#374151', marginBottom: '4px', lineHeight: 1.6 }}>
+                Are you sure you want to leave <strong>{leaveTarget.name}</strong>?{' '}
+                You will lose access to this company. Your account will not be deleted.
+              </p>
+            )}
 
             <InlineError message={leaveError} />
 
             <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-              <button style={ghostBtn} onClick={() => setLeaveTarget(null)}>Cancel</button>
+              <button style={ghostBtn} onClick={() => { setLeaveTarget(null); setLeaveCompanyCount(null) }}>Cancel</button>
               <button
                 onClick={handleLeave}
-                disabled={leaveLoading}
+                disabled={leaveLoading || leaveCountLoading}
                 style={{
-                  flex: 1, padding: '10px', background: '#EF4444', border: 'none', borderRadius: '8px',
-                  fontWeight: 600, fontSize: '0.9375rem', color: '#FFFFFF',
-                  cursor: leaveLoading ? 'default' : 'pointer', display: 'flex', alignItems: 'center',
-                  justifyContent: 'center', gap: '7px', opacity: leaveLoading ? 0.65 : 1,
+                  flex: 1, padding: '10px',
+                  background: leaveCompanyCount === 1 ? '#EF4444' : 'none',
+                  border: leaveCompanyCount === 1 ? 'none' : '1.5px solid #EF4444',
+                  borderRadius: '8px',
+                  fontWeight: 600, fontSize: '0.9375rem',
+                  color: leaveCompanyCount === 1 ? '#FFFFFF' : '#EF4444',
+                  cursor: (leaveLoading || leaveCountLoading) ? 'default' : 'pointer',
+                  display: 'flex', alignItems: 'center',
+                  justifyContent: 'center', gap: '7px',
+                  opacity: (leaveLoading || leaveCountLoading) ? 0.65 : 1,
                 }}
               >
-                {leaveLoading && <Spinner size={14} />}
+                {leaveLoading && <Spinner size={14} dark={leaveCompanyCount !== 1} />}
                 Leave Company
               </button>
             </div>
@@ -1005,7 +1038,10 @@ export default function SettingsPage() {
               You have left your last company. Your account has been permanently deleted.
             </p>
             <button
-              onClick={() => router.replace('/')}
+              onClick={() => {
+                localStorage.clear()
+                router.replace('/')
+              }}
               style={{
                 padding: '10px 28px', background: '#111827', border: 'none', borderRadius: '8px',
                 fontWeight: 600, fontSize: '0.9375rem', color: '#FFFFFF', cursor: 'pointer',
