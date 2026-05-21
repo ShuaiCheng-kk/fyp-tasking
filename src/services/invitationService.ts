@@ -157,6 +157,15 @@ export const invitationService = {
       throw err
     }
 
+    const roleMap: Record<string, string> = {
+      partner: 'Partner',
+      manager: 'Manager',
+      employee: 'Employee',
+      casual_worker: 'Casual Worker',
+      owner: 'Owner',
+    }
+    const normalizedRole = roleMap[invitation.role.toLowerCase()] ?? invitation.role
+
     try {
       // 5. Insert into users table
       const user = await userRepository.createUser({
@@ -164,7 +173,7 @@ export const invitationService = {
         full_name: data.full_name,
         email_address: data.email_address,
         phone_number: data.phone_number,
-        role: invitation.role,
+        role: normalizedRole,
         company_id: invitation.company_id,
         department_id: invitation.department_id,
       })
