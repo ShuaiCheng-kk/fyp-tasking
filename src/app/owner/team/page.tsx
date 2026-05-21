@@ -175,6 +175,9 @@ export default function TeamPage() {
   const [removeLoading, setRemoveLoading] = useState(false)
   const [removeError, setRemoveError] = useState('')
 
+  // Account deleted modal (shown when removed from last company)
+  const [accountDeletedModal, setAccountDeletedModal] = useState(false)
+
   // Manage Departments modal (legacy — kept for internal logic reuse)
   const [manageDeptModal, setManageDeptModal] = useState<ManageDeptModal>(null)
   const [manageDeptAssigned, setManageDeptAssigned] = useState<{ department_id: string; department_name: string }[]>([])
@@ -530,12 +533,26 @@ export default function TeamPage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
       setRemoveModal(null)
-      fetchTeamMembers(companyId)
+      if (data.accountDeleted) {
+        setAccountDeletedModal(true)
+      } else {
+        fetchTeamMembers(companyId)
+      }
     } catch (err) {
       setRemoveError(err instanceof Error ? err.message : 'Failed to remove member')
     } finally {
       setRemoveLoading(false)
     }
+  }
+
+  const handleAccountDeletedExit = async () => {
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    )
+    localStorage.clear()
+    await supabase.auth.signOut()
+    router.replace('/')
   }
 
   const openManageDeptModal = async (member: TeamMember) => {
@@ -1145,6 +1162,47 @@ export default function TeamPage() {
             </div>
           </ModalBox>
         </ModalOverlay>
+      )}
+
+      {/* ── Account Deleted Modal ────────────────────────────────────────── */}
+      {accountDeletedModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.5)',
+            backdropFilter: 'blur(2px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 200,
+          }}
+        >
+          <div style={{ width: '440px', background: '#FFFFFF', borderRadius: '16px', padding: '36px 32px', boxShadow: '0 8px 40px rgba(0,0,0,0.16)' }}>
+            <h2 style={{ fontWeight: 700, fontSize: '1.125rem', color: '#111827', margin: '0 0 12px' }}>
+              Your account has been removed
+            </h2>
+            <p style={{ fontSize: '0.9375rem', color: '#6B7280', lineHeight: 1.6, margin: '0 0 28px' }}>
+              You have been removed from your last company. Your account has been permanently deleted.
+            </p>
+            <button
+              onClick={handleAccountDeletedExit}
+              style={{
+                width: '100%',
+                height: '48px',
+                background: '#F97316',
+                color: '#FFFFFF',
+                border: 'none',
+                borderRadius: '10px',
+                fontWeight: 600,
+                fontSize: '0.9375rem',
+                cursor: 'pointer',
+              }}
+            >
+              Exit
+            </button>
+          </div>
+        </div>
       )}
 
       {/* ── Invite Member Modal ───────────────────────────────────────────── */}
