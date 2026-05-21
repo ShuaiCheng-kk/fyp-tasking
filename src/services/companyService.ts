@@ -155,28 +155,64 @@ export const companyService = {
       }
     }
 
-    // Step 1: fetch all non-Owner members of this company via company_members
-    const nonOwnerMemberships = await companyRepository.findNonOwnerMembersByCompanyId(company_id)
+    // Step 1: get all non-Owner members (with supabase_auth_id) before any deletions
+    console.log(`[deleteCompany] Step 1: fetching non-Owner members for company ${company_id}`)
+    const nonOwnerMembers = await companyRepository.findNonOwnerMembersByCompanyId(company_id)
+    console.log(`[deleteCompany] Step 1: found ${nonOwnerMembers.length} non-Owner members`)
 
-    // Step 2: for each non-Owner member, remove from this company then check remaining memberships
-    for (const { user_id } of nonOwnerMemberships) {
-      await companyRepository.removeCompanyMember(user_id, company_id)
-      const remaining = await companyRepository.countMemberCompanies(user_id)
-      if (remaining === 0) {
-        const member = await userRepository.findById(user_id)
-        await userRepository.deleteInboxByUserId(user_id)
-        await userRepository.deleteMessagesByUserId(user_id)
-        await userRepository.deleteNotificationsByUserId(user_id)
-        await userRepository.deleteManagerDepartmentsByUserId(user_id)
-        await userRepository.deleteById(user_id)
-        if (member?.supabase_auth_id) {
-          await supabaseAdmin.auth.admin.deleteUser(member.supabase_auth_id)
-        }
+    // Step 2: determine which members have no other companies (mark for full deletion)
+    console.log(`[deleteCompany] Step 2: checking remaining memberships for each non-Owner member`)
+    const membersForFullDeletion: { user_id: string; supabase_auth_id: string | null }[] = []
+    for (const member of nonOwnerMembers) {
+      const remaining = await companyRepository.countMemberCompanies(member.user_id)
+      const companiesExcludingThis = remaining - 1 // subtract this company (not yet deleted)
+      console.log(`[deleteCompany] Step 2: user ${member.user_id} has ${companiesExcludingThis} other companies`)
+      if (companiesExcludingThis === 0) {
+        membersForFullDeletion.push(member)
+      }
+    }
+    console.log(`[deleteCompany] Step 2: ${membersForFullDeletion.length} members marked for full deletion`)
+
+    // Step 3: delete all company-scoped records in correct FK order
+    console.log(`[deleteCompany] Step 3: deleting inbox records for company ${company_id}`)
+    await companyRepository.deleteInboxByCompanyId(company_id)
+
+    console.log(`[deleteCompany] Step 3: deleting announcements for company ${company_id}`)
+    await companyRepository.deleteAnnouncementsByCompanyId(company_id)
+
+    console.log(`[deleteCompany] Step 3: deleting notifications for company ${company_id}`)
+    await companyRepository.deleteNotificationsByCompanyId(company_id)
+
+    console.log(`[deleteCompany] Step 3: deleting messages for company ${company_id}`)
+    await companyRepository.deleteMessagesByCompanyId(company_id)
+
+    console.log(`[deleteCompany] Step 3: deleting manager_departments for company ${company_id}`)
+    await companyRepository.deleteManagerDepartmentsByCompanyId(company_id)
+
+    console.log(`[deleteCompany] Step 3: deleting invitation_code for company ${company_id}`)
+    await companyRepository.deleteInvitationCodeByCompanyId(company_id)
+
+    console.log(`[deleteCompany] Step 3: deleting company_members for company ${company_id}`)
+    await companyRepository.deleteCompanyMembersByCompanyId(company_id)
+
+    console.log(`[deleteCompany] Step 3: deleting departments for company ${company_id}`)
+    await companyRepository.deleteDepartmentsByCompanyId(company_id)
+
+    // Step 4: fully delete members who have no other companies
+    console.log(`[deleteCompany] Step 4: fully deleting ${membersForFullDeletion.length} members with no other companies`)
+    for (const member of membersForFullDeletion) {
+      console.log(`[deleteCompany] Step 4: deleting user ${member.user_id}`)
+      await userRepository.deleteById(member.user_id)
+      if (member.supabase_auth_id) {
+        console.log(`[deleteCompany] Step 4: deleting auth user ${member.supabase_auth_id}`)
+        await supabaseAdmin.auth.admin.deleteUser(member.supabase_auth_id)
       }
     }
 
-    // Step 3: proceed with existing company deletion
+    // Step 5: delete the company itself
+    console.log(`[deleteCompany] Step 5: deleting company ${company_id}`)
     await companyRepository.deleteById(company_id)
+    console.log(`[deleteCompany] Step 5: company ${company_id} deleted successfully`)
   },
 
   async createAdditionalCompany(data: {

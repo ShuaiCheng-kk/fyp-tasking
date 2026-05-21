@@ -229,14 +229,82 @@ export const companyRepository = {
     if (error) throw new Error(error.message)
   },
 
-  async findNonOwnerMembersByCompanyId(company_id: string): Promise<{ user_id: string }[]> {
+  async findNonOwnerMembersByCompanyId(company_id: string): Promise<{ user_id: string; supabase_auth_id: string | null }[]> {
     const { data, error } = await supabase
       .from('company_members')
-      .select('user_id')
+      .select('user_id, users!inner(supabase_auth_id)')
       .eq('company_id', company_id)
       .neq('role', 'Owner')
     if (error) throw new Error(error.message)
-    return data || []
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (data || []).map((row: any) => ({
+      user_id: row.user_id as string,
+      supabase_auth_id: (row.users?.supabase_auth_id ?? null) as string | null,
+    }))
+  },
+
+  async deleteInboxByCompanyId(company_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('inbox')
+      .delete()
+      .eq('company_id', company_id)
+    if (error) throw new Error(error.message)
+  },
+
+  async deleteAnnouncementsByCompanyId(company_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('announcements')
+      .delete()
+      .eq('company_id', company_id)
+    if (error) throw new Error(error.message)
+  },
+
+  async deleteNotificationsByCompanyId(company_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('notifications')
+      .delete()
+      .eq('company_id', company_id)
+    if (error) throw new Error(error.message)
+  },
+
+  async deleteMessagesByCompanyId(company_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('messages')
+      .delete()
+      .eq('company_id', company_id)
+    if (error) throw new Error(error.message)
+  },
+
+  async deleteManagerDepartmentsByCompanyId(company_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('manager_departments')
+      .delete()
+      .eq('company_id', company_id)
+    if (error) throw new Error(error.message)
+  },
+
+  async deleteInvitationCodeByCompanyId(company_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('invitation_code')
+      .delete()
+      .eq('company_id', company_id)
+    if (error) throw new Error(error.message)
+  },
+
+  async deleteCompanyMembersByCompanyId(company_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('company_members')
+      .delete()
+      .eq('company_id', company_id)
+    if (error) throw new Error(error.message)
+  },
+
+  async deleteDepartmentsByCompanyId(company_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('departments')
+      .delete()
+      .eq('company_id', company_id)
+    if (error) throw new Error(error.message)
   },
 
   async nullifyUserCompanyId(user_id: string, company_id: string): Promise<boolean> {
