@@ -45,6 +45,7 @@ export const companyService = {
       website: data.website,
     })
     await userRepository.updateCompanyId(internalOwnerId, company.id)
+    await companyRepository.insertCompanyMember(internalOwnerId, company.id, 'Owner')
 
     return company
   },
@@ -113,6 +114,16 @@ export const companyService = {
         if (match) selected = match
       }
       return { role: user.role, company: selected, companies: owned }
+    }
+
+    const memberCompanies = await companyRepository.findCompaniesByMembership(user.id)
+    if (memberCompanies.length > 0) {
+      let selected = memberCompanies[0]
+      if (preferredCompanyId) {
+        const match = memberCompanies.find((c) => c.id === preferredCompanyId)
+        if (match) selected = match
+      }
+      return { role: user.role, company: selected, companies: memberCompanies }
     }
 
     if (user.company_id) {
@@ -185,6 +196,7 @@ export const companyService = {
       logo_url: data.logo_url,
       website: data.website,
     })
+    await companyRepository.insertCompanyMember(internalOwnerId, company.id, 'Owner')
     for (const deptName of data.departments.filter((d) => d.trim())) {
       await departmentRepository.createDepartment({ name: deptName.trim(), company_id: company.id })
     }

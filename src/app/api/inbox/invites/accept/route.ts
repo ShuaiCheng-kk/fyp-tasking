@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getInboxItemById, updateInboxStatus } from '@/repositories/inboxRepository'
 import { userRepository } from '@/repositories/userRepository'
+import { companyRepository } from '@/repositories/companyRepository'
 
 export async function POST(req: NextRequest) {
   try {
@@ -21,19 +22,21 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'User not found' }, { status: 404 })
     }
 
-    if (user.company_id === invite.company_id) {
+    const existing = await companyRepository.findCompanyMember(user_id, invite.company_id)
+    if (existing) {
       return NextResponse.json({ success: false, error: 'Already a member of this company' }, { status: 400 })
     }
-
-    await userRepository.updateCompanyAndDepartment(user_id, invite.company_id, invite.department_id ?? null)
 
     const roleMap: Record<string, string> = {
       owner: 'Owner',
       manager: 'Manager',
       employee: 'Employee',
+      casual_worker: 'Casual Worker',
+      partner: 'Partner',
     }
     const normalizedRole = roleMap[invite.role?.toLowerCase()] ?? invite.role
-    await userRepository.updateRole(user_id, normalizedRole as any)
+
+    await companyRepository.insertCompanyMember(user_id, invite.company_id, normalizedRole)
 
     await updateInboxStatus(inbox_id, 'accepted')
 

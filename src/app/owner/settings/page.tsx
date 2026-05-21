@@ -141,6 +141,9 @@ export default function SettingsPage() {
     searchParams.get('tab') === 'subscription' ? 'subscription' : 'company'
   )
 
+  // Removal overlay (Change 4)
+  const [removalOverlay, setRemovalOverlay] = useState<{ companyName: string } | null>(null)
+
   // Plan tab
   const [planModalTarget, setPlanModalTarget] = useState<Company | null>(null)
   const [planModalType, setPlanModalType] = useState<'upgrade' | 'downgrade' | null>(null)
@@ -248,6 +251,24 @@ export default function SettingsPage() {
           return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
         })
         setCompanies(sorted)
+
+        // Change 3 & 4: detect if current active company was removed
+        const storedCid = localStorage.getItem(`tasking_company_id_${uid}`)
+        if (storedCid && sorted.length > 0 && !sorted.some((c: Company) => c.id === storedCid)) {
+          const removedName = localStorage.getItem(`tasking_last_company_name_${storedCid}`) || 'your previous company'
+          const next = sorted[0]
+          localStorage.setItem(`tasking_company_id_${uid}`, next.id)
+          localStorage.setItem(`tasking_last_company_name_${next.id}`, next.name)
+          setRemovalOverlay({ companyName: removedName })
+          setTimeout(() => {
+            setRemovalOverlay(null)
+          }, 3000)
+        } else if (sorted.length > 0 && sorted[0]) {
+          // Keep last company name cached for future removal detection
+          sorted.forEach((c: Company) => {
+            localStorage.setItem(`tasking_last_company_name_${c.id}`, c.name)
+          })
+        }
       }
     } catch {}
     finally { setLoading(false) }
@@ -308,7 +329,7 @@ export default function SettingsPage() {
   const handleAdd = async () => {
     if (!addName.trim()) { setAddError('Company name is required.'); return }
     if (!addLocation.trim()) { setAddError('Location is required.'); return }
-    if (!addIndustry) { setAddError('Please select an industry.'); return }
+    if (!addIndustry.trim()) { setAddError('Industry is required.'); return }
     if (!addSize) { setAddError('Please select a company size.'); return }
     setAddLoading(true)
     setAddError('')
@@ -688,9 +709,9 @@ export default function SettingsPage() {
                 />
               </div>
               <div>
-                <label style={labelStyle}>Company Size <span style={{ color: '#EF4444' }}>*</span></label>
+                <label style={labelStyle}>Number of Staff <span style={{ color: '#EF4444' }}>*</span></label>
                 <select value={editSize} onChange={(e) => setEditSize(e.target.value)} style={{ ...inputStyle, appearance: 'auto' }}>
-                  <option value="">Select size…</option>
+                  <option value="">Select staff count...</option>
                   {SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
@@ -870,16 +891,19 @@ export default function SettingsPage() {
 
             <div style={{ marginBottom: '16px' }}>
               <label style={labelStyle}>Industry <span style={{ color: '#EF4444' }}>*</span></label>
-              <select value={addIndustry} onChange={(e) => setAddIndustry(e.target.value)} style={{ ...inputStyle, appearance: 'auto' }}>
-                <option value="">Select industry…</option>
-                {INDUSTRIES.map((i) => <option key={i} value={i}>{i}</option>)}
-              </select>
+              <input
+                type="text"
+                placeholder="e.g. Retail, Logistics, Healthcare"
+                value={addIndustry}
+                onChange={(e) => setAddIndustry(e.target.value)}
+                style={inputStyle}
+              />
             </div>
 
             <div style={{ marginBottom: '16px' }}>
-              <label style={labelStyle}>Company Size <span style={{ color: '#EF4444' }}>*</span></label>
+              <label style={labelStyle}>Number of Staff <span style={{ color: '#EF4444' }}>*</span></label>
               <select value={addSize} onChange={(e) => setAddSize(e.target.value)} style={{ ...inputStyle, appearance: 'auto' }}>
-                <option value="">Select size…</option>
+                <option value="">Select staff count...</option>
                 {SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
@@ -929,6 +953,44 @@ export default function SettingsPage() {
             </div>
           </ModalBox>
         </ModalOverlay>
+      )}
+
+      {/* ── Change 4: Removal overlay ─────────────────────────────────────── */}
+      {removalOverlay && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 200,
+          background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(4px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div style={{
+            background: '#FFFFFF', borderRadius: '16px', padding: '40px 48px',
+            boxShadow: '0 8px 48px rgba(0,0,0,0.18)', maxWidth: '460px', textAlign: 'center',
+          }}>
+            <div style={{
+              width: 48, height: 48, borderRadius: '50%', background: '#FEF2F2',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px',
+            }}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                <path d="M12 9v4M12 17h.01" stroke="#EF4444" strokeWidth="2" strokeLinecap="round" />
+                <circle cx="12" cy="12" r="9" stroke="#EF4444" strokeWidth="2" />
+              </svg>
+            </div>
+            <h2 style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827', margin: '0 0 12px' }}>
+              You have been removed
+            </h2>
+            <p style={{ fontSize: '0.9375rem', color: '#6B7280', lineHeight: 1.6, margin: '0 0 20px' }}>
+              You have been removed from <strong style={{ color: '#111827' }}>{removalOverlay.companyName}</strong> by the Owner.
+              Switching you to your other company…
+            </p>
+            <div style={{ height: 4, background: '#F3F4F6', borderRadius: 2, overflow: 'hidden' }}>
+              <div style={{
+                height: '100%', background: '#F97316', borderRadius: 2,
+                animation: 'removal-progress 3s linear forwards',
+              }} />
+            </div>
+            <style>{`@keyframes removal-progress { from { width: 0% } to { width: 100% } }`}</style>
+          </div>
+        </div>
       )}
     </div>
   )

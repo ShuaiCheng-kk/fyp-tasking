@@ -205,7 +205,7 @@ export default function OwnerDashboard() {
 
   // Top-bar data
   const [companies, setCompanies] = useState<{ id: string; name: string; plan: string }[]>([])
-  const [ownerPlan, setOwnerPlan] = useState<string>('')
+  const [userRole, setUserRole] = useState<string>('')
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
@@ -230,6 +230,27 @@ export default function OwnerDashboard() {
   const [dashboardRole, setDashboardRole] = useState<string>('')
   const [userDeptId, setUserDeptId] = useState<string>('')
   const [initialReady, setInitialReady] = useState(false)
+  const [headerTheme, setHeaderTheme] = useState<{ bg: string; text: string; border: string }>({
+    bg: '#1C1C1E', text: '#FFFFFF', border: 'none',
+  })
+
+  // Removal overlay state
+  const [removalOverlay, setRemovalOverlay] = useState<{ companyName: string } | null>(null)
+
+  // ── Change 4: removal detection ────────────────────────────────────────────
+  // Defined early (before useEffect) so the effect closure can reference it.
+  // By the time this fires, departments are already loaded for the next company.
+  const handleRemovalDetected = useCallback((removedCompanyName: string, availableCompanies: { id: string; name: string; plan: string }[]) => {
+    setRemovalOverlay({ companyName: removedCompanyName })
+    setTimeout(() => {
+      setRemovalOverlay(null)
+      if (availableCompanies.length === 0) {
+        fetch('/api/auth/signout', { method: 'POST' })
+        window.location.href = '/signout'
+      }
+      // State (companyId, companyName, departments) was already set in the useEffect before this overlay showed
+    }, 3000)
+  }, [])
 
   // Manager data for department cards
   const [deptManagerMap, setDeptManagerMap] = useState<Record<string, string>>({})
@@ -257,6 +278,17 @@ export default function OwnerDashboard() {
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [closeAll])
+
+  // ── Header theme from localStorage role ────────────────────────────────────
+
+  useEffect(() => {
+    const role = localStorage.getItem('tasking_user_role')
+    if (role === 'Partner') {
+      setHeaderTheme({ bg: '#FFFFFF', text: '#1C1C1E', border: '1px solid #E5E7EB' })
+    } else {
+      setHeaderTheme({ bg: '#1C1C1E', text: '#FFFFFF', border: 'none' })
+    }
+  }, [])
 
   // ── Click outside company dropdown ─────────────────────────────────────────
 
@@ -293,6 +325,7 @@ export default function OwnerDashboard() {
       }
       if (cancelled) return
       setUserId(userIdResolved)
+      setUserRole(localStorage.getItem('tasking_user_role') || '')
 
       fetch(`/api/user/me?user_id=${userIdResolved}`)
         .then(r => r.json())
@@ -334,15 +367,43 @@ export default function OwnerDashboard() {
 
       if (data.company) {
         const company = data.company
+
+        // Change 3 & 4: if the stored company_id is no longer in the returned membership list,
+        // show removal overlay then auto-switch to the company the API resolved to.
+        if (storedCid && !list.some((c: { id: string }) => c.id === storedCid)) {
+          // The API already resolved to the next best company in data.company
+          const next = { id: company.id, name: company.name }
+          localStorage.setItem(`tasking_company_id_${userIdResolved}`, next.id)
+          setCompanyId(next.id)
+          setCompanyName(next.name)
+          await fetchDeptsById(next.id)
+          setInitialReady(true)
+          // Show overlay after UI is ready — use the stored name if available, else a generic label
+          const removedName = localStorage.getItem(`tasking_last_company_name_${storedCid}`) || 'your previous company'
+          handleRemovalDetected(removedName, list)
+          return
+        }
+
         localStorage.setItem(`tasking_company_id_${userIdResolved}`, company.id)
+        localStorage.setItem(`tasking_last_company_name_${company.id}`, company.name)
         setCompanyId(company.id)
         setCompanyName(company.name)
-        setOwnerPlan(company.plan === 'Paid' ? 'Pro' : 'Free')
         await fetchDeptsById(company.id)
+      } else if (storedCid && list.length > 0) {
+        // stored company is gone, but user has other companies — auto-switch
+        const next = list[0] as { id: string; name: string }
+        localStorage.setItem(`tasking_company_id_${userIdResolved}`, next.id)
+        localStorage.setItem(`tasking_last_company_name_${next.id}`, next.name)
+        setCompanyId(next.id)
+        setCompanyName(next.name)
+        await fetchDeptsById(next.id)
+      } else if (list.length === 0) {
+        setCompanyId('')
+        setCompanyName('')
+        setDepartments([])
       } else {
         setCompanyId('')
         setCompanyName('')
-        setOwnerPlan('')
         setDepartments([])
       }
       setInitialReady(true)
@@ -466,7 +527,6 @@ export default function OwnerDashboard() {
     fetch('/api/auth/signout', { method: 'POST' })
     window.location.href = '/signout'
   }
-
 
   // ── Department CRUD ────────────────────────────────────────────────────────
 
@@ -640,8 +700,8 @@ export default function OwnerDashboard() {
         {/* Top bar */}
         <div style={{
           padding: '18px 32px',
-          background: '#FFFFFF',
-          borderBottom: '1px solid #E5E7EB',
+          background: headerTheme.bg,
+          borderBottom: headerTheme.border,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
@@ -656,7 +716,7 @@ export default function OwnerDashboard() {
                 style={{
                   display: 'flex', alignItems: 'center', gap: '6px',
                   background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-                  fontWeight: 700, fontSize: '1.1875rem', color: '#111827',
+                  fontWeight: 700, fontSize: '1.1875rem', color: headerTheme.text,
                   userSelect: 'none',
                 }}
               >
@@ -664,7 +724,7 @@ export default function OwnerDashboard() {
                 <ChevronDown
                   size={16}
                   strokeWidth={2.5}
-                  style={{ color: '#6B7280', transition: 'transform 0.15s', transform: dropdownOpen ? 'rotate(180deg)' : 'none' }}
+                  style={{ color: headerTheme.text, opacity: 0.6, transition: 'transform 0.15s', transform: dropdownOpen ? 'rotate(180deg)' : 'none' }}
                 />
               </button>
               {dropdownOpen && (
@@ -680,10 +740,10 @@ export default function OwnerDashboard() {
                       onClick={() => {
                         if (!userId) return
                         localStorage.setItem(`tasking_company_id_${userId}`, c.id)
+                        localStorage.setItem(`tasking_last_company_name_${c.id}`, c.name)
                         setDropdownOpen(false)
                         setCompanyId(c.id)
                         setCompanyName(c.name)
-                        setOwnerPlan(c.plan === 'Paid' ? 'Pro' : 'Free')
                         void fetchDeptsById(c.id)
                       }}
                       style={{
@@ -703,7 +763,7 @@ export default function OwnerDashboard() {
               )}
             </div>
           ) : (
-            <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#111827', margin: 0 }}>
+            <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: headerTheme.text, margin: 0 }}>
               {dashboardRole === 'Manager' && departmentName
                 ? `${companyName} — ${departmentName}`
                 : companyName ? `${companyName} — Overview` : 'Overview'}
@@ -711,18 +771,18 @@ export default function OwnerDashboard() {
           )}
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             {ownerName && (
-              <span style={{ fontSize: '0.9rem', color: '#374151' }}>{ownerName}</span>
+              <span style={{ fontSize: '0.9rem', color: headerTheme.text, opacity: 0.85 }}>{ownerName}</span>
             )}
-            {ownerPlan && (
+            {userRole && (
               <span style={{
                 padding: '4px 10px',
                 borderRadius: '99px',
                 fontSize: '0.8rem',
                 fontWeight: 600,
-                background: ownerPlan === 'Pro' ? '#EDE9FE' : '#F3F4F6',
-                color: ownerPlan === 'Pro' ? '#7C3AED' : '#6B7280',
+                background: 'rgba(128,128,128,0.15)',
+                color: headerTheme.text,
               }}>
-                {ownerPlan} user
+                {userRole}
               </span>
             )}
           </div>
@@ -1215,6 +1275,44 @@ export default function OwnerDashboard() {
             </div>
           </ModalBox>
         </ModalOverlay>
+      )}
+
+      {/* ── Change 4: Removal overlay ─────────────────────────────────────── */}
+      {removalOverlay && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 200,
+          background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(4px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div style={{
+            background: '#FFFFFF', borderRadius: '16px', padding: '40px 48px',
+            boxShadow: '0 8px 48px rgba(0,0,0,0.18)', maxWidth: '460px', textAlign: 'center',
+          }}>
+            <div style={{
+              width: 48, height: 48, borderRadius: '50%', background: '#FEF2F2',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px',
+            }}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                <path d="M12 9v4M12 17h.01" stroke="#EF4444" strokeWidth="2" strokeLinecap="round" />
+                <circle cx="12" cy="12" r="9" stroke="#EF4444" strokeWidth="2" />
+              </svg>
+            </div>
+            <h2 style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827', margin: '0 0 12px' }}>
+              You have been removed
+            </h2>
+            <p style={{ fontSize: '0.9375rem', color: '#6B7280', lineHeight: 1.6, margin: '0 0 20px' }}>
+              You have been removed from <strong style={{ color: '#111827' }}>{removalOverlay.companyName}</strong> by the Owner.
+              Switching you to your other company…
+            </p>
+            <div style={{ height: 4, background: '#F3F4F6', borderRadius: 2, overflow: 'hidden' }}>
+              <div style={{
+                height: '100%', background: '#F97316', borderRadius: 2,
+                animation: 'removal-progress 3s linear forwards',
+              }} />
+            </div>
+            <style>{`@keyframes removal-progress { from { width: 0% } to { width: 100% } }`}</style>
+          </div>
+        </div>
       )}
 
     </div>

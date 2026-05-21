@@ -22,8 +22,8 @@ export async function DELETE(req: NextRequest) {
   }
 
   try {
-    await teamService.removeMember(company_id, user_id_to_remove, requesting_user_id)
-    return NextResponse.json({ success: true }, { status: 200 })
+    const result = await teamService.removeMember(company_id, user_id_to_remove, requesting_user_id)
+    return NextResponse.json(result, { status: 200 })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to remove member'
     return NextResponse.json({ success: false, message }, { status: 400 })

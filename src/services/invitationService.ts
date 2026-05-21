@@ -9,6 +9,7 @@ import { emailService } from '@/services/emailService'
 import { createInviteNotification } from '@/repositories/inboxRepository'
 import { InvitationCode, User } from '@/types'
 
+
 function getAdminClient() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -73,6 +74,10 @@ export const invitationService = {
     const existingUser = await userRepository.findByEmail(data.email)
 
     if (existingUser) {
+      const alreadyMember = await companyRepository.findCompanyMember(existingUser.id, data.company_id)
+      if (alreadyMember) {
+        throw new Error('This user is already a member of this company.')
+      }
       await createInviteNotification({
         recipient_user_id: existingUser.id,
         sender_user_id: inviter.id,
@@ -178,7 +183,10 @@ export const invitationService = {
         department_id: invitation.department_id,
       })
 
-      // 6. Mark invitation code as used
+      // 6. Insert into company_members
+      await companyRepository.insertCompanyMember(user.id, invitation.company_id, normalizedRole)
+
+      // 7. Mark invitation code as used
       await invitationRepository.markAsUsed(data.code, user.id)
 
       return { user, company_id: invitation.company_id }

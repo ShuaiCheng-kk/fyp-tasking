@@ -108,6 +108,7 @@ type EditManagerModal = { member: TeamMember } | null
 
 const ROLE_LABEL: Record<string, string> = {
   Owner: 'OWNER',
+  Partner: 'PARTNER',
   Manager: 'MANAGER',
   Employee: 'EMPLOYEE',
   'Casual Worker': 'CASUAL WORKER',
@@ -150,6 +151,11 @@ export default function TeamPage() {
   const [inviteLoading, setInviteLoading] = useState(false)
   const [inviteError, setInviteError] = useState('')
   const [inviteSuccess, setInviteSuccess] = useState('')
+
+  // Header theme based on localStorage role
+  const [headerTheme, setHeaderTheme] = useState<{ bg: string; text: string; border: string }>({
+    bg: '#1C1C1E', text: '#FFFFFF', border: 'none',
+  })
 
   // Current user's role (to gate Edit buttons)
   const [currentUserRole, setCurrentUserRole] = useState('')
@@ -209,6 +215,15 @@ export default function TeamPage() {
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [closeModal])
+
+  useEffect(() => {
+    const role = localStorage.getItem('tasking_user_role')
+    if (role === 'Partner') {
+      setHeaderTheme({ bg: '#FFFFFF', text: '#1C1C1E', border: '1px solid #E5E7EB' })
+    } else {
+      setHeaderTheme({ bg: '#1C1C1E', text: '#FFFFFF', border: 'none' })
+    }
+  }, [])
 
   const fetchTeamMembers = useCallback(async (cid: string) => {
     if (!cid) return
@@ -355,7 +370,7 @@ export default function TeamPage() {
   }, [inviteOpen, companyId])
 
   // Group members by role in display order
-  const groupedMembers = (['Owner', 'Manager', 'Employee', 'Casual Worker'] as const).reduce(
+  const groupedMembers = (['Owner', 'Partner', 'Manager', 'Employee', 'Casual Worker'] as const).reduce(
     (acc, role) => {
       const group = teamMembers.filter((m) => m.role === role)
       if (group.length > 0) acc.push({ role, members: group })
@@ -672,8 +687,8 @@ export default function TeamPage() {
       <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
         <div style={{
           padding: '18px 32px',
-          background: '#FFFFFF',
-          borderBottom: '1px solid #E5E7EB',
+          background: headerTheme.bg,
+          borderBottom: headerTheme.border,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
@@ -681,7 +696,7 @@ export default function TeamPage() {
           top: 0,
           zIndex: 10,
         }}>
-          <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#111827', margin: 0 }}>
+          <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: headerTheme.text, margin: 0 }}>
             {companyName ? `${companyName} — Team` : 'Team'}
           </h1>
           <button
