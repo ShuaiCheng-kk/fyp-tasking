@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import { createClient } from '@/lib/supabase'
-import { Send, Search, SquarePen, X, Check, Bell } from 'lucide-react'
+import { Send, Search, SquarePen, X, Check, Bell, MessageSquare } from 'lucide-react'
 
 const ACCENT = '#F97316'
 const ACCENT_LIGHT = '#FFF7ED'
@@ -592,7 +592,7 @@ export default function OwnerInboxPage() {
               </>
             ) : (
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#9CA3AF', gap: 8 }}>
-                <div style={{ fontSize: '2rem' }}>💬</div>
+                <MessageSquare size={32} strokeWidth={1.5} />
                 <div style={{ fontSize: '0.9375rem', fontWeight: 500 }}>Select a conversation to start messaging</div>
               </div>
             )}

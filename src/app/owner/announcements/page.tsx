@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import { createClient } from '@/lib/supabase'
-import { Plus, X, Trash2, Pencil } from 'lucide-react'
+import { Plus, X, Trash2, Pencil, Megaphone } from 'lucide-react'
 
 const ACCENT = '#F97316'
 const ACCENT_LIGHT = '#FFF7ED'
@@ -357,7 +357,7 @@ export default function OwnerAnnouncementsPage() {
               </div>
             ) : (
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#9CA3AF', gap: 8 }}>
-                <div style={{ fontSize: '2rem' }}>📢</div>
+                <Megaphone size={32} strokeWidth={1.5} />
                 <div style={{ fontSize: '0.9375rem', fontWeight: 500 }}>Select an announcement to read</div>
               </div>
             )}

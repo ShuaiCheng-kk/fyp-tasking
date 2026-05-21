@@ -182,6 +182,10 @@ export const authService = {
         website: data.company_website,
       })
 
+      console.log('Inserting Owner into company_members...')
+      await companyRepository.insertCompanyMember(user.id, company.id, 'Owner')
+      console.log('Owner inserted into company_members successfully')
+
       console.log('Step 4: Updating company_id...')
       await userRepository.updateCompanyId(user.id, company.id)
 
