@@ -147,7 +147,7 @@ export const invitationService = {
     // 4. Create Supabase Auth user
     let authUserId: string
     try {
-      const authUser = await userRepository.createAuthUser(data.email_address, data.password)
+      const authUser = await userRepository.createAuthUser(data.email_address, data.password, true)
       authUserId = authUser.id
     } catch (err) {
       const msg = (err instanceof Error ? err.message : '').toLowerCase()

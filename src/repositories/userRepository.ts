@@ -155,7 +155,7 @@ export const userRepository = {
     if (error) throw new Error(error.message)
   },
 
-  async createAuthUser(email: string, password: string) {
+  async createAuthUser(email: string, password: string, emailConfirm = false) {
     const adminClient = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -163,7 +163,7 @@ export const userRepository = {
     const { data, error } = await adminClient.auth.admin.createUser({
       email,
       password,
-      email_confirm: false,
+      email_confirm: emailConfirm,
     })
     if (error) throw new Error(error.message)
     if (!data.user) throw new Error('Registration failed')
