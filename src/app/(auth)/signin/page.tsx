@@ -66,6 +66,7 @@ function SignInContent() {
   const searchParams = useSearchParams();
   const isRemoved = searchParams.get('removed') === 'true';
   const isConfirmed = searchParams.get('confirmed') === 'true';
+  const isJoined = searchParams.get('joined') === 'true';
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -178,6 +179,22 @@ function SignInContent() {
             {c.subheadline}
           </p>
         </div>
+
+        {isJoined && (
+          <div style={{
+            background: '#F0FDF4',
+            border: '1px solid #BBF7D0',
+            borderRadius: '10px',
+            padding: '12px 16px',
+            fontFamily: fB,
+            fontSize: '0.875rem',
+            color: '#15803D',
+            lineHeight: 1.5,
+            marginBottom: '20px',
+          }}>
+            Your account is ready. Please sign in to continue.
+          </div>
+        )}
 
         {isConfirmed && (
           <div style={{

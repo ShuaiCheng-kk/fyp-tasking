@@ -229,6 +229,16 @@ export const companyRepository = {
     if (error) throw new Error(error.message)
   },
 
+  async findNonOwnerMembersByCompanyId(company_id: string): Promise<{ user_id: string }[]> {
+    const { data, error } = await supabase
+      .from('company_members')
+      .select('user_id')
+      .eq('company_id', company_id)
+      .neq('role', 'Owner')
+    if (error) throw new Error(error.message)
+    return data || []
+  },
+
   async nullifyUserCompanyId(user_id: string, company_id: string): Promise<boolean> {
     const { data: existing } = await supabase
       .from('users')

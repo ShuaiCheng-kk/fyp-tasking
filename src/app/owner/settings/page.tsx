@@ -144,6 +144,9 @@ export default function SettingsPage() {
   // Removal overlay (Change 4)
   const [removalOverlay, setRemovalOverlay] = useState<{ companyName: string } | null>(null)
 
+  // Account deleted overlay (shown after Leave Company when no remaining companies)
+  const [accountRemovedOverlay, setAccountRemovedOverlay] = useState(false)
+
   // Plan tab
   const [planModalTarget, setPlanModalTarget] = useState<Company | null>(null)
   const [planModalType, setPlanModalType] = useState<'upgrade' | 'downgrade' | null>(null)
@@ -216,12 +219,17 @@ export default function SettingsPage() {
       const res = await fetch('/api/user/leave-company', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: internalUserId }),
+        body: JSON.stringify({ user_id: internalUserId, company_id: leaveTarget.id }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
       await supabase.auth.signOut()
-      router.replace('/signin')
+      if (data.accountDeleted) {
+        setLeaveTarget(null)
+        setAccountRemovedOverlay(true)
+      } else {
+        router.replace('/signin')
+      }
     } catch (err) {
       setLeaveError(err instanceof Error ? err.message : 'Failed to leave company')
     } finally {
@@ -953,6 +961,45 @@ export default function SettingsPage() {
             </div>
           </ModalBox>
         </ModalOverlay>
+      )}
+
+      {/* ── Account Removed overlay (shown after Leave Company with no remaining companies) ── */}
+      {accountRemovedOverlay && (
+        <div style={{
+          position: 'fixed', inset: 0, zIndex: 200,
+          background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(4px)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          <div style={{
+            background: '#FFFFFF', borderRadius: '16px', padding: '40px 48px',
+            boxShadow: '0 8px 48px rgba(0,0,0,0.18)', maxWidth: '460px', textAlign: 'center',
+          }}>
+            <div style={{
+              width: 48, height: 48, borderRadius: '50%', background: '#FEF2F2',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px',
+            }}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                <path d="M12 9v4M12 17h.01" stroke="#EF4444" strokeWidth="2" strokeLinecap="round" />
+                <circle cx="12" cy="12" r="9" stroke="#EF4444" strokeWidth="2" />
+              </svg>
+            </div>
+            <h2 style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827', margin: '0 0 12px' }}>
+              Your account has been removed
+            </h2>
+            <p style={{ fontSize: '0.9375rem', color: '#6B7280', lineHeight: 1.6, margin: '0 0 24px' }}>
+              You have left your last company. Your account has been permanently deleted.
+            </p>
+            <button
+              onClick={() => router.replace('/')}
+              style={{
+                padding: '10px 28px', background: '#111827', border: 'none', borderRadius: '8px',
+                fontWeight: 600, fontSize: '0.9375rem', color: '#FFFFFF', cursor: 'pointer',
+              }}
+            >
+              Exit
+            </button>
+          </div>
+        </div>
       )}
 
       {/* ── Change 4: Removal overlay ─────────────────────────────────────── */}

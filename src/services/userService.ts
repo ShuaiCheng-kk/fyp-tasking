@@ -2,6 +2,7 @@
 // RULE: Only contains business logic. No HTTP handling. No direct DB access.
 
 import { userRepository } from '@/repositories/userRepository'
+import { companyRepository } from '@/repositories/companyRepository'
 import { User } from '@/types'
 
 const ROLE_ORDER: Record<string, number> = { Owner: 0, Manager: 1, Employee: 2, 'Casual Worker': 3, 'Guest User': 4 }
@@ -27,12 +28,30 @@ export const userService = {
     return userRepository.countMembersAcrossOwnedCompanies(internal_owner_id)
   },
 
-  async leaveCompany(user_id: string): Promise<void> {
+  async leaveCompany(user_id: string, company_id: string): Promise<{ accountDeleted: boolean }> {
     const user = await userRepository.findById(user_id)
     if (!user) throw new Error('User not found')
-    const supabase_auth_id = user.supabase_auth_id
+
+    // Step 1: remove from this company; also null out users.company_id if it matches
+    await companyRepository.removeCompanyMember(user_id, company_id)
+    await companyRepository.nullifyUserCompanyId(user_id, company_id)
+
+    // Step 2: count remaining memberships
+    const remaining = await companyRepository.countMemberCompanies(user_id)
+
+    if (remaining > 0) {
+      // Step 3a: account kept, caller should sign out
+      return { accountDeleted: false }
+    }
+
+    // Step 3b: no remaining companies — delete account fully
+    await userRepository.deleteInboxByUserId(user_id)
+    await userRepository.deleteMessagesByUserId(user_id)
+    await userRepository.deleteNotificationsByUserId(user_id)
+    await userRepository.deleteManagerDepartmentsByUserId(user_id)
     await userRepository.deleteById(user_id)
-    await userRepository.deleteAuthUser(supabase_auth_id)
+    await userRepository.deleteAuthUser(user.supabase_auth_id)
+    return { accountDeleted: true }
   },
 
 }

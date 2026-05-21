@@ -155,14 +155,23 @@ export const companyService = {
       }
     }
 
-    // Step 1: fetch all non-Owner members of this company
-    const nonOwnerMembers = await userRepository.findNonOwnersByCompanyId(company_id)
+    // Step 1: fetch all non-Owner members of this company via company_members
+    const nonOwnerMemberships = await companyRepository.findNonOwnerMembersByCompanyId(company_id)
 
-    // Step 2: delete each non-Owner member from users table and Supabase Auth
-    for (const member of nonOwnerMembers) {
-      await userRepository.deleteById(member.id)
-      if (member.supabase_auth_id) {
-        await supabaseAdmin.auth.admin.deleteUser(member.supabase_auth_id)
+    // Step 2: for each non-Owner member, remove from this company then check remaining memberships
+    for (const { user_id } of nonOwnerMemberships) {
+      await companyRepository.removeCompanyMember(user_id, company_id)
+      const remaining = await companyRepository.countMemberCompanies(user_id)
+      if (remaining === 0) {
+        const member = await userRepository.findById(user_id)
+        await userRepository.deleteInboxByUserId(user_id)
+        await userRepository.deleteMessagesByUserId(user_id)
+        await userRepository.deleteNotificationsByUserId(user_id)
+        await userRepository.deleteManagerDepartmentsByUserId(user_id)
+        await userRepository.deleteById(user_id)
+        if (member?.supabase_auth_id) {
+          await supabaseAdmin.auth.admin.deleteUser(member.supabase_auth_id)
+        }
       }
     }
 
