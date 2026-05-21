@@ -157,8 +157,8 @@ export const invitationService = {
       throw err
     }
 
-    const roleMap: Record<string, string> = {
-      partner: 'Partner',
+    const roleMap: Record<string, User['role']> = {
+      partner: 'partner',
       manager: 'Manager',
       employee: 'Employee',
       casual_worker: 'Casual Worker',
