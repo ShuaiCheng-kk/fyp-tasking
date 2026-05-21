@@ -159,6 +159,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     const resolve = async () => {
+      if (accountRemovedOverlay) return
       let uid = localStorage.getItem('tasking_user_id')
       if (!uid) {
         const supabase = createBrowserClient(
@@ -213,10 +214,6 @@ export default function SettingsPage() {
     if (!leaveTarget) return
     setLeaveLoading(true)
     setLeaveError('')
-    const supabase = createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    )
     try {
       const res = await fetch('/api/user/leave-company', {
         method: 'POST',
@@ -227,7 +224,6 @@ export default function SettingsPage() {
       if (!data.success) throw new Error(data.message)
 
       if (data.accountDeleted) {
-        await supabase.auth.signOut()
         setLeaveTarget(null)
         setAccountRemovedOverlay(true)
       } else {
@@ -1038,8 +1034,13 @@ export default function SettingsPage() {
               You have left your last company. Your account has been permanently deleted.
             </p>
             <button
-              onClick={() => {
+              onClick={async () => {
+                const supabase = createBrowserClient(
+                  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+                  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+                )
                 localStorage.clear()
+                await supabase.auth.signOut()
                 router.replace('/')
               }}
               style={{
