@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getMessages } from '@/services/inboxService'
-import { markMessagesAsRead } from '@/repositories/inboxRepository'
+import { ownerInboxService } from '@/services/owner/ownerInboxService'
 
 export async function GET(
   req: NextRequest,
@@ -13,7 +12,7 @@ export async function GET(
     if (!user_id) {
       return NextResponse.json({ success: false, error: 'Missing user_id' }, { status: 400 })
     }
-    const messages = await getMessages(user_id, other_user_id)
+    const messages = await ownerInboxService.getMessages(user_id, other_user_id)
     return NextResponse.json({ success: true, messages })
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 })
@@ -31,7 +30,7 @@ export async function PATCH(
     if (!user_id) {
       return NextResponse.json({ success: false, error: 'Missing user_id' }, { status: 400 })
     }
-    await markMessagesAsRead(user_id, other_user_id)
+    await ownerInboxService.markMessagesAsRead(user_id, other_user_id)
     return NextResponse.json({ success: true })
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 })

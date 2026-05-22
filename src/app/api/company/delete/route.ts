@@ -1,7 +1,7 @@
 // LAYER: Controller only
 
 import { NextRequest, NextResponse } from 'next/server'
-import { companyService } from '@/services/companyService'
+import { companyService } from '@/services/company/companyService'
 
 const CLIENT_ERRORS = [
   'This is your primary company created during registration and cannot be deleted.',

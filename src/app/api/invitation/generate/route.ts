@@ -2,8 +2,8 @@
 // RULE: Only handles request/response. No business logic. No DB access.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { invitationService } from '@/services/invitationService'
-import type { InvitationCode } from '@/types/index'
+import { invitationService } from '@/services/invitation/invitationService'
+import type { InvitationCode } from '@/types/invitation.types'
 
 const VALID_ROLES: InvitationCode['role'][] = ['Owner', 'Manager', 'Employee']
 

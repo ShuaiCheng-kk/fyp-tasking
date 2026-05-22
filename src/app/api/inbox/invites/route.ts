@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getInvitesByRecipient } from '@/repositories/inboxRepository'
+import { ownerInboxService } from '@/services/owner/ownerInboxService'
 
 export async function GET(req: NextRequest) {
   try {
@@ -8,7 +8,7 @@ export async function GET(req: NextRequest) {
     if (!user_id) {
       return NextResponse.json({ success: false, error: 'Missing user_id' }, { status: 400 })
     }
-    const invites = await getInvitesByRecipient(user_id)
+    const invites = await ownerInboxService.getInvitesByRecipient(user_id)
     return NextResponse.json({ success: true, invites })
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 })

@@ -2,8 +2,8 @@
 // RULE: Only handles request/response. No business logic. No DB access.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { companyService } from '@/services/companyService'
-import type { Company } from '@/types/index'
+import { companyService } from '@/services/company/companyService'
+import type { Company } from '@/types/company.types'
 
 const VALID_PLANS: Company['plan'][] = ['Free', 'Paid']
 

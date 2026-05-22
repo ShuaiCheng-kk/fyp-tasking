@@ -2,7 +2,7 @@
 // RULE: This file must ONLY contain request handling — no business logic
 
 import { NextRequest, NextResponse } from 'next/server'
-import { invitationService } from '@/services/invitationService'
+import { invitationService } from '@/services/invitation/invitationService'
 
 export async function POST(req: NextRequest) {
   let body: unknown

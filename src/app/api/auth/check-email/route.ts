@@ -2,7 +2,7 @@
 // RULE: Parse request, validate, call service, return response. No business logic, no DB access.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { userRepository } from '@/repositories/userRepository'
+import { authRepository as userRepository } from '@/repositories/auth/authRepository'
 
 export async function POST(req: NextRequest) {
   try {

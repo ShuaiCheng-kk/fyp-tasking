@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { userService } from '@/services/userService'
-import { userRepository } from '@/repositories/userRepository'
+import { userService } from '@/services/auth/userService'
+import { authRepository as userRepository } from '@/repositories/auth/authRepository'
 
 export async function GET(req: NextRequest) {
   const owner_id = req.nextUrl.searchParams.get('owner_id')

@@ -2,7 +2,7 @@
 // RULE: Only handles request/response. No business logic. No DB access.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { teamService } from '@/services/teamService'
+import { ownerTeamService as teamService } from '@/services/owner/ownerTeamService'
 
 export async function DELETE(req: NextRequest) {
   let body: unknown

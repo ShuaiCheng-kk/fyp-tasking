@@ -2,7 +2,7 @@
 // RULE: Only handles request/response. No business logic. No DB access.
 
 import { NextResponse } from 'next/server'
-import { authService } from '@/services/authService'
+import { authService } from '@/services/auth/authService'
 
 export async function POST() {
   try {
