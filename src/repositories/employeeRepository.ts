@@ -60,7 +60,7 @@ export const employeeRepository = {
         .select('id, full_name, email_address, role')
         .eq('id', mgrDept.manager_id)
         .single()
-      if (mgrUser) manager = mgrUser as typeof manager
+      if (mgrUser) manager = mgrUser as { id: string; full_name: string; email_address: string; role: string }
     }
 
     // Other employees in same department via employee_departments
