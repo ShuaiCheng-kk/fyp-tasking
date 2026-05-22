@@ -31,6 +31,11 @@ export default function ManagerLayout({
     // Listen for session loss after we had a valid session
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (hadSession.current && (event === 'SIGNED_OUT' || session === null)) {
+        const userInitiated = localStorage.getItem('user_initiated_signout') === 'true'
+        if (userInitiated) {
+          localStorage.removeItem('user_initiated_signout')
+          return
+        }
         accountRemovedRef.current = true
         setAccountRemoved(true)
       }
@@ -119,7 +124,7 @@ export default function ManagerLayout({
             Your account has been removed
           </h2>
           <p style={{ fontSize: '0.9375rem', color: '#6B7280', lineHeight: 1.6, margin: '0 0 24px' }}>
-            Your account has been removed from the company. Thank you for using Tasking.
+            You have been removed from this company. Your account has been deleted.
           </p>
           <button
             onClick={handleAccountRemovedExit}
