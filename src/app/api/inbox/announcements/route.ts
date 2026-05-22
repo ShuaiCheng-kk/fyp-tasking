@@ -7,10 +7,11 @@ export async function GET(req: NextRequest) {
     const company_id = searchParams.get('company_id')
     const role = searchParams.get('role') ?? 'owner'
     const department_id = searchParams.get('department_id')
+    const user_id = searchParams.get('user_id')
     if (!company_id) {
       return NextResponse.json({ success: false, error: 'Missing company_id' }, { status: 400 })
     }
-    const announcements = await getAnnouncements(company_id, role, department_id)
+    const announcements = await getAnnouncements(company_id, role, department_id, user_id)
     return NextResponse.json({ success: true, announcements })
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 })

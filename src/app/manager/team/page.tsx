@@ -228,9 +228,9 @@ export default function ManagerTeamPage() {
     }
   }
 
-  // Filter team to show only members in the selected department
+  // Show all Managers company-wide; filter Employees/Casual Workers by department
   const filteredMembers = selectedDeptId
-    ? teamMembers.filter(m => m.department_id === selectedDeptId || m.role === 'Owner')
+    ? teamMembers.filter(m => m.role === 'Owner' || m.role === 'Manager' || m.department_id === selectedDeptId)
     : teamMembers
 
   const groupedMembers = (['Owner', 'Manager', 'Employee', 'Casual Worker'] as const).reduce(
@@ -254,8 +254,8 @@ export default function ManagerTeamPage() {
       <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
         <div style={{
           padding: '18px 32px',
-          background: '#FFFFFF',
-          borderBottom: '1px solid #E5E7EB',
+          background: '#1E3A5F',
+          borderBottom: '1px solid #163050',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
@@ -264,7 +264,7 @@ export default function ManagerTeamPage() {
           zIndex: 10,
         }}>
           <div>
-            <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#111827', margin: 0 }}>
+            <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#FFFFFF', margin: 0 }}>
               {title}
             </h1>
             {assignedDepts.length > 1 && (

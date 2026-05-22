@@ -1,8 +1,9 @@
 import * as inboxRepo from '@/repositories/inboxRepository'
 import { userRepository } from '@/repositories/userRepository'
+import { companyRepository } from '@/repositories/companyRepository'
 
-export async function getConversations(userId: string, companyId: string) {
-  const messages = await inboxRepo.getConversationPartners(userId, companyId)
+export async function getConversations(userId: string) {
+  const messages = await inboxRepo.getConversationPartners(userId)
 
   const partnerMap = new Map<string, {
     partnerId: string
@@ -10,6 +11,7 @@ export async function getConversations(userId: string, companyId: string) {
     lastTime: string
     unreadCount: number
     lastKnownSenderName: string | null
+    companyId: string | null
   }>()
 
   for (const msg of messages) {
@@ -22,6 +24,7 @@ export async function getConversations(userId: string, companyId: string) {
         lastTime: msg.created_at,
         unreadCount: 0,
         lastKnownSenderName: senderIsPartner ? ((msg as any).sender_name ?? null) : null,
+        companyId: (msg as any).company_id ?? null,
       })
     } else if (senderIsPartner && (msg as any).sender_name && !(partnerMap.get(partnerId)!.lastKnownSenderName)) {
       partnerMap.get(partnerId)!.lastKnownSenderName = (msg as any).sender_name
@@ -37,8 +40,12 @@ export async function getConversations(userId: string, companyId: string) {
       let partnerName = 'Unknown'
       let partnerRole = ''
       let partnerDeleted = false
+      let companyName: string | null = null
       try {
-        const user = await userRepository.findById(conv.partnerId)
+        const [user, company] = await Promise.all([
+          userRepository.findById(conv.partnerId),
+          conv.companyId ? companyRepository.findById(conv.companyId) : Promise.resolve(null),
+        ])
         if (user) {
           partnerName = (user as any).full_name ?? (user as any).name ?? (user as any).email_address ?? 'Unknown'
           partnerRole = (user as any).role ?? ''
@@ -46,21 +53,22 @@ export async function getConversations(userId: string, companyId: string) {
           partnerDeleted = true
           partnerName = conv.lastKnownSenderName ?? 'Deleted User'
         }
+        if (company) companyName = (company as any).name ?? null
       } catch {
         partnerDeleted = true
         partnerName = conv.lastKnownSenderName ?? 'Deleted User'
       }
       const { lastKnownSenderName, ...rest } = conv
-      return { ...rest, partnerName, partnerRole, partnerDeleted }
+      return { ...rest, partnerName, partnerRole, partnerDeleted, companyName }
     })
   )
 
   return conversations
 }
 
-export async function getMessages(userId: string, otherUserId: string, companyId: string) {
-  const messages = await inboxRepo.getMessagesBetweenUsers(userId, otherUserId, companyId)
-  await inboxRepo.markMessagesAsRead(userId, otherUserId, companyId)
+export async function getMessages(userId: string, otherUserId: string) {
+  const messages = await inboxRepo.getMessagesBetweenUsers(userId, otherUserId)
+  await inboxRepo.markMessagesAsRead(userId, otherUserId)
   return messages
 }
 
@@ -77,9 +85,10 @@ export async function sendMessage(fromUserId: string, toUserId: string, companyI
 export async function getAnnouncements(
   companyId: string,
   role: string,
-  departmentId?: string | null
+  departmentId?: string | null,
+  requestingUserId?: string | null
 ) {
-  return inboxRepo.getAnnouncements(companyId, role, departmentId)
+  return inboxRepo.getAnnouncements(companyId, role, departmentId, requestingUserId)
 }
 
 export async function deleteAnnouncement(announcementId: string, requestingUserId: string) {
@@ -126,10 +135,10 @@ export async function updateNotificationStatus(notificationId: string, status: s
   return inboxRepo.updateNotificationStatus(notificationId, status)
 }
 
-export async function getUnreadCount(userId: string, companyId: string, lastAnnouncementReadAt?: string | null) {
+export async function getUnreadCount(userId: string, companyId: string | null, lastAnnouncementReadAt?: string | null) {
   const [unreadMessages, unreadAnnouncements, pendingInvitations] = await Promise.all([
-    inboxRepo.countUnreadMessages(userId, companyId),
-    inboxRepo.countUnreadAnnouncements(companyId, lastAnnouncementReadAt ?? null),
+    inboxRepo.countUnreadMessages(userId),
+    companyId ? inboxRepo.countUnreadAnnouncements(companyId, lastAnnouncementReadAt ?? null) : Promise.resolve(0),
     inboxRepo.countPendingInvitations(userId),
   ])
   return {

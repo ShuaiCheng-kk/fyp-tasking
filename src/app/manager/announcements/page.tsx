@@ -16,6 +16,7 @@ type Announcement = {
   title: string
   content: string
   created_at: string
+  created_by_name?: string | null
 }
 
 type Department = { id: string; name: string }
@@ -104,10 +105,11 @@ export default function ManagerAnnouncementsPage() {
     if (!companyId) return
     const params = new URLSearchParams({ company_id: companyId, role: 'manager' })
     if (userDeptId) params.set('department_id', userDeptId)
+    if (internalUserId) params.set('user_id', internalUserId)
     fetch(`/api/inbox/announcements?${params}`)
       .then(r => r.json())
       .then(d => { if (d.success) setAnnouncements(d.announcements ?? []) })
-  }, [companyId, userDeptId])
+  }, [companyId, userDeptId, internalUserId])
 
   useEffect(() => {
     if (!internalUserId || !companyId) return
@@ -191,8 +193,8 @@ export default function ManagerAnnouncementsPage() {
       <ManagerSidebar unreadMessages={unreadMessages} unreadAnnouncements={unreadCount} />
 
       <main style={{ marginLeft: '64px', flex: 1, height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div style={{ padding: '18px 32px', background: '#FFFFFF', borderBottom: '1px solid #E5E7EB', flexShrink: 0 }}>
-          <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#111827', margin: 0 }}>Announcements</h1>
+        <div style={{ padding: '18px 32px', background: '#1E3A5F', borderBottom: '1px solid #163050', flexShrink: 0 }}>
+          <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#FFFFFF', margin: 0 }}>Announcements</h1>
         </div>
 
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
@@ -238,6 +240,9 @@ export default function ManagerAnnouncementsPage() {
                         {ann.department_id ? (departments.find(d => d.id === ann.department_id)?.name ?? 'Dept') : 'Company-wide'}
                       </span>
                     </div>
+                    {ann.created_by_name && (
+                      <span style={{ fontSize: '0.75rem', color: '#6B7280' }}>By {ann.created_by_name}</span>
+                    )}
                     <div style={{ fontSize: '0.8rem', color: '#6B7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {ann.content.slice(0, 60)}{ann.content.length > 60 ? '…' : ''}
                     </div>
@@ -271,9 +276,14 @@ export default function ManagerAnnouncementsPage() {
                       )}
                     </div>
                   </div>
-                  <div style={{ fontSize: '0.8125rem', color: '#9CA3AF', marginBottom: 20 }}>
+                  <div style={{ fontSize: '0.8125rem', color: '#9CA3AF', marginBottom: selectedAnn.created_by_name ? 4 : 20 }}>
                     {new Date(selectedAnn.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
                   </div>
+                  {selectedAnn.created_by_name && (
+                    <div style={{ fontSize: '0.8125rem', color: '#6B7280', marginBottom: 20 }}>
+                      Posted by {selectedAnn.created_by_name}
+                    </div>
+                  )}
                   <p style={{ fontSize: '0.9375rem', color: '#374151', lineHeight: 1.7, whiteSpace: 'pre-wrap', margin: 0 }}>{selectedAnn.content}</p>
                 </div>
               </div>

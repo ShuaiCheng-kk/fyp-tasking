@@ -68,15 +68,12 @@ export const invitationRepository = {
     return data || []
   },
 
-  async findActiveInvitation(company_id: string, role: string): Promise<InvitationCode | null> {
+  async findActiveInvitation(email: string): Promise<InvitationCode | null> {
     const { data, error } = await supabase
       .from('invitation_code')
       .select('*')
-      .eq('company_id', company_id)
-      .eq('role', role)
+      .eq('email', email)
       .eq('status', 'Active')
-      .is('used_by', null)
-      .gt('expired_at', new Date().toISOString())
       .limit(1)
       .maybeSingle()
     if (error) return null

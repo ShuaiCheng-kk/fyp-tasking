@@ -3,19 +3,21 @@
 import { useState, useEffect } from 'react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { LayoutDashboard, Users, MessageSquare, Megaphone, Settings, LogOut } from 'lucide-react'
+import { LayoutDashboard, BarChart2, Users, MessageSquare, Megaphone, Settings, LogOut, UserPlus, ClipboardList } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 
 const NAV_ITEMS = [
   { label: 'Dashboard',     Icon: LayoutDashboard, href: '/manager/dashboard',     dot: null as 'messages' | 'announcements' | null },
+  { label: 'Report',        Icon: BarChart2,       href: '/manager/report',        dot: null },
   { label: 'Team',          Icon: Users,           href: '/manager/team',          dot: null },
   { label: 'Announcements', Icon: Megaphone,       href: '/manager/announcements', dot: 'announcements' as const },
   { label: 'Inbox',         Icon: MessageSquare,   href: '/manager/inbox',         dot: 'messages' as const },
+  { label: 'Recruitment',   Icon: UserPlus,        href: '/manager/recruitment',   dot: null },
+  { label: 'Attendance',    Icon: ClipboardList,   href: '/manager/attendance',    dot: null },
   { label: 'Settings',      Icon: Settings,        href: '/manager/settings',      dot: null },
 ]
 
-const ACCENT = '#3B82F6'
-const ACTIVE_BG = '#EFF6FF'
+const ACTIVE_BG = '#2563EB'
 
 export default function ManagerSidebar({
 
@@ -121,8 +123,8 @@ export default function ManagerSidebar({
       onMouseLeave={() => setExpanded(false)}
       style={{
         width: expanded ? '220px' : '64px',
-        background: '#FFFFFF',
-        borderRight: '1px solid #E5E7EB',
+        background: '#1E3A5F',
+        borderRight: '1px solid #163050',
         display: 'flex',
         flexDirection: 'column',
         height: '100vh',
@@ -142,7 +144,7 @@ export default function ManagerSidebar({
           alignItems: 'center',
           gap: '10px',
           padding: '20px 18px 18px',
-          borderBottom: '1px solid #F3F4F6',
+          borderBottom: '1px solid #163050',
           textDecoration: 'none',
           flexShrink: 0,
         }}
@@ -158,7 +160,7 @@ export default function ManagerSidebar({
         <span style={{
           fontWeight: 700,
           fontSize: '1.0625rem',
-          color: '#111827',
+          color: '#FFFFFF',
           letterSpacing: '-0.01em',
           whiteSpace: 'nowrap',
           opacity: expanded ? 1 : 0,
@@ -183,7 +185,7 @@ export default function ManagerSidebar({
                 padding: '10px 12px',
                 borderRadius: '8px',
                 background: active ? ACTIVE_BG : 'transparent',
-                color: active ? ACCENT : '#6B7280',
+                color: active ? '#FFFFFF' : '#93C5FD',
                 fontWeight: active ? 600 : 500,
                 fontSize: '0.9rem',
                 cursor: 'pointer',
@@ -193,20 +195,20 @@ export default function ManagerSidebar({
                 transition: 'background 0.12s, color 0.12s',
                 position: 'relative',
               }}
-              onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = '#F3F4F6' }}
+              onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.08)' }}
               onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent' }}
             >
               <span style={{ position: 'relative', flexShrink: 0 }}>
                 <Icon
                   size={18}
                   strokeWidth={2.1}
-                  style={{ display: 'block', color: active ? ACCENT : 'currentColor' }}
+                  style={{ display: 'block', color: 'currentColor' }}
                 />
                 {showDot && (
                   <span style={{
                     position: 'absolute', top: -3, right: -3,
                     width: 8, height: 8, borderRadius: '50%',
-                    background: '#EF4444', border: '1.5px solid #fff',
+                    background: '#EF4444', border: '1.5px solid #1E3A5F',
                   }} />
                 )}
               </span>
@@ -218,8 +220,8 @@ export default function ManagerSidebar({
         })}
       </nav>
 
-      <div style={{ padding: '12px 8px', borderTop: '1px solid #F3F4F6', flexShrink: 0 }}>
-        <div style={{ borderTop: '1px solid #E5E7EB', paddingTop: '8px', marginTop: '2px' }}>
+      <div style={{ padding: '12px 8px', borderTop: '1px solid #163050', flexShrink: 0 }}>
+        <div style={{ borderTop: '1px solid #163050', paddingTop: '8px', marginTop: '2px' }}>
           <button
             onClick={handleLogout}
             style={{
@@ -232,18 +234,18 @@ export default function ManagerSidebar({
               border: 'none',
               cursor: 'pointer',
               borderRadius: '8px',
-              color: '#EF4444',
+              color: '#FCA5A5',
               fontWeight: 500,
               fontSize: '0.9rem',
               transition: 'color 0.12s, background 0.12s',
               whiteSpace: 'nowrap',
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.color = '#DC2626'
-              e.currentTarget.style.background = '#FEF2F2'
+              e.currentTarget.style.color = '#FECACA'
+              e.currentTarget.style.background = 'rgba(239,68,68,0.15)'
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.color = '#EF4444'
+              e.currentTarget.style.color = '#FCA5A5'
               e.currentTarget.style.background = 'none'
             }}
           >

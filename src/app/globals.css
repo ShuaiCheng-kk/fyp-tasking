@@ -15,6 +15,19 @@ a {
   text-decoration: none;
 }
 
+/* ── Owner pages: dark top nav bar ── */
+.owner-layout main > div:first-child {
+  background: #1C1C1E !important;
+  border-bottom-color: #2C2C2E !important;
+}
+.owner-layout main > div:first-child h1 {
+  color: #FFFFFF !important;
+}
+/* Right side: user name span */
+.owner-layout main > div:first-child > div:last-child > span:first-child {
+  color: #FFFFFF !important;
+}
+
 /* ── Button press micro-interaction ── */
 .btn-press {
   transition: transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);

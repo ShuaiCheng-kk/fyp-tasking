@@ -3,10 +3,26 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import ManagerSidebar from '@/components/ManagerSidebar'
 import { createClient } from '@/lib/supabase'
-import { Send, Search } from 'lucide-react'
+import { Send, Search, SquarePen, X } from 'lucide-react'
 
 const ACCENT = '#3B82F6'
 const ACCENT_LIGHT = '#EFF6FF'
+
+const ROLE_COLOR: Record<string, string> = {
+  Owner: '#8B5CF6',
+  Partner: '#8B5CF6',
+  Manager: '#3B82F6',
+  Employee: '#10B981',
+}
+
+type CompanyMember = {
+  id: string
+  full_name: string
+  role: string
+  department_id?: string | null
+}
+
+type CompanyDept = { id: string; name: string }
 
 type Conversation = {
   partnerId: string
@@ -15,6 +31,7 @@ type Conversation = {
   lastMessage: string
   lastTime: string
   unreadCount: number
+  companyName?: string | null
 }
 
 type Message = {
@@ -36,12 +53,12 @@ function formatTime(iso: string) {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
 }
 
-function Avatar({ name, size = 36 }: { name: string; size?: number }) {
+function Avatar({ name, size = 36, color = ACCENT }: { name: string; size?: number; color?: string }) {
   const initials = name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase()
   return (
     <div style={{
-      width: size, height: size, borderRadius: '50%', background: ACCENT + '22',
-      color: ACCENT, fontWeight: 700, fontSize: size * 0.38, display: 'flex',
+      width: size, height: size, borderRadius: '50%', background: color + '22',
+      color, fontWeight: 700, fontSize: size * 0.38, display: 'flex',
       alignItems: 'center', justifyContent: 'center', flexShrink: 0,
     }}>
       {initials}
@@ -65,6 +82,17 @@ export default function ManagerInboxPage() {
   const [msgInput, setMsgInput] = useState('')
   const [sendingMsg, setSendingMsg] = useState(false)
 
+  // Compose modal
+  const [composeOpen, setComposeOpen] = useState(false)
+  const [companyMembers, setCompanyMembers] = useState<CompanyMember[]>([])
+  const [companyDepartments, setCompanyDepartments] = useState<CompanyDept[]>([])
+  const [managerDeptId, setManagerDeptId] = useState<string | null>(null)
+  const [composeSearch, setComposeSearch] = useState('')
+  const [selectedRecipient, setSelectedRecipient] = useState<CompanyMember | null>(null)
+  const [composeText, setComposeText] = useState('')
+  const [composeSending, setComposeSending] = useState(false)
+  const [composeError, setComposeError] = useState('')
+
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const supabase = createClient()
 
@@ -76,30 +104,37 @@ export default function ManagerInboxPage() {
     if (uid) {
       fetch(`/api/user/me?user_id=${uid}`)
         .then(r => r.json())
-        .then(d => { if (d.success && d.user?.id) setInternalUserId(d.user.id) })
+        .then(d => {
+          if (d.success && d.user?.id) {
+            setInternalUserId(d.user.id)
+            if (d.user.department_id) setManagerDeptId(d.user.department_id)
+          }
+        })
         .catch(() => {})
     }
   }, [])
 
   const fetchUnreadCount = useCallback(() => {
-    if (!internalUserId || !companyId) return
-    fetch(`/api/inbox/unread-count?user_id=${internalUserId}&company_id=${companyId}`)
+    if (!internalUserId) return
+    const params = new URLSearchParams({ user_id: internalUserId })
+    if (companyId) params.set('company_id', companyId)
+    fetch(`/api/inbox/unread-count?${params}`)
       .then(r => r.json())
       .then(d => { if (d.success) setUnreadMessages(d.unread_messages ?? 0) })
   }, [internalUserId, companyId])
 
   const fetchConversations = useCallback(() => {
-    if (!internalUserId || !companyId) return
-    fetch(`/api/inbox/messages?user_id=${internalUserId}&company_id=${companyId}`)
+    if (!internalUserId) return
+    fetch(`/api/inbox/messages?user_id=${internalUserId}`)
       .then(r => r.json())
       .then(d => { if (d.success) setConversations(d.conversations ?? []) })
-  }, [internalUserId, companyId])
+  }, [internalUserId])
 
   useEffect(() => {
-    if (!internalUserId || !companyId) return
+    if (!internalUserId) return
     fetchConversations()
     fetchUnreadCount()
-  }, [internalUserId, companyId, fetchConversations, fetchUnreadCount])
+  }, [internalUserId, fetchConversations, fetchUnreadCount])
 
   useEffect(() => {
     const q = search.toLowerCase()
@@ -109,8 +144,8 @@ export default function ManagerInboxPage() {
   }, [search, conversations])
 
   useEffect(() => {
-    if (!selectedConv || !internalUserId || !companyId) return
-    fetch(`/api/inbox/messages/${selectedConv.partnerId}?user_id=${internalUserId}&company_id=${companyId}`)
+    if (!selectedConv || !internalUserId) return
+    fetch(`/api/inbox/messages/${selectedConv.partnerId}?user_id=${internalUserId}`)
       .then(r => r.json())
       .then(d => {
         if (d.success) {
@@ -119,14 +154,14 @@ export default function ManagerInboxPage() {
           fetchConversations()
         }
       })
-  }, [selectedConv, internalUserId, companyId])
+  }, [selectedConv, internalUserId])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
   useEffect(() => {
-    if (!internalUserId || !companyId) return
+    if (!internalUserId) return
     const channel = supabase
       .channel('manager-inbox-messages')
       .on('postgres_changes', {
@@ -143,7 +178,66 @@ export default function ManagerInboxPage() {
       .subscribe()
 
     return () => { supabase.removeChannel(channel) }
-  }, [internalUserId, companyId, selectedConv])
+  }, [internalUserId, selectedConv])
+
+  function openCompose() {
+    if (!companyId || !internalUserId) return
+    setComposeOpen(true)
+    setSelectedRecipient(null)
+    setComposeText('')
+    setComposeSearch('')
+    setComposeError('')
+    Promise.all([
+      fetch(`/api/team/members?company_id=${companyId}`).then(r => r.json()),
+      fetch(`/api/company/departments?company_id=${companyId}`).then(r => r.json()),
+    ]).then(([membersData, deptsData]) => {
+      if (membersData.success) {
+        const all = membersData.members as CompanyMember[]
+        const eligible = all.filter(m => {
+          if (m.id === internalUserId) return false
+          if (m.role === 'Owner' || m.role === 'Partner' || m.role === 'Manager') return true
+          if (m.role === 'Employee' && managerDeptId && m.department_id === managerDeptId) return true
+          return false
+        })
+        setCompanyMembers(eligible)
+      }
+      if (deptsData.success) {
+        setCompanyDepartments(deptsData.departments ?? [])
+      }
+    }).catch(() => {})
+  }
+
+  async function handleComposeSend() {
+    if (!selectedRecipient || !composeText.trim() || !internalUserId || !companyId) return
+    setComposeSending(true)
+    setComposeError('')
+    try {
+      const res = await fetch('/api/inbox/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from_user_id: internalUserId,
+          to_user_id: selectedRecipient.id,
+          company_id: companyId,
+          content: composeText.trim(),
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.error ?? 'Failed to send')
+      setComposeOpen(false)
+      const convRes = await fetch(`/api/inbox/messages?user_id=${internalUserId}`)
+      const convData = await convRes.json()
+      if (convData.success) {
+        setConversations(convData.conversations ?? [])
+        const found = (convData.conversations as Conversation[]).find(c => c.partnerId === selectedRecipient.id)
+        if (found) setSelectedConv(found)
+      }
+    } catch (err) {
+      setComposeError(err instanceof Error ? err.message : 'Something went wrong')
+    } finally {
+      setComposeSending(false)
+    }
+  }
 
   async function handleSendMessage() {
     if (!msgInput.trim() || !selectedConv || !internalUserId || !companyId) return
@@ -180,19 +274,42 @@ export default function ManagerInboxPage() {
     }
   }
 
+  const filteredMembers = composeSearch
+    ? companyMembers.filter(m => m.full_name.toLowerCase().includes(composeSearch.toLowerCase()))
+    : companyMembers
+
   return (
     <div style={{ display: 'flex', height: '100vh', background: '#F3F4F6', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
       <ManagerSidebar unreadMessages={unreadMessages} />
 
       <main style={{ marginLeft: '64px', flex: 1, height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div style={{ padding: '18px 32px', background: '#FFFFFF', borderBottom: '1px solid #E5E7EB', flexShrink: 0 }}>
-          <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#111827', margin: 0 }}>Inbox</h1>
+        <div style={{ padding: '18px 32px', background: '#1E3A5F', borderBottom: '1px solid #163050', flexShrink: 0 }}>
+          <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#FFFFFF', margin: 0 }}>Inbox</h1>
         </div>
 
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
           {/* Left: conversation list */}
           <div style={{ width: '33%', minWidth: 260, maxWidth: 360, background: '#FFFFFF', borderRight: '1px solid #E5E7EB', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+            {/* New Message button */}
             <div style={{ padding: '12px 14px', borderBottom: '1px solid #F3F4F6' }}>
+              <button
+                onClick={openCompose}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6, width: '100%',
+                  padding: '8px 14px', background: ACCENT, border: 'none', borderRadius: 8,
+                  color: '#fff', fontWeight: 600, fontSize: '0.875rem', cursor: 'pointer',
+                  justifyContent: 'center',
+                }}
+                onMouseEnter={e => (e.currentTarget.style.background = '#2563EB')}
+                onMouseLeave={e => (e.currentTarget.style.background = ACCENT)}
+              >
+                <SquarePen size={14} strokeWidth={2.5} />
+                New Message
+              </button>
+            </div>
+
+            {/* Search */}
+            <div style={{ padding: '10px 14px', borderBottom: '1px solid #F3F4F6' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 8, padding: '7px 12px' }}>
                 <Search size={14} color="#9CA3AF" />
                 <input
@@ -228,6 +345,13 @@ export default function ManagerInboxPage() {
                       </span>
                       <span style={{ fontSize: '0.7rem', color: '#9CA3AF', flexShrink: 0, marginLeft: 6 }}>{formatTime(conv.lastTime)}</span>
                     </div>
+                    {conv.companyName && (
+                      <div style={{ marginTop: 2 }}>
+                        <span style={{ background: '#EFF6FF', color: ACCENT, fontSize: '0.68rem', fontWeight: 600, padding: '1px 7px', borderRadius: '20px', border: `1px solid ${ACCENT}33` }}>
+                          {conv.companyName}
+                        </span>
+                      </div>
+                    )}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 1 }}>
                       {conv.partnerRole && (
                         <span style={{ fontSize: '0.7rem', color: ACCENT, fontWeight: 500 }}>{conv.partnerRole}</span>
@@ -309,6 +433,151 @@ export default function ManagerInboxPage() {
           </div>
         </div>
       </main>
+
+      {/* Compose Modal */}
+      {composeOpen && (
+        <div
+          onClick={() => { if (!composeSending) setComposeOpen(false) }}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ width: 460, background: '#fff', borderRadius: 16, boxShadow: '0 20px 60px rgba(0,0,0,0.18)', display: 'flex', flexDirection: 'column', maxHeight: '85vh', overflow: 'hidden' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px 16px', borderBottom: '1px solid #F3F4F6' }}>
+              <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0 }}>New Message</h2>
+              <button
+                onClick={() => setComposeOpen(false)}
+                disabled={composeSending}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', display: 'flex', padding: 4, borderRadius: 6 }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 16, overflowY: 'auto', flex: 1 }}>
+              <div>
+                <p style={{ fontWeight: 600, fontSize: '0.8125rem', color: '#374151', margin: '0 0 10px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>To</p>
+                {selectedRecipient ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: ACCENT_LIGHT, border: `1.5px solid ${ACCENT}33`, borderRadius: 10 }}>
+                    <Avatar name={selectedRecipient.full_name} size={32} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: 0 }}>{selectedRecipient.full_name}</p>
+                      <p style={{ fontSize: '0.75rem', color: '#9CA3AF', margin: 0 }}>{selectedRecipient.role}</p>
+                    </div>
+                    <button
+                      onClick={() => setSelectedRecipient(null)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', display: 'flex', padding: 2 }}
+                    >
+                      <X size={15} />
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#F9FAFB', border: '1.5px solid #E5E7EB', borderRadius: 9, padding: '8px 12px', marginBottom: 8 }}>
+                      <Search size={14} color="#9CA3AF" />
+                      <input
+                        autoFocus
+                        value={composeSearch}
+                        onChange={e => setComposeSearch(e.target.value)}
+                        placeholder="Search people…"
+                        style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: '0.875rem', color: '#374151' }}
+                      />
+                    </div>
+                    <div style={{ maxHeight: 220, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      {filteredMembers.length === 0 ? (
+                        <p style={{ fontSize: '0.875rem', color: '#9CA3AF', textAlign: 'center', padding: '12px 0', margin: 0 }}>No people found</p>
+                      ) : filteredMembers.map(m => {
+                        const roleColor = ROLE_COLOR[m.role] ?? '#9CA3AF'
+                        return (
+                          <button
+                            key={m.id}
+                            onClick={() => setSelectedRecipient(m)}
+                            style={{
+                              display: 'flex', alignItems: 'center', gap: 10,
+                              padding: '9px 10px', background: 'none', border: '1px solid transparent',
+                              borderRadius: 9, cursor: 'pointer', textAlign: 'left', width: '100%',
+                              transition: 'background 0.1s',
+                            }}
+                            onMouseEnter={e => { e.currentTarget.style.background = '#F9FAFB'; e.currentTarget.style.borderColor = '#E5E7EB' }}
+                            onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.borderColor = 'transparent' }}
+                          >
+                            <Avatar name={m.full_name} size={34} color={roleColor} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.full_name}</p>
+                              {m.role === 'Manager' && m.department_id ? (
+                                <p style={{ fontSize: '0.75rem', margin: 0, color: '#9CA3AF', fontWeight: 400 }}>
+                                  {companyDepartments.find(d => d.id === m.department_id)?.name ?? ''}{' · '}Manager
+                                </p>
+                              ) : (
+                                <p style={{ fontSize: '0.75rem', margin: 0, color: roleColor, fontWeight: 500 }}>{m.role}</p>
+                              )}
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {selectedRecipient && (
+                <div>
+                  <p style={{ fontWeight: 600, fontSize: '0.8125rem', color: '#374151', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Message</p>
+                  <textarea
+                    autoFocus
+                    value={composeText}
+                    onChange={e => setComposeText(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && !e.shiftKey && composeText.trim()) {
+                        e.preventDefault()
+                        handleComposeSend()
+                      }
+                    }}
+                    placeholder="Type your message…"
+                    rows={4}
+                    style={{ width: '100%', padding: '10px 12px', border: '1.5px solid #E5E7EB', borderRadius: 9, fontSize: '0.9375rem', color: '#111827', outline: 'none', boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }}
+                  />
+                </div>
+              )}
+
+              {composeError && (
+                <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>
+                  {composeError}
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: 10, padding: '14px 24px', borderTop: '1px solid #F3F4F6' }}>
+              <button
+                onClick={() => setComposeOpen(false)}
+                disabled={composeSending}
+                style={{ flex: 1, padding: '10px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: 9, fontWeight: 600, fontSize: '0.9rem', color: '#6B7280', cursor: composeSending ? 'not-allowed' : 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleComposeSend}
+                disabled={composeSending || !selectedRecipient || !composeText.trim()}
+                style={{
+                  flex: 1, padding: '10px', background: ACCENT, border: 'none', borderRadius: 9,
+                  fontWeight: 600, fontSize: '0.9rem', color: '#fff',
+                  cursor: (composeSending || !selectedRecipient || !composeText.trim()) ? 'not-allowed' : 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+                  opacity: (composeSending || !selectedRecipient || !composeText.trim()) ? 0.55 : 1,
+                  transition: 'opacity 0.15s',
+                }}
+              >
+                {composeSending
+                  ? <svg className="animate-spin" width={15} height={15} viewBox="0 0 18 18"><circle cx="9" cy="9" r="7" stroke="rgba(255,255,255,0.35)" strokeWidth="2.5" fill="none"/><path d="M9 2a7 7 0 0 1 7 7" stroke="white" strokeWidth="2.5" strokeLinecap="round" fill="none"/></svg>
+                  : <Send size={14} />
+                }
+                Send
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
