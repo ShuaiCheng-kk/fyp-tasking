@@ -75,11 +75,10 @@ export async function createInviteNotification(data: {
   if (error) throw new Error(`Failed to create inbox notification: ${error.message}`)
 }
 
-export async function getMessagesBetweenUsers(userId: string, otherUserId: string, companyId: string) {
+export async function getMessagesBetweenUsers(userId: string, otherUserId: string) {
   const { data, error } = await supabase
     .from('messages')
     .select('id, from_user_id, to_user_id, content, created_at, is_read, company_id, sender_name, sender:users!messages_from_user_id_fkey!left(full_name)')
-    .eq('company_id', companyId)
     .or(
       `and(from_user_id.eq.${userId},to_user_id.eq.${otherUserId}),and(from_user_id.eq.${otherUserId},to_user_id.eq.${userId})`
     )
@@ -88,11 +87,10 @@ export async function getMessagesBetweenUsers(userId: string, otherUserId: strin
   return (data ?? []).map(({ sender, ...msg }: any) => msg)
 }
 
-export async function getConversationPartners(userId: string, companyId: string) {
+export async function getConversationPartners(userId: string) {
   const { data, error } = await supabase
     .from('messages')
-    .select('id, from_user_id, to_user_id, content, created_at, is_read, sender_name')
-    .eq('company_id', companyId)
+    .select('id, from_user_id, to_user_id, content, created_at, is_read, sender_name, company_id')
     .or(`from_user_id.eq.${userId},to_user_id.eq.${userId}`)
     .order('created_at', { ascending: false })
   if (error) throw error
@@ -121,13 +119,12 @@ export async function getLastSenderNameSnapshot(partnerId: string, companyId: st
   return (data as any)?.sender_name ?? null
 }
 
-export async function markMessagesAsRead(userId: string, otherUserId: string, companyId: string) {
+export async function markMessagesAsRead(userId: string, otherUserId: string) {
   const { error } = await supabase
     .from('messages')
     .update({ is_read: true })
     .eq('to_user_id', userId)
     .eq('from_user_id', otherUserId)
-    .eq('company_id', companyId)
     .eq('is_read', false)
   if (error) throw error
 }
@@ -142,12 +139,11 @@ export async function insertMessage(fromUserId: string, toUserId: string, compan
   return data
 }
 
-export async function countUnreadMessages(userId: string, companyId: string) {
+export async function countUnreadMessages(userId: string) {
   const { count, error } = await supabase
     .from('messages')
     .select('*', { count: 'exact', head: true })
     .eq('to_user_id', userId)
-    .eq('company_id', companyId)
     .eq('is_read', false)
   if (error) throw error
   return count ?? 0

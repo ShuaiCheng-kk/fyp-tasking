@@ -119,7 +119,7 @@ export default function ManagerDashboard() {
 
   const selectedDeptName = departments.find(d => d.department_id === selectedDeptId)?.department_name ?? ''
   const title = companyName && selectedDeptName
-    ? `${companyName} — ${selectedDeptName}`
+    ? `${companyName} [${selectedDeptName}]`
     : companyName || 'Dashboard'
 
   return (
@@ -129,8 +129,8 @@ export default function ManagerDashboard() {
       <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
         <div style={{
           padding: '18px 32px',
-          background: '#FFFFFF',
-          borderBottom: '1px solid #E5E7EB',
+          background: '#1E3A5F',
+          borderBottom: '1px solid #163050',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
@@ -145,15 +145,15 @@ export default function ManagerDashboard() {
                 style={{
                   display: 'flex', alignItems: 'center', gap: '6px',
                   background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-                  fontWeight: 700, fontSize: '1.1875rem', color: '#111827',
+                  fontWeight: 700, fontSize: '1.1875rem', color: '#FFFFFF',
                   userSelect: 'none',
                 }}
               >
-                {companyName ? `${companyName} — ${selectedDeptName}` : selectedDeptName}
+                {companyName ? `${companyName} [${selectedDeptName}]` : selectedDeptName}
                 <ChevronDown
                   size={16}
                   strokeWidth={2.5}
-                  style={{ color: '#6B7280', transition: 'transform 0.15s', transform: deptDropdownOpen ? 'rotate(180deg)' : 'none' }}
+                  style={{ color: 'rgba(255,255,255,0.7)', transition: 'transform 0.15s', transform: deptDropdownOpen ? 'rotate(180deg)' : 'none' }}
                 />
               </button>
               {deptDropdownOpen && (
@@ -185,26 +185,24 @@ export default function ManagerDashboard() {
               )}
             </div>
           ) : (
-            <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#111827', margin: 0 }}>
+            <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#FFFFFF', margin: 0 }}>
               {loading ? '' : title}
             </h1>
           )}
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             {userName && (
-              <span style={{ fontSize: '0.9rem', color: '#374151' }}>{userName}</span>
+              <span style={{ fontSize: '0.9rem', color: 'rgba(255,255,255,0.85)' }}>{userName}</span>
             )}
-            {plan && (
-              <span style={{
-                padding: '4px 10px',
-                borderRadius: '999px',
-                fontSize: '0.8rem',
-                fontWeight: 600,
-                background: plan === 'Pro' ? '#EDE9FE' : '#F3F4F6',
-                color: plan === 'Pro' ? '#7C3AED' : '#6B7280',
-              }}>
-                {plan} user
-              </span>
-            )}
+            <span style={{
+              padding: '4px 10px',
+              borderRadius: '999px',
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              background: 'rgba(255,255,255,0.15)',
+              color: '#FFFFFF',
+            }}>
+              Manager
+            </span>
           </div>
         </div>
 

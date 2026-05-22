@@ -191,8 +191,8 @@ export default function ManagerAnnouncementsPage() {
       <ManagerSidebar unreadMessages={unreadMessages} unreadAnnouncements={unreadCount} />
 
       <main style={{ marginLeft: '64px', flex: 1, height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div style={{ padding: '18px 32px', background: '#FFFFFF', borderBottom: '1px solid #E5E7EB', flexShrink: 0 }}>
-          <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#111827', margin: 0 }}>Announcements</h1>
+        <div style={{ padding: '18px 32px', background: '#1E3A5F', borderBottom: '1px solid #163050', flexShrink: 0 }}>
+          <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#FFFFFF', margin: 0 }}>Announcements</h1>
         </div>
 
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>

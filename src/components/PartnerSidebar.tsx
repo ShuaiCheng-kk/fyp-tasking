@@ -17,37 +17,17 @@ import {
 import { createBrowserClient } from '@supabase/ssr'
 
 const NAV_ITEMS = [
-  { label: 'Dashboard',     Icon: LayoutDashboard, href: '/owner/dashboard',       dot: null as 'messages' | 'announcements' | null },
-  { label: 'Report',        Icon: BarChart2,        href: '/owner/report',          dot: null },
-  { label: 'Team',          Icon: Users,            href: '/owner/team',            dot: null },
-  { label: 'Announcements', Icon: Megaphone,        href: '/owner/announcements',   dot: 'announcements' as const },
-  { label: 'Inbox',         Icon: MessageSquare,    href: '/owner/inbox',           dot: 'messages' as const },
-  { label: 'Recruitment',   Icon: UserPlus,         href: '/owner/recruitment',     dot: null },
-  { label: 'Attendance',    Icon: ClipboardList,    href: '/owner/attendance',      dot: null },
-  { label: 'Settings',      Icon: Settings,         href: '/owner/settings',        dot: null },
+  { label: 'Dashboard',     Icon: LayoutDashboard, href: '/partner/dashboard',     dot: null as 'messages' | 'announcements' | null },
+  { label: 'Report',        Icon: BarChart2,        href: '/partner/report',        dot: null },
+  { label: 'Team',          Icon: Users,            href: '/partner/team',          dot: null },
+  { label: 'Announcements', Icon: Megaphone,        href: '/partner/announcements', dot: 'announcements' as const },
+  { label: 'Inbox',         Icon: MessageSquare,    href: '/partner/inbox',         dot: 'messages' as const },
+  { label: 'Recruitment',   Icon: UserPlus,         href: '/partner/recruitment',   dot: null },
+  { label: 'Attendance',    Icon: ClipboardList,    href: '/partner/attendance',    dot: null },
+  { label: 'Settings',      Icon: Settings,         href: '/partner/settings',      dot: null },
 ]
 
-type Theme = {
-  sidebarBg: string
-  sidebarText: string
-  sidebarActiveBg: string
-  sidebarActiveText: string
-  sidebarHoverBg: string
-  sidebarBorder: string
-  logoBorder: string
-}
-
-const OWNER_THEME: Theme = {
-  sidebarBg: '#1C1C1E',
-  sidebarText: '#FFFFFF',
-  sidebarActiveBg: '#F97316',
-  sidebarActiveText: '#FFFFFF',
-  sidebarHoverBg: 'rgba(255,255,255,0.1)',
-  sidebarBorder: 'rgba(255,255,255,0.08)',
-  logoBorder: 'rgba(255,255,255,0.08)',
-}
-
-export default function OwnerSidebar({
+export default function PartnerSidebar({
   unreadMessages,
   unreadAnnouncements,
 }: {
@@ -56,8 +36,6 @@ export default function OwnerSidebar({
 }) {
   const pathname = usePathname()
   const [expanded, setExpanded] = useState(false)
-  const [userRole, setUserRole] = useState('')
-  const theme = OWNER_THEME
   const [msgCount, setMsgCount] = useState(unreadMessages ?? 0)
   const [annCount, setAnnCount] = useState(unreadAnnouncements ?? 0)
 
@@ -69,19 +47,15 @@ export default function OwnerSidebar({
       .then(r => r.json())
       .then(d => {
         if (!d.success) return
-        setUserRole(d.user.role)
         const internalId: string = d.user.id
         const cid = localStorage.getItem('tasking_company_id') ?? localStorage.getItem(`tasking_company_id_${authUid}`)
         if (!cid) return
 
-        // Unread messages: from API (DB-backed, accurate)
         fetch(`/api/inbox/unread-count?user_id=${internalId}&company_id=${cid}`)
           .then(r => r.json())
           .then(data => { if (data.success) setMsgCount(data.unread_messages ?? 0) })
           .catch(() => {})
 
-        // Unread announcements: from localStorage per-ID read set (page writes this)
-        // We fetch the announcement list to know total count, then subtract read IDs
         const readKey = `ann_read_ids_${cid}_${internalId}`
         let readIds: Set<string> = new Set()
         try {
@@ -89,7 +63,7 @@ export default function OwnerSidebar({
           if (raw) readIds = new Set(JSON.parse(raw))
         } catch {}
 
-        fetch(`/api/inbox/announcements?company_id=${cid}&role=owner`)
+        fetch(`/api/inbox/announcements?company_id=${cid}&role=Partner`)
           .then(r => r.json())
           .then(data => {
             if (data.success) {
@@ -105,7 +79,7 @@ export default function OwnerSidebar({
         )
 
         const msgChannel = supabase
-          .channel('owner-sidebar-messages')
+          .channel('partner-sidebar-messages')
           .on('postgres_changes', {
             event: 'INSERT', schema: 'public', table: 'messages',
             filter: `to_user_id=eq.${internalId}`,
@@ -113,7 +87,7 @@ export default function OwnerSidebar({
           .subscribe()
 
         const annChannel = supabase
-          .channel('owner-sidebar-announcements')
+          .channel('partner-sidebar-announcements')
           .on('postgres_changes', {
             event: 'INSERT', schema: 'public', table: 'announcements',
             filter: `company_id=eq.${cid}`,
@@ -128,9 +102,8 @@ export default function OwnerSidebar({
       .catch(() => {})
   }, [])
 
-  // Clear message dot immediately when user opens inbox
   useEffect(() => {
-    if (pathname === '/owner/inbox') setMsgCount(0)
+    if (pathname === '/partner/inbox') setMsgCount(0)
   }, [pathname])
 
   useEffect(() => {
@@ -139,10 +112,6 @@ export default function OwnerSidebar({
   useEffect(() => {
     if (unreadAnnouncements !== undefined) setAnnCount(unreadAnnouncements)
   }, [unreadAnnouncements])
-
-  const visibleNavItems = userRole === 'Manager'
-    ? NAV_ITEMS.filter(item => item.label !== 'Report')
-    : NAV_ITEMS
 
   const handleLogout = async () => {
     const supabase = createBrowserClient(
@@ -161,8 +130,8 @@ export default function OwnerSidebar({
       onMouseLeave={() => setExpanded(false)}
       style={{
         width: expanded ? '220px' : '64px',
-        background: theme.sidebarBg,
-        borderRight: `1px solid ${theme.sidebarBorder}`,
+        background: '#FFFFFF',
+        borderRight: '1px solid #E5E7EB',
         display: 'flex',
         flexDirection: 'column',
         height: '100vh',
@@ -183,13 +152,13 @@ export default function OwnerSidebar({
           alignItems: 'center',
           gap: '10px',
           padding: '20px 18px 18px',
-          borderBottom: `1px solid ${theme.logoBorder}`,
+          borderBottom: '1px solid #F3F4F6',
           textDecoration: 'none',
           flexShrink: 0,
         }}
       >
         <svg width="28" height="28" viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
-          <rect width="32" height="32" rx="8" fill={userRole === 'Manager' ? '#3B82F6' : '#F97316'} />
+          <rect width="32" height="32" rx="8" fill="#F97316" />
           <rect x="8" y="9" width="9" height="2.5" rx="1.25" fill="white" />
           <rect x="8" y="14.75" width="16" height="2.5" rx="1.25" fill="white" />
           <rect x="8" y="20.5" width="12" height="2.5" rx="1.25" fill="white" />
@@ -199,7 +168,7 @@ export default function OwnerSidebar({
         <span style={{
           fontWeight: 700,
           fontSize: '1.0625rem',
-          color: theme.sidebarText,
+          color: '#1C1C1E',
           letterSpacing: '-0.01em',
           whiteSpace: 'nowrap',
           opacity: expanded ? 1 : 0,
@@ -211,7 +180,7 @@ export default function OwnerSidebar({
 
       {/* Nav */}
       <nav style={{ flex: 1, padding: '12px 8px', overflow: 'hidden' }}>
-        {visibleNavItems.map(({ label, Icon, href, dot }) => {
+        {NAV_ITEMS.map(({ label, Icon, href, dot }) => {
           const active = pathname === href
           const showDot = dot === 'messages' ? msgCount > 0 : dot === 'announcements' ? annCount > 0 : false
           return (
@@ -224,8 +193,8 @@ export default function OwnerSidebar({
                 gap: '10px',
                 padding: '10px 12px',
                 borderRadius: '8px',
-                background: active ? theme.sidebarActiveBg : 'transparent',
-                color: active ? theme.sidebarActiveText : theme.sidebarText,
+                background: active ? '#F97316' : 'transparent',
+                color: active ? '#FFFFFF' : '#1C1C1E',
                 fontWeight: active ? 600 : 500,
                 fontSize: '0.9rem',
                 cursor: 'pointer',
@@ -235,7 +204,7 @@ export default function OwnerSidebar({
                 transition: 'background 0.12s, color 0.12s',
                 position: 'relative',
               }}
-              onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = theme.sidebarHoverBg } }}
+              onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = '#F3F4F6' } }}
               onMouseLeave={(e) => { if (!active) { e.currentTarget.style.background = 'transparent' } }}
             >
               <span style={{ position: 'relative', flexShrink: 0 }}>
@@ -261,8 +230,8 @@ export default function OwnerSidebar({
       </nav>
 
       {/* Logout */}
-      <div style={{ padding: '12px 8px', borderTop: `1px solid ${theme.logoBorder}`, flexShrink: 0 }}>
-        <div style={{ borderTop: `1px solid ${theme.sidebarBorder}`, paddingTop: '8px', marginTop: '2px' }}>
+      <div style={{ padding: '12px 8px', borderTop: '1px solid #F3F4F6', flexShrink: 0 }}>
+        <div style={{ borderTop: '1px solid #E5E7EB', paddingTop: '8px', marginTop: '2px' }}>
           <button
             onClick={handleLogout}
             style={{

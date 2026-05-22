@@ -4,12 +4,11 @@ import { getConversations, sendMessage } from '@/services/inboxService'
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url)
-    const company_id = searchParams.get('company_id')
     const user_id = searchParams.get('user_id')
-    if (!company_id || !user_id) {
-      return NextResponse.json({ success: false, error: 'Missing company_id or user_id' }, { status: 400 })
+    if (!user_id) {
+      return NextResponse.json({ success: false, error: 'Missing user_id' }, { status: 400 })
     }
-    const conversations = await getConversations(user_id, company_id)
+    const conversations = await getConversations(user_id)
     return NextResponse.json({ success: true, conversations })
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 })

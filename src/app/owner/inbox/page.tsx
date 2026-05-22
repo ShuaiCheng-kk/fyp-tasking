@@ -34,6 +34,8 @@ type Conversation = {
   lastTime: string
   unreadCount: number
   partnerDeleted?: boolean
+  companyId?: string | null
+  companyName?: string | null
 }
 
 type Message = {
@@ -128,18 +130,20 @@ export default function OwnerInboxPage() {
   }, [])
 
   const fetchUnreadCount = useCallback(() => {
-    if (!internalUserId || !companyId) return
-    fetch(`/api/inbox/unread-count?user_id=${internalUserId}&company_id=${companyId}`)
+    if (!internalUserId) return
+    const params = new URLSearchParams({ user_id: internalUserId })
+    if (companyId) params.set('company_id', companyId)
+    fetch(`/api/inbox/unread-count?${params}`)
       .then(r => r.json())
       .then(d => { if (d.success) setUnreadMessages(d.unread_messages ?? 0) })
   }, [internalUserId, companyId])
 
   const fetchConversations = useCallback(() => {
-    if (!internalUserId || !companyId) return
-    fetch(`/api/inbox/messages?user_id=${internalUserId}&company_id=${companyId}`)
+    if (!internalUserId) return
+    fetch(`/api/inbox/messages?user_id=${internalUserId}`)
       .then(r => r.json())
       .then(d => { if (d.success) setConversations(d.conversations ?? []) })
-  }, [internalUserId, companyId])
+  }, [internalUserId])
 
   const fetchInvites = useCallback(() => {
     if (!internalUserId) return
@@ -151,10 +155,10 @@ export default function OwnerInboxPage() {
   }, [internalUserId])
 
   useEffect(() => {
-    if (!internalUserId || !companyId) return
+    if (!internalUserId) return
     fetchConversations()
     fetchUnreadCount()
-  }, [internalUserId, companyId, fetchConversations, fetchUnreadCount])
+  }, [internalUserId, fetchConversations, fetchUnreadCount])
 
   useEffect(() => {
     if (!internalUserId) return
@@ -169,8 +173,8 @@ export default function OwnerInboxPage() {
   }, [search, conversations])
 
   useEffect(() => {
-    if (!selectedConv || !internalUserId || !companyId) return
-    fetch(`/api/inbox/messages/${selectedConv.partnerId}?user_id=${internalUserId}&company_id=${companyId}`)
+    if (!selectedConv || !internalUserId) return
+    fetch(`/api/inbox/messages/${selectedConv.partnerId}?user_id=${internalUserId}`)
       .then(r => r.json())
       .then(d => {
         if (d.success) {
@@ -179,7 +183,7 @@ export default function OwnerInboxPage() {
           fetchConversations()
         }
       })
-  }, [selectedConv, internalUserId, companyId])
+  }, [selectedConv, internalUserId])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -187,7 +191,7 @@ export default function OwnerInboxPage() {
 
   // Realtime: subscribe using internal user ID
   useEffect(() => {
-    if (!internalUserId || !companyId) return
+    if (!internalUserId) return
     const channel = supabase
       .channel('owner-inbox-messages')
       .on('postgres_changes', {
@@ -203,7 +207,7 @@ export default function OwnerInboxPage() {
       })
       .subscribe()
     return () => { supabase.removeChannel(channel) }
-  }, [internalUserId, companyId, selectedConv])
+  }, [internalUserId, selectedConv])
 
   const openCompose = useCallback(() => {
     if (!companyId || !internalUserId) return
@@ -286,7 +290,7 @@ export default function OwnerInboxPage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.error ?? 'Failed to send')
       setComposeOpen(false)
-      const convRes = await fetch(`/api/inbox/messages?user_id=${internalUserId}&company_id=${companyId}`)
+      const convRes = await fetch(`/api/inbox/messages?user_id=${internalUserId}`)
       const convData = await convRes.json()
       if (convData.success) {
         setConversations(convData.conversations ?? [])
@@ -439,6 +443,7 @@ export default function OwnerInboxPage() {
                     >
                       <Avatar name={conv.partnerName} size={38} />
                       <div style={{ flex: 1, minWidth: 0 }}>
+                        {/* Line 1: name + timestamp */}
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
                             <span style={{ fontWeight: conv.unreadCount > 0 ? 700 : 500, fontSize: '0.875rem', color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -452,11 +457,14 @@ export default function OwnerInboxPage() {
                           </div>
                           <span style={{ fontSize: '0.7rem', color: '#9CA3AF', flexShrink: 0, marginLeft: 6 }}>{formatTime(conv.lastTime)}</span>
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 1 }}>
-                          {conv.partnerRole && (
-                            <span style={{ fontSize: '0.7rem', color: ACCENT, fontWeight: 500 }}>{conv.partnerRole}</span>
-                          )}
-                          {conv.partnerRole && <span style={{ fontSize: '0.7rem', color: '#D1D5DB' }}>·</span>}
+                        {/* Line 2: company · role — muted, small */}
+                        {(conv.companyName || conv.partnerRole) && (
+                          <div style={{ fontSize: '0.75rem', color: '#9CA3AF', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {[conv.companyName, conv.partnerRole].filter(Boolean).join(' · ')}
+                          </div>
+                        )}
+                        {/* Line 3: message preview */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
                           <span style={{ fontSize: '0.8125rem', color: conv.unreadCount > 0 ? '#111827' : '#9CA3AF', fontWeight: conv.unreadCount > 0 ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                             {conv.lastMessage}
                           </span>

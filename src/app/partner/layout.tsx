@@ -4,13 +4,13 @@ import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 
 const ROLE_DASHBOARD: Record<string, string> = {
-  Partner: '/partner/dashboard',
+  Owner: '/owner/dashboard',
   Manager: '/manager/dashboard',
   Employee: '/employee/dashboard',
   'Casual Worker': '/casual/dashboard',
 }
 
-export default function OwnerLayout({
+export default function PartnerLayout({
   children,
 }: {
   children: React.ReactNode
@@ -44,15 +44,11 @@ export default function OwnerLayout({
 
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session) {
-        // Session gone — check if this is a deleted account (no company_members)
-        // by trying /api/user/me which will 401; show deleted modal if so.
-        // Since we have no session we cannot identify the user, so just redirect.
         router.replace('/')
         return
       }
       const res = await fetch(`/api/user/me?user_id=${session.user.id}`)
       if (res.status === 404) {
-        // User's own account no longer exists in DB — account was deleted
         setShowDeletedModal(true)
         setChecking(false)
         return
@@ -114,5 +110,5 @@ export default function OwnerLayout({
 
   if (checking) return null
 
-  return <div className="owner-layout">{children}</div>
+  return <div className="partner-layout">{children}</div>
 }
