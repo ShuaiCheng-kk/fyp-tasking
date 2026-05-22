@@ -2,8 +2,8 @@
 // RULE: Only handles request/response. No business logic. No DB access.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { authService } from '@/services/authService'
-import type { User } from '@/types/index'
+import { authService } from '@/services/auth/authService'
+import type { User } from '@/types/auth.types'
 
 const VALID_ROLES: User['role'][] = [
   'Owner', 'Manager', 'Employee', 'Casual Worker', 'Guest User',

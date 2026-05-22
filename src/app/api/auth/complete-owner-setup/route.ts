@@ -4,8 +4,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
-import { authService } from '@/services/authService'
-import { emailService } from '@/services/emailService'
+import { authService } from '@/services/auth/authService'
+import { emailService } from '@/services/email/emailService'
 
 export async function POST(req: NextRequest) {
   const body = await req.json()

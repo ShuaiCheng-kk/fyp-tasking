@@ -1,6 +1,6 @@
 // LAYER: Controller only
 import { NextRequest, NextResponse } from 'next/server'
-import { companyService } from '@/services/companyService'
+import { companyService } from '@/services/company/companyService'
 
 export async function POST(req: NextRequest) {
   let body: unknown

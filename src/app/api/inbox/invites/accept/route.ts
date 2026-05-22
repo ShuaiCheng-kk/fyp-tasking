@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getInboxItemById, updateInboxStatus } from '@/repositories/inboxRepository'
-import { userRepository } from '@/repositories/userRepository'
-import { companyRepository } from '@/repositories/companyRepository'
+import { ownerInboxService } from '@/services/owner/ownerInboxService'
+import { authRepository as userRepository } from '@/repositories/auth/authRepository'
+import { companyRepository } from '@/repositories/company/companyRepository'
 
 export async function POST(req: NextRequest) {
   try {
@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'Missing required fields' }, { status: 400 })
     }
 
-    const invite = await getInboxItemById(inbox_id)
+    const invite = await ownerInboxService.getInboxItemById(inbox_id)
 
     if (invite.status !== 'pending') {
       return NextResponse.json({ success: false, error: 'Invitation is no longer pending' }, { status: 400 })
@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
 
     await companyRepository.insertCompanyMember(user_id, invite.company_id, normalizedRole)
 
-    await updateInboxStatus(inbox_id, 'accepted')
+    await ownerInboxService.updateInboxStatus(inbox_id, 'accepted')
 
     return NextResponse.json({ success: true })
   } catch (error: any) {

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getUnreadCount } from '@/services/inboxService'
+import { ownerInboxService } from '@/services/owner/ownerInboxService'
 
 export async function GET(req: NextRequest) {
   try {
@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
     if (!user_id) {
       return NextResponse.json({ success: false, error: 'Missing user_id' }, { status: 400 })
     }
-    const result = await getUnreadCount(user_id, company_id, last_announcement_read_at)
+    const result = await ownerInboxService.getUnreadCount(user_id, company_id, last_announcement_read_at)
     return NextResponse.json({ success: true, ...result })
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 })

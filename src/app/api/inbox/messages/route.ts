@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getConversations, sendMessage } from '@/services/inboxService'
+import { ownerInboxService } from '@/services/owner/ownerInboxService'
 
 export async function GET(req: NextRequest) {
   try {
@@ -8,7 +8,7 @@ export async function GET(req: NextRequest) {
     if (!user_id) {
       return NextResponse.json({ success: false, error: 'Missing user_id' }, { status: 400 })
     }
-    const conversations = await getConversations(user_id)
+    const conversations = await ownerInboxService.getConversations(user_id)
     return NextResponse.json({ success: true, conversations })
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 })
@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
     if (!from_user_id || !to_user_id || !company_id || !content) {
       return NextResponse.json({ success: false, error: 'Missing required fields' }, { status: 400 })
     }
-    const message = await sendMessage(from_user_id, to_user_id, company_id, content)
+    const message = await ownerInboxService.sendMessage(from_user_id, to_user_id, company_id, content)
     return NextResponse.json({ success: true, message })
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 400 })

@@ -2,7 +2,7 @@
 // RULE: Only handles request/response. No business logic. No DB access.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { companyService } from '@/services/companyService'
+import { companyService } from '@/services/company/companyService'
 
 export async function GET(req: NextRequest) {
   const owner_id = req.nextUrl.searchParams.get('owner_id')

@@ -1,6 +1,6 @@
 // LAYER: Controller only
 import { NextRequest, NextResponse } from 'next/server'
-import { companyService } from '@/services/companyService'
+import { companyService } from '@/services/company/companyService'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)

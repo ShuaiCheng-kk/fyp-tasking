@@ -2,8 +2,8 @@
 // RULE: Only handles request/response. No business logic. No DB access.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { authService } from '@/services/authService'
-import type { User } from '@/types/index'
+import { authService } from '@/services/auth/authService'
+import type { User } from '@/types/auth.types'
 
 const VALID_ROLES: User['role'][] = ['Owner', 'Guest User']
 
@@ -71,10 +71,10 @@ export async function POST(req: NextRequest) {
     const combined = msg + details
 
     if (msg.includes('user already registered') || msg.includes('already registered')) {
-      const existingUser = await import('@/repositories/userRepository')
-        .then((m) => m.userRepository.findByEmail(email_address as string))
+      const existingUser = await import('@/repositories/auth/authRepository')
+        .then((m) => m.authRepository.findByEmail(email_address as string))
       if (!existingUser) {
-        await import('@/services/authService')
+        await import('@/services/auth/authService')
           .then((m) => m.authService.deleteOrphanedAuthUser(email_address as string))
         return NextResponse.json({ success: false, message: 'Registration incomplete. Please try again.' })
       }

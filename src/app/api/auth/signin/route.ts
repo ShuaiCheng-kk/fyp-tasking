@@ -4,7 +4,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
-import { authService } from '@/services/authService'
+import { authService } from '@/services/auth/authService'
 
 export async function POST(req: NextRequest) {
   let body: unknown
