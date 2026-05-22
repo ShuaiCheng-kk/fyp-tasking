@@ -194,6 +194,7 @@ export default function SettingsPage() {
     setDeleteLoading(true)
     setDeleteError('')
     try {
+      localStorage.setItem('owner_deleting_company', 'true')
       const res = await fetch('/api/company/delete', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
@@ -204,6 +205,7 @@ export default function SettingsPage() {
       setDeleteTarget(null)
       fetchCompanies(userId)
     } catch (err) {
+      localStorage.removeItem('owner_deleting_company')
       setDeleteError(err instanceof Error ? err.message : 'Failed to delete company')
     } finally {
       setDeleteLoading(false)
@@ -275,15 +277,21 @@ export default function SettingsPage() {
 
         // Change 3 & 4: detect if current active company was removed
         const storedCid = localStorage.getItem(`tasking_company_id_${uid}`)
+        const ownerDeleting = localStorage.getItem('owner_deleting_company') === 'true'
         if (storedCid && sorted.length > 0 && !sorted.some((c: Company) => c.id === storedCid)) {
-          const removedName = localStorage.getItem(`tasking_last_company_name_${storedCid}`) || 'your previous company'
+          if (ownerDeleting) {
+            localStorage.removeItem('owner_deleting_company')
+          }
           const next = sorted[0]
           localStorage.setItem(`tasking_company_id_${uid}`, next.id)
           localStorage.setItem(`tasking_last_company_name_${next.id}`, next.name)
-          setRemovalOverlay({ companyName: removedName })
-          setTimeout(() => {
-            setRemovalOverlay(null)
-          }, 3000)
+          if (!ownerDeleting) {
+            const removedName = localStorage.getItem(`tasking_last_company_name_${storedCid}`) || 'your previous company'
+            setRemovalOverlay({ companyName: removedName })
+            setTimeout(() => {
+              setRemovalOverlay(null)
+            }, 3000)
+          }
         } else if (sorted.length > 0 && sorted[0]) {
           // Keep last company name cached for future removal detection
           sorted.forEach((c: Company) => {
