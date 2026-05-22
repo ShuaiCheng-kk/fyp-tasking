@@ -5,20 +5,17 @@ import { createBrowserClient } from '@supabase/ssr'
 
 const ROLE_DASHBOARD: Record<string, string> = {
   Owner: '/owner/dashboard',
-  Employee: '/employee/dashboard',
+  Partner: '/partner/dashboard',
+  Manager: '/manager/dashboard',
   'Casual Worker': '/casual/dashboard',
 }
 
-export default function ManagerLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+export default function EmployeeLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const [checking, setChecking] = useState(true)
 
   useEffect(() => {
-    if (window.location.pathname === '/manager/removed') {
+    if (window.location.pathname === '/employee/removed') {
       setChecking(false)
       return
     }
@@ -30,23 +27,22 @@ export default function ManagerLayout({
 
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session) {
-        router.replace('/manager/removed')
+        router.replace('/employee/removed')
         return
       }
 
       const res = await fetch(`/api/user/me?user_id=${session.user.id}`)
-
       if (res.status === 401) {
         localStorage.clear()
-        router.replace('/manager/removed')
+        router.replace('/employee/removed')
         return
       }
       const data = await res.json()
       const role: string = data.success ? (data.user?.role ?? '') : ''
-      if (role === 'Manager') {
+      if (role === 'Employee') {
         setChecking(false)
       } else if (!role) {
-        router.replace('/manager/removed')
+        router.replace('/employee/removed')
       } else {
         router.replace(ROLE_DASHBOARD[role] ?? '/signin')
       }

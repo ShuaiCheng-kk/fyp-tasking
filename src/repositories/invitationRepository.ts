@@ -80,4 +80,18 @@ export const invitationRepository = {
     return data
   },
 
+  async insertEmployeeDepartment(employee_id: string, department_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('employee_departments')
+      .insert({ employee_id, department_id })
+    if (error) throw new Error(error.message)
+  },
+
+  async insertManagerDepartment(manager_id: string, department_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('manager_departments')
+      .insert({ manager_id, department_id })
+    if (error) throw new Error(error.message)
+  },
+
 }

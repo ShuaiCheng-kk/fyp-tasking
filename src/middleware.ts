@@ -46,8 +46,9 @@ export async function middleware(request: NextRequest) {
 
   const { data: { session } } = await supabase.auth.getSession()
 
+  if (pathname === '/manager/removed') return NextResponse.next()
+
   if (!session) {
-    if (pathname === '/manager/removed') return NextResponse.next()
     const url = request.nextUrl.clone()
     url.pathname = pathname.startsWith('/manager') ? '/manager/removed' : '/signin'
     return NextResponse.redirect(url)
@@ -65,7 +66,10 @@ export async function middleware(request: NextRequest) {
   } catch {}
 
   if (!match.allowed.includes(role)) {
-    const redirect = ROLE_HOME[role] ?? '/signin'
+    // No role means the user record was deleted (e.g. manager was removed)
+    const redirect = !role && pathname.startsWith('/manager')
+      ? '/manager/removed'
+      : (ROLE_HOME[role] ?? '/signin')
     const url = request.nextUrl.clone()
     url.pathname = redirect
     return NextResponse.redirect(url)
