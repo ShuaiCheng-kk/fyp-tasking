@@ -48,7 +48,9 @@ export async function middleware(request: NextRequest) {
 
   if (!session) {
     const url = request.nextUrl.clone()
-    url.pathname = '/signin'
+    url.pathname = pathname.startsWith('/manager/') && pathname !== '/manager/removed'
+      ? '/manager/removed'
+      : '/signin'
     return NextResponse.redirect(url)
   }
 

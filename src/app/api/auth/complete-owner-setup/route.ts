@@ -106,11 +106,6 @@ export async function POST(req: NextRequest) {
 
     authUserId = result.user_id
 
-    await supabase.auth.resend({
-      type: 'signup',
-      email: email,
-    })
-
     adminClient.auth.admin.generateLink({
       type: 'magiclink',
       email: email,
