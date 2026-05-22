@@ -106,27 +106,25 @@ export async function POST(req: NextRequest) {
 
     authUserId = result.user_id
 
-    adminClient.auth.admin.generateLink({
-      type: 'magiclink',
+    const { data: linkData, error: linkError } = await adminClient.auth.admin.generateLink({
+      type: 'signup',
       email: email,
+      password: password,
       options: {
         redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback`,
       },
-    }).then(({ data: linkData }) => {
-      const confirmLink = linkData?.properties?.action_link
-      console.log('Generated confirm link:', confirmLink)
-      if (confirmLink) {
-        console.log('Sending Email 1 (confirmation request) to:', email)
-        // Fire and forget — don't await
-        emailService.sendConfirmationRequestEmail({
-          to: email,
-          fullName: full_name,
-          confirmLink,
-        }).catch(err => console.error('Email failed:', err))
-      } else {
-        console.error('No action_link returned from generateLink')
-      }
-    }).catch(err => console.error('Failed to generate confirm link:', err))
+    })
+
+    const confirmLink = linkData?.properties?.action_link
+    if (linkError || !confirmLink) {
+      console.error('Failed to generate confirmation link:', linkError)
+    } else {
+      await emailService.sendConfirmationRequestEmail({
+        to: email,
+        fullName: full_name,
+        confirmLink,
+      })
+    }
 
     return NextResponse.json({ success: true, requiresConfirmation: true, ...result })
   } catch (error: unknown) {
