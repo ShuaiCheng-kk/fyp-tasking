@@ -228,9 +228,9 @@ export default function ManagerTeamPage() {
     }
   }
 
-  // Filter team to show only members in the selected department
+  // Show all Managers company-wide; filter Employees/Casual Workers by department
   const filteredMembers = selectedDeptId
-    ? teamMembers.filter(m => m.department_id === selectedDeptId || m.role === 'Owner')
+    ? teamMembers.filter(m => m.role === 'Owner' || m.role === 'Manager' || m.department_id === selectedDeptId)
     : teamMembers
 
   const groupedMembers = (['Owner', 'Manager', 'Employee', 'Casual Worker'] as const).reduce(

@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 
@@ -17,6 +17,10 @@ export default function ManagerLayout({
   const router = useRouter()
   const [checking, setChecking] = useState(true)
   const [accountRemoved, setAccountRemoved] = useState(false)
+  // Track whether we had a valid session so we can distinguish logout vs. never-logged-in
+  const hadSession = useRef(false)
+  // Guard: once accountRemoved is set, block all other redirects
+  const accountRemovedRef = useRef(false)
 
   useEffect(() => {
     const supabase = createBrowserClient(
@@ -24,19 +28,30 @@ export default function ManagerLayout({
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
     )
 
-    // Detect session invalidation caused by owner removing this manager's account
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'SIGNED_OUT') {
+    // Listen for session loss after we had a valid session
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (hadSession.current && (event === 'SIGNED_OUT' || session === null)) {
+        accountRemovedRef.current = true
         setAccountRemoved(true)
       }
     })
 
     supabase.auth.getSession().then(async ({ data: { session } }) => {
+      // If account-removed modal already triggered, skip all further checks
+      if (accountRemovedRef.current) return
+
       if (!session) {
         router.replace('/signin')
         return
       }
+
+      hadSession.current = true
+
       const res = await fetch(`/api/user/me?user_id=${session.user.id}`)
+
+      // Re-check in case account was removed during the fetch
+      if (accountRemovedRef.current) return
+
       if (res.status === 401) {
         localStorage.clear()
         router.replace('/signin')

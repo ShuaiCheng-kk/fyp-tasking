@@ -168,20 +168,28 @@ export async function countUnreadAnnouncements(companyId: string, lastReadAt: st
 export async function getAnnouncements(
   companyId: string,
   role: string,
-  departmentId?: string | null
+  departmentId?: string | null,
+  requestingUserId?: string | null
 ) {
   const roleLower = role?.toLowerCase()
 
   let query = supabase
     .from('announcements')
-    .select('*, users!announcements_from_user_id_fkey(full_name)')
+    .select('*, poster:users!announcements_from_user_id_fkey(full_name, role)')
     .eq('company_id', companyId)
     .order('created_at', { ascending: false })
 
   if (roleLower === 'owner' || roleLower === 'partner') {
-    // no audience filter — return all announcements for the company
+    // Exclude Manager-posted announcements — Managers post only to their own dept
   } else if (roleLower === 'manager') {
-    if (departmentId) {
+    // Include: own posts OR Owner/Partner posts (company-wide or matching dept)
+    if (departmentId && requestingUserId) {
+      query = query.or(
+        `from_user_id.eq.${requestingUserId},and(department_id.is.null),and(department_id.eq.${departmentId})`
+      )
+    } else if (requestingUserId) {
+      query = query.or(`from_user_id.eq.${requestingUserId},department_id.is.null`)
+    } else if (departmentId) {
       query = query.or(`department_id.is.null,department_id.eq.${departmentId}`)
     } else {
       query = query.is('department_id', null)
@@ -197,10 +205,26 @@ export async function getAnnouncements(
   const { data, error } = await query
   if (error) throw error
 
-  return (data ?? []).map((row: any) => {
-    const { users, ...rest } = row
-    return { ...rest, created_by_name: users?.full_name ?? null }
-  })
+  return (data ?? [])
+    .filter((row: any) => {
+      // For Owner/Partner: hide Manager-posted announcements
+      if (roleLower === 'owner' || roleLower === 'partner') {
+        return row.poster?.role !== 'Manager'
+      }
+      // For Manager: hide announcements from other Managers (keep own posts + Owner/Partner posts)
+      if (roleLower === 'manager') {
+        const posterRole = row.poster?.role
+        if (posterRole === 'Manager') {
+          return row.from_user_id === requestingUserId
+        }
+        return true
+      }
+      return true
+    })
+    .map((row: any) => {
+      const { poster, ...rest } = row
+      return { ...rest, created_by_name: poster?.full_name ?? null }
+    })
 }
 
 export async function updateAnnouncement(

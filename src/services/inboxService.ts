@@ -85,9 +85,10 @@ export async function sendMessage(fromUserId: string, toUserId: string, companyI
 export async function getAnnouncements(
   companyId: string,
   role: string,
-  departmentId?: string | null
+  departmentId?: string | null,
+  requestingUserId?: string | null
 ) {
-  return inboxRepo.getAnnouncements(companyId, role, departmentId)
+  return inboxRepo.getAnnouncements(companyId, role, departmentId, requestingUserId)
 }
 
 export async function deleteAnnouncement(announcementId: string, requestingUserId: string) {

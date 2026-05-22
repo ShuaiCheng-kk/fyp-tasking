@@ -22,6 +22,8 @@ type CompanyMember = {
   department_id?: string | null
 }
 
+type CompanyDept = { id: string; name: string }
+
 type Conversation = {
   partnerId: string
   partnerName: string
@@ -83,6 +85,7 @@ export default function ManagerInboxPage() {
   // Compose modal
   const [composeOpen, setComposeOpen] = useState(false)
   const [companyMembers, setCompanyMembers] = useState<CompanyMember[]>([])
+  const [companyDepartments, setCompanyDepartments] = useState<CompanyDept[]>([])
   const [managerDeptId, setManagerDeptId] = useState<string | null>(null)
   const [composeSearch, setComposeSearch] = useState('')
   const [selectedRecipient, setSelectedRecipient] = useState<CompanyMember | null>(null)
@@ -184,21 +187,24 @@ export default function ManagerInboxPage() {
     setComposeText('')
     setComposeSearch('')
     setComposeError('')
-    fetch(`/api/team/members?company_id=${companyId}`)
-      .then(r => r.json())
-      .then(d => {
-        if (d.success) {
-          const all = d.members as CompanyMember[]
-          const eligible = all.filter(m => {
-            if (m.id === internalUserId) return false
-            if (m.role === 'Owner' || m.role === 'Partner' || m.role === 'Manager') return true
-            if (m.role === 'Employee' && managerDeptId && m.department_id === managerDeptId) return true
-            return false
-          })
-          setCompanyMembers(eligible)
-        }
-      })
-      .catch(() => {})
+    Promise.all([
+      fetch(`/api/team/members?company_id=${companyId}`).then(r => r.json()),
+      fetch(`/api/company/departments?company_id=${companyId}`).then(r => r.json()),
+    ]).then(([membersData, deptsData]) => {
+      if (membersData.success) {
+        const all = membersData.members as CompanyMember[]
+        const eligible = all.filter(m => {
+          if (m.id === internalUserId) return false
+          if (m.role === 'Owner' || m.role === 'Partner' || m.role === 'Manager') return true
+          if (m.role === 'Employee' && managerDeptId && m.department_id === managerDeptId) return true
+          return false
+        })
+        setCompanyMembers(eligible)
+      }
+      if (deptsData.success) {
+        setCompanyDepartments(deptsData.departments ?? [])
+      }
+    }).catch(() => {})
   }
 
   async function handleComposeSend() {
@@ -499,7 +505,13 @@ export default function ManagerInboxPage() {
                             <Avatar name={m.full_name} size={34} color={roleColor} />
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.full_name}</p>
-                              <p style={{ fontSize: '0.75rem', margin: 0, color: roleColor, fontWeight: 500 }}>{m.role}</p>
+                              {m.role === 'Manager' && m.department_id ? (
+                                <p style={{ fontSize: '0.75rem', margin: 0, color: '#9CA3AF', fontWeight: 400 }}>
+                                  {companyDepartments.find(d => d.id === m.department_id)?.name ?? ''}{' · '}Manager
+                                </p>
+                              ) : (
+                                <p style={{ fontSize: '0.75rem', margin: 0, color: roleColor, fontWeight: 500 }}>{m.role}</p>
+                              )}
                             </div>
                           </button>
                         )

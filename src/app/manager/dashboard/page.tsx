@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { ChevronDown } from 'lucide-react'
+import { ChevronDown, Search } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import ManagerSidebar from '@/components/ManagerSidebar'
 
@@ -16,6 +16,7 @@ function Spinner({ size = 16 }: { size?: number }) {
 }
 
 type Department = { department_id: string; department_name: string }
+type Employee = { id: string; full_name: string; email_address: string; role: string; department_id: string | null }
 
 export default function ManagerDashboard() {
   const router = useRouter()
@@ -31,6 +32,9 @@ export default function ManagerDashboard() {
   const [plan, setPlan] = useState<string>('')
   const [deptDropdownOpen, setDeptDropdownOpen] = useState(false)
   const deptDropdownRef = useRef<HTMLDivElement>(null)
+
+  const [employees, setEmployees] = useState<Employee[]>([])
+  const [employeeSearch, setEmployeeSearch] = useState('')
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -111,7 +115,19 @@ export default function ManagerDashboard() {
         }
       }
 
-      if (!cancelled) setLoading(false)
+      if (!cancelled) {
+        setLoading(false)
+        // Fetch employees for the dashboard list
+        if (company_id) {
+          const empRes = await fetch(`/api/team/members?company_id=${company_id}`)
+          const empData = await empRes.json()
+          if (!cancelled && empData.success) {
+            setEmployees(
+              (empData.members as Employee[]).filter(m => m.role === 'Employee' || m.role === 'Casual Worker')
+            )
+          }
+        }
+      }
     }
     void run()
     return () => { cancelled = true }
@@ -212,9 +228,53 @@ export default function ManagerDashboard() {
               <Spinner /> Loading…
             </div>
           ) : (
-            <p style={{ color: '#9CA3AF', fontSize: '0.9375rem' }}>
-              Your team and schedule will appear here.
-            </p>
+            <div>
+              <p style={{ fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '12px' }}>
+                Employees
+              </p>
+              {/* Search bar */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#FFFFFF', border: '1.5px solid #E5E7EB', borderRadius: 9, padding: '8px 12px', marginBottom: '16px', maxWidth: 360 }}>
+                <Search size={14} color="#9CA3AF" />
+                <input
+                  value={employeeSearch}
+                  onChange={e => setEmployeeSearch(e.target.value)}
+                  placeholder="Search employees..."
+                  style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: '0.875rem', color: '#374151' }}
+                />
+              </div>
+              {/* Employee list */}
+              {employees.length === 0 ? (
+                <p style={{ color: '#9CA3AF', fontSize: '0.9375rem' }}>No employees yet.</p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', maxWidth: 560 }}>
+                  {employees
+                    .filter(e => e.full_name.toLowerCase().includes(employeeSearch.toLowerCase()))
+                    .map(emp => (
+                      <div key={emp.id} style={{
+                        display: 'flex', alignItems: 'center', gap: '12px',
+                        padding: '12px 16px', background: '#FFFFFF', borderRadius: '10px', border: '1px solid #F3F4F6',
+                      }}>
+                        <div style={{
+                          width: 36, height: 36, borderRadius: '50%',
+                          background: '#EFF6FF', border: '1.5px solid #BFDBFE',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontWeight: 700, fontSize: '0.875rem', color: '#3B82F6', flexShrink: 0,
+                        }}>
+                          {emp.full_name.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <p style={{ fontWeight: 600, fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{emp.full_name}</p>
+                          <p style={{ fontSize: '0.8125rem', color: '#6B7280', margin: 0 }}>{emp.email_address}</p>
+                        </div>
+                      </div>
+                    ))
+                  }
+                  {employees.filter(e => e.full_name.toLowerCase().includes(employeeSearch.toLowerCase())).length === 0 && (
+                    <p style={{ color: '#9CA3AF', fontSize: '0.875rem' }}>No employees match your search.</p>
+                  )}
+                </div>
+              )}
+            </div>
           )}
         </div>
       </main>
