@@ -30,12 +30,10 @@ const ROLE_MAP: Record<string, InvitationCode['role']> = {
   'partner': 'Partner',
   'manager': 'Manager',
   'employee': 'Employee',
-  'casual worker': 'Casual Worker',
   'Owner': 'Owner',
   'Partner': 'Partner',
   'Manager': 'Manager',
   'Employee': 'Employee',
-  'Casual Worker': 'Casual Worker',
 }
 
 export const invitationService = {
