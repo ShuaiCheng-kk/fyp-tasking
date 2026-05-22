@@ -47,10 +47,9 @@ export async function middleware(request: NextRequest) {
   const { data: { session } } = await supabase.auth.getSession()
 
   if (!session) {
+    if (pathname === '/manager/removed') return NextResponse.next()
     const url = request.nextUrl.clone()
-    url.pathname = pathname.startsWith('/manager/') && pathname !== '/manager/removed'
-      ? '/manager/removed'
-      : '/signin'
+    url.pathname = pathname.startsWith('/manager') ? '/manager/removed' : '/signin'
     return NextResponse.redirect(url)
   }
 
