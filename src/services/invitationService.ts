@@ -90,7 +90,7 @@ export const invitationService = {
       return
     }
 
-    const existingInvitation = await invitationRepository.findActiveInvitation(data.company_id, data.role)
+    const existingInvitation = await invitationRepository.findActiveInvitation(data.email)
     if (existingInvitation) {
       throw new Error('An active invitation already exists for this email. Please wait for them to accept or the invitation to expire.')
     }
