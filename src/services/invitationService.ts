@@ -25,6 +25,19 @@ function generateRandomCode(role: string): string {
   return Math.floor(10000 + Math.random() * 90000).toString()
 }
 
+const ROLE_MAP: Record<string, InvitationCode['role']> = {
+  'owner': 'Owner',
+  'partner': 'Partner',
+  'manager': 'Manager',
+  'employee': 'Employee',
+  'casual worker': 'Casual Worker',
+  'Owner': 'Owner',
+  'Partner': 'Partner',
+  'Manager': 'Manager',
+  'Employee': 'Employee',
+  'Casual Worker': 'Casual Worker',
+}
+
 export const invitationService = {
 
   async generateCode(data: {
@@ -33,8 +46,9 @@ export const invitationService = {
     role: InvitationCode['role']
     generated_by: string
   }): Promise<InvitationCode> {
+    const normalizedRole = ROLE_MAP[data.role] ?? data.role
     let code: string
-    if (data.role === 'Owner') {
+    if (normalizedRole === 'Owner') {
       const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
       code = Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
     } else {
@@ -51,7 +65,7 @@ export const invitationService = {
       code,
       company_id: data.company_id,
       department_id: data.department_id,
-      role: data.role,
+      role: normalizedRole,
       generated_by: generator.id,
       expired_at,
     })
@@ -65,6 +79,7 @@ export const invitationService = {
     invited_by: string
     reporting_manager_id?: string | null
   }): Promise<void> {
+    const normalizedRole = ROLE_MAP[data.role] ?? (data.role as InvitationCode['role'])
     const inviter = await userRepository.findByAuthIdOrInternalId(data.invited_by)
     if (!inviter) throw new Error('User not found')
     if (inviter.email_address.toLowerCase() === data.email.toLowerCase()) {
@@ -82,7 +97,7 @@ export const invitationService = {
         recipient_user_id: existingUser.id,
         sender_user_id: inviter.id,
         company_id: data.company_id,
-        role: data.role,
+        role: normalizedRole,
         department_id: data.department_id,
         type: 'company_invite',
         status: 'pending',
@@ -97,10 +112,10 @@ export const invitationService = {
 
     const expired_at = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
     const invitation = await invitationRepository.createCode({
-      code: generateRandomCode(data.role),
+      code: generateRandomCode(normalizedRole),
       company_id: data.company_id,
       department_id: data.department_id,
-      role: data.role as InvitationCode['role'],
+      role: normalizedRole,
       generated_by: inviter.id,
       expired_at,
       reporting_manager_id: data.reporting_manager_id || null,
