@@ -74,7 +74,7 @@ export default function EmployeeLayout({ children }: { children: React.ReactNode
           router.replace('/employee/removed')
         }
       } catch {}
-    }, 10000)
+    }, 3000)
 
     return () => clearInterval(interval)
   }, [router])
