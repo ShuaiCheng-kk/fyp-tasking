@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import ManagerSidebar from '@/components/ManagerSidebar'
 import { createClient } from '@/lib/supabase'
-import { Plus, X, Trash2 } from 'lucide-react'
+import { Plus, X, Trash2, Megaphone } from 'lucide-react'
 
 const ACCENT = '#3B82F6'
 const ACCENT_LIGHT = '#EFF6FF'
@@ -289,7 +289,7 @@ export default function ManagerAnnouncementsPage() {
               </div>
             ) : (
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#9CA3AF', gap: 8 }}>
-                <div style={{ fontSize: '2rem' }}>📢</div>
+                <Megaphone size={32} strokeWidth={1.5} />
                 <div style={{ fontSize: '0.9375rem', fontWeight: 500 }}>Select an announcement to read</div>
               </div>
             )}

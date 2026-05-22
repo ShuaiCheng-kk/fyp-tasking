@@ -186,7 +186,21 @@ export const invitationService = {
       // 6. Insert into company_members
       await companyRepository.insertCompanyMember(user.id, invitation.company_id, normalizedRole)
 
-      // 7. Mark invitation code as used
+      // 7. Link manager/employee to their department
+      console.log('REDEEM DEBUG - role:', normalizedRole)
+      console.log('REDEEM DEBUG - department_id:', invitation.department_id)
+      if (normalizedRole === 'Manager' && invitation.department_id) {
+        console.log('REDEEM DEBUG - inserting manager department')
+        await invitationRepository.insertManagerDepartment(user.id, invitation.department_id)
+        console.log('REDEEM DEBUG - insert complete')
+      }
+      if (normalizedRole === 'Employee' && invitation.department_id) {
+        console.log('REDEEM DEBUG - inserting employee department')
+        await invitationRepository.insertEmployeeDepartment(user.id, invitation.department_id)
+        console.log('REDEEM DEBUG - insert complete')
+      }
+
+      // 8. Mark invitation code as used
       await invitationRepository.markAsUsed(data.code, user.id)
 
       return { user, company_id: invitation.company_id }

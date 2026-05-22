@@ -1,28 +1,25 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import ManagerSidebar from '@/components/ManagerSidebar'
+import EmployeeSidebar from '@/components/EmployeeSidebar'
 import { createClient } from '@/lib/supabase'
 import { Send, Search, SquarePen, X, MessageSquare } from 'lucide-react'
 
-const ACCENT = '#3B82F6'
-const ACCENT_LIGHT = '#EFF6FF'
+const GREEN = '#16A34A'
+const GREEN_LIGHT = '#DCFCE7'
+const GREEN_BORDER = '#BBF7D0'
 
 const ROLE_COLOR: Record<string, string> = {
-  Owner: '#8B5CF6',
-  Partner: '#8B5CF6',
-  Manager: '#3B82F6',
-  Employee: '#10B981',
+  Manager: '#2563EB',
+  Employee: '#16A34A',
 }
 
-type CompanyMember = {
+type Contact = {
   id: string
   full_name: string
   role: string
-  department_id?: string | null
+  email_address: string
 }
-
-type CompanyDept = { id: string; name: string }
 
 type Conversation = {
   partnerId: string
@@ -53,7 +50,7 @@ function formatTime(iso: string) {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
 }
 
-function Avatar({ name, size = 36, color = ACCENT }: { name: string; size?: number; color?: string }) {
+function Avatar({ name, size = 36, color = GREEN }: { name: string; size?: number; color?: string }) {
   const initials = name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase()
   return (
     <div style={{
@@ -66,12 +63,10 @@ function Avatar({ name, size = 36, color = ACCENT }: { name: string; size?: numb
   )
 }
 
-export default function ManagerInboxPage() {
-  // auth UID — only for localStorage key lookup
-  const [authUserId, setAuthUserId] = useState<string | null>(null)
-  // internal tasking user ID — used for all message from/to fields
+export default function EmployeeInboxPage() {
   const [internalUserId, setInternalUserId] = useState<string | null>(null)
   const [companyId, setCompanyId] = useState<string | null>(null)
+  const [userName, setUserName] = useState('')
   const [unreadMessages, setUnreadMessages] = useState(0)
 
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -82,13 +77,10 @@ export default function ManagerInboxPage() {
   const [msgInput, setMsgInput] = useState('')
   const [sendingMsg, setSendingMsg] = useState(false)
 
-  // Compose modal
   const [composeOpen, setComposeOpen] = useState(false)
-  const [companyMembers, setCompanyMembers] = useState<CompanyMember[]>([])
-  const [companyDepartments, setCompanyDepartments] = useState<CompanyDept[]>([])
-  const [managerDeptId, setManagerDeptId] = useState<string | null>(null)
+  const [contacts, setContacts] = useState<Contact[]>([])
   const [composeSearch, setComposeSearch] = useState('')
-  const [selectedRecipient, setSelectedRecipient] = useState<CompanyMember | null>(null)
+  const [selectedRecipient, setSelectedRecipient] = useState<Contact | null>(null)
   const [composeText, setComposeText] = useState('')
   const [composeSending, setComposeSending] = useState(false)
   const [composeError, setComposeError] = useState('')
@@ -99,29 +91,25 @@ export default function ManagerInboxPage() {
   useEffect(() => {
     const uid = localStorage.getItem('tasking_user_id')
     const cid = localStorage.getItem('tasking_company_id') ?? localStorage.getItem(`tasking_company_id_${uid}`)
-    setAuthUserId(uid)
     setCompanyId(cid)
-    if (uid) {
-      fetch(`/api/user/me?user_id=${uid}`)
-        .then(r => r.json())
-        .then(d => {
-          if (d.success && d.user?.id) {
-            setInternalUserId(d.user.id)
-            if (d.user.department_id) setManagerDeptId(d.user.department_id)
-          }
-        })
-        .catch(() => {})
-    }
+    if (!uid) return
+    fetch(`/api/user/me?user_id=${uid}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.success && d.user?.id) {
+          setInternalUserId(d.user.id)
+          setUserName(d.user.full_name ?? '')
+        }
+      })
+      .catch(() => {})
   }, [])
 
   const fetchUnreadCount = useCallback(() => {
     if (!internalUserId) return
-    const params = new URLSearchParams({ user_id: internalUserId })
-    if (companyId) params.set('company_id', companyId)
-    fetch(`/api/inbox/unread-count?${params}`)
+    fetch(`/api/inbox/unread-count?user_id=${internalUserId}`)
       .then(r => r.json())
       .then(d => { if (d.success) setUnreadMessages(d.unread_messages ?? 0) })
-  }, [internalUserId, companyId])
+  }, [internalUserId])
 
   const fetchConversations = useCallback(() => {
     if (!internalUserId) return
@@ -138,9 +126,7 @@ export default function ManagerInboxPage() {
 
   useEffect(() => {
     const q = search.toLowerCase()
-    setFilteredConversations(
-      q ? conversations.filter(c => c.partnerName.toLowerCase().includes(q)) : conversations
-    )
+    setFilteredConversations(q ? conversations.filter(c => c.partnerName.toLowerCase().includes(q)) : conversations)
   }, [search, conversations])
 
   useEffect(() => {
@@ -163,7 +149,7 @@ export default function ManagerInboxPage() {
   useEffect(() => {
     if (!internalUserId) return
     const channel = supabase
-      .channel('manager-inbox-messages')
+      .channel('employee-inbox-messages')
       .on('postgres_changes', {
         event: 'INSERT', schema: 'public', table: 'messages',
         filter: `to_user_id=eq.${internalUserId}`,
@@ -176,35 +162,21 @@ export default function ManagerInboxPage() {
         fetchUnreadCount()
       })
       .subscribe()
-
     return () => { supabase.removeChannel(channel) }
   }, [internalUserId, selectedConv])
 
   function openCompose() {
-    if (!companyId || !internalUserId) return
+    if (!internalUserId) return
+    const uid = localStorage.getItem('tasking_user_id')
     setComposeOpen(true)
     setSelectedRecipient(null)
     setComposeText('')
     setComposeSearch('')
     setComposeError('')
-    Promise.all([
-      fetch(`/api/team/members?company_id=${companyId}`).then(r => r.json()),
-      fetch(`/api/company/departments?company_id=${companyId}`).then(r => r.json()),
-    ]).then(([membersData, deptsData]) => {
-      if (membersData.success) {
-        const all = membersData.members as CompanyMember[]
-        const eligible = all.filter(m => {
-          if (m.id === internalUserId) return false
-          if (m.role === 'Owner' || m.role === 'Partner' || m.role === 'Manager') return true
-          if (m.role === 'Employee' && managerDeptId && m.department_id === managerDeptId) return true
-          return false
-        })
-        setCompanyMembers(eligible)
-      }
-      if (deptsData.success) {
-        setCompanyDepartments(deptsData.departments ?? [])
-      }
-    }).catch(() => {})
+    fetch(`/api/employee/contacts?user_id=${uid}`)
+      .then(r => r.json())
+      .then(d => { if (d.success) setContacts(d.contacts ?? []) })
+      .catch(() => {})
   }
 
   async function handleComposeSend() {
@@ -274,41 +246,43 @@ export default function ManagerInboxPage() {
     }
   }
 
-  const filteredMembers = composeSearch
-    ? companyMembers.filter(m => m.full_name.toLowerCase().includes(composeSearch.toLowerCase()))
-    : companyMembers
+  const filteredContacts = composeSearch
+    ? contacts.filter(c => c.full_name.toLowerCase().includes(composeSearch.toLowerCase()))
+    : contacts
 
   return (
-    <div style={{ display: 'flex', height: '100vh', background: '#F3F4F6', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
-      <ManagerSidebar unreadMessages={unreadMessages} />
+    <div style={{ display: 'flex', height: '100vh', background: '#F0FDF4', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+      <EmployeeSidebar unreadMessages={unreadMessages} />
 
       <main style={{ marginLeft: '64px', flex: 1, height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        <div style={{ padding: '18px 32px', background: '#1E3A5F', borderBottom: '1px solid #163050', flexShrink: 0 }}>
+        <div style={{ padding: '18px 32px', background: GREEN, borderBottom: '1px solid #15803D', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#FFFFFF', margin: 0 }}>Inbox</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            {userName && <span style={{ fontSize: '0.9rem', color: 'rgba(255,255,255,0.85)' }}>{userName}</span>}
+            <span style={{ padding: '4px 10px', borderRadius: '999px', fontSize: '0.8rem', fontWeight: 600, background: 'rgba(255,255,255,0.2)', color: '#FFFFFF' }}>Employee</span>
+          </div>
         </div>
 
         <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
           {/* Left: conversation list */}
           <div style={{ width: '33%', minWidth: 260, maxWidth: 360, background: '#FFFFFF', borderRight: '1px solid #E5E7EB', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-            {/* New Message button */}
             <div style={{ padding: '12px 14px', borderBottom: '1px solid #F3F4F6' }}>
               <button
                 onClick={openCompose}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 6, width: '100%',
-                  padding: '8px 14px', background: ACCENT, border: 'none', borderRadius: 8,
+                  padding: '8px 14px', background: GREEN, border: 'none', borderRadius: 8,
                   color: '#fff', fontWeight: 600, fontSize: '0.875rem', cursor: 'pointer',
                   justifyContent: 'center',
                 }}
-                onMouseEnter={e => (e.currentTarget.style.background = '#2563EB')}
-                onMouseLeave={e => (e.currentTarget.style.background = ACCENT)}
+                onMouseEnter={e => (e.currentTarget.style.background = '#15803D')}
+                onMouseLeave={e => (e.currentTarget.style.background = GREEN)}
               >
                 <SquarePen size={14} strokeWidth={2.5} />
                 New Message
               </button>
             </div>
 
-            {/* Search */}
             <div style={{ padding: '10px 14px', borderBottom: '1px solid #F3F4F6' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 8, padding: '7px 12px' }}>
                 <Search size={14} color="#9CA3AF" />
@@ -332,12 +306,12 @@ export default function ManagerInboxPage() {
                   onClick={() => setSelectedConv(conv)}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 10, padding: '13px 16px',
-                    background: selectedConv?.partnerId === conv.partnerId ? ACCENT_LIGHT : 'transparent',
+                    background: selectedConv?.partnerId === conv.partnerId ? GREEN_LIGHT : 'transparent',
                     border: 'none', cursor: 'pointer', textAlign: 'left', width: '100%',
                     borderBottom: '1px solid #F9FAFB', transition: 'background 0.1s',
                   }}
                 >
-                  <Avatar name={conv.partnerName} size={38} />
+                  <Avatar name={conv.partnerName} size={38} color={ROLE_COLOR[conv.partnerRole] ?? GREEN} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontWeight: conv.unreadCount > 0 ? 700 : 500, fontSize: '0.875rem', color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -345,24 +319,13 @@ export default function ManagerInboxPage() {
                       </span>
                       <span style={{ fontSize: '0.7rem', color: '#9CA3AF', flexShrink: 0, marginLeft: 6 }}>{formatTime(conv.lastTime)}</span>
                     </div>
-                    {conv.companyName && (
-                      <div style={{ marginTop: 2 }}>
-                        <span style={{ background: '#EFF6FF', color: ACCENT, fontSize: '0.68rem', fontWeight: 600, padding: '1px 7px', borderRadius: '20px', border: `1px solid ${ACCENT}33` }}>
-                          {conv.companyName}
-                        </span>
-                      </div>
-                    )}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 1 }}>
-                      {conv.partnerRole && (
-                        <span style={{ fontSize: '0.7rem', color: ACCENT, fontWeight: 500 }}>{conv.partnerRole}</span>
-                      )}
+                      {conv.partnerRole && <span style={{ fontSize: '0.7rem', color: GREEN, fontWeight: 500 }}>{conv.partnerRole}</span>}
                       {conv.partnerRole && <span style={{ fontSize: '0.7rem', color: '#D1D5DB' }}>·</span>}
                       <span style={{ fontSize: '0.8125rem', color: conv.unreadCount > 0 ? '#111827' : '#9CA3AF', fontWeight: conv.unreadCount > 0 ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                         {conv.lastMessage}
                       </span>
-                      {conv.unreadCount > 0 && (
-                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: ACCENT, flexShrink: 0 }} />
-                      )}
+                      {conv.unreadCount > 0 && <div style={{ width: 8, height: 8, borderRadius: '50%', background: GREEN, flexShrink: 0 }} />}
                     </div>
                   </div>
                 </button>
@@ -370,17 +333,15 @@ export default function ManagerInboxPage() {
             </div>
           </div>
 
-          {/* Right: chat view */}
+          {/* Right: chat */}
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#F9FAFB' }}>
             {selectedConv ? (
               <>
                 <div style={{ padding: '14px 24px', background: '#FFFFFF', borderBottom: '1px solid #E5E7EB', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
-                  <Avatar name={selectedConv.partnerName} size={36} />
+                  <Avatar name={selectedConv.partnerName} size={36} color={ROLE_COLOR[selectedConv.partnerRole] ?? GREEN} />
                   <div>
                     <div style={{ fontWeight: 600, fontSize: '0.9375rem', color: '#111827' }}>{selectedConv.partnerName}</div>
-                    {selectedConv.partnerRole && (
-                      <div style={{ fontSize: '0.75rem', color: '#9CA3AF' }}>{selectedConv.partnerRole}</div>
-                    )}
+                    {selectedConv.partnerRole && <div style={{ fontSize: '0.75rem', color: '#9CA3AF' }}>{selectedConv.partnerRole}</div>}
                   </div>
                 </div>
 
@@ -392,7 +353,7 @@ export default function ManagerInboxPage() {
                         <div style={{
                           maxWidth: '68%', padding: '9px 14px',
                           borderRadius: isMine ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-                          background: isMine ? ACCENT : '#FFFFFF',
+                          background: isMine ? GREEN : '#FFFFFF',
                           color: isMine ? '#fff' : '#111827',
                           fontSize: '0.875rem', boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
                         }}>
@@ -418,7 +379,7 @@ export default function ManagerInboxPage() {
                   <button
                     onClick={handleSendMessage}
                     disabled={sendingMsg || !msgInput.trim()}
-                    style={{ padding: '9px 18px', background: ACCENT, color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: '0.875rem', opacity: sendingMsg || !msgInput.trim() ? 0.6 : 1 }}
+                    style={{ padding: '9px 18px', background: GREEN, color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: '0.875rem', opacity: sendingMsg || !msgInput.trim() ? 0.6 : 1 }}
                   >
                     <Send size={15} /> Send
                   </button>
@@ -459,8 +420,8 @@ export default function ManagerInboxPage() {
               <div>
                 <p style={{ fontWeight: 600, fontSize: '0.8125rem', color: '#374151', margin: '0 0 10px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>To</p>
                 {selectedRecipient ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: ACCENT_LIGHT, border: `1.5px solid ${ACCENT}33`, borderRadius: 10 }}>
-                    <Avatar name={selectedRecipient.full_name} size={32} />
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: GREEN_LIGHT, border: `1.5px solid ${GREEN_BORDER}`, borderRadius: 10 }}>
+                    <Avatar name={selectedRecipient.full_name} size={32} color={ROLE_COLOR[selectedRecipient.role] ?? GREEN} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: 0 }}>{selectedRecipient.full_name}</p>
                       <p style={{ fontSize: '0.75rem', color: '#9CA3AF', margin: 0 }}>{selectedRecipient.role}</p>
@@ -485,14 +446,14 @@ export default function ManagerInboxPage() {
                       />
                     </div>
                     <div style={{ maxHeight: 220, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      {filteredMembers.length === 0 ? (
+                      {filteredContacts.length === 0 ? (
                         <p style={{ fontSize: '0.875rem', color: '#9CA3AF', textAlign: 'center', padding: '12px 0', margin: 0 }}>No people found</p>
-                      ) : filteredMembers.map(m => {
-                        const roleColor = ROLE_COLOR[m.role] ?? '#9CA3AF'
+                      ) : filteredContacts.map(c => {
+                        const roleColor = ROLE_COLOR[c.role] ?? GREEN
                         return (
                           <button
-                            key={m.id}
-                            onClick={() => setSelectedRecipient(m)}
+                            key={c.id}
+                            onClick={() => setSelectedRecipient(c)}
                             style={{
                               display: 'flex', alignItems: 'center', gap: 10,
                               padding: '9px 10px', background: 'none', border: '1px solid transparent',
@@ -502,16 +463,10 @@ export default function ManagerInboxPage() {
                             onMouseEnter={e => { e.currentTarget.style.background = '#F9FAFB'; e.currentTarget.style.borderColor = '#E5E7EB' }}
                             onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.borderColor = 'transparent' }}
                           >
-                            <Avatar name={m.full_name} size={34} color={roleColor} />
+                            <Avatar name={c.full_name} size={34} color={roleColor} />
                             <div style={{ flex: 1, minWidth: 0 }}>
-                              <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.full_name}</p>
-                              {m.role === 'Manager' && m.department_id ? (
-                                <p style={{ fontSize: '0.75rem', margin: 0, color: '#9CA3AF', fontWeight: 400 }}>
-                                  {companyDepartments.find(d => d.id === m.department_id)?.name ?? ''}{' · '}Manager
-                                </p>
-                              ) : (
-                                <p style={{ fontSize: '0.75rem', margin: 0, color: roleColor, fontWeight: 500 }}>{m.role}</p>
-                              )}
+                              <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.full_name}</p>
+                              <p style={{ fontSize: '0.75rem', margin: 0, color: roleColor, fontWeight: 500 }}>{c.role}</p>
                             </div>
                           </button>
                         )
@@ -560,7 +515,7 @@ export default function ManagerInboxPage() {
                 onClick={handleComposeSend}
                 disabled={composeSending || !selectedRecipient || !composeText.trim()}
                 style={{
-                  flex: 1, padding: '10px', background: ACCENT, border: 'none', borderRadius: 9,
+                  flex: 1, padding: '10px', background: GREEN, border: 'none', borderRadius: 9,
                   fontWeight: 600, fontSize: '0.9rem', color: '#fff',
                   cursor: (composeSending || !selectedRecipient || !composeText.trim()) ? 'not-allowed' : 'pointer',
                   display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
