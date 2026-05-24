@@ -35,28 +35,39 @@ export const employeeDashboardRepository = {
   async getAssignedWork(user_id: string): Promise<
     {
       id: string
+      shift_id: string
       title: string
-      description: string | null
+      instruction: string | null
       shift_date: string
       start_time: string
       end_time: string
       assignment_status: string
       casual_worker_name: string
       casual_worker_email: string
+      manager_name: string
+      manager_email: string
     }[]
   > {
     const { data, error } = await supabase
       .from('shift_assignments')
       .select(`
         id,
+        shift_id,
         assignment_status,
-        users!shift_assignments_user_id_fkey (
+
+        casual_worker:users!shift_assignments_user_id_fkey (
           full_name,
           email_address
         ),
+
+        assigned_by_user:users!shift_assignments_assigned_by_fkey (
+          full_name,
+          email_address
+        ),
+
         shifts (
           title,
-          description,
+          instruction,
           shift_date,
           start_time,
           end_time
@@ -71,14 +82,21 @@ export const employeeDashboardRepository = {
 
     return (data ?? []).map((row: any) => ({
       id: row.id,
+      shift_id: row.shift_id,
+
       title: row.shifts?.title ?? 'Untitled Shift',
-      description: row.shifts?.description ?? null,
+      instruction: row.shifts?.instruction ?? null,
       shift_date: row.shifts?.shift_date ?? '',
       start_time: row.shifts?.start_time ?? '',
       end_time: row.shifts?.end_time ?? '',
+
       assignment_status: row.assignment_status ?? 'assigned',
-      casual_worker_name: row.users?.full_name ?? 'Not assigned',
-      casual_worker_email: row.users?.email_address ?? 'No email',
+
+      casual_worker_name: row.casual_worker?.full_name ?? 'Not assigned',
+      casual_worker_email: row.casual_worker?.email_address ?? 'No email',
+
+      manager_name: row.assigned_by_user?.full_name ?? 'Assigned Manager',
+      manager_email: row.assigned_by_user?.email_address ?? '',
     }))
   },
 }

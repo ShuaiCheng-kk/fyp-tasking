@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import EmployeeSidebar from '@/components/EmployeeSidebar'
@@ -9,18 +9,36 @@ const GREEN = '#16A34A'
 
 type AssignedWork = {
   id: string
+  shift_id?: string
   title: string
-  description: string | null
+  instruction: string | null
   shift_date: string
   start_time: string
   end_time: string
   assignment_status: string
   casual_worker_name: string
   casual_worker_email: string
+  manager_name: string
+}
+
+type GroupedAssignedWork = {
+  group_key: string
+  title: string
+  instruction: string | null
+  shift_date: string
+  start_time: string
+  end_time: string
+  manager_name: string
+  casual_workers: {
+    name: string
+    email: string
+    status: string
+  }[]
 }
 
 export default function EmployeeDashboard() {
   const router = useRouter()
+
   const [userName, setUserName] = useState('')
   const [companyName, setCompanyName] = useState('')
   const [departmentName, setDepartmentName] = useState('')
@@ -64,12 +82,7 @@ export default function EmployeeDashboard() {
         return
       }
 
-      const { full_name, company_id } = meData.user
-
-      if (full_name) setUserName(full_name)
-      if (company_id) {
-        localStorage.setItem(`tasking_company_id_${userId}`, company_id)
-      }
+      setUserName(meData.user.full_name ?? '')
 
       const dashRes = await fetch(`/api/employee/dashboard?user_id=${userId}`)
       const dashData = await dashRes.json()
@@ -90,10 +103,72 @@ export default function EmployeeDashboard() {
     }
   }, [router])
 
+  const groupedAssignedWork = useMemo(() => {
+    const grouped: Record<string, GroupedAssignedWork> = {}
+
+    assignedWork.forEach((work) => {
+      const groupKey =
+        work.shift_id ||
+        `${work.title}-${work.shift_date}-${work.start_time}-${work.end_time}`
+
+      if (!grouped[groupKey]) {
+        grouped[groupKey] = {
+          group_key: groupKey,
+          title: work.title,
+          instruction: work.instruction,
+          shift_date: work.shift_date,
+          start_time: work.start_time,
+          end_time: work.end_time,
+          manager_name: work.manager_name || 'Assigned Manager',
+          casual_workers: [],
+        }
+      }
+
+      grouped[groupKey].casual_workers.push({
+        name: work.casual_worker_name,
+        email: work.casual_worker_email,
+        status: work.assignment_status || 'assigned',
+      })
+    })
+
+    return Object.values(grouped)
+  }, [assignedWork])
+
   const title =
     companyName && departmentName
       ? `${companyName} [${departmentName}]`
       : companyName || 'Dashboard'
+
+  const formatDate = (dateValue: string) => {
+    const date = new Date(dateValue)
+    if (Number.isNaN(date.getTime())) return dateValue
+
+    return date.toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    })
+  }
+
+  const formatTime = (timeValue: string) => {
+    const [hour, minute] = timeValue.split(':')
+    const date = new Date()
+    date.setHours(Number(hour), Number(minute), 0, 0)
+
+    return date.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    })
+  }
+
+  const getAssignmentLabel = (dateValue: string) => {
+    const today = new Date().toISOString().split('T')[0]
+    const shiftDate = dateValue?.split('T')[0]
+
+    if (today === shiftDate) return "Today's Assignment"
+    return 'Upcoming Assignment'
+  }
 
   return (
     <div
@@ -145,7 +220,7 @@ export default function EmployeeDashboard() {
               <span
                 style={{
                   fontSize: '0.9rem',
-                  color: 'rgba(255,255,255,0.85)',
+                  color: '#FFFFFF',
                 }}
               >
                 {userName}
@@ -169,34 +244,9 @@ export default function EmployeeDashboard() {
 
         <div style={{ padding: '28px 32px', flex: 1 }}>
           {loading && (
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                color: '#6B7280',
-                fontSize: '0.9375rem',
-              }}
-            >
-              <svg className="animate-spin" width={16} height={16} viewBox="0 0 18 18">
-                <circle
-                  cx="9"
-                  cy="9"
-                  r="7"
-                  stroke="rgba(17,24,39,0.2)"
-                  strokeWidth="2.5"
-                  fill="none"
-                />
-                <path
-                  d="M9 2a7 7 0 0 1 7 7"
-                  stroke="#16A34A"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  fill="none"
-                />
-              </svg>
-              Loading…
-            </div>
+            <p style={{ color: '#6B7280', fontSize: '0.95rem' }}>
+              Loading assigned work...
+            </p>
           )}
 
           {!loading && (
@@ -211,93 +261,165 @@ export default function EmployeeDashboard() {
             >
               <h2
                 style={{
-                  fontSize: '1.25rem',
-                  fontWeight: 700,
+                  fontSize: '1.45rem',
+                  fontWeight: 800,
                   color: '#14532D',
-                  marginBottom: '16px',
+                  margin: '0 0 24px',
                 }}
               >
                 Assigned Work
               </h2>
 
-              {assignedWork.length === 0 ? (
-                <p style={{ color: '#6B7280', fontSize: '0.95rem' }}>
+              {groupedAssignedWork.length === 0 ? (
+                <div
+                  style={{
+                    padding: '18px',
+                    borderRadius: '12px',
+                    border: '1px dashed #BBF7D0',
+                    background: '#F0FDF4',
+                    color: '#6B7280',
+                    fontSize: '0.95rem',
+                  }}
+                >
                   No assigned work found.
-                </p>
+                </div>
               ) : (
-                <div style={{ display: 'grid', gap: '14px' }}>
-                  {assignedWork.map((work) => (
+                <div style={{ display: 'grid', gap: '18px' }}>
+                  {groupedAssignedWork.map((work) => (
                     <div
-                      key={work.id}
+                      key={work.group_key}
                       style={{
-                        padding: '16px',
-                        borderRadius: '12px',
+                        padding: '24px',
+                        borderRadius: '14px',
                         border: '1px solid #BBF7D0',
                         background: '#F0FDF4',
                       }}
                     >
-                      <div
+                      <p
                         style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          gap: '12px',
-                          alignItems: 'center',
+                          margin: '0 0 8px',
+                          fontSize: '0.85rem',
+                          fontWeight: 800,
+                          color: '#16A34A',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.04em',
                         }}
                       >
-                        <h3
-                          style={{
-                            fontSize: '1rem',
-                            fontWeight: 700,
-                            color: '#166534',
-                            margin: 0,
-                          }}
-                        >
-                          {work.title}
-                        </h3>
+                        {getAssignmentLabel(work.shift_date)}
+                      </p>
 
-                        <span
-                          style={{
-                            padding: '4px 10px',
-                            borderRadius: '999px',
-                            background: '#DCFCE7',
-                            color: '#166534',
-                            fontSize: '0.8rem',
-                            fontWeight: 600,
-                          }}
-                        >
-                          {work.assignment_status}
-                        </span>
+                      <h3
+                        style={{
+                          fontSize: '1.45rem',
+                          fontWeight: 900,
+                          color: '#14532D',
+                          margin: '0 0 22px',
+                        }}
+                      >
+                        {work.title}
+                      </h3>
+
+                      <div
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns:
+                            'repeat(auto-fit, minmax(220px, 1fr))',
+                          gap: '14px',
+                          marginBottom: '24px',
+                        }}
+                      >
+                        <InfoBox label="Department" value={departmentName || '-'} />
+                        <InfoBox
+                          label="Shift"
+                          value={`${formatTime(work.start_time)} – ${formatTime(
+                            work.end_time
+                          )}`}
+                        />
+                        <InfoBox label="Date" value={formatDate(work.shift_date)} />
+                        <InfoBox
+                          label="Reporting Manager"
+                          value={work.manager_name || 'Assigned Manager'}
+                        />
                       </div>
 
-                      {work.description && (
+                      <h4 style={sectionTitleStyle}>Assigned Casual Workers</h4>
+
+                      <div
+                        style={{
+                          overflowX: 'auto',
+                          border: '1px solid #BBF7D0',
+                          borderRadius: '12px',
+                          background: '#FFFFFF',
+                          marginBottom: '22px',
+                        }}
+                      >
+                        <table
+                          style={{
+                            width: '100%',
+                            borderCollapse: 'collapse',
+                            fontSize: '0.92rem',
+                          }}
+                        >
+                          <thead>
+                            <tr style={{ background: '#DCFCE7' }}>
+                              <th style={tableHeaderStyle}>CW Name</th>
+                              <th style={tableHeaderStyle}>Email</th>
+                              <th style={tableHeaderStyle}>Role</th>
+                              <th style={tableHeaderStyle}>Status</th>
+                            </tr>
+                          </thead>
+
+                          <tbody>
+                            {work.casual_workers.map((cw, index) => (
+                              <tr key={`${work.group_key}-${cw.email}-${index}`}>
+                                <td style={tableCellStyle}>{cw.name || '-'}</td>
+                                <td style={tableCellStyle}>{cw.email || '-'}</td>
+                                <td style={tableCellStyle}>Casual Worker</td>
+                                <td style={tableCellStyle}>
+                                  <span
+                                    style={{
+                                      padding: '5px 10px',
+                                      borderRadius: '999px',
+                                      background: '#DCFCE7',
+                                      color: '#166534',
+                                      fontSize: '0.8rem',
+                                      fontWeight: 800,
+                                      textTransform: 'capitalize',
+                                    }}
+                                  >
+                                    {cw.status || 'assigned'}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div
+                        style={{
+                          padding: '16px',
+                          borderRadius: '12px',
+                          background: '#FFFFFF',
+                          border: '1px solid #BBF7D0',
+                        }}
+                      >
+                        <h4 style={sectionTitleStyle}>Instructions</h4>
+
                         <p
                           style={{
-                            marginTop: '8px',
-                            color: '#4B5563',
-                            fontSize: '0.9rem',
+                            margin: 0,
+                            color: '#374151',
+                            fontSize: '0.95rem',
+                            lineHeight: 1.7,
                           }}
                         >
-                          <strong>Instructions:</strong> {work.description}
+                          {work.instruction || 'No instructions provided.'}
                         </p>
-                      )}
-
-                      <div
-                        style={{
-                          marginTop: '12px',
-                          display: 'grid',
-                          gap: '6px',
-                          color: '#374151',
-                          fontSize: '0.9rem',
-                        }}
-                      >
-                        <span><strong>Date:</strong> {work.shift_date}</span>
-                        <span><strong>Time:</strong> {work.start_time} - {work.end_time}</span>
-                        <span><strong>Assigned Casual Worker:</strong> {work.casual_worker_name}</span>
-                        <span><strong>Casual Worker Email:</strong> {work.casual_worker_email}</span>
                       </div>
                     </div>
-                  ))}                
-                  </div>
+                  ))}
+                </div>
               )}
             </section>
           )}
@@ -305,4 +427,62 @@ export default function EmployeeDashboard() {
       </main>
     </div>
   )
+}
+
+function InfoBox({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      style={{
+        padding: '14px 16px',
+        borderRadius: '12px',
+        background: '#FFFFFF',
+        border: '1px solid #BBF7D0',
+      }}
+    >
+      <p
+        style={{
+          margin: '0 0 8px',
+          fontSize: '0.78rem',
+          fontWeight: 800,
+          color: '#16A34A',
+          textTransform: 'uppercase',
+          letterSpacing: '0.04em',
+        }}
+      >
+        {label}
+      </p>
+
+      <p
+        style={{
+          margin: 0,
+          fontSize: '1.05rem',
+          fontWeight: 800,
+          color: '#1F2937',
+        }}
+      >
+        {value}
+      </p>
+    </div>
+  )
+}
+
+const sectionTitleStyle: React.CSSProperties = {
+  fontSize: '1.05rem',
+  fontWeight: 900,
+  color: '#14532D',
+  margin: '0 0 12px',
+}
+
+const tableHeaderStyle: React.CSSProperties = {
+  padding: '12px 14px',
+  textAlign: 'left',
+  color: '#14532D',
+  fontWeight: 900,
+  borderBottom: '1px solid #BBF7D0',
+}
+
+const tableCellStyle: React.CSSProperties = {
+  padding: '12px 14px',
+  color: '#374151',
+  borderBottom: '1px solid #DCFCE7',
 }
