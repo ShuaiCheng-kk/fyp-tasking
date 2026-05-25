@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import type { CSSProperties } from 'react'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import EmployeeSidebar from '@/components/EmployeeSidebar'
@@ -141,6 +142,7 @@ export default function EmployeeDashboard() {
 
   const formatDate = (dateValue: string) => {
     const date = new Date(dateValue)
+
     if (Number.isNaN(date.getTime())) return dateValue
 
     return date.toLocaleDateString('en-GB', {
@@ -153,6 +155,7 @@ export default function EmployeeDashboard() {
   const formatTime = (timeValue: string) => {
     const [hour, minute] = timeValue.split(':')
     const date = new Date()
+
     date.setHours(Number(hour), Number(minute), 0, 0)
 
     return date.toLocaleTimeString('en-US', {
@@ -167,6 +170,7 @@ export default function EmployeeDashboard() {
     const shiftDate = dateValue?.split('T')[0]
 
     if (today === shiftDate) return "Today's Assignment"
+
     return 'Upcoming Assignment'
   }
 
@@ -193,7 +197,7 @@ export default function EmployeeDashboard() {
       >
         <div
           style={{
-            padding: '18px 32px',
+            padding: '14px 24px',
             background: GREEN,
             borderBottom: '1px solid #15803D',
             display: 'flex',
@@ -207,7 +211,7 @@ export default function EmployeeDashboard() {
           <h1
             style={{
               fontWeight: 700,
-              fontSize: '1.1875rem',
+              fontSize: '1rem',
               color: '#FFFFFF',
               margin: 0,
             }}
@@ -215,11 +219,11 @@ export default function EmployeeDashboard() {
             {loading ? '' : title}
           </h1>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             {userName && (
               <span
                 style={{
-                  fontSize: '0.9rem',
+                  fontSize: '0.8rem',
                   color: '#FFFFFF',
                 }}
               >
@@ -229,9 +233,9 @@ export default function EmployeeDashboard() {
 
             <span
               style={{
-                padding: '4px 10px',
+                padding: '3px 8px',
                 borderRadius: '999px',
-                fontSize: '0.8rem',
+                fontSize: '0.72rem',
                 fontWeight: 600,
                 background: 'rgba(255,255,255,0.2)',
                 color: '#FFFFFF',
@@ -242,9 +246,9 @@ export default function EmployeeDashboard() {
           </div>
         </div>
 
-        <div style={{ padding: '28px 32px', flex: 1 }}>
+        <div style={{ padding: '18px 22px', flex: 1 }}>
           {loading && (
-            <p style={{ color: '#6B7280', fontSize: '0.95rem' }}>
+            <p style={{ color: '#6B7280', fontSize: '0.82rem' }}>
               Loading assigned work...
             </p>
           )}
@@ -253,18 +257,18 @@ export default function EmployeeDashboard() {
             <section
               style={{
                 background: '#FFFFFF',
-                borderRadius: '16px',
-                padding: '24px',
+                borderRadius: '12px',
+                padding: '18px',
                 border: '1px solid #DCFCE7',
-                boxShadow: '0 8px 20px rgba(22, 163, 74, 0.08)',
+                boxShadow: '0 4px 10px rgba(22, 163, 74, 0.06)',
               }}
             >
               <h2
                 style={{
-                  fontSize: '1.45rem',
+                  fontSize: '1.05rem',
                   fontWeight: 800,
                   color: '#14532D',
-                  margin: '0 0 24px',
+                  margin: '0 0 18px',
                 }}
               >
                 Assigned Work
@@ -273,32 +277,32 @@ export default function EmployeeDashboard() {
               {groupedAssignedWork.length === 0 ? (
                 <div
                   style={{
-                    padding: '18px',
-                    borderRadius: '12px',
+                    padding: '14px',
+                    borderRadius: '10px',
                     border: '1px dashed #BBF7D0',
                     background: '#F0FDF4',
                     color: '#6B7280',
-                    fontSize: '0.95rem',
+                    fontSize: '0.82rem',
                   }}
                 >
                   No assigned work found.
                 </div>
               ) : (
-                <div style={{ display: 'grid', gap: '18px' }}>
+                <div style={{ display: 'grid', gap: '14px' }}>
                   {groupedAssignedWork.map((work) => (
                     <div
                       key={work.group_key}
                       style={{
-                        padding: '24px',
-                        borderRadius: '14px',
+                        padding: '18px',
+                        borderRadius: '12px',
                         border: '1px solid #BBF7D0',
                         background: '#F0FDF4',
                       }}
                     >
                       <p
                         style={{
-                          margin: '0 0 8px',
-                          fontSize: '0.85rem',
+                          margin: '0 0 6px',
+                          fontSize: '0.68rem',
                           fontWeight: 800,
                           color: '#16A34A',
                           textTransform: 'uppercase',
@@ -310,10 +314,10 @@ export default function EmployeeDashboard() {
 
                       <h3
                         style={{
-                          fontSize: '1.45rem',
+                          fontSize: '1rem',
                           fontWeight: 900,
                           color: '#14532D',
-                          margin: '0 0 22px',
+                          margin: '0 0 16px',
                         }}
                       >
                         {work.title}
@@ -323,83 +327,89 @@ export default function EmployeeDashboard() {
                         style={{
                           display: 'grid',
                           gridTemplateColumns:
-                            'repeat(auto-fit, minmax(220px, 1fr))',
-                          gap: '14px',
-                          marginBottom: '24px',
+                            'repeat(auto-fit, minmax(170px, 1fr))',
+                          gap: '10px',
+                          marginBottom: '18px',
                         }}
                       >
-                        <InfoBox label="Department" value={departmentName || '-'} />
+                        <InfoBox
+                          label="Department"
+                          value={departmentName || '-'}
+                        />
+
                         <InfoBox
                           label="Shift"
-                          value={`${formatTime(work.start_time)} – ${formatTime(
-                            work.end_time
-                          )}`}
+                          value={`${formatTime(
+                            work.start_time
+                          )} – ${formatTime(work.end_time)}`}
                         />
-                        <InfoBox label="Date" value={formatDate(work.shift_date)} />
+
+                        <InfoBox
+                          label="Date"
+                          value={formatDate(work.shift_date)}
+                        />
+
                         <InfoBox
                           label="Reporting Manager"
                           value={work.manager_name || 'Assigned Manager'}
                         />
                       </div>
 
-                      <h4 style={sectionTitleStyle}>Assigned Casual Workers</h4>
+                      <h4 style={sectionTitleStyle}>
+                        Assigned Casual Workers
+                      </h4>
 
                       <div
                         style={{
-                          overflowX: 'auto',
                           border: '1px solid #BBF7D0',
-                          borderRadius: '12px',
+                          borderRadius: '10px',
                           background: '#FFFFFF',
-                          marginBottom: '22px',
+                          marginBottom: '16px',
+                          overflow: 'hidden',
                         }}
                       >
-                        <table
-                          style={{
-                            width: '100%',
-                            borderCollapse: 'collapse',
-                            fontSize: '0.92rem',
-                          }}
-                        >
-                          <thead>
-                            <tr style={{ background: '#DCFCE7' }}>
-                              <th style={tableHeaderStyle}>CW Name</th>
-                              <th style={tableHeaderStyle}>Email</th>
-                              <th style={tableHeaderStyle}>Role</th>
-                              <th style={tableHeaderStyle}>Status</th>
-                            </tr>
-                          </thead>
+                        {work.casual_workers.map((cw, index) => (
+                          <div
+                            key={`${work.group_key}-${cw.name}-${index}`}
+                            style={{
+                              padding: '10px 12px',
+                              borderBottom:
+                                index === work.casual_workers.length - 1
+                                  ? 'none'
+                                  : '1px solid #DCFCE7',
+                            }}
+                          >
+                            <p
+                              style={{
+                                margin: '0 0 2px',
+                                fontSize: '0.66rem',
+                                fontWeight: 800,
+                                color: '#16A34A',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.04em',
+                              }}
+                            >
+                              CW Name
+                            </p>
 
-                          <tbody>
-                            {work.casual_workers.map((cw, index) => (
-                              <tr key={`${work.group_key}-${cw.email}-${index}`}>
-                                <td style={tableCellStyle}>{cw.name || '-'}</td>
-                                <td style={tableCellStyle}>{cw.email || '-'}</td>
-                                <td style={tableCellStyle}>Casual Worker</td>
-                                <td style={tableCellStyle}>
-                                  <span
-                                    style={{
-                                      padding: '5px 10px',
-                                      borderRadius: '999px',
-                                      background: '#DCFCE7',
-                                      color: '#166534',
-                                      fontSize: '0.8rem',
-                                      fontWeight: 800,
-                                      textTransform: 'capitalize',
-                                    }}
-                                  >
-                                    {cw.status || 'assigned'}
-                                  </span>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            <p
+                              style={{
+                                margin: 0,
+                                color: '#374151',
+                                fontSize: '0.84rem',
+                                fontWeight: 700,
+                              }}
+                            >
+                              {cw.name || '-'}
+                            </p>
+                          </div>
+                        ))}
                       </div>
 
                       <div
                         style={{
-                          padding: '16px',
-                          borderRadius: '12px',
+                          padding: '12px',
+                          borderRadius: '10px',
                           background: '#FFFFFF',
                           border: '1px solid #BBF7D0',
                         }}
@@ -410,8 +420,8 @@ export default function EmployeeDashboard() {
                           style={{
                             margin: 0,
                             color: '#374151',
-                            fontSize: '0.95rem',
-                            lineHeight: 1.7,
+                            fontSize: '0.82rem',
+                            lineHeight: 1.6,
                           }}
                         >
                           {work.instruction || 'No instructions provided.'}
@@ -429,20 +439,26 @@ export default function EmployeeDashboard() {
   )
 }
 
-function InfoBox({ label, value }: { label: string; value: string }) {
+function InfoBox({
+  label,
+  value,
+}: {
+  label: string
+  value: string
+}) {
   return (
     <div
       style={{
-        padding: '14px 16px',
-        borderRadius: '12px',
+        padding: '10px 12px',
+        borderRadius: '10px',
         background: '#FFFFFF',
         border: '1px solid #BBF7D0',
       }}
     >
       <p
         style={{
-          margin: '0 0 8px',
-          fontSize: '0.78rem',
+          margin: '0 0 5px',
+          fontSize: '0.65rem',
           fontWeight: 800,
           color: '#16A34A',
           textTransform: 'uppercase',
@@ -455,7 +471,7 @@ function InfoBox({ label, value }: { label: string; value: string }) {
       <p
         style={{
           margin: 0,
-          fontSize: '1.05rem',
+          fontSize: '0.84rem',
           fontWeight: 800,
           color: '#1F2937',
         }}
@@ -466,23 +482,9 @@ function InfoBox({ label, value }: { label: string; value: string }) {
   )
 }
 
-const sectionTitleStyle: React.CSSProperties = {
-  fontSize: '1.05rem',
+const sectionTitleStyle: CSSProperties = {
+  fontSize: '0.88rem',
   fontWeight: 900,
   color: '#14532D',
-  margin: '0 0 12px',
-}
-
-const tableHeaderStyle: React.CSSProperties = {
-  padding: '12px 14px',
-  textAlign: 'left',
-  color: '#14532D',
-  fontWeight: 900,
-  borderBottom: '1px solid #BBF7D0',
-}
-
-const tableCellStyle: React.CSSProperties = {
-  padding: '12px 14px',
-  color: '#374151',
-  borderBottom: '1px solid #DCFCE7',
+  margin: '0 0 10px',
 }
