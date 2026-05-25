@@ -1,3 +1,4 @@
+export type * from './recruitment.types'
 export type { User } from './auth.types'
 export type { Company } from './company.types'
 export type { Department } from './department.types'
