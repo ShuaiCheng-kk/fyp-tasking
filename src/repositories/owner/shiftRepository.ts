@@ -12,12 +12,11 @@ export const shiftRepository = {
       .insert({
         company_id: input.company_id,
         department_id: input.department_id,
-        date: input.date,
+        shift_date: input.shift_date,
         start_time: input.start_time,
         end_time: input.end_time,
-        assigned_user_id: input.assigned_user_id ?? null,
-        supervisor_id: input.supervisor_id ?? null,
-        status: 'Draft',
+        title: input.title ?? null,
+        instruction: input.instruction ?? null,
         created_by: input.created_by,
       })
       .select()
@@ -35,9 +34,9 @@ export const shiftRepository = {
       .from('shifts')
       .select('*')
       .eq('company_id', company_id)
-      .gte('date', from)
-      .lte('date', to)
-      .order('date', { ascending: true })
+      .gte('shift_date', from)
+      .lte('shift_date', to)
+      .order('shift_date', { ascending: true })
       .order('start_time', { ascending: true })
     if (error) throw new Error(error.message)
     return (data ?? []) as Shift[]

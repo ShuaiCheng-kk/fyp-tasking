@@ -16,7 +16,7 @@ export interface TimelineRow {
 export const shiftService = {
 
   async createShift(input: ShiftInput): Promise<Shift> {
-    if (!input.company_id || !input.department_id || !input.date || !input.start_time || !input.end_time || !input.created_by) {
+    if (!input.company_id || !input.department_id || !input.shift_date || !input.start_time || !input.end_time || !input.created_by) {
       throw new Error('Missing required shift fields')
     }
     if (input.start_time >= input.end_time) {
@@ -46,27 +46,19 @@ export const shiftService = {
   ): Promise<TimelineRow[]> {
     const shifts = await shiftRepository.getShiftsByCompanyAndDateRange(company_id, date_from, date_to)
 
-    const userIds = [...new Set(shifts.filter(s => s.assigned_user_id).map(s => s.assigned_user_id!))]
     const deptIds = [...new Set(shifts.map(s => s.department_id))]
-
-    const [users, departments] = await Promise.all([
-      shiftRepository.getUsersByIds(userIds),
-      shiftRepository.getDepartmentsByIds(deptIds),
-    ])
-
-    const userMap = new Map(users.map(u => [u.id, u]))
+    const departments = await shiftRepository.getDepartmentsByIds(deptIds)
     const deptMap = new Map(departments.map(d => [d.id, d.name]))
 
-    // Group by assigned_user_id; unassigned shifts group by department as "Open Shift"
+    // Group shifts by department as "Open Shift" rows (assignment lives in shift_assignments)
     const rowMap = new Map<string, TimelineRow>()
     for (const shift of shifts) {
-      const key = shift.assigned_user_id ?? `open_${shift.department_id}`
+      const key = `dept_${shift.department_id}`
       if (!rowMap.has(key)) {
-        const user = shift.assigned_user_id ? userMap.get(shift.assigned_user_id) : null
         rowMap.set(key, {
-          user_id: shift.assigned_user_id,
-          full_name: user?.full_name ?? 'Open Shift',
-          role: user?.role ?? '',
+          user_id: null,
+          full_name: 'Open Shift',
+          role: '',
           department_id: shift.department_id,
           department_name: deptMap.get(shift.department_id) ?? '',
           shifts: [],
