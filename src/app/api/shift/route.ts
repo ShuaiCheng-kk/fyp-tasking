@@ -35,15 +35,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { company_id, department_id, date, start_time, end_time, assigned_user_id, supervisor_id, created_by } =
+  const { company_id, department_id, shift_date, start_time, end_time, created_by } =
     body as Record<string, unknown>
 
   if (!company_id || typeof company_id !== 'string')
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
   if (!department_id || typeof department_id !== 'string')
     return NextResponse.json({ success: false, message: 'department_id is required' }, { status: 400 })
-  if (!date || typeof date !== 'string')
-    return NextResponse.json({ success: false, message: 'date is required' }, { status: 400 })
+  if (!shift_date || typeof shift_date !== 'string')
+    return NextResponse.json({ success: false, message: 'shift_date is required' }, { status: 400 })
   if (!start_time || typeof start_time !== 'string')
     return NextResponse.json({ success: false, message: 'start_time is required' }, { status: 400 })
   if (!end_time || typeof end_time !== 'string')
@@ -54,11 +54,9 @@ export async function POST(req: NextRequest) {
   const input: ShiftInput = {
     company_id,
     department_id,
-    date,
+    shift_date,
     start_time,
     end_time,
-    assigned_user_id: typeof assigned_user_id === 'string' ? assigned_user_id : null,
-    supervisor_id: typeof supervisor_id === 'string' ? supervisor_id : null,
     created_by,
   }
 

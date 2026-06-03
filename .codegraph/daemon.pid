@@ -1,6 +1,13 @@
 {
+<<<<<<< Updated upstream
   "pid": 13876,
   "version": "0.9.9",
   "socketPath": "\\\\.\\pipe\\codegraph-64498d39ebc8c844",
   "startedAt": 1780517562954
+=======
+  "pid": 30516,
+  "version": "0.9.9",
+  "socketPath": "\\\\.\\pipe\\codegraph-d25e68c2bce78434",
+  "startedAt": 1780479582587
+>>>>>>> Stashed changes
 }
