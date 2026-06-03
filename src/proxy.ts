@@ -20,7 +20,7 @@ const ROUTE_ROLES: { prefix: string; allowed: string[] }[] = [
   { prefix: '/casual', allowed: ['Casual Worker'] },
 ]
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   const match = ROUTE_ROLES.find(r => pathname.startsWith(r.prefix))
