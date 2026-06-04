@@ -87,25 +87,14 @@ export const invitationService = {
       if (alreadyMember) {
         throw new Error('This user is already a member of this company.')
       }
-      const { supabase } = await import('@/lib/supabase')
-      const { error } = await supabase
-        .from('inbox')
-        .insert({
-          recipient_user_id: existingUser.id,
-          sender_user_id: inviter.id,
-          company_id: data.company_id,
-          role: normalizedRole,
-          department_id: data.department_id,
-          type: 'company_invite',
-          status: 'pending',
-        })
-      if (error) throw new Error(`Failed to create inbox notification: ${error.message}`)
+      await invitationRepository.insertInboxInvite({
+        recipient_user_id: existingUser.id,
+        sender_user_id: inviter.id,
+        company_id: data.company_id,
+        role: normalizedRole,
+        department_id: data.department_id,
+      })
       return
-    }
-
-    const existingInvitation = await invitationRepository.findActiveInvitation(data.email)
-    if (existingInvitation) {
-      throw new Error('An active invitation already exists for this email. Please wait for them to accept or the invitation to expire.')
     }
 
     const expired_at = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()

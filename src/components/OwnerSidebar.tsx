@@ -7,24 +7,22 @@ import {
   LayoutDashboard,
   BarChart2,
   Users,
-  MessageSquare,
-  Megaphone,
-  Settings,
+  MessageCircle,
   LogOut,
   UserPlus,
   ClipboardList,
+  CheckSquare,
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 
 const NAV_ITEMS = [
   { label: 'Dashboard',     Icon: LayoutDashboard, href: '/owner/dashboard',       dot: null as 'messages' | 'announcements' | null },
+  { label: 'Tasks',         Icon: CheckSquare,     href: '/owner/tasks',           dot: null },
   { label: 'Report',        Icon: BarChart2,        href: '/owner/report',          dot: null },
-  { label: 'Team',          Icon: Users,            href: '/owner/team',            dot: null },
-  { label: 'Announcements', Icon: Megaphone,        href: '/owner/announcements',   dot: 'announcements' as const },
-  { label: 'Inbox',         Icon: MessageSquare,    href: '/owner/inbox',           dot: 'messages' as const },
+  { label: 'My Company',    Icon: Users,            href: '/owner/team',            dot: null },
+  { label: 'Communication', Icon: MessageCircle,    href: '/owner/communication',   dot: 'messages' as const },
   { label: 'Recruitment',   Icon: UserPlus,         href: '/owner/recruitment',     dot: null },
   { label: 'Attendance',    Icon: ClipboardList,    href: '/owner/attendance',      dot: null },
-  { label: 'Settings',      Icon: Settings,         href: '/owner/settings',        dot: null },
 ]
 
 type Theme = {
@@ -128,9 +126,9 @@ export default function OwnerSidebar({
       .catch(() => {})
   }, [])
 
-  // Clear message dot immediately when user opens inbox
+  // Clear message dot immediately when user opens communication page
   useEffect(() => {
-    if (pathname === '/owner/inbox') setMsgCount(0)
+    if (pathname === '/owner/communication') setMsgCount(0)
   }, [pathname])
 
   useEffect(() => {

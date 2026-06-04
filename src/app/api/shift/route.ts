@@ -35,7 +35,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { company_id, department_id, shift_date, start_time, end_time, created_by } =
+  const {
+    company_id,
+    department_id,
+    title,
+    instruction,
+    shift_date,
+    start_time,
+    end_time,
+    created_by,
+    publication_status,
+    acceptance_deadline_at,
+    assigned_user_id,
+    supervisor_employee_id,
+    override_clopening,
+  } =
     body as Record<string, unknown>
 
   if (!company_id || typeof company_id !== 'string')
@@ -54,15 +68,25 @@ export async function POST(req: NextRequest) {
   const input: ShiftInput = {
     company_id,
     department_id,
+    title: typeof title === 'string' && title ? title : null,
+    instruction: typeof instruction === 'string' && instruction ? instruction : null,
     shift_date,
     start_time,
     end_time,
     created_by,
+    publication_status: publication_status === 'published' ? 'published' : 'draft',
+    acceptance_deadline_at: typeof acceptance_deadline_at === 'string' && acceptance_deadline_at ? acceptance_deadline_at : null,
+    override_clopening: override_clopening === true,
+  }
+  const assignmentInput = {
+    ...input,
+    assigned_user_id: typeof assigned_user_id === 'string' && assigned_user_id ? assigned_user_id : null,
+    supervisor_employee_id: typeof supervisor_employee_id === 'string' && supervisor_employee_id ? supervisor_employee_id : null,
   }
 
   try {
-    const shift = await shiftService.createShift(input)
-    return NextResponse.json({ success: true, shift }, { status: 201 })
+    const result = await shiftService.createShift(assignmentInput)
+    return NextResponse.json({ success: true, shift: result.shift, warning: result.warning }, { status: 201 })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to create shift'
     return NextResponse.json({ success: false, message }, { status: 400 })

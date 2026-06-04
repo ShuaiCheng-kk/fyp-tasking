@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { Plus, X, ChevronDown } from 'lucide-react'
+import { Plus, X, ChevronDown, Upload } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
 
@@ -105,6 +105,7 @@ type TeamMember = {
 type ChangeDeptModal = { member: TeamMember } | null
 type ManageDeptModal = { member: TeamMember } | null
 type EditManagerModal = { member: TeamMember } | null
+type MemberImportPreview = { email: string; role: 'Partner' | 'Manager' | 'Employee'; department_name: string | null }
 
 const ROLE_LABEL: Record<string, string> = {
   Owner: 'OWNER',
@@ -112,6 +113,16 @@ const ROLE_LABEL: Record<string, string> = {
   Manager: 'MANAGER',
   Employee: 'EMPLOYEE',
   'Casual Worker': 'CASUAL WORKER',
+}
+
+function parseMemberImportCsv(text: string): MemberImportPreview[] {
+  const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+  const withoutHeader = lines[0]?.toLowerCase().includes('email') ? lines.slice(1) : lines
+  return withoutHeader.map(line => {
+    const [email = '', role = '', department = ''] = line.split(',').map(cell => cell.trim())
+    const normalizedRole: MemberImportPreview['role'] = role.toLowerCase() === 'partner' ? 'Partner' : role.toLowerCase() === 'manager' ? 'Manager' : 'Employee'
+    return { email, role: normalizedRole, department_name: department || null }
+  }).filter(row => row.email)
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -123,7 +134,19 @@ export default function TeamPage() {
   const [companyId, setCompanyId] = useState('')
   const [companyOwnerId, setCompanyOwnerId] = useState('')
   const [ownerEmail, setOwnerEmail] = useState('')
-  const [companyName, setCompanyName] = useState('')
+  const [companyName,        setCompanyName]        = useState('')
+  const [companyProfile,     setCompanyProfile]     = useState<{ description: string | null; location: string | null; industry: string | null; size: string | null } | null>(null)
+  const [editProfileOpen,    setEditProfileOpen]    = useState(false)
+  const [editProfileName,    setEditProfileName]    = useState('')
+  const [editProfileDesc,    setEditProfileDesc]    = useState('')
+  const [editProfileLoc,     setEditProfileLoc]     = useState('')
+  const [editProfileIndustry,setEditProfileIndustry] = useState('')
+  const [editProfileSize,    setEditProfileSize]    = useState('')
+  const [editProfileLoading, setEditProfileLoading] = useState(false)
+  const [editProfileError,   setEditProfileError]   = useState('')
+
+  const INDUSTRIES = ['Retail', 'F&B', 'Logistics', 'Event Management']
+  const SIZES = ['1-10', '11-50', '51-200', '200+']
 
   // Team members
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([])
@@ -151,10 +174,18 @@ export default function TeamPage() {
   const [inviteLoading, setInviteLoading] = useState(false)
   const [inviteError, setInviteError] = useState('')
   const [inviteSuccess, setInviteSuccess] = useState('')
+  const [memberImportOpen, setMemberImportOpen] = useState(false)
+  const [memberImportRows, setMemberImportRows] = useState<MemberImportPreview[]>([])
+  const [memberImportLoading, setMemberImportLoading] = useState(false)
+  const [memberImportError, setMemberImportError] = useState('')
+  const [memberImportResult, setMemberImportResult] = useState('')
 
   // Header theme based on localStorage role
-  const [headerTheme, setHeaderTheme] = useState<{ bg: string; text: string; border: string }>({
-    bg: '#1C1C1E', text: '#FFFFFF', border: 'none',
+  const [headerTheme] = useState<{ bg: string; text: string; border: string }>(() => {
+    if (typeof window !== 'undefined' && localStorage.getItem('tasking_user_role') === 'Partner') {
+      return { bg: '#FFFFFF', text: '#1C1C1E', border: '1px solid #E5E7EB' }
+    }
+    return { bg: '#1C1C1E', text: '#FFFFFF', border: 'none' }
   })
 
   // Current user's role (to gate Edit buttons)
@@ -176,7 +207,7 @@ export default function TeamPage() {
   const [removeError, setRemoveError] = useState('')
 
   // Account deleted modal (shown when removed from last company)
-  const [accountDeletedModal, setAccountDeletedModal] = useState(false)
+  const [accountDeletedModal] = useState(false)
 
   // Manage Departments modal (legacy — kept for internal logic reuse)
   const [manageDeptModal, setManageDeptModal] = useState<ManageDeptModal>(null)
@@ -219,15 +250,6 @@ export default function TeamPage() {
     return () => document.removeEventListener('keydown', onKey)
   }, [closeModal])
 
-  useEffect(() => {
-    const role = localStorage.getItem('tasking_user_role')
-    if (role === 'Partner') {
-      setHeaderTheme({ bg: '#FFFFFF', text: '#1C1C1E', border: '1px solid #E5E7EB' })
-    } else {
-      setHeaderTheme({ bg: '#1C1C1E', text: '#FFFFFF', border: 'none' })
-    }
-  }, [])
-
   const fetchTeamMembers = useCallback(async (cid: string) => {
     if (!cid) return
     setTeamLoading(true)
@@ -238,6 +260,40 @@ export default function TeamPage() {
     } catch {}
     finally { setTeamLoading(false) }
   }, [])
+
+  const handleMemberImportFile = async (file: File | null) => {
+    setMemberImportError('')
+    setMemberImportResult('')
+    if (!file) return
+    const text = await file.text()
+    const rows = parseMemberImportCsv(text)
+    setMemberImportRows(rows)
+    if (rows.length === 0) setMemberImportError('No valid member rows found.')
+  }
+
+  const confirmMemberImport = async () => {
+    if (!companyId || !internalUserId || memberImportRows.length === 0) return
+    setMemberImportLoading(true)
+    setMemberImportError('')
+    setMemberImportResult('')
+    try {
+      const res = await fetch('/api/import/members', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company_id: companyId, invited_by: internalUserId, members: memberImportRows }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to import members')
+      const invited = data.result?.invited?.length ?? 0
+      const failed = data.result?.failed?.length ?? 0
+      setMemberImportResult(`${invited} invitation(s) sent. ${failed} failed.`)
+      await fetchTeamMembers(companyId)
+    } catch (err) {
+      setMemberImportError(err instanceof Error ? err.message : 'Failed to import members')
+    } finally {
+      setMemberImportLoading(false)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -302,33 +358,58 @@ export default function TeamPage() {
 
       if (storedCid) {
         setCompanyId(storedCid)
-        fetchCompanyName(uid, storedCid)
         fetchTeamMembers(storedCid)
-        fetchCompanyDepartments(storedCid)
+        try {
+          const params = new URLSearchParams({ user_id: uid, company_id: storedCid })
+          const [companyRes, deptRes] = await Promise.all([
+            fetch(`/api/company/current?${params}`),
+            fetch(`/api/company/departments?company_id=${storedCid}`),
+          ])
+          const companyData = await companyRes.json()
+          const deptData = await deptRes.json()
+          if (!cancelled && companyData.success && companyData.company?.name) {
+            setCompanyName(companyData.company.name)
+            setCompanyOwnerId(companyData.company.owner_id || '')
+            setCompanyProfile({
+              description: companyData.company.description ?? null,
+              location: companyData.company.location ?? null,
+              industry: companyData.company.industry ?? null,
+              size: companyData.company.size ?? null,
+            })
+          }
+          if (!cancelled && deptData.success) setCompanyDepartments(deptData.departments)
+        } catch {}
       }
     }
     void run()
     return () => { cancelled = true }
   }, [fetchTeamMembers, router])
 
-  const fetchCompanyName = async (uid: string, cid: string) => {
+  const handleEditProfile = async () => {
+    if (!editProfileName.trim()) return
+    setEditProfileLoading(true); setEditProfileError('')
     try {
-      const params = new URLSearchParams({ user_id: uid, company_id: cid })
-      const res = await fetch(`/api/company/current?${params}`)
+      const res = await fetch('/api/company/update-profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          company_id: companyId,
+          name: editProfileName.trim(),
+          description: editProfileDesc || null,
+          location: editProfileLoc || null,
+          industry: editProfileIndustry || null,
+          size: editProfileSize || null,
+          website: null,
+          logo_url: null,
+        }),
+      })
       const data = await res.json()
-      if (data.success && data.company?.name) {
-        setCompanyName(data.company.name)
-        setCompanyOwnerId(data.company.owner_id || '')
-      }
-    } catch {}
-  }
-
-  const fetchCompanyDepartments = async (cid: string) => {
-    try {
-      const res = await fetch(`/api/company/departments?company_id=${cid}`)
-      const data = await res.json()
-      if (data.success) setCompanyDepartments(data.departments)
-    } catch {}
+      if (!data.success) throw new Error(data.message)
+      setCompanyName(editProfileName.trim())
+      setCompanyProfile({ description: editProfileDesc || null, location: editProfileLoc || null, industry: editProfileIndustry || null, size: editProfileSize || null })
+      setEditProfileOpen(false)
+    } catch (err) { setEditProfileError(err instanceof Error ? err.message : 'Failed to update') }
+    finally { setEditProfileLoading(false) }
   }
 
   // When invite modal opens: fetch companies for owner (session); default to active company
@@ -565,6 +646,7 @@ export default function TeamPage() {
     } catch {}
     finally { setManageDeptLoading(false) }
   }
+  void openManageDeptModal
 
   const handleManageDeptToggle = (deptId: string) => {
     if (!manageDeptModal) return
@@ -710,32 +792,92 @@ export default function TeamPage() {
           zIndex: 10,
         }}>
           <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: headerTheme.text, margin: 0 }}>
-            {companyName ? `${companyName} — Team` : 'Team'}
+            {companyName ? `${companyName} — My Company` : 'My Company'}
           </h1>
-          <button
-            onClick={openInviteModal}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '9px 16px',
-              background: currentUserRole === 'Manager' ? '#3B82F6' : '#F97316',
-              border: 'none',
-              borderRadius: '9px',
-              fontWeight: 600,
-              fontSize: '0.9rem',
-              color: '#FFFFFF',
-              cursor: 'pointer',
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = currentUserRole === 'Manager' ? '#2563EB' : '#EA6C0A')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = currentUserRole === 'Manager' ? '#3B82F6' : '#F97316')}
-          >
-            <Plus size={15} strokeWidth={2.5} />
-            {currentUserRole === 'Manager' ? 'Invite Employee' : 'Invite Member'}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {currentUserRole !== 'Manager' && (
+              <button
+                onClick={() => { setMemberImportOpen(true); setMemberImportRows([]); setMemberImportError(''); setMemberImportResult('') }}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '9px 14px', background: '#111827', border: 'none', borderRadius: '9px', fontWeight: 700, fontSize: '0.86rem', color: '#FFFFFF', cursor: 'pointer' }}
+              >
+                <Upload size={15} strokeWidth={2.5} />
+                Import Members
+              </button>
+            )}
+            <button
+              onClick={openInviteModal}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '9px 16px',
+                background: currentUserRole === 'Manager' ? '#3B82F6' : '#F97316',
+                border: 'none',
+                borderRadius: '9px',
+                fontWeight: 600,
+                fontSize: '0.9rem',
+                color: '#FFFFFF',
+                cursor: 'pointer',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = currentUserRole === 'Manager' ? '#2563EB' : '#EA6C0A')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = currentUserRole === 'Manager' ? '#3B82F6' : '#F97316')}
+            >
+              <Plus size={15} strokeWidth={2.5} />
+              {currentUserRole === 'Manager' ? 'Invite Employee' : 'Invite Member'}
+            </button>
+          </div>
         </div>
 
         <div style={{ padding: '28px 32px', flex: 1 }}>
+
+          {/* ── COMPANY PROFILE CARD ──────────────────────────────────────────── */}
+          {companyName && (
+            <div style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '22px 24px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', marginBottom: 32, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                  <div style={{ width: 40, height: 40, borderRadius: '10px', background: '#FFF7ED', border: '1.5px solid #FED7AA', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: '1rem', color: '#F97316', flexShrink: 0 }}>
+                    {companyName.charAt(0).toUpperCase()}
+                  </div>
+                  <div>
+                    <h2 style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827', margin: 0 }}>{companyName}</h2>
+                    {companyProfile?.industry && (
+                      <p style={{ fontSize: '0.8125rem', color: '#6B7280', margin: 0 }}>{companyProfile.industry}</p>
+                    )}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                  {companyProfile?.location && (
+                    <span style={{ fontSize: '0.8125rem', color: '#6B7280' }}>📍 {companyProfile.location}</span>
+                  )}
+                  {companyProfile?.size && (
+                    <span style={{ fontSize: '0.8125rem', color: '#6B7280' }}>👥 {companyProfile.size} employees</span>
+                  )}
+                  {companyProfile?.description && (
+                    <span style={{ fontSize: '0.8125rem', color: '#6B7280' }}>{companyProfile.description}</span>
+                  )}
+                </div>
+              </div>
+              {isCreator && (
+                <button
+                  onClick={() => {
+                    setEditProfileName(companyName)
+                    setEditProfileDesc(companyProfile?.description ?? '')
+                    setEditProfileLoc(companyProfile?.location ?? '')
+                    setEditProfileIndustry(companyProfile?.industry ?? '')
+                    setEditProfileSize(companyProfile?.size ?? '')
+                    setEditProfileError('')
+                    setEditProfileOpen(true)
+                  }}
+                  style={{ padding: '7px 14px', border: '1.5px solid #E5E7EB', borderRadius: '8px', background: 'none', fontWeight: 600, fontSize: '0.875rem', color: '#374151', cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap' }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = '#9CA3AF' }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
+                >
+                  Edit
+                </button>
+              )}
+            </div>
+          )}
+
           {teamLoading ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#9CA3AF', fontSize: '0.9375rem' }}>
               <Spinner size={16} dark /> Loading team…
@@ -1372,6 +1514,111 @@ export default function TeamPage() {
               >
                 {inviteLoading && <Spinner size={14} />}
                 Send Invite
+              </button>
+            </div>
+          </ModalBox>
+        </ModalOverlay>
+      )}
+
+      {/* ── EDIT COMPANY PROFILE MODAL ───────────────────────────────────── */}
+      {memberImportOpen && (
+        <ModalOverlay onClose={() => setMemberImportOpen(false)}>
+          <ModalBox>
+            <ModalHeader title="Import Members" onClose={() => setMemberImportOpen(false)} />
+            <p style={{ margin: '0 0 16px', color: '#6B7280', fontSize: '0.875rem', lineHeight: 1.5 }}>
+              Upload a CSV with columns: email, role, department_name. Importing members sends invitation emails.
+            </p>
+            <input
+              type="file"
+              accept=".csv,text/csv,text/plain"
+              onChange={event => void handleMemberImportFile(event.target.files?.[0] ?? null)}
+              style={modalInputStyle}
+            />
+            {memberImportRows.length > 0 && (
+              <div style={{ marginTop: 16, border: '1px solid #E5E7EB', borderRadius: 10, overflow: 'hidden', maxHeight: 220, overflowY: 'auto' }}>
+                {memberImportRows.map((row, index) => (
+                  <div key={`${row.email}-${index}`} style={{ display: 'grid', gridTemplateColumns: '1.4fr 0.8fr 1fr', gap: 10, padding: '9px 12px', borderBottom: '1px solid #F1F5F9', fontSize: '0.82rem', color: '#374151' }}>
+                    <span>{row.email}</span>
+                    <strong>{row.role}</strong>
+                    <span>{row.department_name || '-'}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {memberImportError && <p style={{ margin: '12px 0 0', color: '#DC2626', fontSize: '0.84rem', fontWeight: 700 }}>{memberImportError}</p>}
+            {memberImportResult && <p style={{ margin: '12px 0 0', color: '#059669', fontSize: '0.84rem', fontWeight: 700 }}>{memberImportResult}</p>}
+            <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+              <button onClick={() => setMemberImportOpen(false)} style={{ flex: 1, padding: '10px 14px', borderRadius: 8, border: '1px solid #E5E7EB', background: '#FFFFFF', color: '#374151', fontWeight: 700, fontSize: '0.875rem', cursor: 'pointer' }}>
+                Cancel
+              </button>
+              <button
+                onClick={confirmMemberImport}
+                disabled={memberImportLoading || memberImportRows.length === 0}
+                style={{ flex: 1, padding: '10px 14px', borderRadius: 8, border: 'none', background: '#F97316', color: '#FFFFFF', fontWeight: 800, fontSize: '0.875rem', cursor: memberImportLoading || memberImportRows.length === 0 ? 'default' : 'pointer', opacity: memberImportLoading || memberImportRows.length === 0 ? 0.65 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+              >
+                {memberImportLoading && <Spinner size={14} />}
+                Send Invites
+              </button>
+            </div>
+          </ModalBox>
+        </ModalOverlay>
+      )}
+
+      {editProfileOpen && (
+        <ModalOverlay onClose={() => setEditProfileOpen(false)}>
+          <ModalBox>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+              <h2 style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827', margin: 0 }}>Edit Company Profile</h2>
+              <button onClick={() => setEditProfileOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', display: 'flex', padding: 4 }}>
+                <X size={18} />
+              </button>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div>
+                <label style={modalLabelStyle}>Company Name *</label>
+                <input value={editProfileName} onChange={e => setEditProfileName(e.target.value)} style={modalInputStyle} />
+              </div>
+              <div>
+                <label style={modalLabelStyle}>Description</label>
+                <textarea value={editProfileDesc} onChange={e => setEditProfileDesc(e.target.value)} rows={2} style={{ ...modalInputStyle, resize: 'vertical' }} />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div>
+                  <label style={modalLabelStyle}>Location</label>
+                  <input value={editProfileLoc} onChange={e => setEditProfileLoc(e.target.value)} placeholder="e.g. Singapore" style={modalInputStyle} />
+                </div>
+                <div>
+                  <label style={modalLabelStyle}>Size</label>
+                  <select value={editProfileSize} onChange={e => setEditProfileSize(e.target.value)} style={{ ...modalInputStyle, appearance: 'none', cursor: 'pointer' }}>
+                    <option value="">Select size</option>
+                    {SIZES.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label style={modalLabelStyle}>Industry</label>
+                <select value={editProfileIndustry} onChange={e => setEditProfileIndustry(e.target.value)} style={{ ...modalInputStyle, appearance: 'none', cursor: 'pointer' }}>
+                  <option value="">Select industry</option>
+                  {INDUSTRIES.map(i => <option key={i} value={i}>{i}</option>)}
+                </select>
+              </div>
+            </div>
+            {editProfileError && (
+              <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626', marginTop: 12 }}>
+                {editProfileError}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+              <button
+                onClick={() => setEditProfileOpen(false)}
+                style={{ flex: 1, padding: '10px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: '8px', fontWeight: 600, fontSize: '0.9375rem', color: '#6B7280', cursor: 'pointer' }}
+              >Cancel</button>
+              <button
+                onClick={handleEditProfile}
+                disabled={editProfileLoading}
+                style={{ flex: 1, padding: '10px', background: '#111827', border: 'none', borderRadius: '8px', fontWeight: 600, fontSize: '0.9375rem', color: '#FFFFFF', cursor: editProfileLoading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, opacity: editProfileLoading ? 0.65 : 1 }}
+              >
+                {editProfileLoading && <Spinner size={14} />} Save Changes
               </button>
             </div>
           </ModalBox>

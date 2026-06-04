@@ -1,543 +1,924 @@
-# Tasking — Owner Role: Complete Use Cases (UC-01 → UC-52)
+# Tasking - Owner Superset Use Cases (UC-01 to UC-52)
 
-> Owner is the highest-privilege superset role. **"Owner's full feature set" = the full internal system.** Every other internal role (Partner, Manager, Employee) is built by removing features and narrowing scope from this list. Build Owner first, then trim.
+> Tasking is a Smart Task Allocation application. Owner is the full internal-system superset. Partner, Manager, and Employee screens should be derived by narrowing scope and removing privileges from Owner, not by inventing separate logic.
 >
-> Status legend: **[DONE]** = already built · **[TODO]** = to build.
-> AI features are built manual-first behind a service function, then the AI API swaps in. AI is limited to the four marked *(AI feature)*.
+> This document is used for two purposes:
+> 1. Preliminary Technical Manual diagrams: choose high-relevance use cases and draw target MVC + Repository class diagrams and sequence diagrams.
+> 2. Development: implement each use case through the strict layer flow below.
 
 ---
 
-## Module 1 — Dashboard (main feature: Smart Task Allocation)
+## Architecture Rule For Every Use Case
 
-The Dashboard is the command centre. Its core is one large **Allocation Timeline** showing everyone's shifts and tasks across all departments. Existing department-management widgets live on this same page.
+Every implemented use case must follow:
+
+```text
+page.tsx -> route.ts -> service -> repository -> Supabase table
+```
+
+- `page.tsx`: UI only. Calls API routes. No direct service, repository, or Supabase access.
+- `route.ts`: Controller only. Parses request, validates required fields, calls service, returns response.
+- `service.ts`: Business logic only. No HTTP and no direct Supabase calls.
+- `repository.ts`: Database access only. Supabase queries only, no business rules.
+- `types/`: Explicit TypeScript interfaces for entities used in diagrams and code.
+
+Do not draw or implement:
+
+```text
+page -> repository
+page -> Supabase
+route -> Supabase
+service -> HTTP response
+```
 
 ---
 
-### UC-01 — Dashboard: Manage Departments  **[DONE]**
+## Diagram Priority Legend
+
+Use this to decide what to draw first.
+
+- **P1 Core Diagram**: strongly connected to Smart Task Allocation. Draw MVC class diagram + sequence diagram.
+- **P2 Support Diagram**: useful for system completeness, but not the main theme. Draw only if time allows.
+- **P3 Context Only**: supporting/admin/auth feature. Mention in manual, diagram optional.
+
+## Smart Allocation Relevance
+
+- **Core**: directly about shifts, tasks, allocation, attendance execution, anomaly/reporting.
+- **Related**: supports the core flow, for example team setup or recruitment pool.
+- **Support**: system/admin/communication feature, not central to the project title.
+
+## Numbering Note
+
+The project numbering runs from UC-01 to UC-52, but the current use-case list defines 48 concrete use cases. UC-34, UC-35, UC-36, and UC-38 are reserved / not currently defined in the project scope. Do not create diagrams for those reserved numbers unless the team later adds official use cases for them.
+
+---
+
+## Recommended Diagrams For Preliminary Technical Manual
+
+If the team cannot draw all diagrams, start with these:
+
+1. UC-21 View Allocation Timeline
+2. UC-23 Create / Edit / Delete Shift
+3. UC-24 Assign Task on a Shift
+4. UC-25 View Who Is Doing What
+5. UC-27 Publish / Unpublish Schedule
+6. UC-29 Shift Acceptance Deadline
+7. UC-30 Clopening Conflict Detection
+8. UC-44 Attendance Final Approval
+9. UC-45 Track Late / Absent / Overtime
+10. UC-48 Workforce Analytics Report
+11. UC-49 AI Anomaly Detection
+
+For preliminary submission, diagrams may represent target design. For final submission, diagrams must be updated to match final code names, API routes, service methods, repository methods, and tables.
+
+---
+
+# Module 1 - Dashboard
+
+The Dashboard is the command centre. It contains the Allocation Timeline, shift controls, task allocation controls, and operational warnings.
+
+---
+
+## UC-01 - Dashboard: Manage Departments
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Create, rename, and delete departments in the active company |
-| Actions | Add department · Edit department name · Delete department |
-| Notes | Departments shown as cards with a search/filter bar |
+|---|---|
+| Status | Built / needs regression testing |
+| Actors | Owner, Partner |
+| Smart Allocation Relevance | Related |
+| Diagram Priority | P3 Context Only |
+| Goal | Create, rename, and delete departments in the active company. Departments are the grouping unit for managers, employees, casual workers, shifts, tasks, and reports. |
+| User Actions | Add department. Rename department. Delete department after confirmation. |
+| MVC / Repository Slice | `OwnerDashboardPage` -> department API route -> company/team service -> company/team repository -> `departments` table. |
+| Sequence Focus | Owner submits department name, controller validates, service checks business rule, repository writes `departments`, dashboard refreshes department cards. |
+| Developer Notes | Do not send emails for department creation. Importing departments is separate from importing members. |
 
 ---
 
-### UC-02 — Dashboard: Generate Invitation Codes  **[DONE]**
+## UC-02 - Dashboard / Team: Generate Invitation Codes or Send Invite
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Onboard new team members via a shareable invitation code |
-| Actions | Generate code for Owner, Manager, or Employee role · Select target department (required for Manager/Employee) · Copy invite link to clipboard |
+|---|---|
+| Status | Built / moved toward Team page |
+| Actors | Owner, Partner |
+| Smart Allocation Relevance | Support |
+| Diagram Priority | P3 Context Only |
+| Goal | Invite internal users into the company with the correct role and optional department. |
+| User Actions | Enter email. Select role. Select department when role is Manager or Employee. Send invite. |
+| MVC / Repository Slice | `OwnerTeamPage` -> invitation API route -> invitation service -> invitation repository + email service -> `invitation_code`, `users`, `companies`, email provider. |
+| Sequence Focus | UI posts invite request, controller validates fields, service creates invitation code and email link, repository stores code, email service sends invite. |
+| Developer Notes | Manager/Employee code is 5-digit numeric. Owner/Partner code is 8-character alphanumeric. Existing users should receive inbox notifications for later company invites. |
 
 ---
 
-### UC-03 — Dashboard: Assign Manager to Department  **[DONE]**
+## UC-03 - Dashboard: Assign Manager to Department
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Set or change which Manager leads a given department |
-| Actions | Click a department card · Select a Manager from the company roster · Save assignment |
+|---|---|
+| Status | Built / currently being tested |
+| Actors | Owner, Partner |
+| Smart Allocation Relevance | Related |
+| Diagram Priority | P2 Support Diagram |
+| Goal | Set the primary Manager for a department so allocation responsibility is clear. |
+| User Actions | Open department card. Choose manager. Save assignment. |
+| MVC / Repository Slice | `OwnerDashboardPage` -> `/api/team/department-manager` -> `ownerTeamService.setDepartmentManager` -> `ownerTeamRepository` -> `manager_departments`, `users`. |
+| Sequence Focus | Owner selects manager, service validates manager belongs to company, repository updates manager department membership, dashboard refreshes cards. |
+| Developer Notes | The manager's `users.department_id` must stay consistent with `manager_departments`. A Manager should not visually remain in the old department after reassignment. |
 
 ---
 
-### UC-04 — Dashboard: Switch Active Company  **[DONE]**
+## UC-04 - Dashboard: Switch Active Company
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Switch context between multiple owned companies |
-| Actions | Click the company name dropdown in the top bar · Select a different company |
-| Notes | Only visible when the Owner belongs to more than one company |
+|---|---|
+| Status | Built |
+| Actors | Owner, Partner |
+| Smart Allocation Relevance | Support |
+| Diagram Priority | P3 Context Only |
+| Goal | Switch the active company context when a user belongs to more than one company. |
+| User Actions | Open company dropdown. Select another company. |
+| MVC / Repository Slice | `OwnerDashboardPage` -> company current API -> company service/repository -> `companies`, `company_members`. |
+| Sequence Focus | Page stores selected company id in local storage and reloads company-scoped data. |
+| Developer Notes | Every company-scoped API must receive `company_id` from current context. |
 
 ---
 
-### UC-21 — Dashboard: View Allocation Timeline  **[TODO]**
+## UC-21 - Dashboard: View Allocation Timeline
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | See, on one timeline, every person's shifts and tasks across all departments — the single command-centre view |
-| Actions | View one day split into two strips (00:00–12:00 on top, 12:00–24:00 below) · Each row = a person (Manager / Employee / Casual Worker) showing their shift blocks with department, name, and time · Click a shift to see its assigned tasks |
-| Notes | Owner sees ALL departments and everyone under each Manager. This page must visibly demonstrate the "smart task allocation" theme. |
+|---|---|
+| Status | Built / needs full testing |
+| Actors | Owner, Partner, Manager, Employee, Casual Worker |
+| Smart Allocation Relevance | Core |
+| Diagram Priority | P1 Core Diagram |
+| Goal | Show all relevant people and their shifts in a single command-centre timeline. |
+| User Actions | Open Dashboard. View shift blocks grouped by person and department. Click a shift to inspect details. |
+| MVC / Repository Slice | `OwnerDashboardPage` -> `/api/shift` -> `shiftService.getTimelineShifts` -> `shiftRepository` -> `shifts`, `shift_assignments`, `users`, `departments`, `company_members`. |
+| Sequence Focus | Page requests date range, service loads shifts and assignments, service groups data into `TimelineRow`, page renders rows and shift blocks. |
+| Developer Notes | Scope differs by role: Owner/Partner see all company data, Manager sees assigned departments, Employee/Casual Worker see own shifts. The same pattern can be reused with narrowed service filters. |
 
 ---
 
-### UC-22 — Dashboard: Navigate Timeline Dates  **[TODO]**
+## UC-22 - Dashboard: Navigate Timeline Dates
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Move the timeline across days and weeks |
-| Actions | Slide / click arrows to move between days · Jump to "Today" · View the week ahead |
-| Rules | History limited to 2 days back (yesterday, day before); forward view extends through next week |
+|---|---|
+| Status | Built / needs full testing |
+| Actors | Owner, Partner, Manager, Employee, Casual Worker |
+| Smart Allocation Relevance | Core |
+| Diagram Priority | P2 Support Diagram |
+| Goal | Move timeline view across allowed dates. |
+| User Actions | Previous day. Today. Next day. Date picker if implemented. |
+| MVC / Repository Slice | `DashboardPage` state -> `/api/shift` -> `shiftService.getTimelineShifts` -> `shiftRepository.getShiftsByCompanyAndDateRange`. |
+| Sequence Focus | User changes date, page calls shift API with new date range, service returns timeline rows for that date. |
+| Developer Notes | Allowed range: up to 2 days back and forward through next week. Do not create shifts from empty timeline slots in final design; create shifts from department/member assignment controls. |
 
 ---
 
-### UC-23 — Dashboard: Create / Edit / Delete Shift  **[TODO]**
+## UC-23 - Dashboard: Create / Edit / Delete Shift
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Schedule when a person works |
-| Actions | Click an empty slot on the timeline · Set department, person, start/end time · Edit by clicking a shift or dragging it · Delete with confirm |
-| Notes | Shifts apply to Managers, Employees, and Casual Workers alike |
+|---|---|
+| Status | Built / currently being tested |
+| Actors | Owner, Partner, Manager |
+| Smart Allocation Relevance | Core |
+| Diagram Priority | P1 Core Diagram |
+| Goal | Create, update, and remove work shifts for schedulable users. |
+| User Actions | Assign shift from department/member card. Edit shift by clicking timeline block. Delete shift with confirmation. |
+| MVC / Repository Slice | `OwnerDashboardPage` -> `/api/shift` or `/api/shift/[id]` -> `shiftService.createShift/editShift/deleteShift` -> `shiftRepository` -> `shifts`, `shift_assignments`. |
+| Sequence Focus | Owner submits shift form, service validates time and deadline, repository inserts shift, repository inserts assignment, dashboard refreshes timeline. |
+| Developer Notes | `shifts` has no `assigned_user_id`. Assignment belongs in `shift_assignments`. `created_by` and `assigned_by` must be internal `users.id`, not Supabase Auth id. |
 
 ---
 
-### UC-24 — Dashboard: Assign Task on a Shift  **[TODO]**
+## UC-24 - Dashboard / Tasks: Assign Task on a Shift
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Tell a person what to do during their shift |
-| Actions | Click a person's shift on the timeline · Click "Add Task" · Enter title, description, priority · Assign · Person is notified |
-| Rules | Tasks are assigned strictly one level down (Owner → Manager). Owner inherits lower levels, so can act down the chain, but the default target is the next level. |
+|---|---|
+| Status | Built / needs full testing |
+| Actors | Owner, Partner, Manager, Employee |
+| Smart Allocation Relevance | Core |
+| Diagram Priority | P1 Core Diagram |
+| Goal | Assign work to the correct lower role during a shift. |
+| User Actions | Select shift. Add task. Enter title, description, priority, due date. Assign to valid target. |
+| MVC / Repository Slice | `OwnerTasksPage` -> `/api/task` -> `taskService.assignTask` -> `taskRepository` -> `tasks`, `shifts`, `users`. |
+| Sequence Focus | Page posts task, service validates assignment rule and shift ownership, repository inserts `tasks`, page refreshes kanban/task list. |
+| Developer Notes | Assignment chain: Owner -> Manager, Manager -> Employee, Employee -> Casual Worker. Owner implementation currently focuses on Manager assignment. |
 
 ---
 
-### UC-25 — Dashboard: View Who's Doing What  **[TODO]**
+## UC-25 - Dashboard / Tasks: View Who Is Doing What
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | See, for any person, the tasks assigned within their current shift |
-| Actions | Expand a Manager to see their Employees · Expand a shift to see its tasks, each task's status (Todo / In Progress / Done) and a **percent-complete progress bar** · A shift/person shows overall completion rolled up from its tasks |
+|---|---|
+| Status | Built / needs full testing |
+| Actors | Owner, Partner, Manager, Employee |
+| Smart Allocation Relevance | Core |
+| Diagram Priority | P1 Core Diagram |
+| Goal | See task ownership, status, and progress for each person and shift. |
+| User Actions | Open tasks page or shift detail. View status columns, assignee, shift link, progress percentage, and subtasks. |
+| MVC / Repository Slice | `OwnerTasksPage` / `OwnerDashboardPage` -> `/api/task?kanban=true` or `/api/task?shift_id=X` -> `taskService.getKanbanTasks/getTasksByCompanyShift` -> `taskRepository` -> `tasks`. |
+| Sequence Focus | Page requests task groups or shift-specific tasks, service filters/groups data, page displays status, assignee, shift link, progress percentage, and subtasks. |
+| Developer Notes | Dashboard shift detail now shows linked tasks from the timeline. Progress roll-up is calculated from task percentages. |
 
 ---
 
-### UC-26 — Dashboard: Edit / Delete / Duplicate Task & Sub-task  **[TODO]**
+## UC-26 - Dashboard / Tasks: Edit / Delete / Duplicate Task and Sub-task
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Maintain tasks after assignment |
-| Actions | Open a task · Edit fields / Delete / Duplicate · Add sub-tasks · Set recurrence for routine tasks |
+|---|---|
+| Status | Built / needs full testing |
+| Actors | Owner, Partner, Manager, Employee |
+| Smart Allocation Relevance | Core |
+| Diagram Priority | P2 Support Diagram |
+| Goal | Maintain task details after allocation. |
+| User Actions | Open task. Edit status, progress, priority, due date, assignee, shift. Delete task. Add sub-task. Duplicate task and its direct sub-tasks. |
+| MVC / Repository Slice | `OwnerTasksPage` -> `/api/task` PATCH/DELETE/POST -> `taskService.editTask/deleteTask/assignTask/duplicateTask` -> `taskRepository` -> `tasks`. |
+| Sequence Focus | User edits, deletes, creates sub-task, or duplicates task; controller parses request; service validates and handles sub-task rules; repository updates task rows; page refreshes. |
+| Developer Notes | Sub-tasks use `tasks.parent_task_id`. Deleting parent tasks deletes direct sub-tasks first to avoid FK failures. |
 
 ---
 
-### UC-27 — Dashboard: Publish / Unpublish Schedule  **[TODO]**
+## UC-27 - Dashboard: Publish / Unpublish Schedule
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Make draft shifts visible to workers, or pull them back |
-| Actions | Click "Publish" on a day/week of draft shifts · Workers are notified · Click "Unpublish" to revert to Draft |
-| Notes | Only Published shifts can be accepted/rejected by workers |
+|---|---|
+| Status | Built / needs full testing |
+| Actors | Owner, Partner, Manager |
+| Smart Allocation Relevance | Core |
+| Diagram Priority | P1 Core Diagram |
+| Goal | Control whether draft shifts are visible/actionable to workers. |
+| User Actions | Publish or unpublish a day/week schedule. |
+| MVC / Repository Slice | `OwnerDashboardPage` -> `/api/shift/schedule` -> `shiftService.publishSchedule` -> `shiftRepository.updateSchedulePublication` -> `shifts.publication_status`. |
+| Sequence Focus | User clicks Publish, controller validates range, service validates status/date range, repository updates shifts, timeline refreshes. |
+| Developer Notes | Only published shifts should be accept/reject eligible for lower roles. New duplicated/recurring shifts should default to draft. |
 
 ---
 
-### UC-28 — Dashboard: Set Recurring / Duplicate Shift  **[TODO]**
+## UC-28 - Dashboard: Set Recurring / Duplicate Shift
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Repeat or copy a shift without recreating it |
-| Actions | Open a shift · Set recurrence (daily / weekly / custom) with an end date, OR duplicate to a new date/time · Save |
+|---|---|
+| Status | Built / needs full testing |
+| Actors | Owner, Partner, Manager |
+| Smart Allocation Relevance | Core |
+| Diagram Priority | P1 Core Diagram |
+| Goal | Repeat or copy shifts without recreating the same details manually. |
+| User Actions | Open shift. Duplicate to another date/time or create recurring shifts until an end date. |
+| MVC / Repository Slice | `OwnerDashboardPage` -> `/api/shift/[id]/duplicate` or `/api/shift/[id]/recurrence` -> `shiftService.duplicateShift/createRecurringShifts` -> `shiftRepository` -> `shifts`, `shift_assignments`. |
+| Sequence Focus | Service loads original shift and assignment, creates new draft shifts, copies assignment when appropriate, timeline refreshes. |
+| Developer Notes | Recurrence supports daily, weekly, custom interval. Limit generated instances to avoid runaway inserts. |
 
 ---
 
-### UC-29 — Dashboard: Set Shift Acceptance Deadline  **[TODO]**
+## UC-29 - Dashboard: Set Shift Acceptance Deadline
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Require workers to respond to a shift within a set window |
-| Actions | Open a shift · Set "respond by" date/time · Save · Unresponded shifts are flagged after the deadline |
+|---|---|
+| Status | Built / needs full testing |
+| Actors | Owner, Partner, Manager, Casual Worker |
+| Smart Allocation Relevance | Core |
+| Diagram Priority | P1 Core Diagram |
+| Goal | Require assigned workers to respond before a deadline. |
+| User Actions | Set respond-by date/time on shift. Published shift becomes late/flagged if still unresponded after deadline. |
+| MVC / Repository Slice | `OwnerDashboardPage` -> `/api/shift/[id]` -> `shiftService.editShift` -> `shiftRepository.updateShift` -> `shifts.acceptance_deadline_at`, `shift_assignments.assignment_status`. |
+| Sequence Focus | User saves deadline, service validates deadline before shift start, repository updates shift, timeline marks overdue assigned shifts. |
+| Developer Notes | Lower-role accept/reject route still needs implementation. Current Owner timeline can visually flag overdue assigned shifts. |
 
 ---
 
-### UC-30 — Dashboard: Detect Clopening Conflict  **[TODO]**
+## UC-30 - Dashboard: Detect Clopening Conflict
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Be warned when a worker is scheduled back-to-back with too little rest |
-| Actions | System checks rest gap on assignment · Shows a warning on the conflicting shift · Owner can override or reschedule |
-| Notes | Manual rule-based check; precursor to AI Anomaly Detection (UC-49) |
+|---|---|
+| Status | Built / needs full testing |
+| Actors | Owner, Partner, Manager |
+| Smart Allocation Relevance | Core |
+| Diagram Priority | P1 Core Diagram |
+| Goal | Warn when a worker is scheduled with too little rest between closing and opening shifts. |
+| User Actions | Create/edit shift. System checks previous and next shifts for same user. Owner/Manager can reschedule or override if allowed. |
+| MVC / Repository Slice | `DashboardPage` -> shift API -> `shiftService.detectClopeningConflict` -> `shiftRepository.getAssignmentsByUserAndDateRange` -> `shifts`, `shift_assignments`. |
+| Sequence Focus | Before insert/update, service fetches nearby assigned shifts, calculates rest gap, returns warning or blocks based on rule. |
+| Developer Notes | Manual rule first. This is a precursor to AI anomaly detection. Keep detection logic in service, not UI. |
 
 ---
 
-### UC-31 — Dashboard: View Split Shift Timeline  **[TODO]**
+## UC-31 - Dashboard: View Split Shift Timeline
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | See a worker's full day at a glance when they work multiple split shifts |
-| Actions | Select a worker · View all their shifts on the day's two-strip view · See gaps |
+|---|---|
+| Status | Built / needs UI testing |
+| Actors | Owner, Partner, Manager, Employee, Casual Worker |
+| Smart Allocation Relevance | Core |
+| Diagram Priority | P2 Support Diagram |
+| Goal | Show workers with multiple shifts in one day clearly, including gaps. |
+| User Actions | Select date/person. View multiple shift blocks and gaps. |
+| MVC / Repository Slice | `DashboardPage` -> `/api/shift` -> `shiftService.getTimelineShifts` -> `shiftRepository` -> timeline data. |
+| Sequence Focus | Page loads all shifts for a date, groups by person, renders multiple blocks in the same row. |
+| Developer Notes | AGENTS says day view should be two strips: 07:00-15:00 and 15:00-23:00. Current UI may need refinement to match this. |
 
 ---
 
-### UC-32 — Dashboard: Undo Last Action  **[TODO]**
+## UC-32 - Dashboard: Undo Last Action
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Reverse an accidental scheduling change quickly |
-| Actions | Click "Undo" after a create/edit/delete/assign action |
+|---|---|
+| Status | Built / needs full testing |
+| Actors | Owner, Partner, Manager |
+| Smart Allocation Relevance | Core |
+| Diagram Priority | P2 Support Diagram |
+| Goal | Reverse accidental shift/task allocation actions quickly. |
+| User Actions | After create/edit/delete/assign, click Undo. |
+| MVC / Repository Slice | `OwnerDashboardPage` -> `/api/shift/undo` -> `shiftService.undoLastShiftAction` -> `shiftRepository` -> `shift_action_history`, `shifts`, `shift_assignments`. |
+| Sequence Focus | Shift service stores action snapshot before/after mutation. Undo reads last reversible action for the actor and restores or removes shift data. |
+| Developer Notes | Requires `shift_action_history` migration. Current implementation covers shift create/edit/delete/assign actions. Do not fake undo only in UI state. |
 
 ---
 
-### UC-33 — Dashboard: Import Departments from File  **[TODO]**
+## UC-33 - Dashboard: Import Departments from File
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Create many departments at once from a file |
-| Actions | Click "Import Departments" · Upload a file listing department names · System reads and creates them directly |
-| Rules | **No emails are sent** — departments are data, not people. This differs from importing team members (UC-37), which sends invitations. |
+|---|---|
+| Status | Built, needs full testing |
+| Actors | Owner, Partner |
+| Smart Allocation Relevance | Related |
+| Diagram Priority | P2 Support Diagram |
+| Goal | Create many departments from a file. |
+| User Actions | Upload CSV/XLSX. Preview department names. Confirm import. |
+| MVC / Repository Slice | `OwnerDashboardPage` -> import departments API -> `departmentImportService` -> `departmentRepository` -> `departments`. |
+| Sequence Focus | UI uploads file, controller passes parsed rows or file ref, service validates duplicates, repository inserts departments. |
+| Developer Notes | No emails are sent. Keep separate from Import Members. |
 
 ---
 
-## Module 2 — Report
+# Module 2 - Report
 
-### UC-48 — Report: View Workforce Analytics  **[TODO]**
+Report summarizes the allocation system after data exists.
+
+---
+
+## UC-48 - Report: View Workforce Analytics
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Get a data-driven summary of workforce and operations |
-| Actions | See a **status overview of all shifts and tasks** (how many Todo / In Progress / Done, completion %), **attendance summary** (present / late / absent / pending approval), **hours worked** shown as a bar chart, and **department utilisation** · Surface pressing issues / anomalies (uncovered shifts, overdue tasks, flagged attendance) · Filter by date range / department · Export |
-| Notes | Report = a roll-up of existing shift / task / attendance data (no new data needed). Build the structure now; it fills as data grows. Inspired by a status-overview dashboard: progress at a glance + risks highlighted. |
+|---|---|
+| Status | Built, needs full testing |
+| Actors | Owner, Partner, Manager |
+| Smart Allocation Relevance | Core |
+| Diagram Priority | P1 Core Diagram |
+| Goal | Show operational summary of shifts, tasks, attendance, hours, utilization, and risks. |
+| User Actions | Select date range and department. View charts/cards. Export report if implemented. |
+| MVC / Repository Slice | `OwnerReportPage` -> report API -> `reportService.getWorkforceAnalytics` -> `reportRepository` -> `shifts`, `shift_assignments`, `tasks`, `attendance_records`, `departments`, `users`. |
+| Sequence Focus | Page requests report filters, service aggregates data, repository fetches raw rows, service computes metrics, page renders summary. |
+| Developer Notes | Report should be a roll-up of existing data, not a separate source of truth. AI anomaly detection can later reuse report service outputs. |
 
 ---
 
-## Module 3 — Team
+# Module 3 - Team / My Company
 
-### UC-05 — Team: View Team Members  **[DONE]**
+Team and My Company define who can be allocated work. These are important setup features but not the core allocation diagrams unless selected.
+
+---
+
+## UC-05 - Team: View Team Members
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Browse all members in the current company grouped by role |
-| Actions | View members grouped by role (Owner / Partner / Manager / Employee / Casual Worker) · Each member shown as a row with name, role/position, department, email, and a **task-completion / hours progress indicator** · Click a member to open their detail (their shifts, tasks, completion) · Existing actions (remove, change department, change manager) available from the row's "..." menu |
-| Notes | Per-person rows with a completion bar (inspired by a Users list view), upgrading the current name+email-only display. |
+|---|---|
+| Status | Built / needs UI refinement |
+| Actors | Owner, Partner, Manager |
+| Smart Allocation Relevance | Related |
+| Diagram Priority | P2 Support Diagram |
+| Goal | Browse company members by role and department. |
+| User Actions | View members. Filter/group by role. Open detail if implemented. |
+| MVC / Repository Slice | `OwnerTeamPage` -> `/api/team/members` -> team service -> team repository -> `company_members`, `users`, department membership tables. |
+| Sequence Focus | Page requests members for company, service sorts by role, repository loads company members, page renders member list. |
+| Developer Notes | Member department display should use membership tables where available. `users.department_id` is denormalized and should not be the only source for role membership in final version. |
 
 ---
 
-### UC-06 — Team: Remove Team Member  **[DONE]**
+## UC-06 - Team: Remove Team Member
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Remove a member from the company |
-| Actions | Click "Remove" on a member · Confirm in modal |
-| Rules | Cannot remove self · Cannot remove the company creator |
+|---|---|
+| Status | Built |
+| Actors | Owner, Partner |
+| Smart Allocation Relevance | Support |
+| Diagram Priority | P3 Context Only |
+| Goal | Remove a member from the company safely. |
+| User Actions | Click remove. Confirm. |
+| MVC / Repository Slice | `OwnerTeamPage` -> remove member API -> `ownerTeamService.removeMember` -> `ownerTeamRepository` -> `company_members`, `users`, inbox/messages/notifications cleanup. |
+| Sequence Focus | Service validates permissions, removes membership, deletes account only if no remaining companies. |
+| Developer Notes | Cannot remove self or company creator. Partner delete-company guard is separate. |
 
 ---
 
-### UC-07 — Team: Change Member's Department  **[DONE]**
+## UC-07 - Team: Change Member Department
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Reassign a member to a different department |
-| Actions | Open change-department modal · Select new department · Save |
+|---|---|
+| Status | Built / needs membership-table refinement |
+| Actors | Owner, Partner, Manager |
+| Smart Allocation Relevance | Related |
+| Diagram Priority | P2 Support Diagram |
+| Goal | Reassign a member to a different department. |
+| User Actions | Open change department modal. Select department. Save. |
+| MVC / Repository Slice | `OwnerTeamPage` -> update department API -> user/team service -> user/team repository -> `users`, role department membership table. |
+| Sequence Focus | Page submits member and department id, service validates scope, repository updates department membership. |
+| Developer Notes | Manager, Employee, and Casual Worker should use their authoritative membership tables in final version. |
 
 ---
 
-### UC-08 — Team: Change Member's Reporting Manager  **[DONE]**
+## UC-08 - Team: Change Member Reporting Manager
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Update which Manager a member reports to |
-| Actions | Open edit-manager modal · Select new manager · Save |
+|---|---|
+| Status | Built / needs final schema rules |
+| Actors | Owner, Partner, Manager |
+| Smart Allocation Relevance | Related |
+| Diagram Priority | P2 Support Diagram |
+| Goal | Update who a member reports to. |
+| User Actions | Open edit manager modal. Select manager. Save. |
+| MVC / Repository Slice | `OwnerTeamPage` -> reporting manager API -> team service -> team repository -> `users` or membership/reporting table. |
+| Sequence Focus | Service validates manager belongs to same company/department, repository updates reporting relationship. |
+| Developer Notes | Current schema has `invitation_code.reporting_manager_id`, but final reporting relationship may need a dedicated member reporting table if required. |
 
 ---
 
-### UC-37 — Team: Import Members from File  **[TODO]**
+## UC-37 - Team: Import Members from File
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Invite many team members at once from a file |
-| Actions | Click "Import Members" · Upload a file with each person's target role and email · System reads it and automatically sends an invitation email to each |
-| Rules | **Emails ARE sent** — members are people who must accept an invite to join. This differs from importing departments (UC-33), which sends nothing. |
+|---|---|
+| Status | Built, needs full testing |
+| Actors | Owner, Partner |
+| Smart Allocation Relevance | Related |
+| Diagram Priority | P2 Support Diagram |
+| Goal | Invite many members from a file. |
+| User Actions | Upload CSV/XLSX. Preview rows. Confirm. System sends invitation emails. |
+| MVC / Repository Slice | `OwnerTeamPage` -> import members API -> `memberImportService` -> invitation repository + email service -> `invitation_code`, email provider. |
+| Sequence Focus | Service validates role/email/department rows, creates invitation code per row, sends email per valid member, returns success/failure summary. |
+| Developer Notes | Emails are sent. This differs from Import Departments. |
 
 ---
 
-## Module 4 — Communication (Announcements + Messages, two tabs)
+# Module 4 - Communication
 
-> Announcements (broadcast) and Messages (one-to-one) are merged into one sidebar module with two tabs, to keep the sidebar uncluttered.
+Communication supports operations but is not the Smart Allocation core.
 
-### UC-09 — Communication: Post Announcement  **[DONE]**
+---
+
+## UC-09 - Communication: Post Announcement
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Broadcast a message to the whole company or a specific department |
-| Actions | Click "New" · Enter title and content · Choose audience (Company-wide or specific department) · Post |
+|---|---|
+| Status | Built |
+| Actors | Owner, Partner, Manager, Employee |
+| Smart Allocation Relevance | Support |
+| Diagram Priority | P3 Context Only |
+| Goal | Broadcast information to a company or department. |
+| User Actions | Create announcement. Choose audience. Post. |
+| MVC / Repository Slice | `OwnerCommunicationPage` -> announcement API -> announcement service -> announcement repository -> `announcements`. |
+| Sequence Focus | Controller validates title/content/audience, repository inserts announcement. |
+| Developer Notes | Announcements and Messages belong in one Communication module with tabs. |
 
 ---
 
-### UC-10 — Communication: Read Announcement  **[DONE]**
+## UC-10 - Communication: Read Announcement
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Read company/department announcements |
-| Actions | Select an announcement · Content shown in detail panel · Unread dot clears on open |
+|---|---|
+| Status | Built |
+| Actors | Owner, Partner, Manager, Employee |
+| Smart Allocation Relevance | Support |
+| Diagram Priority | P3 Context Only |
+| Goal | Read announcements relevant to the current user. |
+| User Actions | Open Communication. Select announcement. |
+| MVC / Repository Slice | Communication page -> announcement API -> service -> repository -> `announcements`. |
+| Sequence Focus | Page fetches announcements scoped by company/department, user opens item. |
+| Developer Notes | Unread tracking may require separate table if final requirement needs per-user read state. |
 
 ---
 
-### UC-11 — Communication: Edit Own Announcement  **[DONE]**
+## UC-11 - Communication: Edit Own Announcement
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Correct or update a previously posted announcement |
-| Actions | Select own announcement · Click "Edit" · Modify title, content, or audience · Save |
-| Rules | Only the original poster sees Edit/Delete |
+|---|---|
+| Status | Built |
+| Actors | Owner, Partner, Manager, Employee |
+| Smart Allocation Relevance | Support |
+| Diagram Priority | P3 Context Only |
+| Goal | Correct or update a posted announcement. |
+| User Actions | Select own announcement. Edit. Save. |
+| MVC / Repository Slice | Communication page -> announcement API PATCH -> service permission check -> repository update -> `announcements`. |
+| Sequence Focus | Service confirms current user is original sender before update. |
+| Developer Notes | Only original poster should see edit/delete. |
 
 ---
 
-### UC-12 — Communication: Delete Own Announcement  **[DONE]**
+## UC-12 - Communication: Delete Own Announcement
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Remove a previously posted announcement |
-| Actions | Select own announcement · Click "Delete" · Confirm in dialog |
+|---|---|
+| Status | Built |
+| Actors | Owner, Partner, Manager, Employee |
+| Smart Allocation Relevance | Support |
+| Diagram Priority | P3 Context Only |
+| Goal | Remove own announcement. |
+| User Actions | Select own announcement. Delete. Confirm. |
+| MVC / Repository Slice | Communication page -> announcement API DELETE -> service permission check -> repository delete -> `announcements`. |
+| Sequence Focus | User confirms deletion, service checks ownership, repository deletes row. |
+| Developer Notes | Avoid deleting other users' announcements. |
 
 ---
 
-### UC-13 — Communication: Send Direct Message  **[DONE]**
+## UC-13 - Communication: Send Direct Message
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Have a private conversation with a team member |
-| Actions | Click "New Message" · Search and select recipient · Type and send · Real-time via Supabase subscription |
-| Rules | Cannot message Casual Workers |
+|---|---|
+| Status | Built |
+| Actors | Owner, Partner, Manager, Employee |
+| Smart Allocation Relevance | Support |
+| Diagram Priority | P3 Context Only |
+| Goal | Send private messages between internal team members. |
+| User Actions | Select recipient. Type message. Send. |
+| MVC / Repository Slice | Communication page -> messages API -> inbox/message service -> message repository -> `messages`. |
+| Sequence Focus | Controller validates sender/recipient/content, repository inserts message, page refreshes conversation. |
+| Developer Notes | Casual Workers are excluded from current direct-message rule. |
 
 ---
 
-## Module 5 — Inbox
+# Module 5 - Inbox
 
-### UC-14 — Inbox: Accept / Decline Company Invitation  **[DONE]**
+---
+
+## UC-14 - Inbox: Accept / Decline Company Invitation
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Join or reject an invitation to become an Owner in another company |
-| Actions | Open "Invitations" tab · Click Accept or Decline on a pending invite |
+|---|---|
+| Status | Built |
+| Actors | Owner, Partner, Manager, Employee |
+| Smart Allocation Relevance | Support |
+| Diagram Priority | P3 Context Only |
+| Goal | Accept or decline invitation to another company/role. |
+| User Actions | Open inbox invitations. Accept or decline. |
+| MVC / Repository Slice | Inbox page -> invite API -> inbox service -> inbox repository/company repository -> `inbox`, `company_members`, `users`. |
+| Sequence Focus | Service validates invite, updates membership, updates inbox status. |
+| Developer Notes | Do not set invitation `used_by` before internal `users` row exists. |
 
 ---
 
-## Module 6 — Recruitment
+# Module 6 - Recruitment
 
-> Owner can post jobs and review applicants. Manager inherits this exact logic. Posted jobs appear on the public Job Board on the marketing site.
+Recruitment builds the casual worker pool that later becomes schedulable for allocation.
 
-### UC-39 — Recruitment: Post Job Opening  **[TODO]**
+---
+
+## UC-39 - Recruitment: Post Job Opening
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Advertise a role so Casual Workers / Guests can apply |
-| Actions | Click "New Job" · Enter title, department, type, location, pay, dates, description · Publish to the public Job Board |
+|---|---|
+| Status | Built, needs full testing |
+| Actors | Owner, Partner, Manager |
+| Smart Allocation Relevance | Related |
+| Diagram Priority | P2 Support Diagram |
+| Goal | Publish job openings for Guest Users/Casual Workers to apply. |
+| User Actions | Create job posting. Enter title, department, employment type, location, pay, description, requirements. Publish. |
+| MVC / Repository Slice | `OwnerRecruitmentPage` -> recruitment API -> `recruitmentService.createJobPosting` -> `recruitmentRepository` -> `job_postings`. |
+| Sequence Focus | Service validates department/company, repository inserts job posting, public job board can read open postings. |
+| Developer Notes | Existing schema has `job_postings`. Manager version should be department scoped. |
 
 ---
 
-### UC-40 — Recruitment: Edit / Archive / Duplicate Job Opening  **[TODO]**
+## UC-40 - Recruitment: Edit / Archive / Duplicate Job Opening
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Maintain job postings |
-| Actions | Open a posting · Edit fields · Archive a filled posting · Duplicate for a similar role |
+|---|---|
+| Status | Built, needs full testing |
+| Actors | Owner, Partner, Manager |
+| Smart Allocation Relevance | Related |
+| Diagram Priority | P2 Support Diagram |
+| Goal | Maintain job postings after creation. |
+| User Actions | Edit posting. Archive posting. Duplicate posting. |
+| MVC / Repository Slice | Recruitment page -> recruitment API PATCH/duplicate -> recruitment service -> recruitment repository -> `job_postings`. |
+| Sequence Focus | Service validates ownership/scope, repository updates or copies posting. |
+| Developer Notes | Archived jobs should not appear as open on public job board. |
 
 ---
 
-### UC-41 — Recruitment: View Applicant List  **[TODO]**
+## UC-41 - Recruitment: View Applicant List
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Review who applied to a job opening |
-| Actions | Open a posting · View applicants with profile, skills, availability · Sort / filter |
+|---|---|
+| Status | Built, needs full testing |
+| Actors | Owner, Partner, Manager |
+| Smart Allocation Relevance | Related |
+| Diagram Priority | P2 Support Diagram |
+| Goal | Review applicants for a job posting. |
+| User Actions | Open posting. View applicants. Sort/filter by status/fit. |
+| MVC / Repository Slice | Recruitment page -> applicants API -> recruitment service -> recruitment repository -> `job_applicants`, `job_postings`. |
+| Sequence Focus | Page requests applicants for job, service validates posting scope, repository returns applicants. |
+| Developer Notes | Candidate recommendation can later score this applicant list. |
 
 ---
 
-### UC-42 — Recruitment: Accept / Reject Applicant  **[TODO]**
+## UC-42 - Recruitment: Accept / Reject Applicant
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Hire or decline an applicant |
-| Actions | Select an applicant · Accept (sends a job invitation; on confirm they become an active Casual Worker) or Reject |
+|---|---|
+| Status | Built, needs full testing |
+| Actors | Owner, Partner, Manager |
+| Smart Allocation Relevance | Related |
+| Diagram Priority | P2 Support Diagram |
+| Goal | Decide whether an applicant should join the casual worker pool. |
+| User Actions | Accept applicant or reject applicant. Accepted applicant receives invitation. |
+| MVC / Repository Slice | Recruitment page -> applicant decision API -> recruitment service -> recruitment repository + invitation/email service -> `job_applicants`, `job_invitations`, `users`/`invitation_code`. |
+| Sequence Focus | Service updates applicant status, creates job invitation, sends invite or notification. |
+| Developer Notes | On successful onboarding, applicant becomes a Casual Worker and can later be scheduled via `shift_assignments`. |
 
 ---
 
-### UC-43 — Recruitment: Set Casual Worker Inactive / Blocked  **[TODO]**
+## UC-43 - Recruitment: Set Casual Worker Inactive / Blocked
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Temporarily or permanently stop a worker from being scheduled |
-| Actions | Open a worker · Set Inactive (cannot apply) or Blocked (cannot re-enter) |
+|---|---|
+| Status | Built, needs full testing |
+| Actors | Owner, Partner, Manager |
+| Smart Allocation Relevance | Related |
+| Diagram Priority | P2 Support Diagram |
+| Goal | Prevent unsuitable or unavailable casual workers from being scheduled or applying. |
+| User Actions | Open worker profile. Set inactive or blocked. |
+| MVC / Repository Slice | Recruitment/Team page -> worker status API -> worker service -> worker repository -> `users` plus status table/column to be added if needed. |
+| Sequence Focus | Service validates permission and status transition, repository updates worker availability status. |
+| Developer Notes | Current `users` schema has no inactive/blocked status. This likely needs SQL migration. |
 
 ---
 
-## Module 7 — Attendance
+# Module 7 - Attendance
 
-> Approval is a 4-tier chain: Casual Worker clocks in/out → supervising **Employee** confirms → **Manager** reviews → **Owner** gives final approval (Owner controls pay). Each tier can approve, reject, or send back.
+Attendance proves whether allocated work was actually performed.
 
-### UC-44 — Attendance: Final Approve / Reject / Modify Record  **[TODO]**
+---
+
+## UC-44 - Attendance: Final Approve / Reject / Modify Record
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Give the final decision on attendance/timesheets that Managers have already reviewed |
-| Actions | Open the Manager-reviewed queue · See worked hours visualised as a **bar chart** per worker/shift alongside the record · **Quickly review and approve/reject** in one place · Approve (final) · Reject with reason · Modify (original preserved as history) |
-| Rules | Records reach Owner only after Employee confirm + Manager review. Owner's approval is final and triggers pay readiness. |
+|---|---|
+| Status | Built, needs full testing |
+| Actors | Owner, Partner, Manager, Employee, Casual Worker |
+| Smart Allocation Relevance | Core |
+| Diagram Priority | P1 Core Diagram |
+| Goal | Owner gives final approval for attendance after lower-tier review. |
+| User Actions | Owner opens reviewed queue. Approves, rejects, or modifies attendance record. |
+| MVC / Repository Slice | `OwnerAttendancePage` -> attendance API -> `attendanceService.finalApproveAttendance` -> `attendanceRepository` -> `attendance_records`, `shift_assignments`, `shifts`, `users`. |
+| Sequence Focus | Casual Worker clocks in/out, Employee confirms/submits, Manager reviews, Owner final approves/rejects. |
+| Developer Notes | Existing `attendance_records` schema has employee and manager notes but may need owner final fields/history for modification. |
 
 ---
 
-### UC-45 — Attendance: Track Status & Flag No-shows / Late / Overtime  **[TODO]**
+## UC-45 - Attendance: Track Status and Flag No-shows / Late / Overtime
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Monitor real-time attendance and exceptions |
-| Actions | View who is clocked in / late / absent · System flags no-shows, late arrivals, overtime against scheduled shift times |
+|---|---|
+| Status | Built, needs full testing |
+| Actors | Owner, Partner, Manager, Employee, Casual Worker |
+| Smart Allocation Relevance | Core |
+| Diagram Priority | P1 Core Diagram |
+| Goal | Track attendance exceptions against scheduled shifts. |
+| User Actions | View attendance status board. See late, absent, overtime, pending approval. |
+| MVC / Repository Slice | Attendance page -> attendance status API -> `attendanceService.getAttendanceExceptions` -> attendance repository -> `attendance_records`, `shift_assignments`, `shifts`. |
+| Sequence Focus | Service compares clock-in/out times against scheduled shift times and returns exception flags. |
+| Developer Notes | Manual rule-based logic first. AI auto-approve can later reuse clean/flagged classification. |
 
 ---
 
-### UC-46 — Attendance: Manage Time-off & Break-waiver Requests  **[TODO]**
+## UC-46 - Attendance: Manage Time-off and Break-waiver Requests
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Approve or reject staff time-off and break-waiver requests |
-| Actions | Open requests queue · Approve / reject each · Approved time-off blocks scheduling in that window |
+|---|---|
+| Status | Built, needs full testing |
+| Actors | Owner, Partner, Manager, Employee, Casual Worker |
+| Smart Allocation Relevance | Related |
+| Diagram Priority | P2 Support Diagram |
+| Goal | Approve or reject availability/time-off requests that affect scheduling. |
+| User Actions | Open request queue. Approve or reject. |
+| MVC / Repository Slice | Attendance page -> request API -> request service -> request repository -> time-off/request table to be added. |
+| Sequence Focus | User submits request, Owner/Manager reviews, service blocks scheduling window if approved. |
+| Developer Notes | Current schema lacks time-off table. Requires SQL migration if implemented. |
 
 ---
 
-### UC-47 — Attendance: Approve Shift Swap Request  **[TODO]**
+## UC-47 - Attendance: Approve Shift Swap Request
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Allow workers to trade shifts with approval |
-| Actions | Open a swap request · Review both workers' eligibility · Approve / reject |
+|---|---|
+| Status | Built, needs full testing |
+| Actors | Owner, Partner, Manager, Employee, Casual Worker |
+| Smart Allocation Relevance | Core |
+| Diagram Priority | P2 Support Diagram |
+| Goal | Allow workers to trade shifts with approval. |
+| User Actions | Open swap request. Review both workers. Approve or reject. |
+| MVC / Repository Slice | Attendance/Dashboard page -> shift swap API -> `shiftSwapService.approveSwapRequest` -> shift swap repository + shift repository -> swap table, `shift_assignments`. |
+| Sequence Focus | Service validates both workers are eligible, updates `shift_assignments` if approved, records decision. |
+| Developer Notes | Current schema lacks shift swap table. Requires SQL migration. |
 
 ---
 
-## Module 8 — Settings
+# Module 8 - Settings
 
-### UC-15 — Settings: Edit Company Profile  **[DONE]**
+Settings is company administration, not the main Smart Allocation flow.
+
+---
+
+## UC-15 - Settings: Edit Company Profile
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner (company creator only) |
-| Goal | Update company information |
-| Actions | Click "Edit" on a company card · Modify name, description, location, industry, size · Save |
+|---|---|
+| Status | Built |
+| Actors | Owner, Partner with restrictions |
+| Smart Allocation Relevance | Support |
+| Diagram Priority | P3 Context Only |
+| Goal | Update company profile information. |
+| User Actions | Edit company name, description, location, industry, size. |
+| MVC / Repository Slice | Settings/Team page -> company profile API -> company service -> company repository -> `companies`. |
+| Sequence Focus | Service checks permission, repository updates company profile. |
+| Developer Notes | Company creator has full control. Partner restrictions apply to invited companies. |
 
 ---
 
-### UC-16 — Settings: Create Additional Company  **[DONE]**
+## UC-16 - Settings: Create Additional Company
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Register a new company under the same account |
-| Actions | Click "Add Company" · Fill in name, location, industry, size, optional departments · Create |
+|---|---|
+| Status | Built |
+| Actors | Owner |
+| Smart Allocation Relevance | Support |
+| Diagram Priority | P3 Context Only |
+| Goal | Register another company under same Owner account. |
+| User Actions | Add company. Fill company details. Create. |
+| MVC / Repository Slice | Settings page -> company create API -> company service -> company repository -> `companies`, `company_members`. |
+| Sequence Focus | Service creates company and owner membership. |
+| Developer Notes | New company must become available in active company switcher. |
 
 ---
 
-### UC-17 — Settings: Delete Company  **[DONE]**
+## UC-17 - Settings: Delete Company
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner (company creator only) |
-| Goal | Permanently remove a company |
-| Actions | Click "Delete" on a company card · Confirm in modal |
+|---|---|
+| Status | Built |
+| Actors | Owner only, company creator only |
+| Smart Allocation Relevance | Support |
+| Diagram Priority | P3 Context Only |
+| Goal | Permanently delete company. |
+| User Actions | Click delete. Confirm. |
+| MVC / Repository Slice | Settings page -> delete company API -> company service -> company repository -> company and dependent tables. |
+| Sequence Focus | Service validates creator ownership, repository deletes dependent records safely. |
+| Developer Notes | Partner cannot delete a company they were invited into. |
 
 ---
 
-### UC-18 — Settings: Manage Subscription Plan  **[DONE]**
+## UC-18 - Settings: Manage Subscription Plan
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Upgrade or downgrade the company's subscription tier |
-| Actions | Switch to "Subscription" tab · Click Upgrade or Downgrade on the target company |
+|---|---|
+| Status | Built |
+| Actors | Owner, Partner with restrictions |
+| Smart Allocation Relevance | Support |
+| Diagram Priority | P3 Context Only |
+| Goal | Upgrade or downgrade subscription. |
+| User Actions | Choose Free/Paid plan. Save. |
+| MVC / Repository Slice | Settings/Dashboard plan UI -> company plan API -> company service -> company repository -> `companies.plan`. |
+| Sequence Focus | Controller validates plan, service checks permission, repository updates plan. |
+| Developer Notes | Real payment integration is outside current scope unless required later. |
 
 ---
 
-### UC-19 — Settings: Leave Company  **[DONE]**
+## UC-19 - Settings: Leave Company
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner (non-creator only) |
-| Goal | Exit a company the Owner was invited into but did not create |
-| Actions | Click "Leave Company" on the company card · Confirm |
-| Notes | If it is the last company, the account is permanently deleted |
+|---|---|
+| Status | Built |
+| Actors | Owner, Partner, Manager, Employee |
+| Smart Allocation Relevance | Support |
+| Diagram Priority | P3 Context Only |
+| Goal | Leave a company the user belongs to. |
+| User Actions | Click leave. Confirm. |
+| MVC / Repository Slice | Settings/Team page -> leave company API -> user/company service -> user/team repository -> `company_members`, `users`, invitations/inbox cleanup. |
+| Sequence Focus | Service removes membership and deletes account only if no remaining companies. |
+| Developer Notes | Company creator should not leave/delete through the invited-user flow. |
 
 ---
 
-### UC-20 — Logout  **[DONE]**
+## UC-20 - Logout
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Sign out of the application |
-| Actions | Click "Logout" in the sidebar |
+|---|---|
+| Status | Built |
+| Actors | Owner, Partner, Manager, Employee, Casual Worker, Guest User |
+| Smart Allocation Relevance | Support |
+| Diagram Priority | P3 Context Only |
+| Goal | Sign out of the application. |
+| User Actions | Click Logout. |
+| MVC / Repository Slice | Sidebar/page -> signout API -> auth service -> Supabase Auth. |
+| Sequence Focus | UI calls signout, server clears session, user redirects to sign-in. |
+| Developer Notes | Not recommended for detailed Smart Allocation diagrams. |
 
 ---
 
-## Module 9 — AI Features (free tier; built manual-first behind a service function)
+# Module 9 - AI Features
 
-### UC-49 — AI: Anomaly Detection  *(AI feature)*  **[TODO]**
+AI is limited to four features. Each must be manual-first behind a service function, then AI can replace the decision function later.
+
+---
+
+## UC-49 - AI: Anomaly Detection
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Be alerted automatically to unusual attendance / scheduling patterns |
-| Actions | System surfaces anomalies on the Timeline & Report · Owner reviews each |
-| Notes | Manual rule-based version first; AI swaps in via API later. |
+|---|---|
+| Status | Built, needs full testing |
+| Actors | Owner, Partner, Manager |
+| Smart Allocation Relevance | Core |
+| Diagram Priority | P1 Core Diagram |
+| Goal | Surface unusual scheduling, task, or attendance patterns. |
+| User Actions | View anomaly highlights on Dashboard/Report. Review flagged issue. |
+| MVC / Repository Slice | Dashboard/Report page -> anomaly API -> `anomalyDetectionService.detectAnomalies` -> repositories -> `shifts`, `shift_assignments`, `tasks`, `attendance_records`. |
+| Sequence Focus | Service gathers operational data, runs manual rules first, returns anomaly list. AI API can later replace scoring logic only. |
+| Developer Notes | Manual examples: uncovered shift, clopening risk, overdue task, late/absent worker, overtime. |
 
 ---
 
-### UC-50 — AI: Auto-approve Timesheets  *(AI feature)*  **[TODO]**
+## UC-50 - AI: Auto-approve Timesheets
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Only review flagged timesheets; let clean ones auto-approve |
-| Actions | Enable auto-approve · System approves records matching the shift · Flags mismatches for manual review |
-| Notes | Manual-first behind a service function; AI swaps in later. Fits the 4-tier chain at the Owner tier. |
+|---|---|
+| Status | Built, needs full testing |
+| Actors | Owner, Partner, Manager, Employee, Casual Worker |
+| Smart Allocation Relevance | Core |
+| Diagram Priority | P1 Core Diagram |
+| Goal | Auto-approve clean attendance records and flag suspicious ones. |
+| User Actions | Owner enables/reviews auto-approval. System approves clean records or flags mismatches. |
+| MVC / Repository Slice | Attendance page -> auto-approve API -> `attendanceService.autoApproveTimesheets` -> attendance repository -> `attendance_records`, `shifts`, `shift_assignments`. |
+| Sequence Focus | Service compares attendance against shift assignment and manual rules, updates records or returns flags. |
+| Developer Notes | Manual-first service function. AI must not leak into route/page/repository. |
 
 ---
 
-### UC-51 — AI: Candidate Recommendation  *(AI feature)*  **[TODO]**
+## UC-51 - AI: Candidate Recommendation
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Quickly identify the most suitable applicants for a posting |
-| Actions | Open a posting's applicant list · View AI-ranked candidates by skills / availability match · Owner makes the final pick |
-| Notes | Manual scoring first; AI swaps in later. |
+|---|---|
+| Status | Built, needs full testing |
+| Actors | Owner, Partner, Manager |
+| Smart Allocation Relevance | Related |
+| Diagram Priority | P2 Support Diagram |
+| Goal | Rank job applicants by suitability for open casual-worker roles. |
+| User Actions | Open applicant list. View recommended candidates. Owner/Manager makes final decision. |
+| MVC / Repository Slice | Recruitment page -> recommendation API -> `candidateRecommendationService.recommendCandidates` -> recruitment repository -> `job_applicants`, `job_postings`. |
+| Sequence Focus | Service loads applicants and job requirements, manual scoring ranks candidates, page displays ranking. |
+| Developer Notes | AI later swaps into `recommendCandidates(applicants, jobPosting)` only. |
 
 ---
 
-### UC-52 — AI: Job Description Generator  *(AI feature)*  **[TODO]**
+## UC-52 - AI: Job Description Generator
 
 | Field | Detail |
-|-------|--------|
-| Actor | Owner |
-| Goal | Produce a job description without writing it by hand |
-| Actions | In the New Job form, click "Generate" · Enter role + key points · System drafts the description · Owner edits and uses it |
-| Notes | Template first; AI swaps in later. |
+|---|---|
+| Status | Built, needs full testing |
+| Actors | Owner, Partner, Manager |
+| Smart Allocation Relevance | Related |
+| Diagram Priority | P2 Support Diagram |
+| Goal | Generate draft job descriptions for recruitment postings. |
+| User Actions | Enter role/key points. Click Generate. Edit generated description. |
+| MVC / Repository Slice | Recruitment page -> job description API -> `jobDescriptionService.generateDescription` -> no repository unless saved to `job_postings`. |
+| Sequence Focus | Page sends role and key points, service returns template/manual generated text, page inserts into form. |
+| Developer Notes | This is the weakest Smart Allocation link. Include only if the manual needs all AI features represented. |
 
 ---
 
-## Summary
+# Summary For Team Planning
 
-- **Done (20):** UC-01–20 — auth, company/department management, team, communication, inbox, settings.
-- **To build (32):** UC-21–33, 37, 39–52 — the Dashboard Timeline + task allocation, file imports, Recruitment, Attendance (4-tier), Report, and the 4 AI features.
-- Owner = full internal superset. Partner = Owner minus "delete invited company". Manager = scoped to own department(s). Employee = own shifts/tasks + supervise CWs. Build Owner, then trim downward.
+## Current Development Blocks
+
+| Block | UC Range | Feature Area | Current State |
+|---|---:|---|---|
+| Block 1 | UC-21, UC-22, UC-23 | Shift CRUD, Timeline, Date Navigation | Built, actively testing/fixing |
+| Block 2 | UC-24, UC-25, UC-26 | Task Creation, Assignment, Viewing, Sub-tasks | Built, needs full testing |
+| Block 3 | UC-27, UC-28, UC-29 | Publish Schedule, Duplicate/Recurring Shift, Acceptance Deadline | Built, needs full testing |
+| Block 4 | UC-30, UC-31, UC-32 | Clopening, Split Shift View, Undo | Built, needs full testing |
+| Block 5 | UC-39 to UC-43 | Recruitment | Built, needs full testing |
+| Block 6 | UC-44 to UC-47 | Attendance | Built, needs full testing |
+| Block 7 | UC-33, UC-37, UC-48 | Imports and Report | Built, needs full testing |
+| Block 8 | UC-49 to UC-52 | AI Features | Built, needs full testing |
+
+## Suggested Diagram Set
+
+For a Smart Task Allocation-focused manual, prioritize P1 and selected P2 use cases. Avoid spending diagram effort on login, logout, company profile, and basic messaging unless required by the rubric.
+
+## Final Submission Rule
+
+Before final submission, update every diagram so names match final code:
+
+- Page/component name
+- API route path
+- Service method
+- Repository method
+- Type/interface
+- Supabase table/column names
