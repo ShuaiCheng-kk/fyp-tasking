@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import OwnerSidebar from '@/components/OwnerSidebar'
+import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import { createClient } from '@/lib/supabase'
 import {
   Plus, X, Trash2, Pencil, Megaphone,
@@ -10,6 +11,12 @@ import {
 
 const ACCENT = '#F97316'
 const ACCENT_LIGHT = '#FFF7ED'
+const PAGE_BG = '#EEF2F7'
+const PANEL = '#FFFFFF'
+const BORDER = '#E2E8F0'
+const TEXT = '#0F172A'
+const MUTED = '#64748B'
+const SOFT = '#F8FAFC'
 
 // ─── Shared types ────────────────────────────────────────────────────────────
 
@@ -121,6 +128,9 @@ export default function OwnerCommunicationPage() {
   const [authUserId, setAuthUserId] = useState<string | null>(null)
   const [internalUserId, setInternalUserId] = useState<string | null>(null)
   const [companyId, setCompanyId] = useState<string | null>(null)
+  const [ownerName, setOwnerName] = useState('')
+  const [companyName, setCompanyName] = useState('')
+  const [currentPlan, setCurrentPlan] = useState('Free')
   const [userRole, setUserRole] = useState('')
   const [userDeptId, setUserDeptId] = useState<string | null>(null)
   const [departments, setDepartments] = useState<Department[]>([])
@@ -130,6 +140,7 @@ export default function OwnerCommunicationPage() {
   const [announcements, setAnnouncements] = useState<Announcement[]>([])
   const [selectedAnn, setSelectedAnn] = useState<Announcement | null>(null)
   const [readIds, setReadIds] = useState<Set<string>>(new Set())
+  const [annSearch, setAnnSearch] = useState('')
 
   const [showNewAnnModal, setShowNewAnnModal] = useState(false)
   const [annTitle, setAnnTitle] = useState('')
@@ -171,8 +182,26 @@ export default function OwnerCommunicationPage() {
   const [composeSending, setComposeSending] = useState(false)
   const [composeError, setComposeError] = useState('')
 
+  // Deep-link state: set from URL params on mount
+  const [pendingPartnerId, setPendingPartnerId] = useState<string | null>(null)
+  const [pendingPrefill, setPendingPrefill] = useState('')
+  const [conversationsFetched, setConversationsFetched] = useState(false)
+
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const supabase = createClient()
+
+  // ── Read deep-link params once on mount ──
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const pid = params.get('partner_id')
+    const pre = params.get('prefill') ?? ''
+    if (pid) {
+      setPendingPartnerId(pid)
+      setPendingPrefill(pre)
+      setActiveTab('messages')
+      setMsgSubTab('messages')
+    }
+  }, [])
 
   // ── Auth init ──
   useEffect(() => {
@@ -180,6 +209,10 @@ export default function OwnerCommunicationPage() {
     const cid = localStorage.getItem('tasking_company_id') ?? localStorage.getItem(`tasking_company_id_${uid}`)
     setAuthUserId(uid)
     setCompanyId(cid)
+    if (cid) {
+      const stored = localStorage.getItem(`tasking_last_company_name_${cid}`)
+      if (stored) setCompanyName(stored)
+    }
     if (uid) {
       fetch(`/api/user/me?user_id=${uid}`)
         .then(r => r.json())
@@ -188,19 +221,27 @@ export default function OwnerCommunicationPage() {
             setInternalUserId(d.user.id)
             setUserRole(d.user.role ?? '')
             setUserDeptId(d.user.department_id ?? null)
+            if (d.user?.full_name) setOwnerName(d.user.full_name)
             if (cid) setReadIds(loadReadIds(cid, d.user.id))
           }
         })
     }
   }, [])
 
-  // ── Departments ──
+  // ── Departments + plan ──
   useEffect(() => {
     if (!companyId) return
     fetch(`/api/company/departments?company_id=${companyId}`)
       .then(r => r.json())
       .then(d => { if (d.success) setDepartments(d.departments ?? []) })
       .catch(() => {})
+    const uid = localStorage.getItem('tasking_user_id')
+    if (uid) {
+      fetch(`/api/company/current?user_id=${uid}&company_id=${companyId}`)
+        .then(r => r.json())
+        .then(d => { if (d.success) setCurrentPlan(d.company?.plan ?? 'Free') })
+        .catch(() => {})
+    }
   }, [companyId])
 
   // ── Unread message count ──
@@ -245,7 +286,12 @@ export default function OwnerCommunicationPage() {
     if (!internalUserId) return
     fetch(`/api/inbox/messages?user_id=${internalUserId}`)
       .then(r => r.json())
-      .then(d => { if (d.success) setConversations(d.conversations ?? []) })
+      .then(d => {
+        if (d.success) {
+          setConversations(d.conversations ?? [])
+          setConversationsFetched(true)
+        }
+      })
   }, [internalUserId])
 
   const fetchInvites = useCallback(() => {
@@ -262,6 +308,44 @@ export default function OwnerCommunicationPage() {
     fetchConversations()
     fetchUnreadCount()
   }, [internalUserId, fetchConversations, fetchUnreadCount])
+
+  // ── Apply deep-link once conversations are loaded ──
+  useEffect(() => {
+    if (!pendingPartnerId || !internalUserId || !conversationsFetched || !companyId) return
+
+    const pid = pendingPartnerId
+    const pre = pendingPrefill
+
+    // Clear immediately so this effect doesn't re-fire
+    setPendingPartnerId(null)
+    setPendingPrefill('')
+    window.history.replaceState({}, '', '/owner/communication')
+
+    const found = conversations.find(c => c.partnerId === pid)
+    if (found) {
+      setSelectedConv(found)
+      if (pre) setMsgInput(pre)
+    } else {
+      // No prior conversation — open compose with recipient pre-selected
+      fetch(`/api/team/members?company_id=${companyId}`)
+        .then(r => r.json())
+        .then(d => {
+          if (!d.success) return
+          const eligible = (d.members as CompanyMember[]).filter(
+            m => m.role !== 'Casual Worker' && m.id !== internalUserId
+          )
+          setCompanyMembers(eligible)
+          const partner = eligible.find(m => m.id === pid)
+          if (partner) {
+            setSelectedRecipient(partner)
+            setComposeText(pre)
+            setComposeOpen(true)
+            setComposeSearch('')
+            setComposeError('')
+          }
+        })
+    }
+  }, [pendingPartnerId, conversations, internalUserId, conversationsFetched, companyId, pendingPrefill])
 
   useEffect(() => {
     if (!internalUserId) return
@@ -355,6 +439,9 @@ export default function OwnerCommunicationPage() {
     if (!internalUserId) return
     setDeleting(true)
     try {
+      setAnnouncements(prev => prev.filter(a => a.id !== announcementId))
+      setSelectedAnn(prev => prev?.id === announcementId ? null : prev)
+      setDeleteConfirmId(null)
       const res = await fetch('/api/inbox/announcements', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
@@ -362,10 +449,9 @@ export default function OwnerCommunicationPage() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.error)
-      setAnnouncements(prev => prev.filter(a => a.id !== announcementId))
-      if (selectedAnn?.id === announcementId) setSelectedAnn(null)
-      setDeleteConfirmId(null)
-    } catch {}
+    } catch {
+      fetchAnnouncements()
+    }
     finally { setDeleting(false) }
   }
 
@@ -413,6 +499,7 @@ export default function OwnerCommunicationPage() {
   }
 
   const canPostCompanyWide = ['owner', 'partner'].includes(userRole?.toLowerCase())
+  const communicationReady = Boolean(internalUserId && companyId)
 
   // ── Message actions ──
   const openCompose = useCallback(() => {
@@ -548,101 +635,159 @@ export default function OwnerCommunicationPage() {
     ? companyMembers.filter(m => m.full_name.toLowerCase().includes(composeSearch.toLowerCase()))
     : companyMembers
 
+  const filteredAnnouncements = annSearch
+    ? announcements.filter(ann =>
+        ann.title.toLowerCase().includes(annSearch.toLowerCase()) ||
+        ann.content.toLowerCase().includes(annSearch.toLowerCase()) ||
+        (ann.created_by_name ?? '').toLowerCase().includes(annSearch.toLowerCase()),
+      )
+    : announcements
+
   // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ display: 'flex', height: '100vh', background: '#F3F4F6', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+    <div style={{ display: 'flex', height: '100vh', background: PAGE_BG, color: TEXT, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
       <OwnerSidebar unreadMessages={unreadMessages} unreadAnnouncements={unreadAnnCount} />
 
-      <main style={{ marginLeft: '64px', flex: 1, height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <main style={{ marginLeft: '64px', flex: 1, minWidth: 0, height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '28px 32px 24px' }}>
 
-        {/* Page header + top-level tabs */}
-        <div style={{ padding: '18px 32px 0', background: '#FFFFFF', borderBottom: '1px solid #E5E7EB', flexShrink: 0 }}>
-          <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#111827', margin: '0 0 14px' }}>Communication</h1>
-          <div style={{ display: 'flex', gap: 0 }}>
-            {(['announcements', 'messages'] as const).map(tab => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                style={{
-                  padding: '9px 22px',
-                  background: 'none',
-                  border: 'none',
-                  borderBottom: activeTab === tab ? `2.5px solid ${ACCENT}` : '2.5px solid transparent',
-                  cursor: 'pointer',
-                  fontWeight: activeTab === tab ? 700 : 500,
-                  fontSize: '0.9rem',
-                  color: activeTab === tab ? ACCENT : '#6B7280',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  transition: 'color 0.12s',
-                }}
-              >
-                {tab === 'announcements' ? <Megaphone size={15} /> : <MessageSquare size={15} />}
-                {tab === 'announcements' ? 'Announcements' : 'Messages'}
-                {tab === 'announcements' && unreadAnnCount > 0 && (
-                  <span style={{ background: ACCENT, color: '#fff', borderRadius: '50%', width: 16, height: 16, fontSize: '0.65rem', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {unreadAnnCount}
-                  </span>
-                )}
-                {tab === 'messages' && unreadMessages > 0 && (
-                  <span style={{ background: ACCENT, color: '#fff', borderRadius: '50%', width: 16, height: 16, fontSize: '0.65rem', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {unreadMessages}
-                  </span>
-                )}
-              </button>
-            ))}
+        {/* Page header — matches Dashboard style */}
+        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24, marginBottom: 20 }}>
+          <div>
+            <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
+              {companyName ? `Communication for ${companyName}` : 'Communication'}
+            </h1>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+            {ownerName && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: '#fff', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+                <div style={{ width: 26, height: 26, borderRadius: 999, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#fff' }}>{ownerName.charAt(0).toUpperCase()}</span>
+                </div>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{ownerName}</span>
+              </div>
+            )}
+            {companyId && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
+          </div>
+        </div>
+
+        <section style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 18, overflow: 'hidden', boxShadow: '0 18px 45px rgba(15,23,42,0.06)' }}>
+        {/* Top-level tabs */}
+        <div style={{ height: 66, padding: '0 18px', flexShrink: 0, borderBottom: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {(['announcements', 'messages'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              style={{
+                height: 40,
+                padding: '0 15px',
+                background: activeTab === tab ? ACCENT_LIGHT : PANEL,
+                border: activeTab === tab ? `1px solid ${ACCENT}55` : `1px solid ${BORDER}`,
+                borderRadius: 12,
+                cursor: 'pointer',
+                fontWeight: 800,
+                fontSize: 13,
+                color: activeTab === tab ? ACCENT : MUTED,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                transition: 'transform 0.16s ease, border-color 0.16s ease, background 0.16s ease',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)' }}
+              onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)' }}
+            >
+              {tab === 'announcements' ? <Megaphone size={14} /> : <MessageSquare size={14} />}
+              {tab === 'announcements' ? 'Announcements' : 'Messages'}
+              {tab === 'announcements' && unreadAnnCount > 0 && (
+                <span style={{ minWidth: 18, height: 18, padding: '0 5px', borderRadius: 999, background: ACCENT, color: '#fff', fontSize: 11, fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {unreadAnnCount}
+                </span>
+              )}
+              {tab === 'messages' && unreadMessages > 0 && (
+                <span style={{ minWidth: 18, height: 18, padding: '0 5px', borderRadius: 999, background: ACCENT, color: '#fff', fontSize: 11, fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {unreadMessages}
+                </span>
+              )}
+            </button>
+          ))}
+          </div>
+          <div style={{ color: MUTED, fontSize: 12, fontWeight: 700 }}>
+            {activeTab === 'announcements' ? `${announcements.length} announcements` : `${filteredConversations.length} conversations`}
           </div>
         </div>
 
         {/* ── Announcements tab ── */}
         {activeTab === 'announcements' && (
-          <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+          <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '360px minmax(0, 1fr)', overflow: 'hidden', background: SOFT }}>
             {/* Left: list */}
-            <div style={{ width: '33%', minWidth: 260, maxWidth: 360, background: '#FFFFFF', borderRight: '1px solid #E5E7EB', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-              <div style={{ padding: '13px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-                <span style={{ fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>All Announcements</span>
+            <div style={{ minHeight: 0, background: PANEL, borderRight: `1px solid ${BORDER}`, display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+              <div style={{ padding: 16, borderBottom: `1px solid ${BORDER}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, gap: 12 }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 900, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Inbox</div>
+                  <div style={{ marginTop: 3, fontSize: 18, fontWeight: 900, color: TEXT }}>All Announcements</div>
+                </div>
                 <button
                   onClick={() => setShowNewAnnModal(true)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 12px', background: ACCENT, color: '#fff', border: 'none', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }}
+                  style={{ height: 36, display: 'flex', alignItems: 'center', gap: 5, padding: '0 13px', background: ACCENT, color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 900, cursor: 'pointer' }}
                 >
-                  <Plus size={13} /> New
+                  <Plus size={14} /> New
                 </button>
               </div>
 
-              <div style={{ overflowY: 'auto', flex: 1 }}>
-                {announcements.length === 0 ? (
-                  <div style={{ padding: 24, color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>No announcements yet</div>
-                ) : announcements.map(ann => {
+              <div style={{ padding: 14, borderBottom: `1px solid ${BORDER}` }}>
+                <div style={{ height: 38, display: 'flex', alignItems: 'center', gap: 8, background: SOFT, border: `1px solid ${BORDER}`, borderRadius: 10, padding: '0 12px' }}>
+                  <Search size={15} color="#94A3B8" />
+                  <input
+                    value={annSearch}
+                    onChange={e => setAnnSearch(e.target.value)}
+                    placeholder="Search announcements..."
+                    style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: 13, color: TEXT, fontWeight: 600 }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, padding: 12 }}>
+                {filteredAnnouncements.length === 0 ? (
+                  <div style={{ height: 180, borderRadius: 14, background: SOFT, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 8, fontWeight: 700 }}>
+                    <Megaphone size={28} strokeWidth={1.6} />
+                    {annSearch ? 'No matching announcements' : 'No announcements yet'}
+                  </div>
+                ) : filteredAnnouncements.map(ann => {
                   const unread = !readIds.has(ann.id)
+                  const selected = selectedAnn?.id === ann.id
                   return (
                     <button
                       key={ann.id}
                       onClick={() => handleSelectAnn(ann)}
                       style={{
-                        display: 'flex', flexDirection: 'column', gap: 5, padding: '13px 16px',
-                        background: selectedAnn?.id === ann.id ? ACCENT_LIGHT : 'transparent',
-                        border: 'none', cursor: 'pointer', textAlign: 'left', width: '100%',
-                        borderBottom: '1px solid #F9FAFB', transition: 'background 0.1s',
+                        display: 'flex', flexDirection: 'column', gap: 6, padding: 14,
+                        background: selected ? ACCENT_LIGHT : PANEL,
+                        border: selected ? `1px solid ${ACCENT}55` : `1px solid ${BORDER}`,
+                        borderRadius: 14,
+                        cursor: 'pointer', textAlign: 'left', width: '100%', marginBottom: 10,
+                        boxShadow: selected ? '0 10px 22px rgba(249,115,22,0.10)' : '0 1px 0 rgba(15,23,42,0.02)',
+                        transition: 'transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease',
                       }}
+                      onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 12px 24px rgba(15,23,42,0.08)' }}
+                      onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.boxShadow = selected ? '0 10px 22px rgba(249,115,22,0.10)' : '0 1px 0 rgba(15,23,42,0.02)' }}
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        {unread && <div style={{ width: 7, height: 7, borderRadius: '50%', background: ACCENT, flexShrink: 0 }} />}
-                        <span style={{ fontWeight: unread ? 700 : 500, fontSize: '0.875rem', color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                        <div style={{ width: 8, height: 8, borderRadius: 999, background: unread ? ACCENT : '#CBD5E1', flexShrink: 0 }} />
+                        <span style={{ fontWeight: unread ? 900 : 800, fontSize: 14, color: TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                           {ann.title}
                         </span>
-                        {ann.created_by_name && (
-                          <span style={{ fontSize: '12px', color: '#6B7280', whiteSpace: 'nowrap', flexShrink: 0 }}>{ann.created_by_name}</span>
+                        {ann.from_user_id !== internalUserId && ann.created_by_name && (
+                          <span style={{ fontSize: 12, color: MUTED, whiteSpace: 'nowrap', flexShrink: 0, fontWeight: 700 }}>{ann.created_by_name}</span>
                         )}
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.75rem', color: '#9CA3AF' }}>{formatTime(ann.created_at)}</span>
-                        <span style={{ fontSize: '0.7rem', background: ann.department_id ? '#EFF6FF' : '#F3F4F6', color: ann.department_id ? '#3B82F6' : '#6B7280', padding: '1px 6px', borderRadius: 4 }}>
+                        <span style={{ fontSize: 11, color: '#94A3B8', fontWeight: 800 }}>{formatTime(ann.created_at)}</span>
+                        <span style={{ fontSize: 11, background: ann.department_id ? '#EFF6FF' : '#F1F5F9', color: ann.department_id ? '#2563EB' : MUTED, padding: '3px 9px', borderRadius: 999, fontWeight: 800 }}>
                           {ann.department_id ? (departments.find(d => d.id === ann.department_id)?.name ?? 'Dept') : 'Company-wide'}
                         </span>
                       </div>
-                      <div style={{ fontSize: '0.8rem', color: '#6B7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <div style={{ display: 'none' }}>
                         {ann.content.slice(0, 60)}{ann.content.length > 60 ? '…' : ''}
                       </div>
                     </button>
@@ -652,14 +797,23 @@ export default function OwnerCommunicationPage() {
             </div>
 
             {/* Right: detail */}
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#F9FAFB' }}>
+            <div style={{ minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: SOFT }}>
               {selectedAnn ? (
-                <div style={{ flex: 1, overflowY: 'auto', padding: 32 }}>
-                  <div style={{ background: '#FFFFFF', borderRadius: 12, padding: 28, boxShadow: '0 1px 4px rgba(0,0,0,0.06)', maxWidth: 720 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-                      <h2 style={{ fontWeight: 700, fontSize: '1.25rem', color: '#111827', margin: 0, lineHeight: 1.3 }}>{selectedAnn.title}</h2>
+                <>
+                  <div style={{ flexShrink: 0, background: PANEL, borderBottom: `1px solid ${BORDER}`, padding: '18px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 18 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                      <div style={{ width: 42, height: 42, borderRadius: 14, background: ACCENT_LIGHT, color: ACCENT, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <Megaphone size={20} />
+                      </div>
+                      <div style={{ minWidth: 0 }}>
+                        <h2 style={{ margin: 0, color: TEXT, fontSize: 21, lineHeight: 1.2, fontWeight: 900, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedAnn.title}</h2>
+                        <div style={{ marginTop: 5, color: MUTED, fontSize: 12, fontWeight: 700 }}>
+                          {selectedAnn.created_by_name ?? 'Owner'} / {new Date(selectedAnn.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+                        </div>
+                      </div>
+                    </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, marginLeft: 16 }}>
-                        <span style={{ fontSize: '0.75rem', background: selectedAnn.department_id ? '#EFF6FF' : '#F3F4F6', color: selectedAnn.department_id ? '#3B82F6' : '#6B7280', padding: '3px 10px', borderRadius: 5, fontWeight: 600 }}>
+                        <span style={{ height: 32, padding: '0 11px', borderRadius: 999, background: selectedAnn.department_id ? '#EFF6FF' : '#F1F5F9', color: selectedAnn.department_id ? '#2563EB' : MUTED, fontSize: 12, fontWeight: 900, display: 'flex', alignItems: 'center' }}>
                           {selectedAnn.department_id ? (departments.find(d => d.id === selectedAnn.department_id)?.name ?? 'Department') : 'Company-wide'}
                         </span>
                         {selectedAnn.from_user_id === internalUserId && (
@@ -667,39 +821,37 @@ export default function OwnerCommunicationPage() {
                             <button
                               onClick={() => handleOpenEdit(selectedAnn)}
                               title="Edit announcement"
-                              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: 'none', border: '1px solid #E5E7EB', borderRadius: 6, cursor: 'pointer', color: '#374151', fontSize: '0.8rem', fontWeight: 500 }}
+                              style={{ width: 36, height: 36, background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 10, cursor: 'pointer', color: TEXT, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                               onMouseEnter={e => { e.currentTarget.style.background = '#F9FAFB' }}
                               onMouseLeave={e => { e.currentTarget.style.background = 'none' }}
                             >
-                              <Pencil size={13} /> Edit
+                              <Pencil size={15} />
                             </button>
                             <button
                               onClick={() => setDeleteConfirmId(selectedAnn.id)}
                               title="Delete announcement"
-                              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: 'none', border: '1px solid #FECACA', borderRadius: 6, cursor: 'pointer', color: '#DC2626', fontSize: '0.8rem', fontWeight: 500 }}
+                              style={{ width: 36, height: 36, background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 10, cursor: 'pointer', color: '#DC2626', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                               onMouseEnter={e => { e.currentTarget.style.background = '#FEF2F2' }}
                               onMouseLeave={e => { e.currentTarget.style.background = 'none' }}
                             >
-                              <Trash2 size={13} /> Delete
+                              <Trash2 size={15} />
                             </button>
                           </>
                         )}
                       </div>
-                    </div>
-                    <div style={{ fontSize: '0.8125rem', color: '#9CA3AF', marginBottom: 4 }}>
-                      {new Date(selectedAnn.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
-                    </div>
-                    {selectedAnn.created_by_name && (
-                      <div style={{ fontSize: '13px', color: '#9CA3AF', marginBottom: 20 }}>Posted by {selectedAnn.created_by_name}</div>
-                    )}
-                    {!selectedAnn.created_by_name && <div style={{ marginBottom: 20 }} />}
-                    <p style={{ fontSize: '0.9375rem', color: '#374151', lineHeight: 1.7, whiteSpace: 'pre-wrap', margin: 0 }}>{selectedAnn.content}</p>
                   </div>
-                </div>
+                  <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 28 }}>
+                    <article style={{ maxWidth: 760, background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 18, padding: 30, boxShadow: '0 14px 35px rgba(15,23,42,0.06)' }}>
+                      <p style={{ margin: 0, color: '#334155', fontSize: 15, lineHeight: 1.8, whiteSpace: 'pre-wrap' }}>{selectedAnn.content}</p>
+                    </article>
+                  </div>
+                </>
               ) : (
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#9CA3AF', gap: 8 }}>
-                  <Megaphone size={32} strokeWidth={1.5} />
-                  <div style={{ fontSize: '0.9375rem', fontWeight: 500 }}>Select an announcement to read</div>
+                <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+                  <div style={{ width: 360, minHeight: 180, borderRadius: 18, background: PANEL, border: `1px solid ${BORDER}`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 10, boxShadow: '0 12px 30px rgba(15,23,42,0.04)' }}>
+                    <Megaphone size={34} strokeWidth={1.6} />
+                    <div style={{ color: MUTED, fontWeight: 800 }}>Select an announcement to read</div>
+                  </div>
                 </div>
               )}
             </div>
@@ -708,79 +860,74 @@ export default function OwnerCommunicationPage() {
 
         {/* ── Messages tab ── */}
         {activeTab === 'messages' && (
-          <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+          <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '360px minmax(0, 1fr)', overflow: 'hidden', background: SOFT }}>
             {/* Left: conversation list */}
-            <div style={{ width: '33%', minWidth: 260, maxWidth: 360, background: '#FFFFFF', borderRight: '1px solid #E5E7EB', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+            <div style={{ minHeight: 0, background: PANEL, borderRight: `1px solid ${BORDER}`, display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
               {/* Sub-tabs: Messages / Invitations */}
-              <div style={{ display: 'flex', borderBottom: '1px solid #E5E7EB' }}>
+              <div style={{ padding: 16, borderBottom: `1px solid ${BORDER}` }}>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                 <button
                   onClick={() => setMsgSubTab('messages')}
                   style={{
-                    flex: 1, padding: '11px 0', background: 'none', border: 'none', cursor: 'pointer',
-                    fontWeight: msgSubTab === 'messages' ? 700 : 500, fontSize: '0.875rem',
-                    color: msgSubTab === 'messages' ? ACCENT : '#6B7280',
-                    borderBottom: msgSubTab === 'messages' ? `2px solid ${ACCENT}` : '2px solid transparent',
+                    flex: 1, height: 38, background: msgSubTab === 'messages' ? ACCENT_LIGHT : PANEL, border: msgSubTab === 'messages' ? `1px solid ${ACCENT}55` : `1px solid ${BORDER}`, borderRadius: 10, cursor: 'pointer',
+                    fontWeight: 900, fontSize: 12,
+                    color: msgSubTab === 'messages' ? ACCENT : MUTED,
                     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                   }}
                 >
-                  <SquarePen size={14} /> Messages
+                  <MessageSquare size={14} /> Chats
                 </button>
                 <button
                   onClick={() => setMsgSubTab('invites')}
                   style={{
-                    flex: 1, padding: '11px 0', background: 'none', border: 'none', cursor: 'pointer',
-                    fontWeight: msgSubTab === 'invites' ? 700 : 500, fontSize: '0.875rem',
-                    color: msgSubTab === 'invites' ? ACCENT : '#6B7280',
-                    borderBottom: msgSubTab === 'invites' ? `2px solid ${ACCENT}` : '2px solid transparent',
+                    flex: 1, height: 38, background: msgSubTab === 'invites' ? ACCENT_LIGHT : PANEL, border: msgSubTab === 'invites' ? `1px solid ${ACCENT}55` : `1px solid ${BORDER}`, borderRadius: 10, cursor: 'pointer',
+                    fontWeight: 900, fontSize: 12,
+                    color: msgSubTab === 'invites' ? ACCENT : MUTED,
                     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                     position: 'relative',
                   }}
                 >
-                  <Bell size={14} /> Invitations
-                  {invites.length > 0 && (
-                    <span style={{
-                      position: 'absolute', top: 6, right: 18,
-                      background: ACCENT, color: '#fff', borderRadius: '50%',
-                      width: 16, height: 16, fontSize: '0.65rem', fontWeight: 700,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}>{invites.length}</span>
-                  )}
+                  <Bell size={14} /> Invites {invites.length > 0 ? `(${invites.length})` : ''}
                 </button>
+                </div>
+
+                {msgSubTab === 'messages' && (
+                  <>
+                    <button
+                      onClick={openCompose}
+                      data-testid="new-message-btn"
+                      disabled={!communicationReady}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 7, width: '100%', height: 38,
+                        background: ACCENT, border: 'none', borderRadius: 10,
+                        color: '#fff', fontWeight: 900, fontSize: 13,
+                        cursor: communicationReady ? 'pointer' : 'not-allowed',
+                        justifyContent: 'center', opacity: communicationReady ? 1 : 0.6,
+                        marginBottom: 12,
+                      }}
+                    >
+                      <SquarePen size={15} strokeWidth={2.5} /> New Message
+                    </button>
+
+                    <div style={{ height: 38, display: 'flex', alignItems: 'center', gap: 8, background: SOFT, border: `1px solid ${BORDER}`, borderRadius: 10, padding: '0 12px' }}>
+                      <Search size={15} color="#94A3B8" />
+                      <input
+                        value={search}
+                        onChange={e => setSearch(e.target.value)}
+                        placeholder="Search people..."
+                        style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: 13, color: TEXT, fontWeight: 600 }}
+                      />
+                    </div>
+                  </>
+                )}
               </div>
 
               {msgSubTab === 'messages' ? (
                 <>
-                  <div style={{ padding: '12px 14px', borderBottom: '1px solid #F3F4F6' }}>
-                    <button
-                      onClick={openCompose}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 6, width: '100%',
-                        padding: '8px 14px', background: ACCENT, border: 'none', borderRadius: 8,
-                        color: '#fff', fontWeight: 600, fontSize: '0.875rem', cursor: 'pointer',
-                        justifyContent: 'center',
-                      }}
-                      onMouseEnter={e => (e.currentTarget.style.background = '#EA6C0A')}
-                      onMouseLeave={e => (e.currentTarget.style.background = ACCENT)}
-                    >
-                      <SquarePen size={14} strokeWidth={2.5} /> New Message
-                    </button>
-                  </div>
-
-                  <div style={{ padding: '10px 14px', borderBottom: '1px solid #F3F4F6' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 8, padding: '7px 12px' }}>
-                      <Search size={14} color="#9CA3AF" />
-                      <input
-                        value={search}
-                        onChange={e => setSearch(e.target.value)}
-                        placeholder="Search conversations..."
-                        style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: '0.875rem', color: '#374151' }}
-                      />
-                    </div>
-                  </div>
-
-                  <div style={{ overflowY: 'auto', flex: 1 }}>
+                  <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, padding: 12 }}>
                     {filteredConversations.length === 0 ? (
-                      <div style={{ padding: 24, color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>
+                      <div style={{ height: 180, borderRadius: 14, background: SOFT, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 8, fontWeight: 700 }}>
+                        <MessageSquare size={28} strokeWidth={1.6} />
                         {search ? 'No results' : 'No conversations yet'}
                       </div>
                     ) : filteredConversations.map(conv => (
@@ -788,13 +935,22 @@ export default function OwnerCommunicationPage() {
                         key={conv.partnerId}
                         onClick={() => setSelectedConv(conv)}
                         style={{
-                          display: 'flex', alignItems: 'center', gap: 10, padding: '13px 16px',
-                          background: selectedConv?.partnerId === conv.partnerId ? ACCENT_LIGHT : 'transparent',
-                          border: 'none', cursor: 'pointer', textAlign: 'left', width: '100%',
-                          borderBottom: '1px solid #F9FAFB', transition: 'background 0.1s',
+                          display: 'flex', alignItems: 'center', gap: 11, padding: 13,
+                          background: selectedConv?.partnerId === conv.partnerId ? ACCENT_LIGHT : PANEL,
+                          border: selectedConv?.partnerId === conv.partnerId ? `1px solid ${ACCENT}55` : `1px solid ${BORDER}`,
+                          borderRadius: 14,
+                          cursor: 'pointer', textAlign: 'left', width: '100%', marginBottom: 10,
+                          boxShadow: selectedConv?.partnerId === conv.partnerId ? '0 10px 22px rgba(249,115,22,0.10)' : '0 1px 0 rgba(15,23,42,0.02)',
+                          transition: 'transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease',
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 12px 24px rgba(15,23,42,0.08)' }}
+                        onMouseLeave={e => {
+                          const selected = selectedConv?.partnerId === conv.partnerId
+                          e.currentTarget.style.transform = 'translateY(0)'
+                          e.currentTarget.style.boxShadow = selected ? '0 10px 22px rgba(249,115,22,0.10)' : '0 1px 0 rgba(15,23,42,0.02)'
                         }}
                       >
-                        <Avatar name={conv.partnerName} size={38} />
+                        <Avatar name={conv.partnerName} size={40} />
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
@@ -868,25 +1024,32 @@ export default function OwnerCommunicationPage() {
             </div>
 
             {/* Right: chat view (hidden on invites sub-tab) */}
-            <div style={{ flex: 1, display: msgSubTab === 'invites' ? 'none' : 'flex', flexDirection: 'column', overflow: 'hidden', background: '#F9FAFB' }}>
-              {selectedConv ? (
+            <div style={{ minWidth: 0, minHeight: 0, flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: SOFT }}>
+              {msgSubTab === 'invites' ? (
+                <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+                  <div style={{ width: 360, minHeight: 180, borderRadius: 18, background: PANEL, border: `1px solid ${BORDER}`, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 10, boxShadow: '0 12px 30px rgba(15,23,42,0.04)' }}>
+                    <Bell size={34} strokeWidth={1.6} />
+                    <div style={{ color: MUTED, fontWeight: 800 }}>Review invitations from the left panel</div>
+                  </div>
+                </div>
+              ) : selectedConv ? (
                 <>
-                  <div style={{ padding: '14px 24px', background: '#FFFFFF', borderBottom: '1px solid #E5E7EB', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
-                    <Avatar name={selectedConv.partnerName} size={36} />
+                  <div style={{ padding: '16px 24px', background: PANEL, borderBottom: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+                    <Avatar name={selectedConv.partnerName} size={42} />
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ fontWeight: 600, fontSize: '0.9375rem', color: '#111827' }}>{selectedConv.partnerName}</span>
+                        <span style={{ fontWeight: 900, fontSize: 17, color: TEXT }}>{selectedConv.partnerName}</span>
                         {selectedConv.partnerDeleted && (
-                          <span style={{ background: '#F3F4F6', color: '#6B7280', fontSize: '11px', padding: '2px 8px', borderRadius: '20px' }}>Account removed</span>
+                          <span style={{ background: '#F1F5F9', color: MUTED, fontSize: 11, padding: '3px 8px', borderRadius: 999, fontWeight: 800 }}>Account removed</span>
                         )}
                       </div>
                       {selectedConv.partnerRole && (
-                        <div style={{ fontSize: '0.75rem', color: '#9CA3AF' }}>{selectedConv.partnerRole}</div>
+                        <div style={{ fontSize: 12, color: MUTED, fontWeight: 700 }}>{selectedConv.partnerRole}</div>
                       )}
                     </div>
                   </div>
 
-                  <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: 10 }}>
                     {messages.map(msg => {
                       const isMine = msg.from_user_id === internalUserId
                       return (
@@ -894,12 +1057,12 @@ export default function OwnerCommunicationPage() {
                           <div style={{
                             maxWidth: '68%', padding: '9px 14px',
                             borderRadius: isMine ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-                            background: isMine ? ACCENT : '#FFFFFF',
-                            color: isMine ? '#fff' : '#111827',
-                            fontSize: '0.875rem', boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
+                            background: isMine ? '#DBEAFE' : '#F3E8FF',
+                            color: TEXT,
+                            fontSize: 13, fontWeight: 600, lineHeight: 1.45, boxShadow: '0 4px 12px rgba(15,23,42,0.05)',
                           }}>
                             {msg.content}
-                            <div style={{ fontSize: '0.7rem', marginTop: 4, opacity: 0.7, textAlign: 'right' }}>
+                            <div style={{ fontSize: 11, marginTop: 5, color: MUTED, fontWeight: 700, textAlign: isMine ? 'right' : 'left' }}>
                               {formatTime(msg.created_at)}
                             </div>
                           </div>
@@ -909,20 +1072,20 @@ export default function OwnerCommunicationPage() {
                     <div ref={messagesEndRef} />
                   </div>
 
-                  <div style={{ padding: '12px 24px', background: '#FFFFFF', borderTop: '1px solid #E5E7EB', display: 'flex', gap: 10, flexShrink: 0 }}>
+                  <div style={{ padding: '14px 24px', background: PANEL, borderTop: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
                     <input
                       value={msgInput}
                       onChange={e => setMsgInput(e.target.value)}
                       onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !selectedConv.partnerDeleted) { e.preventDefault(); handleSendMessage() } }}
                       placeholder={selectedConv.partnerDeleted ? "This user's account no longer exists." : 'Type a message...'}
                       disabled={selectedConv.partnerDeleted}
-                      style={{ flex: 1, padding: '9px 14px', border: '1px solid #E5E7EB', borderRadius: 8, fontSize: '0.875rem', outline: 'none', background: selectedConv.partnerDeleted ? '#F9FAFB' : undefined, color: selectedConv.partnerDeleted ? '#9CA3AF' : undefined, cursor: selectedConv.partnerDeleted ? 'not-allowed' : undefined }}
+                      style={{ flex: 1, height: 42, padding: '0 14px', border: `1px solid ${BORDER}`, borderRadius: 12, fontSize: 13, fontWeight: 600, outline: 'none', background: selectedConv.partnerDeleted ? SOFT : PANEL, color: selectedConv.partnerDeleted ? '#94A3B8' : TEXT, cursor: selectedConv.partnerDeleted ? 'not-allowed' : undefined }}
                     />
                     {!selectedConv.partnerDeleted && (
                       <button
                         onClick={handleSendMessage}
                         disabled={sendingMsg || !msgInput.trim()}
-                        style={{ padding: '9px 18px', background: ACCENT, color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: '0.875rem', opacity: sendingMsg || !msgInput.trim() ? 0.6 : 1 }}
+                        style={{ height: 42, padding: '0 17px', background: ACCENT, color: '#fff', border: 'none', borderRadius: 12, cursor: sendingMsg || !msgInput.trim() ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontWeight: 900, fontSize: 13, opacity: sendingMsg || !msgInput.trim() ? 0.6 : 1 }}
                       >
                         <Send size={15} /> Send
                       </button>
@@ -938,6 +1101,7 @@ export default function OwnerCommunicationPage() {
             </div>
           </div>
         )}
+        </section>
       </main>
 
       {/* Invite flash toasts */}
@@ -1029,7 +1193,7 @@ export default function OwnerCommunicationPage() {
               </div>
               <div>
                 <label style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 }}>Content *</label>
-                <textarea value={annContent} onChange={e => setAnnContent(e.target.value)} placeholder="Write your announcement..." rows={5} style={{ width: '100%', padding: '9px 12px', border: '1px solid #E5E7EB', borderRadius: 7, fontSize: '0.875rem', outline: 'none', resize: 'vertical', boxSizing: 'border-box' }} />
+                <textarea data-testid="announcement-content" value={annContent} onChange={e => setAnnContent(e.target.value)} placeholder="Write your announcement here..." rows={5} style={{ width: '100%', padding: '9px 12px', border: '1px solid #E5E7EB', borderRadius: 7, fontSize: '0.875rem', outline: 'none', resize: 'vertical', boxSizing: 'border-box' }} />
               </div>
               <div>
                 <label style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 }}>Audience</label>
@@ -1038,7 +1202,7 @@ export default function OwnerCommunicationPage() {
                   {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                 </select>
               </div>
-              <button onClick={handlePostAnnouncement} disabled={posting || !annTitle.trim() || !annContent.trim()} style={{ padding: '10px 0', background: ACCENT, color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: '0.9375rem', cursor: 'pointer', opacity: posting || !annTitle.trim() || !annContent.trim() ? 0.6 : 1 }}>
+              <button onClick={handlePostAnnouncement} disabled={!communicationReady || posting || !annTitle.trim() || !annContent.trim()} style={{ padding: '10px 0', background: ACCENT, color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: '0.9375rem', cursor: communicationReady ? 'pointer' : 'not-allowed', opacity: !communicationReady || posting || !annTitle.trim() || !annContent.trim() ? 0.6 : 1 }}>
                 {posting ? 'Posting...' : 'Post Announcement'}
               </button>
             </div>

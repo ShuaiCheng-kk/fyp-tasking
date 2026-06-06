@@ -12,11 +12,13 @@ import {
   UserPlus,
   ClipboardList,
   CheckSquare,
+  CalendarDays,
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 
 const NAV_ITEMS = [
   { label: 'Dashboard',     Icon: LayoutDashboard, href: '/owner/dashboard',       dot: null as 'messages' | 'announcements' | null },
+  { label: 'Shifts',        Icon: CalendarDays,    href: '/owner/shifts',          dot: null },
   { label: 'Tasks',         Icon: CheckSquare,     href: '/owner/tasks',           dot: null },
   { label: 'Report',        Icon: BarChart2,        href: '/owner/report',          dot: null },
   { label: 'My Company',    Icon: Users,            href: '/owner/team',            dot: null },

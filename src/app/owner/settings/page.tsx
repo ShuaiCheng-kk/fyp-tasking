@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { Plus, X, Pencil, Trash2 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
+import OwnerPlanBadge from '@/components/owner/PlanBadge'
 
 const INDUSTRIES = ['Retail', 'F&B', 'Logistics', 'Event Management']
 const SIZES = ['1-10', '11-50', '51-200', '200+']
@@ -100,6 +101,8 @@ export default function SettingsPage() {
   const searchParams = useSearchParams()
   const [userId, setUserId] = useState('')
   const [internalUserId, setInternalUserId] = useState('')
+  const [ownerName, setOwnerName] = useState('')
+  const [activeCompanyId, setActiveCompanyId] = useState('')
   const [companies, setCompanies] = useState<Company[]>([])
   const [loading, setLoading] = useState(true)
   const [userIdError, setUserIdError] = useState('')
@@ -177,12 +180,14 @@ export default function SettingsPage() {
         return
       }
       setUserId(uid)
+      setActiveCompanyId(localStorage.getItem(`tasking_company_id_${uid}`) || localStorage.getItem('tasking_company_id') || '')
       const role = localStorage.getItem('tasking_user_role') || ''
       setUserRole(role)
       const meRes = await fetch(`/api/user/me?user_id=${uid}`)
       const meData = await meRes.json()
       if (meData.success) {
         setInternalUserId(meData.user.id)
+        if (meData.user?.full_name) setOwnerName(meData.user.full_name)
       }
       fetchCompanies(uid)
     }
@@ -461,18 +466,29 @@ export default function SettingsPage() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ display: 'flex', height: '100vh', background: '#F3F4F6', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+    <div style={{ display: 'flex', height: '100vh', background: '#F7F8FA', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
       <OwnerSidebar />
 
       <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
 
-        {/* Top bar */}
-        <div style={{
-          padding: '18px 32px', background: '#FFFFFF', borderBottom: '1px solid #E5E7EB',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          position: 'sticky', top: 0, zIndex: 10,
-        }}>
-          <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#111827', margin: 0 }}>Settings</h1>
+        {/* Page header — matches Dashboard style */}
+        <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
+          <div>
+            <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
+              My Company
+            </h1>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
+            {ownerName && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: '#fff', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+                <div style={{ width: 26, height: 26, borderRadius: 999, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#fff' }}>{ownerName.charAt(0).toUpperCase()}</span>
+                </div>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{ownerName}</span>
+              </div>
+            )}
+            {activeCompanyId && <OwnerPlanBadge plan={companies.find(c => c.id === activeCompanyId)?.plan ?? 'Free'} currentCompanyId={activeCompanyId} />}
+          </div>
         </div>
 
         {/* Body: vertical tab layout */}

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { Plus, X, ChevronDown, Upload } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
+import OwnerPlanBadge from '@/components/owner/PlanBadge'
 
 // ─── Spinner ──────────────────────────────────────────────────────────────────
 
@@ -135,6 +136,8 @@ export default function TeamPage() {
   const [companyOwnerId, setCompanyOwnerId] = useState('')
   const [ownerEmail, setOwnerEmail] = useState('')
   const [companyName,        setCompanyName]        = useState('')
+  const [ownerName,          setOwnerName]          = useState('')
+  const [currentPlan,        setCurrentPlan]        = useState('Free')
   const [companyProfile,     setCompanyProfile]     = useState<{ description: string | null; location: string | null; industry: string | null; size: string | null } | null>(null)
   const [editProfileOpen,    setEditProfileOpen]    = useState(false)
   const [editProfileName,    setEditProfileName]    = useState('')
@@ -325,6 +328,7 @@ export default function TeamPage() {
             setOwnerEmail(d.user.email_address)
             setCurrentUserRole(d.user.role)
             setUserDeptId(d.user.department_id || '')
+            if (d.user?.full_name) setOwnerName(d.user.full_name)
           }
         })
         .catch(() => {})
@@ -370,6 +374,7 @@ export default function TeamPage() {
           if (!cancelled && companyData.success && companyData.company?.name) {
             setCompanyName(companyData.company.name)
             setCompanyOwnerId(companyData.company.owner_id || '')
+            setCurrentPlan(companyData.company.plan ?? 'Free')
             setCompanyProfile({
               description: companyData.company.description ?? null,
               location: companyData.company.location ?? null,
@@ -775,60 +780,54 @@ export default function TeamPage() {
     ((inviteRole === 'Manager' || inviteRole === 'Employee') && !inviteDeptId)
 
   return (
-    <div style={{ display: 'flex', height: '100vh', background: '#F3F4F6', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+    <div style={{ display: 'flex', height: '100vh', background: '#F7F8FA', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
       <OwnerSidebar />
 
       {/* ── MAIN ───────────────────────────────────────────────────────────── */}
       <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-        <div style={{
-          padding: '18px 32px',
-          background: headerTheme.bg,
-          borderBottom: headerTheme.border,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          position: 'sticky',
-          top: 0,
-          zIndex: 10,
-        }}>
-          <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: headerTheme.text, margin: 0 }}>
-            {companyName ? `${companyName} — My Company` : 'My Company'}
-          </h1>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {currentUserRole !== 'Manager' && (
-              <button
-                onClick={() => { setMemberImportOpen(true); setMemberImportRows([]); setMemberImportError(''); setMemberImportResult('') }}
-                style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '9px 14px', background: '#111827', border: 'none', borderRadius: '9px', fontWeight: 700, fontSize: '0.86rem', color: '#FFFFFF', cursor: 'pointer' }}
-              >
-                <Upload size={15} strokeWidth={2.5} />
-                Import Members
-              </button>
+        {/* Page header — matches Dashboard style */}
+        <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
+          <div>
+            <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
+              {companyName ? `Team for ${companyName}` : 'My Company'}
+            </h1>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
+            {ownerName && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: '#fff', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+                <div style={{ width: 26, height: 26, borderRadius: 999, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#fff' }}>{ownerName.charAt(0).toUpperCase()}</span>
+                </div>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{ownerName}</span>
+              </div>
             )}
-            <button
-              onClick={openInviteModal}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '9px 16px',
-                background: currentUserRole === 'Manager' ? '#3B82F6' : '#F97316',
-                border: 'none',
-                borderRadius: '9px',
-                fontWeight: 600,
-                fontSize: '0.9rem',
-                color: '#FFFFFF',
-                cursor: 'pointer',
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = currentUserRole === 'Manager' ? '#2563EB' : '#EA6C0A')}
-              onMouseLeave={(e) => (e.currentTarget.style.background = currentUserRole === 'Manager' ? '#3B82F6' : '#F97316')}
-            >
-              <Plus size={15} strokeWidth={2.5} />
-              {currentUserRole === 'Manager' ? 'Invite Employee' : 'Invite Member'}
-            </button>
+            {companyId && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
           </div>
         </div>
 
-        <div style={{ padding: '28px 32px', flex: 1 }}>
+        {/* Action buttons row */}
+        <div style={{ padding: '0 28px 8px', display: 'flex', gap: 8, flexShrink: 0 }}>
+          {currentUserRole !== 'Manager' && (
+            <button
+              onClick={() => { setMemberImportOpen(true); setMemberImportRows([]); setMemberImportError(''); setMemberImportResult('') }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 14px', background: '#111827', border: 'none', borderRadius: 9, fontWeight: 700, fontSize: '0.86rem', color: '#FFFFFF', cursor: 'pointer' }}
+            >
+              <Upload size={15} strokeWidth={2.5} />
+              Import Members
+            </button>
+          )}
+          <button
+            onClick={openInviteModal}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 16px', background: currentUserRole === 'Manager' ? '#3B82F6' : '#F97316', border: 'none', borderRadius: 9, fontWeight: 600, fontSize: '0.9rem', color: '#FFFFFF', cursor: 'pointer' }}
+            onMouseEnter={e => (e.currentTarget.style.background = currentUserRole === 'Manager' ? '#2563EB' : '#EA6C0A')}
+            onMouseLeave={e => (e.currentTarget.style.background = currentUserRole === 'Manager' ? '#3B82F6' : '#F97316')}
+          >
+            <Plus size={15} strokeWidth={2.5} />
+            {currentUserRole === 'Manager' ? 'Invite Employee' : 'Invite Member'}
+          </button>
+        </div>
+
+        <div style={{ padding: '8px 28px 28px', flex: 1 }}>
 
           {/* ── COMPANY PROFILE CARD ──────────────────────────────────────────── */}
           {companyName && (

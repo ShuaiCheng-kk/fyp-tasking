@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import { Archive, Copy, Plus, Send, Sparkles, UserCheck, UserX, X } from 'lucide-react'
 import OwnerSidebar from '@/components/OwnerSidebar'
+import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import { CandidateRecommendation } from '@/types/AI'
 import { CasualWorkerStatus, JobApplicant, JobPostingSummary } from '@/types/Recruitment'
 
@@ -53,6 +54,8 @@ export default function OwnerRecruitmentPage() {
   const [internalUserId, setInternalUserId] = useState('')
   const [companyId, setCompanyId] = useState('')
   const [companyName, setCompanyName] = useState('')
+  const [ownerName, setOwnerName] = useState('')
+  const [currentPlan, setCurrentPlan] = useState('Free')
   const [departments, setDepartments] = useState<Department[]>([])
   const [postings, setPostings] = useState<JobPostingSummary[]>([])
   const [selectedPostingId, setSelectedPostingId] = useState('')
@@ -171,6 +174,7 @@ export default function OwnerRecruitmentPage() {
       const meData = await meRes.json()
       if (!meData.success) return
       setInternalUserId(meData.user.id)
+      if (meData.user?.full_name) setOwnerName(meData.user.full_name)
 
       const storedCid = localStorage.getItem(`tasking_company_id_${authId}`) || meData.user.company_id || ''
       if (!storedCid) return
@@ -178,7 +182,10 @@ export default function OwnerRecruitmentPage() {
 
       const currentRes = await fetch(`/api/company/current?user_id=${authId}&company_id=${storedCid}`)
       const currentData = await currentRes.json()
-      if (!cancelled && currentData.success) setCompanyName(currentData.company?.name ?? '')
+      if (!cancelled && currentData.success) {
+        setCompanyName(currentData.company?.name ?? '')
+        setCurrentPlan(currentData.company?.plan ?? 'Free')
+      }
       if (!cancelled) await fetchRecruitmentData(storedCid)
     }
     void run()
@@ -343,97 +350,181 @@ export default function OwnerRecruitmentPage() {
   }
 
   return (
-    <div style={{ display: 'flex', height: '100vh', background: '#F3F4F6', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+    <div style={{ display: 'flex', height: '100vh', background: '#F7F8FA', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
       <OwnerSidebar />
       <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ padding: '18px 32px', background: '#FFFFFF', borderBottom: '1px solid #E5E7EB', position: 'sticky', top: 0, zIndex: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#111827', margin: 0 }}>
-            {companyName ? `${companyName} - Recruitment` : 'Recruitment'}
-          </h1>
-          <button onClick={openCreateForm} style={{ display: 'flex', alignItems: 'center', gap: 7, border: 'none', borderRadius: 8, background: '#F97316', color: '#FFFFFF', padding: '9px 13px', fontWeight: 800, cursor: 'pointer' }}>
-            <Plus size={15} /> New Job
+
+        {/* Page header — matches Dashboard style */}
+        <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
+          <div>
+            <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
+              {companyName ? `Recruitment for ${companyName}` : 'Recruitment'}
+            </h1>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
+            {ownerName && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: '#fff', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+                <div style={{ width: 26, height: 26, borderRadius: 999, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#fff' }}>{ownerName.charAt(0).toUpperCase()}</span>
+                </div>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{ownerName}</span>
+              </div>
+            )}
+            {companyId && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
+          </div>
+        </div>
+
+        <div style={{ padding: '0 28px 8px', flexShrink: 0 }}>
+          <button
+            onClick={openCreateForm}
+            data-testid="new-job-btn"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 7, border: 'none', borderRadius: 8, background: '#F97316', color: '#FFFFFF', padding: '9px 18px', fontWeight: 700, fontSize: '0.875rem', cursor: 'pointer' }}
+            onMouseEnter={e => (e.currentTarget.style.background = '#EA6C0A')}
+            onMouseLeave={e => (e.currentTarget.style.background = '#F97316')}
+          >
+            <Plus size={14} /> New Job
           </button>
         </div>
 
-        <div style={{ padding: 24, display: 'grid', gridTemplateColumns: '320px 1fr 360px', gap: 18, alignItems: 'start' }}>
-          <section style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, overflow: 'hidden' }}>
-            <div style={{ padding: 14, borderBottom: '1px solid #F1F5F9', fontSize: '0.78rem', fontWeight: 900, color: '#6B7280', textTransform: 'uppercase' }}>Job Postings</div>
+        <div style={{ padding: '0 28px 24px', display: 'grid', gridTemplateColumns: '300px 1fr 320px', gap: 20, alignItems: 'start' }}>
+
+          {/* Left: Job postings list */}
+          <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: '0 1px 3px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04)', overflow: 'hidden' }}>
+            <div style={{ padding: '16px 18px 14px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#A0AEC0', letterSpacing: '0.08em', textTransform: 'uppercase', flex: 1 }}>Job Postings</span>
+              <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#CBD5E0', background: '#F7F8FA', padding: '2px 8px', borderRadius: 99 }}>{postings.length}</span>
+            </div>
             {loading ? (
-              <div style={{ padding: 18, color: '#9CA3AF', fontSize: '0.9rem' }}>Loading...</div>
+              <div style={{ padding: '24px 18px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>Loading...</div>
             ) : postings.length === 0 ? (
-              <div style={{ padding: 18, color: '#9CA3AF', fontSize: '0.9rem' }}>No job postings yet.</div>
+              <div style={{ padding: '24px 18px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>No job postings yet.</div>
             ) : postings.map(posting => {
               const colors = statusColor(posting.status)
+              const isSelected = selectedPostingId === posting.id
               return (
-                <button key={posting.id} onClick={() => setSelectedPostingId(posting.id)} style={{ width: '100%', border: 'none', borderBottom: '1px solid #F1F5F9', background: selectedPostingId === posting.id ? '#FFF7ED' : '#FFFFFF', padding: 14, textAlign: 'left', cursor: 'pointer' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                    <strong style={{ fontSize: '0.9rem', color: '#111827' }}>{posting.title}</strong>
-                    <span style={{ background: colors.bg, color: colors.text, borderRadius: 999, padding: '2px 8px', fontSize: '0.68rem', fontWeight: 900 }}>{posting.status}</span>
+                <button
+                  key={posting.id}
+                  onClick={() => setSelectedPostingId(posting.id)}
+                  style={{
+                    width: '100%', border: 'none', borderBottom: '1px solid #F0F4F8',
+                    background: isSelected ? '#FFF7ED' : '#FFFFFF',
+                    padding: '14px 18px', textAlign: 'left', cursor: 'pointer',
+                    transition: 'background 0.1s',
+                    borderLeft: isSelected ? '3px solid #F97316' : '3px solid transparent',
+                  }}
+                  onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = '#FAFBFC' }}
+                  onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = '#FFFFFF' }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
+                    <strong style={{ fontSize: '0.875rem', color: '#111827', lineHeight: 1.3, flex: 1 }}>{posting.title}</strong>
+                    <span style={{ background: colors.bg, color: colors.text, borderRadius: 999, padding: '2px 8px', fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', flexShrink: 0 }}>{posting.status}</span>
                   </div>
-                  <p style={{ margin: '6px 0 0', fontSize: '0.78rem', color: '#6B7280' }}>{posting.department_name ?? 'Any department'} · {posting.applicant_count} applicants</p>
+                  <p style={{ margin: '5px 0 0', fontSize: '0.775rem', color: '#9CA3AF' }}>
+                    {posting.department_name ?? 'Any dept'} · {posting.applicant_count} applicant{posting.applicant_count !== 1 ? 's' : ''}
+                  </p>
                 </button>
               )
             })}
-          </section>
+          </div>
 
-          <section style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, minHeight: 520 }}>
-            {error && <div style={{ margin: 14, padding: 12, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 8, fontSize: '0.84rem', fontWeight: 700 }}>{error}</div>}
+          {/* Center: Posting detail */}
+          <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: '0 1px 3px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04)', minHeight: 520, overflow: 'hidden' }}>
+            {error && (
+              <div style={{ margin: 16, padding: '11px 14px', background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 10, fontSize: '0.84rem', fontWeight: 600 }}>{error}</div>
+            )}
             {!selectedPosting ? (
-              <div style={{ padding: 24, color: '#9CA3AF' }}>Select a job posting.</div>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 24px', color: '#CBD5E0', gap: 10 }}>
+                <UserCheck size={32} strokeWidth={1.5} />
+                <p style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 500 }}>Select a job posting</p>
+              </div>
             ) : (
-              <div>
-                <div style={{ padding: 18, borderBottom: '1px solid #F1F5F9', display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: 12 }}>
+              <>
+                <div style={{ padding: '20px 24px 18px', borderBottom: '1px solid #F0F4F8', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
                   <div>
-                    <h2 style={{ margin: 0, fontSize: '1.05rem', color: '#111827' }}>{selectedPosting.title}</h2>
-                    <p style={{ margin: '6px 0 0', color: '#6B7280', fontSize: '0.86rem' }}>{selectedPosting.department_name ?? 'Any department'} · {selectedPosting.location ?? 'No location'} · {selectedPosting.employment_type ?? 'Role'}</p>
+                    <h2 style={{ margin: 0, fontSize: '1.125rem', color: '#111827', fontWeight: 700, lineHeight: 1.3 }}>{selectedPosting.title}</h2>
+                    <p style={{ margin: '6px 0 0', color: '#9CA3AF', fontSize: '0.8375rem' }}>
+                      {[selectedPosting.department_name ?? 'Any department', selectedPosting.location, selectedPosting.employment_type].filter(Boolean).join(' · ')}
+                    </p>
                   </div>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button onClick={() => openEditForm(selectedPosting)} style={{ border: '1px solid #E5E7EB', background: '#FFFFFF', borderRadius: 8, padding: '8px 10px', fontWeight: 800, cursor: 'pointer' }}>Edit</button>
-                    <button onClick={() => runPostingAction('duplicate_posting')} disabled={actionLoading} title="Duplicate" style={{ border: '1px solid #E5E7EB', background: '#FFFFFF', borderRadius: 8, width: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}><Copy size={15} /></button>
-                    <button onClick={() => runPostingAction('archive_posting')} disabled={actionLoading || selectedPosting.status === 'archived'} title="Archive" style={{ border: 'none', background: '#111827', color: '#FFFFFF', borderRadius: 8, width: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: selectedPosting.status === 'archived' ? 'default' : 'pointer', opacity: selectedPosting.status === 'archived' ? 0.45 : 1 }}><Archive size={15} /></button>
+                  <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                    <button onClick={() => openEditForm(selectedPosting)} style={{ border: '1.5px solid #E5E7EB', background: '#FFFFFF', borderRadius: 8, padding: '7px 14px', fontWeight: 600, fontSize: '0.8125rem', color: '#374151', cursor: 'pointer' }}
+                      onMouseEnter={e => (e.currentTarget.style.background = '#F9FAFB')}
+                      onMouseLeave={e => (e.currentTarget.style.background = '#FFFFFF')}
+                    >Edit</button>
+                    <button onClick={() => runPostingAction('duplicate_posting')} disabled={actionLoading} title="Duplicate" style={{ border: '1.5px solid #E5E7EB', background: '#FFFFFF', borderRadius: 8, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#6B7280' }}
+                      onMouseEnter={e => (e.currentTarget.style.background = '#F9FAFB')}
+                      onMouseLeave={e => (e.currentTarget.style.background = '#FFFFFF')}
+                    ><Copy size={14} /></button>
+                    <button onClick={() => runPostingAction('archive_posting')} disabled={actionLoading || selectedPosting.status === 'archived'} title="Archive" style={{ border: 'none', background: '#1C1C1E', color: '#FFFFFF', borderRadius: 8, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: selectedPosting.status === 'archived' ? 'default' : 'pointer', opacity: selectedPosting.status === 'archived' ? 0.4 : 1 }}><Archive size={14} /></button>
                   </div>
                 </div>
-                <div style={{ padding: 18, display: 'grid', gap: 14 }}>
-                  <div><span style={labelStyle}>Description</span><p style={{ margin: 0, color: '#374151', lineHeight: 1.6 }}>{selectedPosting.description}</p></div>
-                  <div><span style={labelStyle}>Requirements</span><p style={{ margin: 0, color: '#374151', lineHeight: 1.6 }}>{selectedPosting.requirements || 'No requirements listed.'}</p></div>
+
+                <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 18 }}>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-                    <div style={{ padding: 12, background: '#F8FAFC', borderRadius: 8 }}><span style={labelStyle}>Pay</span><strong>{selectedPosting.salary_amount ?? '-'} {selectedPosting.salary_type ?? ''}</strong></div>
-                    <div style={{ padding: 12, background: '#F8FAFC', borderRadius: 8 }}><span style={labelStyle}>Pending</span><strong>{selectedPosting.pending_count}</strong></div>
-                    <div style={{ padding: 12, background: '#F8FAFC', borderRadius: 8 }}><span style={labelStyle}>Total Applicants</span><strong>{selectedPosting.applicant_count}</strong></div>
+                    {[
+                      { label: 'Pay', value: selectedPosting.salary_amount ? `${selectedPosting.salary_amount} ${selectedPosting.salary_type ?? ''}` : '—' },
+                      { label: 'Pending', value: selectedPosting.pending_count },
+                      { label: 'Applicants', value: selectedPosting.applicant_count },
+                    ].map(({ label, value }) => (
+                      <div key={label} style={{ padding: '12px 14px', background: '#F7F8FA', borderRadius: 10 }}>
+                        <span style={labelStyle}>{label}</span>
+                        <strong style={{ fontSize: '1.125rem', color: '#111827' }}>{value}</strong>
+                      </div>
+                    ))}
                   </div>
 
                   <div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', margin: '8px 0 10px' }}>
-                      <h3 style={{ margin: 0, fontSize: '0.95rem', color: '#111827' }}>Applicants</h3>
-                      <button onClick={recommendCandidates} disabled={aiLoading || applicants.length === 0} style={{ border: 'none', borderRadius: 7, background: '#111827', color: '#FFFFFF', padding: '7px 10px', display: 'flex', gap: 6, alignItems: 'center', cursor: aiLoading || applicants.length === 0 ? 'default' : 'pointer', opacity: aiLoading || applicants.length === 0 ? 0.6 : 1, fontSize: '0.76rem', fontWeight: 900 }}>
-                        {aiLoading ? <Spinner size={13} /> : <Sparkles size={13} />} Recommend
+                    <span style={labelStyle}>Description</span>
+                    <p style={{ margin: 0, color: '#374151', lineHeight: 1.7, fontSize: '0.9rem' }}>{selectedPosting.description}</p>
+                  </div>
+                  {selectedPosting.requirements && (
+                    <div>
+                      <span style={labelStyle}>Requirements</span>
+                      <p style={{ margin: 0, color: '#374151', lineHeight: 1.7, fontSize: '0.9rem' }}>{selectedPosting.requirements}</p>
+                    </div>
+                  )}
+
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                      <span style={labelStyle}>Applicants ({applicants.length})</span>
+                      <button
+                        onClick={recommendCandidates}
+                        disabled={aiLoading || applicants.length === 0}
+                        style={{ border: 'none', borderRadius: 7, background: '#111827', color: '#FFFFFF', padding: '6px 12px', display: 'flex', gap: 6, alignItems: 'center', cursor: aiLoading || applicants.length === 0 ? 'default' : 'pointer', opacity: aiLoading || applicants.length === 0 ? 0.5 : 1, fontSize: '0.775rem', fontWeight: 700 }}
+                      >
+                        {aiLoading ? <Spinner size={12} /> : <Sparkles size={12} />} AI Recommend
                       </button>
                     </div>
                     {applicants.length === 0 ? (
-                      <div style={{ padding: 14, color: '#9CA3AF', background: '#F8FAFC', borderRadius: 8 }}>No applicants yet.</div>
+                      <div style={{ padding: '20px 16px', color: '#9CA3AF', background: '#F7F8FA', borderRadius: 10, textAlign: 'center', fontSize: '0.875rem' }}>No applicants yet.</div>
                     ) : applicants.map(applicant => {
                       const colors = statusColor(applicant.status)
                       const recommendation = recommendations.find(item => item.applicant_id === applicant.id)
                       return (
-                        <div key={applicant.id} style={{ padding: 12, border: '1px solid #E5E7EB', borderRadius: 8, marginBottom: 8, display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                          <div>
-                            <strong style={{ color: '#111827' }}>{applicant.full_name}</strong>
-                            <p style={{ margin: '3px 0 0', color: '#6B7280', fontSize: '0.8rem' }}>{applicant.email_address}</p>
-                            {applicant.cover_letter && <p style={{ margin: '7px 0 0', color: '#4B5563', fontSize: '0.82rem' }}>{applicant.cover_letter}</p>}
+                        <div key={applicant.id} style={{ padding: '14px 16px', border: '1.5px solid #E5E7EB', borderRadius: 10, marginBottom: 10, display: 'flex', justifyContent: 'space-between', gap: 12, background: '#FFFFFF' }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                              <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#1C1C1E', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FFFFFF', fontWeight: 700, fontSize: '0.7rem', flexShrink: 0 }}>
+                                {applicant.full_name.charAt(0).toUpperCase()}
+                              </div>
+                              <strong style={{ color: '#111827', fontSize: '0.9rem' }}>{applicant.full_name}</strong>
+                            </div>
+                            <p style={{ margin: '2px 0 0 36px', color: '#9CA3AF', fontSize: '0.775rem' }}>{applicant.email_address}</p>
+                            {applicant.cover_letter && <p style={{ margin: '8px 0 0', color: '#4B5563', fontSize: '0.8125rem', lineHeight: 1.5 }}>{applicant.cover_letter}</p>}
                             {recommendation && (
-                              <div style={{ marginTop: 8, padding: 9, background: '#F8FAFC', borderRadius: 8, color: '#374151', fontSize: '0.78rem', lineHeight: 1.45 }}>
-                                <strong>AI {recommendation.score}/100 · {recommendation.recommendation}</strong>
-                                <p style={{ margin: '4px 0 0' }}>{recommendation.reasons[0] ?? recommendation.suggested_next_step}</p>
+                              <div style={{ marginTop: 10, padding: '10px 12px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, fontSize: '0.78rem', lineHeight: 1.5 }}>
+                                <strong style={{ color: '#059669' }}>AI Score: {recommendation.score}/100 — {recommendation.recommendation}</strong>
+                                <p style={{ margin: '4px 0 0', color: '#374151' }}>{recommendation.reasons[0] ?? recommendation.suggested_next_step}</p>
                                 {recommendation.risks[0] && <p style={{ margin: '3px 0 0', color: '#B45309' }}>{recommendation.risks[0]}</p>}
                               </div>
                             )}
                           </div>
-                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
-                            <span style={{ background: colors.bg, color: colors.text, borderRadius: 999, padding: '2px 8px', fontSize: '0.68rem', fontWeight: 900 }}>{applicant.status}</span>
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, flexShrink: 0 }}>
+                            <span style={{ background: colors.bg, color: colors.text, borderRadius: 999, padding: '3px 10px', fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase' }}>{applicant.status}</span>
                             {applicant.status === 'pending' && (
                               <div style={{ display: 'flex', gap: 6 }}>
-                                <button onClick={() => decideApplicant(applicant.id, 'accepted')} disabled={actionLoading} style={{ border: 'none', borderRadius: 7, background: '#059669', color: '#FFFFFF', padding: '7px 9px', display: 'flex', gap: 5, alignItems: 'center', cursor: 'pointer' }}><UserCheck size={14} /> Accept</button>
-                                <button onClick={() => decideApplicant(applicant.id, 'rejected')} disabled={actionLoading} style={{ border: 'none', borderRadius: 7, background: '#DC2626', color: '#FFFFFF', padding: '7px 9px', display: 'flex', gap: 5, alignItems: 'center', cursor: 'pointer' }}><UserX size={14} /> Reject</button>
+                                <button onClick={() => decideApplicant(applicant.id, 'accepted')} disabled={actionLoading} style={{ border: 'none', borderRadius: 7, background: '#059669', color: '#FFFFFF', padding: '6px 10px', display: 'flex', gap: 5, alignItems: 'center', cursor: 'pointer', fontSize: '0.775rem', fontWeight: 600 }}><UserCheck size={13} /> Accept</button>
+                                <button onClick={() => decideApplicant(applicant.id, 'rejected')} disabled={actionLoading} style={{ border: 'none', borderRadius: 7, background: '#DC2626', color: '#FFFFFF', padding: '6px 10px', display: 'flex', gap: 5, alignItems: 'center', cursor: 'pointer', fontSize: '0.775rem', fontWeight: 600 }}><UserX size={13} /> Reject</button>
                               </div>
                             )}
                           </div>
@@ -442,34 +533,56 @@ export default function OwnerRecruitmentPage() {
                     })}
                   </div>
                 </div>
-              </div>
+              </>
             )}
-          </section>
+          </div>
 
-          <section style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, overflow: 'hidden' }}>
-            <div style={{ padding: 14, borderBottom: '1px solid #F1F5F9', fontSize: '0.78rem', fontWeight: 900, color: '#6B7280', textTransform: 'uppercase' }}>Casual Worker Access</div>
+          {/* Right: Casual worker access */}
+          <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: '0 1px 3px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04)', overflow: 'hidden' }}>
+            <div style={{ padding: '16px 18px 14px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#A0AEC0', letterSpacing: '0.08em', textTransform: 'uppercase', flex: 1 }}>Casual Workers</span>
+              <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#CBD5E0', background: '#F7F8FA', padding: '2px 8px', borderRadius: 99 }}>{workers.length}</span>
+            </div>
             {workers.length === 0 ? (
-              <div style={{ padding: 18, color: '#9CA3AF', fontSize: '0.9rem' }}>No casual workers yet.</div>
+              <div style={{ padding: '24px 18px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>No casual workers yet.</div>
             ) : workers.map(worker => {
               const colors = statusColor(worker.worker_status)
               return (
-                <div key={worker.id} style={{ padding: 14, borderBottom: '1px solid #F1F5F9' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                    <strong style={{ color: '#111827', fontSize: '0.9rem' }}>{worker.full_name}</strong>
-                    <span style={{ background: colors.bg, color: colors.text, borderRadius: 999, padding: '2px 8px', fontSize: '0.68rem', fontWeight: 900 }}>{worker.worker_status}</span>
+                <div key={worker.id} style={{ padding: '14px 18px', borderBottom: '1px solid #F0F4F8' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', marginBottom: 4 }}>
+                    <strong style={{ color: '#111827', fontSize: '0.875rem' }}>{worker.full_name}</strong>
+                    <span style={{ background: colors.bg, color: colors.text, borderRadius: 999, padding: '2px 9px', fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase' }}>{worker.worker_status}</span>
                   </div>
-                  <p style={{ margin: '4px 0 9px', color: '#6B7280', fontSize: '0.78rem' }}>{worker.department_name ?? 'No department'} · {worker.email_address}</p>
+                  <p style={{ margin: '0 0 10px', color: '#9CA3AF', fontSize: '0.775rem' }}>{worker.department_name ?? 'No department'} · {worker.email_address}</p>
                   <div style={{ display: 'flex', gap: 6 }}>
-                    {(['active', 'inactive', 'blocked'] as const).map(status => (
-                      <button key={status} onClick={() => updateWorkerStatus(worker.id, status)} disabled={actionLoading || worker.worker_status === status} style={{ flex: 1, border: '1px solid #E5E7EB', borderRadius: 7, background: worker.worker_status === status ? '#F3F4F6' : '#FFFFFF', color: status === 'blocked' ? '#B91C1C' : '#374151', padding: '7px 0', fontSize: '0.74rem', fontWeight: 800, cursor: actionLoading || worker.worker_status === status ? 'default' : 'pointer' }}>
-                        {status}
-                      </button>
-                    ))}
+                    {(['active', 'inactive', 'blocked'] as const).map(status => {
+                      const isActive = worker.worker_status === status
+                      const isBlockBtn = status === 'blocked'
+                      return (
+                        <button
+                          key={status}
+                          onClick={() => updateWorkerStatus(worker.id, status)}
+                          disabled={actionLoading || isActive}
+                          style={{
+                            flex: 1, border: isActive ? 'none' : '1.5px solid #E5E7EB',
+                            borderRadius: 7,
+                            background: isActive ? (isBlockBtn ? '#FEF2F2' : '#F3F4F6') : '#FFFFFF',
+                            color: isBlockBtn ? (isActive ? '#B91C1C' : '#9CA3AF') : (isActive ? '#374151' : '#9CA3AF'),
+                            padding: '6px 0', fontSize: '0.75rem', fontWeight: isActive ? 700 : 500,
+                            cursor: actionLoading || isActive ? 'default' : 'pointer',
+                            transition: 'all 0.1s',
+                            textTransform: 'capitalize',
+                          }}
+                        >
+                          {status}
+                        </button>
+                      )
+                    })}
                   </div>
                 </div>
               )
             })}
-          </section>
+          </div>
         </div>
       </main>
 
@@ -481,7 +594,7 @@ export default function OwnerRecruitmentPage() {
               <button onClick={() => setFormOpen(false)} style={{ border: 'none', background: 'transparent', color: '#9CA3AF', cursor: 'pointer' }}><X size={18} /></button>
             </div>
             <div style={{ display: 'grid', gap: 13 }}>
-              <div><label style={labelStyle}>Title</label><input value={title} onChange={event => setTitle(event.target.value)} style={inputStyle} /></div>
+              <div><label style={labelStyle}>Title</label><input data-testid="job-title-input" value={title} onChange={event => setTitle(event.target.value)} style={inputStyle} /></div>
               <button onClick={generateJobDescription} disabled={aiLoading || !title.trim()} style={{ border: 'none', borderRadius: 8, background: '#111827', color: '#FFFFFF', padding: 10, fontWeight: 900, cursor: aiLoading || !title.trim() ? 'default' : 'pointer', opacity: aiLoading || !title.trim() ? 0.6 : 1, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 8 }}>
                 {aiLoading ? <Spinner size={14} /> : <Sparkles size={14} />} Generate description, requirements, and questions
               </button>

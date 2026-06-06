@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import { Check, Clock, Edit3, ShieldCheck, Sparkles, UserX, X } from 'lucide-react'
 import OwnerSidebar from '@/components/OwnerSidebar'
+import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import { AIAutoApprovalDecision } from '@/types/AI'
 import {
   AttendanceDashboard,
@@ -65,6 +66,8 @@ export default function OwnerAttendancePage() {
   const [internalUserId, setInternalUserId] = useState('')
   const [companyId, setCompanyId] = useState('')
   const [companyName, setCompanyName] = useState('')
+  const [ownerName, setOwnerName] = useState('')
+  const [currentPlan, setCurrentPlan] = useState('Free')
   const [dashboard, setDashboard] = useState<AttendanceDashboard | null>(null)
   const [timeOffRequests, setTimeOffRequests] = useState<TimeOffRequestView[]>([])
   const [swapRequests, setSwapRequests] = useState<ShiftSwapRequestView[]>([])
@@ -129,6 +132,7 @@ export default function OwnerAttendancePage() {
       const meData = await meRes.json()
       if (!meData.success || cancelled) return
       setInternalUserId(meData.user.id)
+      if (meData.user?.full_name) setOwnerName(meData.user.full_name)
 
       const storedCompanyId = localStorage.getItem(`tasking_company_id_${authId}`) || meData.user.company_id || ''
       if (!storedCompanyId) return
@@ -136,7 +140,10 @@ export default function OwnerAttendancePage() {
 
       const currentRes = await fetch(`/api/company/current?user_id=${authId}&company_id=${storedCompanyId}`)
       const currentData = await currentRes.json()
-      if (!cancelled && currentData.success) setCompanyName(currentData.company?.name ?? '')
+      if (!cancelled && currentData.success) {
+        setCompanyName(currentData.company?.name ?? '')
+        setCurrentPlan(currentData.company?.plan ?? 'Free')
+      }
       if (!cancelled) await fetchAttendanceData(storedCompanyId)
     }
     void run()
@@ -228,19 +235,40 @@ export default function OwnerAttendancePage() {
   const records = dashboard?.records ?? []
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: '#F3F4F6', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+    <div style={{ display: 'flex', minHeight: '100vh', background: '#F7F8FA', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
       <OwnerSidebar />
       <main style={{ marginLeft: '64px', flex: 1, minHeight: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ padding: '18px 32px', background: '#FFFFFF', borderBottom: '1px solid #E5E7EB', position: 'sticky', top: 0, zIndex: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#111827', margin: 0 }}>
-            {companyName ? `${companyName} - Attendance` : 'Attendance'}
-          </h1>
-          <button onClick={() => fetchAttendanceData(companyId)} disabled={loading || !companyId} style={{ border: 'none', borderRadius: 8, background: '#111827', color: '#FFFFFF', padding: '9px 13px', fontWeight: 800, cursor: loading ? 'default' : 'pointer' }}>
+        {/* Page header — matches Dashboard style */}
+        <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
+          <div>
+            <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
+              {companyName ? `Attendance for ${companyName}` : 'Attendance'}
+            </h1>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
+            {ownerName && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: '#fff', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+                <div style={{ width: 26, height: 26, borderRadius: 999, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#fff' }}>{ownerName.charAt(0).toUpperCase()}</span>
+                </div>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{ownerName}</span>
+              </div>
+            )}
+            {companyId && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
+          </div>
+        </div>
+
+        <div style={{ padding: '0 28px 8px', flexShrink: 0 }}>
+          <button
+            onClick={() => fetchAttendanceData(companyId)}
+            disabled={loading || !companyId}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1.5px solid #E5E7EB', borderRadius: 8, background: '#fff', color: '#374151', padding: '7px 14px', fontWeight: 600, fontSize: '0.8125rem', cursor: loading || !companyId ? 'default' : 'pointer', opacity: loading || !companyId ? 0.5 : 1 }}
+          >
             Refresh
           </button>
         </div>
 
-        <div style={{ padding: 24, display: 'grid', gap: 18 }}>
+        <div style={{ padding: '0 28px 24px', display: 'grid', gap: 18 }}>
           {error && <div style={{ padding: 12, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 8, fontSize: '0.84rem', fontWeight: 800 }}>{error}</div>}
 
           <section style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, padding: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 14 }}>
