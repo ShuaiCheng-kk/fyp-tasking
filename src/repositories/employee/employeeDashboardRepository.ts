@@ -32,55 +32,49 @@ export const employeeDashboardRepository = {
     }
   },
 
-  async getAssignedWork(user_id: string): Promise<
-    {
-      id: string
-      shift_id: string
-      title: string
-      instruction: string | null
-      shift_date: string
-      start_time: string
-      end_time: string
-      assignment_status: string
-      casual_worker_name: string
-      casual_worker_email: string
-      manager_name: string
-      manager_email: string
-    }[]
-  > {
-    const { data, error } = await supabase
-      .from('shift_assignments')
-      .select(`
-        id,
-        shift_id,
-        assignment_status,
+async getAssignedWork(user_id: string) {
+  const { data, error } = await supabase
+    .from('shift_assignments')
+    .select(`
+      id,
+      shift_id,
+      user_id,
+      assignment_status,
+      assigned_by,
+      shifts!inner (
+        title,
+        instruction,
+        shift_date,
+        start_time,
+        end_time
+      )
+    `)
+    .eq('user_id', user_id)
+    .order('created_at', { ascending: false })
 
-        casual_worker:users!shift_assignments_user_id_fkey (
-          full_name,
-          email_address
-        ),
+  if (error) {
+    throw new Error(error.message)
+  }
 
-        assigned_by_user:users!shift_assignments_assigned_by_fkey (
-          full_name,
-          email_address
-        ),
+  const assignedByIds = [
+    ...new Set((data ?? []).map((row: any) => row.assigned_by).filter(Boolean)),
+  ]
 
-        shifts (
-          title,
-          instruction,
-          shift_date,
-          start_time,
-          end_time
-        )
-      `)
-      .eq('supervisor_employee_id', user_id)
-      .order('created_at', { ascending: false })
+  const { data: assignedByUsers } = assignedByIds.length
+    ? await supabase
+        .from('users')
+        .select('id, full_name, email_address')
+        .in('id', assignedByIds)
+    : { data: [] }
 
-    if (error) {
-      throw new Error(error.message)
-    }
+  const assignedByMap = new Map(
+    ((assignedByUsers ?? []) as any[]).map((user) => [user.id, user])
+  )
 
-    return (data ?? []).map((row: any) => ({
+  return (data ?? []).map((row: any) => {
+    const assignedBy = assignedByMap.get(row.assigned_by)
+
+    return {
       id: row.id,
       shift_id: row.shift_id,
 
@@ -92,11 +86,9 @@ export const employeeDashboardRepository = {
 
       assignment_status: row.assignment_status ?? 'assigned',
 
-      casual_worker_name: row.casual_worker?.full_name ?? 'Not assigned',
-      casual_worker_email: row.casual_worker?.email_address ?? 'No email',
-
-      manager_name: row.assigned_by_user?.full_name ?? 'Assigned Manager',
-      manager_email: row.assigned_by_user?.email_address ?? '',
-    }))
-  },
+      manager_name: assignedBy?.full_name ?? 'Assigned Manager',
+      manager_email: assignedBy?.email_address ?? '',
+    }
+  })
+}
 }

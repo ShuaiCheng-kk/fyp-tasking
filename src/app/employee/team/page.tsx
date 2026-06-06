@@ -32,7 +32,14 @@ function RoleBadge({ role }: { role: string }) {
   )
 }
 
-function MemberCard({ member }: { member: TeamMember }) {
+function MemberCard({
+  member,
+  showViewButton = false,
+}: {
+  member: TeamMember
+  showViewButton?: boolean
+}) {
+  const router = useRouter()
   const initials = member.full_name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase()
   const isManager = member.role === 'Manager'
   return (
@@ -66,6 +73,24 @@ function MemberCard({ member }: { member: TeamMember }) {
           <span style={{ fontSize: '0.8125rem', color: '#6B7280' }}>{member.email_address}</span>
         )}
       </div>
+
+      {showViewButton && (
+        <button
+          onClick={() => router.push(`/employee/casual-workers/${member.id}`)}
+          style={{
+            padding: '7px 12px',
+            borderRadius: '8px',
+            border: 'none',
+            background: GREEN,
+            color: '#FFFFFF',
+            fontSize: '0.75rem',
+            fontWeight: 600,
+            cursor: 'pointer',
+          }}
+        >
+          View Details
+        </button>
+      )}
     </div>
   )
 }
@@ -77,6 +102,7 @@ export default function EmployeeTeamPage() {
   const [departmentName, setDepartmentName] = useState('')
   const [manager, setManager] = useState<TeamMember | null>(null)
   const [teammates, setTeammates] = useState<TeamMember[]>([])
+  const [casualWorkers, setCasualWorkers] = useState<TeamMember[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -104,7 +130,8 @@ export default function EmployeeTeamPage() {
       }
       if (!cancelled && teamData.success) {
         setManager(teamData.manager ?? null)
-        setTeammates(teamData.teammates ?? [])
+        setTeammates(teamData.employees ?? [])
+        setCasualWorkers(teamData.casual_workers ?? [])
       }
       if (!cancelled) setLoading(false)
     }
@@ -162,16 +189,32 @@ export default function EmployeeTeamPage() {
                 )}
               </section>
 
-              {/* My Team */}
+              {/* Employees */}
               <section>
                 <p style={{ fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 12px' }}>
-                  My Team
+                  Employees
                 </p>
                 {teammates.length === 0 ? (
                   <p style={{ color: '#9CA3AF', fontSize: '0.9375rem' }}>No other employees in your department.</p>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     {teammates.map(m => <MemberCard key={m.id} member={m} />)}
+                  </div>
+                )}
+              </section>
+
+              {/* Assigned Casual Workers */}
+              <section>
+                <p style={{ fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 12px' }}>
+                  Assigned Casual Workers
+                </p>
+                {casualWorkers.length === 0 ? (
+                  <p style={{ color: '#9CA3AF', fontSize: '0.9375rem' }}>No assigned casual workers in your department.</p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {casualWorkers.map(cw => (
+                      <MemberCard key={cw.id} member={cw} showViewButton />
+                    ))}
                   </div>
                 )}
               </section>

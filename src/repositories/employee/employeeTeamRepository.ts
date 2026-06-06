@@ -1,48 +1,60 @@
 import { supabase } from '@/lib/supabase'
 
+type TeamUser = {
+  id: string
+  full_name: string
+  email_address: string
+  role: string
+}
+
 export const employeeTeamRepository = {
-
   async getEmployeeTeam(user_id: string): Promise<{
-    manager: { id: string; full_name: string; email_address: string; role: string } | null
-    teammates: { id: string; full_name: string; email_address: string; role: string }[]
+    manager: TeamUser | null
+    employees: TeamUser[]
+    casual_workers: TeamUser[]
   }> {
-    const { data: empDept } = await supabase
-      .from('employee_departments')
-      .select('department_id')
-      .eq('employee_id', user_id)
-      .single()
-    if (!empDept?.department_id) return { manager: null, teammates: [] }
-
-    const { department_id } = empDept
-
-    const { data: mgrDept } = await supabase
-      .from('manager_departments')
-      .select('manager_id')
-      .eq('department_id', department_id)
-      .limit(1)
+    const { data: currentUser, error: userErr } = await supabase
+      .from('users')
+      .select('id, company_id, department_id')
+      .eq('id', user_id)
       .single()
 
-    let manager: { id: string; full_name: string; email_address: string; role: string } | null = null
-    if (mgrDept?.manager_id) {
-      const { data: mgrUser } = await supabase
-        .from('users')
-        .select('id, full_name, email_address, role')
-        .eq('id', mgrDept.manager_id)
-        .single()
-      if (mgrUser) manager = mgrUser as { id: string; full_name: string; email_address: string; role: string }
+    if (userErr || !currentUser?.company_id || !currentUser?.department_id) {
+      return {
+        manager: null,
+        employees: [],
+        casual_workers: [],
+      }
     }
 
-    const { data: teammates } = await supabase
-      .from('employee_departments')
-      .select('employee_id, users!inner(id, full_name, email_address, role)')
-      .eq('department_id', department_id)
-      .neq('employee_id', user_id)
+    const { data: teamUsers, error: teamErr } = await supabase
+      .from('users')
+      .select('id, full_name, email_address, role')
+      .eq('company_id', currentUser.company_id)
+      .eq('department_id', currentUser.department_id)
+      .in('role', ['Manager', 'Employee', 'Casual Worker'])
 
-    const mappedTeammates = ((teammates ?? []) as any[])
-      .map(row => row.users)
-      .filter(Boolean) as { id: string; full_name: string; email_address: string; role: string }[]
+    if (teamErr) {
+      throw new Error(teamErr.message)
+    }
 
-    return { manager, teammates: mappedTeammates }
+    const users = (teamUsers ?? []) as TeamUser[]
+
+    const manager =
+      users.find((user) => user.role === 'Manager') ?? null
+
+    const employees = users.filter(
+      (user) => user.role === 'Employee' && user.id !== user_id
+    )
+
+    const casual_workers = users.filter(
+      (user) => user.role === 'Casual Worker'
+    )
+
+    return {
+      manager,
+      employees,
+      casual_workers,
+    }
   },
-
 }

@@ -180,7 +180,7 @@ export default function EmployeeDashboard() {
         display: 'flex',
         height: '100vh',
         background: '#F0FDF4',
-        fontFamily: 'system-ui, -apple-system, sans-serif',
+        fontFamily: 'var(--font-body)',
       }}
     >
       <EmployeeSidebar />
@@ -214,6 +214,7 @@ export default function EmployeeDashboard() {
               fontSize: '1rem',
               color: '#FFFFFF',
               margin: 0,
+              fontFamily: 'var(--font-heading)',
             }}
           >
             {loading ? '' : title}
