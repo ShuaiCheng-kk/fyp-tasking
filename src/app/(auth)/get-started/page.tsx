@@ -326,7 +326,7 @@ function Card({ children, maxWidth = '680px' }: { children: React.ReactNode; max
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-type Path = 'owner' | 'invitation' | null;
+type Path = 'owner' | 'invitation' | 'guest' | null;
 
 export default function GetStartedPage() {
   const router = useRouter();
@@ -342,6 +342,7 @@ export default function GetStartedPage() {
   const [companyNameError, setCompanyNameError] = useState('');
   const [ownerPhoneError, setOwnerPhoneError] = useState('');
   const [invitedPhoneError, setInvitedPhoneError] = useState('');
+  const [guestPhoneError, setGuestPhoneError] = useState('');
 
   // Owner form state
   const [ownerAccount, setOwnerAccount] = useState({ fullName: '', email: '', password: '', phone: '' });
@@ -357,11 +358,27 @@ export default function GetStartedPage() {
   const [inviteCode, setInviteCode] = useState('');
   const [urlCode, setUrlCode] = useState('');
 
+  // Guest user form state
+  const [guestAccount, setGuestAccount] = useState({ fullName: '', email: '', password: '', phone: '' });
+
   // ── Read URL code on mount ────────────────────────────────────────────────
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    const role = params.get('role');
+    const jobId = sessionStorage.getItem('apply_job_id');
     const code = params.get('code');
+
+    if (jobId) {
+      sessionStorage.setItem('apply_job_id', jobId);
+    }
+
+    if (role === 'guest') {
+      setPath('guest');
+      transition(() => setStep(1));
+      return;
+    }
+
     if (code) {
       setUrlCode(code);
       setInviteCode(code);
@@ -566,6 +583,99 @@ export default function GetStartedPage() {
     }
     goNext();
   };
+
+  const handleGuestRegister = async () => {
+  setError('');
+  setGuestPhoneError('');
+
+  if (!guestAccount.fullName.trim()) { setError('Please enter your full name.'); return; }
+  if (/\s{2,}/.test(guestAccount.fullName) || guestAccount.fullName !== guestAccount.fullName.trimEnd()) {
+    setError('Full name cannot have consecutive spaces or trailing spaces.'); return;
+  }
+  if (!guestAccount.email.trim()) { setError('Please enter your email.'); return; }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(guestAccount.email.trim())) {
+    setError('Please enter a valid email address (e.g. you@example.com).'); return;
+  }
+  if (!guestAccount.password) { setError('Please create a password.'); return; }
+  if (!guestAccount.phone) { setGuestPhoneError('Phone number is required.'); return; }
+  if (guestAccount.phone.length !== 8) {
+    setGuestPhoneError('Phone number must be exactly 8 digits.'); return;
+  }
+
+  setIsLoading(true);
+
+  try {
+    const [emailRes, phoneRes] = await Promise.all([
+      fetch('/api/auth/check-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: guestAccount.email.trim() }),
+      }),
+      fetch('/api/auth/check-phone', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: guestAccount.phone }),
+      }),
+    ]);
+
+    const emailData = await emailRes.json();
+    if (emailData.exists) {
+      setError('An account with this email already exists. Please sign in instead.');
+      return;
+    }
+
+    const phoneData = await phoneRes.json();
+    if (phoneData.exists) {
+      setError('This phone number is already registered to another account. Please use a different number.');
+      return;
+    }
+
+    const registerRes = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        full_name: guestAccount.fullName.trim(),
+        email_address: guestAccount.email.trim(),
+        password: guestAccount.password,
+        phone_number: guestAccount.phone,
+        role: 'Guest User',
+      }),
+    });
+
+    const registerData = await registerRes.json();
+    if (!registerData.success) throw new Error(registerData.message);
+
+    const signinRes = await fetch('/api/auth/signin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email_address: guestAccount.email.trim(),
+        password: guestAccount.password,
+      }),
+    });
+
+    const signinData = await signinRes.json();
+    if (!signinData.success) throw new Error(signinData.message);
+
+    const authUid = signinData.user.auth_id;
+
+    localStorage.setItem('tasking_user_id', authUid);
+    localStorage.setItem('tasking_user_role', signinData.user.role);
+    localStorage.removeItem('tasking_company_id');
+
+    const jobId = sessionStorage.getItem('apply_job_id');
+
+    if (jobId) {
+      window.location.href =  `/worker/dashboard?apply=true&job_id=${jobId}`;
+    } else {
+      window.location.href = '/worker/dashboard';
+    }
+  } catch (err) {
+    setError(err instanceof Error ? err.message : 'Registration failed');
+  } finally {
+    setIsLoading(false);
+  }
+};
 
   const handleRedeemCode = async () => {
     setIsLoading(true);
@@ -1121,6 +1231,32 @@ export default function GetStartedPage() {
                 </p>
               </>
             )}
+          </Card>
+        )}
+
+        {/* ──────── GUEST USER PATH ──────── */}
+
+        {!confirmationEmail && path === 'guest' && step === 1 && (
+          <Card>
+            <TaskingLogo />
+            <BackButton onClick={() => router.push('/job-board')} />
+            <StepHeading
+              headline="Create your applicant account"
+              subheadline="Register as a Guest User to apply for this job."
+            />
+            <AccountFields
+              form={guestAccount}
+              setForm={setGuestAccount}
+              phoneError={guestPhoneError}
+              clearPhoneError={() => setGuestPhoneError('')}
+            />
+            <div style={{ marginTop: '28px' }}>
+              <InlineError message={error} />
+              <PrimaryButton loading={isLoading} onClick={handleGuestRegister}>
+                Register
+              </PrimaryButton>
+              <LegalText />
+            </div>
           </Card>
         )}
 
