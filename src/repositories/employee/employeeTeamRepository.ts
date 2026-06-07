@@ -11,7 +11,6 @@ export const employeeTeamRepository = {
   async getEmployeeTeam(user_id: string): Promise<{
     manager: TeamUser | null
     employees: TeamUser[]
-    casual_workers: TeamUser[]
   }> {
     const { data: currentUser, error: userErr } = await supabase
       .from('users')
@@ -23,7 +22,6 @@ export const employeeTeamRepository = {
       return {
         manager: null,
         employees: [],
-        casual_workers: [],
       }
     }
 
@@ -32,7 +30,7 @@ export const employeeTeamRepository = {
       .select('id, full_name, email_address, role')
       .eq('company_id', currentUser.company_id)
       .eq('department_id', currentUser.department_id)
-      .in('role', ['Manager', 'Employee', 'Casual Worker'])
+      .in('role', ['Manager', 'Employee'])
 
     if (teamErr) {
       throw new Error(teamErr.message)
@@ -47,14 +45,9 @@ export const employeeTeamRepository = {
       (user) => user.role === 'Employee' && user.id !== user_id
     )
 
-    const casual_workers = users.filter(
-      (user) => user.role === 'Casual Worker'
-    )
-
     return {
       manager,
       employees,
-      casual_workers,
     }
   },
 }
