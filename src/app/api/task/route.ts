@@ -113,8 +113,8 @@ export async function PATCH(req: NextRequest) {
   if (!b.id || typeof b.id !== 'string')
     return NextResponse.json({ success: false, message: 'id is required' }, { status: 400 })
 
-  // Quick status+percentage update shortcut
-  if (b.status !== undefined && b.percentage_complete !== undefined) {
+  // Quick status+percentage update shortcut (only when no other fields are present)
+  if (b.status !== undefined && b.percentage_complete !== undefined && !b.title) {
     try {
       const task = await taskService.updateTaskStatus(
         b.id,

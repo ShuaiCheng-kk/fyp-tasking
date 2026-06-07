@@ -677,7 +677,7 @@ export default function OwnerDashboard() {
                   const right = positionForTimeWithPad(endMin)
                   const width = right - left
                   if (width <= 0) return null
-                  const color = deptColor(shift.department_id)
+                  const color = deptColor(row.department_id)
                   return (
                     <div
                       key={shift.id}

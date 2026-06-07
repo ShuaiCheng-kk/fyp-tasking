@@ -1,17 +1,122 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from 'react'
 import { useRouter } from 'next/navigation'
+import { createPortal } from 'react-dom'
 import {
   Plus, X, ChevronDown, Calendar, AlertCircle,
   CheckCircle, Clock, Eye, Layers, Users, MoreHorizontal,
-  Copy, UserCog, Pencil, Trash2,
+  Copy, UserCog, UserRound, Pencil, Trash2, CalendarDays, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import { Task, TaskInput, KanbanGroup } from '@/types/Task'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
+
+// ─── Date picker constants ────────────────────────────────────────────────────
+
+const TASK_ORANGE = '#F97316'
+const TASK_BORDER = '#E2E8F0'
+const TASK_TEXT   = '#0F172A'
+
+
+// ─── Task Date Picker ──────────────────────────────────────────────────────────
+
+function TaskDatePicker({ value, onChange, taskDates }: {
+  value: string
+  onChange: (date: string) => void
+  taskDates: Set<string>
+}) {
+  const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 292 })
+  const [viewMonth, setViewMonth] = useState(value.slice(0, 7))
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const popoverRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (triggerRef.current?.contains(e.target as Node) || popoverRef.current?.contains(e.target as Node)) return
+      setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  const handleOpen = () => {
+    if (triggerRef.current) {
+      const r = triggerRef.current.getBoundingClientRect()
+      const POPOVER_H = 320
+      const fitsBelow = r.bottom + POPOVER_H + 8 <= window.innerHeight
+      setViewMonth(value.slice(0, 7))
+      setPos({ top: fitsBelow ? r.bottom + 6 : r.top - POPOVER_H - 6, left: r.right - Math.max(r.width, 292), width: Math.max(r.width, 292) })
+    }
+    setOpen(o => !o)
+  }
+
+  const todayStr = formatDateKey(new Date())
+  const [cy, cm] = viewMonth.split('-').map(Number)
+  const firstDay = new Date(cy, cm - 1, 1).getDay()
+  const daysInMonth = new Date(cy, cm, 0).getDate()
+  const monthLabel = new Date(cy, cm - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+  const cells: (string | null)[] = []
+  for (let i = 0; i < firstDay; i++) cells.push(null)
+  for (let d = 1; d <= daysInMonth; d++) cells.push(`${cy}-${String(cm).padStart(2, '0')}-${String(d).padStart(2, '0')}`)
+
+  const todayMonth = todayStr.slice(0, 7)
+  const goPrev = () => { const d = new Date(cy, cm - 2, 1); const nm = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; if (nm < todayMonth) return; setViewMonth(nm) }
+  const goNext = () => { const d = new Date(cy, cm, 1); setViewMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`) }
+
+  const displayLabel = new Date(`${value}T00:00:00`).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
+
+  const popover = open ? (
+    <div ref={popoverRef} style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 9999, background: '#FFFFFF', border: `1px solid ${TASK_BORDER}`, borderRadius: 16, boxShadow: '0 8px 32px rgba(15,23,42,0.14)', padding: '14px 16px', width: pos.width }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <button type="button" onClick={goPrev} disabled={viewMonth <= todayMonth} style={{ width: 26, height: 26, border: `1px solid ${TASK_BORDER}`, borderRadius: 7, background: '#FFFFFF', cursor: viewMonth <= todayMonth ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: viewMonth <= todayMonth ? '#D1D5DB' : '#64748B' }}><ChevronLeft size={13} /></button>
+        <span style={{ fontSize: 13, fontWeight: 700, color: TASK_TEXT }}>{monthLabel}</span>
+        <button type="button" onClick={goNext} style={{ width: 26, height: 26, border: `1px solid ${TASK_BORDER}`, borderRadius: 7, background: '#FFFFFF', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748B' }}><ChevronRight size={13} /></button>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', marginBottom: 4 }}>
+        {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(d => (
+          <div key={d} style={{ fontSize: 11, fontWeight: 600, color: '#9CA3AF', textAlign: 'center', height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{d}</div>
+        ))}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
+        {cells.map((date, i) => {
+          if (!date) return <div key={`e-${i}`} style={{ height: 36 }} />
+          const isPast = date < todayStr
+          if (isPast) return <div key={date} style={{ height: 36 }} />
+          const isSel = date === value
+          const isToday = date === todayStr
+          const hasTask = taskDates.has(date)
+          return (
+            <button key={date} type="button" onClick={() => { onChange(date); setOpen(false) }}
+              style={{ height: 36, width: '100%', border: isToday && !isSel ? `2px solid ${TASK_ORANGE}` : 'none', borderRadius: 8, background: isSel ? TASK_ORANGE : 'transparent', color: isSel ? '#FFFFFF' : isToday ? TASK_ORANGE : TASK_TEXT, fontWeight: isSel || isToday ? 700 : 400, fontSize: 13, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: 0 }}
+              onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = '#F8FAFC' }}
+              onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = 'transparent' }}
+            >
+              <span style={{ lineHeight: 1 }}>{parseInt(date.split('-')[2])}</span>
+              {hasTask && <span style={{ width: 4, height: 4, borderRadius: '50%', background: isSel ? 'rgba(255,255,255,0.8)' : TASK_ORANGE, flexShrink: 0 }} />}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  ) : null
+
+  return (
+    <>
+      <button ref={triggerRef} type="button" onClick={handleOpen}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 38, padding: '0 12px', border: `1px solid ${TASK_BORDER}`, borderRadius: 9, background: '#FFFFFF', cursor: 'pointer', fontSize: 13, fontWeight: 500, color: TASK_TEXT, minWidth: 140 }}
+      >
+        <CalendarDays size={14} color="#64748B" style={{ flexShrink: 0 }} />
+        <span>{displayLabel}</span>
+      </button>
+      {typeof document !== 'undefined' && createPortal(popover, document.body)}
+    </>
+  )
+}
 
 // ─── Local page types ─────────────────────────────────────────────────────────
 
@@ -350,9 +455,8 @@ function TaskCard({
   const accentColor = task.department_id ? deptColor(task.department_id) : '#E5E7EB'
 
   const MENU_ITEMS = [
-    { label: 'Edit',      icon: <Pencil size={13} />,  action: onEdit,      color: '#111827' },
-    { label: 'Duplicate', icon: <Copy size={13} />,    action: onDuplicate, color: '#374151' },
-    { label: 'Delete',    icon: <Trash2 size={13} />,  action: onDelete,    color: '#DC2626' },
+    { label: 'Edit',      icon: <Pencil size={13} style={{ color: '#F97316' }} />,  action: onEdit,      color: '#374151' },
+    { label: 'Duplicate', icon: <Copy size={13} style={{ color: '#F97316' }} />,    action: onDuplicate, color: '#374151' },
   ]
 
   return (
@@ -390,7 +494,7 @@ function TaskCard({
               e.stopPropagation()
               if (!menuOpen && menuBtnRef.current) {
                 const r = menuBtnRef.current.getBoundingClientRect()
-                setMenuPos({ top: r.bottom + 4, left: r.right - 148 })
+                setMenuPos({ top: r.bottom + 4, left: r.right - 152 })
               }
               setMenuOpen(o => !o)
             }}
@@ -401,18 +505,28 @@ function TaskCard({
             <MoreHorizontal size={14} />
           </button>
           {menuOpen && (
-            <div style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 10, boxShadow: '0 8px 24px rgba(15,23,42,0.14)', zIndex: 9999, minWidth: 148, padding: '4px 0', overflow: 'hidden' }}>
+            <div style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.10)', zIndex: 9999, width: 152, padding: '6px 4px' }}>
+              <p style={{ margin: '0 6px 3px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9CA3AF' }}>Task</p>
               {MENU_ITEMS.map(item => (
                 <button key={item.label} type="button"
                   onClick={e => { e.stopPropagation(); setMenuOpen(false); item.action() }}
-                  style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '8px 14px', textAlign: 'left', border: 'none', background: 'transparent', color: item.color, fontWeight: item.label === 'Delete' ? 600 : 500, fontSize: 13, cursor: 'pointer' }}
-                  onMouseEnter={e => { e.currentTarget.style.background = item.label === 'Delete' ? '#FEF2F2' : '#F9FAFB' }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '5px 10px', textAlign: 'left', border: 'none', background: 'transparent', color: item.color, fontWeight: 500, fontSize: 12, cursor: 'pointer', borderRadius: 10 }}
+                  onMouseEnter={e => { e.currentTarget.style.background = '#F9FAFB' }}
                   onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
                 >
                   {item.icon}
                   {item.label}
                 </button>
               ))}
+              <div style={{ height: 1, background: '#F1F5F9', margin: '3px 6px' }} />
+              <button type="button"
+                onClick={e => { e.stopPropagation(); setMenuOpen(false); onDelete() }}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '5px 10px', textAlign: 'left', border: 'none', background: 'transparent', color: '#DC2626', fontWeight: 500, fontSize: 12, cursor: 'pointer', borderRadius: 10 }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#FEF2F2' }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+              >
+                <Trash2 size={13} /> Delete
+              </button>
             </div>
           )}
         </div>
@@ -423,14 +537,7 @@ function TaskCard({
         {task.title}
       </p>
 
-      {/* Shift chip */}
-      {shift && (
-        <div style={{ marginBottom: 10, fontSize: '0.72rem', color: '#6B7280', background: '#F9FAFB', border: '1px solid rgba(0,0,0,0.07)', borderRadius: 7, padding: '5px 8px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {shift.start_time.slice(0, 5)} – {shift.end_time.slice(0, 5)}
-        </div>
-      )}
-
-      {/* Footer: assignee + due date */}
+      {/* Footer: assignee + deadline time */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
         {assignee ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -448,7 +555,7 @@ function TaskCard({
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
             {overdue && <AlertCircle size={11} color="#EF4444" />}
             <span style={{ fontSize: '0.7rem', fontWeight: 600, color: overdue ? '#EF4444' : '#9CA3AF' }}>
-              {formatDueDate(task.due_at)}
+              {new Date(task.due_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}
             </span>
           </div>
         )}
@@ -459,151 +566,6 @@ function TaskCard({
 
 // ─── Department Info Card ─────────────────────────────────────────────────────
 
-function DeptInfoCard({
-  dept,
-  members,
-  deptStats,
-  deptManagerMap,
-  onAssignTask,
-  canManage,
-  onEditName,
-  onChangeManager,
-  onDelete,
-}: {
-  dept: Department
-  members: Member[]
-  deptStats: DeptTaskStats | undefined
-  deptManagerMap: Record<string, string>
-  onAssignTask: (memberId: string, deptId: string) => void
-  canManage: boolean
-  onEditName: () => void
-  onChangeManager: () => void
-  onDelete: () => void
-}) {
-  const deptMembers = members.filter(m => m.department_id === dept.id && m.role !== 'Owner' && m.role !== 'Partner')
-  const managerName = deptManagerMap[dept.id]
-  const [menuOpen, setMenuOpen] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
-
-  return (
-    <div style={{ background: '#FFFFFF', borderRadius: '16px', padding: '20px', boxShadow: '0 1px 3px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04)', marginBottom: 16 }}>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 14 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ width: 10, height: 10, borderRadius: '50%', background: deptColor(dept.id) }} />
-          <div>
-            <h3 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0 }}>{dept.name}</h3>
-            <p style={{ fontSize: '0.8rem', color: '#9CA3AF', margin: '2px 0 0' }}>
-              {managerName ?? 'No manager'} · {deptMembers.length} member{deptMembers.length !== 1 ? 's' : ''}
-            </p>
-          </div>
-        </div>
-        {canManage && (
-          <div ref={menuRef} style={{ position: 'relative' }}>
-            <button
-              onClick={e => { e.stopPropagation(); setMenuOpen(o => !o) }}
-              aria-label="department-menu"
-              style={{ width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid #E5E7EB', borderRadius: '6px', cursor: 'pointer', color: '#6B7280' }}
-              onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
-              onMouseLeave={e => { e.currentTarget.style.background = 'none' }}
-            >
-              <MoreHorizontal size={14} />
-            </button>
-            {menuOpen && (
-              <div
-                onClick={e => e.stopPropagation()}
-                style={{
-                  position: 'absolute', top: '100%', right: 0, marginTop: 4,
-                  background: '#FFFFFF',
-                  borderRadius: '10px',
-                  boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
-                  border: '1px solid #E5E7EB',
-                  minWidth: '160px',
-                  zIndex: 30,
-                  overflow: 'hidden',
-                  animation: 'dropdownFadeIn 0.15s ease',
-                }}
-              >
-                <button
-                  onClick={() => { setMenuOpen(false); onEditName() }}
-                  style={{ width: '100%', textAlign: 'left', padding: '12px 14px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.875rem', color: '#374151', fontWeight: 500 }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#F4F4F5')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-                >Edit Name</button>
-                <button
-                  onClick={() => { setMenuOpen(false); onChangeManager() }}
-                  style={{ width: '100%', textAlign: 'left', padding: '12px 14px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.875rem', color: '#374151', fontWeight: 500 }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#F4F4F5')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-                >Change Manager</button>
-                <div style={{ height: 1, background: '#E5E7EB', margin: '2px 0' }} />
-                <button
-                  onClick={() => { setMenuOpen(false); onDelete() }}
-                  style={{ width: '100%', textAlign: 'left', padding: '12px 14px', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.875rem', color: '#EF4444', fontWeight: 500 }}
-                  onMouseEnter={e => (e.currentTarget.style.background = '#FEF2F2')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-                >Delete</button>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Mini task stats */}
-      {deptStats && (
-        <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
-          {[
-            { label: 'Assigned', count: deptStats.assigned, bg: '#E2E8F0', color: '#475569' },
-            { label: 'In Progress', count: deptStats.inProgress, bg: '#DBEAFE', color: '#2563EB' },
-            { label: 'Review', count: deptStats.review, bg: '#FED7AA', color: '#EA580C' },
-            { label: 'Complete', count: deptStats.complete, bg: '#BBF7D0', color: '#16A34A' },
-          ].map(({ label, count, bg, color }) => (
-            <div key={label} style={{ padding: '5px 10px', background: bg, borderRadius: '8px', display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span style={{ fontWeight: 800, fontSize: '0.875rem', color }}>{count}</span>
-              <span style={{ fontSize: '0.7rem', fontWeight: 600, color, opacity: 0.75 }}>{label}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Members list */}
-      {deptMembers.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <p style={{ fontSize: '0.75rem', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.04em', margin: '0 0 6px' }}>Members</p>
-          {deptMembers.map(m => (
-            <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: '#F8FAFC', borderRadius: '8px', justifyContent: 'space-between' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '0.75rem', color: '#374151', flexShrink: 0 }}>
-                  {m.full_name.charAt(0).toUpperCase()}
-                </div>
-                <div>
-                  <p style={{ fontWeight: 600, fontSize: '0.8125rem', color: '#111827', margin: 0 }}>{m.full_name}</p>
-                  <p style={{ fontSize: '0.7rem', color: '#9CA3AF', margin: 0 }}>{m.role}</p>
-                </div>
-              </div>
-              <button
-                onClick={() => onAssignTask(m.id, dept.id)}
-                style={{ padding: '5px 10px', background: '#F97316', border: 'none', borderRadius: '6px', fontWeight: 600, fontSize: '0.75rem', color: '#FFFFFF', cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap' }}
-                onMouseEnter={e => (e.currentTarget.style.background = '#EA6C0A')}
-                onMouseLeave={e => (e.currentTarget.style.background = '#F97316')}
-              >
-                Assign Task
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -643,6 +605,7 @@ export default function OwnerTasksPage() {
 
   const [kanban,        setKanban]        = useState<KanbanGroup | null>(null)
   const [kanbanLoading, setKanbanLoading] = useState(false)
+  const [taskDate,      setTaskDate]      = useState(() => formatDateKey(new Date()))
 
   // Task detail/edit panel
   const [selectedTask,  setSelectedTask]  = useState<Task | null>(null)
@@ -653,12 +616,16 @@ export default function OwnerTasksPage() {
   const [editTitle,       setEditTitle]       = useState('')
   const [editDescription, setEditDescription] = useState('')
   const [editPriority,    setEditPriority]    = useState('')
-  const [editDueAt,       setEditDueAt]       = useState('')
-  const [editAssignee,    setEditAssignee]    = useState('')
-  const [editShiftId,     setEditShiftId]     = useState('')
+  const [editDueAt,          setEditDueAt]          = useState('')
+  const [editDeadlineTime,   setEditDeadlineTime]   = useState('')
+  const [editAssignee,       setEditAssignee]       = useState('')
+  const [editShiftId,        setEditShiftId]        = useState('')
   const [editStatus,      setEditStatus]      = useState<Task['status']>('Assigned')
   const [editPercent,     setEditPercent]     = useState(0)
   const [deleteConfirm,   setDeleteConfirm]   = useState(false)
+  const [deleteTaskModal, setDeleteTaskModal] = useState<Task | null>(null)
+  const [deleteTaskLoading, setDeleteTaskLoading] = useState(false)
+  const [deleteTaskError, setDeleteTaskError] = useState('')
   const [subTaskTitle,    setSubTaskTitle]    = useState('')
   const [subTaskLoading,  setSubTaskLoading]  = useState(false)
   const [taskViewMode,    setTaskViewMode]    = useState(false)
@@ -748,7 +715,11 @@ export default function OwnerTasksPage() {
         setAllManagers(mgrData.managers)
         const map: Record<string, string> = {}
         for (const mgr of mgrData.managers as ManagerInfo[]) {
-          if (mgr.department_id && !map[mgr.department_id]) map[mgr.department_id] = mgr.full_name
+          if (mgr.department_id) {
+            map[mgr.department_id] = map[mgr.department_id]
+              ? `${map[mgr.department_id]}, ${mgr.full_name}`
+              : mgr.full_name
+          }
         }
         setDeptManagerMap(map)
       }
@@ -761,8 +732,8 @@ export default function OwnerTasksPage() {
   useEffect(() => {
     if (!companyId) return
     const today = new Date()
-    const dateFrom = formatDateKey(addDays(today, -2))
-    const dateTo = formatDateKey(addDays(today, 7))
+    const dateFrom = formatDateKey(addDays(today, -30))
+    const dateTo = formatDateKey(addDays(today, 14))
 
     fetch(`/api/shift?company_id=${companyId}&date_from=${dateFrom}&date_to=${dateTo}`)
       .then(r => r.json())
@@ -824,6 +795,7 @@ export default function OwnerTasksPage() {
     setEditDescription(task.description ?? '')
     setEditPriority(task.priority ?? '')
     setEditDueAt(task.due_at ? task.due_at.slice(0, 10) : '')
+    setEditDeadlineTime(task.due_at ? new Date(task.due_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '')
     setEditAssignee(task.assigned_user_id ?? '')
     setEditShiftId(task.shift_id ?? '')
     setEditStatus(task.status)
@@ -839,27 +811,38 @@ export default function OwnerTasksPage() {
 
   const handleSaveTask = async () => {
     if (!selectedTask || !editTitle.trim()) return
+    if (editAssignee && !editShiftId) { setPanelError('Please select a shift for the assignee'); return }
     setEditLoading(true); setPanelError('')
     try {
+      const resolvedShift = shiftOptions.find(x => x.id === editShiftId)
+      const due_at = resolvedShift && editDeadlineTime
+        ? new Date(`${resolvedShift.shift_date}T${editDeadlineTime}:00`).toISOString()
+        : editShiftId && editDeadlineTime && selectedTask.due_at
+          ? selectedTask.due_at
+          : null
+      const payload = {
+        id: selectedTask.id,
+        company_id: selectedTask.company_id,
+        department_id: selectedTask.department_id,
+        title: editTitle.trim(),
+        description: editDescription || null,
+        priority: editPriority || null,
+        due_at,
+        assigned_user_id: editAssignee || null,
+        shift_id: editShiftId || null,
+        status: editStatus,
+        percentage_complete: editPercent,
+      }
       const res = await fetch('/api/task', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: selectedTask.id,
-          title: editTitle.trim(),
-          description: editDescription || null,
-          priority: editPriority || null,
-          due_at: editDueAt ? new Date(editDueAt).toISOString() : null,
-          assigned_user_id: editAssignee || null,
-          shift_id: editShiftId || null,
-          status: editStatus,
-          percentage_complete: editPercent,
-        }),
+        body: JSON.stringify(payload),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
+      await fetchKanban(companyId)
+      if (resolvedShift?.shift_date) setTaskDate(resolvedShift.shift_date)
       closePanel()
-      fetchKanban(companyId)
     } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to save') }
     finally { setEditLoading(false) }
   }
@@ -884,6 +867,25 @@ export default function OwnerTasksPage() {
       if (!data.success) fetchKanban(companyId, true)
     } catch { fetchKanban(companyId, true) }
     finally { setDeleteLoading(false) }
+  }
+
+  const handleDeleteTaskDirect = async () => {
+    if (!deleteTaskModal) return
+    setDeleteTaskLoading(true); setDeleteTaskError('')
+    const taskId = deleteTaskModal.id
+    setKanban(prev => {
+      if (!prev) return prev
+      const next = { ...prev } as KanbanGroup
+      for (const col of COLUMNS) next[col] = (prev[col] ?? []).filter(t => t.id !== taskId)
+      return next
+    })
+    setDeleteTaskModal(null)
+    try {
+      const res = await fetch(`/api/task?id=${taskId}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (!data.success) { fetchKanban(companyId, true); setDeleteTaskError(data.message ?? 'Failed to delete') }
+    } catch { fetchKanban(companyId, true) }
+    finally { setDeleteTaskLoading(false) }
   }
 
   const handleDuplicateTask = async () => {
@@ -947,6 +949,7 @@ export default function OwnerTasksPage() {
 
   const handleCreateTask = async () => {
     if (!newTitle.trim() || !newDeptId) { setNewError('Title and department are required'); return }
+    if (newAssigneeId && !newShiftId) { setNewError('Please select a shift for the assignee'); return }
     setNewLoading(true); setNewError('')
     try {
       const input: Partial<TaskInput> & { company_id: string; department_id: string; title: string } = {
@@ -1032,7 +1035,11 @@ export default function OwnerTasksPage() {
         setAllManagers(mgrData.managers)
         const map: Record<string, string> = {}
         for (const mgr of mgrData.managers as ManagerInfo[]) {
-          if (mgr.department_id && !map[mgr.department_id]) map[mgr.department_id] = mgr.full_name
+          if (mgr.department_id) {
+            map[mgr.department_id] = map[mgr.department_id]
+              ? `${map[mgr.department_id]}, ${mgr.full_name}`
+              : mgr.full_name
+          }
         }
         setDeptManagerMap(map)
       }
@@ -1040,12 +1047,38 @@ export default function OwnerTasksPage() {
     finally { setEditManagerLoading(false) }
   }
 
+  // ── Dates that have tasks (for calendar dots) ─────────────────────────────
+
+  const datesWithTasks = useMemo<Set<string>>(() => {
+    if (!kanban) return new Set()
+    const allTasks = [...kanban.Assigned, ...kanban['In Progress'], ...kanban.Review, ...kanban.Complete]
+    const dates = new Set<string>()
+    for (const t of allTasks) {
+      if (t.shift_id) {
+        const date = t.shift_date ?? shiftOptions.find(s => s.id === t.shift_id)?.shift_date ?? null
+        if (date) dates.add(date)
+      } else if (t.due_at) {
+        dates.add(t.due_at.slice(0, 10))
+      }
+    }
+    return dates
+  }, [kanban, shiftOptions])
+
   // ── Filtered tasks per column ──────────────────────────────────────────────
 
   const filteredTasks = (col: Task['status']): Task[] => {
     if (!kanban) return []
     return (kanban[col] ?? [])
       .filter(t => !selectedDeptId || t.department_id === selectedDeptId)
+      .filter(t => {
+        if (t.shift_id) {
+          // prefer shift_date embedded in task; fall back to shiftOptions lookup
+          const date = t.shift_date ?? shiftOptions.find(s => s.id === t.shift_id)?.shift_date ?? null
+          return date === taskDate
+        }
+        if (t.due_at) return t.due_at.slice(0, 10) === taskDate
+        return false
+      })
       .sort((a, b) => (PRIORITY_ORDER[a.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.priority ?? ''] ?? 4))
   }
 
@@ -1070,6 +1103,15 @@ export default function OwnerTasksPage() {
     ...(['Low', 'Medium', 'High', 'Urgent'] as PriorityLevel[]).map(p => ({ value: p, label: p })),
   ]
   const editTaskShiftOptions = selectedTask ? shiftOptions.filter(shift => shift.department_id === selectedTask.department_id) : shiftOptions
+  const editAssigneeShiftOptions = editAssignee
+    ? editTaskShiftOptions.filter(s => s.user_id === editAssignee)
+    : editTaskShiftOptions
+  const editShiftDropdownOptions = editAssigneeShiftOptions.map(s => ({
+    value: s.id,
+    label: `${new Date(`${s.shift_date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} · ${s.start_time.slice(0, 5)} – ${s.end_time.slice(0, 5)}`,
+  }))
+  const editAssigneeDropdownOptions = assignableMembers.map(m => ({ value: m.id, label: m.full_name }))
+  const editSelectedShiftForDeadline = editAssigneeShiftOptions.find(s => s.id === editShiftId) ?? null
   const selectedSubTasks = selectedTask && kanban
     ? COLUMNS.flatMap(col => kanban[col]).filter(task => task.parent_task_id === selectedTask.id)
     : []
@@ -1098,7 +1140,7 @@ export default function OwnerTasksPage() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ display: 'flex', height: '100vh', background: '#F7F8FA', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+    <div style={{ display: 'flex', height: '100vh', background: '#F7F8FA' }}>
       <OwnerSidebar />
 
       {/* Dropdown animation */}
@@ -1141,7 +1183,7 @@ export default function OwnerTasksPage() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#6B7280', flexShrink: 0 }}>
                   <Users size={13} />
-                  <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>Dept:</span>
+                  <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>Department:</span>
                 </div>
                 <button
                   onClick={() => setSelectedDeptId('')}
@@ -1160,91 +1202,152 @@ export default function OwnerTasksPage() {
                   </button>
                 ))}
               </div>
-              {/* New Task button */}
-              <button
-                onClick={() => { setNewTaskModal(true); setNewError(''); if (selectedDeptId) setNewDeptId(selectedDeptId) }}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: '#F97316', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#fff', cursor: 'pointer', flexShrink: 0 }}
-                onMouseEnter={e => (e.currentTarget.style.background = '#EA6C0A')}
-                onMouseLeave={e => (e.currentTarget.style.background = '#F97316')}
-              >
-                <Plus size={13} strokeWidth={2.5} /> New Task
-              </button>
+              {/* Date nav + New Task */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                <button
+                  type="button"
+                  onClick={() => setTaskDate(formatDateKey(new Date()))}
+                  style={{ height: 38, padding: '0 14px', border: `1px solid ${TASK_BORDER}`, borderRadius: 8, background: taskDate === formatDateKey(new Date()) ? '#F97316' : '#FFFFFF', color: taskDate === formatDateKey(new Date()) ? '#FFFFFF' : TASK_TEXT, fontSize: 13, fontWeight: 700, cursor: 'pointer', transition: 'background 0.15s, color 0.15s' }}
+                >Today</button>
+                <button
+                  type="button"
+                  onClick={() => setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), -1)))}
+                  disabled={taskDate <= formatDateKey(new Date())}
+                  style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${TASK_BORDER}`, background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: taskDate <= formatDateKey(new Date()) ? 'default' : 'pointer', color: TASK_TEXT, opacity: taskDate <= formatDateKey(new Date()) ? 0.3 : 1 }}
+                ><ChevronLeft size={16} /></button>
+                <TaskDatePicker value={taskDate} onChange={setTaskDate} taskDates={datesWithTasks} />
+                <button
+                  type="button"
+                  onClick={() => setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), 1)))}
+                  style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${TASK_BORDER}`, background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: 'pointer', color: TASK_TEXT }}
+                ><ChevronRight size={16} /></button>
+                {!selectedDeptId && (
+                  <button
+                    onClick={() => { setNewTaskModal(true); setNewError('') }}
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: '#F97316', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#fff', cursor: 'pointer', height: 38 }}
+                    onMouseEnter={e => (e.currentTarget.style.background = '#EA6C0A')}
+                    onMouseLeave={e => (e.currentTarget.style.background = '#F97316')}
+                  >
+                    <Plus size={13} strokeWidth={2.5} /> New Task
+                  </button>
+                )}
+              </div>
             </div>
 
-            {/* ── DEPARTMENT INFO CARDS (when a dept is selected) ──────────── */}
-            {selectedDeptId && (
-              <div style={{ padding: '16px 20px 0', flexShrink: 0 }}>
-                {visibleDepts.map(dept => (
-                  <DeptInfoCard
-                    key={dept.id}
-                    dept={dept}
-                    members={members}
-                    deptStats={deptTaskStats.find(s => s.department_id === dept.id)}
-                    deptManagerMap={deptManagerMap}
-                    onAssignTask={openNewTaskFor}
-                    canManage={canManageDepartments}
-                    onEditName={() => { setEditDeptModal(dept); setEditDeptName(dept.name); setEditDeptError('') }}
-                    onChangeManager={() => { setEditManagerModal(dept); setEditManagerSelectedId(''); setEditManagerError('') }}
-                    onDelete={() => { setDeleteDeptModal(dept); setDeleteDeptError('') }}
-                  />
-                ))}
-              </div>
-            )}
-
-            {/* ── KANBAN BOARD ─────────────────────────────────────────────── */}
+            {/* ── BODY: sidebar + kanban ───────────────────────────────────── */}
             {!initialReady || kanbanLoading ? (
               <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flex: 1 }}>
                 <Spinner size={24} dark />
               </div>
             ) : (
-              <div style={{ padding: '16px 20px 20px', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, flex: 1, minHeight: 0 }}>
-                {COLUMNS.map(col => {
-                  const cfg = STATUS_CONFIG[col]
-                  const tasks = filteredTasks(col)
-                  return (
-                    <div
-                      key={col}
-                      style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        background: '#F7F8FA',
-                        borderRadius: '12px',
-                        overflow: 'hidden',
-                        minHeight: 0,
-                        border: '1px solid #F0F1F3',
-                      }}
-                    >
-                      {/* Column header */}
-                      <div style={{ padding: '11px 14px 10px', display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0, borderBottom: '1px solid #ECEEF1' }}>
-                        <div style={{ color: cfg.color, display: 'flex', alignItems: 'center' }}>{cfg.icon}</div>
-                        <span style={{ fontWeight: 700, fontSize: '0.8125rem', color: cfg.color, flex: 1 }}>{cfg.label}</span>
-                        <span style={{ fontSize: '0.72rem', fontWeight: 700, background: cfg.bg, color: cfg.color, padding: '2px 8px', borderRadius: '99px' }}>{tasks.length}</span>
-                      </div>
+              <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
 
-                      {/* Scrollable card area */}
-                      <div style={{ flex: 1, overflowY: 'auto', padding: '4px 10px 12px' }}>
-                        {tasks.length === 0 ? (
-                          <div style={{ textAlign: 'center', padding: '24px 12px', color: '#CBD5E1', fontSize: '0.8125rem' }}>
-                            No tasks
-                          </div>
-                        ) : (
-                          tasks.map(task => (
-                            <TaskCard
-                              key={task.id}
-                              task={task}
-                              members={members}
-                              shiftOptions={shiftOptions}
-                              onClick={() => openTask(task, false)}
-                              onEdit={() => openTask(task, false)}
-                              onDelete={() => { openTask(task, false); setDeleteConfirm(true) }}
-                              onDuplicate={() => handleQuickDuplicate(task)}
-                            />
-                          ))
+                {/* ── LEFT SIDEBAR (only when dept selected) ───────────────── */}
+                {selectedDeptId && (() => {
+                  const dept = visibleDepts[0]
+                  if (!dept) return null
+                  const deptMembers = members.filter(m => m.department_id === dept.id && m.role === 'Manager')
+                  // collect user IDs that have tasks on the selected date
+                  const allDateTasks = COLUMNS.flatMap(col => filteredTasks(col))
+                  const busyIds = new Set(allDateTasks.map(t => t.assigned_user_id).filter(Boolean) as string[])
+                  const freeMembers = deptMembers.filter(m => !busyIds.has(m.id))
+                  const busyMembers = deptMembers.filter(m => busyIds.has(m.id))
+
+                  const renderMember = (m: Member) => (
+                    <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 8, border: '1px solid #F1F5F9', borderRadius: 12, padding: '9px 10px', background: '#FFFFFF', justifyContent: 'space-between' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: m.role === 'Manager' ? '#FFF7ED' : '#F3F4F6', color: m.role === 'Manager' ? '#EA580C' : '#4B5563', flexShrink: 0 }}>
+                          {m.role === 'Manager' ? <UserCog size={13} /> : <UserRound size={13} />}
+                        </span>
+                        <div style={{ minWidth: 0 }}>
+                          <p style={{ margin: 0, color: m.role === 'Manager' ? '#EA580C' : '#111827', fontSize: 12, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.full_name}</p>
+                          <p style={{ margin: 0, fontSize: '0.68rem', color: '#9CA3AF' }}>{m.role}</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => openNewTaskFor(m.id, dept.id)}
+                        style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, background: '#FFF7ED', border: '1px solid #FDBA74', borderRadius: 7, color: '#EA580C', cursor: 'pointer' }}
+                        title="Assign Task"
+                        onMouseEnter={e => { e.currentTarget.style.background = '#FEF3C7' }}
+                        onMouseLeave={e => { e.currentTarget.style.background = '#FFF7ED' }}
+                      >
+                        <Plus size={13} strokeWidth={2.5} />
+                      </button>
+                    </div>
+                  )
+
+                  return (
+                    <div style={{ width: 220, flexShrink: 0, borderRight: '1px solid #F3F4F6', display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
+                      <div style={{ padding: '12px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {/* Free members first */}
+                        {freeMembers.length > 0 && (
+                          <>
+                            <p style={{ margin: '0 2px 2px', fontSize: '0.68rem', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Available</p>
+                            {freeMembers.map(renderMember)}
+                          </>
+                        )}
+                        {/* Busy members below */}
+                        {busyMembers.length > 0 && (
+                          <>
+                            <p style={{ margin: `${freeMembers.length > 0 ? '10px' : '0'} 2px 2px`, fontSize: '0.68rem', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Has Tasks</p>
+                            {busyMembers.map(renderMember)}
+                          </>
                         )}
                       </div>
                     </div>
                   )
-                })}
+                })()}
+
+                {/* ── KANBAN COLUMNS ───────────────────────────────────────── */}
+                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'row', alignItems: 'stretch', padding: '16px 16px 20px', gap: 0 }}>
+                  {COLUMNS.map((col, colIdx) => {
+                    const cfg = STATUS_CONFIG[col]
+                    const tasks = filteredTasks(col)
+                    return (
+                      <Fragment key={col}>
+                      {colIdx > 0 && (
+                        <div style={{ flexShrink: 0, width: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <svg width="24" height="18" viewBox="0 0 24 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <line x1="0" y1="9" x2="17" y2="9" stroke="#94A3B8" strokeWidth="2"/>
+                            <polyline points="11,3 19,9 11,15" fill="none" stroke="#94A3B8" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round"/>
+                          </svg>
+                        </div>
+                      )}
+                      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: '#F7F8FA', borderRadius: '12px', overflow: 'hidden', minHeight: 0, border: '1px solid #F0F1F3' }}>
+                        {/* Column header */}
+                        <div style={{ padding: '11px 14px 10px', display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0, borderBottom: '1px solid #ECEEF1' }}>
+                          <div style={{ color: cfg.color, display: 'flex', alignItems: 'center' }}>{cfg.icon}</div>
+                          <span style={{ fontWeight: 700, fontSize: '0.8125rem', color: cfg.color, flex: 1 }}>{cfg.label}</span>
+                          <span style={{ fontSize: '0.72rem', fontWeight: 700, background: cfg.bg, color: cfg.color, padding: '2px 8px', borderRadius: '99px' }}>{tasks.length}</span>
+                        </div>
+                        {/* Scrollable card area */}
+                        <div style={{ flex: 1, overflowY: 'auto', padding: '10px 10px 12px' }}>
+                          {tasks.length === 0 ? (
+                            <div style={{ margin: '8px 0', padding: '32px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                              {{ Assigned: <Layers size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />, 'In Progress': <Clock size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />, Review: <Eye size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />, Complete: <CheckCircle size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} /> }[col]}
+                              <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No {cfg.label.toLowerCase()} tasks</p>
+                            </div>
+                          ) : (
+                            tasks.map(task => (
+                              <TaskCard
+                                key={task.id}
+                                task={task}
+                                members={members}
+                                shiftOptions={shiftOptions}
+                                onClick={() => openTask(task, false)}
+                                onEdit={() => openTask(task, false)}
+                                onDelete={() => { setDeleteTaskModal(task); setDeleteTaskError('') }}
+                                onDuplicate={() => handleQuickDuplicate(task)}
+                              />
+                            ))
+                          )}
+                        </div>
+                      </div>
+                      </Fragment>
+                    )
+                  })}
+                </div>
+
               </div>
             )}
 
@@ -1259,18 +1362,15 @@ export default function OwnerTasksPage() {
             ref={panelRef}
             onClick={e => e.stopPropagation()}
             data-testid="task-detail-panel"
-            style={{ width: 520, maxHeight: '90vh', background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16)', display: 'flex', flexDirection: 'column' }}
+            style={{ width: 540, background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)' }}
           >
-            {/* Modal header */}
-            <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid #F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+            {/* Header */}
+            <div style={{ padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ color: STATUS_CONFIG[selectedTask.status].color }}>{STATUS_CONFIG[selectedTask.status].icon}</div>
-                <span style={{ fontSize: '0.8rem', fontWeight: 700, color: STATUS_CONFIG[selectedTask.status].color, background: STATUS_CONFIG[selectedTask.status].bg, padding: '3px 9px', borderRadius: '99px' }}>
-                  {selectedTask.status}
-                </span>
-                {taskViewMode && (
-                  <span style={{ fontSize: '0.75rem', color: '#9CA3AF', fontStyle: 'italic' }}>View only</span>
-                )}
+                <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Pencil size={14} color="#fff" strokeWidth={2.5} />
+                </div>
+                <span style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827' }}>Edit Task</span>
               </div>
               <button onClick={closePanel} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
                 onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
@@ -1280,185 +1380,126 @@ export default function OwnerTasksPage() {
               </button>
             </div>
 
-            {/* ─── VIEW mode body ─── */}
-            {taskViewMode ? (
-              <>
-                <div style={{ padding: '20px 24px', flex: 1, display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' }}>
-                  <h2 style={{ fontWeight: 700, fontSize: '1.1rem', color: '#111827', margin: 0, lineHeight: 1.35 }}>{selectedTask.title}</h2>
-                  {selectedTask.description && (
-                    <p style={{ margin: 0, fontSize: '0.875rem', color: '#4B5563', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{selectedTask.description}</p>
-                  )}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                    {[
-                      { label: 'Priority', value: selectedTask.priority || '—' },
-                      { label: 'Assignee', value: (() => { const m = assignableMembers.find(x => x.id === selectedTask.assigned_user_id); return m ? m.full_name : '—' })() },
-                      { label: 'Shift', value: (() => { const s = editTaskShiftOptions.find(x => x.id === selectedTask.shift_id); return s ? `${s.start_time.slice(0,5)} – ${s.end_time.slice(0,5)}` : '—' })() },
-                      { label: 'Due Date', value: selectedTask.due_at ? new Date(selectedTask.due_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—' },
-                    ].map(row => (
-                      <div key={row.label} style={{ background: '#F8FAFC', borderRadius: 10, padding: '10px 14px', border: '1px solid #F0F1F3' }}>
-                        <div style={{ fontSize: '0.72rem', color: '#9CA3AF', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>{row.label}</div>
-                        <div style={{ fontSize: '0.875rem', color: '#111827', fontWeight: 600 }}>{row.value}</div>
-                      </div>
-                    ))}
-                  </div>
-                  {selectedTask.percentage_complete > 0 && (
-                    <div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                        <span style={{ fontSize: '0.75rem', color: '#6B7280', fontWeight: 600 }}>Progress</span>
-                        <span style={{ fontSize: '0.75rem', color: '#F97316', fontWeight: 700 }}>{selectedTask.percentage_complete}%</span>
-                      </div>
-                      <div style={{ height: 6, background: '#F1F5F9', borderRadius: 99, overflow: 'hidden' }}>
-                        <div style={{ height: '100%', width: `${selectedTask.percentage_complete}%`, background: 'linear-gradient(90deg, #F97316, #EA580C)', borderRadius: 99 }} />
-                      </div>
-                    </div>
-                  )}
-                  {selectedSubTasks.length > 0 && (
-                    <div>
-                      <div style={{ fontSize: '0.75rem', color: '#9CA3AF', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Sub-tasks ({selectedSubTasks.length})</div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        {selectedSubTasks.map(t => (
-                          <div key={t.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 12px', background: '#F8FAFC', border: '1px solid #E5E7EB', borderRadius: 8 }}>
-                            <span style={{ fontSize: '0.82rem', color: '#111827', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</span>
-                            <span style={{ fontSize: '0.7rem', color: STATUS_CONFIG[t.status].color, fontWeight: 700, flexShrink: 0 }}>{t.status}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-                <div style={{ padding: '14px 24px 20px', borderTop: '1px solid #F1F5F9', display: 'flex', gap: 10, justifyContent: 'flex-end', flexShrink: 0 }}>
-                  <button style={ghostBtn} onClick={closePanel}>Close</button>
-                  <button
-                    style={{ padding: '9px 20px', background: '#111827', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: '0.875rem', color: '#FFFFFF', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7 }}
-                    onClick={() => setTaskViewMode(false)}
-                    onMouseEnter={e => { e.currentTarget.style.background = '#1F2937' }}
-                    onMouseLeave={e => { e.currentTarget.style.background = '#111827' }}
-                  >
-                    <Pencil size={13} /> Edit Task
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                {/* ─── EDIT mode body ─── */}
-                <div style={{ padding: '20px 24px', flex: 1, display: 'flex', flexDirection: 'column', gap: 16, overflowY: 'auto' }}>
-                  <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: '0 0 -10px' }}>{selectedTask.title}</h2>
-                  <div>
-                    <label style={modalLabelStyle}>Title *</label>
-                    <input value={editTitle} onChange={e => setEditTitle(e.target.value)} style={modalInputStyle} />
-                  </div>
-                  <div>
-                    <label style={modalLabelStyle}>Description</label>
-                    <textarea value={editDescription} onChange={e => setEditDescription(e.target.value)} rows={3} style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.5 }} />
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                    <div>
-                      <label style={modalLabelStyle}>Status</label>
-                      <div style={{ position: 'relative' }}>
-                        <select value={editStatus} onChange={e => setEditStatus(e.target.value as Task['status'])} style={{ ...modalInputStyle, paddingRight: 32, appearance: 'none', cursor: 'pointer' }}>
-                          {COLUMNS.map(s => <option key={s} value={s}>{s}</option>)}
-                        </select>
-                        <ChevronDown size={14} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
-                      </div>
-                    </div>
-                    <div>
-                      <label style={modalLabelStyle}>Priority</label>
-                      <div style={{ position: 'relative' }}>
-                        <select value={editPriority} onChange={e => setEditPriority(e.target.value)} style={{ ...modalInputStyle, paddingRight: 32, appearance: 'none', cursor: 'pointer' }}>
-                          <option value="">None</option>
-                          {(['Low', 'Medium', 'High', 'Urgent'] as PriorityLevel[]).map(p => <option key={p} value={p}>{p}</option>)}
-                        </select>
-                        <ChevronDown size={14} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
-                      </div>
-                    </div>
-                  </div>
-                  <div>
-                    <label style={modalLabelStyle}>Assignee</label>
-                    <div style={{ position: 'relative' }}>
-                      <select value={editAssignee} onChange={e => setEditAssignee(e.target.value)} style={{ ...modalInputStyle, paddingRight: 32, appearance: 'none', cursor: 'pointer' }}>
-                        <option value="">Unassigned</option>
-                        {assignableMembers.map(m => <option key={m.id} value={m.id}>{m.full_name} ({m.role})</option>)}
-                      </select>
-                      <ChevronDown size={14} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
-                    </div>
-                  </div>
-                  <div>
-                    <label style={modalLabelStyle}>Shift</label>
-                    <div style={{ position: 'relative' }}>
-                      <select value={editShiftId} onChange={e => setEditShiftId(e.target.value)} style={{ ...modalInputStyle, paddingRight: 32, appearance: 'none', cursor: 'pointer' }}>
-                        <option value="">No shift</option>
-                        {editTaskShiftOptions.map(shift => <option key={shift.id} value={shift.id}>{formatShiftOptionLabel(shift)}</option>)}
-                      </select>
-                      <ChevronDown size={14} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
-                    </div>
-                  </div>
-                  <div>
-                    <label style={modalLabelStyle}><div style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Calendar size={13} /> Due Date</div></label>
-                    <input type="date" value={editDueAt} onChange={e => setEditDueAt(e.target.value)} style={modalInputStyle} />
-                  </div>
-                  <div>
-                    <label style={modalLabelStyle}>Progress — {editPercent}%</label>
-                    <input type="range" min={0} max={100} step={5} value={editPercent} onChange={e => setEditPercent(Number(e.target.value))} style={{ width: '100%', accentColor: '#F97316', cursor: 'pointer' }} />
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
-                      <span style={{ fontSize: '0.7rem', color: '#9CA3AF' }}>0%</span>
-                      <span style={{ fontSize: '0.7rem', color: '#9CA3AF' }}>100%</span>
-                    </div>
-                  </div>
-                  <div>
-                    <label style={modalLabelStyle}>Sub-tasks</label>
-                    {selectedSubTasks.length > 0 && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
-                        {selectedSubTasks.map(task => (
-                          <div key={task.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 10px', background: '#F8FAFC', border: '1px solid #E5E7EB', borderRadius: 8 }}>
-                            <span style={{ fontSize: '0.82rem', color: '#111827', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{task.title}</span>
-                            <span style={{ fontSize: '0.7rem', color: STATUS_CONFIG[task.status].color, fontWeight: 700, flexShrink: 0 }}>{task.status}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <input value={subTaskTitle} onChange={e => setSubTaskTitle(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleCreateSubTask() }} placeholder="Add a sub-task" style={modalInputStyle} />
-                      <button onClick={handleCreateSubTask} disabled={subTaskLoading || !subTaskTitle.trim()} style={{ padding: '0 12px', border: 'none', borderRadius: 8, background: '#F97316', color: '#FFFFFF', fontWeight: 700, fontSize: '0.82rem', cursor: subTaskLoading || !subTaskTitle.trim() ? 'default' : 'pointer', opacity: subTaskLoading || !subTaskTitle.trim() ? 0.6 : 1 }}>
-                        Add
-                      </button>
-                    </div>
-                  </div>
-                  <InlineError message={panelError} />
-                </div>
+            {/* Body */}
+            <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16, maxHeight: 'calc(90vh - 140px)', overflowY: 'auto' }}>
 
-                <div style={{ padding: '14px 24px 20px', borderTop: '1px solid #F1F5F9', display: 'flex', gap: 10, alignItems: 'center', flexShrink: 0 }}>
-                  {!deleteConfirm ? (
-                    <>
-                      <button onClick={() => setDeleteConfirm(true)} style={{ padding: '8px 14px', background: 'none', border: '1.5px solid #FECACA', borderRadius: 8, fontWeight: 600, fontSize: '0.875rem', color: '#DC2626', cursor: 'pointer' }}>
-                        Delete
-                      </button>
-                      <button
-                        onClick={handleDuplicateTask}
-                        disabled={duplicateLoading}
-                        style={{ padding: '8px 14px', background: '#FFFFFF', border: '1.5px solid #D1D5DB', borderRadius: 8, fontWeight: 600, fontSize: '0.875rem', color: '#374151', cursor: duplicateLoading ? 'default' : 'pointer', opacity: duplicateLoading ? 0.65 : 1, display: 'flex', alignItems: 'center', gap: 6 }}
-                      >
-                        {duplicateLoading ? <Spinner size={13} dark /> : <Copy size={13} />}
-                        Duplicate
-                      </button>
-                      <div style={{ flex: 1, display: 'flex', gap: 10 }}>
-                        <button style={ghostBtn} onClick={closePanel}>Cancel</button>
-                        <button style={primaryBtn(editLoading)} onClick={handleSaveTask} disabled={editLoading}>
-                          {editLoading && <Spinner size={14} />} Save Changes
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <span style={{ fontSize: '0.875rem', color: '#374151', flex: 1 }}>Delete this task?</span>
-                      <button style={ghostBtn} onClick={() => setDeleteConfirm(false)}>No</button>
-                      <button style={dangerBtn(deleteLoading)} onClick={handleDeleteTask} disabled={deleteLoading}>
-                        {deleteLoading && <Spinner size={14} />} Yes, Delete
-                      </button>
-                    </>
-                  )}
+              {/* Title */}
+              <div>
+                <label style={modalLabelStyle}>Title <span style={{ color: '#F97316' }}>*</span></label>
+                <input autoFocus value={editTitle} onChange={e => setEditTitle(e.target.value)} style={{ ...modalInputStyle, background: '#FAFAFA' }} onKeyDown={e => { if (e.key === 'Enter') handleSaveTask() }} />
+              </div>
+
+              {/* Description */}
+              <div>
+                <label style={modalLabelStyle}>Description <span style={{ color: '#D1D5DB', fontWeight: 400 }}>(optional)</span></label>
+                <textarea value={editDescription} onChange={e => setEditDescription(e.target.value)} rows={2} style={{ ...modalInputStyle, resize: 'vertical', background: '#FAFAFA', lineHeight: 1.55 }} />
+              </div>
+
+              {/* Priority + Assign To */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div>
+                  <label style={modalLabelStyle}>Priority</label>
+                  <DropdownField
+                    value={editPriority}
+                    options={priorityDropdownOptions}
+                    onChange={v => setEditPriority(v)}
+                    placeholder="None"
+                  />
                 </div>
-              </>
-            )}
+                <div>
+                  <label style={modalLabelStyle}>Assign To</label>
+                  <DropdownField
+                    value={editAssignee}
+                    options={editAssigneeDropdownOptions}
+                    onChange={v => { setEditAssignee(v); setEditShiftId(''); setEditDeadlineTime('') }}
+                    placeholder="Unassigned"
+                  />
+                </div>
+              </div>
+
+              {/* Divider */}
+              <div style={{ borderTop: '1px dashed #E5E7EB' }} />
+
+              {/* Shift */}
+              <div>
+                <label style={modalLabelStyle}>
+                  Shift
+                  {editAssignee && editAssigneeShiftOptions.length === 0 && (
+                    <span style={{ fontWeight: 400, color: '#F97316', marginLeft: 8, fontSize: '0.78rem' }}>no upcoming shifts</span>
+                  )}
+                </label>
+                <DropdownField
+                  value={editShiftId}
+                  options={editShiftDropdownOptions}
+                  onChange={v => {
+                    setEditShiftId(v)
+                    const s = editAssigneeShiftOptions.find(x => x.id === v)
+                    if (s) setEditDeadlineTime(s.end_time.slice(0, 5))
+                  }}
+                  placeholder={editAssignee ? 'Select shift' : 'Select assignee first'}
+                  disabled={!editAssignee}
+                />
+              </div>
+
+              {/* Deadline time */}
+              <div>
+                <label style={modalLabelStyle}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                    <Clock size={12} color="#F97316" />
+                    Deadline
+                    {editSelectedShiftForDeadline && (
+                      <span style={{ color: '#9CA3AF', fontWeight: 400, fontSize: '0.78rem' }}>
+                        — {new Date(`${editSelectedShiftForDeadline.shift_date}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                      </span>
+                    )}
+                  </span>
+                </label>
+                {editSelectedShiftForDeadline ? (
+                  <DeadlineTimePicker
+                    value={editDeadlineTime}
+                    onChange={setEditDeadlineTime}
+                    shiftStart={editSelectedShiftForDeadline.start_time.slice(0, 5)}
+                    shiftEnd={editSelectedShiftForDeadline.end_time.slice(0, 5)}
+                  />
+                ) : (
+                  <div style={{ padding: '10px 12px', border: '1.5px solid #E5E7EB', borderRadius: 8, background: '#F9FAFB', fontSize: '0.9375rem', color: '#9CA3AF' }}>
+                    Select a shift first
+                  </div>
+                )}
+              </div>
+
+              <InlineError message={panelError} />
+            </div>
+
+            {/* Footer */}
+            <div style={{ padding: '0 24px 20px', display: 'flex', gap: 10 }}>
+              <button style={ghostBtn} onClick={closePanel}>Cancel</button>
+              <button
+                style={{ ...primaryBtn(editLoading), background: editLoading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', border: 'none' }}
+                onClick={handleSaveTask}
+                disabled={editLoading}
+              >
+                {editLoading && <Spinner size={14} />} Save Changes
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════ DELETE TASK MODAL ═══════════════ */}
+      {deleteTaskModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.42)', display: 'grid', placeItems: 'center', padding: 18, zIndex: 100 }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: 'min(480px, 100%)', maxHeight: '88vh', overflowY: 'auto', background: '#FFFFFF', borderRadius: 16, border: '1px solid #E2E8F0', boxShadow: '0 24px 70px rgba(15,23,42,0.32)', padding: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 16 }}>
+              <h2 style={{ margin: 0, color: TASK_TEXT, fontSize: 16, fontWeight: 700 }}>Delete Task</h2>
+              <button type="button" onClick={() => setDeleteTaskModal(null)} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, border: `1px solid ${TASK_BORDER}`, borderRadius: 9, background: '#FFFFFF', cursor: 'pointer', color: TASK_TEXT }}><X size={16} /></button>
+            </div>
+            <p style={{ color: '#64748B', marginTop: 0, fontSize: 13, whiteSpace: 'nowrap' }}>Are you sure you want to delete <strong style={{ color: TASK_TEXT }}>{deleteTaskModal.title}</strong>?</p>
+            {deleteTaskError && <div style={{ border: '1px solid #FECACA', background: '#FEF2F2', color: '#B91C1C', borderRadius: 10, padding: '10px 12px', fontSize: '0.82rem', fontWeight: 700, marginBottom: 12 }}>{deleteTaskError}</div>}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
+              <button type="button" onClick={() => setDeleteTaskModal(null)} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: `1px solid ${TASK_BORDER}`, borderRadius: 10, background: '#FFFFFF', color: TASK_TEXT, height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Cancel</button>
+              <button type="button" onClick={handleDeleteTaskDirect} disabled={deleteTaskLoading} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: '#DC2626', color: '#FFFFFF', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: deleteTaskLoading ? 'default' : 'pointer', opacity: deleteTaskLoading ? 0.65 : 1 }}>{deleteTaskLoading ? null : <Trash2 size={16} />} Delete</button>
+            </div>
           </div>
         </div>
       )}
@@ -1503,17 +1544,12 @@ export default function OwnerTasksPage() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div>
                   <label style={modalLabelStyle}>Department <span style={{ color: '#F97316' }}>*</span></label>
-                  <div style={{ position: 'relative' }}>
-                    <select
-                      value={newDeptId}
-                      onChange={e => { setNewDeptId(e.target.value); setNewAssigneeId(''); setNewShiftId(''); setNewDeadlineTime('') }}
-                      style={{ ...modalInputStyle, paddingRight: 32, appearance: 'none', cursor: 'pointer' }}
-                    >
-                      <option value="">Select department</option>
-                      {deptDropdownOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                    </select>
-                    <ChevronDown size={13} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
-                  </div>
+                  <DropdownField
+                    value={newDeptId}
+                    options={deptDropdownOptions}
+                    onChange={v => { setNewDeptId(v); setNewAssigneeId(''); setNewShiftId(''); setNewDeadlineTime('') }}
+                    placeholder="Select department"
+                  />
                 </div>
                 <div>
                   <label style={modalLabelStyle}>Assign To</label>
@@ -1638,7 +1674,7 @@ export default function OwnerTasksPage() {
               <button onClick={() => setDeleteDeptModal(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', display: 'flex', padding: 4 }}><X size={18} /></button>
             </div>
             <p style={{ fontSize: '0.9375rem', color: '#374151', margin: 0, lineHeight: 1.6 }}>
-              Are you sure you want to delete <strong>{deleteDeptModal.name}</strong>? This cannot be undone.
+              Are you sure you want to delete <strong style={{ color: '#111827' }}>{deleteDeptModal.name}</strong>?
             </p>
             <InlineError message={deleteDeptError} />
             <div style={{ display: 'flex', gap: 10, marginTop: 24 }}>

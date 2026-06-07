@@ -14,6 +14,7 @@ export interface Task {
   due_at: string | null
   created_at: string
   updated_at?: string
+  shift_date?: string | null
 }
 
 export interface TaskInput {

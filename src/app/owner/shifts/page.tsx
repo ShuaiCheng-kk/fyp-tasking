@@ -671,6 +671,7 @@ export default function OwnerShiftsPage() {
   const [timelineDeleteError, setTimelineDeleteError] = useState('')
 
   const [openDepartmentMenuId, setOpenDepartmentMenuId] = useState<string | null>(null)
+  const [deptMenuPos, setDeptMenuPos] = useState({ top: 0, right: 0 })
   const [departmentModal, setDepartmentModal] = useState<DepartmentModalMode>(null)
   const [departmentModalTab, setDepartmentModalTab] = useState<'manual' | 'import'>('manual')
   const [activeDepartment, setActiveDepartment] = useState<Department | null>(null)
@@ -1292,9 +1293,8 @@ export default function OwnerShiftsPage() {
   }
 
   const openManagerModal = (department: Department) => {
-    const current = departmentManagers.find(item => item.department_id === department.id)
     setManagerModalDepartment(department)
-    setSelectedManagerId(current?.manager_id ?? '')
+    setSelectedManagerId('')
     setManagerActionError('')
     setOpenDepartmentMenuId(null)
   }
@@ -1544,7 +1544,7 @@ export default function OwnerShiftsPage() {
             const right = tlPad(endMin)
             const width = right - left
             if (width <= 0) return null
-            const shiftColor = deptColor(shift.department_id)
+            const shiftColor = deptColor(row.department_id)
             return (
               <button
                 key={`${shift.id}_${shift.assignment_id ?? 'open'}`}
@@ -1791,7 +1791,10 @@ export default function OwnerShiftsPage() {
                 {departments.map((department, deptIdx) => {
                   const deptMembers = membersByDepartment.get(department.id) ?? []
                   const employeeCount = deptMembers.filter(member => member.role === 'Employee').length
-                  const manager = departmentManagers.find(item => item.department_id === department.id)
+                  const deptManagerList = departmentManagers.filter(item => item.department_id === department.id)
+                  const managerNamesStr = deptManagerList.length > 0
+                    ? deptManagerList.map(m => m.manager_name).join(', ')
+                    : null
                   return (
                     <article
                       key={department.id}
@@ -1799,7 +1802,7 @@ export default function OwnerShiftsPage() {
                       style={{
                         position: 'relative',
                         animationDelay: `${deptIdx * 55}ms`,
-                        zIndex: openDepartmentMenuId === department.id ? 50 : 1,
+                        zIndex: 1,
                         display: 'flex',
                         flexDirection: 'column',
                         justifyContent: 'space-between',
@@ -1832,23 +1835,18 @@ export default function OwnerShiftsPage() {
                         aria-label={`Open ${department.name} actions`}
                         onClick={(event) => {
                           event.stopPropagation()
-                          setOpenDepartmentMenuId(openDepartmentMenuId === department.id ? null : department.id)
+                          if (openDepartmentMenuId === department.id) {
+                            setOpenDepartmentMenuId(null)
+                          } else {
+                            const r = event.currentTarget.getBoundingClientRect()
+                            setDeptMenuPos({ top: r.bottom + 4, right: window.innerWidth - r.right })
+                            setOpenDepartmentMenuId(department.id)
+                          }
                         }}
                         style={{ position: 'absolute', top: 12, right: 12, width: 30, height: 30, borderRadius: 9, border: `1px solid ${PANEL_BORDER}`, background: '#FFFFFF', display: 'grid', placeItems: 'center', cursor: 'pointer', flexShrink: 0 }}
                       >
                         <MoreHorizontal size={17} color={TEXT_DARK} />
                       </button>
-                      {openDepartmentMenuId === department.id && (
-                        <div data-department-menu-root="true" onClick={event => event.stopPropagation()} style={{ position: 'absolute', top: 44, right: 12, zIndex: 20, width: 180, background: '#FFFFFF', border: `1px solid #E5E7EB`, borderRadius: 14, boxShadow: '0 4px 24px rgba(0,0,0,0.10)', padding: '8px 6px' }}>
-                          <p style={{ margin: '0 6px 4px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9CA3AF' }}>
-                            Department
-                          </p>
-                          <button type="button" onClick={() => openEditDepartment(department)} style={menuButtonStyle}><Pencil size={13} style={{ color: '#F97316' }} /> Edit department</button>
-                          <button type="button" onClick={() => openManagerModal(department)} style={menuButtonStyle}><Users size={13} style={{ color: '#F97316' }} /> Set manager</button>
-                          <div style={{ height: 1, background: '#F1F5F9', margin: '4px 6px' }} />
-                          <button type="button" onClick={() => openDeleteDepartment(department)} style={{ ...menuButtonStyle, color: '#DC2626' }}><Trash2 size={13} /> Delete</button>
-                        </div>
-                      )}
 
                       <div style={{ minWidth: 0, display: 'grid', gap: 20, paddingRight: 34 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1865,15 +1863,15 @@ export default function OwnerShiftsPage() {
                               <UserCog size={13} />
                             </span>
                             <div style={{ minWidth: 0 }}>
-                              <span style={{ display: 'block', color: manager?.manager_name ? '#EA580C' : '#94A3B8', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                {manager?.manager_name ?? 'No manager set'}
+                              <span style={{ display: 'block', color: managerNamesStr ? '#EA580C' : '#94A3B8', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                {managerNamesStr ?? 'No manager set'}
                               </span>
-                              {manager?.manager_id && (
+                              {deptManagerList.length > 0 && (
                                 <button
                                   type="button"
                                   onClick={(event) => {
                                     event.stopPropagation()
-                                    router.push(`/owner/communication?tab=messages&partner_id=${manager.manager_id}`)
+                                    router.push(`/owner/communication?tab=messages&partner_id=${deptManagerList[0].manager_id}`)
                                   }}
                                   style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: 0, background: 'transparent', color: '#CBD5E1', cursor: 'pointer', padding: 0, marginTop: 4, fontSize: 11, fontWeight: 700 }}
                                   onMouseEnter={e => { e.currentTarget.style.color = '#F97316' }}
@@ -2352,7 +2350,7 @@ export default function OwnerShiftsPage() {
       )}
 
       {managerModalDepartment && (
-        <Modal title={`Set Manager - ${managerModalDepartment.name}`} onClose={() => setManagerModalDepartment(null)}>
+        <Modal title={`Add Manager — ${managerModalDepartment.name}`} onClose={() => setManagerModalDepartment(null)}>
           <div>
             <span style={labelStyle}>Manager</span>
             <DropdownField
@@ -2360,14 +2358,24 @@ export default function OwnerShiftsPage() {
               options={(() => {
                 const assignedMap = new Map(departmentManagers.map(a => [a.manager_id, a.department_id]))
                 const deptNameMap = new Map(departments.map(d => [d.id, d.name]))
-                const unassigned = managerOptions.filter(m => !assignedMap.has(m.id))
-                const assigned = managerOptions.filter(m => assignedMap.has(m.id))
+                // already in this dept — not selectable
+                const alreadyHere = managerOptions.filter(m => assignedMap.get(m.id) === managerModalDepartment.id)
+                // in another dept — disabled with note
+                const inOtherDept = managerOptions.filter(m => assignedMap.has(m.id) && assignedMap.get(m.id) !== managerModalDepartment.id)
+                // free — selectable
+                const free = managerOptions.filter(m => !assignedMap.has(m.id))
                 return [
-                  ...unassigned.map(m => ({ value: m.id, label: m.full_name })),
-                  ...assigned.map(m => ({ value: m.id, label: `${m.full_name} · ${deptNameMap.get(assignedMap.get(m.id)!) ?? ''}` })),
+                  ...free.map(m => ({ value: m.id, label: m.full_name })),
+                  ...inOtherDept.map(m => ({ value: m.id, label: `${m.full_name} · already in ${deptNameMap.get(assignedMap.get(m.id)!) ?? ''}` })),
+                  ...alreadyHere.map(m => ({ value: m.id, label: `${m.full_name} · already in this dept` })),
                 ]
               })()}
-              onChange={v => setSelectedManagerId(v)}
+              onChange={v => {
+                // block selecting managers already assigned anywhere
+                const assignedMap = new Map(departmentManagers.map(a => [a.manager_id, a.department_id]))
+                if (assignedMap.has(v)) return
+                setSelectedManagerId(v)
+              }}
               placeholder="Select manager"
             />
           </div>
@@ -2444,6 +2452,38 @@ export default function OwnerShiftsPage() {
           to   { opacity: 1; transform: translateX(-50%) translateY(0); }
         }
       `}</style>
+
+      {/* Department card menu — rendered at fixed position to escape overflow:hidden cards */}
+      {openDepartmentMenuId && (() => {
+        const department = departments.find(d => d.id === openDepartmentMenuId)
+        if (!department) return null
+        return (
+          <div
+            data-department-menu-root="true"
+            onClick={e => e.stopPropagation()}
+            style={{
+              position: 'fixed',
+              top: deptMenuPos.top,
+              right: deptMenuPos.right,
+              zIndex: 9999,
+              width: 180,
+              background: '#FFFFFF',
+              border: '1px solid #E5E7EB',
+              borderRadius: 14,
+              boxShadow: '0 4px 24px rgba(0,0,0,0.10)',
+              padding: '8px 6px',
+            }}
+          >
+            <p style={{ margin: '0 6px 4px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9CA3AF' }}>
+              Department
+            </p>
+            <button type="button" onClick={() => { setOpenDepartmentMenuId(null); openEditDepartment(department) }} style={menuButtonStyle}><Pencil size={13} style={{ color: '#F97316' }} /> Edit department</button>
+            <button type="button" onClick={() => { setOpenDepartmentMenuId(null); openManagerModal(department) }} style={menuButtonStyle}><Users size={13} style={{ color: '#F97316' }} /> Add manager</button>
+            <div style={{ height: 1, background: '#F1F5F9', margin: '4px 6px' }} />
+            <button type="button" onClick={() => { setOpenDepartmentMenuId(null); openDeleteDepartment(department) }} style={{ ...menuButtonStyle, color: '#DC2626' }}><Trash2 size={13} /> Delete</button>
+          </div>
+        )
+      })()}
     </div>
   )
 }

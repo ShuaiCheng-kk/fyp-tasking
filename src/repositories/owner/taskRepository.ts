@@ -34,11 +34,14 @@ export const taskRepository = {
   async getTasksByCompany(company_id: string): Promise<Task[]> {
     const { data, error } = await supabase
       .from('tasks')
-      .select('*')
+      .select('id, shift_id, company_id, department_id, parent_task_id, title, description, assigned_user_id, assigned_by, status, percentage_complete, priority, due_at, created_at, updated_at, shifts(shift_date)')
       .eq('company_id', company_id)
       .order('created_at', { ascending: false })
     if (error) throw new Error(error.message)
-    return (data ?? []) as Task[]
+    return ((data ?? []) as unknown as (Task & { shifts: { shift_date: string }[] | null })[]).map(row => ({
+      ...row,
+      shift_date: row.shifts && row.shifts.length > 0 ? row.shifts[0].shift_date : null,
+    }))
   },
 
   async getTasksByShift(shift_id: string): Promise<Task[]> {
@@ -125,14 +128,18 @@ export const taskRepository = {
 
   async getTaskStatsByCompany(company_id: string): Promise<TaskStats> {
     const todayStr = new Date().toISOString().split('T')[0]
+    // Fetch tasks whose linked shift is today, or whose due_at falls today (no shift)
     const { data, error } = await supabase
       .from('tasks')
-      .select('id, title, status, priority, percentage_complete, assigned_user_id, created_at')
+      .select('id, title, status, priority, percentage_complete, assigned_user_id, created_at, shift_id, due_at, shifts(shift_date)')
       .eq('company_id', company_id)
-      .gte('created_at', `${todayStr}T00:00:00.000Z`)
-      .lte('created_at', `${todayStr}T23:59:59.999Z`)
     if (error) throw new Error(error.message)
-    const rows = (data ?? []) as { id: string; title: string; status: string; priority: string | null; percentage_complete: number; assigned_user_id: string | null; created_at: string }[]
+    const allRows = (data ?? []) as unknown as { id: string; title: string; status: string; priority: string | null; percentage_complete: number; assigned_user_id: string | null; created_at: string; shift_id: string | null; due_at: string | null; shifts: { shift_date: string }[] | null }[]
+    const rows = allRows.filter(r => {
+      if (r.shift_id && r.shifts && r.shifts.length > 0) return r.shifts[0].shift_date === todayStr
+      if (r.due_at) return r.due_at.slice(0, 10) === todayStr
+      return false
+    })
 
     const assigneeIds = [...new Set(rows.map(r => r.assigned_user_id).filter(Boolean))] as string[]
     const userMap = new Map<string, string>()
