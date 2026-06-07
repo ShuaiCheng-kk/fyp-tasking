@@ -52,6 +52,120 @@ a {
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.1) !important;
 }
 
+/* ── Department active dot pulse (Shift Planning page) ── */
+@keyframes dept-dot-pulse {
+  0%   { transform: scale(1);    opacity: 1; }
+  50%  { transform: scale(1.9);  opacity: 0.35; }
+  100% { transform: scale(1);    opacity: 1; }
+}
+.dept-dot-active {
+  animation: dept-dot-pulse 1.6s ease-in-out infinite;
+}
+
+/* ── Shift bar hover (timeline) ── */
+.shift-bar {
+  transition: transform 0.15s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.15s ease, filter 0.15s ease;
+}
+.shift-bar:hover {
+  transform: scaleY(1.12);
+  box-shadow: 0 4px 18px rgba(15,23,42,0.28) !important;
+  filter: brightness(1.08);
+  z-index: 3 !important;
+}
+
+/* ── OFF bar idle shimmer ── */
+@keyframes off-shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+.off-bar {
+  transition: background 0.18s ease, transform 0.18s ease;
+}
+.off-bar:hover {
+  background: linear-gradient(90deg, #E2E8F0 0%, #CBD5E1 40%, #E2E8F0 60%, #CBD5E1 100%) !important;
+  background-size: 200% auto !important;
+  animation: off-shimmer 1.2s linear infinite;
+  transform: scaleY(1.08);
+}
+
+/* ── Timeline row hover ── */
+.tl-row {
+  transition: background 0.14s ease;
+}
+.tl-row:hover {
+  background: #FAFAFA !important;
+}
+.tl-row:hover .tl-name {
+  color: #F97316 !important;
+}
+
+/* ── Member card in dept drill-down ── */
+.member-card {
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+.member-card:hover {
+  border-color: #FDBA74 !important;
+  box-shadow: 0 4px 14px rgba(249,115,22,0.10);
+  transform: translateY(-2px);
+}
+
+/* ── Assign button pulse on hover ── */
+.assign-btn {
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.14s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.15s ease;
+}
+.assign-btn:hover {
+  background: #FEF3E8 !important;
+  border-color: #F97316 !important;
+  transform: scale(1.06);
+  box-shadow: 0 2px 10px rgba(249,115,22,0.18);
+}
+
+/* ── Schedule Shifts / Add button press ── */
+.schedule-btn {
+  transition: transform 0.14s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.14s ease, filter 0.14s ease;
+}
+.schedule-btn:hover:not(:disabled) {
+  transform: translateY(-1px) scale(1.02);
+  box-shadow: 0 4px 14px rgba(234,88,12,0.30);
+  filter: brightness(1.05);
+}
+.schedule-btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* ── Dept card color-bar accent ── */
+.dept-card-bar {
+  transition: transform 0.2s ease, opacity 0.2s ease;
+  transform: scaleY(0);
+  transform-origin: center;
+  opacity: 0;
+}
+.dept-card:hover .dept-card-bar {
+  transform: scaleY(1);
+  opacity: 1;
+}
+
+/* ── Staggered fade-in for dept cards ── */
+@keyframes card-fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.dept-card {
+  animation: card-fade-up 0.28s ease both;
+}
+
+/* ── Batch people picker chip ── */
+.people-chip {
+  transition: transform 0.13s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.13s ease;
+}
+.people-chip:hover:not([data-locked="true"]) {
+  transform: scale(1.02);
+  box-shadow: 0 3px 12px rgba(15,23,42,0.09);
+}
+.people-chip:active:not([data-locked="true"]) {
+  transform: scale(0.97);
+}
+
 /* ── Logo hover pulse ── */
 .logo-hover {
   transition: transform 0.2s ease;

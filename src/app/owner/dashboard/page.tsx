@@ -1375,24 +1375,23 @@ export default function OwnerDashboard() {
                             <span style={{ width: 8, height: 8, borderRadius: 2, background: deptColor(deptId), flexShrink: 0, display: 'inline-block' }} />
                             <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: '#94A3B8' }}>{deptName}</span>
                           </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2px 4px' }}>
                           {rows.map((row, i) => (
                             <div
                               key={`${row.user_id}_${i}`}
                               data-testid="team-member-row"
                               className="team-row"
-                              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px', borderRadius: 10 }}
+                              style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 8px', borderRadius: 10, minWidth: 0 }}
                             >
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, flexShrink: 0, background: row.role === 'Manager' ? '#FFF7ED' : '#F3F4F6', color: row.role === 'Manager' ? '#EA580C' : '#4B5563', borderRadius: 999 }}>
-                                {row.role === 'Manager' ? <UserCog size={15} /> : <UserRound size={15} />}
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: row.role === 'Manager' ? '#FFF7ED' : '#F3F4F6', color: row.role === 'Manager' ? '#EA580C' : '#4B5563', borderRadius: 999 }}>
+                                {row.role === 'Manager' ? <UserCog size={13} /> : <UserRound size={13} />}
                               </div>
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <p style={{ fontSize: 12, fontWeight: 600, margin: 0, color: row.role === 'Manager' ? '#EA580C' : '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.full_name}</p>
-                              </div>
+                              <p style={{ fontSize: 13, fontWeight: 700, margin: 0, color: row.role === 'Manager' ? '#EA580C' : '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }}>{row.full_name}</p>
                               <button
                                 onClick={() => router.push(`/owner/communication?tab=messages&partner_id=${row.user_id}`)}
                                 aria-label={`Message ${row.full_name}`}
                                 className="msg-btn"
-                                style={{ flexShrink: 0, cursor: 'pointer', background: 'transparent', border: 'none', padding: 6, borderRadius: 8, color: '#CBD5E1', transition: 'color 0.15s' }}
+                                style={{ flexShrink: 0, cursor: 'pointer', background: 'transparent', border: 'none', padding: 4, borderRadius: 6, color: '#CBD5E1', transition: 'color 0.15s' }}
                                 onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = '#F97316' }}
                                 onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = '#CBD5E1' }}
                               >
@@ -1400,6 +1399,7 @@ export default function OwnerDashboard() {
                               </button>
                             </div>
                           ))}
+                          </div>
                         </div>
                       ))}
                     </div>

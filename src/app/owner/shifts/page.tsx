@@ -918,6 +918,14 @@ export default function OwnerShiftsPage() {
     }
   }, [visibleTimelineRows])
 
+  const activeDeptIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const row of timelineRows) {
+      if (row.user_id && row.shifts.length > 0) ids.add(row.department_id)
+    }
+    return ids
+  }, [timelineRows])
+
   const selectedTimelineRows = useMemo(
     () => visibleTimelineRows.filter(row => row.user_id && selectedTimelineUserIds.includes(row.user_id)),
     [selectedTimelineUserIds, visibleTimelineRows],
@@ -1490,14 +1498,14 @@ export default function OwnerShiftsPage() {
     const EDGE = '2px solid rgba(15,23,42,0.45)'
     const rowSelected = !!row.user_id && selectedTimelineUserIds.includes(row.user_id)
     return (
-      <div key={row.user_id ?? `${row.department_id}_open`} style={{ display: 'flex', height: 72, borderTop: isDeptBoundary ? EDGE : '1px solid rgba(15,23,42,0.12)', background: rowSelected ? '#FFF7ED' : '#FFFFFF', transition: 'background 0.15s ease' }}>
+      <div key={row.user_id ?? `${row.department_id}_open`} className="tl-row" style={{ display: 'flex', height: 72, borderTop: isDeptBoundary ? EDGE : '1px solid rgba(15,23,42,0.12)', background: rowSelected ? '#FFF7ED' : '#FFFFFF' }}>
         <div style={{ width: 8, flexShrink: 0, background: barColor, opacity: 0.85 }} />
         <div style={{ width: 180, flexShrink: 0, display: 'flex', alignItems: 'center', padding: '0 10px 0 12px', overflow: 'hidden' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: row.role === 'Manager' ? '#FFF7ED' : '#F3F4F6', color: row.role === 'Manager' ? '#EA580C' : '#4B5563', borderRadius: 999 }}>
               {row.role === 'Manager' ? <UserCog size={13} /> : <UserRound size={13} />}
             </div>
-            <span style={{ minWidth: 0, fontSize: 13, fontWeight: 600, color: row.role === 'Manager' ? '#EA580C' : '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            <span className="tl-name" style={{ minWidth: 0, fontSize: 13, fontWeight: 600, color: row.role === 'Manager' ? '#EA580C' : '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', transition: 'color 0.14s ease' }}>
               {row.full_name}
             </span>
           </div>
@@ -1520,10 +1528,9 @@ export default function OwnerShiftsPage() {
             return (
               <button
                 type="button"
+                className="off-bar"
                 onClick={() => { if (dept) openBatchDrawer(dept, row.user_id!, timelineDate) }}
-                style={{ position: 'absolute', top: 10, bottom: 10, left: `${TL_PAD}%`, right: `${TL_PAD}%`, borderRadius: 999, background: '#E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1, border: 'none', cursor: 'pointer', transition: 'background 0.15s' }}
-                onMouseEnter={e => { e.currentTarget.style.background = '#CBD5E1' }}
-                onMouseLeave={e => { e.currentTarget.style.background = '#E2E8F0' }}
+                style={{ position: 'absolute', top: 10, bottom: 10, left: `${TL_PAD}%`, right: `${TL_PAD}%`, borderRadius: 999, background: '#E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1, border: 'none', cursor: 'pointer' }}
                 title={`Assign shift to ${row.full_name}`}
               >
                 <span style={{ fontSize: '0.78rem', fontWeight: 800, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em', pointerEvents: 'none' }}>Off</span>
@@ -1542,6 +1549,7 @@ export default function OwnerShiftsPage() {
               <button
                 key={`${shift.id}_${shift.assignment_id ?? 'open'}`}
                 type="button"
+                className="shift-bar"
                 onClick={() => openShiftDetail(shift, row)}
                 style={{
                   position: 'absolute',
@@ -1733,7 +1741,7 @@ export default function OwnerShiftsPage() {
                       No Manager or Employee yet.
                     </div>
                   ) : getDepartmentPeople(selectedDepartment).map(member => (
-                    <div key={member.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, border: `1px solid ${PANEL_BORDER}`, borderRadius: 12, padding: '13px 12px', background: '#FFFFFF' }}>
+                    <div key={member.id} className="member-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, border: `1px solid ${PANEL_BORDER}`, borderRadius: 12, padding: '13px 12px', background: '#FFFFFF' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                         <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 999, background: member.role === 'Manager' ? '#FFF7ED' : '#F3F4F6', color: member.role === 'Manager' ? '#EA580C' : '#4B5563', flexShrink: 0 }}>
                           {member.role === 'Manager' ? <UserCog size={14} /> : <UserRound size={14} />}
@@ -1757,6 +1765,7 @@ export default function OwnerShiftsPage() {
                       </div>
                       <button
                         type="button"
+                        className="assign-btn"
                         onClick={() => openBatchDrawer(selectedDepartment, member.id)}
                         style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5, border: `1px solid #FDBA74`, borderRadius: 9, background: '#FFF7ED', color: '#EA580C', height: 30, padding: '0 9px', fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
                       >
@@ -1767,6 +1776,7 @@ export default function OwnerShiftsPage() {
                 </div>
                 <button
                   type="button"
+                  className="schedule-btn"
                   onClick={() => openBatchDrawer(selectedDepartment)}
                   disabled={getDepartmentPeople(selectedDepartment).length === 0}
                   style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: getDepartmentPeople(selectedDepartment).length === 0 ? '#E2E8F0' : 'linear-gradient(135deg, #F97316, #EA580C)', color: getDepartmentPeople(selectedDepartment).length === 0 ? '#94A3B8' : '#FFFFFF', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 800, cursor: getDepartmentPeople(selectedDepartment).length === 0 ? 'not-allowed' : 'pointer' }}
@@ -1778,15 +1788,17 @@ export default function OwnerShiftsPage() {
               <div style={{ minHeight: 150, display: 'grid', placeItems: 'center', color: MUTED, fontWeight: 700 }}>No departments yet.</div>
             ) : (
               <div style={{ display: 'grid', gap: 10 }}>
-                {departments.map(department => {
+                {departments.map((department, deptIdx) => {
                   const deptMembers = membersByDepartment.get(department.id) ?? []
                   const employeeCount = deptMembers.filter(member => member.role === 'Employee').length
                   const manager = departmentManagers.find(item => item.department_id === department.id)
                   return (
                     <article
                       key={department.id}
+                      className="dept-card"
                       style={{
                         position: 'relative',
+                        animationDelay: `${deptIdx * 55}ms`,
                         zIndex: openDepartmentMenuId === department.id ? 50 : 1,
                         display: 'flex',
                         flexDirection: 'column',
@@ -1795,16 +1807,17 @@ export default function OwnerShiftsPage() {
                         minHeight: 112,
                         border: `1px solid ${PANEL_BORDER}`,
                         borderRadius: 12,
-                        padding: 12,
+                        padding: '12px 12px 12px 15px',
                         background: '#FFFFFF',
                         cursor: 'pointer',
+                        overflow: 'hidden',
                         transition: 'box-shadow 0.16s ease, transform 0.16s ease, border-color 0.16s ease',
                       }}
                       onClick={() => { clearTimelineSelection(); setSelectedDepartmentId(department.id) }}
                       onMouseEnter={event => {
-                        event.currentTarget.style.transform = 'translateY(-4px)'
-                        event.currentTarget.style.boxShadow = '0 12px 28px rgba(15,23,42,0.12)'
-                        event.currentTarget.style.borderColor = '#FDBA74'
+                        event.currentTarget.style.transform = 'translateY(-3px)'
+                        event.currentTarget.style.boxShadow = `0 10px 28px rgba(15,23,42,0.11)`
+                        event.currentTarget.style.borderColor = deptColor(department.id)
                       }}
                       onMouseLeave={event => {
                         event.currentTarget.style.transform = 'none'
@@ -1812,6 +1825,7 @@ export default function OwnerShiftsPage() {
                         event.currentTarget.style.borderColor = PANEL_BORDER
                       }}
                     >
+                      <span className="dept-card-bar" style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, background: deptColor(department.id), borderRadius: '12px 0 0 12px' }} />
                       <button
                         type="button"
                         data-department-menu-root="true"
@@ -1838,7 +1852,10 @@ export default function OwnerShiftsPage() {
 
                       <div style={{ minWidth: 0, display: 'grid', gap: 20, paddingRight: 34 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ width: 8, height: 8, borderRadius: 999, background: deptColor(department.id), flexShrink: 0 }} />
+                          <span
+                            className={activeDeptIds.has(department.id) ? 'dept-dot-active' : undefined}
+                            style={{ width: 8, height: 8, borderRadius: 999, background: deptColor(department.id), flexShrink: 0, display: 'inline-block' }}
+                          />
                           <h3 style={{ margin: 0, color: '#0F172A', fontSize: 15, fontWeight: 800, letterSpacing: '-0.15px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{department.name}</h3>
                         </div>
 
@@ -2049,6 +2066,8 @@ export default function OwnerShiftsPage() {
                       const isManager = member.role === 'Manager'
                       return (
                         <button type="button" key={member.id}
+                          className="people-chip"
+                          data-locked={batchFromSelection ? 'true' : 'false'}
                           onClick={() => { if (!batchFromSelection) toggleBatchMember(member.id) }}
                           style={{ border: active ? `1.5px solid ${OWNER_ORANGE}` : `1px solid ${PANEL_BORDER}`, background: active ? '#FFF7ED' : '#FFFFFF', borderRadius: 10, padding: '10px 12px', textAlign: 'left', cursor: batchFromSelection ? 'default' : 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}
                         >
