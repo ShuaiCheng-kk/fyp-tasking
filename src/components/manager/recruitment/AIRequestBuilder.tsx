@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react'
 import { Sparkles, ChevronRight, Edit3, DollarSign, Calendar, AlertCircle } from 'lucide-react'
-import { JobFormType, PostJobForm, ShiftForm, OneOffForm } from '../types/recruitment.form.types'
+import { JobFormType, PostJobForm, ShiftForm, OneOffForm } from '@/types/recruitment.form.types'
 import { Spinner, Chip, primaryBtnStyle, secondaryBtnStyle, inputStyle, labelStyle } from './ui'
 
 interface AIRequestBuilderProps {
