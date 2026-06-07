@@ -10,8 +10,6 @@ type AssignedWorkDTO = {
   start_time: string
   end_time: string
   assignment_status: string
-  casual_worker_name: string
-  casual_worker_email: string
   manager_name: string
   manager_email: string
 }
