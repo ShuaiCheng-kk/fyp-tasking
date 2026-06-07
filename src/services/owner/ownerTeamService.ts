@@ -2,6 +2,7 @@ import { ownerTeamRepository } from '@/repositories/owner/ownerTeamRepository'
 import { supabaseAdmin } from '@/lib/supabaseAdmin'
 import { User } from '@/types/auth.types'
 
+
 const ROLE_ORDER: Record<string, number> = { Owner: 0, Partner: 1, Manager: 2, Employee: 3, 'Casual Worker': 4, 'Guest User': 5 }
 
 export const ownerTeamService = {
@@ -26,8 +27,7 @@ export const ownerTeamService = {
   ): Promise<{ success: true; accountDeleted: boolean }> {
     console.log('[removeMember] START — company_id:', company_id, 'user_id_to_remove:', user_id_to_remove, 'requesting_user_id:', requesting_user_id)
 
-    const { supabase } = await import('@/lib/supabase')
-    const { data: company } = await supabase.from('companies').select('*').eq('id', company_id).single()
+    const company = await ownerTeamRepository.findCompanyById(company_id)
     if (!company) throw new Error('Company not found')
 
     const requester = await ownerTeamRepository.findUserByAuthIdOrInternalId(requesting_user_id)
@@ -73,6 +73,42 @@ export const ownerTeamService = {
 
   async getManagerDepartments(manager_id: string, company_id: string): Promise<{ department_id: string; department_name: string }[]> {
     return ownerTeamRepository.findManagerDepartments(manager_id, company_id)
+  },
+
+  async getDepartmentManagers(company_id: string): Promise<{
+    department_id: string
+    manager_id: string
+    manager_name: string
+  }[]> {
+    return ownerTeamRepository.findDepartmentManagers(company_id)
+  },
+
+  async setDepartmentManager(data: {
+    manager_id: string
+    company_id: string
+    department_id: string
+    assigned_by: string
+  }): Promise<void> {
+    const manager = await ownerTeamRepository.findUserById(data.manager_id)
+    if (!manager || manager.company_id !== data.company_id || manager.role !== 'Manager') {
+      throw new Error('Manager not found in this company')
+    }
+    const previousDepartmentManagers = await ownerTeamRepository.findDepartmentManagers(data.company_id)
+    const managersToUnassign = previousDepartmentManagers
+      .filter(item => item.department_id === data.department_id && item.manager_id !== data.manager_id)
+      .map(item => item.manager_id)
+    await ownerTeamRepository.removeManagersFromDepartment(data.company_id, data.department_id)
+    await Promise.all(managersToUnassign.map(managerId =>
+      ownerTeamRepository.updateUserDepartment(managerId, null),
+    ))
+    await ownerTeamRepository.removeManagerDepartmentsByCompany(data.manager_id, data.company_id)
+    await ownerTeamRepository.updateUserDepartment(data.manager_id, data.department_id)
+    await ownerTeamRepository.assignManagerDepartment(
+      data.manager_id,
+      data.company_id,
+      data.department_id,
+      data.assigned_by,
+    )
   },
 
   async assignManagerToDepartment(manager_id: string, company_id: string, department_id: string, assigned_by: string): Promise<void> {

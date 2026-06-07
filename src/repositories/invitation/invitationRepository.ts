@@ -44,16 +44,17 @@ export const invitationRepository = {
     if (error) throw new Error(error.message)
   },
 
-  async findActiveInvitation(email: string): Promise<InvitationCode | null> {
-    const { data, error } = await supabase
-      .from('invitation_code')
-      .select('*')
-      .eq('email', email)
-      .eq('status', 'Active')
-      .limit(1)
-      .maybeSingle()
-    if (error) return null
-    return data
+  async insertInboxInvite(data: {
+    recipient_user_id: string
+    sender_user_id: string
+    company_id: string
+    role: string
+    department_id: string | null
+  }): Promise<void> {
+    const { error } = await supabase
+      .from('inbox')
+      .insert({ ...data, type: 'company_invite', status: 'pending' })
+    if (error) throw new Error(error.message)
   },
 
   async insertEmployeeDepartment(employee_id: string, department_id: string): Promise<void> {

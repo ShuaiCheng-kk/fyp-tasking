@@ -3,6 +3,16 @@ import { User } from '@/types/auth.types'
 
 export const ownerTeamRepository = {
 
+  async findCompanyById(company_id: string): Promise<{ id: string; owner_id: string } | null> {
+    const { data, error } = await supabase
+      .from('companies')
+      .select('id, owner_id')
+      .eq('id', company_id)
+      .single()
+    if (error) return null
+    return data
+  },
+
   async findMembersByCompanyId(company_id: string): Promise<User[]> {
     const { data, error } = await supabase
       .from('company_members')
@@ -171,14 +181,75 @@ export const ownerTeamRepository = {
     }))
   },
 
+  async findDepartmentManagers(company_id: string): Promise<{
+    department_id: string
+    manager_id: string
+    manager_name: string
+  }[]> {
+    const { data, error } = await supabase
+      .from('manager_departments')
+      .select('department_id, manager_id')
+      .eq('company_id', company_id)
+    if (error) throw new Error(error.message)
+
+    const assignments = (data ?? []) as { department_id: string; manager_id: string }[]
+    const managerIds = [...new Set(assignments.map(row => row.manager_id))]
+    if (managerIds.length === 0) return []
+
+    const { data: users, error: userError } = await supabase
+      .from('users')
+      .select('id, full_name')
+      .in('id', managerIds)
+    if (userError) throw new Error(userError.message)
+
+    const userMap = new Map((users ?? []).map(user => [user.id as string, user.full_name as string]))
+    return assignments.map(row => ({
+      department_id: row.department_id,
+      manager_id: row.manager_id,
+      manager_name: userMap.get(row.manager_id) ?? '',
+    }))
+  },
+
   async assignManagerDepartment(manager_id: string, company_id: string, department_id: string, assigned_by: string): Promise<void> {
     const { error } = await supabase
       .from('manager_departments')
       .insert({ manager_id, company_id, department_id, assigned_by })
     if (error) {
-      if (error.code === '23505') throw new Error('ALREADY_ASSIGNED')
+      if (error.code === '23505') {
+        const { error: updateError } = await supabase
+          .from('manager_departments')
+          .update({ company_id, department_id, assigned_by, assigned_at: new Date().toISOString() })
+          .eq('manager_id', manager_id)
+        if (updateError) throw new Error(updateError.message)
+        return
+      }
       throw new Error(error.message)
     }
+  },
+
+  async removeManagerDepartmentsByCompany(manager_id: string, company_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('manager_departments')
+      .delete()
+      .eq('manager_id', manager_id)
+      .or(`company_id.eq.${company_id},company_id.is.null`)
+    if (error) throw new Error(error.message)
+  },
+
+  async updateUserDepartment(user_id: string, department_id: string | null): Promise<void> {
+    const { error } = await supabase
+      .from('users')
+      .update({ department_id })
+      .eq('id', user_id)
+    if (error) throw new Error(error.message)
+  },
+
+  async removeManagersFromDepartment(company_id: string, department_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('manager_departments')
+      .delete()
+      .eq('department_id', department_id)
+    if (error) throw new Error(error.message)
   },
 
   async removeManagerDepartment(manager_id: string, department_id: string): Promise<void> {
