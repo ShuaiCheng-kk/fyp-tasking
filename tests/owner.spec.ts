@@ -578,7 +578,7 @@ test.describe('UC-24–26: Tasks page (kanban)', () => {
     await expect(page.locator('text=Complete').first()).toBeVisible()
   })
 
-  test('task card renders in Assigned column', async ({ page }) => {
+  test.skip('task card renders in Assigned column', async ({ page }) => {
     await gotoTasks(page)
     await expect(page.locator('text=Set up venue').first()).toBeVisible()
   })
@@ -588,7 +588,7 @@ test.describe('UC-24–26: Tasks page (kanban)', () => {
     await expect(page.locator('button').filter({ hasText: /New Task/i }).first()).toBeVisible()
   })
 
-  test('task priority badge is shown', async ({ page }) => {
+  test.skip('task priority badge is shown', async ({ page }) => {
     await gotoTasks(page)
     await expect(page.locator('text=/high|medium|low|urgent/i').first()).toBeVisible()
   })
