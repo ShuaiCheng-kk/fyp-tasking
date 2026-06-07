@@ -215,7 +215,7 @@ test.describe('Owner Shifts — department drill-down', () => {
     await page.getByRole('button', { name: /^Assign \d+ Shift/i }).click()
     await expect.poll(() => bulkPayload, { timeout: 5000 }).not.toBeNull()
 
-    const p = bulkPayload as Record<string, unknown>
+    const p = bulkPayload as unknown as Record<string, unknown>
     expect(p.company_id).toBe('company-1')
     expect(p.department_id).toBe('dept-ops')
     expect((p.assignments as unknown[]).length).toBeGreaterThan(0)
