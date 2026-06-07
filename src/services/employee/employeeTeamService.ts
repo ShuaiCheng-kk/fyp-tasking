@@ -12,7 +12,6 @@ export const employeeTeamService = {
   async getTeam(auth_user_id: string): Promise<{
     manager: TeamUser | null
     employees: TeamUser[]
-    casual_workers: TeamUser[]
   }> {
     const user =
       await employeeInboxRepository.findUserByAuthIdOrInternalId(auth_user_id)
