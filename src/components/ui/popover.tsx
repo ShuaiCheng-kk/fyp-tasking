@@ -1,83 +1,119 @@
 "use client"
 
 import * as React from "react"
-import { Popover as PopoverPrimitive } from "@base-ui/react/popover"
+import { createPortal } from "react-dom"
 
-import { cn } from "@/lib/utils"
-
-function Popover({ ...props }: PopoverPrimitive.Root.Props) {
-  return <PopoverPrimitive.Root data-slot="popover" {...props} />
+type PopoverContextValue = {
+  open: boolean
+  setOpen: (v: boolean) => void
+  triggerRef: React.RefObject<HTMLButtonElement | null>
 }
 
-function PopoverTrigger({ className, ...props }: PopoverPrimitive.Trigger.Props) {
-  return <PopoverPrimitive.Trigger data-slot="popover-trigger" className={cn('outline-none', className)} {...props} />
+const PopoverContext = React.createContext<PopoverContextValue | null>(null)
+
+function usePopover() {
+  const ctx = React.useContext(PopoverContext)
+  if (!ctx) throw new Error("Popover components must be used inside <Popover>")
+  return ctx
+}
+
+function Popover({ children, defaultOpen = false }: { children: React.ReactNode; defaultOpen?: boolean }) {
+  const [open, setOpen] = React.useState(defaultOpen)
+  const triggerRef = React.useRef<HTMLButtonElement | null>(null)
+  return (
+    <PopoverContext.Provider value={{ open, setOpen, triggerRef }}>
+      {children}
+    </PopoverContext.Provider>
+  )
+}
+
+function PopoverTrigger({
+  children,
+  className,
+  style,
+  ...props
+}: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  const { open, setOpen, triggerRef } = usePopover()
+  return (
+    <button
+      ref={triggerRef}
+      type="button"
+      className={className}
+      style={style}
+      aria-expanded={open}
+      onClick={() => setOpen(!open)}
+      {...props}
+    >
+      {children}
+    </button>
+  )
 }
 
 function PopoverContent({
+  children,
+  align = "end",
+  sideOffset = 8,
   className,
-  align = "center",
-  alignOffset = 0,
-  side = "bottom",
-  sideOffset = 4,
+  style,
   ...props
-}: PopoverPrimitive.Popup.Props &
-  Pick<
-    PopoverPrimitive.Positioner.Props,
-    "align" | "alignOffset" | "side" | "sideOffset"
-  >) {
-  return (
-    <PopoverPrimitive.Portal>
-      <PopoverPrimitive.Positioner
-        align={align}
-        alignOffset={alignOffset}
-        side={side}
-        sideOffset={sideOffset}
-        className="isolate z-50"
-      >
-        <PopoverPrimitive.Popup
-          data-slot="popover-content"
-          className={cn(
-            "z-50 flex w-72 origin-(--transform-origin) flex-col gap-2.5 rounded-lg bg-popover p-2.5 text-sm text-popover-foreground shadow-md outline-none duration-100 data-[side=bottom]:slide-in-from-top-2 data-[side=inline-end]:slide-in-from-left-2 data-[side=inline-start]:slide-in-from-right-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
-            className
-          )}
-          {...props}
-        />
-      </PopoverPrimitive.Positioner>
-    </PopoverPrimitive.Portal>
+}: React.HTMLAttributes<HTMLDivElement> & {
+  align?: "start" | "center" | "end"
+  alignOffset?: number
+  side?: "top" | "bottom" | "left" | "right"
+  sideOffset?: number
+}) {
+  const { open, setOpen, triggerRef } = usePopover()
+  const [pos, setPos] = React.useState({ top: 0, left: 0 })
+  const contentRef = React.useRef<HTMLDivElement>(null)
+
+  React.useEffect(() => {
+    if (!open || !triggerRef.current) return
+    const r = triggerRef.current.getBoundingClientRect()
+    const contentWidth = contentRef.current?.offsetWidth ?? 280
+    let left = r.right - contentWidth
+    if (align === "start") left = r.left
+    if (align === "center") left = r.left + r.width / 2 - contentWidth / 2
+    setPos({ top: r.bottom + sideOffset, left: Math.max(8, left) })
+  }, [open, align, sideOffset, triggerRef])
+
+  React.useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (
+        contentRef.current?.contains(e.target as Node) ||
+        triggerRef.current?.contains(e.target as Node)
+      ) return
+      setOpen(false)
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [open, setOpen, triggerRef])
+
+  if (!open || typeof window === "undefined") return null
+
+  return createPortal(
+    <div
+      ref={contentRef}
+      className={className}
+      style={{ position: "fixed", top: pos.top, left: pos.left, zIndex: 9999, ...style }}
+      {...props}
+    >
+      {children}
+    </div>,
+    document.body
   )
 }
 
 function PopoverHeader({ className, ...props }: React.ComponentProps<"div">) {
-  return (
-    <div
-      data-slot="popover-header"
-      className={cn("flex flex-col gap-0.5 text-sm", className)}
-      {...props}
-    />
-  )
+  return <div className={className} {...props} />
 }
 
-function PopoverTitle({ className, ...props }: PopoverPrimitive.Title.Props) {
-  return (
-    <PopoverPrimitive.Title
-      data-slot="popover-title"
-      className={cn("font-medium", className)}
-      {...props}
-    />
-  )
+function PopoverTitle({ className, ...props }: React.ComponentProps<"p">) {
+  return <p className={className} {...props} />
 }
 
-function PopoverDescription({
-  className,
-  ...props
-}: PopoverPrimitive.Description.Props) {
-  return (
-    <PopoverPrimitive.Description
-      data-slot="popover-description"
-      className={cn("text-muted-foreground", className)}
-      {...props}
-    />
-  )
+function PopoverDescription({ className, ...props }: React.ComponentProps<"p">) {
+  return <p className={className} {...props} />
 }
 
 export {
