@@ -197,7 +197,7 @@ test.describe('Owner Shifts — department drill-down', () => {
 
     await page.getByRole('button', { name: 'Schedule shifts' }).click()
     // Drawer heading = department name when no single member
-    await expect(page.getByRole('heading', { name: 'Operations' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Operations' }).first()).toBeVisible()
 
     // Step 1: select people
     await page.getByRole('button', { name: /Alice Employee/ }).click()
@@ -273,9 +273,9 @@ test.describe('Owner Shifts — Shift Timeline', () => {
 
     await expect(page.getByRole('heading', { name: 'Edit Shift' })).toBeVisible()
     await expect(page.getByText('Reassign to')).toBeVisible()
-    await expect(page.getByText('Date')).toBeVisible()
-    await expect(page.getByText('Start')).toBeVisible()
-    await expect(page.getByText('End')).toBeVisible()
+    await expect(page.getByText('Date', { exact: true })).toBeVisible()
+    await expect(page.getByText('Start', { exact: true })).toBeVisible()
+    await expect(page.getByText('End', { exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Delete', exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Save', exact: true })).toBeVisible()
 

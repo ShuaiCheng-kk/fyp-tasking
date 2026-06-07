@@ -15,14 +15,31 @@ const fB = 'var(--font-body)';
 const iconMap = { Zap, Shield, Star } as const;
 type IconName = keyof typeof iconMap;
 
-// ─── Dummy card data (6 placeholders) ─────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-const DUMMY_CARDS = Array.from({ length: 6 }, (_, i) => ({ id: i }));
+type JobPosting = {
+  id: string
+  title: string
+  company_name: string | null
+  location: string | null
+  employment_type: string | null
+  status: string
+  created_at: string
+  department_id: string | null
+}
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function JobBoardPage() {
-  const [modalOpen, setModalOpen] = useState<number | null>(null);
+  const [modalOpen, setModalOpen] = useState<string | null>(null);
+  const [postings, setPostings] = useState<JobPosting[]>([]);
+
+  useEffect(() => {
+    fetch('/api/job-board')
+      .then(r => r.json())
+      .then(data => { if (data.success) setPostings(data.postings ?? []) })
+      .catch(() => {})
+  }, []);
 
   const closeModal = () => setModalOpen(null);
 
@@ -214,14 +231,18 @@ export default function JobBoardPage() {
             </div>
           </div>
 
-          {/* 3-column cards grid */}
+          {/* Live job postings grid */}
           <div className="grid-features-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px' }}>
-            {DUMMY_CARDS.map(({ id }) => (
+            {postings.length === 0 ? (
+              <p style={{ fontFamily: fB, fontSize: '0.9375rem', color: '#9CA3AF', gridColumn: '1/-1', textAlign: 'center', padding: '40px 0' }}>
+                No open positions at this time. Check back soon!
+              </p>
+            ) : postings.map((posting) => (
               <div
-                key={id}
+                key={posting.id}
                 style={{
                   background: '#FFFFFF',
-                  border: '2px dashed #D1D5DB',
+                  border: '1.5px solid #E5E7EB',
                   borderRadius: '16px',
                   padding: '24px',
                   display: 'flex',
@@ -232,8 +253,8 @@ export default function JobBoardPage() {
                 <span style={{
                   display: 'inline-block',
                   alignSelf: 'flex-start',
-                  background: '#F3F4F6',
-                  color: '#6B7280',
+                  background: '#ECFDF5',
+                  color: '#059669',
                   fontFamily: fB,
                   fontSize: '0.75rem',
                   fontWeight: 700,
@@ -242,34 +263,32 @@ export default function JobBoardPage() {
                   textTransform: 'uppercase',
                   letterSpacing: '0.05em',
                 }}>
-                  DUMMY — Status placeholder
+                  {posting.employment_type ?? 'Open'}
                 </span>
 
                 <div style={{ borderBottom: '1px solid #F0E8D8', paddingBottom: '12px' }}>
-                  <p style={{ fontFamily: fH, fontWeight: 700, fontSize: '1.0625rem', color: '#9CA3AF' }}>
-                    DUMMY — Job Title placeholder
+                  <p style={{ fontFamily: fH, fontWeight: 700, fontSize: '1.0625rem', color: '#1C1917' }}>
+                    {posting.title}
                   </p>
-                  <p style={{ fontFamily: fB, fontSize: '0.875rem', color: '#9CA3AF', marginTop: '4px' }}>
-                    DUMMY — Company placeholder
+                  <p style={{ fontFamily: fB, fontSize: '0.875rem', color: '#78716C', marginTop: '4px' }}>
+                    {posting.company_name ?? 'Tasking'}
                   </p>
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1 }}>
-                  {[
-                    'DUMMY — Department placeholder',
-                    'DUMMY — Location placeholder',
-                    'DUMMY — Shift Hours placeholder',
-                    'DUMMY — Date Posted placeholder',
-                  ].map((text) => (
-                    <p key={text} style={{ fontFamily: fB, fontSize: '0.8125rem', color: '#9CA3AF' }}>
-                      {text}
+                  {posting.location && (
+                    <p style={{ fontFamily: fB, fontSize: '0.8125rem', color: '#6B7280' }}>
+                      {posting.location}
                     </p>
-                  ))}
+                  )}
+                  <p style={{ fontFamily: fB, fontSize: '0.8125rem', color: '#9CA3AF' }}>
+                    Posted {new Date(posting.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                  </p>
                 </div>
 
                 <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
                   <button
-                    onClick={() => setModalOpen(id)}
+                    onClick={() => setModalOpen(posting.id)}
                     style={{
                       flex: 1,
                       padding: '10px 0',
@@ -358,44 +377,34 @@ export default function JobBoardPage() {
               <X size={18} color="#374151" />
             </button>
 
-            <p style={{
-              fontFamily: fB,
-              fontSize: '0.75rem',
-              fontWeight: 700,
-              color: '#9CA3AF',
-              textTransform: 'uppercase',
-              letterSpacing: '0.08em',
-              marginBottom: '12px',
-            }}>
-              DUMMY — Company placeholder
-            </p>
-            <h2 style={{
-              fontFamily: fH,
-              fontWeight: 700,
-              fontSize: '1.5rem',
-              color: '#9CA3AF',
-              marginBottom: '24px',
-            }}>
-              DUMMY — Job Title placeholder
-            </h2>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '32px' }}>
-              {[
-                { label: 'Description', value: 'DUMMY — Full job description placeholder' },
-                { label: 'Requirements', value: 'DUMMY — Requirements placeholder' },
-                { label: 'Shift Details', value: 'DUMMY — Shift details placeholder' },
-                { label: 'Pay Rate', value: 'DUMMY — Pay rate placeholder' },
-              ].map(({ label, value }) => (
-                <div key={label} style={{ borderBottom: '1px solid #F0E8D8', paddingBottom: '16px' }}>
-                  <p style={{ fontFamily: fB, fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '6px' }}>
-                    {label}
+            {(() => {
+              const posting = postings.find(p => p.id === modalOpen)
+              if (!posting) return null
+              return (
+                <>
+                  <p style={{ fontFamily: fB, fontSize: '0.75rem', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '12px' }}>
+                    {posting.company_name ?? 'Tasking'}
                   </p>
-                  <p style={{ fontFamily: fB, fontSize: '0.9375rem', color: '#9CA3AF' }}>
-                    {value}
-                  </p>
-                </div>
-              ))}
-            </div>
+                  <h2 style={{ fontFamily: fH, fontWeight: 700, fontSize: '1.5rem', color: '#1C1917', marginBottom: '24px' }}>
+                    {posting.title}
+                  </h2>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '32px' }}>
+                    {posting.location && (
+                      <div style={{ borderBottom: '1px solid #F0E8D8', paddingBottom: '16px' }}>
+                        <p style={{ fontFamily: fB, fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '6px' }}>Location</p>
+                        <p style={{ fontFamily: fB, fontSize: '0.9375rem', color: '#374151' }}>{posting.location}</p>
+                      </div>
+                    )}
+                    {posting.employment_type && (
+                      <div style={{ borderBottom: '1px solid #F0E8D8', paddingBottom: '16px' }}>
+                        <p style={{ fontFamily: fB, fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '6px' }}>Type</p>
+                        <p style={{ fontFamily: fB, fontSize: '0.9375rem', color: '#374151' }}>{posting.employment_type}</p>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )
+            })()}
 
             <Link
               href="/get-started"

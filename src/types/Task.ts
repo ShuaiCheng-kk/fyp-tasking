@@ -31,11 +31,23 @@ export interface TaskInput {
   due_at?: string | null
 }
 
+export interface TaskStatItem {
+  id: string
+  title: string
+  status: string
+  priority?: string | null
+  percentage_complete?: number
+  assignee_name?: string
+  assigned_user_id?: string | null
+  created_at?: string
+}
+
 export interface TaskStats {
   assigned: number
   inProgress: number
   review: number
   complete: number
+  tasks?: TaskStatItem[]
 }
 
 export interface DepartmentTaskStats extends TaskStats {

@@ -5,6 +5,16 @@ import { supabase } from '@/lib/supabase'
 import { CasualWorkerStatus, JobApplicant, JobInvitation, JobPosting, JobPostingInput } from '@/types/Recruitment'
 
 export const recruitmentRepository = {
+  async getPublicJobPostings(): Promise<JobPosting[]> {
+    const { data, error } = await supabase
+      .from('job_postings')
+      .select('*')
+      .eq('status', 'open')
+      .order('created_at', { ascending: false })
+    if (error) throw new Error(error.message)
+    return (data ?? []) as JobPosting[]
+  },
+
   async getJobPostingsByCompany(company_id: string): Promise<JobPosting[]> {
     const { data, error } = await supabase
       .from('job_postings')

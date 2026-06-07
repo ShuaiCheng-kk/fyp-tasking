@@ -277,10 +277,10 @@ function formatShiftHour(time: string): string {
 
 function previewDateLabel(dateKey: string): string {
   const d = new Date(`${dateKey}T00:00:00`)
+  const weekday = d.toLocaleDateString('en-US', { weekday: 'short' })
   const month = d.toLocaleDateString('en-US', { month: 'long' })
   const dayNum = d.getDate()
-  const weekday = d.toLocaleDateString('en-US', { weekday: 'short' })
-  return `${month} ${dayNum}  ·  ${weekday}`
+  return `${weekday}, ${month} ${dayNum}`
 }
 
 function TimelineDatePicker({ value, onChange, shiftDates, anchorRef, triggerStyle }: {
@@ -418,6 +418,7 @@ function InlineDatePicker({ value, onChange, shiftDates }: {
     cells.push(`${cy}-${String(cm).padStart(2, '0')}-${String(d).padStart(2, '0')}`)
   }
 
+  const canGoPrevMonth = viewMonth > todayMonth
   const goPrev = () => {
     const d = new Date(cy, cm - 2, 1)
     const nm = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
@@ -432,8 +433,8 @@ function InlineDatePicker({ value, onChange, shiftDates }: {
   return (
     <div style={{ border: `1px solid ${PANEL_BORDER}`, borderRadius: 10, padding: '8px 10px', background: '#FAFBFC' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-        <button type="button" onClick={goPrev} disabled={viewMonth <= todayMonth}
-          style={{ width: 22, height: 22, border: `1px solid ${PANEL_BORDER}`, borderRadius: 6, background: '#fff', cursor: viewMonth <= todayMonth ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: viewMonth <= todayMonth ? '#D1D5DB' : '#64748B', padding: 0 }}>
+        <button type="button" onClick={goPrev} disabled={!canGoPrevMonth}
+          style={{ width: 22, height: 22, border: `1px solid ${PANEL_BORDER}`, borderRadius: 6, background: '#fff', cursor: canGoPrevMonth ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', color: canGoPrevMonth ? '#64748B' : '#D1D5DB', padding: 0 }}>
           <ChevronLeft size={11} />
         </button>
         <span style={{ fontSize: 12, fontWeight: 700, color: TEXT_DARK }}>{monthLabel}</span>
@@ -664,6 +665,7 @@ export default function OwnerShiftsPage() {
   const [timelineDate, setTimelineDate] = useState(minDate)
   const [rangeStartHour, setRangeStartHour] = useState(7)
   const [rangeEndHour, setRangeEndHour] = useState(23)
+  const [isAutoFit, setIsAutoFit] = useState(false)
   const [selectedTimelineUserIds, setSelectedTimelineUserIds] = useState<string[]>([])
   const [timelineBulkDeleting, setTimelineBulkDeleting] = useState(false)
   const [timelineDeleteError, setTimelineDeleteError] = useState('')
@@ -685,6 +687,7 @@ export default function OwnerShiftsPage() {
 
   const [batchDepartment, setBatchDepartment] = useState<Department | null>(null)
   const [batchSingleMember, setBatchSingleMember] = useState<TeamMember | null>(null)
+  const [batchFromSelection, setBatchFromSelection] = useState(false)
   const [calMonth, setCalMonth] = useState('')
   const [calDir, setCalDir] = useState<'next' | 'prev'>('next')
   const [calKey, setCalKey] = useState(0)
@@ -697,6 +700,8 @@ export default function OwnerShiftsPage() {
   const [bulkError, setBulkError] = useState('')
   const [bulkResult, setBulkResult] = useState('')
   const [bulkFailures, setBulkFailures] = useState<BulkFailure[]>([])
+  const [successToast, setSuccessToast] = useState<string | null>(null)
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [selectedShift, setSelectedShift] = useState<TimelineShiftBlock | null>(null)
   const [shiftEditForm, setShiftEditForm] = useState<ShiftEditForm>({
@@ -782,9 +787,9 @@ export default function OwnerShiftsPage() {
     return () => document.removeEventListener('pointerdown', closeDepartmentMenuOnOutsideClick)
   }, [])
 
-  const fetchAssignmentData = useCallback(async (cid: string) => {
+  const fetchAssignmentData = useCallback(async (cid: string, silent = false) => {
     if (!cid) return
-    setAssignmentDataLoading(true)
+    if (!silent) setAssignmentDataLoading(true)
     try {
       const [deptRes, memberRes, managerRes] = await Promise.all([
         fetch(`/api/company/departments?company_id=${cid}`),
@@ -795,7 +800,7 @@ export default function OwnerShiftsPage() {
       const memberData = await memberRes.json()
       const managerData = await managerRes.json()
       if (deptData.success) {
-        const nextDepartments: Department[] = deptData.departments ?? []
+        const nextDepartments: Department[] = (deptData.departments ?? []).sort((a: Department, b: Department) => a.name.localeCompare(b.name))
         setDepartments(nextDepartments)
       }
       if (memberData.success) {
@@ -806,7 +811,7 @@ export default function OwnerShiftsPage() {
       }
       if (managerData.success) setDepartmentManagers(managerData.assignments ?? [])
     } finally {
-      setAssignmentDataLoading(false)
+      if (!silent) setAssignmentDataLoading(false)
     }
   }, [])
 
@@ -902,6 +907,17 @@ export default function OwnerShiftsPage() {
         }
       })
   }, [departments, getDepartmentPeople, members, selectedDepartment, timelineRows])
+  const autoFitRange = useMemo(() => {
+    const allShifts = visibleTimelineRows.flatMap(r => r.shifts)
+    if (allShifts.length === 0) return { from: 7, to: 23 }
+    const minMin = Math.min(...allShifts.map(s => timeToMinutes(s.start_time)))
+    const maxMin = Math.max(...allShifts.map(s => timeToMinutes(s.end_time)))
+    return {
+      from: Math.max(0, Math.floor(minMin / 60) - 1),
+      to: Math.min(24, Math.ceil(maxMin / 60) + 1),
+    }
+  }, [visibleTimelineRows])
+
   const selectedTimelineRows = useMemo(
     () => visibleTimelineRows.filter(row => row.user_id && selectedTimelineUserIds.includes(row.user_id)),
     [selectedTimelineUserIds, visibleTimelineRows],
@@ -941,12 +957,14 @@ export default function OwnerShiftsPage() {
   const datesWithShifts = useMemo(() => {
     const dates = new Set<string>()
     for (const row of futureRows) {
+      if (!row.user_id) continue
       for (const shift of row.shifts) {
+        if (selectedDepartmentId && shift.department_id !== selectedDepartmentId) continue
         dates.add(shift.shift_date)
       }
     }
     return dates
-  }, [futureRows])
+  }, [futureRows, selectedDepartmentId])
 
   const editUserShiftDates = useMemo(() => {
     const uid = shiftEditForm.assigned_user_id
@@ -1012,6 +1030,7 @@ export default function OwnerShiftsPage() {
     setTimelineDeleteError('')
     try {
       const qs = internalUserId ? `?actor_id=${internalUserId}` : ''
+      const deletedCount = selectedTimelineAssignmentIds.length
       for (const assignmentId of selectedTimelineAssignmentIds) {
         const res = await fetch(`/api/shift-assignment/${assignmentId}${qs}`, { method: 'DELETE' })
         const data = await res.json()
@@ -1019,6 +1038,9 @@ export default function OwnerShiftsPage() {
       }
       setSelectedTimelineUserIds([])
       await refreshShiftData()
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+      setSuccessToast(`${deletedCount} shift${deletedCount === 1 ? '' : 's'} removed`)
+      toastTimerRef.current = setTimeout(() => setSuccessToast(null), 3000)
     } catch (err) {
       setTimelineDeleteError(err instanceof Error ? err.message : 'Failed to delete selected shifts')
     } finally {
@@ -1080,15 +1102,26 @@ export default function OwnerShiftsPage() {
   }
 
   const removeShiftCard = (memberId: string, date: string) => {
-    const remainingEnabled = selectedDates.filter(d => {
-      if (d === date) return false
-      const cell = batchCells[`${memberId}_${d}`]
-      return cell?.enabled !== false
+    // Check if ALL members will have this date disabled after this removal
+    const allMembersDisabledForDate = selectedMemberIds.every(mid => {
+      if (mid === memberId) return true
+      const cell = batchCells[`${mid}_${date}`]
+      return cell?.enabled === false
     })
-    updateBatchCell(memberId, date, { enabled: false })
-    if (remainingEnabled.length === 0) {
-      setSelectedMemberIds(prev => prev.filter(id => id !== memberId))
+
+    if (allMembersDisabledForDate) {
+      // Remove the date entirely and clean up cells so calendar date reverts to unselected
+      setSelectedDates(prev => prev.filter(d => d !== date))
+      setBatchCells(prev => {
+        const next = { ...prev }
+        for (const mid of selectedMemberIds) delete next[`${mid}_${date}`]
+        return next
+      })
+    } else {
+      updateBatchCell(memberId, date, { enabled: false })
     }
+    // Never remove member from selectedMemberIds here — that breaks re-selection
+    // Members are only removed via the people-picker toggles
   }
 
   const applyDefaultToAllCells = () => {
@@ -1110,18 +1143,19 @@ export default function OwnerShiftsPage() {
     })
   }
 
-  const openBatchDrawer = (department: Department, initialMemberId?: string) => {
+  const openBatchDrawer = (department: Department, initialMemberId?: string, initialDate?: string) => {
     const departmentMembers = getDepartmentPeople(department)
     const single = initialMemberId ? (members.find(m => m.id === initialMemberId) ?? null) : null
     setBatchDepartment(department)
     setBatchSingleMember(single)
+    setBatchFromSelection(false)
     setSelectedMemberIds(initialMemberId ? [initialMemberId] : [])
-    setSelectedDates([])
+    setSelectedDates(initialDate ? [initialDate] : [])
     setBatchCells({})
     setBulkError('')
     setBulkResult('')
     setBulkFailures([])
-    const base = addDays(new Date(), 1)
+    const base = initialDate ? new Date(`${initialDate}T00:00:00`) : addDays(new Date(), 1)
     setCalMonth(`${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, '0')}`)
     if (!initialMemberId && departmentMembers.length === 1) {
       setSelectedMemberIds([departmentMembers[0].id])
@@ -1129,9 +1163,29 @@ export default function OwnerShiftsPage() {
     if (companyId) void fetchFutureRows(companyId)
   }
 
+  const openBatchDrawerForSelection = () => {
+    if (selectedTimelineRows.length === 0) return
+    const firstRow = selectedTimelineRows[0]
+    const dept = departments.find(d => d.id === firstRow.department_id)
+    if (!dept) return
+    setBatchDepartment(dept)
+    setBatchSingleMember(null)
+    setBatchFromSelection(true)
+    setSelectedMemberIds(selectedTimelineUserIds)
+    setSelectedDates([])
+    setBatchCells({})
+    setBulkError('')
+    setBulkResult('')
+    setBulkFailures([])
+    const base = addDays(new Date(), 1)
+    setCalMonth(`${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, '0')}`)
+    if (companyId) void fetchFutureRows(companyId)
+  }
+
   const closeBatchDrawer = () => {
     setBatchDepartment(null)
     setBatchSingleMember(null)
+    setBatchFromSelection(false)
     setCalDir('next')
     setCalKey(0)
     setBulkError('')
@@ -1175,10 +1229,16 @@ export default function OwnerShiftsPage() {
       if (!data.success) throw new Error(data.message || 'Failed to assign shifts')
       const createdCount = data.result?.created?.length ?? 0
       const failures: BulkFailure[] = data.result?.failed ?? []
-      setBulkFailures(failures)
-      setBulkResult(`${createdCount} shift(s) assigned. ${failures.length} need attention.`)
       await refreshShiftData()
-      if (createdCount > 0 && failures.length === 0) closeBatchDrawer()
+      if (failures.length > 0) {
+        setBulkFailures(failures)
+        setBulkResult('')
+      } else {
+        closeBatchDrawer()
+        if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+        setSuccessToast(`${createdCount} shift${createdCount === 1 ? '' : 's'} assigned successfully`)
+        toastTimerRef.current = setTimeout(() => setSuccessToast(null), 3000)
+      }
     } catch (err) {
       setBulkError(err instanceof Error ? err.message : 'Failed to assign shifts')
     } finally {
@@ -1267,7 +1327,7 @@ export default function OwnerShiftsPage() {
         if (!data.success) throw new Error(data.message || 'Failed to save department')
         setDepartmentModal(null)
       }
-      await fetchAssignmentData(companyId)
+      await fetchAssignmentData(companyId, true)
     } catch (err) {
       setDepartmentActionError(err instanceof Error ? err.message : 'Failed to save department')
     } finally {
@@ -1289,7 +1349,7 @@ export default function OwnerShiftsPage() {
       if (!data.success) throw new Error(data.message || 'Failed to delete department')
       setDepartmentModal(null)
       setActiveDepartment(null)
-      await Promise.all([fetchAssignmentData(companyId), refreshShiftData()])
+      await Promise.all([fetchAssignmentData(companyId, true), refreshShiftData()])
     } catch (err) {
       setDepartmentActionError(err instanceof Error ? err.message : 'Failed to delete department')
     } finally {
@@ -1315,7 +1375,7 @@ export default function OwnerShiftsPage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to set manager')
       setManagerModalDepartment(null)
-      await fetchAssignmentData(companyId)
+      await fetchAssignmentData(companyId, true)
     } catch (err) {
       setManagerActionError(err instanceof Error ? err.message : 'Failed to set manager')
     } finally {
@@ -1338,8 +1398,8 @@ export default function OwnerShiftsPage() {
   const saveShiftEdit = async () => {
     if (!selectedShift || !internalUserId) return
     setShiftActionError('')
-    if (shiftEditForm.shift_date < minDate || shiftEditForm.shift_date > maxDate) {
-      setShiftActionError('Shift date must be inside the next 30 days.')
+    if (shiftEditForm.shift_date > maxDate) {
+      setShiftActionError('Shift date must be within the next 30 days.')
       return
     }
     if (shiftEditForm.start_time >= shiftEditForm.end_time) {
@@ -1460,7 +1520,7 @@ export default function OwnerShiftsPage() {
             return (
               <button
                 type="button"
-                onClick={() => { if (dept) openBatchDrawer(dept, row.user_id!) }}
+                onClick={() => { if (dept) openBatchDrawer(dept, row.user_id!, timelineDate) }}
                 style={{ position: 'absolute', top: 10, bottom: 10, left: `${TL_PAD}%`, right: `${TL_PAD}%`, borderRadius: 999, background: '#E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1, border: 'none', cursor: 'pointer', transition: 'background 0.15s' }}
                 onMouseEnter={e => { e.currentTarget.style.background = '#CBD5E1' }}
                 onMouseLeave={e => { e.currentTarget.style.background = '#E2E8F0' }}
@@ -1532,14 +1592,15 @@ export default function OwnerShiftsPage() {
     }
     const EDGE = '2px solid rgba(15,23,42,0.45)'
     const deptOrder: string[] = []
-    const deptMap: Record<string, { color: string; rows: TimelineRow[] }> = {}
+    const deptMap: Record<string, { color: string; name: string; rows: TimelineRow[] }> = {}
     for (const row of visibleTimelineRows) {
       if (!deptMap[row.department_id]) {
         deptOrder.push(row.department_id)
-        deptMap[row.department_id] = { color: deptColor(row.department_id), rows: [] }
+        deptMap[row.department_id] = { color: deptColor(row.department_id), name: row.department_name, rows: [] }
       }
       deptMap[row.department_id].rows.push(row)
     }
+    deptOrder.sort((a, b) => deptMap[a].name.localeCompare(deptMap[b].name))
     for (const dept of Object.values(deptMap)) {
       dept.rows.sort((a, b) => roleRank(a.role) - roleRank(b.role) || a.full_name.localeCompare(b.full_name))
     }
@@ -1574,8 +1635,8 @@ export default function OwnerShiftsPage() {
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: APP_BG }}>
       <OwnerSidebar />
-      <main style={{ marginLeft: 64, height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, padding: '20px 28px', gap: 0 }}>
-        <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, flexShrink: 0 }}>
+      <main style={{ marginLeft: 64, height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, gap: 0 }}>
+        <div style={{ padding: '20px 28px 16px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24, flexShrink: 0 }}>
           <div>
             {companies.length > 1 ? (
               <div style={{ position: 'relative' }}>
@@ -1609,7 +1670,7 @@ export default function OwnerShiftsPage() {
             )}
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {ownerName && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: '#fff', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
                 <div style={{ width: 26, height: 26, borderRadius: 999, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -1622,7 +1683,7 @@ export default function OwnerShiftsPage() {
           </div>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 24, flex: 1, minHeight: 0, paddingBottom: 24 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 24, flex: 1, minHeight: 0, padding: '0 28px 24px' }}>
           {initialReady && !companyId && (
             <div style={{ background: '#FFFBEB', borderRadius: 12, padding: '14px 16px', fontSize: 13, color: '#92400E', border: '1px solid #FDE68A' }}>
               No company is linked to your profile yet. If you just accepted an invitation, try signing out and signing in again.
@@ -1764,11 +1825,14 @@ export default function OwnerShiftsPage() {
                         <MoreHorizontal size={17} color={TEXT_DARK} />
                       </button>
                       {openDepartmentMenuId === department.id && (
-                        <div data-department-menu-root="true" onClick={event => event.stopPropagation()} style={{ position: 'absolute', top: 44, right: 12, zIndex: 20, width: 178, background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 12, boxShadow: '0 4px 24px rgba(15,23,42,0.12)', padding: 4 }}>
-                          <button type="button" onClick={() => openEditDepartment(department)} style={menuButtonStyle}><Pencil size={14} /> Edit department</button>
-                          <button type="button" onClick={() => openManagerModal(department)} style={menuButtonStyle}><Users size={14} /> Set manager</button>
-                          <div style={{ margin: '3px 8px', height: 1, background: '#F1F5F9' }} />
-                          <button type="button" onClick={() => openDeleteDepartment(department)} style={{ ...menuButtonStyle, color: '#DC2626' }}><Trash2 size={14} /> Delete</button>
+                        <div data-department-menu-root="true" onClick={event => event.stopPropagation()} style={{ position: 'absolute', top: 44, right: 12, zIndex: 20, width: 180, background: '#FFFFFF', border: `1px solid #E5E7EB`, borderRadius: 14, boxShadow: '0 4px 24px rgba(0,0,0,0.10)', padding: '8px 6px' }}>
+                          <p style={{ margin: '0 6px 4px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9CA3AF' }}>
+                            Department
+                          </p>
+                          <button type="button" onClick={() => openEditDepartment(department)} style={menuButtonStyle}><Pencil size={13} style={{ color: '#F97316' }} /> Edit department</button>
+                          <button type="button" onClick={() => openManagerModal(department)} style={menuButtonStyle}><Users size={13} style={{ color: '#F97316' }} /> Set manager</button>
+                          <div style={{ height: 1, background: '#F1F5F9', margin: '4px 6px' }} />
+                          <button type="button" onClick={() => openDeleteDepartment(department)} style={{ ...menuButtonStyle, color: '#DC2626' }}><Trash2 size={13} /> Delete</button>
                         </div>
                       )}
 
@@ -1844,6 +1908,23 @@ export default function OwnerShiftsPage() {
                     </button>
                     <button
                       type="button"
+                      aria-label={`Assign shifts for ${selectedTimelineUserIds.length} selected people`}
+                      onClick={openBatchDrawerForSelection}
+                      style={{
+                        ...iconButtonStyle,
+                        width: 38,
+                        height: 38,
+                        background: '#FFF7ED',
+                        border: '1px solid #FDBA74',
+                        color: '#EA580C',
+                        cursor: 'pointer',
+                      }}
+                      title={`Assign shifts to ${selectedTimelineUserIds.length} selected people`}
+                    >
+                      <CalendarDays size={16} />
+                    </button>
+                    <button
+                      type="button"
                       aria-label={`Delete shifts for ${selectedTimelineUserIds.length} selected people`}
                       onClick={deleteSelectedTimelineAssignments}
                       disabled={timelineBulkDeleting}
@@ -1883,33 +1964,38 @@ export default function OwnerShiftsPage() {
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 10 }}>
                     {[
-                      { label: 'Auto-fit', from: 7, to: 23 },
-                      { label: 'Full day', from: 0, to: 24 },
-                    ].map(option => {
-                      const active = rangeStartHour === option.from && rangeEndHour === option.to
-                      return (
-                        <button
-                          key={option.label}
-                          type="button"
-                          onClick={() => { setRangeStartHour(option.from); setRangeEndHour(option.to) }}
-                          style={{
-                            cursor: 'pointer',
-                            borderRadius: 10,
-                            border: active ? '1.5px solid #FDBA74' : `1px solid ${PANEL_BORDER}`,
-                            background: active ? '#FFF7ED' : '#F9FAFB',
-                            padding: '8px 6px',
-                            textAlign: 'center',
-                          }}
-                        >
-                          <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: active ? '#EA580C' : '#374151' }}>{option.label}</p>
-                        </button>
-                      )
-                    })}
+                      {
+                        label: 'Auto-fit',
+                        onClick: () => { setRangeStartHour(autoFitRange.from); setRangeEndHour(autoFitRange.to); setIsAutoFit(true) },
+                        active: isAutoFit,
+                      },
+                      {
+                        label: 'Full day',
+                        onClick: () => { setRangeStartHour(0); setRangeEndHour(24); setIsAutoFit(false) },
+                        active: !isAutoFit && rangeStartHour === 0 && rangeEndHour === 24,
+                      },
+                    ].map(option => (
+                      <button
+                        key={option.label}
+                        type="button"
+                        onClick={option.onClick}
+                        style={{
+                          cursor: 'pointer',
+                          borderRadius: 10,
+                          border: option.active ? '1.5px solid #FDBA74' : `1px solid ${PANEL_BORDER}`,
+                          background: option.active ? '#FFF7ED' : '#F9FAFB',
+                          padding: '8px 6px',
+                          textAlign: 'center',
+                        }}
+                      >
+                        <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: option.active ? '#EA580C' : '#374151' }}>{option.label}</p>
+                      </button>
+                    ))}
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                     {[
-                      { label: 'From', val: rangeStartHour, dec: () => setRangeStartHour(Math.max(0, rangeStartHour - 1)), inc: () => setRangeStartHour(Math.min(rangeEndHour - 1, rangeStartHour + 1)) },
-                      { label: 'To', val: rangeEndHour, dec: () => setRangeEndHour(Math.max(rangeStartHour + 1, rangeEndHour - 1)), inc: () => setRangeEndHour(Math.min(24, rangeEndHour + 1)) },
+                      { label: 'From', val: rangeStartHour, dec: () => { setIsAutoFit(false); setRangeStartHour(Math.max(0, rangeStartHour - 1)) }, inc: () => { setIsAutoFit(false); setRangeStartHour(Math.min(rangeEndHour - 1, rangeStartHour + 1)) } },
+                      { label: 'To', val: rangeEndHour, dec: () => { setIsAutoFit(false); setRangeEndHour(Math.max(rangeStartHour + 1, rangeEndHour - 1)) }, inc: () => { setIsAutoFit(false); setRangeEndHour(Math.min(24, rangeEndHour + 1)) } },
                     ].map(control => (
                       <div key={control.label} style={{ borderRadius: 10, border: `1px solid ${PANEL_BORDER}`, background: '#F9FAFB', padding: '8px 10px' }}>
                         <p style={{ margin: '0 0 6px 0', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9CA3AF' }}>{control.label}</p>
@@ -1939,7 +2025,12 @@ export default function OwnerShiftsPage() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, padding: 18, borderBottom: `1px solid ${PANEL_BORDER}` }}>
               <div>
                 <h2 style={{ margin: 0, color: TEXT_DARK, fontSize: '1.25rem', fontWeight: 900 }}>
-                  {batchSingleMember ? `Assign — ${batchSingleMember.full_name}` : batchDepartment.name}
+                  {batchSingleMember
+                    ? `Assign Shift to ${batchSingleMember.full_name}`
+                    : selectedMemberIds.length > 0 && new Set(selectedMemberIds.map(id => members.find(m => m.id === id)?.department_id)).size > 1
+                      ? `Assign Shifts to Selected (${selectedMemberIds.length})`
+                      : `Assign Shift to ${batchDepartment.name}`
+                  }
                 </h2>
               </div>
               <button type="button" onClick={closeBatchDrawer} style={iconButtonStyle}><X size={18} /></button>
@@ -1950,12 +2041,16 @@ export default function OwnerShiftsPage() {
                 <div style={{ marginBottom: 20 }}>
                   <p style={{ margin: '0 0 8px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: '#94A3B8' }}>People</p>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 8 }}>
-                    {(membersByDepartment.get(batchDepartment.id) ?? []).map(member => {
+                    {(batchFromSelection
+                      ? members.filter(m => selectedMemberIds.includes(m.id))
+                      : (membersByDepartment.get(batchDepartment.id) ?? [])
+                    ).map(member => {
                       const active = selectedMemberIds.includes(member.id)
                       const isManager = member.role === 'Manager'
                       return (
-                        <button type="button" key={member.id} onClick={() => toggleBatchMember(member.id)}
-                          style={{ border: active ? `1.5px solid ${OWNER_ORANGE}` : `1px solid ${PANEL_BORDER}`, background: active ? '#FFF7ED' : '#FFFFFF', borderRadius: 10, padding: '10px 12px', textAlign: 'left', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}
+                        <button type="button" key={member.id}
+                          onClick={() => { if (!batchFromSelection) toggleBatchMember(member.id) }}
+                          style={{ border: active ? `1.5px solid ${OWNER_ORANGE}` : `1px solid ${PANEL_BORDER}`, background: active ? '#FFF7ED' : '#FFFFFF', borderRadius: 10, padding: '10px 12px', textAlign: 'left', cursor: batchFromSelection ? 'default' : 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}
                         >
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                             <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 999, background: isManager ? '#FFF7ED' : '#F3F4F6', color: isManager ? '#EA580C' : '#4B5563', flexShrink: 0 }}>
@@ -2111,14 +2206,19 @@ export default function OwnerShiftsPage() {
                     {selectedMembers.map(member => {
                       const isManager = member.role === 'Manager'
                       return (
-                        <div key={member.id} style={{ border: `1px solid ${PANEL_BORDER}`, borderRadius: 12, overflow: 'hidden', display: 'grid', gridTemplateColumns: '128px 1fr' }}>
-                          <div style={{ borderRight: `1px solid ${PANEL_BORDER}`, background: '#F8FAFC', padding: '12px 10px', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 5 }}>
-                            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 999, background: isManager ? '#FFF7ED' : '#F3F4F6', color: isManager ? '#EA580C' : '#4B5563' }}>
-                              {isManager ? <UserCog size={13} /> : <UserRound size={13} />}
-                            </span>
-                            <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: isManager ? '#EA580C' : TEXT_DARK, wordBreak: 'break-word', lineHeight: 1.3 }}>{member.full_name}</p>
-                            <p style={{ margin: 0, fontSize: 11, color: MUTED }}>{member.role}</p>
-                          </div>
+                        <div key={member.id} style={{ border: `1px solid ${PANEL_BORDER}`, borderRadius: 12, overflow: 'hidden' }}>
+                          {!batchSingleMember && (
+                            <div style={{ padding: '8px 12px', borderBottom: `1px solid ${PANEL_BORDER}`, background: '#F8FAFC', display: 'flex', alignItems: 'center', gap: 7 }}>
+                              <div style={{ width: 22, height: 22, borderRadius: '50%', background: isManager ? '#FEF3E8' : '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                {isManager
+                                  ? <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={OWNER_ORANGE} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                                  : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                                }
+                              </div>
+                              <span style={{ fontSize: 12, fontWeight: 700, color: isManager ? OWNER_ORANGE : TEXT_DARK }}>{member.full_name}</span>
+                              <span style={{ fontSize: 11, color: '#94A3B8', fontWeight: 500 }}>{member.role}</span>
+                            </div>
+                          )}
                           <div style={{ padding: '10px', display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
                             {selectedDates.map(date => {
                               const key = `${member.id}_${date}`
@@ -2158,10 +2258,9 @@ export default function OwnerShiftsPage() {
                 )}
               </div>
 
-              {(bulkError || bulkResult || bulkFailures.length > 0) && (
+              {(bulkError || bulkFailures.length > 0) && (
                 <div style={{ marginBottom: 16 }}>
                   {bulkError && <div style={errorBoxStyle}>{bulkError}</div>}
-                  {bulkResult && <div style={successBoxStyle}>{bulkResult}</div>}
                   {bulkFailures.length > 0 && (
                     <div style={{ ...errorBoxStyle, marginTop: 8 }}>
                       {bulkFailures.slice(0, 5).map((failure, index) => (
@@ -2186,7 +2285,7 @@ export default function OwnerShiftsPage() {
         <Modal title={departmentModal === 'delete' ? 'Delete Department' : departmentModal === 'edit' ? 'Edit Department' : 'Add Department'} onClose={() => setDepartmentModal(null)}>
           {departmentModal === 'delete' ? (
             <>
-              <p style={{ color: MUTED, marginTop: 0 }}>This will remove {activeDepartment?.name}. Existing linked data may block deletion.</p>
+              <p style={{ color: MUTED, marginTop: 0, fontSize: 13, whiteSpace: 'nowrap' }}>Are you sure you want to delete <strong>{activeDepartment?.name}</strong>? This cannot be undone.</p>
               {departmentActionError && <div style={errorBoxStyle}>{departmentActionError}</div>}
               <div style={modalFooterStyle}>
                 <button type="button" onClick={() => setDepartmentModal(null)} style={secondaryButtonStyle}>Cancel</button>
@@ -2235,13 +2334,24 @@ export default function OwnerShiftsPage() {
 
       {managerModalDepartment && (
         <Modal title={`Set Manager - ${managerModalDepartment.name}`} onClose={() => setManagerModalDepartment(null)}>
-          <label>
+          <div>
             <span style={labelStyle}>Manager</span>
-            <select value={selectedManagerId} onChange={e => setSelectedManagerId(e.target.value)} style={inputStyle}>
-              <option value="">Select manager</option>
-              {managerOptions.map(manager => <option key={manager.id} value={manager.id}>{manager.full_name}</option>)}
-            </select>
-          </label>
+            <DropdownField
+              value={selectedManagerId}
+              options={(() => {
+                const assignedMap = new Map(departmentManagers.map(a => [a.manager_id, a.department_id]))
+                const deptNameMap = new Map(departments.map(d => [d.id, d.name]))
+                const unassigned = managerOptions.filter(m => !assignedMap.has(m.id))
+                const assigned = managerOptions.filter(m => assignedMap.has(m.id))
+                return [
+                  ...unassigned.map(m => ({ value: m.id, label: m.full_name })),
+                  ...assigned.map(m => ({ value: m.id, label: `${m.full_name} · ${deptNameMap.get(assignedMap.get(m.id)!) ?? ''}` })),
+                ]
+              })()}
+              onChange={v => setSelectedManagerId(v)}
+              placeholder="Select manager"
+            />
+          </div>
           {managerActionError && <div style={{ ...errorBoxStyle, marginTop: 12 }}>{managerActionError}</div>}
           <div style={modalFooterStyle}>
             <button type="button" onClick={() => setManagerModalDepartment(null)} style={secondaryButtonStyle}>Cancel</button>
@@ -2253,15 +2363,17 @@ export default function OwnerShiftsPage() {
       {selectedShift && (
         <Modal title="Edit Shift" onClose={() => setSelectedShift(null)}>
           <div style={{ display: 'grid', gap: 12 }}>
-            <label>
+            <div>
               <span style={labelStyle}>Reassign to</span>
-              <select value={shiftEditForm.assigned_user_id} onChange={e => setShiftEditForm(prev => ({ ...prev, assigned_user_id: e.target.value }))} style={inputStyle}>
-                <option value="">Open shift</option>
-                {members
+              <DropdownField
+                value={shiftEditForm.assigned_user_id}
+                options={members
                   .filter(member => member.department_id === shiftEditForm.department_id)
-                  .map(member => <option key={member.id} value={member.id}>{member.full_name} - {member.role}</option>)}
-              </select>
-            </label>
+                  .map(member => ({ value: member.id, label: `${member.full_name} · ${member.role}` }))}
+                onChange={v => setShiftEditForm(prev => ({ ...prev, assigned_user_id: v }))}
+                placeholder="Select person"
+              />
+            </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, alignItems: 'start' }}>
               <div>
                 <span style={labelStyle}>Date</span>
@@ -2292,6 +2404,27 @@ export default function OwnerShiftsPage() {
           </div>
         </Modal>
       )}
+
+      {/* ── Success toast ── */}
+      {successToast && (
+        <div style={{
+          position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 9999, display: 'flex', alignItems: 'center', gap: 10,
+          background: '#0F172A', color: '#fff', borderRadius: 12,
+          padding: '12px 20px', boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
+          fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap',
+          animation: 'fadeSlideUpToast 0.22s ease',
+        }}>
+          <Check size={15} style={{ color: '#10B981', flexShrink: 0 }} />
+          {successToast}
+        </div>
+      )}
+      <style>{`
+        @keyframes fadeSlideUpToast {
+          from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+          to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+        }
+      `}</style>
     </div>
   )
 }
@@ -2310,6 +2443,89 @@ function Modal({ title, children, onClose }: { title: string; children: React.Re
   )
 }
 
+// ─── Custom Dropdown Field ────────────────────────────────────────────────────
+
+function DropdownField({ value, options, onChange, placeholder, disabled = false }: {
+  value: string
+  options: { value: string; label: string }[]
+  onChange: (v: string) => void
+  placeholder?: string
+  disabled?: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 })
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const h = (e: MouseEvent) => {
+      if (!triggerRef.current?.contains(e.target as Node) && !dropdownRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [open])
+
+  const selected = options.find(o => o.value === value)
+  const canOpen = !disabled && options.length > 0
+
+  const handleOpen = () => {
+    if (!canOpen) return
+    if (!open && triggerRef.current) {
+      const r = triggerRef.current.getBoundingClientRect()
+      const DROPDOWN_H = Math.min(options.length * 37 + 8, 208)
+      const fitsBelow = r.bottom + DROPDOWN_H + 4 <= window.innerHeight
+      setPos({ top: fitsBelow ? r.bottom + 4 : r.top - DROPDOWN_H - 4, left: r.left, width: r.width })
+    }
+    setOpen(o => !o)
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button ref={triggerRef} type="button" disabled={disabled}
+        onClick={handleOpen}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '10px 12px', border: `1.5px solid ${open ? '#F97316' : '#E5E7EB'}`, borderRadius: 8,
+          background: disabled ? '#F9FAFB' : '#FAFAFA', cursor: canOpen ? 'pointer' : 'default',
+          fontSize: '0.9375rem', color: selected ? '#111827' : '#9CA3AF',
+          fontWeight: selected ? 500 : 400, outline: 'none', boxSizing: 'border-box',
+          transition: 'border-color 0.15s',
+        }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {selected?.label ?? placeholder ?? 'Select...'}
+        </span>
+        <ChevronDown size={13} style={{ color: '#9CA3AF', flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+      </button>
+      {open && (
+        <div ref={dropdownRef} style={{
+          position: 'fixed', top: pos.top, left: pos.left, width: pos.width,
+          background: '#FFFFFF', border: '1.5px solid #E5E7EB', borderRadius: 10,
+          boxShadow: '0 8px 24px rgba(15,23,42,0.12)', zIndex: 9999, maxHeight: 208, overflowY: 'auto',
+          padding: '4px 0',
+        }}>
+          {options.map(opt => {
+            const isSel = opt.value === value
+            return (
+              <button key={opt.value} type="button"
+                onClick={() => { onChange(opt.value); setOpen(false) }}
+                style={{
+                  display: 'block', width: '100%', padding: '8px 14px', textAlign: 'left',
+                  border: 'none', background: isSel ? '#FFF7ED' : 'transparent',
+                  color: isSel ? '#EA580C' : '#374151', fontWeight: isSel ? 700 : 400,
+                  fontSize: 13, cursor: 'pointer',
+                }}
+                onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = '#F9FAFB' }}
+                onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = 'transparent' }}
+              >{opt.label}</button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 const menuButtonStyle: React.CSSProperties = {
   width: '100%',
   border: 0,
@@ -2318,9 +2534,9 @@ const menuButtonStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 8,
-  borderRadius: 7,
-  padding: '7px 10px',
-  fontSize: 13,
+  borderRadius: 10,
+  padding: '5px 10px',
+  fontSize: 12,
   fontWeight: 500,
   cursor: 'pointer',
   textAlign: 'left',

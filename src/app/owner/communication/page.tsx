@@ -649,16 +649,16 @@ export default function OwnerCommunicationPage() {
     <div style={{ display: 'flex', height: '100vh', background: PAGE_BG, color: TEXT, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
       <OwnerSidebar unreadMessages={unreadMessages} unreadAnnouncements={unreadAnnCount} />
 
-      <main style={{ marginLeft: '64px', flex: 1, minWidth: 0, height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '28px 32px 24px' }}>
+      <main style={{ marginLeft: '64px', flex: 1, minWidth: 0, height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '20px 28px 24px' }}>
 
         {/* Page header — matches Dashboard style */}
-        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24, marginBottom: 20 }}>
+        <div style={{ padding: '0 0 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
           <div>
             <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
               {companyName ? `Communication for ${companyName}` : 'Communication'}
             </h1>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {ownerName && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: '#fff', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
                 <div style={{ width: 26, height: 26, borderRadius: 999, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -914,7 +914,7 @@ export default function OwnerCommunicationPage() {
                       <input
                         value={search}
                         onChange={e => setSearch(e.target.value)}
-                        placeholder="Search people..."
+                        placeholder="Search conversations..."
                         style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: 13, color: TEXT, fontWeight: 600 }}
                       />
                     </div>

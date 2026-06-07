@@ -616,12 +616,6 @@ export default function OwnerTasksPage() {
   const [userRole,       setUserRole]       = useState('')
   const [companyName,    setCompanyName]    = useState('')
   const [currentPlan,    setCurrentPlan]    = useState('Free')
-  const [headerTheme] = useState<{ bg: string; text: string; border: string }>(() => {
-    if (typeof window === 'undefined') return { bg: '#1C1C1E', text: '#FFFFFF', border: 'none' }
-    return localStorage.getItem('tasking_user_role') === 'Partner'
-      ? { bg: '#FFFFFF', text: '#1C1C1E', border: '1px solid #E5E7EB' }
-      : { bg: '#1C1C1E', text: '#FFFFFF', border: 'none' }
-  })
   const [initialReady,   setInitialReady]   = useState(false)
 
   const [departments, setDepartments] = useState<Department[]>([])
@@ -1240,7 +1234,7 @@ export default function OwnerTasksPage() {
                               task={task}
                               members={members}
                               shiftOptions={shiftOptions}
-                              onClick={() => openTask(task, true)}
+                              onClick={() => openTask(task, false)}
                               onEdit={() => openTask(task, false)}
                               onDelete={() => { openTask(task, false); setDeleteConfirm(true) }}
                               onDuplicate={() => handleQuickDuplicate(task)}
@@ -1496,7 +1490,7 @@ export default function OwnerTasksPage() {
               {/* Title */}
               <div>
                 <label style={modalLabelStyle}>Title <span style={{ color: '#F97316' }}>*</span></label>
-                <input autoFocus value={newTitle} onChange={e => setNewTitle(e.target.value)} placeholder="What needs to be done?" style={{ ...modalInputStyle, background: '#FAFAFA' }} onKeyDown={e => { if (e.key === 'Enter') handleCreateTask() }} />
+                <input autoFocus value={newTitle} onChange={e => setNewTitle(e.target.value)} placeholder="Task title..." style={{ ...modalInputStyle, background: '#FAFAFA' }} onKeyDown={e => { if (e.key === 'Enter') handleCreateTask() }} />
               </div>
 
               {/* Description */}
@@ -1509,12 +1503,17 @@ export default function OwnerTasksPage() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div>
                   <label style={modalLabelStyle}>Department <span style={{ color: '#F97316' }}>*</span></label>
-                  <DropdownField
-                    value={newDeptId}
-                    options={deptDropdownOptions}
-                    onChange={v => { setNewDeptId(v); setNewAssigneeId(''); setNewShiftId(''); setNewDeadlineTime('') }}
-                    placeholder="Select department"
-                  />
+                  <div style={{ position: 'relative' }}>
+                    <select
+                      value={newDeptId}
+                      onChange={e => { setNewDeptId(e.target.value); setNewAssigneeId(''); setNewShiftId(''); setNewDeadlineTime('') }}
+                      style={{ ...modalInputStyle, paddingRight: 32, appearance: 'none', cursor: 'pointer' }}
+                    >
+                      <option value="">Select department</option>
+                      {deptDropdownOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                    <ChevronDown size={13} style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
+                  </div>
                 </div>
                 <div>
                   <label style={modalLabelStyle}>Assign To</label>

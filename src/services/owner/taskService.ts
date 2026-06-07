@@ -5,7 +5,8 @@ import { taskRepository } from '@/repositories/owner/taskRepository'
 import { Task, TaskInput, TaskStats, DepartmentTaskStats, KanbanGroup } from '@/types/Task'
 
 export interface ActivityFeedEvent {
-  type: 'shift_started' | 'task_updated' | 'shift_uncovered'
+  id: string
+  type: 'task_updated'
   actor_name: string
   department: string
   timestamp: string
@@ -143,52 +144,29 @@ export const taskService = {
   },
 
   async getTodayActivityFeed(company_id: string): Promise<ActivityFeedEvent[]> {
-    const { tasks, shifts, departments, users } = await taskRepository.getActivityFeedToday(company_id)
+    const { tasks, departments, users } = await taskRepository.getActivityFeedToday(company_id)
 
     const deptMap = new Map(departments.map(d => [d.id, d.name]))
     const userMap = new Map(users.map(u => [u.id, u.full_name]))
 
-    const now = Date.now()
-
     const events: ActivityFeedEvent[] = []
 
     for (const task of tasks) {
+      if (task.status === 'Assigned') continue
       const actor = task.assigned_user_id ? (userMap.get(task.assigned_user_id) ?? 'Someone') : 'Owner'
       const dept = deptMap.get(task.department_id) ?? 'Unknown'
       events.push({
+        id: `task_${task.id}`,
         type: 'task_updated',
         actor_name: actor,
         department: dept,
         timestamp: task.updated_at,
-        description: `Task "${task.title}" moved to ${task.status}`,
+        description: `${actor} moved "${task.title}" to ${task.status}`,
       })
     }
 
-    const todayStr = new Date().toISOString().split('T')[0]
-    for (const shift of shifts) {
-      const dept = deptMap.get(shift.department_id) ?? 'Unknown'
-      const shiftStartMs = new Date(`${todayStr}T${shift.start_time}`).getTime()
-      if (shiftStartMs <= now) {
-        events.push({
-          type: 'shift_started',
-          actor_name: dept,
-          department: dept,
-          timestamp: `${todayStr}T${shift.start_time}`,
-          description: `Shift started at ${shift.start_time.slice(0, 5)} in ${dept}`,
-        })
-      } else {
-        events.push({
-          type: 'shift_uncovered',
-          actor_name: dept,
-          department: dept,
-          timestamp: `${todayStr}T${shift.start_time}`,
-          description: `Upcoming shift at ${shift.start_time.slice(0, 5)} in ${dept}`,
-        })
-      }
-    }
-
     events.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-    return events.slice(0, 10)
+    return events.slice(0, 20)
   },
 
 }

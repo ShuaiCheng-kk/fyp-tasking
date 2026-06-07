@@ -2,7 +2,7 @@
 // RULE: Supabase queries only. No business logic.
 
 import { supabase } from '@/lib/supabase'
-import { Task, TaskInput, TaskStats, DepartmentTaskStats } from '@/types/Task'
+import { Task, TaskInput, TaskStats, TaskStatItem, DepartmentTaskStats } from '@/types/Task'
 import { User } from '@/types/auth.types'
 import { Shift } from '@/types/Shift'
 
@@ -124,17 +124,40 @@ export const taskRepository = {
   },
 
   async getTaskStatsByCompany(company_id: string): Promise<TaskStats> {
+    const todayStr = new Date().toISOString().split('T')[0]
     const { data, error } = await supabase
       .from('tasks')
-      .select('status')
+      .select('id, title, status, priority, percentage_complete, assigned_user_id, created_at')
       .eq('company_id', company_id)
+      .gte('created_at', `${todayStr}T00:00:00.000Z`)
+      .lte('created_at', `${todayStr}T23:59:59.999Z`)
     if (error) throw new Error(error.message)
-    const rows = (data ?? []) as { status: string }[]
+    const rows = (data ?? []) as { id: string; title: string; status: string; priority: string | null; percentage_complete: number; assigned_user_id: string | null; created_at: string }[]
+
+    const assigneeIds = [...new Set(rows.map(r => r.assigned_user_id).filter(Boolean))] as string[]
+    const userMap = new Map<string, string>()
+    if (assigneeIds.length > 0) {
+      const { data: users } = await supabase.from('users').select('id, full_name').in('id', assigneeIds)
+      for (const u of (users ?? []) as { id: string; full_name: string }[]) userMap.set(u.id, u.full_name)
+    }
+
+    const tasks: TaskStatItem[] = rows.map(r => ({
+      id: r.id,
+      title: r.title,
+      status: r.status,
+      priority: r.priority,
+      percentage_complete: r.percentage_complete,
+      assigned_user_id: r.assigned_user_id,
+      assignee_name: r.assigned_user_id ? (userMap.get(r.assigned_user_id) ?? undefined) : undefined,
+      created_at: r.created_at,
+    }))
+
     return {
       assigned: rows.filter(r => r.status === 'Assigned').length,
       inProgress: rows.filter(r => r.status === 'In Progress').length,
       review: rows.filter(r => r.status === 'Review').length,
       complete: rows.filter(r => r.status === 'Complete').length,
+      tasks,
     }
   },
 
@@ -171,7 +194,6 @@ export const taskRepository = {
 
   async getActivityFeedToday(company_id: string): Promise<{
     tasks: { id: string; title: string; status: string; updated_at: string; department_id: string; assigned_user_id: string | null }[]
-    shifts: { id: string; department_id: string; start_time: string; shift_date: string }[]
     departments: { id: string; name: string }[]
     users: { id: string; full_name: string; role: string }[]
   }> {
@@ -179,31 +201,21 @@ export const taskRepository = {
     todayStart.setHours(0, 0, 0, 0)
     const todayEnd = new Date()
     todayEnd.setHours(23, 59, 59, 999)
-    const todayStr = todayStart.toISOString().split('T')[0]
 
-    const [tasksRes, shiftsRes] = await Promise.all([
-      supabase
-        .from('tasks')
-        .select('id, title, status, updated_at, department_id, assigned_user_id')
-        .eq('company_id', company_id)
-        .gte('updated_at', todayStart.toISOString())
-        .lte('updated_at', todayEnd.toISOString())
-        .order('updated_at', { ascending: false })
-        .limit(20),
-      supabase
-        .from('shifts')
-        .select('id, department_id, start_time, shift_date')
-        .eq('company_id', company_id)
-        .eq('shift_date', todayStr)
-        .order('start_time', { ascending: true }),
-    ])
-    if (tasksRes.error) throw new Error(tasksRes.error.message)
-    if (shiftsRes.error) throw new Error(shiftsRes.error.message)
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('id, title, status, updated_at, department_id, assigned_user_id')
+      .eq('company_id', company_id)
+      .neq('status', 'Assigned')
+      .gte('updated_at', todayStart.toISOString())
+      .lte('updated_at', todayEnd.toISOString())
+      .order('updated_at', { ascending: false })
+      .limit(20)
+    if (error) throw new Error(error.message)
 
-    const tasks = (tasksRes.data ?? []) as { id: string; title: string; status: string; updated_at: string; department_id: string; assigned_user_id: string | null }[]
-    const shifts = (shiftsRes.data ?? []) as { id: string; department_id: string; start_time: string; shift_date: string }[]
+    const tasks = (data ?? []) as { id: string; title: string; status: string; updated_at: string; department_id: string; assigned_user_id: string | null }[]
 
-    const deptIds = [...new Set([...tasks.map(t => t.department_id), ...shifts.map(s => s.department_id)])]
+    const deptIds = [...new Set(tasks.map(t => t.department_id))]
     const userIds = tasks.map(t => t.assigned_user_id).filter(Boolean) as string[]
 
     const [deptsRes, usersRes] = await Promise.all([
@@ -217,7 +229,6 @@ export const taskRepository = {
 
     return {
       tasks,
-      shifts,
       departments: (deptsRes.data ?? []) as { id: string; name: string }[],
       users: (usersRes.data ?? []) as { id: string; full_name: string; role: string }[],
     }

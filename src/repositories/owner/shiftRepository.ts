@@ -140,6 +140,24 @@ export const shiftRepository = {
     if (error) throw new Error(error.message)
   },
 
+  async deleteAssignmentById(assignment_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('shift_assignments')
+      .delete()
+      .eq('id', assignment_id)
+    if (error) throw new Error(error.message)
+  },
+
+  async getAssignmentById(assignment_id: string): Promise<ShiftAssignment | null> {
+    const { data, error } = await supabase
+      .from('shift_assignments')
+      .select('*')
+      .eq('id', assignment_id)
+      .single()
+    if (error) return null
+    return data as ShiftAssignment
+  },
+
   async getUsersByIds(
     ids: string[],
   ): Promise<{ id: string; full_name: string; role: string; department_id: string | null }[]> {

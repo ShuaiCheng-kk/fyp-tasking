@@ -5,6 +5,10 @@ import { recruitmentRepository } from '@/repositories/owner/recruitmentRepositor
 import { CasualWorkerStatus, JobApplicant, JobPosting, JobPostingInput, JobPostingSummary } from '@/types/Recruitment'
 
 export const recruitmentService = {
+  async getPublicJobPostings(): Promise<JobPosting[]> {
+    return recruitmentRepository.getPublicJobPostings()
+  },
+
   async getJobPostings(company_id: string): Promise<JobPostingSummary[]> {
     if (!company_id) throw new Error('company_id is required')
     const postings = await recruitmentRepository.getJobPostingsByCompany(company_id)

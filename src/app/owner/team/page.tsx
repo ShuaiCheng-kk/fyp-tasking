@@ -183,13 +183,6 @@ export default function TeamPage() {
   const [memberImportError, setMemberImportError] = useState('')
   const [memberImportResult, setMemberImportResult] = useState('')
 
-  // Header theme based on localStorage role
-  const [headerTheme] = useState<{ bg: string; text: string; border: string }>(() => {
-    if (typeof window !== 'undefined' && localStorage.getItem('tasking_user_role') === 'Partner') {
-      return { bg: '#FFFFFF', text: '#1C1C1E', border: '1px solid #E5E7EB' }
-    }
-    return { bg: '#1C1C1E', text: '#FFFFFF', border: 'none' }
-  })
 
   // Current user's role (to gate Edit buttons)
   const [currentUserRole, setCurrentUserRole] = useState('')

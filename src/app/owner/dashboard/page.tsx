@@ -1,52 +1,56 @@
-'use client'
+﻿'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  ChevronDown, ChevronLeft, ChevronRight, Calendar,
-  Briefcase, CheckCircle, Clock, Eye,
-  Zap, AlertTriangle, Building2, Plus, Pencil, Trash2, Users, Copy, Repeat, Upload,
+  ChevronDown, CheckCircle, Eye,
+  Users, ClipboardList, Timer,
+  MoreHorizontal, ChevronLeft, Check, Activity, MessageCircle,
+  UserRound, UserCog, CheckCheck, SlidersHorizontal,
+  CalendarDays, Target,
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
-import { Task } from '@/types/Task'
+import { Badge } from '@/components/ui/badge'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
 // ─── Local types ──────────────────────────────────────────────────────────────
+
+type TaskItem = {
+  id: string
+  title: string
+  status: string
+  priority?: string | null
+  percentage_complete?: number
+  assignee_name?: string
+  assigned_user_id?: string | null
+  created_at?: string
+}
 
 type TaskStats = {
   assigned: number
   inProgress: number
   review: number
   complete: number
+  tasks?: TaskItem[]
 }
 
 type ActivityFeedEvent = {
-  type: 'shift_started' | 'task_updated' | 'shift_uncovered'
+  id: string
+  type: 'task_updated'
   actor_name: string
   department: string
   timestamp: string
   description: string
-}
-
-type Department = {
-  id: string
-  name: string
-  company_id?: string
-  created_at?: string
-}
-
-type TeamMember = {
-  id: string
-  full_name: string
-  role: string
-  department_id: string | null
-}
-
-type DepartmentManagerAssignment = {
-  department_id: string
-  manager_id: string
-  manager_name: string
+  status: string
 }
 
 type Company = {
@@ -55,33 +59,18 @@ type Company = {
   plan: string
 }
 
-type ShiftFormState = {
-  title: string
-  instruction: string
-  shift_date: string
-  start_time: string
-  end_time: string
-  assigned_user_id: string
-  acceptance_deadline_at: string
-  recurrence_rule: 'daily' | 'weekly' | 'custom'
-  recurrence_end_date: string
-  custom_interval_days: number
-  duplicate_shift_date: string
-  duplicate_start_time: string
-  duplicate_end_time: string
-}
-
-function parseDepartmentImportCsv(text: string): string[] {
-  const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
-  const withoutHeader = lines[0]?.toLowerCase().includes('department') ? lines.slice(1) : lines
-  return [...new Set(withoutHeader.map(line => line.split(',')[0]?.trim()).filter(Boolean))]
-}
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function timeToMinutes(timeStr: string): number {
   const [h, m] = timeStr.split(':').map(Number)
   return h * 60 + (m || 0)
+}
+
+function formatShiftHour(time: string): string {
+  const [h, m] = time.split(':').map(Number)
+  const ampm = h < 12 ? 'am' : 'pm'
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
+  return m === 0 ? `${h12}${ampm}` : `${h12}:${String(m).padStart(2, '0')}${ampm}`
 }
 
 function timeAgo(ts: string): string {
@@ -99,40 +88,11 @@ function formatDateKey(date: Date): string {
   return `${year}-${month}-${day}`
 }
 
-function addDays(date: Date, days: number): Date {
-  const next = new Date(date)
-  next.setDate(next.getDate() + days)
-  return next
-}
-
 const DEPT_COLORS = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#06B6D4', '#EC4899', '#F97316', '#EF4444']
 function deptColor(deptId: string): string {
   let h = 0
   for (let i = 0; i < deptId.length; i++) h = deptId.charCodeAt(i) + ((h << 5) - h)
   return DEPT_COLORS[Math.abs(h) % DEPT_COLORS.length]
-}
-
-function toDateTimeLocal(value: string | null): string {
-  if (!value) return ''
-  return value.slice(0, 16)
-}
-
-function defaultShiftForm(date: string): ShiftFormState {
-  return {
-    title: '',
-    instruction: '',
-    shift_date: date,
-    start_time: '09:00',
-    end_time: '17:00',
-    assigned_user_id: '',
-    acceptance_deadline_at: '',
-    recurrence_rule: 'weekly',
-    recurrence_end_date: '',
-    custom_interval_days: 1,
-    duplicate_shift_date: date,
-    duplicate_start_time: '09:00',
-    duplicate_end_time: '17:00',
-  }
 }
 
 function Spinner({ size = 16, dark = false }: { size?: number; dark?: boolean }) {
@@ -144,97 +104,72 @@ function Spinner({ size = 16, dark = false }: { size?: number; dark?: boolean })
   )
 }
 
-const modalInputStyle: React.CSSProperties = {
-  width: '100%',
-  padding: '10px 12px',
-  border: '1.5px solid #E5E7EB',
-  borderRadius: '8px',
-  fontSize: '0.9375rem',
-  color: '#111827',
-  outline: 'none',
-  boxSizing: 'border-box',
-  background: '#FFFFFF',
+function roleRank(role: string): number {
+  if (role === 'Manager') return 0
+  if (role === 'Employee') return 1
+  return 2
 }
 
-const modalLabelStyle: React.CSSProperties = {
-  display: 'block',
-  fontWeight: 600,
-  fontSize: '0.875rem',
-  color: '#374151',
-  marginBottom: '8px',
+function sortRowsByRole(rows: TimelineRow[]): TimelineRow[] {
+  return [...rows].sort((a, b) => roleRank(a.role) - roleRank(b.role) || a.full_name.localeCompare(b.full_name))
 }
 
-function InlineError({ message }: { message: string }) {
-  if (!message) return null
-  return (
-    <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626', lineHeight: 1.5 }}>
-      {message}
-    </div>
-  )
+function priorityRank(priority?: string | null): number {
+  const value = priority ?? 'None'
+  if (value === 'Urgent') return 0
+  if (value === 'High') return 1
+  if (value === 'Medium') return 2
+  if (value === 'Low') return 3
+  return 4
 }
 
-// ─── Stat Card ────────────────────────────────────────────────────────────────
+function priorityBadgeClass(priority?: string | null): string {
+  const value = priority ?? 'None'
+  if (value === 'Urgent') return 'bg-red-100 text-red-700 border border-red-200'
+  if (value === 'High') return 'bg-orange-100 text-orange-700 border border-orange-200'
+  if (value === 'Medium') return 'bg-yellow-100 text-yellow-700 border border-yellow-200'
+  if (value === 'Low') return 'bg-gray-100 text-gray-500 border border-gray-200'
+  return 'bg-gray-50 text-gray-400 border border-gray-200'
+}
 
-function StatCard({
-  label, value, icon, accent, loading,
-}: {
-  label: string
-  value: number
-  icon: React.ReactNode
-  accent: string
-  loading: boolean
-}) {
-  return (
-    <div style={{
-      background: '#FFFFFF',
-      border: '1px solid #E5E7EB',
-      borderRadius: '14px',
-      padding: '18px 20px',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '10px',
-      boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
-      flex: 1,
-      minWidth: 0,
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#6B7280', letterSpacing: '0.02em', textTransform: 'uppercase' }}>{label}</span>
-        <div style={{ width: 30, height: 30, borderRadius: '8px', background: `${accent}18`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: accent, flexShrink: 0 }}>
-          {icon}
-        </div>
-      </div>
-      {loading ? (
-        <div style={{ height: 32, display: 'flex', alignItems: 'center' }}><Spinner size={18} dark /></div>
-      ) : (
-        <span style={{ fontSize: '1.75rem', fontWeight: 800, color: '#111827', lineHeight: 1 }}>{value.toLocaleString()}</span>
-      )}
-    </div>
-  )
+function formatHourLabel(hour: number): string {
+  if (hour === 0 || hour === 24) return '12am'
+  if (hour === 12) return '12pm'
+  return hour < 12 ? `${hour}am` : `${hour - 12}pm`
+}
+
+// ─── Animated counter ────────────────────────────────────────────────────────
+
+function AnimatedNumber({ value, duration = 550 }: { value: number; duration?: number }) {
+  const [display, setDisplay] = useState(value)
+  const prevRef = useRef(value)
+  const rafRef  = useRef<number | null>(null)
+
+  useEffect(() => {
+    const from = prevRef.current
+    const to   = value
+    if (from === to) return
+    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    const start = performance.now()
+    const tick = (now: number) => {
+      const t = Math.min((now - start) / duration, 1)
+      const eased = 1 - (1 - t) ** 3       // ease-out cubic
+      setDisplay(Math.round(from + (to - from) * eased))
+      if (t < 1) rafRef.current = requestAnimationFrame(tick)
+      else prevRef.current = to
+    }
+    rafRef.current = requestAnimationFrame(tick)
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
+  }, [value, duration])
+
+  return <>{display.toLocaleString()}</>
 }
 
 // ─── Plan badge popover ───────────────────────────────────────────────────────
 
-function PlanBadge({
-  plan,
-  currentCompanyId,
-  headerText,
-}: {
-  plan: string
-  currentCompanyId: string
-  headerText: string
-}) {
-  const [open, setOpen] = useState(false)
+function PlanBadge({ plan, currentCompanyId }: { plan: string; currentCompanyId: string }) {
   const [upgradeLoading, setUpgradeLoading] = useState(false)
   const [upgradeError, setUpgradeError] = useState('')
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
 
   const isPro = plan === 'Paid' || plan === 'Pro'
 
@@ -249,7 +184,6 @@ function PlanBadge({
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
-      setOpen(false)
       window.location.reload()
     } catch (err) {
       setUpgradeError(err instanceof Error ? err.message : 'Failed to update plan')
@@ -259,58 +193,108 @@ function PlanBadge({
   }
 
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      <button
-        onClick={() => setOpen(o => !o)}
+    <Popover>
+      <PopoverTrigger
+        aria-label={`${isPro ? 'Pro' : 'Free'} plan`}
         style={{
-          padding: '4px 10px',
-          borderRadius: '99px',
-          fontSize: '0.8rem',
-          fontWeight: 600,
-          background: isPro ? 'rgba(16,185,129,0.18)' : 'rgba(156,163,175,0.18)',
-          color: isPro ? '#059669' : headerText,
-          border: 'none',
-          cursor: 'pointer',
+          display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, whiteSpace: 'nowrap',
+          borderRadius: 999, padding: '0 16px', height: 36, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+          background: isPro ? 'linear-gradient(135deg, #10B981, #14B8A6)' : '#F3F4F6',
+          color: isPro ? '#fff' : '#4B5563',
+          boxShadow: isPro ? '0 1px 4px rgba(16,185,129,0.3)' : 'none',
         }}
       >
-        {isPro ? 'Pro' : 'Free'}
-      </button>
-      {open && (
-        <div style={{
-          position: 'absolute', top: '100%', right: 0, marginTop: 6,
-          background: '#FFFFFF', border: '1px solid #E5E7EB',
-          borderRadius: '12px', boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
-          minWidth: '220px', zIndex: 50, padding: '16px',
-        }}>
-          <p style={{ fontWeight: 700, fontSize: '0.875rem', color: '#111827', margin: '0 0 6px' }}>
-            Current plan: <span style={{ color: isPro ? '#059669' : '#6B7280' }}>{isPro ? 'Pro' : 'Free'}</span>
-          </p>
-          <p style={{ fontSize: '0.8rem', color: '#6B7280', margin: '0 0 12px', lineHeight: 1.5 }}>
-            {isPro ? 'You have access to all Pro features.' : 'Upgrade to Pro for advanced features.'}
-          </p>
-          {upgradeError && (
-            <p style={{ fontSize: '0.8rem', color: '#DC2626', margin: '0 0 10px' }}>{upgradeError}</p>
-          )}
-          {isPro ? (
-            <button
-              onClick={() => handlePlanChange('Free')}
-              disabled={upgradeLoading}
-              style={{ width: '100%', padding: '8px', background: '#F3F4F6', border: 'none', borderRadius: '8px', fontWeight: 600, fontSize: '0.8125rem', color: '#374151', cursor: 'pointer', opacity: upgradeLoading ? 0.6 : 1 }}
-            >
-              {upgradeLoading ? <Spinner size={13} dark /> : 'Downgrade to Free'}
-            </button>
-          ) : (
-            <button
-              onClick={() => handlePlanChange('Paid')}
-              disabled={upgradeLoading}
-              style={{ width: '100%', padding: '8px', background: '#059669', border: 'none', borderRadius: '8px', fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: 'pointer', opacity: upgradeLoading ? 0.6 : 1 }}
-            >
-              {upgradeLoading ? <Spinner size={13} /> : 'Upgrade to Pro'}
-            </button>
-          )}
+        <span style={{ width: 6, height: 6, borderRadius: 999, background: isPro ? 'rgba(255,255,255,0.7)' : '#9CA3AF', flexShrink: 0 }} />
+        {isPro ? 'Pro Plan' : 'Free Plan'}
+      </PopoverTrigger>
+      <PopoverContent align="end" sideOffset={8} style={{ width: 280, padding: 0, background: 'transparent', border: 'none', boxShadow: 'none' }}>
+        <div style={{ width: 280, borderRadius: 16, overflow: 'hidden', boxShadow: '0 8px 32px rgba(0,0,0,0.12)', background: '#fff' }}>
+          <div style={{ padding: '16px 20px', background: isPro ? 'linear-gradient(135deg, #10B981, #14B8A6)' : 'linear-gradient(135deg, #F3F4F6, #E5E7EB)' }}>
+            <p style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: isPro ? 'rgba(255,255,255,0.75)' : '#9CA3AF', margin: 0 }}>Current Plan</p>
+            <p style={{ fontSize: 20, fontWeight: 700, color: isPro ? '#fff' : '#1F2937', margin: '4px 0 2px' }}>{isPro ? 'Pro' : 'Free'}</p>
+            <p style={{ fontSize: 12, color: isPro ? 'rgba(255,255,255,0.85)' : '#6B7280', margin: 0 }}>
+              {isPro ? 'AI features & advanced analytics enabled' : 'Upgrade to unlock AI & analytics'}
+            </p>
+          </div>
+          <div style={{ padding: '12px 16px' }}>
+            {upgradeError && (
+              <p style={{ marginBottom: 10, borderRadius: 8, background: '#FEF2F2', padding: '6px 10px', fontSize: 11, color: '#DC2626' }}>{upgradeError}</p>
+            )}
+            {isPro ? (
+              <button
+                type="button"
+                onClick={() => handlePlanChange('Free')}
+                disabled={upgradeLoading}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: 34, borderRadius: 10, border: 'none', background: '#F3F4F6', fontSize: 12, fontWeight: 500, color: '#6B7280', cursor: 'pointer' }}
+              >
+                {upgradeLoading ? <Spinner size={13} dark /> : 'Downgrade to Free'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => handlePlanChange('Paid')}
+                disabled={upgradeLoading}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: 34, borderRadius: 10, border: 'none', background: 'linear-gradient(135deg, #10B981, #14B8A6)', fontSize: 12, fontWeight: 600, color: '#fff', cursor: 'pointer' }}
+              >
+                {upgradeLoading ? <Spinner size={13} /> : 'Upgrade to Pro'}
+              </button>
+            )}
+          </div>
         </div>
-      )}
-    </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
+// ─── Progress Ring ────────────────────────────────────────────────────────────
+
+function DeptCard({ deptId, deptName, rows, onClick }: {
+  deptId: string; deptName: string; rows: TimelineRow[]; onClick: () => void
+}) {
+  const color = deptColor(deptId)
+  const managerCount = rows.filter(row => row.role === 'Manager').length
+  const employeeCount = rows.filter(row => row.role !== 'Manager').length
+
+  return (
+    <article
+      data-testid="dept-timeline-card"
+      onClick={onClick}
+      className="dept-card"
+      style={{ padding: '20px 18px', borderRadius: 18, border: '1px solid #EEF0F4', background: '#fff', minHeight: 130, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', cursor: 'pointer' }}
+    >
+      {/* Header: color block + name */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ width: 34, height: 34, borderRadius: 12, background: color, flexShrink: 0 }} />
+        <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#0F172A', lineHeight: 1.2 }}>{deptName}</p>
+      </div>
+
+      {/* Manager + Employee counts — centered */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 20 }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: '#EA580C' }}>
+          <UserCog size={14} /> {managerCount}
+        </span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: '#4B5563' }}>
+          <UserRound size={14} /> {employeeCount}
+        </span>
+      </div>
+    </article>
+  )
+}
+
+// ─── Task status badge ────────────────────────────────────────────────────────
+
+function TaskStatusBadge({ status }: { status: string }) {
+  const styles: Record<string, { background: string; color: string }> = {
+    'In Progress': { background: '#EFF6FF', color: '#2563EB' },
+    'Review':      { background: '#FEFCE8', color: '#A16207' },
+    'Complete':    { background: '#F0FDF4', color: '#16A34A' },
+    'Assigned':    { background: '#F3F4F6', color: '#4B5563' },
+  }
+  const s = styles[status] ?? { background: '#F3F4F6', color: '#4B5563' }
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', height: 22, borderRadius: 999, padding: '0 9px', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap', background: s.background, color: s.color }}>
+      {status}
+    </span>
   )
 }
 
@@ -319,21 +303,15 @@ function PlanBadge({
 export default function OwnerDashboard() {
   const router = useRouter()
 
-  const [userId,         setUserId]         = useState('')
+  const [userId,        setUserId]        = useState('')
   const [internalUserId, setInternalUserId] = useState('')
-  const [companyId,      setCompanyId]      = useState('')
-  const [ownerName,      setOwnerName]      = useState('')
-  const [companyName,    setCompanyName]    = useState('')
-  const [companies,      setCompanies]      = useState<Company[]>([])
-  const [currentPlan,    setCurrentPlan]    = useState('Free')
-  const [dashboardRole,  setDashboardRole]  = useState('')
-  const [initialReady,   setInitialReady]   = useState(false)
-  const [headerTheme] = useState<{ bg: string; text: string; border: string }>(() => {
-    if (typeof window !== 'undefined' && localStorage.getItem('tasking_user_role') === 'Partner') {
-      return { bg: '#FFFFFF', text: '#1C1C1E', border: '1px solid #E5E7EB' }
-    }
-    return { bg: '#1C1C1E', text: '#FFFFFF', border: 'none' }
-  })
+  const [companyId,     setCompanyId]     = useState('')
+  const [ownerName,     setOwnerName]     = useState('')
+  const [companyName,   setCompanyName]   = useState('')
+  const [companies,     setCompanies]     = useState<Company[]>([])
+  const [currentPlan,   setCurrentPlan]   = useState('Free')
+  const [dashboardRole, setDashboardRole] = useState('')
+  const [initialReady,  setInitialReady]  = useState(false)
   const [removalOverlay, setRemovalOverlay] = useState<{ companyName: string } | null>(null)
   const [dropdownOpen,   setDropdownOpen]   = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -341,61 +319,30 @@ export default function OwnerDashboard() {
   // Task stats
   const [taskStats,        setTaskStats]        = useState<TaskStats | null>(null)
   const [taskStatsLoading, setTaskStatsLoading] = useState(false)
-  const [todayShiftCount,  setTodayShiftCount]  = useState(0)
 
   // Activity feed
   const [activityFeed,        setActivityFeed]        = useState<ActivityFeedEvent[]>([])
   const [activityFeedLoading, setActivityFeedLoading] = useState(false)
-
-  // Departments and members for shift assignment
-  const [departments,          setDepartments]          = useState<Department[]>([])
-  const [members,              setMembers]              = useState<TeamMember[]>([])
-  const [departmentManagers,    setDepartmentManagers]   = useState<DepartmentManagerAssignment[]>([])
-  const [assignmentDataLoading, setAssignmentDataLoading] = useState(false)
+  const [markedFeedItems, setMarkedFeedItems] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem('tasking_marked_feed_items')
+      return stored ? new Set(JSON.parse(stored) as string[]) : new Set()
+    } catch { return new Set() }
+  })
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null)
+  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null)
+  const [chartReady, setChartReady] = useState(false)
 
   // Timeline
   const [timelineRows,    setTimelineRows]    = useState<TimelineRow[]>([])
   const [timelineLoading, setTimelineLoading] = useState(false)
   const [timelineView,    setTimelineView]    = useState<'global' | 'dept'>('global')
-  const [timelineDate,    setTimelineDate]    = useState(() => formatDateKey(new Date()))
+  const [timeFrom, setTimeFrom] = useState(7)
+  const [timeTo,   setTimeTo]   = useState(23)
+  const [isAutoFit, setIsAutoFit] = useState(false)
 
-  const [assignTarget, setAssignTarget] = useState<{ member: TeamMember; department: Department } | null>(null)
-  const [selectedShift, setSelectedShift] = useState<{ shift: TimelineShiftBlock; row: TimelineRow } | null>(null)
-  const [selectedShiftTasks, setSelectedShiftTasks] = useState<Task[]>([])
-  const [selectedShiftTasksLoading, setSelectedShiftTasksLoading] = useState(false)
-  const [shiftForm, setShiftForm] = useState<ShiftFormState>(() => defaultShiftForm(timelineDate))
-  const [shiftFormLoading, setShiftFormLoading] = useState(false)
-  const [shiftFormError, setShiftFormError] = useState('')
-  const [shiftFormCanOverride, setShiftFormCanOverride] = useState(false)
-  const [scheduleScope, setScheduleScope] = useState<'day' | 'week'>('day')
-  const [scheduleActionLoading, setScheduleActionLoading] = useState(false)
-  const [scheduleActionError, setScheduleActionError] = useState('')
-  const [undoLoading, setUndoLoading] = useState(false)
-  const [departmentModal, setDepartmentModal] = useState<'add' | 'edit' | 'delete' | null>(null)
-  const [activeDepartment, setActiveDepartment] = useState<Department | null>(null)
-  const [departmentNameInput, setDepartmentNameInput] = useState('')
-  const [departmentActionLoading, setDepartmentActionLoading] = useState(false)
-  const [departmentActionError, setDepartmentActionError] = useState('')
-  const [departmentImportOpen, setDepartmentImportOpen] = useState(false)
-  const [departmentImportRows, setDepartmentImportRows] = useState<string[]>([])
-  const [departmentImportLoading, setDepartmentImportLoading] = useState(false)
-  const [departmentImportError, setDepartmentImportError] = useState('')
-  const [departmentImportResult, setDepartmentImportResult] = useState('')
-  const [managerModalDepartment, setManagerModalDepartment] = useState<Department | null>(null)
-  const [selectedManagerId, setSelectedManagerId] = useState('')
-  const [managerActionLoading, setManagerActionLoading] = useState(false)
-  const [managerActionError, setManagerActionError] = useState('')
-
-  const todayStr = formatDateKey(new Date())
-  const minTimelineDate = formatDateKey(addDays(new Date(), -2))
-  const maxTimelineDate = formatDateKey(addDays(new Date(), 7))
-  const canGoPrevious = timelineDate > minTimelineDate
-  const canGoNext = timelineDate < maxTimelineDate
-  const selectedTimelineDate = new Date(`${timelineDate}T00:00:00`)
-
-  // ── Header theme ───────────────────────────────────────────────────────────
-
-  // ── Click outside dropdown ─────────────────────────────────────────────────
+  // Department drill-down: null = card grid, string = selected deptId
+  const [selectedDeptId, setSelectedDeptId] = useState<string | null>(null)
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -435,8 +382,8 @@ export default function OwnerDashboard() {
         .then(r => r.json())
         .then(d => {
           if (!cancelled && d.success) {
-            if (d.user?.full_name) setOwnerName(d.user.full_name)
             if (d.user?.id) setInternalUserId(d.user.id)
+            if (d.user?.full_name) setOwnerName(d.user.full_name)
           }
         })
         .catch(() => {})
@@ -496,9 +443,10 @@ export default function OwnerDashboard() {
       const feedData  = await feedRes.json()
       if (statsData.success) setTaskStats(statsData.stats)
       if (feedData.success)  setActivityFeed(feedData.feed ?? [])
+      setLastRefreshed(new Date())
     } catch {}
     finally { setTaskStatsLoading(false); setActivityFeedLoading(false) }
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!companyId) return
@@ -506,1236 +454,1143 @@ export default function OwnerDashboard() {
     return () => window.clearTimeout(timer)
   }, [companyId, fetchDashboardData])
 
-  const fetchAssignmentData = useCallback(async (cid: string) => {
-    if (!cid) return
-    setAssignmentDataLoading(true)
-    try {
-      const [deptRes, memberRes, managerRes] = await Promise.all([
-        fetch(`/api/company/departments?company_id=${cid}`),
-        fetch(`/api/team/members?company_id=${cid}`),
-        fetch(`/api/team/department-manager?company_id=${cid}`),
-      ])
-      const deptData = await deptRes.json()
-      const memberData = await memberRes.json()
-      const managerData = await managerRes.json()
-      if (deptData.success) setDepartments(deptData.departments ?? [])
-      if (managerData.success) setDepartmentManagers(managerData.assignments ?? [])
-      if (memberData.success) {
-        setMembers((memberData.members ?? []).filter((member: TeamMember) =>
-          ['Manager', 'Employee', 'Casual Worker'].includes(member.role),
-        ))
-      }
-    } catch {
-      setDepartments([])
-      setMembers([])
-      setDepartmentManagers([])
-    } finally {
-      setAssignmentDataLoading(false)
-    }
-  }, [])
-
   useEffect(() => {
-    if (!companyId) return
-    const timer = window.setTimeout(() => { void fetchAssignmentData(companyId) }, 0)
-    return () => window.clearTimeout(timer)
-  }, [companyId, fetchAssignmentData])
+    try {
+      localStorage.setItem('tasking_marked_feed_items', JSON.stringify([...markedFeedItems]))
+    } catch {}
+  }, [markedFeedItems])
 
   // Timeline fetch
-
-  const fetchTimeline = useCallback(async (cid: string, date: string) => {
+  const fetchTimeline = useCallback(async (cid: string) => {
     if (!cid) return
     setTimelineLoading(true)
     try {
-      const res = await fetch(`/api/shift?company_id=${cid}&date_from=${date}&date_to=${date}`)
+      const today = formatDateKey(new Date())
+      const res = await fetch(`/api/shift?company_id=${cid}&date_from=${today}&date_to=${today}`)
       const data = await res.json()
-      if (data.success) {
-        setTimelineRows(data.rows ?? [])
-        const allShifts: TimelineShiftBlock[] = (data.rows ?? []).flatMap((r: TimelineRow) => r.shifts)
-        setTodayShiftCount(allShifts.length)
-      }
+      if (data.success) setTimelineRows(data.rows ?? [])
     } catch {}
     finally { setTimelineLoading(false) }
   }, [])
 
   useEffect(() => {
     if (!companyId) return
-    const timer = window.setTimeout(() => { void fetchTimeline(companyId, timelineDate) }, 0)
+    const timer = window.setTimeout(() => { void fetchTimeline(companyId) }, 0)
     return () => window.clearTimeout(timer)
-  }, [companyId, timelineDate, fetchTimeline])
+  }, [companyId, fetchTimeline])
 
-  const changeTimelineDate = (days: number) => {
-    const next = formatDateKey(addDays(selectedTimelineDate, days))
-    if (next < minTimelineDate || next > maxTimelineDate) return
-    setTimelineDate(next)
-  }
+  // ── Donut chart entrance ──────────────────────────────────────────────────
+  useEffect(() => {
+    const t = setTimeout(() => setChartReady(true), 480)
+    return () => clearTimeout(t)
+  }, [])
 
-  // ── Timeline rendering ─────────────────────────────────────────────────────
 
-  const PERSON_COL = 172
-  const ROW_H = 62
-  const TIME_START = 7 * 60   // 07:00
-  const TIME_END   = 23 * 60  // 23:00
-  const HOURS      = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
-
-  function positionForTime(minutes: number, segmentStart = TIME_START, segmentEnd = TIME_END): number {
-    const segmentSpan = segmentEnd - segmentStart
-    return ((Math.max(segmentStart, Math.min(segmentEnd, minutes)) - segmentStart) / segmentSpan) * 100
-  }
-
-  function renderTimeAxis(segmentStartHour: number, segmentEndHour: number) {
-    const segmentStart = segmentStartHour * 60
-    const segmentEnd = segmentEndHour * 60
-    const hours = HOURS.filter(hour => hour >= segmentStartHour && hour <= segmentEndHour)
-    return (
-      <div style={{ display: 'flex', background: '#1C1C1E' }}>
-        <div style={{ width: PERSON_COL, flexShrink: 0, borderRight: '1px solid rgba(255,255,255,0.08)', height: 32, display: 'flex', alignItems: 'center', paddingLeft: 12, boxSizing: 'border-box' }}>
-          <span style={{ fontSize: '0.68rem', fontWeight: 800, color: 'rgba(255,255,255,0.72)' }}>
-            {segmentStartHour}:00-{segmentEndHour}:00
-          </span>
-        </div>
-        <div style={{ flex: 1, position: 'relative', height: 32 }}>
-          {hours.map((hour, index) => (
-            <span
-              key={hour}
-              style={{
-                position: 'absolute',
-                left: `${positionForTime(hour * 60, segmentStart, segmentEnd)}%`,
-                top: '50%',
-                transform: index === 0 ? 'translateY(-50%)' : index === hours.length - 1 ? 'translate(-100%, -50%)' : 'translate(-50%, -50%)',
-                fontSize: '0.7rem',
-                fontWeight: 500,
-                color: 'rgba(255,255,255,0.55)',
-                whiteSpace: 'nowrap',
-                userSelect: 'none',
-                pointerEvents: 'none',
-              }}
-            >
-              {`${hour}:00`}
-            </span>
-          ))}
-        </div>
-      </div>
+  // ── Supabase realtime: push updates on task / shift changes ──────────────
+  useEffect(() => {
+    if (!companyId) return
+    const client = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     )
+    const channel = client
+      .channel('dashboard-realtime')
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'tasks',
+        filter: `company_id=eq.${companyId}`,
+      }, () => { void fetchDashboardData(companyId) })
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'shift_assignments',
+      }, () => { void fetchTimeline(companyId) })
+      .subscribe()
+    return () => { void client.removeChannel(channel) }
+  }, [companyId, fetchDashboardData, fetchTimeline])
+
+  // ── Derived data ──────────────────────────────────────────────────────────
+
+  const todayActiveStaff    = timelineRows.filter(r => r.user_id && !['Owner', 'Partner'].includes(r.role) && r.shifts.length > 0)
+  const todayShiftCount     = todayActiveStaff.length
+  const casualWorkersCount  = todayActiveStaff.filter(r => r.role === 'Casual Worker').length
+
+  const totalTasks = taskStats
+    ? taskStats.assigned + taskStats.inProgress + taskStats.review + taskStats.complete
+    : 0
+
+  const completeCount = taskStats?.complete ?? 0
+
+  const todayTasks = [...(taskStats?.tasks ?? [])].sort((a, b) => {
+    const byPriority = priorityRank(a.priority) - priorityRank(b.priority)
+    if (byPriority !== 0) return byPriority
+    return new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime()
+  })
+  const priorityFocusTasks = todayTasks
+    .filter(task => task.priority === 'Urgent' || task.priority === 'High')
+    .sort((a, b) => {
+      if (a.status === 'Complete' && b.status !== 'Complete') return 1
+      if (a.status !== 'Complete' && b.status === 'Complete') return -1
+      return priorityRank(a.priority) - priorityRank(b.priority)
+    })
+  const priorityCompleteCount = priorityFocusTasks.filter(task => task.status === 'Complete').length
+  const priorityCompletionPct = priorityFocusTasks.length > 0
+    ? Math.round((priorityCompleteCount / priorityFocusTasks.length) * 100)
+    : 0
+  const focusAssignedCount    = priorityFocusTasks.filter(t => t.status === 'Assigned' || !t.status).length
+  const focusInProgressCount  = priorityFocusTasks.filter(t => t.status === 'In Progress').length
+  const focusReviewCount      = priorityFocusTasks.filter(t => t.status === 'Review').length
+  const focusDonutSegs = (() => {
+    const total = priorityFocusTasks.length
+    const raw = [
+      { count: focusAssignedCount,   color: '#94A3B8', label: 'Assigned' },
+      { count: focusInProgressCount, color: '#4F46E5', label: 'In Progress' },
+      { count: focusReviewCount,     color: '#D97706', label: 'Review' },
+      { count: priorityCompleteCount, color: '#059669', label: 'Complete' },
+    ]
+    let cumFrac = 0
+    return raw.map(seg => {
+      const frac = total > 0 ? seg.count / total : 0
+      const start = cumFrac
+      cumFrac += frac
+      return { ...seg, frac, start }
+    })
+  })()
+  const feedKey = (event: ActivityFeedEvent) => event.id ?? `${event.type}-${event.timestamp}-${event.description}`
+
+  const teamByDept: Record<string, { name: string; rows: TimelineRow[] }> = {}
+  for (const row of todayActiveStaff) {
+    if (!teamByDept[row.department_id]) teamByDept[row.department_id] = { name: row.department_name, rows: [] }
+    teamByDept[row.department_id].rows.push(row)
+  }
+  for (const group of Object.values(teamByDept)) {
+    group.rows = sortRowsByRole(group.rows)
   }
 
-  function renderTimelineRows(rows: TimelineRow[], segmentStart = TIME_START, segmentEnd = TIME_END) {
+  // Timeline rendering helpers
+  const PERSON_COL = 180
+  const ROW_H = 72
+
+  // Auto-fit: earliest shift start → latest shift end across all today's rows, with ±1h padding
+  const autoFrom = todayActiveStaff.length > 0
+    ? Math.max(0, Math.floor(Math.min(...todayActiveStaff.flatMap(r => r.shifts.map(s => timeToMinutes(s.start_time)))) / 60) - 1)
+    : 7
+  const autoTo = todayActiveStaff.length > 0
+    ? Math.min(24, Math.ceil(Math.max(...todayActiveStaff.flatMap(r => r.shifts.map(s => timeToMinutes(s.end_time)))) / 60) + 1)
+    : 23
+
+  function positionForTime(minutes: number): number {
+    const start = timeFrom * 60
+    const end = timeTo * 60
+    return ((Math.max(start, Math.min(end, minutes)) - start) / Math.max(end - start, 1)) * 100
+  }
+
+  const visibleTimelineRows = todayActiveStaff.filter(row => {
+    const start = timeFrom * 60
+    const end = timeTo * 60
+    return row.shifts.some(s => timeToMinutes(s.start_time) < end && timeToMinutes(s.end_time) > start)
+  })
+
+  const deptGroups: Record<string, { name: string; rows: TimelineRow[] }> = {}
+  for (const row of visibleTimelineRows) {
+    if (!deptGroups[row.department_id]) deptGroups[row.department_id] = { name: row.department_name, rows: [] }
+    deptGroups[row.department_id].rows.push(row)
+  }
+  for (const group of Object.values(deptGroups)) {
+    group.rows = sortRowsByRole(group.rows)
+  }
+
+  const deptIds = Object.keys(deptGroups)
+
+  const hourTicks: number[] = []
+  for (let h = timeFrom; h <= timeTo; h++) hourTicks.push(h)
+
+  function renderTimelineContent(rows: TimelineRow[]) {
+    const segStart = timeFrom * 60
+    const segEnd = timeTo * 60
+
     if (rows.length === 0) {
       return (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', color: '#9CA3AF', fontSize: '0.875rem' }}>
-          No shifts scheduled for this date
+        <div style={{ padding: '32px 0', textAlign: 'center', fontSize: 13, color: '#9CA3AF' }}>
+          No shifts scheduled today in this range
         </div>
       )
     }
-    return rows.map((row, idx) => (
-      <div key={`${row.user_id ?? row.department_id}_${idx}`} style={{ display: 'flex', height: ROW_H, borderTop: '1px solid #E5E7EB', background: idx % 2 === 0 ? '#FFFFFF' : '#FAFAFA' }}>
-        {/* Person column */}
-        <div style={{ width: PERSON_COL, flexShrink: 0, borderRight: '1px solid #E5E7EB', padding: '6px 12px', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 2, overflow: 'hidden' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div style={{ width: 26, height: 26, borderRadius: '50%', background: deptColor(row.department_id), display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FFFFFF', fontWeight: 700, fontSize: '0.65rem', flexShrink: 0 }}>
-              {row.full_name.charAt(0).toUpperCase()}
+
+    // Group rows by dept, preserving order of first appearance
+    const deptOrder: string[] = []
+    const deptMap: Record<string, { name: string; color: string; rows: TimelineRow[] }> = {}
+    for (const row of rows) {
+      if (!deptMap[row.department_id]) {
+        deptOrder.push(row.department_id)
+        deptMap[row.department_id] = { name: row.department_name, color: deptColor(row.department_id), rows: [] }
+      }
+      deptMap[row.department_id].rows.push(row)
+    }
+
+    const EDGE = '2px solid rgba(15,23,42,0.45)'
+    return (
+      <div style={{ borderRight: EDGE, borderBottom: EDGE }}>
+        {deptOrder.map((deptId, deptIdx) => {
+          const dept = deptMap[deptId]
+          return dept.rows.map((row, rowIdx) => {
+            const isDeptBoundary = deptIdx > 0 && rowIdx === 0
+            return (
+            <div
+              key={`${row.user_id ?? row.department_id}_${rowIdx}`}
+              style={{ display: 'flex', height: ROW_H, borderTop: isDeptBoundary ? EDGE : '1px solid rgba(15,23,42,0.12)', background: '#FFFFFF' }}
+            >
+              {/* Dept color bar — narrow strip only, no text */}
+              <div style={{ width: 8, flexShrink: 0, background: dept.color, opacity: 0.85 }} />
+
+              {/* Person col */}
+              <div style={{ width: PERSON_COL, flexShrink: 0, display: 'flex', alignItems: 'center', padding: '0 12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: row.role === 'Manager' ? '#FFF7ED' : '#F3F4F6', color: row.role === 'Manager' ? '#EA580C' : '#4B5563', borderRadius: 999 }}>
+                    {row.role === 'Manager' ? <UserCog size={13} /> : <UserRound size={13} />}
+                  </div>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: row.role === 'Manager' ? '#EA580C' : '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {row.full_name}
+                  </span>
+                </div>
+              </div>
+
+              {/* Shift bars */}
+              <div style={{ position: 'relative', flex: 1 }}>
+                {/* Vertical hour grid lines — in front of shift bars */}
+                {hourTicks.map(h => (
+                  <div
+                    key={`grid-${h}`}
+                    style={{
+                      position: 'absolute',
+                      top: 0, bottom: 0,
+                      left: `${positionForTimeWithPad(h * 60)}%`,
+                      width: 0,
+                      borderLeft: '1px solid rgba(15,23,42,0.12)',
+                      pointerEvents: 'none',
+                      zIndex: 2,
+                    }}
+                  />
+                ))}
+                {row.shifts.map((shift: TimelineShiftBlock) => {
+                  const startMin = timeToMinutes(shift.start_time)
+                  const endMin = timeToMinutes(shift.end_time)
+                  if (endMin <= segStart || startMin >= segEnd) return null
+                  const left = positionForTimeWithPad(startMin)
+                  const right = positionForTimeWithPad(endMin)
+                  const width = right - left
+                  if (width <= 0) return null
+                  const color = deptColor(shift.department_id)
+                  return (
+                    <div
+                      key={shift.id}
+                      style={{
+                        position: 'absolute',
+                        top: 10, bottom: 10,
+                        left: `${left}%`,
+                        width: `${Math.max(width, 1.5)}%`,
+                        borderRadius: 999,
+                        background: color,
+                        border: 'none',
+                        zIndex: 1,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <span style={{ fontSize: 11, fontWeight: 600, color: '#FFFFFF', whiteSpace: 'nowrap', pointerEvents: 'none', userSelect: 'none', padding: '0 10px' }}>
+                        {formatShiftHour(shift.start_time)} – {formatShiftHour(shift.end_time)}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
             </div>
-            <span style={{ fontWeight: 600, fontSize: '0.8125rem', color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {row.full_name}
-            </span>
-          </div>
-          <div style={{ paddingLeft: 32, display: 'flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ fontSize: '0.65rem', fontWeight: 600, color: '#6B7280', background: '#F1F5F9', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase' }}>
-              {row.role}
-            </span>
-            <span style={{ fontSize: '0.7rem', color: '#94A3B8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {row.department_name}
-            </span>
-          </div>
-        </div>
-        {/* Gantt bar area */}
-        <div style={{ flex: 1, position: 'relative', background: 'inherit' }}>
-          {/* Hour grid lines */}
-          {HOURS.filter(h => h * 60 > segmentStart && h * 60 < segmentEnd).map(h => (
-            <div key={h} style={{ position: 'absolute', left: `${positionForTime(h * 60, segmentStart, segmentEnd)}%`, top: 0, bottom: 0, borderLeft: '1px solid #EEF2F7', pointerEvents: 'none' }} />
-          ))}
-          {row.shifts.map(shift => {
-            const startMin = timeToMinutes(shift.start_time)
-            const endMin   = timeToMinutes(shift.end_time)
-            if (endMin <= segmentStart || startMin >= segmentEnd) return null
-            const left  = positionForTime(startMin, segmentStart, segmentEnd)
-            const right = positionForTime(endMin, segmentStart, segmentEnd)
-            const width = right - left
-            if (width <= 0) return null
-            const color = deptColor(shift.department_id)
-            const isPublished = shift.publication_status === 'published'
-            const isResponseOverdue = Boolean(
-              isPublished &&
-              shift.acceptance_deadline_at &&
-              shift.assignment_status === 'assigned' &&
-              new Date(shift.acceptance_deadline_at).getTime() < Date.now(),
-            )
+          )})
+        })}
+      </div>
+    )
+  }
+  const TIMELINE_PAD_PCT = 4
+
+  function positionForTimeWithPad(minutes: number): number {
+    const raw = positionForTime(minutes)
+    return TIMELINE_PAD_PCT + (raw / 100) * (100 - TIMELINE_PAD_PCT * 2)
+  }
+
+  function renderHourAxis() {
+    return (
+      <div style={{ display: 'flex', background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', borderRadius: '12px 12px 0 0' }}>
+        <div style={{ width: 8 + PERSON_COL, flexShrink: 0 }} />
+        <div style={{ position: 'relative', height: 36, flex: 1 }}>
+          {hourTicks.map((h) => {
+            const left = `${positionForTimeWithPad(h * 60)}%`
             return (
               <div
-                key={shift.id}
-                onClick={() => openShiftDetail(shift, row)}
-                title={`${row.full_name} · ${shift.start_time.slice(0, 5)}–${shift.end_time.slice(0, 5)} · ${row.department_name}`}
+                key={h}
                 style={{
                   position: 'absolute',
-                  left: `calc(${left}% + 2px)`,
-                  width: `calc(${Math.max(width, 1.5)}% - 4px)`,
-                  top: 8, bottom: 8,
-                  background: isResponseOverdue ? '#F97316' : color,
-                  borderRadius: 6,
-                  border: isPublished ? 'none' : '1px dashed rgba(17,24,39,0.35)',
-                  padding: '4px 8px',
+                  top: 0,
+                  left,
+                  transform: 'translateX(-50%)',
                   display: 'flex',
+                  flexDirection: 'column',
                   alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 6,
-                  overflow: 'hidden',
-                  boxShadow: isPublished ? '0 2px 6px rgba(0,0,0,0.18)' : 'none',
-                  opacity: isPublished ? 1 : 0.72,
-                  cursor: 'pointer',
+                  height: '100%',
+                  pointerEvents: 'none',
                 }}
               >
-                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#FFFFFF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {shift.start_time.slice(0, 5)}–{shift.end_time.slice(0, 5)}
-                </span>
-                <span style={{ fontSize: '0.62rem', fontWeight: 900, color: '#FFFFFF', flexShrink: 0 }}>
-                  {isResponseOverdue ? 'LATE' : isPublished ? 'PUB' : 'DRAFT'}
+                <span style={{
+                  display: 'block',
+                  marginTop: 9,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: 'rgba(255,255,255,0.55)',
+                  whiteSpace: 'nowrap',
+                  userSelect: 'none',
+                  letterSpacing: '0.02em',
+                }}>
+                  {formatHourLabel(h)}
                 </span>
               </div>
             )
           })}
         </div>
       </div>
-    ))
+    )
   }
 
-  // Department view groups rows by dept
-  function renderDeptView(segmentStart = TIME_START, segmentEnd = TIME_END) {
-    const grouped: Record<string, { name: string; rows: TimelineRow[] }> = {}
-    for (const row of timelineRows) {
-      if (!grouped[row.department_id]) grouped[row.department_id] = { name: row.department_name, rows: [] }
-      grouped[row.department_id].rows.push(row)
-    }
-    const deptIds = Object.keys(grouped)
-    if (deptIds.length === 0) {
-      return (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px', color: '#9CA3AF', fontSize: '0.875rem' }}>
-          No shifts scheduled for this date
-        </div>
-      )
-    }
-    return deptIds.map(deptId => (
-      <div key={deptId}>
-        {/* Dept header row */}
-        <div style={{ display: 'flex', background: '#F8FAFC', borderTop: '1px solid #E5E7EB' }}>
-          <div style={{ width: PERSON_COL, flexShrink: 0, borderRight: '1px solid #E5E7EB', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div style={{ width: 8, height: 8, borderRadius: '50%', background: deptColor(deptId) }} />
-            <span style={{ fontWeight: 700, fontSize: '0.8rem', color: '#374151' }}>{grouped[deptId].name}</span>
-          </div>
-          <div style={{ flex: 1 }} />
-        </div>
-        {renderTimelineRows(grouped[deptId].rows, segmentStart, segmentEnd)}
-      </div>
-    ))
-  }
+  const selectedDeptRows = selectedDeptId ? (deptGroups[selectedDeptId]?.rows ?? []) : []
+  const selectedDeptName = selectedDeptId ? (deptGroups[selectedDeptId]?.name ?? '') : ''
 
-  // ── Render ─────────────────────────────────────────────────────────────────
-
-  const refreshShiftViews = async () => {
-    if (!companyId) return
-    await Promise.all([
-      fetchTimeline(companyId, timelineDate),
-      fetchDashboardData(companyId),
-    ])
-  }
-
-  const openAssignShift = (member: TeamMember, department: Department) => {
-    setAssignTarget({ member, department })
-    setSelectedShift(null)
-    setShiftForm({
-      ...defaultShiftForm(timelineDate),
-      assigned_user_id: member.id,
-    })
-    setShiftFormError('')
-    setShiftFormCanOverride(false)
-  }
-
-  const openShiftDetail = (shift: TimelineShiftBlock, row: TimelineRow) => {
-    setSelectedShift({ shift, row })
-    setAssignTarget(null)
-    setSelectedShiftTasks([])
-    setSelectedShiftTasksLoading(true)
-    fetch(`/api/task?company_id=${companyId}&shift_id=${shift.id}`)
-      .then(res => res.json())
-      .then(data => {
-        if (data.success) setSelectedShiftTasks(data.tasks ?? [])
-      })
-      .catch(() => setSelectedShiftTasks([]))
-      .finally(() => setSelectedShiftTasksLoading(false))
-    setShiftForm({
-      title: shift.title ?? '',
-      instruction: shift.instruction ?? '',
-      shift_date: shift.shift_date,
-      start_time: shift.start_time.slice(0, 5),
-      end_time: shift.end_time.slice(0, 5),
-      assigned_user_id: row.user_id ?? '',
-      acceptance_deadline_at: toDateTimeLocal(shift.acceptance_deadline_at),
-      recurrence_rule: shift.recurrence_rule ?? 'weekly',
-      recurrence_end_date: '',
-      custom_interval_days: 1,
-      duplicate_shift_date: formatDateKey(addDays(new Date(`${shift.shift_date}T00:00:00`), 1)),
-      duplicate_start_time: shift.start_time.slice(0, 5),
-      duplicate_end_time: shift.end_time.slice(0, 5),
-    })
-    setShiftFormError('')
-    setShiftFormCanOverride(false)
-  }
-
-  const validateShiftForm = () => {
-    if (!shiftForm.shift_date) return 'Shift date is required'
-    if (!shiftForm.start_time || !shiftForm.end_time) return 'Start and end time are required'
-    if (shiftForm.start_time >= shiftForm.end_time) return 'Start time must be before end time'
-    if (shiftForm.shift_date < minTimelineDate || shiftForm.shift_date > maxTimelineDate) {
-      return 'Shift date must be within the allowed timeline window'
-    }
-    if (shiftForm.acceptance_deadline_at && shiftForm.acceptance_deadline_at > `${shiftForm.shift_date}T${shiftForm.start_time}`) {
-      return 'Respond by must be before the shift starts'
-    }
-    return ''
-  }
-
-  const handleCreateShift = async () => {
-    if (!assignTarget || !companyId || !internalUserId) return
-    const error = validateShiftForm()
-    if (error) { setShiftFormError(error); return }
-    setShiftFormLoading(true)
-    setShiftFormError('')
-    try {
-      const res = await fetch('/api/shift', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          company_id: companyId,
-          department_id: assignTarget.department.id,
-          title: shiftForm.title || null,
-          instruction: shiftForm.instruction || null,
-          shift_date: shiftForm.shift_date,
-          start_time: shiftForm.start_time,
-          end_time: shiftForm.end_time,
-          created_by: internalUserId,
-          assigned_user_id: shiftForm.assigned_user_id,
-          acceptance_deadline_at: shiftForm.acceptance_deadline_at || null,
-          override_clopening: shiftFormCanOverride,
-        }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to assign shift')
-      setAssignTarget(null)
-      setShiftFormCanOverride(false)
-      setTimelineDate(shiftForm.shift_date)
-      await refreshShiftViews()
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to assign shift'
-      setShiftFormCanOverride(message.startsWith('CLOPENING_CONFLICT:'))
-      setShiftFormError(message.replace('CLOPENING_CONFLICT: ', ''))
-    } finally {
-      setShiftFormLoading(false)
-    }
-  }
-
-  const handleUpdateShift = async () => {
-    if (!selectedShift || !companyId || !internalUserId) return
-    const error = validateShiftForm()
-    if (error) { setShiftFormError(error); return }
-    setShiftFormLoading(true)
-    setShiftFormError('')
-    try {
-      const res = await fetch(`/api/shift/${selectedShift.shift.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: shiftForm.title || null,
-          instruction: shiftForm.instruction || null,
-          shift_date: shiftForm.shift_date,
-          start_time: shiftForm.start_time,
-          end_time: shiftForm.end_time,
-          assigned_user_id: shiftForm.assigned_user_id || null,
-          assigned_by: internalUserId,
-          acceptance_deadline_at: shiftForm.acceptance_deadline_at || null,
-          override_clopening: shiftFormCanOverride,
-        }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to update shift')
-      setSelectedShift(null)
-      setShiftFormCanOverride(false)
-      setTimelineDate(shiftForm.shift_date)
-      await refreshShiftViews()
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to update shift'
-      setShiftFormCanOverride(message.startsWith('CLOPENING_CONFLICT:'))
-      setShiftFormError(message.replace('CLOPENING_CONFLICT: ', ''))
-    } finally {
-      setShiftFormLoading(false)
-    }
-  }
-
-  const handleDeleteShift = async () => {
-    if (!selectedShift || !internalUserId) return
-    setShiftFormLoading(true)
-    setShiftFormError('')
-    try {
-      const res = await fetch(`/api/shift/${selectedShift.shift.id}?actor_id=${internalUserId}`, { method: 'DELETE' })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to delete shift')
-      setSelectedShift(null)
-      await refreshShiftViews()
-    } catch (err) {
-      setShiftFormError(err instanceof Error ? err.message : 'Failed to delete shift')
-    } finally {
-      setShiftFormLoading(false)
-    }
-  }
-
-  const handleUndoShiftAction = async () => {
-    if (!companyId || !internalUserId) return
-    setUndoLoading(true)
-    setScheduleActionError('')
-    try {
-      const res = await fetch('/api/shift/undo', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company_id: companyId, actor_id: internalUserId }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to undo')
-      await refreshShiftViews()
-    } catch (err) {
-      setScheduleActionError(err instanceof Error ? err.message : 'Failed to undo')
-    } finally {
-      setUndoLoading(false)
-    }
-  }
-
-  const handleSchedulePublication = async (publicationStatus: 'draft' | 'published') => {
-    if (!companyId) return
-    setScheduleActionLoading(true)
-    setScheduleActionError('')
-    const dateFrom = scheduleScope === 'day' ? timelineDate : timelineDate
-    const dateTo = scheduleScope === 'day' ? timelineDate : formatDateKey(addDays(selectedTimelineDate, 6))
-    try {
-      const res = await fetch('/api/shift/schedule', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          company_id: companyId,
-          date_from: dateFrom,
-          date_to: dateTo,
-          publication_status: publicationStatus,
-        }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to update schedule')
-      await refreshShiftViews()
-    } catch (err) {
-      setScheduleActionError(err instanceof Error ? err.message : 'Failed to update schedule')
-    } finally {
-      setScheduleActionLoading(false)
-    }
-  }
-
-  const handleDuplicateShift = async () => {
-    if (!selectedShift || !internalUserId) return
-    if (!shiftForm.duplicate_shift_date || !shiftForm.duplicate_start_time || !shiftForm.duplicate_end_time) {
-      setShiftFormError('Duplicate date and time are required')
-      return
-    }
-    if (shiftForm.duplicate_start_time >= shiftForm.duplicate_end_time) {
-      setShiftFormError('Duplicate start time must be before end time')
-      return
-    }
-    setShiftFormLoading(true)
-    setShiftFormError('')
-    try {
-      const res = await fetch(`/api/shift/${selectedShift.shift.id}/duplicate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          shift_date: shiftForm.duplicate_shift_date,
-          start_time: shiftForm.duplicate_start_time,
-          end_time: shiftForm.duplicate_end_time,
-          assigned_user_id: shiftForm.assigned_user_id || null,
-          created_by: internalUserId,
-          override_clopening: shiftFormCanOverride,
-        }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to duplicate shift')
-      setTimelineDate(shiftForm.duplicate_shift_date)
-      setSelectedShift(null)
-      setShiftFormCanOverride(false)
-      await refreshShiftViews()
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to duplicate shift'
-      setShiftFormCanOverride(message.startsWith('CLOPENING_CONFLICT:'))
-      setShiftFormError(message.replace('CLOPENING_CONFLICT: ', ''))
-    } finally {
-      setShiftFormLoading(false)
-    }
-  }
-
-  const handleCreateRecurrence = async () => {
-    if (!selectedShift || !internalUserId) return
-    if (!shiftForm.recurrence_end_date) {
-      setShiftFormError('Recurrence end date is required')
-      return
-    }
-    setShiftFormLoading(true)
-    setShiftFormError('')
-    try {
-      const res = await fetch(`/api/shift/${selectedShift.shift.id}/recurrence`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          recurrence_rule: shiftForm.recurrence_rule,
-          recurrence_end_date: shiftForm.recurrence_end_date,
-          custom_interval_days: shiftForm.custom_interval_days,
-          assigned_user_id: shiftForm.assigned_user_id || null,
-          created_by: internalUserId,
-        }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to create recurring shifts')
-      setSelectedShift(null)
-      await refreshShiftViews()
-    } catch (err) {
-      setShiftFormError(err instanceof Error ? err.message : 'Failed to create recurring shifts')
-    } finally {
-      setShiftFormLoading(false)
-    }
-  }
-
-  const openAddDepartment = () => {
-    setDepartmentModal('add')
-    setActiveDepartment(null)
-    setDepartmentNameInput('')
-    setDepartmentActionError('')
-  }
-
-  const openDepartmentImport = () => {
-    setDepartmentImportOpen(true)
-    setDepartmentImportRows([])
-    setDepartmentImportError('')
-    setDepartmentImportResult('')
-  }
-
-  const handleDepartmentImportFile = async (file: File | null) => {
-    setDepartmentImportError('')
-    setDepartmentImportResult('')
-    if (!file) return
-    const rows = parseDepartmentImportCsv(await file.text())
-    setDepartmentImportRows(rows)
-    if (rows.length === 0) setDepartmentImportError('No valid departments found.')
-  }
-
-  const confirmDepartmentImport = async () => {
-    if (!companyId || departmentImportRows.length === 0) return
-    setDepartmentImportLoading(true)
-    setDepartmentImportError('')
-    setDepartmentImportResult('')
-    try {
-      const res = await fetch('/api/import/departments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company_id: companyId, departments: departmentImportRows }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to import departments')
-      const created = data.result?.created?.length ?? 0
-      const skipped = data.result?.skipped?.length ?? 0
-      setDepartmentImportResult(`${created} department(s) created. ${skipped} skipped.`)
-      await fetchAssignmentData(companyId)
-    } catch (err) {
-      setDepartmentImportError(err instanceof Error ? err.message : 'Failed to import departments')
-    } finally {
-      setDepartmentImportLoading(false)
-    }
-  }
-
-  const openEditDepartment = (department: Department) => {
-    setDepartmentModal('edit')
-    setActiveDepartment(department)
-    setDepartmentNameInput(department.name)
-    setDepartmentActionError('')
-  }
-
-  const openDeleteDepartment = (department: Department) => {
-    setDepartmentModal('delete')
-    setActiveDepartment(department)
-    setDepartmentNameInput(department.name)
-    setDepartmentActionError('')
-  }
-
-  const openManagerModal = (department: Department) => {
-    const current = departmentManagers.find(item => item.department_id === department.id)
-    setManagerModalDepartment(department)
-    setSelectedManagerId(current?.manager_id ?? '')
-    setManagerActionError('')
-  }
-
-  const handleSaveDepartment = async () => {
-    if (!companyId) return
-    const name = departmentNameInput.trim()
-    if (!name) { setDepartmentActionError('Department name is required'); return }
-    setDepartmentActionLoading(true)
-    setDepartmentActionError('')
-    try {
-      const isEdit = departmentModal === 'edit'
-      const res = await fetch(isEdit ? '/api/company/update-department' : '/api/company/create-department', {
-        method: isEdit ? 'PATCH' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(isEdit
-          ? { department_id: activeDepartment?.id, name }
-          : { company_id: companyId, name }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to save department')
-      setDepartmentModal(null)
-      setActiveDepartment(null)
-      await fetchAssignmentData(companyId)
-    } catch (err) {
-      setDepartmentActionError(err instanceof Error ? err.message : 'Failed to save department')
-    } finally {
-      setDepartmentActionLoading(false)
-    }
-  }
-
-  const handleDeleteDepartment = async () => {
-    if (!companyId || !activeDepartment) return
-    setDepartmentActionLoading(true)
-    setDepartmentActionError('')
-    try {
-      const res = await fetch('/api/company/delete-department', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ department_id: activeDepartment.id }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to delete department')
-      setDepartmentModal(null)
-      setActiveDepartment(null)
-      await Promise.all([fetchAssignmentData(companyId), fetchTimeline(companyId, timelineDate)])
-    } catch (err) {
-      setDepartmentActionError(err instanceof Error ? err.message : 'Failed to delete department')
-    } finally {
-      setDepartmentActionLoading(false)
-    }
-  }
-
-  const handleSetDepartmentManager = async () => {
-    if (!companyId || !internalUserId || !managerModalDepartment || !selectedManagerId) return
-    setManagerActionLoading(true)
-    setManagerActionError('')
-    try {
-      const res = await fetch('/api/team/department-manager', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          company_id: companyId,
-          department_id: managerModalDepartment.id,
-          manager_id: selectedManagerId,
-          assigned_by: internalUserId,
-        }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to update manager')
-      setManagerModalDepartment(null)
-      await fetchAssignmentData(companyId)
-    } catch (err) {
-      setManagerActionError(err instanceof Error ? err.message : 'Failed to update manager')
-    } finally {
-      setManagerActionLoading(false)
-    }
-  }
-
-  const totalTasks = taskStats
-    ? taskStats.assigned + taskStats.inProgress + taskStats.review + taskStats.complete
-    : 0
-  const shiftModalOpen = Boolean(assignTarget || selectedShift)
-  const shiftModalDepartment = assignTarget?.department ?? departments.find(department => department.id === selectedShift?.shift.department_id)
-  const shiftModalMembers = shiftModalDepartment
-    ? members.filter(member => member.department_id === shiftModalDepartment.id)
-    : members
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ display: 'flex', height: '100vh', background: '#F1F5F9', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: '#F1F5F9', fontFamily: 'inherit' }}>
+      <style>{`
+        @keyframes dotPulse {
+          0%   { box-shadow: 0 0 0 0 rgba(52,211,153,0.55); }
+          70%  { box-shadow: 0 0 0 5px rgba(52,211,153,0); }
+          100% { box-shadow: 0 0 0 0 rgba(52,211,153,0); }
+        }
+        @keyframes fadeSlideUp {
+          from { opacity: 0; transform: translateY(18px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(6px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes scaleIn {
+          from { opacity: 0; transform: scale(0.94); }
+          to   { opacity: 1; transform: scale(1); }
+        }
+        @keyframes slideInLeft {
+          from { opacity: 0; transform: translateX(-14px); }
+          to   { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes numberPop {
+          0%   { transform: scale(1); }
+          40%  { transform: scale(1.18); }
+          100% { transform: scale(1); }
+        }
+        @keyframes iconBounce {
+          0%, 100% { transform: translateY(0); }
+          40%      { transform: translateY(-4px); }
+          70%      { transform: translateY(-2px); }
+        }
+        /* ── Stat cards ── */
+        .stat-card {
+          transition: box-shadow 0.22s ease, transform 0.22s ease, background 0.18s ease;
+          cursor: default;
+        }
+        .stat-card:hover {
+          box-shadow: 0 8px 28px rgba(0,0,0,0.10), 0 0 0 1.5px rgba(249,115,22,0.18) !important;
+          transform: translateY(-3px) scale(1.015);
+        }
+        .stat-card:hover .stat-icon {
+          animation: iconBounce 0.5s ease forwards;
+        }
+        /* ── Panel cards (Focus / Team / Feed / Tasks) ── */
+        .panel-card {
+          transition: box-shadow 0.22s ease, transform 0.22s ease;
+        }
+        .panel-card:hover {
+          box-shadow: 0 8px 32px rgba(0,0,0,0.09), 0 0 0 1.5px rgba(0,0,0,0.07) !important;
+          transform: translateY(-2px);
+        }
+        /* ── Feed items ── */
+        .feed-item {
+          transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+        }
+        .feed-item:hover {
+          background: #F8FAFC !important;
+          transform: translateX(2px);
+          box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+        /* ── Task items ── */
+        .task-item {
+          transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+        }
+        .task-item:hover {
+          background: #F8FAFC !important;
+          transform: translateX(2px);
+          box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+        /* ── Team member rows ── */
+        .team-row {
+          transition: background 0.15s ease, transform 0.12s ease;
+        }
+        .team-row:hover {
+          background: #FFF7ED !important;
+          transform: translateX(2px);
+        }
+        /* ── Dept cards (schedule grid) ── */
+        .dept-card {
+          transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+        }
+        .dept-card:hover {
+          box-shadow: 0 6px 24px rgba(0,0,0,0.10) !important;
+          transform: translateY(-3px);
+          border-color: #FDBA74 !important;
+        }
+        /* ── Mark/read buttons ── */
+        .mark-btn {
+          transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease;
+        }
+        .mark-btn:hover {
+          transform: scale(1.05);
+        }
+        /* ── Message button ── */
+        .msg-btn {
+          transition: color 0.15s ease, transform 0.15s ease, background 0.15s ease !important;
+        }
+        .msg-btn:hover {
+          transform: scale(1.18) !important;
+        }
+        /* ── Staggered entrance for stat cards ── */
+        .stat-card:nth-child(1) { animation: fadeSlideUp 0.38s ease both; animation-delay: 0.04s; }
+        .stat-card:nth-child(2) { animation: fadeSlideUp 0.38s ease both; animation-delay: 0.08s; }
+        .stat-card:nth-child(3) { animation: fadeSlideUp 0.38s ease both; animation-delay: 0.12s; }
+        .stat-card:nth-child(4) { animation: fadeSlideUp 0.38s ease both; animation-delay: 0.16s; }
+        .stat-card:nth-child(5) { animation: fadeSlideUp 0.38s ease both; animation-delay: 0.20s; }
+        .stat-card:nth-child(6) { animation: fadeSlideUp 0.38s ease both; animation-delay: 0.24s; }
+        /* ── Staggered entrance for panel cards ── */
+        .panel-card:nth-child(1) { animation: scaleIn 0.40s ease both; animation-delay: 0.18s; }
+        .panel-card:nth-child(2) { animation: scaleIn 0.40s ease both; animation-delay: 0.24s; }
+        .panel-card:nth-child(3) { animation: scaleIn 0.40s ease both; animation-delay: 0.30s; }
+        .panel-card:nth-child(4) { animation: scaleIn 0.40s ease both; animation-delay: 0.36s; }
+        /* ── Feed items stagger ── */
+        .feed-item:nth-child(1) { animation: slideInLeft 0.28s ease both; animation-delay: 0.05s; }
+        .feed-item:nth-child(2) { animation: slideInLeft 0.28s ease both; animation-delay: 0.10s; }
+        .feed-item:nth-child(3) { animation: slideInLeft 0.28s ease both; animation-delay: 0.15s; }
+        .feed-item:nth-child(4) { animation: slideInLeft 0.28s ease both; animation-delay: 0.20s; }
+        .feed-item:nth-child(5) { animation: slideInLeft 0.28s ease both; animation-delay: 0.25s; }
+      `}</style>
       <OwnerSidebar />
 
-      <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+      <main
+        style={{ marginLeft: 64, height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, padding: '20px 28px', gap: 0 }}
+      >
 
-        {/* Top bar */}
-        <div style={{ padding: '18px 32px', background: headerTheme.bg, borderBottom: headerTheme.border, display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 10 }}>
-          {dashboardRole !== 'Manager' && companies.length > 1 ? (
-            <div ref={dropdownRef} style={{ position: 'relative', display: 'inline-block' }}>
-              <button onClick={() => setDropdownOpen(o => !o)} style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontWeight: 700, fontSize: '1.1875rem', color: headerTheme.text, userSelect: 'none' }}>
-                {companyName ? `${companyName} — Overview` : 'Overview'}
-                <ChevronDown size={16} strokeWidth={2.5} style={{ color: headerTheme.text, opacity: 0.6, transition: 'transform 0.15s', transform: dropdownOpen ? 'rotate(180deg)' : 'none' }} />
-              </button>
-              {dropdownOpen && (
-                <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: '6px', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: '10px', boxShadow: '0 4px 16px rgba(0,0,0,0.1)', minWidth: '200px', zIndex: 50, overflow: 'hidden' }}>
-                  {companies.map(c => (
-                    <button key={c.id} type="button"
-                      onClick={() => {
-                        if (!userId) return
-                        localStorage.setItem(`tasking_company_id_${userId}`, c.id)
-                        localStorage.setItem(`tasking_last_company_name_${c.id}`, c.name)
-                        setDropdownOpen(false); setCompanyId(c.id); setCompanyName(c.name); setCurrentPlan(c.plan || 'Free')
-                      }}
-                      style={{ width: '100%', textAlign: 'left', padding: '10px 14px', background: c.id === companyId ? '#FFF7ED' : 'none', border: 'none', cursor: 'pointer', fontSize: '0.9rem', color: c.id === companyId ? '#EA580C' : '#374151', fontWeight: c.id === companyId ? 600 : 400 }}
-                    >
-                      {c.name}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : (
-            <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: headerTheme.text, margin: 0 }}>
-              {companyName ? `${companyName} — Overview` : 'Overview'}
-            </h1>
-          )}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            {ownerName && <span style={{ fontSize: '0.9rem', color: headerTheme.text, opacity: 0.85 }}>{ownerName}</span>}
-            {companyId && (
-              <PlanBadge
-                plan={currentPlan}
-                currentCompanyId={companyId}
-                headerText={headerTheme.text}
-              />
+        {/* ── Page header ────────────────────────────────────────── */}
+        <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, flexShrink: 0 }}>
+          <div>
+            <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#F97316', marginBottom: 4 }}>
+              {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+            </p>
+            {dashboardRole !== 'Manager' && companies.length > 1 ? (
+              <div ref={dropdownRef} className="relative">
+                <button
+                  onClick={() => setDropdownOpen(o => !o)}
+                  className="flex cursor-pointer items-center gap-2 border-0 bg-transparent p-0 font-heading text-3xl font-bold tracking-tight text-gray-950"
+                >
+                  {companyName ? `Today's Overview for ${companyName}` : "Today's Overview"}
+                  <ChevronDown size={18} strokeWidth={2.5} className={`mt-1 text-gray-400 transition-transform duration-150 ${dropdownOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {dropdownOpen && (
+                  <div className="absolute left-0 top-[calc(100%+8px)] z-50 min-w-[200px] rounded-xl border border-gray-100 bg-white p-1.5 shadow-lg">
+                    {companies.map(c => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => {
+                          if (!userId) return
+                          localStorage.setItem(`tasking_company_id_${userId}`, c.id)
+                          localStorage.setItem(`tasking_last_company_name_${c.id}`, c.name)
+                          setDropdownOpen(false); setCompanyId(c.id); setCompanyName(c.name); setCurrentPlan(c.plan || 'Free')
+                        }}
+                        className={`w-full cursor-pointer rounded-lg border-0 px-3 py-2 text-left text-sm ${c.id === companyId ? 'bg-orange-50 font-semibold text-orange-600' : 'bg-transparent font-normal text-gray-700'}`}
+                      >
+                        {c.name}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
+                {companyName ? `Today's Overview for ${companyName}` : "Today's Overview"}
+              </h1>
             )}
+          </div>
+
+          {/* Right: user + plan */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+            {ownerName && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: '#fff', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+                <div style={{ width: 26, height: 26, borderRadius: 999, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#fff' }}>{ownerName.charAt(0).toUpperCase()}</span>
+                </div>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{ownerName}</span>
+              </div>
+            )}
+            {companyId && <PlanBadge plan={currentPlan} currentCompanyId={companyId} />}
           </div>
         </div>
 
-        {/* Content */}
-        <div style={{ padding: '28px 32px', flex: 1 }}>
+        {/* ── Content ──────────────────────────────────────────────────── */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 24, flex: 1, overflow: 'hidden', minHeight: 0 }}>
 
           {initialReady && !companyId && (
-            <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '10px', padding: '14px 18px', fontSize: '0.9rem', color: '#92400E', marginBottom: '24px' }}>
+            <div style={{ background: '#FFFBEB', borderRadius: 12, padding: '14px 16px', fontSize: 13, color: '#92400E', border: '1px solid #FDE68A' }}>
               No company is linked to your profile yet. If you just accepted an invitation, try signing out and signing in again.
             </div>
           )}
 
           {companyId && (
-            <>
-              {/* ── A: STAT CARDS ROW ─────────────────────────────────────── */}
-              <div style={{ display: 'flex', gap: 12, marginBottom: 28 }}>
-                <StatCard label="Visible Shifts" value={todayShiftCount}            icon={<Briefcase size={15} />}   accent="#3B82F6" loading={timelineLoading}   />
-                <StatCard label="Total Tasks"     value={totalTasks}                 icon={<Building2 size={15} />}   accent="#6B7280" loading={taskStatsLoading} />
-                <StatCard label="In Progress"     value={taskStats?.inProgress ?? 0} icon={<Clock size={15} />}       accent="#3B82F6" loading={taskStatsLoading} />
-                <StatCard label="In Review"       value={taskStats?.review ?? 0}     icon={<Eye size={15} />}         accent="#F97316" loading={taskStatsLoading} />
-                <StatCard label="Complete"        value={taskStats?.complete ?? 0}   icon={<CheckCircle size={15} />} accent="#10B981" loading={taskStatsLoading} />
-              </div>
-
-              {/* ── B: TODAY'S LIVE FEED ──────────────────────────────────── */}
-              <div style={{ marginBottom: 28, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: '14px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
-                <div style={{ padding: '14px 20px', borderBottom: '1px solid #F1F5F9' }}>
-                  <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Today&apos;s Live Feed</span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 24, flex: 1, overflow: 'hidden', minHeight: 0 }}>
+              {/* ── Last refreshed chip ── */}
+              {lastRefreshed && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0, marginBottom: -8 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10B981', flexShrink: 0, display: 'inline-block', animation: 'dotPulse 1.4s ease-out infinite', marginLeft: 5 }} />
+                  <span style={{ fontSize: 10, fontWeight: 500, color: '#94A3B8', letterSpacing: '0.03em' }}>
+                    Updated {timeAgo(lastRefreshed.toISOString())}
+                  </span>
                 </div>
-                {activityFeedLoading ? (
-                  <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}><Spinner size={20} dark /></div>
-                ) : activityFeed.length === 0 ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 20px', maxHeight: 80 }}>
-                    <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                      <Zap size={13} color="#9CA3AF" />
+              )}
+
+              {/* ── ROW 1: Stat cards ─────────────── */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: 14, flexShrink: 0 }}>
+                {[
+                  {
+                    label: 'Staff on Shift',
+                    value: timelineLoading ? null : todayShiftCount,
+                    icon: <Users size={16} style={{ color: '#F97316' }} />,
+                    accentBg: '#FFF7ED',
+                  },
+                  {
+                    label: 'Casual Workers',
+                    value: timelineLoading ? null : casualWorkersCount,
+                    icon: <UserRound size={16} style={{ color: '#EC4899' }} />,
+                    accentBg: '#FDF2F8',
+                  },
+                  {
+                    label: 'Total Tasks',
+                    value: taskStatsLoading ? null : totalTasks,
+                    icon: <ClipboardList size={16} style={{ color: '#3B82F6' }} />,
+                    accentBg: '#EFF6FF',
+                  },
+                  {
+                    label: 'Tasks In Progress',
+                    value: taskStatsLoading ? null : (taskStats?.inProgress ?? 0),
+                    icon: <Timer size={16} style={{ color: '#8B5CF6' }} />,
+                    accentBg: '#F5F3FF',
+                  },
+                  {
+                    label: 'Tasks In Review',
+                    value: taskStatsLoading ? null : (taskStats?.review ?? 0),
+                    icon: <Eye size={16} style={{ color: '#F59E0B' }} />,
+                    accentBg: '#FFFBEB',
+                  },
+                  {
+                    label: 'Tasks Complete',
+                    value: taskStatsLoading ? null : (taskStats?.complete ?? 0),
+                    icon: <CheckCircle size={16} style={{ color: '#10B981' }} />,
+                    accentBg: '#ECFDF5',
+                  },
+                ].map(card => (
+                  <article key={card.label} className="stat-card" style={{
+                    background: '#fff',
+                    borderRadius: 16,
+                    padding: '16px 18px',
+                    boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 10,
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <p style={{ fontSize: 11, fontWeight: 600, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.07em', margin: 0 }}>{card.label}</p>
+                      <div className="stat-icon" style={{ width: 32, height: 32, borderRadius: 10, background: card.accentBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        {card.icon}
+                      </div>
                     </div>
-                    <span style={{ fontSize: '0.875rem', color: '#9CA3AF' }}>No activity yet today.</span>
-                  </div>
-                ) : (
-                  <div style={{ maxHeight: 360, overflowY: 'auto' }}>
-                    {activityFeed.slice(0, 10).map((event, idx) => {
-                      const isShift = event.type === 'shift_started'
-                      const isAlert = event.type === 'shift_uncovered'
-                      const iconColor = isAlert ? '#EF4444' : isShift ? '#F97316' : '#3B82F6'
-                      const iconBg   = isAlert ? '#FEF2F2' : isShift ? '#FFF7ED' : '#EFF6FF'
-                      const Icon     = isAlert ? AlertTriangle : isShift ? Briefcase : Zap
-                      return (
-                        <div key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '12px 20px', borderTop: idx === 0 ? 'none' : '1px solid #F8FAFC' }}>
-                          <div style={{ width: 32, height: 32, borderRadius: '50%', background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1 }}>
-                            <Icon size={14} color={iconColor} />
-                          </div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <p style={{ margin: 0, fontSize: '0.875rem', color: '#111827', lineHeight: 1.45, fontWeight: 500 }}>{event.description}</p>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3 }}>
-                              <span style={{ fontSize: '0.75rem', color: '#9CA3AF' }}>{event.department}</span>
-                              <span style={{ fontSize: '0.75rem', color: '#CBD5E1' }}>·</span>
-                              <span style={{ fontSize: '0.75rem', color: '#9CA3AF' }}>{timeAgo(event.timestamp)}</span>
-                            </div>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* ── C: ALLOCATION TIMELINE (today, read-only) ─────────────── */}
-              <div style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: '14px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
-                {/* Timeline header */}
-                <div style={{ padding: '14px 20px', borderBottom: '1px solid #E5E7EB', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#111827' }}>Allocation Timeline</span>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: '0.8rem', color: '#9CA3AF' }}>
-                      <Calendar size={13} />
-                      {selectedTimelineDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-                    </span>
-                    {timelineLoading && <Spinner size={14} dark />}
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <button
-                        onClick={() => changeTimelineDate(-1)}
-                        disabled={!canGoPrevious}
-                        title="Previous day"
-                        style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid #E5E7EB', background: '#FFFFFF', color: canGoPrevious ? '#374151' : '#CBD5E1', cursor: canGoPrevious ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                      >
-                        <ChevronLeft size={15} />
-                      </button>
-                      <button
-                        onClick={() => setTimelineDate(todayStr)}
-                        disabled={timelineDate === todayStr}
-                        style={{ height: 30, padding: '0 12px', borderRadius: 8, border: '1px solid #E5E7EB', background: timelineDate === todayStr ? '#F8FAFC' : '#FFFFFF', color: timelineDate === todayStr ? '#9CA3AF' : '#374151', cursor: timelineDate === todayStr ? 'default' : 'pointer', fontSize: '0.8rem', fontWeight: 600 }}
-                      >
-                        Today
-                      </button>
-                      <button
-                        onClick={() => changeTimelineDate(1)}
-                        disabled={!canGoNext}
-                        title="Next day"
-                        style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid #E5E7EB', background: '#FFFFFF', color: canGoNext ? '#374151' : '#CBD5E1', cursor: canGoNext ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                      >
-                        <ChevronRight size={15} />
-                      </button>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <select value={scheduleScope} onChange={event => setScheduleScope(event.target.value as 'day' | 'week')} style={{ height: 30, border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', color: '#374151', fontSize: '0.78rem', fontWeight: 700, padding: '0 8px', outline: 'none' }}>
-                        <option value="day">Day</option>
-                        <option value="week">Week</option>
-                      </select>
-                      <button onClick={() => handleSchedulePublication('published')} disabled={scheduleActionLoading} style={{ height: 30, padding: '0 10px', border: 'none', borderRadius: 8, background: '#F97316', color: '#FFFFFF', cursor: scheduleActionLoading ? 'default' : 'pointer', fontSize: '0.78rem', fontWeight: 800, opacity: scheduleActionLoading ? 0.65 : 1 }}>
-                        Publish
-                      </button>
-                      <button onClick={() => handleSchedulePublication('draft')} disabled={scheduleActionLoading} style={{ height: 30, padding: '0 10px', border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', color: '#374151', cursor: scheduleActionLoading ? 'default' : 'pointer', fontSize: '0.78rem', fontWeight: 800, opacity: scheduleActionLoading ? 0.65 : 1 }}>
-                        Unpublish
-                      </button>
-                      <button onClick={handleUndoShiftAction} disabled={undoLoading} style={{ height: 30, padding: '0 10px', border: '1px solid #F97316', borderRadius: 8, background: '#FFF7ED', color: '#C2410C', cursor: undoLoading ? 'default' : 'pointer', fontSize: '0.78rem', fontWeight: 800, opacity: undoLoading ? 0.65 : 1 }}>
-                        Undo
-                      </button>
-                    </div>
-                    <div style={{ display: 'flex', background: '#F1F5F9', borderRadius: 8, padding: 3, gap: 2 }}>
-                      {(['global', 'dept'] as const).map(v => (
-                        <button
-                          key={v}
-                          onClick={() => setTimelineView(v)}
-                          style={{
-                            padding: '5px 12px',
-                            borderRadius: 6,
-                            border: 'none',
-                            fontWeight: 600,
-                            fontSize: '0.8rem',
-                            cursor: 'pointer',
-                            background: timelineView === v ? '#FFFFFF' : 'transparent',
-                            color: timelineView === v ? '#111827' : '#6B7280',
-                            boxShadow: timelineView === v ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
-                            transition: 'all 0.12s',
-                          }}
-                        >
-                          {v === 'global' ? 'Global View' : 'Department View'}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                {scheduleActionError && (
-                  <div style={{ padding: '8px 20px', borderBottom: '1px solid #FEE2E2', background: '#FEF2F2', color: '#B91C1C', fontSize: '0.8rem', fontWeight: 600 }}>
-                    {scheduleActionError}
-                  </div>
-                )}
-
-                {renderTimeAxis(7, 15)}
-                <div style={{ minHeight: 120 }}>
-                  {timelineView === 'global'
-                    ? renderTimelineRows(timelineRows, 7 * 60, 15 * 60)
-                    : renderDeptView(7 * 60, 15 * 60)
-                  }
-                </div>
-                {renderTimeAxis(15, 23)}
-                <div style={{ minHeight: 120 }}>
-                  {timelineView === 'global'
-                    ? renderTimelineRows(timelineRows, 15 * 60, 23 * 60)
-                    : renderDeptView(15 * 60, 23 * 60)
-                  }
-                </div>
-              </div>
-
-              <div style={{ marginTop: 28, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: '14px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
-                <div style={{ padding: '14px 20px', borderBottom: '1px solid #F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Departments & Shift Assignment</span>
-                    {assignmentDataLoading && <Spinner size={14} dark />}
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <button
-                      onClick={openDepartmentImport}
-                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 11px', border: 'none', borderRadius: 8, background: '#111827', color: '#FFFFFF', fontSize: '0.8rem', fontWeight: 800, cursor: 'pointer' }}
-                    >
-                      <Upload size={14} /> Import
-                    </button>
-                    <button
-                      onClick={openAddDepartment}
-                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 11px', border: 'none', borderRadius: 8, background: '#F97316', color: '#FFFFFF', fontSize: '0.8rem', fontWeight: 800, cursor: 'pointer' }}
-                    >
-                      <Plus size={14} /> Add Department
-                    </button>
-                  </div>
-                </div>
-                {departments.length === 0 ? (
-                  <div style={{ padding: '18px 20px', fontSize: '0.875rem', color: '#9CA3AF' }}>
-                    No departments found for this company.
-                  </div>
-                ) : (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 14, padding: 16 }}>
-                    {departments.map(department => {
-                      const deptMembers = members.filter(member => member.department_id === department.id)
-                      const manager = departmentManagers.find(item => item.department_id === department.id)
-                      return (
-                        <div key={department.id} style={{ border: '1px solid #E5E7EB', borderRadius: 10, overflow: 'hidden', background: '#FFFFFF' }}>
-                          <div style={{ padding: '12px 14px', borderBottom: '1px solid #F1F5F9' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <div style={{ width: 9, height: 9, borderRadius: '50%', background: deptColor(department.id) }} />
-                              <span style={{ fontWeight: 700, fontSize: '0.9rem', color: '#111827', minWidth: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{department.name}</span>
-                              <span style={{ fontSize: '0.75rem', color: '#9CA3AF', whiteSpace: 'nowrap' }}>{deptMembers.length} people</span>
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 8 }}>
-                              <span style={{ fontSize: '0.75rem', color: '#6B7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                Manager: <strong style={{ color: '#111827' }}>{manager?.manager_name || 'Unassigned'}</strong>
-                              </span>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
-                                <button onClick={() => openEditDepartment(department)} title="Edit department" style={{ width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #E5E7EB', borderRadius: 7, background: '#FFFFFF', color: '#6B7280', cursor: 'pointer' }}><Pencil size={13} /></button>
-                                <button onClick={() => openManagerModal(department)} title="Change manager" style={{ width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #E5E7EB', borderRadius: 7, background: '#FFFFFF', color: '#6B7280', cursor: 'pointer' }}><Users size={13} /></button>
-                                <button onClick={() => openDeleteDepartment(department)} title="Delete department" style={{ width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #FECACA', borderRadius: 7, background: '#FFFFFF', color: '#DC2626', cursor: 'pointer' }}><Trash2 size={13} /></button>
-                              </div>
-                            </div>
-                          </div>
-                          <div style={{ padding: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                            {deptMembers.length === 0 ? (
-                              <div style={{ padding: '10px 8px', fontSize: '0.8125rem', color: '#CBD5E1' }}>No schedulable members in this department.</div>
-                            ) : deptMembers.map(member => (
-                              <div key={member.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: '#F8FAFC', borderRadius: 8 }}>
-                                <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#1C1C1E', color: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.72rem', fontWeight: 800, flexShrink: 0 }}>
-                                  {member.full_name.charAt(0).toUpperCase()}
-                                </div>
-                                <div style={{ minWidth: 0, flex: 1 }}>
-                                  <p style={{ margin: 0, fontSize: '0.82rem', fontWeight: 650, color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{member.full_name}</p>
-                                  <p style={{ margin: '2px 0 0', fontSize: '0.72rem', color: '#9CA3AF' }}>{member.role}</p>
-                                </div>
-                                <button
-                                  onClick={() => openAssignShift(member, department)}
-                                  style={{ padding: '6px 10px', border: 'none', borderRadius: 7, background: '#F97316', color: '#FFFFFF', fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}
-                                >
-                                  Assign Shift
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </div>
-      </main>
-
-      {departmentModal && (
-        <div onClick={() => setDepartmentModal(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 120 }}>
-          <div onClick={event => event.stopPropagation()} style={{ width: 460, background: '#FFFFFF', borderRadius: 16, padding: 28, boxShadow: '0 8px 40px rgba(0,0,0,0.14)' }}>
-            <h2 style={{ margin: '0 0 16px', fontSize: '1.05rem', fontWeight: 800, color: '#111827' }}>
-              {departmentModal === 'add' ? 'Add Department' : departmentModal === 'edit' ? 'Edit Department' : 'Delete Department'}
-            </h2>
-            {departmentModal === 'delete' ? (
-              <p style={{ margin: 0, fontSize: '0.92rem', color: '#374151', lineHeight: 1.6 }}>
-                Delete <strong>{activeDepartment?.name}</strong>? This removes the department record.
-              </p>
-            ) : (
-              <div>
-                <label style={modalLabelStyle}>Department Name</label>
-                <input autoFocus value={departmentNameInput} onChange={event => setDepartmentNameInput(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') void handleSaveDepartment() }} placeholder="Operations" style={modalInputStyle} />
-              </div>
-            )}
-            <div style={{ marginTop: 14 }}>
-              <InlineError message={departmentActionError} />
-            </div>
-            <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
-              <button onClick={() => setDepartmentModal(null)} style={{ flex: 1, padding: '10px 14px', borderRadius: 8, border: '1px solid #E5E7EB', background: '#FFFFFF', color: '#374151', fontWeight: 700, fontSize: '0.875rem', cursor: 'pointer' }}>
-                Cancel
-              </button>
-              <button
-                onClick={departmentModal === 'delete' ? handleDeleteDepartment : handleSaveDepartment}
-                disabled={departmentActionLoading}
-                style={{ flex: 1, padding: '10px 14px', borderRadius: 8, border: 'none', background: departmentModal === 'delete' ? '#DC2626' : '#F97316', color: '#FFFFFF', fontWeight: 800, fontSize: '0.875rem', cursor: departmentActionLoading ? 'default' : 'pointer', opacity: departmentActionLoading ? 0.65 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
-              >
-                {departmentActionLoading && <Spinner size={14} />}
-                {departmentModal === 'delete' ? 'Delete' : 'Save'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {departmentImportOpen && (
-        <div onClick={() => setDepartmentImportOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 120 }}>
-          <div onClick={event => event.stopPropagation()} style={{ width: 500, background: '#FFFFFF', borderRadius: 16, padding: 28, boxShadow: '0 8px 40px rgba(0,0,0,0.14)' }}>
-            <h2 style={{ margin: '0 0 8px', fontSize: '1.05rem', fontWeight: 800, color: '#111827' }}>Import Departments</h2>
-            <p style={{ margin: '0 0 16px', color: '#6B7280', fontSize: '0.875rem', lineHeight: 1.5 }}>
-              Upload a CSV with one department name per row. No invitation emails are sent.
-            </p>
-            <input type="file" accept=".csv,text/csv,text/plain" onChange={event => void handleDepartmentImportFile(event.target.files?.[0] ?? null)} style={modalInputStyle} />
-            {departmentImportRows.length > 0 && (
-              <div style={{ marginTop: 16, border: '1px solid #E5E7EB', borderRadius: 10, overflow: 'hidden', maxHeight: 220, overflowY: 'auto' }}>
-                {departmentImportRows.map(name => (
-                  <div key={name} style={{ padding: '9px 12px', borderBottom: '1px solid #F1F5F9', fontSize: '0.86rem', color: '#374151', fontWeight: 700 }}>{name}</div>
+                    <p style={{ fontSize: 28, fontWeight: 800, color: '#0F172A', lineHeight: 1, margin: 0, letterSpacing: '-0.5px' }}>
+                      {card.value === null ? <Spinner size={14} dark /> : <AnimatedNumber value={card.value} />}
+                    </p>
+                  </article>
                 ))}
               </div>
-            )}
-            <div style={{ marginTop: 14 }}>
-              <InlineError message={departmentImportError} />
-              {departmentImportResult && <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#15803D', lineHeight: 1.5 }}>{departmentImportResult}</div>}
-            </div>
-            <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
-              <button onClick={() => setDepartmentImportOpen(false)} style={{ flex: 1, padding: '10px 14px', borderRadius: 8, border: '1px solid #E5E7EB', background: '#FFFFFF', color: '#374151', fontWeight: 700, fontSize: '0.875rem', cursor: 'pointer' }}>
-                Cancel
-              </button>
-              <button
-                onClick={confirmDepartmentImport}
-                disabled={departmentImportLoading || departmentImportRows.length === 0}
-                style={{ flex: 1, padding: '10px 14px', borderRadius: 8, border: 'none', background: '#F97316', color: '#FFFFFF', fontWeight: 800, fontSize: '0.875rem', cursor: departmentImportLoading || departmentImportRows.length === 0 ? 'default' : 'pointer', opacity: departmentImportLoading || departmentImportRows.length === 0 ? 0.65 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
-              >
-                {departmentImportLoading && <Spinner size={14} />}
-                Import
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
-      {managerModalDepartment && (
-        <div onClick={() => setManagerModalDepartment(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 120 }}>
-          <div onClick={event => event.stopPropagation()} style={{ width: 460, background: '#FFFFFF', borderRadius: 16, padding: 28, boxShadow: '0 8px 40px rgba(0,0,0,0.14)' }}>
-            <h2 style={{ margin: '0 0 6px', fontSize: '1.05rem', fontWeight: 800, color: '#111827' }}>Change Manager</h2>
-            <p style={{ margin: '0 0 16px', fontSize: '0.87rem', color: '#6B7280' }}>{managerModalDepartment.name}</p>
-            <label style={modalLabelStyle}>Manager</label>
-            <select value={selectedManagerId} onChange={event => setSelectedManagerId(event.target.value)} style={{ ...modalInputStyle, appearance: 'none', cursor: 'pointer' }}>
-              <option value="">Select manager</option>
-              {members.filter(member => member.role === 'Manager').map(manager => (
-                <option key={manager.id} value={manager.id}>{manager.full_name}</option>
-              ))}
-            </select>
-            <div style={{ marginTop: 14 }}>
-              <InlineError message={managerActionError} />
-            </div>
-            <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
-              <button onClick={() => setManagerModalDepartment(null)} style={{ flex: 1, padding: '10px 14px', borderRadius: 8, border: '1px solid #E5E7EB', background: '#FFFFFF', color: '#374151', fontWeight: 700, fontSize: '0.875rem', cursor: 'pointer' }}>
-                Cancel
-              </button>
-              <button
-                onClick={handleSetDepartmentManager}
-                disabled={managerActionLoading || !selectedManagerId}
-                style={{ flex: 1, padding: '10px 14px', borderRadius: 8, border: 'none', background: '#F97316', color: '#FFFFFF', fontWeight: 800, fontSize: '0.875rem', cursor: managerActionLoading || !selectedManagerId ? 'default' : 'pointer', opacity: managerActionLoading || !selectedManagerId ? 0.65 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
-              >
-                {managerActionLoading && <Spinner size={14} />}
-                Save
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+              {/* ── ROW 2: Timeline full width ─── */}
+              <div style={{ flexShrink: 0 }}>
 
-      {shiftModalOpen && (
-        <div onClick={() => { setAssignTarget(null); setSelectedShift(null) }} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 120 }}>
-          <div onClick={event => event.stopPropagation()} style={{ width: 520, background: '#FFFFFF', borderRadius: 16, padding: 28, boxShadow: '0 8px 40px rgba(0,0,0,0.14)' }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 18 }}>
-              <div>
-                <h2 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: '#111827' }}>
-                  {assignTarget ? 'Assign Shift' : 'Shift Details'}
-                </h2>
-                <p style={{ margin: '5px 0 0', fontSize: '0.85rem', color: '#6B7280' }}>
-                  {shiftModalDepartment?.name ?? selectedShift?.shift.department_name ?? 'Department'} · {assignTarget?.member.full_name ?? selectedShift?.row.full_name ?? 'Open Shift'}
-                </p>
-              </div>
-              <button onClick={() => { setAssignTarget(null); setSelectedShift(null) }} style={{ border: 'none', background: 'none', color: '#9CA3AF', cursor: 'pointer', fontSize: '1.25rem', lineHeight: 1 }}>
-                ×
-              </button>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div>
-                <label style={modalLabelStyle}>Title</label>
-                <input value={shiftForm.title} onChange={event => setShiftForm(prev => ({ ...prev, title: event.target.value }))} placeholder="Opening shift" style={modalInputStyle} />
-              </div>
-              <div>
-                <label style={modalLabelStyle}>Instruction</label>
-                <textarea value={shiftForm.instruction} onChange={event => setShiftForm(prev => ({ ...prev, instruction: event.target.value }))} rows={3} placeholder="Optional shift notes" style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.45 }} />
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div>
-                  <label style={modalLabelStyle}>Date</label>
-                  <input type="date" min={minTimelineDate} max={maxTimelineDate} value={shiftForm.shift_date} onChange={event => setShiftForm(prev => ({ ...prev, shift_date: event.target.value }))} style={modalInputStyle} />
-                </div>
-                <div>
-                  <label style={modalLabelStyle}>Assigned To</label>
-                  <select value={shiftForm.assigned_user_id} onChange={event => setShiftForm(prev => ({ ...prev, assigned_user_id: event.target.value }))} style={{ ...modalInputStyle, appearance: 'none', cursor: 'pointer' }}>
-                    {!assignTarget && <option value="">Open Shift</option>}
-                    {shiftModalMembers.map(member => (
-                      <option key={member.id} value={member.id}>{member.full_name} ({member.role})</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div>
-                  <label style={modalLabelStyle}>Start Time</label>
-                  <input type="time" value={shiftForm.start_time} onChange={event => setShiftForm(prev => ({ ...prev, start_time: event.target.value }))} style={modalInputStyle} />
-                </div>
-                <div>
-                  <label style={modalLabelStyle}>End Time</label>
-                  <input type="time" value={shiftForm.end_time} onChange={event => setShiftForm(prev => ({ ...prev, end_time: event.target.value }))} style={modalInputStyle} />
-                </div>
-              </div>
-              <div>
-                <label style={modalLabelStyle}>Respond By</label>
-                <input type="datetime-local" value={shiftForm.acceptance_deadline_at} onChange={event => setShiftForm(prev => ({ ...prev, acceptance_deadline_at: event.target.value }))} style={modalInputStyle} />
-              </div>
-              {selectedShift && (
-                <div style={{ padding: 12, border: '1px solid #E5E7EB', borderRadius: 10, background: '#F8FAFC' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                    <label style={{ ...modalLabelStyle, margin: 0 }}>Shift Tasks</label>
-                    <button
-                      onClick={() => router.push('/owner/tasks')}
-                      style={{ border: 'none', background: 'transparent', color: '#F97316', fontSize: '0.78rem', fontWeight: 800, cursor: 'pointer', padding: 0 }}
-                    >
-                      Open Tasks
-                    </button>
-                  </div>
-                  {selectedShiftTasksLoading ? (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#6B7280', fontSize: '0.82rem' }}>
-                      <Spinner size={14} dark /> Loading tasks
+                {/* Timeline */}
+                <div className="panel-card" style={{ minWidth: 0, padding: '16px 20px', background: '#FFFFFF', borderRadius: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column' }}>
+                  {/* Timeline header */}
+                  <div className="mb-4 flex items-center justify-between gap-4" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 16 }}>
+                    <div className="flex items-center gap-2" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {selectedDeptId ? (
+                        <>
+                          <button
+                            onClick={() => setSelectedDeptId(null)}
+                            className="flex cursor-pointer items-center gap-1 border-0 bg-transparent p-0 text-sm font-medium text-gray-500 hover:text-gray-800"
+                          >
+                            <ChevronLeft size={15} />
+                            All Departments
+                          </button>
+                          <span className="text-gray-200">·</span>
+                          <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: deptColor(selectedDeptId) }} />
+                          <span className="text-sm font-semibold text-gray-900">{selectedDeptName}</span>
+                        </>
+                      ) : (
+                        <>
+                          <CalendarDays className="size-4 text-orange-500" />
+                          <span className="text-base font-semibold text-gray-900">Schedule</span>
+                          {timelineLoading && <Spinner size={13} dark />}
+                        </>
+                      )}
                     </div>
-                  ) : selectedShiftTasks.length === 0 ? (
-                    <p style={{ margin: 0, color: '#94A3B8', fontSize: '0.82rem' }}>No tasks linked to this shift.</p>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      {selectedShiftTasks.slice(0, 5).map(task => (
-                        <div key={task.id} style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8, alignItems: 'center', padding: '8px 10px', borderRadius: 8, background: '#FFFFFF', border: '1px solid #EEF2F7' }}>
-                          <div style={{ minWidth: 0 }}>
-                            <div style={{ color: '#111827', fontSize: '0.82rem', fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{task.title}</div>
-                            <div style={{ marginTop: 3, color: '#64748B', fontSize: '0.72rem' }}>{task.percentage_complete}% complete</div>
+
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        data-testid="timeline-menu"
+                        aria-label="Options"
+                        className="flex size-9 cursor-pointer items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-500 transition-colors hover:bg-gray-50"
+                      >
+                        <MoreHorizontal size={16} />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" sideOffset={10} style={{ width: 300, borderRadius: 16, padding: 16, border: '1px solid #E5E7EB', background: '#fff', boxShadow: '0 4px 24px rgba(0,0,0,0.10)' }}>
+                        {/* View mode */}
+                        <p style={{ margin: '0 0 8px 0', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <SlidersHorizontal size={12} style={{ color: '#F97316' }} />
+                          Timeline view
+                        </p>
+                        <div style={{ display: 'grid', gap: 4, marginBottom: 12 }}>
+                          {(['global', 'dept'] as const).map(v => (
+                            <DropdownMenuItem
+                              key={v}
+                              onClick={() => setTimelineView(v)}
+                              style={{
+                                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                borderRadius: 10, padding: '8px 10px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                                background: timelineView === v ? '#FFF7ED' : 'transparent',
+                                color: timelineView === v ? '#EA580C' : '#374151',
+                              }}
+                            >
+                              <span>{v === 'global' ? 'All departments' : 'By department'}</span>
+                              {timelineView === v && <Check size={13} />}
+                            </DropdownMenuItem>
+                          ))}
+                        </div>
+
+                        <div style={{ height: 1, background: '#F3F4F6', margin: '0 0 12px 0' }} />
+
+                        {/* Time window */}
+                        <div style={{ marginBottom: 8 }}>
+                          <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9CA3AF' }}>Time window</span>
+                        </div>
+
+                        {/* Auto-fit / Full presets */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 10 }}>
+                          {[
+                            {
+                              label: 'Auto-fit',
+                              onClick: () => { setTimeFrom(autoFrom); setTimeTo(autoTo); setIsAutoFit(true) },
+                              active: isAutoFit,
+                            },
+                            {
+                              label: 'Full day',
+                              onClick: () => { setTimeFrom(0); setTimeTo(24); setIsAutoFit(false) },
+                              active: !isAutoFit && timeFrom === 0 && timeTo === 24,
+                            },
+                          ].map(opt => (
+                            <button
+                              key={opt.label}
+                              type="button"
+                              onClick={opt.onClick}
+                              style={{
+                                cursor: 'pointer', borderRadius: 10, border: opt.active ? '1.5px solid #FDBA74' : '1px solid #E5E7EB',
+                                background: opt.active ? '#FFF7ED' : '#F9FAFB', padding: '8px 6px', textAlign: 'center',
+                              }}
+                            >
+                              <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: opt.active ? '#EA580C' : '#374151' }}>{opt.label}</p>
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* From / To manual adjust */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                          {[
+                            { label: 'From', val: timeFrom, dec: () => { setIsAutoFit(false); setTimeFrom(Math.max(0, timeFrom - 1)) }, inc: () => { setIsAutoFit(false); setTimeFrom(Math.min(timeTo - 1, timeFrom + 1)) } },
+                            { label: 'To', val: timeTo, dec: () => { setIsAutoFit(false); setTimeTo(Math.max(timeFrom + 1, timeTo - 1)) }, inc: () => { setIsAutoFit(false); setTimeTo(Math.min(24, timeTo + 1)) } },
+                          ].map(ctrl => (
+                            <div key={ctrl.label} style={{ borderRadius: 10, border: '1px solid #E5E7EB', background: '#F9FAFB', padding: '8px 10px' }}>
+                              <p style={{ margin: '0 0 6px 0', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9CA3AF' }}>{ctrl.label}</p>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
+                                <button type="button" onClick={ctrl.dec} aria-label={`Decrease ${ctrl.label}`} style={{ width: 26, height: 26, borderRadius: 8, border: '1px solid #E5E7EB', background: '#fff', cursor: 'pointer', fontSize: 14, color: '#6B7280', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>−</button>
+                                <span style={{ fontSize: 13, fontWeight: 700, color: '#111827' }}>{formatHourLabel(ctrl.val)}</span>
+                                <button type="button" onClick={ctrl.inc} aria-label={`Increase ${ctrl.label}`} style={{ width: 26, height: 26, borderRadius: 8, border: '1px solid #E5E7EB', background: '#fff', cursor: 'pointer', fontSize: 14, color: '#6B7280', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+
+                  {/* Department card grid (default — no drill-down) */}
+                  {!selectedDeptId && (
+                    <>
+                      {timelineLoading ? (
+                        <div className="py-10 flex justify-center"><Spinner size={20} dark /></div>
+                      ) : deptIds.length === 0 ? (
+                        <div style={{ padding: '32px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                          <CalendarDays size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
+                          <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No shifts scheduled today</p>
+                        </div>
+                      ) : timelineView === 'dept' ? (
+                        <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(220px,1fr))]">
+                          {deptIds.map(deptId => (
+                            <DeptCard
+                              key={deptId}
+                              deptId={deptId}
+                              deptName={deptGroups[deptId].name}
+                              rows={deptGroups[deptId].rows}
+                              onClick={() => setSelectedDeptId(deptId)}
+                            />
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ borderRadius: 12, overflow: 'hidden', border: '1px solid #E2E8F0' }}>
+                          {renderHourAxis()}
+                          {renderTimelineContent(visibleTimelineRows)}
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {/* Drill-down: single department timeline */}
+                  {selectedDeptId && (
+                    <div style={{ borderRadius: 12, overflow: 'hidden', border: '1px solid #E2E8F0' }}>
+                      {renderHourAxis()}
+                      {renderTimelineContent(selectedDeptRows)}
+                    </div>
+                  )}
+
+                  {/* ── Department legend — only in all-departments view ── */}
+                  {!timelineLoading && deptIds.length > 0 && timelineView === 'global' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 12, paddingTop: 12, borderTop: '1px solid #F1F5F9', flexShrink: 0 }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#94A3B8', marginRight: 4, flexShrink: 0 }}>Departments</span>
+                      {deptIds.map(deptId => {
+                        const color = deptColor(deptId)
+                        const name = deptGroups[deptId]?.name ?? deptId
+                        const count = deptGroups[deptId]?.rows?.length ?? 0
+                        return (
+                          <div key={deptId} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, borderRadius: 999, padding: '4px 10px 4px 6px', background: '#F8FAFC', border: '1px solid #E2E8F0' }}>
+                            <span style={{ width: 10, height: 10, borderRadius: 3, background: color, flexShrink: 0, display: 'inline-block' }} />
+                            <span style={{ fontSize: 12, fontWeight: 600, color: '#334155' }}>{name}</span>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: '#94A3B8' }}>{count}</span>
                           </div>
-                          <span style={{ padding: '3px 8px', borderRadius: 99, background: task.status === 'Complete' ? '#DCFCE7' : task.status === 'Review' ? '#FFEDD5' : task.status === 'In Progress' ? '#DBEAFE' : '#E2E8F0', color: task.status === 'Complete' ? '#15803D' : task.status === 'Review' ? '#C2410C' : task.status === 'In Progress' ? '#1D4ED8' : '#475569', fontSize: '0.7rem', fontWeight: 800, whiteSpace: 'nowrap' }}>
-                            {task.status}
-                          </span>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+
+              </div>
+
+              {/* ── ROW 3: Focus | Team | Live Feed | Tasks (4 equal cols) ─── */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 16, alignItems: 'stretch', flex: 1, minHeight: 0 }}>
+
+                {/* ── COL 1: Focus ── */}
+                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+
+                    {/* Card header */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18, flexShrink: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <Target size={15} style={{ color: '#EA580C' }} />
+                        </div>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Focus</span>
+                      </div>
+                    </div>
+
+                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+                    {taskStatsLoading ? (
+                      <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}><Spinner size={20} dark /></div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+                        {/* Donut chart */}
+                        {(() => {
+                          const total = priorityFocusTasks.length
+                          const RM = 55, SW = 16, CX = 80, CY = 80
+                          const C = 2 * Math.PI * RM
+                          return (
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 20 }}>
+                              {/* SVG donut */}
+                              <div style={{ flexShrink: 0 }}>
+                                <svg width={160} height={160} viewBox="0 0 160 160">
+                                  {total === 0 ? (
+                                    <circle cx={CX} cy={CY} r={RM} fill="none" stroke="#F3F4F6" strokeWidth={SW} />
+                                  ) : (
+                                    focusDonutSegs.map((seg, i) => {
+                                      if (seg.count === 0) return null
+                                      return (
+                                        <circle
+                                          key={i}
+                                          cx={CX} cy={CY} r={RM}
+                                          fill="none"
+                                          stroke={seg.color}
+                                          strokeWidth={SW}
+                                          strokeDasharray={`${seg.frac * C} ${C}`}
+                                          transform={`rotate(${-90 + seg.start * 360} ${CX} ${CY})`}
+                                          strokeLinecap="butt"
+                                        />
+                                      )
+                                    })
+                                  )}
+                                  <text x={CX} y={CY - 10} textAnchor="middle" dominantBaseline="middle" fill="#0F172A" fontSize="24" fontWeight="800" fontFamily="inherit">{total}</text>
+                                  <text x={CX} y={CY + 12} textAnchor="middle" dominantBaseline="middle" fill="#94A3B8" fontSize="11" fontWeight="500" fontFamily="inherit">tasks</text>
+                                </svg>
+                              </div>
+                              {/* Legend */}
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                                {focusDonutSegs.map(seg => (
+                                  <div key={seg.label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <div style={{ width: 10, height: 10, borderRadius: 3, background: seg.color, flexShrink: 0 }} />
+                                    <span style={{ fontSize: 12, color: '#374151', width: 68 }}>{seg.label}</span>
+                                    <span style={{ fontSize: 14, fontWeight: 800, color: seg.count > 0 ? seg.color : '#D1D5DB' }}>{seg.count}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )
+                        })()}
+
+                        {/* Task list */}
+                        {priorityFocusTasks.length === 0 ? (
+                          <div style={{ padding: '32px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                            <Target size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
+                            <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No urgent or high priority tasks</p>
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {priorityFocusTasks.map(task => {
+                              const stageMap: Record<string, { color: string; bg: string; label: string }> = {
+                                'Assigned':    { color: '#64748B', bg: '#F1F5F9', label: 'Assigned' },
+                                'In Progress': { color: '#4F46E5', bg: '#EEF2FF', label: 'In Progress' },
+                                'Review':      { color: '#D97706', bg: '#FFFBEB', label: 'Review' },
+                                'Complete':    { color: '#059669', bg: '#ECFDF5', label: 'Complete' },
+                              }
+                              const stage = stageMap[task.status ?? 'Assigned'] ?? stageMap['Assigned']
+                              const { color: stageColor, bg: stageBg, label: stageLabel } = stage
+                              const isComplete = task.status === 'Complete'
+                              const isExpanded = expandedTaskId === task.id
+                              const pStyle = task.priority === 'Urgent'
+                                ? { bg: '#FEE2E2', color: '#B91C1C', border: '#FECACA' }
+                                : { bg: '#FFEDD5', color: '#C2410C', border: '#FDBA74' }
+                              return (
+                                <div
+                                  key={task.id}
+                                  className="task-item"
+                                  style={{ borderRadius: 12, border: '1px solid #EBEBEB', padding: '10px 12px', background: '#FAFAFA', cursor: 'pointer' }}
+                                  onClick={() => setExpandedTaskId(isExpanded ? null : task.id)}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    {/* Priority badge */}
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, width: 60, height: 24, borderRadius: 8, fontSize: 11, fontWeight: 700, background: pStyle.bg, color: pStyle.color, border: `1px solid ${pStyle.border}` }}>
+                                      {task.priority}
+                                    </span>
+                                    {/* Title */}
+                                    <span style={{ fontSize: 12, fontWeight: 600, color: isComplete ? '#94A3B8' : '#0F172A', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: isComplete ? 'line-through' : 'none' }}>
+                                      {task.title}
+                                    </span>
+                                    {/* Assignee */}
+                                    {task.assignee_name && (
+                                      <span style={{ fontSize: 11, fontWeight: 600, color: '#374151', flexShrink: 0 }}>{task.assignee_name}</span>
+                                    )}
+                                    {/* Status badge */}
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, minWidth: 76, height: 24, borderRadius: 999, fontSize: 11, fontWeight: 600, background: stageBg, color: stageColor }}>
+                                      {stageLabel}
+                                    </span>
+                                  </div>
+                                  {isExpanded && task.assignee_name && task.assigned_user_id && (
+                                    <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #F1F5F9' }}>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          router.push(`/owner/communication?tab=messages&partner_id=${task.assigned_user_id}&prefill=${encodeURIComponent(`Regarding: "${task.title}"`)}`)
+                                        }}
+                                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, borderRadius: 8, border: '1px solid #E2E8F0', background: '#fff', padding: '5px 10px', fontSize: 11, color: '#64748B', cursor: 'pointer' }}
+                                      >
+                                        <MessageCircle size={11} />
+                                        Send Message
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    </div>
+                  </div>
+
+                {/* ── COL 2: Team ── */}
+                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexShrink: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <Users size={15} style={{ color: '#F97316' }} />
+                      </div>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Team</span>
+                    </div>
+                  </div>
+                  <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+                  {timelineLoading ? (
+                    <div style={{ display: 'flex', justifyContent: 'center', padding: '24px 0' }}><Spinner size={16} dark /></div>
+                  ) : todayShiftCount === 0 ? (
+                    <div style={{ padding: '32px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                      <Users size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
+                      <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No one is on shift today</p>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                      {Object.entries(teamByDept).map(([deptId, { name: deptName, rows }]) => (
+                        <div key={deptId}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 10px 6px', borderBottom: '2px solid #374151', marginBottom: 2 }}>
+                            <span style={{ width: 8, height: 8, borderRadius: 2, background: deptColor(deptId), flexShrink: 0, display: 'inline-block' }} />
+                            <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: '#94A3B8' }}>{deptName}</span>
+                          </div>
+                          {rows.map((row, i) => (
+                            <div
+                              key={`${row.user_id}_${i}`}
+                              data-testid="team-member-row"
+                              className="team-row"
+                              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px', borderRadius: 10 }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 32, height: 32, flexShrink: 0, background: row.role === 'Manager' ? '#FFF7ED' : '#F3F4F6', color: row.role === 'Manager' ? '#EA580C' : '#4B5563', borderRadius: 999 }}>
+                                {row.role === 'Manager' ? <UserCog size={15} /> : <UserRound size={15} />}
+                              </div>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <p style={{ fontSize: 12, fontWeight: 600, margin: 0, color: row.role === 'Manager' ? '#EA580C' : '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.full_name}</p>
+                              </div>
+                              <button
+                                onClick={() => router.push(`/owner/communication?tab=messages&partner_id=${row.user_id}`)}
+                                aria-label={`Message ${row.full_name}`}
+                                className="msg-btn"
+                                style={{ flexShrink: 0, cursor: 'pointer', background: 'transparent', border: 'none', padding: 6, borderRadius: 8, color: '#CBD5E1', transition: 'color 0.15s' }}
+                                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = '#F97316' }}
+                                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = '#CBD5E1' }}
+                              >
+                                <MessageCircle size={14} />
+                              </button>
+                            </div>
+                          ))}
                         </div>
                       ))}
                     </div>
                   )}
+                  </div>
                 </div>
-              )}
-              {selectedShift && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 8, alignItems: 'end', padding: 10, border: '1px solid #E5E7EB', borderRadius: 10, background: '#F8FAFC' }}>
-                  <div>
-                    <label style={modalLabelStyle}>Duplicate Date</label>
-                    <input type="date" value={shiftForm.duplicate_shift_date} onChange={event => setShiftForm(prev => ({ ...prev, duplicate_shift_date: event.target.value }))} style={modalInputStyle} />
-                  </div>
-                  <div>
-                    <label style={modalLabelStyle}>Start</label>
-                    <input type="time" value={shiftForm.duplicate_start_time} onChange={event => setShiftForm(prev => ({ ...prev, duplicate_start_time: event.target.value }))} style={modalInputStyle} />
-                  </div>
-                  <div>
-                    <label style={modalLabelStyle}>End</label>
-                    <input type="time" value={shiftForm.duplicate_end_time} onChange={event => setShiftForm(prev => ({ ...prev, duplicate_end_time: event.target.value }))} style={modalInputStyle} />
-                  </div>
-                  <button onClick={handleDuplicateShift} disabled={shiftFormLoading} title="Duplicate shift" style={{ height: 40, width: 42, border: 'none', borderRadius: 8, background: '#111827', color: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: shiftFormLoading ? 'default' : 'pointer', opacity: shiftFormLoading ? 0.65 : 1 }}>
-                    <Copy size={15} />
-                  </button>
-                </div>
-              )}
-              {selectedShift && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 92px auto', gap: 8, alignItems: 'end', padding: 10, border: '1px solid #E5E7EB', borderRadius: 10, background: '#FFFFFF' }}>
-                  <div>
-                    <label style={modalLabelStyle}>Repeat</label>
-                    <select value={shiftForm.recurrence_rule} onChange={event => setShiftForm(prev => ({ ...prev, recurrence_rule: event.target.value as ShiftFormState['recurrence_rule'] }))} style={{ ...modalInputStyle, appearance: 'none', cursor: 'pointer' }}>
-                      <option value="daily">Daily</option>
-                      <option value="weekly">Weekly</option>
-                      <option value="custom">Custom</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label style={modalLabelStyle}>Until</label>
-                    <input type="date" value={shiftForm.recurrence_end_date} onChange={event => setShiftForm(prev => ({ ...prev, recurrence_end_date: event.target.value }))} style={modalInputStyle} />
-                  </div>
-                  <div>
-                    <label style={modalLabelStyle}>Days</label>
-                    <input type="number" min={1} max={31} value={shiftForm.custom_interval_days} onChange={event => setShiftForm(prev => ({ ...prev, custom_interval_days: Number(event.target.value) }))} disabled={shiftForm.recurrence_rule !== 'custom'} style={{ ...modalInputStyle, opacity: shiftForm.recurrence_rule === 'custom' ? 1 : 0.45 }} />
-                  </div>
-                  <button onClick={handleCreateRecurrence} disabled={shiftFormLoading || !shiftForm.recurrence_end_date} title="Create recurring shifts" style={{ height: 40, width: 42, border: 'none', borderRadius: 8, background: '#F97316', color: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: shiftFormLoading || !shiftForm.recurrence_end_date ? 'default' : 'pointer', opacity: shiftFormLoading || !shiftForm.recurrence_end_date ? 0.65 : 1 }}>
-                    <Repeat size={15} />
-                  </button>
-                </div>
-              )}
-              <InlineError message={shiftFormError} />
-            </div>
 
-            <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
-              {selectedShift && (
-                <button
-                  onClick={handleDeleteShift}
-                  disabled={shiftFormLoading}
-                  style={{ padding: '10px 14px', borderRadius: 8, border: '1px solid #FECACA', background: '#FFFFFF', color: '#DC2626', fontWeight: 700, fontSize: '0.875rem', cursor: shiftFormLoading ? 'default' : 'pointer', opacity: shiftFormLoading ? 0.6 : 1 }}
-                >
-                  Delete
-                </button>
-              )}
-              <button
-                onClick={() => { setAssignTarget(null); setSelectedShift(null) }}
-                style={{ flex: 1, padding: '10px 14px', borderRadius: 8, border: '1px solid #E5E7EB', background: '#FFFFFF', color: '#374151', fontWeight: 700, fontSize: '0.875rem', cursor: 'pointer' }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={assignTarget ? handleCreateShift : handleUpdateShift}
-                disabled={shiftFormLoading}
-                style={{ flex: 1, padding: '10px 14px', borderRadius: 8, border: 'none', background: '#F97316', color: '#FFFFFF', fontWeight: 800, fontSize: '0.875rem', cursor: shiftFormLoading ? 'default' : 'pointer', opacity: shiftFormLoading ? 0.65 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
-              >
-                {shiftFormLoading && <Spinner size={14} />}
-                {shiftFormCanOverride ? 'Override Warning' : assignTarget ? 'Assign Shift' : 'Save Changes'}
-              </button>
+                {/* ── COL 3: Live Feed ── */}
+                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }} data-testid="live-feed">
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexShrink: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <Activity size={15} style={{ color: '#F97316' }} />
+                        </div>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Live Feed</span>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10B981', flexShrink: 0, display: 'inline-block', animation: 'dotPulse 1.4s ease-out infinite' }} />
+                      </div>
+                      {activityFeed.length > 0 && (
+                        <button
+                          type="button"
+                          className="mark-btn"
+                          onClick={() => setMarkedFeedItems(new Set(activityFeed.map(event => feedKey(event))))}
+                          style={{ cursor: 'pointer', borderRadius: 999, border: '1px solid #E2E8F0', background: '#fff', padding: '5px 14px', fontSize: 11, fontWeight: 600, color: '#64748B', transition: 'all 0.15s' }}
+                          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#F8FAFC' }}
+                          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '#fff' }}
+                        >
+                          Mark all read
+                        </button>
+                      )}
+                    </div>
+
+                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+                    {activityFeedLoading ? (
+                      <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}><Spinner size={16} dark /></div>
+                    ) : activityFeed.length === 0 ? (
+                      <div style={{ padding: '32px 16px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                        <Activity size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
+                        <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No activity yet today</p>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {activityFeed.map((event) => {
+                          const statusColors: Record<string, { dot: string; bg: string }> = {
+                            'In Progress': { dot: '#4F46E5', bg: '#EEF2FF' },
+                            'Review':      { dot: '#D97706', bg: '#FFFBEB' },
+                            'Complete':    { dot: '#059669', bg: '#ECFDF5' },
+                          }
+                          const matchedStatus = Object.keys(statusColors).find(s => event.description.endsWith(s))
+                          const { dot: dotColor, bg: dotBg } = statusColors[matchedStatus ?? ''] ?? { dot: '#4F46E5', bg: '#EEF2FF' }
+                          const key = feedKey(event)
+                          const isMarked = markedFeedItems.has(key)
+                          return (
+                            <div key={key} className="feed-item" style={{ borderRadius: 14, border: `1px solid ${isMarked ? '#F1F5F9' : '#F1F5F9'}`, background: isMarked ? '#FAFAFA' : '#fff', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                                <div style={{ width: 28, height: 28, borderRadius: 8, background: isMarked ? '#F1F5F9' : dotBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                  <div style={{ width: 7, height: 7, borderRadius: 999, background: isMarked ? '#CBD5E1' : dotColor }} />
+                                </div>
+                                <p style={{ margin: 0, fontSize: 12, color: isMarked ? '#94A3B8' : '#334155', lineHeight: 1.5, flex: 1 }}>{event.description}</p>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <span style={{ fontSize: 10, color: '#94A3B8', fontWeight: 500 }}>{timeAgo(event.timestamp)}</span>
+                                <button
+                                  type="button"
+                                  className="mark-btn"
+                                  onClick={() => setMarkedFeedItems(prev => new Set(prev).add(key))}
+                                  style={{ cursor: isMarked ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4, width: 70, height: 24, borderRadius: 999, border: isMarked ? '1px solid #BBF7D0' : '1px solid #E2E8F0', background: isMarked ? '#F0FDF4' : '#F8FAFC', color: isMarked ? '#16A34A' : '#64748B', fontSize: 11, fontWeight: 600 }}
+                                >
+                                  <CheckCheck size={11} />
+                                  {isMarked ? 'Done' : 'Mark'}
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                    </div>
+                  </div>
+
+                {/* ── COL 4: Tasks ── */}
+                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexShrink: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <ClipboardList size={15} style={{ color: '#F97316' }} />
+                        </div>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Tasks</span>
+                      </div>
+                    </div>
+
+                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+                    {taskStatsLoading ? (
+                      <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}><Spinner size={16} dark /></div>
+                    ) : todayTasks.length === 0 ? (
+                      <div style={{ padding: '32px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                        <ClipboardList size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
+                        <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No tasks assigned today</p>
+                      </div>
+                    ) : (() => {
+                        const medLowTasks = todayTasks.filter(t => t.priority === 'Medium' || t.priority === 'Low')
+                        const pMap: Record<string, { bg: string; color: string; border: string }> = {
+                          Medium: { bg: '#FEF9C3', color: '#A16207', border: '#FDE047' },
+                          Low:    { bg: '#F3F4F6', color: '#6B7280', border: '#E5E7EB' },
+                        }
+                        const sMap: Record<string, { bg: string; color: string }> = {
+                          'Assigned':    { bg: '#F1F5F9', color: '#64748B' },
+                          'In Progress': { bg: '#EEF2FF', color: '#4F46E5' },
+                          'Review':      { bg: '#FFFBEB', color: '#D97706' },
+                          'Complete':    { bg: '#ECFDF5', color: '#059669' },
+                        }
+                        if (medLowTasks.length === 0) return (
+                          <div style={{ padding: '32px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                            <ClipboardList size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
+                            <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No medium or low priority tasks</p>
+                          </div>
+                        )
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {medLowTasks.map(task => {
+                              const isExpanded = expandedTaskId === task.id
+                              const ps = pMap[task.priority ?? ''] ?? { bg: '#F3F4F6', color: '#9CA3AF', border: '#E5E7EB' }
+                              const sc = sMap[task.status ?? 'Assigned'] ?? sMap['Assigned']
+                              return (
+                                <div
+                                  key={task.id}
+                                  data-testid="task-list-item"
+                                  className="task-item"
+                                  style={{ borderRadius: 12, border: '1px solid #EBEBEB', background: '#FAFAFA', padding: '10px 12px', cursor: 'pointer' }}
+                                  onClick={() => setExpandedTaskId(isExpanded ? null : task.id)}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    {/* Priority badge */}
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, width: 60, height: 24, borderRadius: 8, fontSize: 11, fontWeight: 700, background: ps.bg, color: ps.color, border: `1px solid ${ps.border}` }}>
+                                      {task.priority}
+                                    </span>
+                                    {/* Title */}
+                                    <span style={{ fontSize: 12, fontWeight: 600, color: '#0F172A', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                      {task.title}
+                                    </span>
+                                    {/* Assignee */}
+                                    {task.assignee_name && (
+                                      <span style={{ fontSize: 11, fontWeight: 600, color: '#374151', flexShrink: 0 }}>{task.assignee_name}</span>
+                                    )}
+                                    {/* Status badge */}
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, minWidth: 76, height: 24, borderRadius: 999, fontSize: 11, fontWeight: 600, background: sc.bg, color: sc.color }}>
+                                      {task.status ?? 'Assigned'}
+                                    </span>
+                                  </div>
+                                  {isExpanded && (
+                                    <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #F1F5F9' }}>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          if (task.assigned_user_id) {
+                                            router.push(`/owner/communication?tab=messages&partner_id=${task.assigned_user_id}&prefill=${encodeURIComponent(`Regarding: "${task.title}"`)}`)
+                                          }
+                                        }}
+                                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, borderRadius: 8, border: '1px solid #E2E8F0', background: '#fff', padding: '5px 10px', fontSize: 11, color: '#64748B', cursor: 'pointer' }}
+                                      >
+                                        <MessageCircle size={11} />
+                                        Send Message
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )
+                      })()}
+                    </div>
+                  </div>
+
+              </div>
             </div>
-          </div>
+          )}
         </div>
-      )}
+      </main>
 
-      {/* Removal overlay */}
+      {/* ── REMOVAL OVERLAY ───────────────────────────────────────── */}
       {removalOverlay && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: '#FFFFFF', borderRadius: '16px', padding: '40px 48px', boxShadow: '0 8px 48px rgba(0,0,0,0.18)', maxWidth: '460px', textAlign: 'center' }}>
-            <h2 style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827', margin: '0 0 12px' }}>You have been removed</h2>
-            <p style={{ fontSize: '0.9375rem', color: '#6B7280', lineHeight: 1.6, margin: '0 0 20px' }}>
-              You have been removed from <strong style={{ color: '#111827' }}>{removalOverlay.companyName}</strong>. Switching to your other company…
+        <div className="fixed inset-0 z-[200] bg-black/70 backdrop-blur-sm flex items-center justify-center">
+          <div className="bg-white rounded-2xl px-12 py-10 shadow-2xl max-w-md text-center">
+            <h2 className="text-base font-bold text-gray-900 mb-2.5">You have been removed</h2>
+            <p className="text-sm text-gray-500 leading-relaxed mb-5">
+              You were removed from <strong className="text-gray-900">{removalOverlay.companyName}</strong>. Switching to your other company…
             </p>
-            <div style={{ height: 4, background: '#F3F4F6', borderRadius: 2, overflow: 'hidden' }}>
-              <div style={{ height: '100%', background: '#F97316', borderRadius: 2, animation: 'removal-progress 3s linear forwards' }} />
+            <div className="h-1 bg-gray-100 rounded-full overflow-hidden">
+              <div className="h-full w-full rounded-full bg-orange-500 transition-all duration-200" />
             </div>
-            <style>{`@keyframes removal-progress { from { width: 0% } to { width: 100% } }`}</style>
           </div>
         </div>
       )}

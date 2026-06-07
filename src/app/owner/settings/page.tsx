@@ -475,7 +475,7 @@ export default function SettingsPage() {
         <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
           <div>
             <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
-              My Company
+              Settings
             </h1>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>

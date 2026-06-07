@@ -53,6 +53,27 @@ export interface RecurringShiftInput {
   override_clopening?: boolean
 }
 
+export interface BulkShiftAssignmentInput {
+  user_id: string
+  shift_date: string
+  start_time: string
+  end_time: string
+  supervisor_employee_id?: string | null
+}
+
+export interface BulkShiftAssignmentPayload {
+  company_id: string
+  department_id: string
+  created_by: string
+  assignments: BulkShiftAssignmentInput[]
+  override_clopening?: boolean
+}
+
+export interface BulkShiftAssignmentResult {
+  created: Shift[]
+  failed: { user_id: string; shift_date: string; start_time: string; end_time: string; message: string }[]
+}
+
 export interface ClopeningConflict {
   conflicting_shift_id: string
   conflicting_shift_date: string

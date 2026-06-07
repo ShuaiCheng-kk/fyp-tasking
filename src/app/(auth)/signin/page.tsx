@@ -232,8 +232,9 @@ function SignInContent() {
 
           {/* Email field */}
           <div>
-            <label style={labelStyle}>{c.emailLabel}</label>
+            <label htmlFor="signin-email" style={labelStyle}>{c.emailLabel}</label>
             <input
+              id="signin-email"
               type="email"
               placeholder={c.emailPlaceholder}
               value={email}
@@ -246,9 +247,10 @@ function SignInContent() {
 
           {/* Password field */}
           <div>
-            <label style={labelStyle}>{c.passwordLabel}</label>
+            <label htmlFor="signin-password" style={labelStyle}>{c.passwordLabel}</label>
             <div style={{ position: 'relative' }}>
               <input
+                id="signin-password"
                 type={showPassword ? 'text' : 'password'}
                 placeholder={c.passwordPlaceholder}
                 value={password}

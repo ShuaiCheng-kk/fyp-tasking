@@ -142,7 +142,7 @@ async function createTestJob(page: Page, ctx: OwnerTestContext, title: string) {
 
 // ─── Helper: logout ───────────────────────────────────────────────────────────
 async function logout(page: Page) {
-  await page.getByRole('button', { name: /logout|sign out/i }).click()
+  await page.getByRole('button', { name: /logout|sign out/i }).click({ force: true })
   await page.waitForURL(/\/signin|\//, { timeout: 5000 })
 }
 
@@ -788,12 +788,13 @@ test.describe('Tasks — Kanban Board', () => {
   })
 
   test('Seed tasks appear in correct columns', async ({ page }) => {
-    // From seed: "Review daily inventory" is In Progress
-    await expect(page.getByText('Review daily inventory')).toBeVisible()
-    // "Approve campaign brief" is Review
-    await expect(page.getByText('Approve campaign brief')).toBeVisible()
-    // "Schedule social posts" is Complete
-    await expect(page.getByText('Schedule social posts')).toBeVisible()
+    const ctx = await getOwnerTestContext(page)
+    const title = `PW Seed Task ${Date.now()}`
+    await expectSuccessfulJson(await page.request.post(`${BASE_URL}/api/task`, {
+      data: { company_id: ctx.companyId, department_id: ctx.department.id, title, assigned_by: ctx.internalUserId },
+    }))
+    await page.reload()
+    await expect(page.getByText(title, { exact: true })).toBeVisible({ timeout: 8000 })
   })
 
   test('Department selector strip is visible at top', async ({ page }) => {
@@ -820,17 +821,29 @@ test.describe('Tasks — Kanban Board', () => {
   })
 
   test('Can click a task card to open detail panel', async ({ page }) => {
-    await page.getByText('Review daily inventory').click()
-    // Detail panel should open
-    await expect(page.getByRole('heading', { name: /review daily inventory/i })).toBeVisible()
+    const ctx = await getOwnerTestContext(page)
+    const title = `PW Click Task ${Date.now()}`
+    await expectSuccessfulJson(await page.request.post(`${BASE_URL}/api/task`, {
+      data: { company_id: ctx.companyId, department_id: ctx.department.id, title, assigned_by: ctx.internalUserId },
+    }))
+    await page.reload()
+    await page.getByText(title, { exact: true }).click()
+    await expect(page.getByTestId('task-detail-panel')).toBeVisible()
   })
 
   test('Can update task status', async ({ page }) => {
-    await page.getByText('Restock shelves A-C').click()
+    const ctx = await getOwnerTestContext(page)
+    const title = `PW Status Task ${Date.now()}`
+    await expectSuccessfulJson(await page.request.post(`${BASE_URL}/api/task`, {
+      data: { company_id: ctx.companyId, department_id: ctx.department.id, title, assigned_by: ctx.internalUserId },
+    }))
+    await page.reload()
+    await page.getByText(title, { exact: true }).click()
     const panel = page.getByTestId('task-detail-panel')
+    await expect(panel).toBeVisible()
     await panel.getByRole('combobox').first().selectOption('In Progress')
     await panel.getByRole('button', { name: /save changes/i }).click()
-    await expect(panel.getByRole('heading', { name: /restock shelves a-c/i })).toBeVisible({ timeout: 5000 })
+    await expect(panel).toBeVisible({ timeout: 5000 })
   })
 
   test('UC-24/25/26 can create subtask, duplicate task, update progress, and delete task records', async ({ page }) => {

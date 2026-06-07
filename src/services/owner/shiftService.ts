@@ -2,7 +2,7 @@
 // RULE: Business logic only. No HTTP handling. No direct DB access.
 
 import { shiftRepository } from '@/repositories/owner/shiftRepository'
-import { ClopeningConflict, DuplicateShiftInput, RecurringShiftInput, Shift, ShiftInput, ShiftMutationResult, ShiftSnapshot } from '@/types/Shift'
+import { BulkShiftAssignmentPayload, BulkShiftAssignmentResult, ClopeningConflict, DuplicateShiftInput, RecurringShiftInput, Shift, ShiftInput, ShiftMutationResult, ShiftSnapshot } from '@/types/Shift'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 
 const TIMELINE_ROLE_ORDER: Record<string, number> = {
@@ -309,6 +309,72 @@ export const shiftService = {
     }
 
     await shiftRepository.markShiftActionUndone(action.id)
+  },
+
+  async deleteShiftAssignment(assignment_id: string, actor_id?: string): Promise<void> {
+    if (!assignment_id) throw new Error('assignment_id is required')
+    const assignment = await shiftRepository.getAssignmentById(assignment_id)
+    if (!assignment) throw new Error('Shift assignment not found')
+    const before = await getShiftSnapshot(assignment.shift_id)
+    await shiftRepository.deleteAssignmentById(assignment_id)
+    const after = await getShiftSnapshot(assignment.shift_id)
+    await shiftRepository.createShiftActionHistory({
+      company_id: before.shift.company_id,
+      actor_id: actor_id ?? before.shift.created_by,
+      action_type: 'edit',
+      shift_id: assignment.shift_id,
+      before_data: before,
+      after_data: after,
+    })
+  },
+
+  async assignShiftsInBulk(payload: BulkShiftAssignmentPayload): Promise<BulkShiftAssignmentResult> {
+    const { company_id, department_id, created_by, assignments, override_clopening = false } = payload
+    const created: Shift[] = []
+    const failed: BulkShiftAssignmentResult['failed'] = []
+
+    for (const item of assignments) {
+      if (!item.user_id || !item.shift_date || !item.start_time || !item.end_time) {
+        failed.push({ ...item, message: 'Missing required fields' })
+        continue
+      }
+      if (item.start_time >= item.end_time) {
+        failed.push({ ...item, message: 'start_time must be before end_time' })
+        continue
+      }
+      try {
+        const warning = await detectClopeningConflict({
+          user_id: item.user_id,
+          shift_date: item.shift_date,
+          start_time: item.start_time,
+          end_time: item.end_time,
+        })
+        if (warning && !override_clopening) {
+          failed.push({ ...item, message: `CLOPENING_CONFLICT: ${warning.message}` })
+          continue
+        }
+        const shift = await shiftRepository.createShift({
+          company_id,
+          department_id,
+          shift_date: item.shift_date,
+          start_time: item.start_time,
+          end_time: item.end_time,
+          created_by,
+          publication_status: 'draft',
+        })
+        await shiftRepository.createShiftAssignment({
+          shift_id: shift.id,
+          user_id: item.user_id,
+          assigned_by: created_by,
+          supervisor_employee_id: item.supervisor_employee_id ?? null,
+        })
+        created.push(shift)
+      } catch (err) {
+        failed.push({ ...item, message: err instanceof Error ? err.message : 'Failed to assign shift' })
+      }
+    }
+
+    return { created, failed }
   },
 
   async getTimelineShifts(
