@@ -24,6 +24,21 @@ export interface JobPosting {
   industry: string | null
   salary_amount: number | null
   salary_type: string | null   // 'per hour' | 'per day' | 'per month'
+  // Extended fields
+  benefits: string | null
+  urgency: string | null        // 'normal' | 'high' | 'urgent'
+  openings: number | null
+  expires_at: string | null     // ISO date string
+  expiry_preset: string | null  // '7d' | '14d' | '30d' | '60d' | 'custom' | 'none'
+  form_type: string | null      // 'shift' | 'oneoff'
+  // Shift-specific
+  shift_start_time: string | null
+  shift_end_time: string | null
+  shift_days: string[] | null
+  // One-off specific
+  job_date: string | null
+  job_end_date: string | null
+  estimated_hours: string | null
 }
 
 export type CreateJobPostingInput = Pick<
@@ -43,6 +58,18 @@ export type CreateJobPostingInput = Pick<
   | 'industry'
   | 'salary_amount'
   | 'salary_type'
+  | 'benefits'
+  | 'urgency'
+  | 'openings'
+  | 'expires_at'
+  | 'expiry_preset'
+  | 'form_type'
+  | 'shift_start_time'
+  | 'shift_end_time'
+  | 'shift_days'
+  | 'job_date'
+  | 'job_end_date'
+  | 'estimated_hours'
 >
 
 export type UpdateJobPostingInput = Partial<
@@ -57,6 +84,22 @@ export type UpdateJobPostingInput = Partial<
     | 'is_recurring'
     | 'recurrence_interval'
     | 'recurrence_unit'
+    | 'company_name'
+    | 'industry'
+    | 'salary_amount'
+    | 'salary_type'
+    | 'benefits'
+    | 'urgency'
+    | 'openings'
+    | 'expires_at'
+    | 'expiry_preset'
+    | 'form_type'
+    | 'shift_start_time'
+    | 'shift_end_time'
+    | 'shift_days'
+    | 'job_date'
+    | 'job_end_date'
+    | 'estimated_hours'
   >
 >
 

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { Zap, Shield, Star, X, Search, Bookmark, BookmarkCheck, MapPin, Briefcase, Clock, DollarSign } from 'lucide-react';
+import { Zap, Shield, Star, X, Search, Bookmark, BookmarkCheck, MapPin, Briefcase, Clock, DollarSign, Timer } from 'lucide-react';
 import { hero, search, whyTasking, listings } from './content';
 import { JobPosting } from '@/types/recruitment.types';
 
@@ -94,20 +94,33 @@ function recurrenceLabel(job: JobPosting): string | null {
   return `Repeats every ${n === 1 ? u : `${n} ${u}s`}`;
 }
 
-// ─── Closing date heuristic ───────────────────────────────────────────────────
-// There's no expires_at column yet. We show archived_at for closed/archived jobs,
-// and for open jobs we display the updated_at date as "Last updated" instead.
+// ─── Expiry info ─────────────────────────────────────────────────────────────
 
+function expiryInfo(job: JobPosting): {
+  label: string; diffDays: number | null; expired: boolean; urgent: boolean
+} | null {
+  // Closed / archived: show when it was closed
+  if ((job.status === 'closed' || job.status === 'archived') && job.archived_at) {
+    return { label: `Closed ${timeAgo(job.archived_at)}`, diffDays: null, expired: true, urgent: false };
+  }
+  // Open with expires_at
+  if (job.status === 'open' && job.expires_at) {
+    const diffMs = new Date(job.expires_at).getTime() - Date.now();
+    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+    if (diffDays < 0)   return { label: 'Expired',           diffDays, expired: true,  urgent: false };
+    if (diffDays === 0) return { label: 'Expires today',     diffDays, expired: false, urgent: true  };
+    if (diffDays === 1) return { label: 'Expires tomorrow',  diffDays, expired: false, urgent: true  };
+    if (diffDays <= 3)  return { label: `Expires in ${diffDays}d`, diffDays, expired: false, urgent: true  };
+    if (diffDays <= 7)  return { label: `Expires in ${diffDays}d`, diffDays, expired: false, urgent: false };
+    return { label: `Expires ${new Date(job.expires_at).toLocaleDateString('en-SG', { day: 'numeric', month: 'short' })}`, diffDays, expired: false, urgent: false };
+  }
+  return null;
+}
+
+// kept for backward compat — used in detail panel table row
 function closingInfo(job: JobPosting): { label: string; value: string; urgent?: boolean } | null {
   if ((job.status === 'closed' || job.status === 'archived') && job.archived_at) {
     return { label: 'Closed on', value: formatDate(job.archived_at) };
-  }
-  if (job.status === 'open') {
-    // Flag jobs not updated in >30 days as potentially stale
-    const daysSinceUpdate = Math.floor((Date.now() - new Date(job.updated_at).getTime()) / 86400000);
-    if (daysSinceUpdate > 30) {
-      return { label: 'Last updated', value: `${daysSinceUpdate}d ago`, urgent: true };
-    }
   }
   return null;
 }
@@ -163,6 +176,7 @@ function JobDetailPanel({
 }) {
   const { rating, count } = seedRating(job.company_id);
   const recur = recurrenceLabel(job);
+  const expiry = expiryInfo(job);
   const closing = closingInfo(job);
 
   return (
@@ -208,18 +222,30 @@ function JobDetailPanel({
         <Pill><Clock size={11} />Posted {timeAgo(job.created_at)}</Pill>
       </div>
 
-      {/* Closing / stale warning */}
-      {closing && (
+      {/* Expiry / closing notice */}
+      {expiry && (
         <div style={{
           display: 'flex', alignItems: 'center', gap: '8px',
-          background: closing.urgent ? '#FEF3C7' : '#F3F4F6',
-          border: `1px solid ${closing.urgent ? '#FCD34D' : '#E5E7EB'}`,
+          background: expiry.expired ? '#F3F4F6' : expiry.urgent ? '#FEF3C7' : '#FEF3C7',
+          border: `1px solid ${expiry.expired ? '#E5E7EB' : expiry.urgent ? '#FCD34D' : '#FDE68A'}`,
           borderRadius: '8px', padding: '10px 14px',
         }}>
-          <Clock size={14} color={closing.urgent ? '#D97706' : '#6B7280'} />
-          <p style={{ fontFamily: fB, fontSize: '0.8125rem', color: closing.urgent ? '#92400E' : '#6B7280', margin: 0 }}>
+          <Timer size={14} color={expiry.expired ? '#6B7280' : '#D97706'} />
+          <p style={{ fontFamily: fB, fontSize: '0.8125rem', color: expiry.expired ? '#6B7280' : '#92400E', margin: 0, fontWeight: 600 }}>
+            {expiry.label}
+            {job.expires_at && !expiry.expired && ` — ${new Date(job.expires_at).toLocaleDateString('en-SG', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' })}`}
+          </p>
+        </div>
+      )}
+      {closing && !expiry && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '8px',
+          background: '#F3F4F6', border: '1px solid #E5E7EB',
+          borderRadius: '8px', padding: '10px 14px',
+        }}>
+          <Clock size={14} color="#6B7280" />
+          <p style={{ fontFamily: fB, fontSize: '0.8125rem', color: '#6B7280', margin: 0 }}>
             <strong>{closing.label}:</strong> {closing.value}
-            {closing.urgent && ' — listing may be outdated'}
           </p>
         </div>
       )}
@@ -255,6 +281,7 @@ function JobDetailPanel({
             { label: 'Salary',     value: job.salary_amount ? `$${job.salary_amount} ${job.salary_type ?? ''}`.trim() : null },
             { label: 'Posted',     value: formatDate(job.created_at) },
             { label: 'Last updated', value: formatDate(job.updated_at) },
+            { label: 'Expires on', value: job.expires_at ? formatDate(job.expires_at) : null },
             { label: 'Closed on',  value: job.archived_at ? formatDate(job.archived_at) : null },
           ].filter(r => r.value).map(({ label, value }) => (
             <div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '0.875rem' }}>
@@ -322,6 +349,7 @@ function JobCard({
 }) {
   const { rating, count } = seedRating(job.company_id);
   const recur = recurrenceLabel(job);
+  const expiry = expiryInfo(job);
   const closing = closingInfo(job);
 
   return (
@@ -371,20 +399,21 @@ function JobCard({
         {job.description.length > 110 ? job.description.slice(0, 110) + '…' : job.description}
       </p>
 
-      {/* Footer: posted time + closing warning */}
+      {/* Footer: posted time + expiry badge */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
         <p style={{ fontFamily: fB, fontSize: '0.75rem', color: '#9CA3AF', margin: 0 }}>
           Posted {timeAgo(job.created_at)}
         </p>
-        {closing && (
+        {expiry && (
           <span style={{
+            display: 'inline-flex', alignItems: 'center', gap: '4px',
             fontFamily: fB, fontSize: '0.6875rem', fontWeight: 600,
-            color: closing.urgent ? '#92400E' : '#6B7280',
-            background: closing.urgent ? '#FEF3C7' : '#F3F4F6',
-            border: `1px solid ${closing.urgent ? '#FCD34D' : '#E5E7EB'}`,
+            color:      expiry.expired ? '#6B7280' : expiry.urgent ? '#92400E' : '#92400E',
+            background: expiry.expired ? '#F3F4F6' : expiry.urgent ? '#FEF3C7' : '#FEF3C7',
+            border: `1px solid ${expiry.expired ? '#E5E7EB' : expiry.urgent ? '#FCD34D' : '#FDE68A'}`,
             borderRadius: '100px', padding: '2px 8px',
           }}>
-            {closing.label}: {closing.value}
+            <Timer size={10} />{expiry.label}
           </span>
         )}
       </div>

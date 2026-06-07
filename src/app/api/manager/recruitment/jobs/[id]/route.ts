@@ -4,7 +4,6 @@ import { managerRecruitmentService } from '@/services/manager/managerRecruitment
 type RouteContext = { params: Promise<{ id: string }> }
 
 // PATCH /api/manager/recruitment/jobs/:id
-// Body: any subset of job fields + optional { status: 'open' | 'closed' | 'archived' }
 export async function PATCH(req: NextRequest, { params }: RouteContext) {
   try {
     const { id } = await params
@@ -12,22 +11,24 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
 
     const body = await req.json()
 
-    const job = await managerRecruitmentService.updateJob(id, {
-      ...(body.title               !== undefined && { title:               body.title }),
-      ...(body.description         !== undefined && { description:         body.description }),
-      ...(body.requirements        !== undefined && { requirements:        body.requirements }),
-      ...(body.location            !== undefined && { location:            body.location }),
-      ...(body.employment_type     !== undefined && { employment_type:     body.employment_type }),
-      ...(body.is_recurring        !== undefined && { is_recurring:        body.is_recurring }),
-      ...(body.recurrence_interval !== undefined && { recurrence_interval: body.recurrence_interval }),
-      ...(body.recurrence_unit     !== undefined && { recurrence_unit:     body.recurrence_unit }),
-      ...(body.company_name        !== undefined && { company_name:        body.company_name }),
-      ...(body.industry            !== undefined && { industry:            body.industry }),
-      ...(body.salary_amount       !== undefined && { salary_amount:       body.salary_amount }),
-      ...(body.salary_type         !== undefined && { salary_type:         body.salary_type }),
-      ...(body.status              !== undefined && { status:              body.status }),
-    })
+    // Build update object — only include keys that were actually sent
+    const updates: Record<string, any> = {}
+    const fields = [
+      'title', 'description', 'requirements', 'location', 'employment_type',
+      'is_recurring', 'recurrence_interval', 'recurrence_unit',
+      'company_name', 'industry', 'salary_amount', 'salary_type', 'status',
+      // Extended fields
+      'benefits', 'urgency', 'openings', 'expires_at', 'expiry_preset',
+      'shift_start_time', 'shift_end_time', 'shift_days',
+      'job_date', 'job_end_date', 'estimated_hours',
+    ]
+    for (const field of fields) {
+      if (body[field] !== undefined) updates[field] = body[field]
+    }
+    // formType comes in as 'formType' from the client, stored as 'form_type'
+    if (body.formType !== undefined) updates.form_type = body.formType
 
+    const job = await managerRecruitmentService.updateJob(id, updates)
     return NextResponse.json({ success: true, job })
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 400 })

@@ -58,7 +58,7 @@ export function jobToForm(job: JobPosting & Record<string, any>): PostJobForm {
     expiry_preset:   job.expiry_preset ?? 'none',
   }
 
-  if (job.is_recurring || job.formType === 'shift') {
+  if (job.is_recurring || job.form_type === 'shift') {
     return {
       ...base,
       formType: 'shift',

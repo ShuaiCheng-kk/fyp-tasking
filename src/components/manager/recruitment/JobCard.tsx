@@ -9,7 +9,9 @@ import { ActionMenu } from './ActionMenu'
 import { isExpired, expiryLabel, postedAgoLabel } from '@/app/manager/recruitment/utils/recruitment.utils'
 
 interface JobCardProps {
-  job: JobPosting & Record<string, any>
+  job: JobPosting
+  selected?: boolean
+  compact?: boolean
   onEdit: () => void
   onDuplicate: () => void
   onClose: () => void
@@ -17,10 +19,20 @@ interface JobCardProps {
   onDelete: () => void
 }
 
-export function JobCard({ job, onEdit, onDuplicate, onClose, onArchive, onDelete }: JobCardProps) {
-  const isShift    = job.is_recurring || job.formType === 'shift'
-  const expired    = isExpired(job)
-  const expLabel   = expiryLabel(job)
+export function JobCard({
+  job,
+  selected = false,
+  compact = false,
+  onEdit,
+  onDuplicate,
+  onClose,
+  onArchive,
+  onDelete,
+}: JobCardProps) {
+
+  const isShift     = job.is_recurring || job.form_type === 'shift'
+  const expired     = isExpired(job)
+  const expLabel    = expiryLabel(job)
   const postedLabel = postedAgoLabel(job.created_at)
   const expDiffDays = job.expires_at
     ? Math.ceil((new Date(job.expires_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
@@ -51,7 +63,7 @@ export function JobCard({ job, onEdit, onDuplicate, onClose, onArchive, onDelete
                 <span style={{
                   fontSize: '0.7rem', fontWeight: 600, padding: '2px 7px', borderRadius: 999,
                   display: 'flex', alignItems: 'center', gap: '3px',
-                  color:  expired ? '#6B7280' : expDiffDays !== null && expDiffDays <= 3 ? '#DC2626' : '#D97706',
+                  color:      expired ? '#6B7280' : expDiffDays !== null && expDiffDays <= 3 ? '#DC2626' : '#D97706',
                   background: expired ? '#F3F4F6' : expDiffDays !== null && expDiffDays <= 3 ? '#FEF2F2' : '#FEF3C7',
                 }}>
                   <Timer size={10} />{expLabel}
@@ -96,7 +108,7 @@ export function JobCard({ job, onEdit, onDuplicate, onClose, onArchive, onDelete
                   <Users size={11} />{job.openings} openings
                 </span>
               )}
-              {isShift && job.shift_days?.length > 0 && (
+              {isShift && job.shift_days && job.shift_days.length > 0 && (
                 <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.75rem', color: '#1D4ED8', background: '#DBEAFE', padding: '3px 9px', borderRadius: 999, fontWeight: 500 }}>
                   <Calendar size={11} />{job.shift_days.join(', ')}
                 </span>
