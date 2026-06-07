@@ -462,6 +462,7 @@ function TaskCard({
   return (
     <div
       onClick={onClick}
+      className="task-card"
       style={{
         background: '#FFFFFF',
         border: '1px solid #E5E7EB',
@@ -471,11 +472,8 @@ function TaskCard({
         cursor: 'pointer',
         position: 'relative',
         zIndex: menuOpen ? 100 : undefined,
-        transition: 'box-shadow 0.12s',
         marginBottom: 8,
       }}
-      onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 4px 14px rgba(0,0,0,0.09)' }}
-      onMouseLeave={e => { e.currentTarget.style.boxShadow = 'none' }}
     >
       {/* Top row: priority badge + ... menu */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 7 }}>
@@ -541,7 +539,7 @@ function TaskCard({
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
         {assignee ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div style={{ width: 22, height: 22, borderRadius: '50%', background: '#FFF3E8', border: '1.5px solid #F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <div className="task-card-icon" style={{ width: 22, height: 22, borderRadius: '50%', background: '#FFF3E8', border: '1.5px solid #F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
               <UserCog size={12} color="#F97316" strokeWidth={2} />
             </div>
             <span style={{ fontSize: '0.75rem', color: '#374151', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -1149,6 +1147,110 @@ export default function OwnerTasksPage() {
           from { opacity: 0; transform: translateY(-6px); }
           to   { opacity: 1; transform: translateY(0); }
         }
+        @keyframes fadeSlideUp {
+          from { opacity: 0; transform: translateY(14px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes slideInLeft {
+          from { opacity: 0; transform: translateX(-12px); }
+          to   { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes scaleIn {
+          from { opacity: 0; transform: scale(0.95); }
+          to   { opacity: 1; transform: scale(1); }
+        }
+        @keyframes iconBounce {
+          0%, 100% { transform: translateY(0); }
+          40%      { transform: translateY(-3px); }
+          70%      { transform: translateY(-1px); }
+        }
+
+        /* Kanban task cards */
+        .task-card {
+          transition: box-shadow 0.16s ease, transform 0.16s ease, border-color 0.16s ease;
+        }
+        .task-card:hover {
+          box-shadow: 0 6px 22px rgba(0,0,0,0.10), 0 0 0 1.5px rgba(249,115,22,0.15) !important;
+          transform: translateY(-2px);
+        }
+        .task-card:hover .task-card-icon {
+          animation: iconBounce 0.45s ease forwards;
+        }
+
+        /* Kanban column */
+        .kanban-col {
+          transition: box-shadow 0.18s ease;
+        }
+        .kanban-col:hover {
+          box-shadow: 0 4px 18px rgba(0,0,0,0.06);
+        }
+
+        /* Department filter pills */
+        .dept-pill {
+          transition: all 0.13s ease;
+        }
+        .dept-pill:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+
+        /* Member sidebar cards */
+        .member-card {
+          transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
+        }
+        .member-card:hover {
+          box-shadow: 0 4px 14px rgba(0,0,0,0.07);
+          transform: translateX(2px);
+          border-color: #FDBA74 !important;
+        }
+
+        /* Assign task (+) button */
+        .assign-task-btn {
+          transition: background 0.13s ease, transform 0.13s ease, box-shadow 0.13s ease;
+        }
+        .assign-task-btn:hover {
+          background: #FEF3C7 !important;
+          transform: scale(1.12);
+          box-shadow: 0 2px 8px rgba(249,115,22,0.18);
+        }
+
+        /* New Task button */
+        .new-task-btn {
+          transition: background 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease;
+        }
+        .new-task-btn:hover {
+          background: #EA6C0A !important;
+          transform: translateY(-1px);
+          box-shadow: 0 4px 14px rgba(249,115,22,0.30);
+        }
+
+        /* Today button */
+        .today-btn {
+          transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease;
+        }
+        .today-btn:hover {
+          transform: translateY(-1px);
+        }
+
+        /* Staggered entry — kanban columns */
+        .kanban-col:nth-child(1) { animation: scaleIn 0.32s ease both; animation-delay: 0.06s; }
+        .kanban-col:nth-child(2) { animation: scaleIn 0.32s ease both; animation-delay: 0.11s; }
+        .kanban-col:nth-child(3) { animation: scaleIn 0.32s ease both; animation-delay: 0.16s; }
+        .kanban-col:nth-child(4) { animation: scaleIn 0.32s ease both; animation-delay: 0.21s; }
+
+        /* Staggered entry — task cards */
+        .task-card:nth-child(1) { animation: fadeSlideUp 0.26s ease both; animation-delay: 0.04s; }
+        .task-card:nth-child(2) { animation: fadeSlideUp 0.26s ease both; animation-delay: 0.08s; }
+        .task-card:nth-child(3) { animation: fadeSlideUp 0.26s ease both; animation-delay: 0.12s; }
+        .task-card:nth-child(4) { animation: fadeSlideUp 0.26s ease both; animation-delay: 0.16s; }
+        .task-card:nth-child(5) { animation: fadeSlideUp 0.26s ease both; animation-delay: 0.20s; }
+
+        /* Staggered entry — member sidebar */
+        .member-card:nth-child(1) { animation: slideInLeft 0.24s ease both; animation-delay: 0.05s; }
+        .member-card:nth-child(2) { animation: slideInLeft 0.24s ease both; animation-delay: 0.10s; }
+        .member-card:nth-child(3) { animation: slideInLeft 0.24s ease both; animation-delay: 0.15s; }
+        .member-card:nth-child(4) { animation: slideInLeft 0.24s ease both; animation-delay: 0.20s; }
+        .member-card:nth-child(5) { animation: slideInLeft 0.24s ease both; animation-delay: 0.25s; }
       `}</style>
 
       <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
@@ -1187,7 +1289,8 @@ export default function OwnerTasksPage() {
                 </div>
                 <button
                   onClick={() => setSelectedDeptId('')}
-                  style={{ padding: '5px 13px', borderRadius: '99px', border: selectedDeptId === '' ? '2px solid #111827' : '1.5px solid #E5E7EB', background: selectedDeptId === '' ? '#111827' : 'transparent', color: selectedDeptId === '' ? '#FFFFFF' : '#374151', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer', transition: 'all 0.12s', flexShrink: 0 }}
+                  className="dept-pill"
+                  style={{ padding: '5px 13px', borderRadius: '99px', border: selectedDeptId === '' ? '2px solid #111827' : '1.5px solid #E5E7EB', background: selectedDeptId === '' ? '#111827' : 'transparent', color: selectedDeptId === '' ? '#FFFFFF' : '#374151', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer', flexShrink: 0 }}
                 >
                   All
                 </button>
@@ -1195,7 +1298,8 @@ export default function OwnerTasksPage() {
                   <button
                     key={d.id}
                     onClick={() => setSelectedDeptId(selectedDeptId === d.id ? '' : d.id)}
-                    style={{ padding: '5px 13px', borderRadius: '99px', border: selectedDeptId === d.id ? `2px solid ${deptColor(d.id)}` : '1.5px solid #E5E7EB', background: selectedDeptId === d.id ? deptColor(d.id) : 'transparent', color: selectedDeptId === d.id ? '#FFFFFF' : '#374151', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer', transition: 'all 0.12s', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5 }}
+                    className="dept-pill"
+                    style={{ padding: '5px 13px', borderRadius: '99px', border: selectedDeptId === d.id ? `2px solid ${deptColor(d.id)}` : '1.5px solid #E5E7EB', background: selectedDeptId === d.id ? deptColor(d.id) : 'transparent', color: selectedDeptId === d.id ? '#FFFFFF' : '#374151', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5 }}
                   >
                     <span style={{ width: 6, height: 6, borderRadius: '50%', background: selectedDeptId === d.id ? 'rgba(255,255,255,0.7)' : deptColor(d.id), flexShrink: 0 }} />
                     {d.name}
@@ -1207,7 +1311,8 @@ export default function OwnerTasksPage() {
                 <button
                   type="button"
                   onClick={() => setTaskDate(formatDateKey(new Date()))}
-                  style={{ height: 38, padding: '0 14px', border: `1px solid ${TASK_BORDER}`, borderRadius: 8, background: taskDate === formatDateKey(new Date()) ? '#F97316' : '#FFFFFF', color: taskDate === formatDateKey(new Date()) ? '#FFFFFF' : TASK_TEXT, fontSize: 13, fontWeight: 700, cursor: 'pointer', transition: 'background 0.15s, color 0.15s' }}
+                  className="today-btn"
+                  style={{ height: 38, padding: '0 14px', border: `1px solid ${TASK_BORDER}`, borderRadius: 8, background: taskDate === formatDateKey(new Date()) ? '#F97316' : '#FFFFFF', color: taskDate === formatDateKey(new Date()) ? '#FFFFFF' : TASK_TEXT, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
                 >Today</button>
                 <button
                   type="button"
@@ -1224,9 +1329,8 @@ export default function OwnerTasksPage() {
                 {!selectedDeptId && (
                   <button
                     onClick={() => { setNewTaskModal(true); setNewError('') }}
+                    className="new-task-btn"
                     style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: '#F97316', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#fff', cursor: 'pointer', height: 38 }}
-                    onMouseEnter={e => (e.currentTarget.style.background = '#EA6C0A')}
-                    onMouseLeave={e => (e.currentTarget.style.background = '#F97316')}
                   >
                     <Plus size={13} strokeWidth={2.5} /> New Task
                   </button>
@@ -1254,7 +1358,7 @@ export default function OwnerTasksPage() {
                   const busyMembers = deptMembers.filter(m => busyIds.has(m.id))
 
                   const renderMember = (m: Member) => (
-                    <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 8, border: '1px solid #F1F5F9', borderRadius: 12, padding: '9px 10px', background: '#FFFFFF', justifyContent: 'space-between' }}>
+                    <div key={m.id} className="member-card" style={{ display: 'flex', alignItems: 'center', gap: 8, border: '1px solid #F1F5F9', borderRadius: 12, padding: '9px 10px', background: '#FFFFFF', justifyContent: 'space-between' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
                         <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: m.role === 'Manager' ? '#FFF7ED' : '#F3F4F6', color: m.role === 'Manager' ? '#EA580C' : '#4B5563', flexShrink: 0 }}>
                           {m.role === 'Manager' ? <UserCog size={13} /> : <UserRound size={13} />}
@@ -1266,10 +1370,9 @@ export default function OwnerTasksPage() {
                       </div>
                       <button
                         onClick={() => openNewTaskFor(m.id, dept.id)}
+                        className="assign-task-btn"
                         style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, background: '#FFF7ED', border: '1px solid #FDBA74', borderRadius: 7, color: '#EA580C', cursor: 'pointer' }}
                         title="Assign Task"
-                        onMouseEnter={e => { e.currentTarget.style.background = '#FEF3C7' }}
-                        onMouseLeave={e => { e.currentTarget.style.background = '#FFF7ED' }}
                       >
                         <Plus size={13} strokeWidth={2.5} />
                       </button>
@@ -1313,7 +1416,7 @@ export default function OwnerTasksPage() {
                           </svg>
                         </div>
                       )}
-                      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: '#F7F8FA', borderRadius: '12px', overflow: 'hidden', minHeight: 0, border: '1px solid #F0F1F3' }}>
+                      <div className="kanban-col" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: '#F7F8FA', borderRadius: '12px', overflow: 'hidden', minHeight: 0, border: '1px solid #F0F1F3' }}>
                         {/* Column header */}
                         <div style={{ padding: '11px 14px 10px', display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0, borderBottom: '1px solid #ECEEF1' }}>
                           <div style={{ color: cfg.color, display: 'flex', alignItems: 'center' }}>{cfg.icon}</div>
