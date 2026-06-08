@@ -83,8 +83,7 @@ export const invitationService = {
     const existingUser = await authRepository.findByEmail(data.email)
 
     if (existingUser) {
-      const alreadyMember = await companyRepository.findCompanyMember(existingUser.id, data.company_id)
-      if (alreadyMember) {
+      if (existingUser.company_id === data.company_id) {
         throw new Error('This user is already a member of this company.')
       }
       await invitationRepository.insertInboxInvite({
@@ -189,10 +188,7 @@ export const invitationService = {
         phone_number: data.phone_number,
         role: normalizedRole,
         company_id: invitation.company_id,
-        department_id: invitation.department_id,
       })
-
-      await companyRepository.insertCompanyMember(user.id, invitation.company_id, normalizedRole)
 
       console.log('REDEEM DEBUG - role:', normalizedRole)
       console.log('REDEEM DEBUG - department_id:', invitation.department_id)

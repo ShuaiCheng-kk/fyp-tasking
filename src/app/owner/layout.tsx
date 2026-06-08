@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
@@ -42,17 +42,19 @@ export default function OwnerLayout({
       }
     })
 
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (!session) {
-        // Session gone — check if this is a deleted account (no company_members)
-        // by trying /api/user/me which will 401; show deleted modal if so.
-        // Since we have no session we cannot identify the user, so just redirect.
+    async function checkAuth() {
+      // Use the Supabase session as the authoritative source.
+      // createBrowserClient reads from cookies (set by the SSR signin route).
+      const { data: { session } } = await supabase.auth.getSession()
+      const userId = session?.user?.id ?? localStorage.getItem('tasking_user_id')
+
+      if (!userId) {
         router.replace('/')
         return
       }
-      const res = await fetch(`/api/user/me?user_id=${session.user.id}`)
+
+      const res = await fetch(`/api/user/me?user_id=${userId}`)
       if (res.status === 404) {
-        // User's own account no longer exists in DB — account was deleted
         setShowDeletedModal(true)
         setChecking(false)
         return
@@ -62,10 +64,14 @@ export default function OwnerLayout({
       const redirect = ROLE_DASHBOARD[role]
       if (redirect) {
         router.replace(redirect)
+      } else if (!data.success || !role) {
+        router.replace('/')
       } else {
         setChecking(false)
       }
-    })
+    }
+
+    checkAuth()
 
     return () => subscription.unsubscribe()
   }, [router])

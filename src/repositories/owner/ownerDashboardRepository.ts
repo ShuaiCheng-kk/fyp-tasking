@@ -26,20 +26,7 @@ export const ownerDashboardRepository = {
       .select('*')
       .eq('owner_id', owner_id)
     if (error) throw error
-    const owned: Company[] = data || []
-
-    const { data: memberData } = await supabase
-      .from('company_members')
-      .select('companies(*)')
-      .eq('user_id', owner_id)
-    const memberCompanies = ((memberData ?? []) as any[])
-      .map(row => row.companies)
-      .filter(Boolean) as Company[]
-
-    for (const c of memberCompanies) {
-      if (!owned.some((o) => o.id === c.id)) owned.push(c)
-    }
-    return owned
+    return data || []
   },
 
   async countMembersAcrossOwnedCompanies(internal_owner_id: string): Promise<number> {

@@ -78,27 +78,6 @@ export const partnerInboxRepository = {
     return count ?? 0
   },
 
-  async getNotifications(userId: string) {
-    const { data, error } = await supabase
-      .from('notifications')
-      .select('*')
-      .eq('to_user_id', userId)
-      .order('created_at', { ascending: false })
-    if (error) throw error
-    return data
-  },
-
-  async updateNotificationStatus(notificationId: string, status: string) {
-    const { data, error } = await supabase
-      .from('notifications')
-      .update({ status })
-      .eq('id', notificationId)
-      .select()
-      .single()
-    if (error) throw error
-    return data
-  },
-
   async getInvitesByRecipient(recipient_user_id: string) {
     const { data, error } = await supabase
       .from('inbox')

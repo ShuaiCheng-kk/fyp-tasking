@@ -2,7 +2,7 @@
 // RULE: Business logic only. No HTTP handling. No direct DB access.
 
 import { shiftRepository } from '@/repositories/owner/shiftRepository'
-import { BulkShiftAssignmentPayload, BulkShiftAssignmentResult, ClopeningConflict, DuplicateShiftInput, RecurringShiftInput, Shift, ShiftInput, ShiftMutationResult, ShiftSnapshot } from '@/types/Shift'
+import { BulkShiftAssignmentPayload, BulkShiftAssignmentResult, ClopeningConflict, DuplicateShiftInput, RecurringShiftInput, Shift, ShiftInput, ShiftMutationResult } from '@/types/Shift'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 
 const TIMELINE_ROLE_ORDER: Record<string, number> = {
@@ -49,15 +49,6 @@ export const shiftService = {
         supervisor_employee_id: input.supervisor_employee_id ?? null,
       })
     }
-    const after = await getShiftSnapshot(shift.id)
-    await shiftRepository.createShiftActionHistory({
-      company_id: shift.company_id,
-      actor_id: input.created_by,
-      action_type: 'create',
-      shift_id: shift.id,
-      before_data: null,
-      after_data: after,
-    })
     return { shift, warning }
   },
 
@@ -72,7 +63,6 @@ export const shiftService = {
   ): Promise<ShiftMutationResult> {
     const existing = await shiftRepository.getShiftById(id)
     if (!existing) throw new Error('Shift not found')
-    const before = await getShiftSnapshot(id)
     const effectiveShift = { ...existing, ...fields }
     if (effectiveShift.start_time >= effectiveShift.end_time) {
       throw new Error('start_time must be before end_time')
@@ -112,15 +102,6 @@ export const shiftService = {
         })
       }
     }
-    const after = await getShiftSnapshot(id)
-    await shiftRepository.createShiftActionHistory({
-      company_id: shift.company_id,
-      actor_id: assignment?.assigned_by ?? shift.created_by,
-      action_type: 'edit',
-      shift_id: shift.id,
-      before_data: before,
-      after_data: after,
-    })
     return { shift, warning }
   },
 
@@ -195,15 +176,6 @@ export const shiftService = {
       })
     }
 
-    const after = await getShiftSnapshot(shift.id)
-    await shiftRepository.createShiftActionHistory({
-      company_id: shift.company_id,
-      actor_id: input.created_by,
-      action_type: 'create',
-      shift_id: shift.id,
-      before_data: null,
-      after_data: after,
-    })
     return { shift, warning }
   },
 
@@ -274,58 +246,18 @@ export const shiftService = {
     return created
   },
 
-  async deleteShift(id: string, actor_id?: string): Promise<void> {
-    const before = await getShiftSnapshot(id)
-    if (!before) throw new Error('Shift not found')
+  async deleteShift(id: string): Promise<void> {
+    const shift = await shiftRepository.getShiftById(id)
+    if (!shift) throw new Error('Shift not found')
     await shiftRepository.deleteAssignmentsByShiftId(id)
     await shiftRepository.deleteShift(id)
-    await shiftRepository.createShiftActionHistory({
-      company_id: before.shift.company_id,
-      actor_id: actor_id ?? before.shift.created_by,
-      action_type: 'delete',
-      shift_id: before.shift.id,
-      before_data: before,
-      after_data: null,
-    })
   },
 
-  async undoLastShiftAction(company_id: string, actor_id: string): Promise<void> {
-    if (!company_id || !actor_id) throw new Error('company_id and actor_id are required')
-    const action = await shiftRepository.getLastUndoableShiftAction(company_id, actor_id)
-    if (!action) throw new Error('No shift action to undo')
-
-    if (action.action_type === 'create') {
-      await shiftRepository.deleteAssignmentsByShiftId(action.shift_id)
-      await shiftRepository.deleteShift(action.shift_id)
-    } else if (action.action_type === 'edit') {
-      if (!action.before_data) throw new Error('Undo data is missing')
-      await shiftRepository.updateShift(action.shift_id, toShiftUpdateFields(action.before_data.shift))
-      await shiftRepository.deleteAssignmentsByShiftId(action.shift_id)
-      await shiftRepository.restoreShiftAssignments(action.before_data.assignments)
-    } else if (action.action_type === 'delete') {
-      if (!action.before_data) throw new Error('Undo data is missing')
-      await shiftRepository.restoreShift(action.before_data.shift)
-      await shiftRepository.restoreShiftAssignments(action.before_data.assignments)
-    }
-
-    await shiftRepository.markShiftActionUndone(action.id)
-  },
-
-  async deleteShiftAssignment(assignment_id: string, actor_id?: string): Promise<void> {
+  async deleteShiftAssignment(assignment_id: string): Promise<void> {
     if (!assignment_id) throw new Error('assignment_id is required')
     const assignment = await shiftRepository.getAssignmentById(assignment_id)
     if (!assignment) throw new Error('Shift assignment not found')
-    const before = await getShiftSnapshot(assignment.shift_id)
     await shiftRepository.deleteAssignmentById(assignment_id)
-    const after = await getShiftSnapshot(assignment.shift_id)
-    await shiftRepository.createShiftActionHistory({
-      company_id: before.shift.company_id,
-      actor_id: actor_id ?? before.shift.created_by,
-      action_type: 'edit',
-      shift_id: assignment.shift_id,
-      before_data: before,
-      after_data: after,
-    })
   },
 
   async assignShiftsInBulk(payload: BulkShiftAssignmentPayload): Promise<BulkShiftAssignmentResult> {
@@ -432,7 +364,7 @@ export const shiftService = {
       assignedShiftIds.add(shift.id)
 
       if (!rowMap.has(user.id)) {
-        const departmentId = user.department_id ?? shift.department_id
+        const departmentId = (user as any).department_id ?? shift.department_id
         rowMap.set(user.id, {
           user_id: user.id,
           full_name: user.full_name,
@@ -522,16 +454,6 @@ function addDaysToDateKey(dateKey: string, days: number): string {
   return `${year}-${month}-${day}`
 }
 
-async function getShiftSnapshot(shift_id: string): Promise<ShiftSnapshot> {
-  const shift = await shiftRepository.getShiftById(shift_id)
-  if (!shift) throw new Error('Shift not found')
-  const assignments = await shiftRepository.getAssignmentsByShiftIds([shift_id])
-  return {
-    shift,
-    assignments: assignments as unknown as Array<Record<string, unknown>>,
-  }
-}
-
 async function detectClopeningConflict(input: {
   user_id: string
   shift_date: string
@@ -575,22 +497,3 @@ async function detectClopeningConflict(input: {
   return null
 }
 
-function toShiftUpdateFields(
-  shift: Shift,
-): Partial<Omit<Shift, 'id' | 'company_id' | 'created_by' | 'created_at'>> {
-  return {
-    department_id: shift.department_id,
-    title: shift.title,
-    instruction: shift.instruction,
-    shift_date: shift.shift_date,
-    start_time: shift.start_time,
-    end_time: shift.end_time,
-    status: shift.status,
-    publication_status: shift.publication_status,
-    acceptance_deadline_at: shift.acceptance_deadline_at,
-    recurrence_group_id: shift.recurrence_group_id,
-    recurrence_rule: shift.recurrence_rule,
-    source_shift_id: shift.source_shift_id,
-    updated_at: shift.updated_at,
-  }
-}

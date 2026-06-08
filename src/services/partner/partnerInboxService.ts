@@ -82,15 +82,6 @@ export const partnerInboxService = {
     return partnerInboxRepository.insertMessage(fromUserId, toUserId, companyId, content.trim(), senderName)
   },
 
-  async getNotifications(userId: string) {
-    return partnerInboxRepository.getNotifications(userId)
-  },
-
-  async updateNotificationStatus(notificationId: string, status: string) {
-    if (!['accepted', 'rejected'].includes(status)) throw new Error('Invalid status')
-    return partnerInboxRepository.updateNotificationStatus(notificationId, status)
-  },
-
   async getUnreadCount(userId: string, companyId: string | null, lastAnnouncementReadAt?: string | null) {
     const [unreadMessages, unreadAnnouncements, pendingInvitations] = await Promise.all([
       partnerInboxRepository.countUnreadMessages(userId),

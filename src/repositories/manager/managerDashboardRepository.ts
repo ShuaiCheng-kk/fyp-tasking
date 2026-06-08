@@ -21,9 +21,10 @@ export const managerDashboardRepository = {
 
   async findCompaniesByMembership(user_id: string): Promise<Company[]> {
     const { data, error } = await supabase
-      .from('company_members')
-      .select('companies(*)')
-      .eq('user_id', user_id)
+      .from('users')
+      .select('company_id, companies(*)')
+      .eq('id', user_id)
+      .not('company_id', 'is', null)
     if (error) throw new Error(error.message)
     return ((data ?? []) as any[]).map(row => row.companies).filter(Boolean) as Company[]
   },

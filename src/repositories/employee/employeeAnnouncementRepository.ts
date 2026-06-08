@@ -24,17 +24,17 @@ export const employeeAnnouncementRepository = {
       .single()
     if (!mgrDept?.manager_id) return []
 
-    const { data: member } = await supabase
-      .from('company_members')
+    const { data: user } = await supabase
+      .from('users')
       .select('company_id')
-      .eq('user_id', user_id)
+      .eq('id', user_id)
       .single()
-    if (!member?.company_id) return []
+    if (!user?.company_id) return []
 
     const { data, error } = await supabase
       .from('announcements')
       .select('id, title, content, created_at, poster:users!announcements_from_user_id_fkey(full_name)')
-      .eq('company_id', member.company_id)
+      .eq('company_id', user.company_id)
       .eq('from_user_id', mgrDept.manager_id)
       .order('created_at', { ascending: false })
     if (error) throw error

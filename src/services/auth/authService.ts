@@ -34,7 +34,6 @@ export const authService = {
     phone_number: string | null
     role: User['role']
     company_id?: string | null
-    department_id?: string | null
   }): Promise<void> {
     await authRepository.createUser({
       supabase_auth_id: data.user_id,
@@ -43,7 +42,6 @@ export const authService = {
       phone_number: data.phone_number,
       role: data.role,
       company_id: data.company_id ?? null,
-      department_id: data.department_id ?? null,
     })
   },
 
@@ -177,10 +175,6 @@ export const authService = {
         logo_url: data.company_logo_url,
         website: data.company_website,
       })
-
-      console.log('Inserting Owner into company_members...')
-      await companyRepository.insertCompanyMember(user.id, company.id, 'Owner')
-      console.log('Owner inserted into company_members successfully')
 
       console.log('Step 4: Updating company_id...')
       await authRepository.updateCompanyId(user.id, company.id)

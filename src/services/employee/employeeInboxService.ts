@@ -89,18 +89,6 @@ export const employeeInboxService = {
     return employeeInboxRepository.insertMessage(fromUserId, toUserId, companyId, content.trim(), senderName)
   },
 
-  async getNotifications(userId: string) {
-    // employees use same notification system
-    const { supabase } = await import('@/lib/supabase')
-    const { data, error } = await supabase
-      .from('notifications')
-      .select('*')
-      .eq('to_user_id', userId)
-      .order('created_at', { ascending: false })
-    if (error) throw error
-    return data
-  },
-
   async getUnreadCount(userId: string, companyId: string | null, lastAnnouncementReadAt?: string | null) {
     const [unreadMessages, unreadAnnouncements, pendingInvitations] = await Promise.all([
       employeeInboxRepository.countUnreadMessages(userId),

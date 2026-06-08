@@ -88,19 +88,3 @@ export interface ShiftMutationResult {
   warning: ClopeningConflict | null
 }
 
-export interface ShiftSnapshot {
-  shift: Shift
-  assignments: Array<Record<string, unknown>>
-}
-
-export interface ShiftActionHistory {
-  id: string
-  company_id: string
-  actor_id: string
-  action_type: 'create' | 'edit' | 'delete'
-  shift_id: string
-  before_data: ShiftSnapshot | null
-  after_data: ShiftSnapshot | null
-  undone_at: string | null
-  created_at: string
-}

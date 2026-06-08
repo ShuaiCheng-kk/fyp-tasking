@@ -20,6 +20,32 @@ export async function GET(req: NextRequest) {
   }
 }
 
+export async function DELETE(req: NextRequest) {
+  let body: unknown
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
+  }
+
+  const { manager_id, department_id } = body as Record<string, unknown>
+
+  if (!manager_id || typeof manager_id !== 'string') {
+    return NextResponse.json({ success: false, message: 'manager_id is required' }, { status: 400 })
+  }
+  if (!department_id || typeof department_id !== 'string') {
+    return NextResponse.json({ success: false, message: 'department_id is required' }, { status: 400 })
+  }
+
+  try {
+    await ownerTeamService.removeManagerFromDepartment(manager_id, department_id)
+    return NextResponse.json({ success: true })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to remove manager from department'
+    return NextResponse.json({ success: false, message }, { status: 400 })
+  }
+}
+
 export async function PATCH(req: NextRequest) {
   let body: unknown
   try {
