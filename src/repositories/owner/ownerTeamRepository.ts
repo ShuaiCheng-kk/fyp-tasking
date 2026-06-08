@@ -15,18 +15,17 @@ export const ownerTeamRepository = {
 
   async findMembersByCompanyId(company_id: string): Promise<User[]> {
     const { data, error } = await supabase
-      .from('company_members')
-      .select('users(*)')
+      .from('users')
+      .select('*')
       .eq('company_id', company_id)
     if (error) throw new Error(error.message)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return (data || []).map((row: any) => row.users).filter(Boolean) as User[]
+    return (data || []) as User[]
   },
 
-  async findManagersByCompany(company_id: string): Promise<{ id: string; full_name: string; department_id: string | null }[]> {
+  async findManagersByCompany(company_id: string): Promise<{ id: string; full_name: string }[]> {
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, department_id')
+      .select('id, full_name')
       .eq('company_id', company_id)
       .eq('role', 'Manager')
     if (error) throw new Error(error.message)
@@ -35,26 +34,25 @@ export const ownerTeamRepository = {
 
   async findManagersByDepartment(company_id: string, department_id: string): Promise<{ id: string; full_name: string }[]> {
     const { data, error } = await supabase
-      .from('users')
-      .select('id, full_name')
+      .from('manager_departments')
+      .select('manager_id, users!inner(id, full_name)')
       .eq('company_id', company_id)
       .eq('department_id', department_id)
-      .eq('role', 'Manager')
     if (error) throw new Error(error.message)
-    return data || []
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (data || []).map((row: any) => ({ id: row.users.id, full_name: row.users.full_name }))
   },
 
   async findNonOwnerMembersByCompanyId(company_id: string): Promise<{ user_id: string; supabase_auth_id: string | null }[]> {
     const { data, error } = await supabase
-      .from('company_members')
-      .select('user_id, users!inner(supabase_auth_id)')
+      .from('users')
+      .select('id, supabase_auth_id')
       .eq('company_id', company_id)
       .neq('role', 'Owner')
     if (error) throw new Error(error.message)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return (data || []).map((row: any) => ({
-      user_id: row.user_id as string,
-      supabase_auth_id: (row.users?.supabase_auth_id ?? null) as string | null,
+      user_id: row.id as string,
+      supabase_auth_id: (row.supabase_auth_id ?? null) as string | null,
     }))
   },
 
@@ -83,16 +81,6 @@ export const ownerTeamRepository = {
     return byId ?? null
   },
 
-  async removeCompanyMember(user_id: string, company_id: string): Promise<boolean> {
-    const { error, count } = await supabase
-      .from('company_members')
-      .delete({ count: 'exact' })
-      .eq('user_id', user_id)
-      .eq('company_id', company_id)
-    if (error) throw new Error(error.message)
-    return (count ?? 0) > 0
-  },
-
   async nullifyUserCompanyId(user_id: string, company_id: string): Promise<boolean> {
     const { data: existing } = await supabase
       .from('users')
@@ -103,28 +91,11 @@ export const ownerTeamRepository = {
     if (!existing) return false
     const { error } = await supabase
       .from('users')
-      .update({ company_id: null, department_id: null })
+      .update({ company_id: null })
       .eq('id', user_id)
       .eq('company_id', company_id)
     if (error) throw new Error(error.message)
     return true
-  },
-
-  async countMemberCompanies(user_id: string): Promise<number> {
-    const { count, error } = await supabase
-      .from('company_members')
-      .select('*', { count: 'exact', head: true })
-      .eq('user_id', user_id)
-    if (error) throw new Error(error.message)
-    return count ?? 0
-  },
-
-  async deleteAllCompanyMembersByUserId(user_id: string): Promise<void> {
-    const { error } = await supabase
-      .from('company_members')
-      .delete()
-      .eq('user_id', user_id)
-    if (error) throw new Error(error.message)
   },
 
   async deleteUserById(user_id: string): Promise<void> {
@@ -148,14 +119,6 @@ export const ownerTeamRepository = {
       .from('messages')
       .delete()
       .or(`from_user_id.eq.${user_id},to_user_id.eq.${user_id}`)
-    if (error) throw new Error(error.message)
-  },
-
-  async deleteNotificationsByUserId(user_id: string): Promise<void> {
-    const { error } = await supabase
-      .from('notifications')
-      .delete()
-      .or(`to_user_id.eq.${user_id},from_user_id.eq.${user_id}`)
     if (error) throw new Error(error.message)
   },
 
@@ -233,14 +196,6 @@ export const ownerTeamRepository = {
       .delete()
       .eq('manager_id', manager_id)
       .or(`company_id.eq.${company_id},company_id.is.null`)
-    if (error) throw new Error(error.message)
-  },
-
-  async updateUserDepartment(user_id: string, department_id: string | null): Promise<void> {
-    const { error } = await supabase
-      .from('users')
-      .update({ department_id })
-      .eq('id', user_id)
     if (error) throw new Error(error.message)
   },
 

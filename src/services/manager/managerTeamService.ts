@@ -25,9 +25,6 @@ export const managerTeamService = {
   async removeManagerFromDepartment(manager_id: string, department_id: string): Promise<void> {
     const manager = await managerTeamRepository.findUserById(manager_id)
     if (!manager) throw new Error('Manager not found')
-    if (manager.department_id === department_id) {
-      throw new Error('Cannot remove manager from their primary department')
-    }
     await managerTeamRepository.removeManagerDepartment(manager_id, department_id)
   },
 

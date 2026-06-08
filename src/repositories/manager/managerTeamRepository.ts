@@ -5,11 +5,11 @@ export const managerTeamRepository = {
 
   async findMembersByCompanyId(company_id: string): Promise<User[]> {
     const { data, error } = await supabase
-      .from('company_members')
-      .select('users(*)')
+      .from('users')
+      .select('*')
       .eq('company_id', company_id)
     if (error) throw new Error(error.message)
-    return (data || []).map((row: any) => row.users).filter(Boolean) as User[]
+    return (data || []) as User[]
   },
 
   async findUserByAuthIdOrInternalId(ref: string): Promise<User | null> {

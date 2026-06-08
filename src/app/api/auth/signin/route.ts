@@ -69,6 +69,10 @@ export async function POST(req: NextRequest) {
           full_name: user.full_name,
           company_id: user.company_id,
         },
+        session: {
+          access_token: authData.session!.access_token,
+          refresh_token: authData.session!.refresh_token,
+        },
       },
       { status: 200 },
     )

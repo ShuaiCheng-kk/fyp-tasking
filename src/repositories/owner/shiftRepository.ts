@@ -2,7 +2,7 @@
 // RULE: Supabase queries only. No business logic.
 
 import { supabase } from '@/lib/supabase'
-import { Shift, ShiftActionHistory, ShiftInput, ShiftSnapshot } from '@/types/Shift'
+import { Shift, ShiftInput } from '@/types/Shift'
 import { ShiftAssignment } from '@/types/ShiftAssignment'
 import { User } from '@/types/auth.types'
 
@@ -160,14 +160,14 @@ export const shiftRepository = {
 
   async getUsersByIds(
     ids: string[],
-  ): Promise<{ id: string; full_name: string; role: string; department_id: string | null }[]> {
+  ): Promise<{ id: string; full_name: string; role: string }[]> {
     if (ids.length === 0) return []
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, role, department_id')
+      .select('id, full_name, role')
       .in('id', ids)
     if (error) throw new Error(error.message)
-    return (data ?? []) as { id: string; full_name: string; role: string; department_id: string | null }[]
+    return (data ?? []) as { id: string; full_name: string; role: string }[]
   },
 
   async getAssignmentsByShiftIds(ids: string[]): Promise<ShiftAssignment[]> {
@@ -199,51 +199,18 @@ export const shiftRepository = {
     return (data ?? []) as Array<ShiftAssignment & { shifts: Shift | null }>
   },
 
-  async createShiftActionHistory(input: {
-    company_id: string
-    actor_id: string
-    action_type: 'create' | 'edit' | 'delete'
-    shift_id: string
-    before_data: ShiftSnapshot | null
-    after_data: ShiftSnapshot | null
-  }): Promise<void> {
-    const { error } = await supabase
-      .from('shift_action_history')
-      .insert(input)
-    if (error) throw new Error(error.message)
-  },
-
-  async getLastUndoableShiftAction(company_id: string, actor_id: string): Promise<ShiftActionHistory | null> {
+  async getCompanyMembers(company_id: string): Promise<(User & { department_id: string | null })[]> {
     const { data, error } = await supabase
-      .from('shift_action_history')
-      .select('*')
-      .eq('company_id', company_id)
-      .eq('actor_id', actor_id)
-      .is('undone_at', null)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-    if (error) throw new Error(error.message)
-    return (data as ShiftActionHistory | null) ?? null
-  },
-
-  async markShiftActionUndone(id: string): Promise<void> {
-    const { error } = await supabase
-      .from('shift_action_history')
-      .update({ undone_at: new Date().toISOString() })
-      .eq('id', id)
-    if (error) throw new Error(error.message)
-  },
-
-  async getCompanyMembers(company_id: string): Promise<User[]> {
-    const { data, error } = await supabase
-      .from('company_members')
-      .select('users(*)')
+      .from('users')
+      .select('*, manager_departments!manager_departments_manager_id_fkey(department_id), employee_departments(department_id)')
       .eq('company_id', company_id)
     if (error) throw new Error(error.message)
-    return ((data ?? []) as unknown as { users: User | null }[])
-      .map(row => row.users)
-      .filter((user): user is User => Boolean(user))
+    return (data ?? []).map((row: any) => ({
+      ...row,
+      department_id: row.manager_departments?.[0]?.department_id ?? row.employee_departments?.[0]?.department_id ?? null,
+      manager_departments: undefined,
+      employee_departments: undefined,
+    })) as (User & { department_id: string | null })[]
   },
 
   async getDepartmentsByIds(

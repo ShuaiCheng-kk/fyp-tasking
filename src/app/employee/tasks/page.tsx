@@ -86,12 +86,7 @@ function formatShiftOptionLabel(shift: ShiftOption): string {
   return `${date} · ${time} · ${shift.assignee_name}`
 }
 
-const DEPT_COLORS = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#06B6D4', '#EC4899', '#F97316', '#EF4444']
-function deptColor(deptId: string): string {
-  let h = 0
-  for (let i = 0; i < deptId.length; i++) h = deptId.charCodeAt(i) + ((h << 5) - h)
-  return DEPT_COLORS[Math.abs(h) % DEPT_COLORS.length]
-}
+import { deptColor } from '@/lib/deptColor'
 
 // ─── Modal helpers ────────────────────────────────────────────────────────────
 

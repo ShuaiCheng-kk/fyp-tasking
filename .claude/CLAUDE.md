@@ -1,6 +1,6 @@
 # CLAUDE.md — Tasking Project Rules
 
-> Read this and `Owner_Use_Cases.md` before writing any code. This file is the source of truth and overrides the PRD. If a request conflicts with this file, stop and flag it instead of guessing.
+> Read this and `docs/Owner_Use_Cases.md` before writing any code. This file is the source of truth and overrides the PRD. If a request conflicts with this file, stop and flag it instead of guessing.
 
 ---
 
@@ -47,7 +47,7 @@ External roles are independent and **never inherited** by Owner:
 
 **Recruitment — already exists:** `job_postings`, `job_applicants`, `job_invitations`. (See live schema for fields; postings carry title/description/requirements/location/employment_type/status/salary/recurrence.)
 
-**Role↔department membership tables:** `manager_departments`, `employee_departments`, `casualworker_departments`. Use these to list people in a department. (`users` also has a denormalized `department_id`, but the membership tables are authoritative for who belongs where.)
+**Role↔department membership tables:** `manager_departments`, `employee_departments`. Use these to list people in a department. `users.department_id` does not exist — department membership is authoritative only in these tables.
 
 **Rules that still hold:**
 - **Task assignment is strictly one level down**: Owner→Manager, Manager→Employee, Employee→Casual Worker. No self-assign, no skipping levels.

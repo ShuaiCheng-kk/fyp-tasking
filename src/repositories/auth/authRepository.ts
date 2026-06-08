@@ -31,7 +31,6 @@ export const authRepository = {
     phone_number: string | null
     role: User['role']
     company_id?: string | null
-    department_id?: string | null
   }): Promise<User> {
     const { data: user, error } = await supabase
       .from('users')

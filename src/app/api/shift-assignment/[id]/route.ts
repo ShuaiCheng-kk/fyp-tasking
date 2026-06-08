@@ -11,10 +11,8 @@ export async function DELETE(
   const { id } = await params
   if (!id) return NextResponse.json({ success: false, message: 'id is required' }, { status: 400 })
 
-  const actor_id = req.nextUrl.searchParams.get('actor_id') ?? undefined
-
   try {
-    await shiftService.deleteShiftAssignment(id, actor_id)
+    await shiftService.deleteShiftAssignment(id)
     return NextResponse.json({ success: true }, { status: 200 })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to delete shift assignment'

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { ownerInboxService } from '@/services/owner/ownerInboxService'
 import { authRepository as userRepository } from '@/repositories/auth/authRepository'
-import { companyRepository } from '@/repositories/company/companyRepository'
+import { supabase } from '@/lib/supabase'
 
 export async function POST(req: NextRequest) {
   try {
@@ -22,8 +22,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'User not found' }, { status: 404 })
     }
 
-    const existing = await companyRepository.findCompanyMember(user_id, invite.company_id)
-    if (existing) {
+    if (user.company_id === invite.company_id) {
       return NextResponse.json({ success: false, error: 'Already a member of this company' }, { status: 400 })
     }
 
@@ -36,7 +35,10 @@ export async function POST(req: NextRequest) {
     }
     const normalizedRole = roleMap[invite.role?.toLowerCase()] ?? invite.role
 
-    await companyRepository.insertCompanyMember(user_id, invite.company_id, normalizedRole)
+    await supabase
+      .from('users')
+      .update({ company_id: invite.company_id, role: normalizedRole })
+      .eq('id', user_id)
 
     await ownerInboxService.updateInboxStatus(inbox_id, 'accepted')
 

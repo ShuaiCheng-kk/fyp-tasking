@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
@@ -7,29 +7,17 @@ import { Eye, EyeOff } from 'lucide-react';
 import { createBrowserClient } from '@supabase/ssr';
 import { page as c } from './content';
 
-// ─── Design tokens ────────────────────────────────────────────────────────────
-
 const fH = 'var(--font-heading)';
 const fB = 'var(--font-body)';
 
-// ─── Small spinner ─────────────────────────────────────────────────────────────
-
 function Spinner() {
   return (
-    <svg
-      className="animate-spin"
-      width="18"
-      height="18"
-      viewBox="0 0 18 18"
-      style={{ display: 'inline-block' }}
-    >
+    <svg className="animate-spin" width="18" height="18" viewBox="0 0 18 18" style={{ display: 'inline-block' }}>
       <circle cx="9" cy="9" r="7" stroke="rgba(255,255,255,0.35)" strokeWidth="2.5" fill="none" />
       <path d="M9 2a7 7 0 0 1 7 7" stroke="white" strokeWidth="2.5" strokeLinecap="round" fill="none" />
     </svg>
   );
 }
-
-// ─── Logo ─────────────────────────────────────────────────────────────────────
 
 function TaskingLogo() {
   return (
@@ -49,8 +37,6 @@ function TaskingLogo() {
   );
 }
 
-// ─── Role-based redirect map ───────────────────────────────────────────────────
-
 const ROLE_ROUTES: Record<string, string> = {
   'Owner': '/owner/dashboard',
   'Partner': '/partner/dashboard',
@@ -59,8 +45,6 @@ const ROLE_ROUTES: Record<string, string> = {
   'Casual Worker': '/casual/dashboard',
   'Guest User': '/job-board',
 };
-
-// ─── Page ─────────────────────────────────────────────────────────────────────
 
 function SignInContent() {
   const searchParams = useSearchParams();
@@ -86,28 +70,33 @@ function SignInContent() {
     );
 
     try {
-      // Clear any stale session so its SIGNED_OUT event cannot race the new sign-in
-      await supabase.auth.signOut();
-
-      const res = await fetch('/api/auth/signin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email_address: email, password }),
+      // Sign in client-side so session lives in localStorage and is immediately
+      // visible to all subsequent client-side getSession() calls on navigation.
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
       });
-      const data = await res.json();
-      if (!data.success) throw new Error(data.message);
+      if (authError || !authData.user) {
+        const msg = authError?.message?.toLowerCase() ?? '';
+        if (msg.includes('email not confirmed')) throw new Error('email not confirmed');
+        throw new Error('invalid');
+      }
 
-      // API route already signed in server-side and set sb-* cookies.
-      // Store user identifiers for client-side lookups then navigate.
-      const authUid = data.user.auth_id;
+      // Fetch role and company_id from our DB
+      const res = await fetch('/api/user/me?user_id=' + authData.user.id);
+      const data = await res.json();
+      if (!data.success) throw new Error('invalid');
+
+      const role: string = data.user?.role ?? '';
+      const authUid = authData.user.id;
       localStorage.setItem('tasking_user_id', authUid);
       localStorage.removeItem('tasking_company_id');
-      if (data.user.company_id) {
-        localStorage.setItem(`tasking_company_id_${authUid}`, data.user.company_id);
+      if (data.user?.company_id) {
+        localStorage.setItem('tasking_company_id_' + authUid, data.user.company_id);
       }
-      localStorage.setItem('tasking_user_role', data.user.role);
+      localStorage.setItem('tasking_user_role', role);
 
-      const route = ROLE_ROUTES[data.user.role] || '/owner/dashboard';
+      const route = ROLE_ROUTES[role] || '/owner/dashboard';
       window.location.href = route;
     } catch (err) {
       const msg = err instanceof Error ? err.message : '';
@@ -145,34 +134,13 @@ function SignInContent() {
   };
 
   return (
-    <div style={{
-      flex: 1,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      background: '#FFFBF5',
-      padding: '40px 24px',
-    }}>
-      <div className="auth-card" style={{
-        background: '#FFFFFF',
-        border: '1px solid #F0E8D8',
-        borderRadius: '20px',
-        padding: '48px 44px',
-        width: '100%',
-        maxWidth: '440px',
-        boxShadow: '0 4px 32px rgba(0,0,0,0.06)',
-      }}>
+    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FFFBF5', padding: '40px 24px' }}>
+      <div className="auth-card" style={{ background: '#FFFFFF', border: '1px solid #F0E8D8', borderRadius: '20px', padding: '48px 44px', width: '100%', maxWidth: '440px', boxShadow: '0 4px 32px rgba(0,0,0,0.06)' }}>
 
         <TaskingLogo />
 
         <div style={{ textAlign: 'center', marginBottom: '36px' }}>
-          <h1 style={{
-            fontFamily: fH,
-            fontWeight: 700,
-            fontSize: '1.75rem',
-            color: '#1C1917',
-            marginBottom: '8px',
-          }}>
+          <h1 style={{ fontFamily: fH, fontWeight: 700, fontSize: '1.75rem', color: '#1C1917', marginBottom: '8px' }}>
             {c.headline}
           </h1>
           <p style={{ fontFamily: fB, fontSize: '0.9375rem', color: '#78716C' }}>
@@ -181,56 +149,24 @@ function SignInContent() {
         </div>
 
         {isJoined && (
-          <div style={{
-            background: '#F0FDF4',
-            border: '1px solid #BBF7D0',
-            borderRadius: '10px',
-            padding: '12px 16px',
-            fontFamily: fB,
-            fontSize: '0.875rem',
-            color: '#15803D',
-            lineHeight: 1.5,
-            marginBottom: '20px',
-          }}>
+          <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: '10px', padding: '12px 16px', fontFamily: fB, fontSize: '0.875rem', color: '#15803D', lineHeight: 1.5, marginBottom: '20px' }}>
             Your account is ready. Please sign in to continue.
           </div>
         )}
 
         {isConfirmed && (
-          <div style={{
-            background: '#F0FDF4',
-            border: '1px solid #BBF7D0',
-            borderRadius: '10px',
-            padding: '12px 16px',
-            fontFamily: fB,
-            fontSize: '0.875rem',
-            color: '#15803D',
-            lineHeight: 1.5,
-            marginBottom: '20px',
-          }}>
+          <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: '10px', padding: '12px 16px', fontFamily: fB, fontSize: '0.875rem', color: '#15803D', lineHeight: 1.5, marginBottom: '20px' }}>
             Email confirmed! You can now sign in.
           </div>
         )}
 
         {isRemoved && (
-          <div style={{
-            background: '#FEF2F2',
-            border: '1px solid #FECACA',
-            borderRadius: '10px',
-            padding: '12px 16px',
-            fontFamily: fB,
-            fontSize: '0.875rem',
-            color: '#DC2626',
-            lineHeight: 1.5,
-            marginBottom: '20px',
-          }}>
+          <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '10px', padding: '12px 16px', fontFamily: fB, fontSize: '0.875rem', color: '#DC2626', lineHeight: 1.5, marginBottom: '20px' }}>
             Your account has been removed. Please contact your administrator or sign up with a new account.
           </div>
         )}
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-
-          {/* Email field */}
           <div>
             <label htmlFor="signin-email" style={labelStyle}>{c.emailLabel}</label>
             <input
@@ -245,7 +181,6 @@ function SignInContent() {
             />
           </div>
 
-          {/* Password field */}
           <div>
             <label htmlFor="signin-password" style={labelStyle}>{c.passwordLabel}</label>
             <div style={{ position: 'relative' }}>
@@ -262,78 +197,34 @@ function SignInContent() {
               <button
                 type="button"
                 onClick={() => setShowPassword((v) => !v)}
-                style={{
-                  position: 'absolute',
-                  right: '14px',
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  background: 'none',
-                  border: 'none',
-                  cursor: 'pointer',
-                  color: '#9CA3AF',
-                  display: 'flex',
-                  alignItems: 'center',
-                  padding: 0,
-                }}
+                style={{ position: 'absolute', right: '14px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', display: 'flex', alignItems: 'center', padding: 0 }}
               >
                 {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
               </button>
             </div>
             <div style={{ textAlign: 'right', marginTop: '8px' }}>
-              <Link
-                href={c.forgotPasswordHref}
-                style={{ fontFamily: fB, fontSize: '0.875rem', color: '#F97316', fontWeight: 500 }}
-              >
+              <Link href={c.forgotPasswordHref} style={{ fontFamily: fB, fontSize: '0.875rem', color: '#F97316', fontWeight: 500 }}>
                 {c.forgotPassword}
               </Link>
             </div>
           </div>
 
-          {/* Error banner */}
           {showError && (
-            <div style={{
-              background: '#FEF2F2',
-              border: '1px solid #FECACA',
-              borderRadius: '10px',
-              padding: '12px 16px',
-              fontFamily: fB,
-              fontSize: '0.875rem',
-              color: '#DC2626',
-              lineHeight: 1.5,
-            }}>
+            <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '10px', padding: '12px 16px', fontFamily: fB, fontSize: '0.875rem', color: '#DC2626', lineHeight: 1.5 }}>
               {errorMessage}
             </div>
           )}
 
-          {/* Submit button */}
           <button
             type="submit"
             disabled={isLoading}
             className="btn-press"
-            style={{
-              width: '100%',
-              background: '#F97316',
-              color: '#FFFFFF',
-              padding: '14px',
-              borderRadius: '10px',
-              fontFamily: fB,
-              fontWeight: 700,
-              fontSize: '0.9375rem',
-              border: 'none',
-              cursor: isLoading ? 'default' : 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '8px',
-              opacity: isLoading ? 0.85 : 1,
-              transition: 'opacity 0.15s',
-            }}
+            style={{ width: '100%', background: '#F97316', color: '#FFFFFF', padding: '14px', borderRadius: '10px', fontFamily: fB, fontWeight: 700, fontSize: '0.9375rem', border: 'none', cursor: isLoading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', opacity: isLoading ? 0.85 : 1, transition: 'opacity 0.15s' }}
           >
             {isLoading ? <><Spinner /> Signing in…</> : c.submitButton}
           </button>
         </form>
 
-        {/* Get started link */}
         <p style={{ marginTop: '24px', textAlign: 'center', fontFamily: fB, fontSize: '0.9375rem', color: '#78716C' }}>
           Don&apos;t have an account?{' '}
           <Link href="/get-started" style={{ color: '#F97316', fontWeight: 600 }}>
