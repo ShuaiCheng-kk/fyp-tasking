@@ -1,7 +1,7 @@
 import { companyRepository } from '@/repositories/company/companyRepository'
 import { departmentRepository } from '@/repositories/department/departmentRepository'
 import { authRepository } from '@/repositories/auth/authRepository'
-import { supabaseAdmin } from '@/lib/supabaseAdmin'
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
 import { Company, } from '@/types/company.types'
 import { Department } from '@/types/department.types'
 import { User } from '@/types/auth.types'
@@ -43,7 +43,6 @@ export const companyService = {
       website: data.website,
     })
     await authRepository.updateCompanyId(internalOwnerId, company.id)
-    await companyRepository.insertCompanyMember(internalOwnerId, company.id, 'Owner')
 
     return company
   },
@@ -80,24 +79,29 @@ export const companyService = {
   },
 
   async getManagersByDepartment(company_id: string, department_id: string): Promise<{ id: string; full_name: string }[]> {
-    const { data, error } = await (await import('@/lib/supabase')).supabase
-      .from('users')
-      .select('id, full_name')
+    const { supabase } = await import('@/lib/supabase')
+    const { data, error } = await supabase
+      .from('manager_departments')
+      .select('manager_id, users!inner(id, full_name)')
       .eq('company_id', company_id)
       .eq('department_id', department_id)
-      .eq('role', 'Manager')
     if (error) throw new Error(error.message)
-    return data || []
+    return (data || []).map((row: any) => ({ id: row.users.id, full_name: row.users.full_name }))
   },
 
   async getAllManagersByCompany(company_id: string): Promise<{ id: string; full_name: string; department_id: string | null }[]> {
-    const { data, error } = await (await import('@/lib/supabase')).supabase
+    const { supabase } = await import('@/lib/supabase')
+    const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, department_id')
+      .select('id, full_name, manager_departments!manager_departments_manager_id_fkey(department_id)')
       .eq('company_id', company_id)
       .eq('role', 'Manager')
     if (error) throw new Error(error.message)
-    return data || []
+    return (data || []).map((row: any) => ({
+      id: row.id,
+      full_name: row.full_name,
+      department_id: row.manager_departments?.[0]?.department_id ?? null,
+    }))
   },
 
   async getCompaniesByOwner(owner_id: string): Promise<Company[]> {
@@ -166,26 +170,13 @@ export const companyService = {
     const nonOwnerMembers = await companyRepository.findNonOwnerMembersByCompanyId(company_id)
     console.log(`[deleteCompany] Step 1: found ${nonOwnerMembers.length} non-Owner members`)
 
-    console.log(`[deleteCompany] Step 2: checking remaining memberships for each non-Owner member`)
-    const membersForFullDeletion: { user_id: string; supabase_auth_id: string | null }[] = []
-    for (const member of nonOwnerMembers) {
-      const remaining = await companyRepository.countMemberCompanies(member.user_id)
-      const companiesExcludingThis = remaining - 1
-      console.log(`[deleteCompany] Step 2: user ${member.user_id} has ${companiesExcludingThis} other companies`)
-      if (companiesExcludingThis === 0) {
-        membersForFullDeletion.push(member)
-      }
-    }
-    console.log(`[deleteCompany] Step 2: ${membersForFullDeletion.length} members marked for full deletion`)
+    const membersForFullDeletion = nonOwnerMembers
 
     console.log(`[deleteCompany] Step 3: deleting inbox records for company ${company_id}`)
     await companyRepository.deleteInboxByCompanyId(company_id)
 
     console.log(`[deleteCompany] Step 3: deleting announcements for company ${company_id}`)
     await companyRepository.deleteAnnouncementsByCompanyId(company_id)
-
-    console.log(`[deleteCompany] Step 3: deleting notifications for company ${company_id}`)
-    await companyRepository.deleteNotificationsByCompanyId(company_id)
 
     console.log(`[deleteCompany] Step 3: deleting messages for company ${company_id}`)
     await companyRepository.deleteMessagesByCompanyId(company_id)
@@ -196,19 +187,16 @@ export const companyService = {
     console.log(`[deleteCompany] Step 3: deleting invitation_code for company ${company_id}`)
     await companyRepository.deleteInvitationCodeByCompanyId(company_id)
 
-    console.log(`[deleteCompany] Step 3: deleting company_members for company ${company_id}`)
-    await companyRepository.deleteCompanyMembersByCompanyId(company_id)
-
     console.log(`[deleteCompany] Step 3: deleting departments for company ${company_id}`)
     await companyRepository.deleteDepartmentsByCompanyId(company_id)
 
-    console.log(`[deleteCompany] Step 4: fully deleting ${membersForFullDeletion.length} members with no other companies`)
+    console.log(`[deleteCompany] Step 4: fully deleting ${membersForFullDeletion.length} members`)
     for (const member of membersForFullDeletion) {
       console.log(`[deleteCompany] Step 4: deleting user ${member.user_id}`)
       await authRepository.deleteById(member.user_id)
       if (member.supabase_auth_id) {
         console.log(`[deleteCompany] Step 4: deleting auth user ${member.supabase_auth_id}`)
-        await supabaseAdmin.auth.admin.deleteUser(member.supabase_auth_id)
+        await getSupabaseAdmin().auth.admin.deleteUser(member.supabase_auth_id)
       }
     }
 
@@ -243,7 +231,6 @@ export const companyService = {
       logo_url: data.logo_url,
       website: data.website,
     })
-    await companyRepository.insertCompanyMember(internalOwnerId, company.id, 'Owner')
     for (const deptName of data.departments.filter((d) => d.trim())) {
       await departmentRepository.createDepartment({ name: deptName.trim(), company_id: company.id })
     }

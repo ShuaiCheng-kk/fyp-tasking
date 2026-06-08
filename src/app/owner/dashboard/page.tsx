@@ -7,7 +7,7 @@ import {
   Users, ClipboardList, Timer,
   MoreHorizontal, ChevronLeft, Check, Activity, MessageCircle,
   UserRound, UserCog, CheckCheck, SlidersHorizontal,
-  CalendarDays, Target,
+  CalendarDays, Target, Crown,
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
@@ -88,12 +88,7 @@ function formatDateKey(date: Date): string {
   return `${year}-${month}-${day}`
 }
 
-const DEPT_COLORS = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#06B6D4', '#EC4899', '#F97316', '#EF4444']
-function deptColor(deptId: string): string {
-  let h = 0
-  for (let i = 0; i < deptId.length; i++) h = deptId.charCodeAt(i) + ((h << 5) - h)
-  return DEPT_COLORS[Math.abs(h) % DEPT_COLORS.length]
-}
+import { deptColor } from '@/lib/deptColor'
 
 function Spinner({ size = 16, dark = false }: { size?: number; dark?: boolean }) {
   return (
@@ -897,49 +892,18 @@ export default function OwnerDashboard() {
             <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#F97316', marginBottom: 4 }}>
               {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
             </p>
-            {dashboardRole !== 'Manager' && companies.length > 1 ? (
-              <div ref={dropdownRef} className="relative">
-                <button
-                  onClick={() => setDropdownOpen(o => !o)}
-                  className="flex cursor-pointer items-center gap-2 border-0 bg-transparent p-0 font-heading text-3xl font-bold tracking-tight text-gray-950"
-                >
-                  {companyName ? `Today's Overview for ${companyName}` : "Today's Overview"}
-                  <ChevronDown size={18} strokeWidth={2.5} className={`mt-1 text-gray-400 transition-transform duration-150 ${dropdownOpen ? 'rotate-180' : ''}`} />
-                </button>
-                {dropdownOpen && (
-                  <div className="absolute left-0 top-[calc(100%+8px)] z-50 min-w-[200px] rounded-xl border border-gray-100 bg-white p-1.5 shadow-lg">
-                    {companies.map(c => (
-                      <button
-                        key={c.id}
-                        type="button"
-                        onClick={() => {
-                          if (!userId) return
-                          localStorage.setItem(`tasking_company_id_${userId}`, c.id)
-                          localStorage.setItem(`tasking_last_company_name_${c.id}`, c.name)
-                          setDropdownOpen(false); setCompanyId(c.id); setCompanyName(c.name); setCurrentPlan(c.plan || 'Free')
-                        }}
-                        className={`w-full cursor-pointer rounded-lg border-0 px-3 py-2 text-left text-sm ${c.id === companyId ? 'bg-orange-50 font-semibold text-orange-600' : 'bg-transparent font-normal text-gray-700'}`}
-                      >
-                        {c.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
-                {companyName ? `Today's Overview for ${companyName}` : "Today's Overview"}
-              </h1>
-            )}
+            <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
+              {companyName ? `Today's Overview for ${companyName}` : "Today's Overview"}
+            </h1>
           </div>
 
           {/* Right: user + plan */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
             {ownerName && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: '#fff', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
-                <div style={{ width: 26, height: 26, borderRadius: 999, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: '#fff' }}>{ownerName.charAt(0).toUpperCase()}</span>
-                </div>
+                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: '#0F172A', color: '#FFFFFF', flexShrink: 0 }}>
+                  <Crown size={13} />
+                </span>
                 <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{ownerName}</span>
               </div>
             )}

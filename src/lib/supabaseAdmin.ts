@@ -13,4 +13,3 @@ export function getSupabaseAdmin() {
   return instance
 }
 
-export const supabaseAdmin = getSupabaseAdmin()

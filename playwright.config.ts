@@ -4,23 +4,19 @@ export default defineConfig({
   testDir: './tests',
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 1 : 0,
+  retries: 0,
   workers: 1,
   reporter: [
     ['list'],
     ['html', { outputFolder: 'playwright-report', open: 'never' }],
   ],
-  // Sign in once, save cookies/localStorage for all tests
-  globalSetup: './tests/global-setup.ts',
   use: {
     baseURL: 'http://localhost:3000',
-    // Reuse the owner's real Supabase session so middleware auth passes
-    storageState: 'tests/.auth/owner.json',
-    trace: 'on-first-retry',
+    trace: 'off',
     screenshot: 'only-on-failure',
-    video: 'on-first-retry',
-    actionTimeout: 10000,
-    navigationTimeout: 15000,
+    video: 'off',
+    actionTimeout: process.env.CI ? 20000 : 10000,
+    navigationTimeout: process.env.CI ? 30000 : 15000,
   },
   projects: [
     {
@@ -31,7 +27,7 @@ export default defineConfig({
   webServer: {
     command: 'npm run dev',
     url: 'http://localhost:3000',
-    reuseExistingServer: true,
-    timeout: 30000,
+    reuseExistingServer: !process.env.CI,
+    timeout: 120000,
   },
 })

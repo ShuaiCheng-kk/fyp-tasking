@@ -6,7 +6,7 @@ import { createPortal } from 'react-dom'
 import {
   Plus, X, ChevronDown, Calendar, AlertCircle,
   CheckCircle, Clock, Eye, Layers, Users, MoreHorizontal,
-  Copy, UserCog, UserRound, Pencil, Trash2, CalendarDays, ChevronLeft, ChevronRight,
+  Copy, Crown, UserCog, UserRound, Pencil, Trash2, CalendarDays, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
@@ -193,12 +193,7 @@ function formatShiftOptionLabel(shift: ShiftOption): string {
   return `${date} · ${time} · ${shift.assignee_name}`
 }
 
-const DEPT_COLORS = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#06B6D4', '#EC4899', '#F97316', '#EF4444']
-function deptColor(deptId: string): string {
-  let h = 0
-  for (let i = 0; i < deptId.length; i++) h = deptId.charCodeAt(i) + ((h << 5) - h)
-  return DEPT_COLORS[Math.abs(h) % DEPT_COLORS.length]
-}
+import { deptColor } from '@/lib/deptColor'
 function deptCardBg(deptId: string): string {
   const hex = deptColor(deptId)
   const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16)
@@ -1265,9 +1260,9 @@ export default function OwnerTasksPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {ownerName && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: '#fff', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
-                <div style={{ width: 26, height: 26, borderRadius: 999, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: '#fff' }}>{ownerName.charAt(0).toUpperCase()}</span>
-                </div>
+                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: '#0F172A', color: '#FFFFFF', flexShrink: 0 }}>
+                  <Crown size={13} />
+                </span>
                 <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{ownerName}</span>
               </div>
             )}
