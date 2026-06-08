@@ -5,6 +5,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { attendanceService } from '@/services/owner/attendanceService'
 import { AttendanceOwnerStatus, AttendanceRequestStatus } from '@/types/Attendance'
 
+// CHANGE TYPE: Code only
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const company_id = searchParams.get('company_id')
@@ -43,6 +45,18 @@ export async function PATCH(req: NextRequest) {
   const action = b.action
 
   try {
+    if (action === 'manager_review') {
+      if (typeof b.id !== 'string' || typeof b.manager_id !== 'string') {
+        return NextResponse.json({ success: false, message: 'id and manager_id are required' }, { status: 400 })
+      }
+      const record = await attendanceService.managerReviewAttendance({
+        id: b.id,
+        manager_id: b.manager_id,
+        manager_notes: (b.manager_notes as string | null) ?? null,
+      })
+      return NextResponse.json({ success: true, record })
+    }
+
     if (action === 'final_review') {
       if (typeof b.id !== 'string' || typeof b.owner_id !== 'string' || typeof b.decision !== 'string') {
         return NextResponse.json({ success: false, message: 'id, owner_id and decision are required' }, { status: 400 })

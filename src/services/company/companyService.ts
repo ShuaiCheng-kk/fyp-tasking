@@ -69,6 +69,12 @@ export const companyService = {
   },
 
   async deleteDepartment(department_id: string): Promise<void> {
+    const supabase = getSupabaseAdmin()
+    // Remove membership records so members no longer reference this department
+    await Promise.all([
+      supabase.from('manager_departments').delete().eq('department_id', department_id),
+      supabase.from('employee_departments').delete().eq('department_id', department_id),
+    ])
     await departmentRepository.deleteById(department_id)
   },
 

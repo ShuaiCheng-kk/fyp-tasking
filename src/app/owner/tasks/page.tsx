@@ -1278,9 +1278,9 @@ export default function OwnerTasksPage() {
             <div style={{ padding: '14px 20px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, gap: 12, flexWrap: 'wrap' }}>
               {/* Dept pills */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#6B7280', flexShrink: 0 }}>
-                  <Users size={13} />
-                  <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>Department:</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                  <Users size={15} style={{ color: '#F97316' }} />
+                  <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Department:</span>
                 </div>
                 <button
                   onClick={() => setSelectedDeptId('')}
@@ -1289,7 +1289,7 @@ export default function OwnerTasksPage() {
                 >
                   All
                 </button>
-                {departments.map(d => (
+                {[...departments].sort((a, b) => a.name.localeCompare(b.name)).map(d => (
                   <button
                     key={d.id}
                     onClick={() => setSelectedDeptId(selectedDeptId === d.id ? '' : d.id)}

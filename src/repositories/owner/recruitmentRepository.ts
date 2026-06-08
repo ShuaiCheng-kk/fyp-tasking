@@ -165,6 +165,19 @@ export const recruitmentRepository = {
     }))
   },
 
+  async getClosedPostingsByDateRange(company_id: string, date_from: string, date_to: string): Promise<JobPosting[]> {
+    const { data, error } = await supabase
+      .from('job_postings')
+      .select('*')
+      .eq('company_id', company_id)
+      .in('status', ['closed', 'archived'])
+      .gte('created_at', `${date_from}T00:00:00`)
+      .lte('created_at', `${date_to}T23:59:59`)
+      .order('created_at', { ascending: false })
+    if (error) throw new Error(error.message)
+    return (data ?? []) as JobPosting[]
+  },
+
   async updateCasualWorkerStatus(user_id: string, worker_status: 'active' | 'inactive' | 'blocked'): Promise<void> {
     const { error } = await supabase
       .from('users')

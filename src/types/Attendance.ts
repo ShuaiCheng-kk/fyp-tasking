@@ -34,7 +34,14 @@ export interface AttendanceRecordUpdate {
   owner_reviewed_at?: string | null
   owner_adjusted_clock_in_time?: string | null
   owner_adjusted_clock_out_time?: string | null
+  manager_notes?: string | null
   status?: string
+}
+
+export interface AttendanceManagerReviewInput {
+  id: string
+  manager_id: string
+  manager_notes: string | null
 }
 
 export interface AttendanceReviewInput {

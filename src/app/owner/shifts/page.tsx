@@ -1353,7 +1353,7 @@ export default function OwnerShiftsPage() {
       if (!data.success) throw new Error(data.message || 'Failed to delete department')
       setDepartmentModal(null)
       setActiveDepartment(null)
-      await Promise.all([fetchAssignmentData(companyId, true), refreshShiftData()])
+      await Promise.all([fetchAssignmentData(companyId, true), refreshShiftData(), fetchTimeline(companyId, timelineDate)])
     } catch (err) {
       setDepartmentActionError(err instanceof Error ? err.message : 'Failed to delete department')
     } finally {
@@ -1899,10 +1899,15 @@ export default function OwnerShiftsPage() {
 
         <section style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, flexWrap: 'wrap', flexShrink: 0 }}>
-            <div>
-              <h2 style={{ margin: 0, color: TEXT_DARK, fontSize: '1.12rem', fontWeight: 900 }}>Shift Timeline</h2>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <CalendarDays size={15} style={{ color: '#F97316' }} />
+                </div>
+                <h2 style={{ margin: 0, color: '#0F172A', fontSize: 14, fontWeight: 700, letterSpacing: '-0.2px' }}>Shift Timeline</h2>
+              </div>
               {timelineDeleteError ? (
-                <p style={{ margin: '4px 0 0', color: '#DC2626', fontSize: 12, fontWeight: 700 }}>{timelineDeleteError}</p>
+                <p style={{ margin: 0, color: '#DC2626', fontSize: 12, fontWeight: 700 }}>{timelineDeleteError}</p>
               ) : null}
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
