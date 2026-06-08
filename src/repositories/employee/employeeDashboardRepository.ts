@@ -32,40 +32,18 @@ export const employeeDashboardRepository = {
     }
   },
 
-  async getAssignedWork(user_id: string): Promise<
-    {
-      id: string
-      shift_id: string
-      title: string
-      instruction: string | null
-      shift_date: string
-      start_time: string
-      end_time: string
-      assignment_status: string
-      casual_worker_name: string
-      casual_worker_email: string
-      manager_name: string
-      manager_email: string
-    }[]
-  > {
+  async getAssignedWork(user_id: string) {
     const { data, error } = await supabase
       .from('shift_assignments')
       .select(`
         id,
         shift_id,
+        user_id,
+        assigned_cw_id,
         assignment_status,
-
-        casual_worker:users!shift_assignments_user_id_fkey (
-          full_name,
-          email_address
-        ),
-
-        assigned_by_user:users!shift_assignments_assigned_by_fkey (
-          full_name,
-          email_address
-        ),
-
-        shifts (
+        assigned_by,
+        created_at,
+        shifts!inner (
           title,
           instruction,
           shift_date,
@@ -73,30 +51,67 @@ export const employeeDashboardRepository = {
           end_time
         )
       `)
-      .eq('supervisor_employee_id', user_id)
+      .eq('user_id', user_id)
       .order('created_at', { ascending: false })
 
     if (error) {
       throw new Error(error.message)
     }
 
-    return (data ?? []).map((row: any) => ({
-      id: row.id,
-      shift_id: row.shift_id,
+    const assignedByIds = [
+      ...new Set((data ?? []).map((row: any) => row.assigned_by).filter(Boolean)),
+    ]
 
-      title: row.shifts?.title ?? 'Untitled Shift',
-      instruction: row.shifts?.instruction ?? null,
-      shift_date: row.shifts?.shift_date ?? '',
-      start_time: row.shifts?.start_time ?? '',
-      end_time: row.shifts?.end_time ?? '',
+    const assignedCwIds = [
+      ...new Set((data ?? []).map((row: any) => row.assigned_cw_id).filter(Boolean)),
+    ]
 
-      assignment_status: row.assignment_status ?? 'assigned',
+    const { data: assignedByUsers } = assignedByIds.length
+      ? await supabase
+          .from('users')
+          .select('id, full_name, email_address')
+          .in('id', assignedByIds)
+      : { data: [] }
 
-      casual_worker_name: row.casual_worker?.full_name ?? 'Not assigned',
-      casual_worker_email: row.casual_worker?.email_address ?? 'No email',
+    const { data: assignedCwUsers } = assignedCwIds.length
+      ? await supabase
+          .from('users')
+          .select('id, full_name, email_address, phone_number')
+          .in('id', assignedCwIds)
+      : { data: [] }
 
-      manager_name: row.assigned_by_user?.full_name ?? 'Assigned Manager',
-      manager_email: row.assigned_by_user?.email_address ?? '',
-    }))
+    const assignedByMap = new Map(
+      ((assignedByUsers ?? []) as any[]).map((user) => [user.id, user])
+    )
+
+    const assignedCwMap = new Map(
+      ((assignedCwUsers ?? []) as any[]).map((user) => [user.id, user])
+    )
+
+    return (data ?? []).map((row: any) => {
+      const assignedBy = assignedByMap.get(row.assigned_by)
+      const assignedCw = assignedCwMap.get(row.assigned_cw_id)
+
+      return {
+        id: row.id,
+        shift_id: row.shift_id,
+
+        title: row.shifts?.title ?? 'Untitled Shift',
+        instruction: row.shifts?.instruction ?? null,
+        shift_date: row.shifts?.shift_date ?? '',
+        start_time: row.shifts?.start_time ?? '',
+        end_time: row.shifts?.end_time ?? '',
+
+        assignment_status: row.assignment_status ?? 'assigned',
+
+        assigned_cw_id: row.assigned_cw_id ?? null,
+        casual_worker_name: assignedCw?.full_name ?? '',
+        casual_worker_email: assignedCw?.email_address ?? '',
+        casual_worker_phone: assignedCw?.phone_number ?? '',
+
+        manager_name: assignedBy?.full_name ?? 'Assigned Manager',
+        manager_email: assignedBy?.email_address ?? '',
+      }
+    })
   },
 }

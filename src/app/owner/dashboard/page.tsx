@@ -1,23 +1,94 @@
-'use client'
+﻿'use client'
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { Plus, Search, Pencil, Trash2, X, ChevronDown, Check, Copy } from 'lucide-react'
+import {
+  ChevronDown, CheckCircle, Eye,
+  Users, ClipboardList, Timer,
+  MoreHorizontal, ChevronLeft, Check, Activity, MessageCircle,
+  UserRound, UserCog, CheckCheck, SlidersHorizontal,
+  CalendarDays, Target, Crown,
+} from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
+import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
+import { Badge } from '@/components/ui/badge'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Local types ──────────────────────────────────────────────────────────────
 
-type Department = {
+type TaskItem = {
   id: string
-  name: string
-  company_id: string
-  created_at: string
+  title: string
+  status: string
+  priority?: string | null
+  percentage_complete?: number
+  assignee_name?: string
+  assigned_user_id?: string | null
+  created_at?: string
 }
 
-type ManagerInfo = { id: string; full_name: string; department_id: string | null }
+type TaskStats = {
+  assigned: number
+  inProgress: number
+  review: number
+  complete: number
+  tasks?: TaskItem[]
+}
 
-// ─── Spinner ──────────────────────────────────────────────────────────────────
+type ActivityFeedEvent = {
+  id: string
+  type: 'task_updated'
+  actor_name: string
+  department: string
+  timestamp: string
+  description: string
+  status: string
+}
+
+type Company = {
+  id: string
+  name: string
+  plan: string
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function timeToMinutes(timeStr: string): number {
+  const [h, m] = timeStr.split(':').map(Number)
+  return h * 60 + (m || 0)
+}
+
+function formatShiftHour(time: string): string {
+  const [h, m] = time.split(':').map(Number)
+  const ampm = h < 12 ? 'am' : 'pm'
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
+  return m === 0 ? `${h12}${ampm}` : `${h12}:${String(m).padStart(2, '0')}${ampm}`
+}
+
+function timeAgo(ts: string): string {
+  const diff = Math.floor((Date.now() - new Date(ts).getTime()) / 1000)
+  if (diff < 60) return 'just now'
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+  return `${Math.floor(diff / 86400)}d ago`
+}
+
+function formatDateKey(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+import { deptColor } from '@/lib/deptColor'
 
 function Spinner({ size = 16, dark = false }: { size?: number; dark?: boolean }) {
   return (
@@ -28,219 +99,255 @@ function Spinner({ size = 16, dark = false }: { size?: number; dark?: boolean })
   )
 }
 
-// ─── Modal Overlay ────────────────────────────────────────────────────────────
-
-function ModalOverlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
-  return (
-    <div
-      onClick={onClose}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(0,0,0,0.4)',
-        backdropFilter: 'blur(2px)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 100,
-      }}
-    >
-      <div onClick={(e) => e.stopPropagation()} style={{ width: '520px' }}>
-        {children}
-      </div>
-    </div>
-  )
+function roleRank(role: string): number {
+  if (role === 'Manager') return 0
+  if (role === 'Employee') return 1
+  return 2
 }
 
-function ModalBox({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{
-      background: '#FFFFFF',
-      borderRadius: '16px',
-      padding: '32px',
-      boxShadow: '0 8px 40px rgba(0,0,0,0.12)',
-    }}>
-      {children}
-    </div>
-  )
+function sortRowsByRole(rows: TimelineRow[]): TimelineRow[] {
+  return [...rows].sort((a, b) => roleRank(a.role) - roleRank(b.role) || a.full_name.localeCompare(b.full_name))
 }
 
-function ModalHeader({ title, onClose }: { title: string; onClose: () => void }) {
+function priorityRank(priority?: string | null): number {
+  const value = priority ?? 'None'
+  if (value === 'Urgent') return 0
+  if (value === 'High') return 1
+  if (value === 'Medium') return 2
+  if (value === 'Low') return 3
+  return 4
+}
+
+function priorityBadgeClass(priority?: string | null): string {
+  const value = priority ?? 'None'
+  if (value === 'Urgent') return 'bg-red-100 text-red-700 border border-red-200'
+  if (value === 'High') return 'bg-orange-100 text-orange-700 border border-orange-200'
+  if (value === 'Medium') return 'bg-yellow-100 text-yellow-700 border border-yellow-200'
+  if (value === 'Low') return 'bg-gray-100 text-gray-500 border border-gray-200'
+  return 'bg-gray-50 text-gray-400 border border-gray-200'
+}
+
+function formatHourLabel(hour: number): string {
+  if (hour === 0 || hour === 24) return '12am'
+  if (hour === 12) return '12pm'
+  return hour < 12 ? `${hour}am` : `${hour - 12}pm`
+}
+
+// ─── Animated counter ────────────────────────────────────────────────────────
+
+function AnimatedNumber({ value, duration = 550 }: { value: number; duration?: number }) {
+  const [display, setDisplay] = useState(value)
+  const prevRef = useRef(value)
+  const rafRef  = useRef<number | null>(null)
+
+  useEffect(() => {
+    const from = prevRef.current
+    const to   = value
+    if (from === to) return
+    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    const start = performance.now()
+    const tick = (now: number) => {
+      const t = Math.min((now - start) / duration, 1)
+      const eased = 1 - (1 - t) ** 3       // ease-out cubic
+      setDisplay(Math.round(from + (to - from) * eased))
+      if (t < 1) rafRef.current = requestAnimationFrame(tick)
+      else prevRef.current = to
+    }
+    rafRef.current = requestAnimationFrame(tick)
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
+  }, [value, duration])
+
+  return <>{display.toLocaleString()}</>
+}
+
+// ─── Plan badge popover ───────────────────────────────────────────────────────
+
+function PlanBadge({ plan, currentCompanyId }: { plan: string; currentCompanyId: string }) {
+  const [upgradeLoading, setUpgradeLoading] = useState(false)
+  const [upgradeError, setUpgradeError] = useState('')
+
+  const isPro = plan === 'Paid' || plan === 'Pro'
+
+  const handlePlanChange = async (newPlan: 'Free' | 'Paid') => {
+    if (!currentCompanyId) return
+    setUpgradeLoading(true); setUpgradeError('')
+    try {
+      const res = await fetch('/api/company/update-plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company_id: currentCompanyId, plan: newPlan }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      window.location.reload()
+    } catch (err) {
+      setUpgradeError(err instanceof Error ? err.message : 'Failed to update plan')
+    } finally {
+      setUpgradeLoading(false)
+    }
+  }
+
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
-      <h2 style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827', margin: 0 }}>{title}</h2>
-      <button
-        onClick={onClose}
-        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', display: 'flex', padding: '4px', borderRadius: '6px' }}
+    <Popover>
+      <PopoverTrigger
+        aria-label={`${isPro ? 'Pro' : 'Free'} plan`}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, whiteSpace: 'nowrap',
+          borderRadius: 999, padding: '0 16px', height: 36, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+          background: isPro ? 'linear-gradient(135deg, #10B981, #14B8A6)' : '#F3F4F6',
+          color: isPro ? '#fff' : '#4B5563',
+          boxShadow: isPro ? '0 1px 4px rgba(16,185,129,0.3)' : 'none',
+        }}
       >
-        <X size={18} />
-      </button>
-    </div>
+        <span style={{ width: 6, height: 6, borderRadius: 999, background: isPro ? 'rgba(255,255,255,0.7)' : '#9CA3AF', flexShrink: 0 }} />
+        {isPro ? 'Pro Plan' : 'Free Plan'}
+      </PopoverTrigger>
+      <PopoverContent align="end" sideOffset={8} style={{ width: 280, padding: 0, background: 'transparent', border: 'none', boxShadow: 'none' }}>
+        <div style={{ width: 280, borderRadius: 16, overflow: 'hidden', boxShadow: '0 8px 32px rgba(0,0,0,0.12)', background: '#fff' }}>
+          <div style={{ padding: '16px 20px', background: isPro ? 'linear-gradient(135deg, #10B981, #14B8A6)' : 'linear-gradient(135deg, #F3F4F6, #E5E7EB)' }}>
+            <p style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: isPro ? 'rgba(255,255,255,0.75)' : '#9CA3AF', margin: 0 }}>Current Plan</p>
+            <p style={{ fontSize: 20, fontWeight: 700, color: isPro ? '#fff' : '#1F2937', margin: '4px 0 2px' }}>{isPro ? 'Pro' : 'Free'}</p>
+            <p style={{ fontSize: 12, color: isPro ? 'rgba(255,255,255,0.85)' : '#6B7280', margin: 0 }}>
+              {isPro ? 'AI features & advanced analytics enabled' : 'Upgrade to unlock AI & analytics'}
+            </p>
+          </div>
+          <div style={{ padding: '12px 16px' }}>
+            {upgradeError && (
+              <p style={{ marginBottom: 10, borderRadius: 8, background: '#FEF2F2', padding: '6px 10px', fontSize: 11, color: '#DC2626' }}>{upgradeError}</p>
+            )}
+            {isPro ? (
+              <button
+                type="button"
+                onClick={() => handlePlanChange('Free')}
+                disabled={upgradeLoading}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: 34, borderRadius: 10, border: 'none', background: '#F3F4F6', fontSize: 12, fontWeight: 500, color: '#6B7280', cursor: 'pointer' }}
+              >
+                {upgradeLoading ? <Spinner size={13} dark /> : 'Downgrade to Free'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => handlePlanChange('Paid')}
+                disabled={upgradeLoading}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', height: 34, borderRadius: 10, border: 'none', background: 'linear-gradient(135deg, #10B981, #14B8A6)', fontSize: 12, fontWeight: 600, color: '#fff', cursor: 'pointer' }}
+              >
+                {upgradeLoading ? <Spinner size={13} /> : 'Upgrade to Pro'}
+              </button>
+            )}
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }
 
-function InlineError({ message }: { message: string }) {
-  if (!message) return null
-  return (
-    <div style={{
-      background: '#FEF2F2',
-      border: '1px solid #FECACA',
-      borderRadius: '8px',
-      padding: '10px 14px',
-      fontSize: '0.875rem',
-      color: '#DC2626',
-      marginTop: '12px',
-      lineHeight: 1.5,
-    }}>
-      {message}
-    </div>
-  )
-}
+// ─── Progress Ring ────────────────────────────────────────────────────────────
 
-// ─── Invite code display box ──────────────────────────────────────────────────
-
-function CodeBox({ code, loading }: { code: string; loading: boolean }) {
-  return (
-    <div style={{
-      background: '#F8F9FA',
-      border: '1px solid #E5E7EB',
-      borderRadius: '12px',
-      padding: '24px',
-      textAlign: 'center',
-      minHeight: '84px',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-    }}>
-      {loading ? (
-        <Spinner size={24} dark />
-      ) : code ? (
-        <span style={{
-          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-          fontWeight: 700,
-          fontSize: '2rem',
-          letterSpacing: '0.15em',
-          color: '#1C1C1E',
-        }}>
-          {code}
-        </span>
-      ) : (
-        <span style={{ fontSize: '0.875rem', color: '#9CA3AF' }}>Select a department to generate a code</span>
-      )}
-    </div>
-  )
-}
-
-// ─── Code action buttons (Copy Link) ─────────────────────────────────────────
-
-const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fyp-tasking.vercel.app'
-
-function CodeActions({ code, loading, copied, onCopy }: {
-  code: string
-  loading: boolean
-  copied: boolean
-  onCopy: () => void
+function DeptCard({ deptId, deptName, rows, onClick }: {
+  deptId: string; deptName: string; rows: TimelineRow[]; onClick: () => void
 }) {
-  const disabled = !code || loading
+  const color = deptColor(deptId)
+  const managerCount = rows.filter(row => row.role === 'Manager').length
+  const employeeCount = rows.filter(row => row.role !== 'Manager').length
+
   return (
-    <button
-      onClick={onCopy}
-      disabled={disabled}
-      style={{
-        width: '100%',
-        height: '48px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: '8px',
-        background: copied ? '#059669' : '#F97316',
-        color: '#FFFFFF',
-        border: 'none',
-        borderRadius: '10px',
-        fontWeight: 600,
-        fontSize: '0.9375rem',
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        opacity: disabled ? 0.45 : 1,
-        transition: 'background 0.2s',
-        whiteSpace: 'nowrap',
-      }}
-      onMouseEnter={(e) => { if (!disabled && !copied) e.currentTarget.style.background = '#EA6C0A' }}
-      onMouseLeave={(e) => { if (!disabled && !copied) e.currentTarget.style.background = '#F97316' }}
+    <article
+      data-testid="dept-timeline-card"
+      onClick={onClick}
+      className="dept-card"
+      style={{ padding: '20px 18px', borderRadius: 18, border: '1px solid #EEF0F4', background: '#fff', minHeight: 130, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', cursor: 'pointer' }}
     >
-      {copied ? <><Check size={15} /> Copied!</> : <><Copy size={15} /> Copy Link</>}
-    </button>
+      {/* Header: color block + name */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ width: 34, height: 34, borderRadius: 12, background: color, flexShrink: 0 }} />
+        <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#0F172A', lineHeight: 1.2 }}>{deptName}</p>
+      </div>
+
+      {/* Manager + Employee counts — centered */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 20 }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: '#EA580C' }}>
+          <UserCog size={14} /> {managerCount}
+        </span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: '#4B5563' }}>
+          <UserRound size={14} /> {employeeCount}
+        </span>
+      </div>
+    </article>
   )
 }
 
+// ─── Task status badge ────────────────────────────────────────────────────────
 
-// ─── Shared modal input style ─────────────────────────────────────────────────
-
-const modalInputStyle: React.CSSProperties = {
-  width: '100%',
-  padding: '10px 12px',
-  border: '1.5px solid #E5E7EB',
-  borderRadius: '8px',
-  fontSize: '0.9375rem',
-  color: '#111827',
-  outline: 'none',
-  boxSizing: 'border-box',
-  background: '#FFFFFF',
-}
-
-const modalLabelStyle: React.CSSProperties = {
-  display: 'block',
-  fontWeight: 600,
-  fontSize: '0.875rem',
-  color: '#374151',
-  marginBottom: '8px',
+function TaskStatusBadge({ status }: { status: string }) {
+  const styles: Record<string, { background: string; color: string }> = {
+    'In Progress': { background: '#EFF6FF', color: '#2563EB' },
+    'Review':      { background: '#FEFCE8', color: '#A16207' },
+    'Complete':    { background: '#F0FDF4', color: '#16A34A' },
+    'Assigned':    { background: '#F3F4F6', color: '#4B5563' },
+  }
+  const s = styles[status] ?? { background: '#F3F4F6', color: '#4B5563' }
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', height: 22, borderRadius: 999, padding: '0 9px', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap', background: s.background, color: s.color }}>
+      {status}
+    </span>
+  )
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function OwnerDashboard() {
   const router = useRouter()
-  // Auth / company IDs read once on mount
-  const [userId, setUserId] = useState('')
-  const [companyId, setCompanyId] = useState('')
 
-  // Top-bar data
-  const [companies, setCompanies] = useState<{ id: string; name: string; plan: string }[]>([])
-  const [userRole, setUserRole] = useState<string>('')
-  const [dropdownOpen, setDropdownOpen] = useState(false)
+  const [userId,        setUserId]        = useState('')
+  const [internalUserId, setInternalUserId] = useState('')
+  const [companyId,     setCompanyId]     = useState('')
+  const [ownerName,     setOwnerName]     = useState('')
+  const [companyName,   setCompanyName]   = useState('')
+  const [companies,     setCompanies]     = useState<Company[]>([])
+  const [currentPlan,   setCurrentPlan]   = useState('Free')
+  const [dashboardRole, setDashboardRole] = useState('')
+  const [initialReady,  setInitialReady]  = useState(false)
+  const [removalOverlay, setRemovalOverlay] = useState<{ companyName: string } | null>(null)
+  const [dropdownOpen,   setDropdownOpen]   = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
-  // Departments
-  const [departments, setDepartments] = useState<Department[]>([])
-  const [deptSearch, setDeptSearch] = useState('')
+  // Task stats
+  const [taskStats,        setTaskStats]        = useState<TaskStats | null>(null)
+  const [taskStatsLoading, setTaskStatsLoading] = useState(false)
 
-  // Department CRUD modal state
-  const [addModal, setAddModal] = useState(false)
-  const [editModal, setEditModal] = useState<Department | null>(null)
-  const [deleteModal, setDeleteModal] = useState<Department | null>(null)
-  const [deptFormName, setDeptFormName] = useState('')
-  const [deptLoading, setDeptLoading] = useState(false)
-  const [deptError, setDeptError] = useState('')
-  const [inviteLoading, setInviteLoading] = useState(false)
-  const [inviteCode, setInviteCode] = useState('')
-  const [inviteModal, setInviteModal] = useState<'owner' | 'manager' | 'employee' | null>(null)
-  const [selectedDeptId, setSelectedDeptId] = useState('')
-  const [copied, setCopied] = useState(false)
-  const [ownerName, setOwnerName] = useState('')
-  const [companyName, setCompanyName] = useState('')
-  const [dashboardRole, setDashboardRole] = useState<string>('')
-  const [userDeptId, setUserDeptId] = useState<string>('')
-  const [initialReady, setInitialReady] = useState(false)
-  const [headerTheme, setHeaderTheme] = useState<{ bg: string; text: string; border: string }>({
-    bg: '#1C1C1E', text: '#FFFFFF', border: 'none',
+  // Activity feed
+  const [activityFeed,        setActivityFeed]        = useState<ActivityFeedEvent[]>([])
+  const [activityFeedLoading, setActivityFeedLoading] = useState(false)
+  const [markedFeedItems, setMarkedFeedItems] = useState<Set<string>>(() => {
+    try {
+      const stored = localStorage.getItem('tasking_marked_feed_items')
+      return stored ? new Set(JSON.parse(stored) as string[]) : new Set()
+    } catch { return new Set() }
   })
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null)
+  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null)
+  const [chartReady, setChartReady] = useState(false)
 
-  // Removal overlay state
-  const [removalOverlay, setRemovalOverlay] = useState<{ companyName: string } | null>(null)
+  // Timeline
+  const [timelineRows,    setTimelineRows]    = useState<TimelineRow[]>([])
+  const [timelineLoading, setTimelineLoading] = useState(false)
+  const [timelineView,    setTimelineView]    = useState<'global' | 'dept'>('global')
+  const [timeFrom, setTimeFrom] = useState(7)
+  const [timeTo,   setTimeTo]   = useState(23)
+  const [isAutoFit, setIsAutoFit] = useState(false)
 
-  // ── Change 4: removal detection ────────────────────────────────────────────
-  // Defined early (before useEffect) so the effect closure can reference it.
-  // By the time this fires, departments are already loaded for the next company.
-  const handleRemovalDetected = useCallback((removedCompanyName: string, availableCompanies: { id: string; name: string; plan: string }[]) => {
+  // Department drill-down: null = card grid, string = selected deptId
+  const [selectedDeptId, setSelectedDeptId] = useState<string | null>(null)
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) setDropdownOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const handleRemovalDetected = useCallback((removedCompanyName: string, availableCompanies: Company[]) => {
     setRemovalOverlay({ companyName: removedCompanyName })
     setTimeout(() => {
       setRemovalOverlay(null)
@@ -248,1073 +355,1209 @@ export default function OwnerDashboard() {
         fetch('/api/auth/signout', { method: 'POST' })
         window.location.href = '/signout'
       }
-      // State (companyId, companyName, departments) was already set in the useEffect before this overlay showed
     }, 3000)
   }, [])
 
-  // Manager data for department cards
-  const [deptManagerMap, setDeptManagerMap] = useState<Record<string, string>>({})
-  const [allCompanyManagers, setAllCompanyManagers] = useState<ManagerInfo[]>([])
-  const [editManagerModal, setEditManagerModal] = useState<Department | null>(null)
-  const [editManagerSelectedId, setEditManagerSelectedId] = useState('')
-  const [editManagerLoading, setEditManagerLoading] = useState(false)
-  const [editManagerError, setEditManagerError] = useState('')
-
-  const canManageDepartments = dashboardRole === 'Owner' || dashboardRole === 'Partner'
-
-  // ── Close all modals ───────────────────────────────────────────────────────
-
-  const closeAll = useCallback(() => {
-    setAddModal(false)
-    setEditModal(null)
-    setDeleteModal(null)
-    setEditManagerModal(null)
-  }, [])
-
-  // ── Escape key ─────────────────────────────────────────────────────────────
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeAll() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [closeAll])
-
-  // ── Header theme from localStorage role ────────────────────────────────────
-
-  useEffect(() => {
-    const role = localStorage.getItem('tasking_user_role')
-    if (role === 'Partner') {
-      setHeaderTheme({ bg: '#FFFFFF', text: '#1C1C1E', border: '1px solid #E5E7EB' })
-    } else {
-      setHeaderTheme({ bg: '#1C1C1E', text: '#FFFFFF', border: 'none' })
-    }
-  }, [])
-
-  // ── Click outside company dropdown ─────────────────────────────────────────
-
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setDropdownOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
-
-  // ── Mount: session → company context (owner-owned OR membership) ───────────
+  // ── Mount: resolve session → company context ───────────────────────────────
 
   useEffect(() => {
     let cancelled = false
     const run = async () => {
       let userIdResolved = localStorage.getItem('tasking_user_id')
       if (!userIdResolved) {
-        const supabase = createBrowserClient(
-          process.env.NEXT_PUBLIC_SUPABASE_URL!,
-          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-        )
+        const supabase = createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
         const { data: { session } } = await supabase.auth.getSession()
-        if (session?.user?.id) {
-          userIdResolved = session.user.id
-          localStorage.setItem('tasking_user_id', userIdResolved)
-        }
+        if (session?.user?.id) { userIdResolved = session.user.id; localStorage.setItem('tasking_user_id', userIdResolved) }
       }
-      if (!userIdResolved) {
-        router.replace('/signin')
-        return
-      }
+      if (!userIdResolved) { router.replace('/signin'); return }
       if (cancelled) return
       setUserId(userIdResolved)
-      setUserRole(localStorage.getItem('tasking_user_role') || '')
 
       fetch(`/api/user/me?user_id=${userIdResolved}`)
         .then(r => r.json())
         .then(d => {
           if (!cancelled && d.success) {
+            if (d.user?.id) setInternalUserId(d.user.id)
             if (d.user?.full_name) setOwnerName(d.user.full_name)
-            if (d.user?.department_id) setUserDeptId(d.user.department_id)
           }
         })
         .catch(() => {})
 
-      const storedCid =
-        typeof localStorage !== 'undefined'
-          ? localStorage.getItem(`tasking_company_id_${userIdResolved}`)
-          : null
-
+      const storedCid = localStorage.getItem(`tasking_company_id_${userIdResolved}`)
       const qs = new URLSearchParams({ user_id: userIdResolved })
       if (storedCid) qs.set('company_id', storedCid)
 
       const res = await fetch(`/api/company/current?${qs}`)
-      if (!res.ok) {
-        if (!cancelled) setInitialReady(true)
-        return
-      }
+      if (!res.ok) { if (!cancelled) setInitialReady(true); return }
       const data = await res.json()
       if (cancelled) return
-      if (!data.success) {
-        setInitialReady(true)
-        return
-      }
+      if (!data.success) { setInitialReady(true); return }
 
       setDashboardRole(data.role || '')
-      const list = (data.companies || []).map((c: { id: string; name: string; plan: string }) => ({
-        id: c.id,
-        name: c.name,
-        plan: c.plan,
-      }))
+      const list: Company[] = (data.companies || []).map((c: Company) => ({ id: c.id, name: c.name, plan: c.plan }))
       setCompanies(list)
 
       if (data.company) {
         const company = data.company
-
-        // Change 3 & 4: if the stored company_id is no longer in the returned membership list,
-        // show removal overlay then auto-switch to the company the API resolved to.
-        if (storedCid && !list.some((c: { id: string }) => c.id === storedCid)) {
-          // The API already resolved to the next best company in data.company
-          const next = { id: company.id, name: company.name }
-          localStorage.setItem(`tasking_company_id_${userIdResolved}`, next.id)
-          setCompanyId(next.id)
-          setCompanyName(next.name)
-          await fetchDeptsById(next.id)
+        if (storedCid && !list.some(c => c.id === storedCid)) {
+          localStorage.setItem(`tasking_company_id_${userIdResolved}`, company.id)
+          setCompanyId(company.id); setCompanyName(company.name); setCurrentPlan(company.plan || 'Free')
           setInitialReady(true)
-          // Show overlay after UI is ready — use the stored name if available, else a generic label
           const removedName = localStorage.getItem(`tasking_last_company_name_${storedCid}`) || 'your previous company'
           handleRemovalDetected(removedName, list)
           return
         }
-
         localStorage.setItem(`tasking_company_id_${userIdResolved}`, company.id)
         localStorage.setItem(`tasking_last_company_name_${company.id}`, company.name)
-        setCompanyId(company.id)
-        setCompanyName(company.name)
-        await fetchDeptsById(company.id)
+        setCompanyId(company.id); setCompanyName(company.name); setCurrentPlan(company.plan || 'Free')
       } else if (storedCid && list.length > 0) {
-        // stored company is gone, but user has other companies — auto-switch
-        const next = list[0] as { id: string; name: string }
+        const next = list[0]
         localStorage.setItem(`tasking_company_id_${userIdResolved}`, next.id)
-        localStorage.setItem(`tasking_last_company_name_${next.id}`, next.name)
-        setCompanyId(next.id)
-        setCompanyName(next.name)
-        await fetchDeptsById(next.id)
-      } else if (list.length === 0) {
-        setCompanyId('')
-        setCompanyName('')
-        setDepartments([])
+        setCompanyId(next.id); setCompanyName(next.name); setCurrentPlan(next.plan || 'Free')
       } else {
-        setCompanyId('')
-        setCompanyName('')
-        setDepartments([])
+        setCompanyId(''); setCompanyName('')
       }
       setInitialReady(true)
     }
     void run()
     return () => { cancelled = true }
-  }, [router])
+  }, [router, handleRemovalDetected])
 
-  // ── Data fetchers ──────────────────────────────────────────────────────────
+  // ── Task stats + feed ──────────────────────────────────────────────────────
 
-  const fetchManagersForCompany = async (cid: string) => {
+  const fetchDashboardData = useCallback(async (cid: string) => {
     if (!cid) return
+    setTaskStatsLoading(true)
+    setActivityFeedLoading(true)
     try {
-      const res = await fetch(`/api/company/managers?company_id=${cid}`)
-      const data = await res.json()
-      if (data.success) {
-        setAllCompanyManagers(data.managers)
-        const map: Record<string, string> = {}
-        for (const mgr of data.managers as ManagerInfo[]) {
-          if (mgr.department_id && !map[mgr.department_id]) {
-            map[mgr.department_id] = mgr.full_name
-          }
-        }
-        setDeptManagerMap(map)
-      }
+      const [statsRes, feedRes] = await Promise.all([
+        fetch(`/api/task?company_id=${cid}&stats=true`),
+        fetch(`/api/task?company_id=${cid}&activity_feed=true`),
+      ])
+      const statsData = await statsRes.json()
+      const feedData  = await feedRes.json()
+      if (statsData.success) setTaskStats(statsData.stats)
+      if (feedData.success)  setActivityFeed(feedData.feed ?? [])
+      setLastRefreshed(new Date())
     } catch {}
-  }
+    finally { setTaskStatsLoading(false); setActivityFeedLoading(false) }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const fetchDeptsById = async (cid: string) => {
-    if (!cid) return
-    try {
-      const res = await fetch(`/api/company/departments?company_id=${cid}`)
-      const data = await res.json()
-      if (data.success) setDepartments(data.departments)
-    } catch {}
-    await fetchManagersForCompany(cid)
-  }
-
-  const fetchDepts = async () => {
+  useEffect(() => {
     if (!companyId) return
-    fetchDeptsById(companyId)
-  }
+    const timer = window.setTimeout(() => { void fetchDashboardData(companyId) }, 0)
+    return () => window.clearTimeout(timer)
+  }, [companyId, fetchDashboardData])
 
-  // ── Invite code generation ─────────────────────────────────────────────────
-
-  const generateCode = async (role: 'Manager' | 'Employee' | 'Owner', deptId?: string) => {
-    const cid = companyId || ''
-    const uid = userId || ''
-    setInviteLoading(true)
-    setInviteCode('')
+  useEffect(() => {
     try {
-      const res = await fetch('/api/invitation/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          company_id: cid,
-          department_id: deptId || null,
-          role,
-          generated_by: uid,
-        }),
-      })
-      const data = await res.json()
-      if (data.success) {
-        setInviteCode(data.code)
-      }
-    } finally {
-      setInviteLoading(false)
-    }
-  }
+      localStorage.setItem('tasking_marked_feed_items', JSON.stringify([...markedFeedItems]))
+    } catch {}
+  }, [markedFeedItems])
 
-  // ── Open invite modals ─────────────────────────────────────────────────────
-
-  const openManagerModal = () => {
-    setCopied(false)
-    setInviteCode('')
-
-    setSelectedDeptId('')
-    setInviteModal('manager')
-  }
-
-  const handleManagerDeptSelect = (deptId: string) => {
-    setSelectedDeptId(deptId)
-    setCopied(false)
-    setInviteCode('')
-  }
-
-  const openEmployeeModal = () => {
-    setCopied(false)
-    setInviteCode('')
-
-    setSelectedDeptId('')
-    setInviteModal('employee')
-  }
-
-  const openOwnerModal = () => {
-    setCopied(false)
-    setInviteCode('')
-
-    setInviteModal('owner')
-  }
-
-  const handleEmployeeDeptSelect = (deptId: string) => {
-    setSelectedDeptId(deptId)
-    setCopied(false)
-    setInviteCode('')
-  }
-
-  const copyLink = (role: 'Owner' | 'Manager' | 'Employee') => {
-    if (!inviteCode) return
-    const roleLabel = role === 'Owner' ? 'Owner' : role
-    const message = `Join ${ownerName}'s company as ${roleLabel} in Tasking with invitation code: ${inviteCode}\nGet started here: ${appUrl}/get-started`
-    navigator.clipboard.writeText(message)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
-
-  // ── Sign out ───────────────────────────────────────────────────────────────
-
-  const handleSignOut = () => {
-    if (userId) localStorage.removeItem(`tasking_company_id_${userId}`)
-    fetch('/api/auth/signout', { method: 'POST' })
-    window.location.href = '/signout'
-  }
-
-  // ── Department CRUD ────────────────────────────────────────────────────────
-
-  const handleAddDept = async () => {
-    if (!deptFormName.trim()) return
-    const cid = companyId
-    if (!cid) { setDeptError('Company not found, please refresh'); return }
-    setDeptLoading(true)
-    setDeptError('')
+  // Timeline fetch
+  const fetchTimeline = useCallback(async (cid: string) => {
+    if (!cid) return
+    setTimelineLoading(true)
     try {
-      const res = await fetch('/api/company/create-department', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: deptFormName.trim(), company_id: cid }),
-      })
+      const today = formatDateKey(new Date())
+      const res = await fetch(`/api/shift?company_id=${cid}&date_from=${today}&date_to=${today}`)
       const data = await res.json()
-      if (!data.success) throw new Error(data.message)
-      setAddModal(false)
-      setDeptFormName('')
-      fetchDepts()
-    } catch (err) {
-      setDeptError(err instanceof Error ? err.message : 'Failed to add department')
-    } finally {
-      setDeptLoading(false)
-    }
-  }
+      if (data.success) setTimelineRows(data.rows ?? [])
+    } catch {}
+    finally { setTimelineLoading(false) }
+  }, [])
 
-  const handleEditDept = async () => {
-    if (!deptFormName.trim() || !editModal) return
-    setDeptLoading(true)
-    setDeptError('')
-    try {
-      const res = await fetch('/api/company/update-department', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ department_id: editModal.id, name: deptFormName.trim() }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message)
-      setEditModal(null)
-      setDeptFormName('')
-      fetchDepts()
-    } catch (err) {
-      setDeptError(err instanceof Error ? err.message : 'Failed to update department')
-    } finally {
-      setDeptLoading(false)
-    }
-  }
+  useEffect(() => {
+    if (!companyId) return
+    const timer = window.setTimeout(() => { void fetchTimeline(companyId) }, 0)
+    return () => window.clearTimeout(timer)
+  }, [companyId, fetchTimeline])
 
-  const handleDeleteDept = async () => {
-    if (!deleteModal) return
-    setDeptLoading(true)
-    setDeptError('')
-    try {
-      const res = await fetch('/api/company/delete-department', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ department_id: deleteModal.id }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message)
-      setDeleteModal(null)
-      fetchDepts()
-    } catch (err) {
-      setDeptError(err instanceof Error ? err.message : 'Failed to delete department')
-    } finally {
-      setDeptLoading(false)
-    }
-  }
+  // ── Donut chart entrance ──────────────────────────────────────────────────
+  useEffect(() => {
+    const t = setTimeout(() => setChartReady(true), 480)
+    return () => clearTimeout(t)
+  }, [])
 
-  const handleEditDeptManager = async () => {
-    if (!editManagerModal || !editManagerSelectedId) return
-    setEditManagerLoading(true)
-    setEditManagerError('')
-    try {
-      const res = await fetch('/api/user/update-department', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: editManagerSelectedId, department_id: editManagerModal.id }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message)
-      setEditManagerModal(null)
-      setEditManagerSelectedId('')
-      await fetchManagersForCompany(companyId)
-    } catch (err) {
-      setEditManagerError(err instanceof Error ? err.message : 'Failed to update manager')
-    } finally {
-      setEditManagerLoading(false)
-    }
-  }
 
-  // ── Derived ────────────────────────────────────────────────────────────────
+  // ── Supabase realtime: push updates on task / shift changes ──────────────
+  useEffect(() => {
+    if (!companyId) return
+    const client = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    )
+    const channel = client
+      .channel('dashboard-realtime')
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'tasks',
+        filter: `company_id=eq.${companyId}`,
+      }, () => { void fetchDashboardData(companyId) })
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'shift_assignments',
+      }, () => { void fetchTimeline(companyId) })
+      .subscribe()
+    return () => { void client.removeChannel(channel) }
+  }, [companyId, fetchDashboardData, fetchTimeline])
 
-  const departmentName = userDeptId
-    ? departments.find(d => d.id === userDeptId)?.name ?? ''
-    : ''
+  // ── Derived data ──────────────────────────────────────────────────────────
 
-  const startsWithDigit = (s: string) => /^\d/.test(s)
-  const visibleDepts = dashboardRole === 'Manager' && userDeptId
-    ? departments.filter(d => d.id === userDeptId)
-    : departments
-  const filteredDepts = visibleDepts
-    .filter((d) => d.name.toLowerCase().includes(deptSearch.toLowerCase()))
+  const todayActiveStaff    = timelineRows.filter(r => r.user_id && !['Owner', 'Partner'].includes(r.role) && r.shifts.length > 0)
+  const todayShiftCount     = todayActiveStaff.length
+  const casualWorkersCount  = todayActiveStaff.filter(r => r.role === 'Casual Worker').length
+
+  const totalTasks = taskStats
+    ? taskStats.assigned + taskStats.inProgress + taskStats.review + taskStats.complete
+    : 0
+
+  const completeCount = taskStats?.complete ?? 0
+
+  const todayTasks = [...(taskStats?.tasks ?? [])].sort((a, b) => {
+    const byPriority = priorityRank(a.priority) - priorityRank(b.priority)
+    if (byPriority !== 0) return byPriority
+    return new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime()
+  })
+  const priorityFocusTasks = todayTasks
+    .filter(task => task.priority === 'Urgent' || task.priority === 'High')
     .sort((a, b) => {
-      const aNum = startsWithDigit(a.name)
-      const bNum = startsWithDigit(b.name)
-      if (aNum !== bNum) return aNum ? 1 : -1
-      return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+      if (a.status === 'Complete' && b.status !== 'Complete') return 1
+      if (a.status !== 'Complete' && b.status === 'Complete') return -1
+      return priorityRank(a.priority) - priorityRank(b.priority)
     })
+  const priorityCompleteCount = priorityFocusTasks.filter(task => task.status === 'Complete').length
+  const priorityCompletionPct = priorityFocusTasks.length > 0
+    ? Math.round((priorityCompleteCount / priorityFocusTasks.length) * 100)
+    : 0
+  const focusAssignedCount    = priorityFocusTasks.filter(t => t.status === 'Assigned' || !t.status).length
+  const focusInProgressCount  = priorityFocusTasks.filter(t => t.status === 'In Progress').length
+  const focusReviewCount      = priorityFocusTasks.filter(t => t.status === 'Review').length
+  const focusDonutSegs = (() => {
+    const total = priorityFocusTasks.length
+    const raw = [
+      { count: focusAssignedCount,   color: '#94A3B8', label: 'Assigned' },
+      { count: focusInProgressCount, color: '#4F46E5', label: 'In Progress' },
+      { count: focusReviewCount,     color: '#D97706', label: 'Review' },
+      { count: priorityCompleteCount, color: '#059669', label: 'Complete' },
+    ]
+    let cumFrac = 0
+    return raw.map(seg => {
+      const frac = total > 0 ? seg.count / total : 0
+      const start = cumFrac
+      cumFrac += frac
+      return { ...seg, frac, start }
+    })
+  })()
+  const feedKey = (event: ActivityFeedEvent) => event.id ?? `${event.type}-${event.timestamp}-${event.description}`
 
-  // ── Action button styles ───────────────────────────────────────────────────
-
-  const primaryBtn = (loading: boolean): React.CSSProperties => ({
-    flex: 1,
-    padding: '10px',
-    background: '#111827',
-    border: 'none',
-    borderRadius: '8px',
-    fontWeight: 600,
-    fontSize: '0.9375rem',
-    color: '#FFFFFF',
-    cursor: loading ? 'default' : 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '7px',
-    opacity: loading ? 0.65 : 1,
-  })
-
-  const ghostBtn: React.CSSProperties = {
-    flex: 1,
-    padding: '10px',
-    background: 'none',
-    border: '1.5px solid #E5E7EB',
-    borderRadius: '8px',
-    fontWeight: 600,
-    fontSize: '0.9375rem',
-    color: '#6B7280',
-    cursor: 'pointer',
+  const teamByDept: Record<string, { name: string; rows: TimelineRow[] }> = {}
+  for (const row of todayActiveStaff) {
+    if (!teamByDept[row.department_id]) teamByDept[row.department_id] = { name: row.department_name, rows: [] }
+    teamByDept[row.department_id].rows.push(row)
+  }
+  for (const group of Object.values(teamByDept)) {
+    group.rows = sortRowsByRole(group.rows)
   }
 
-  const dangerBtn = (loading: boolean): React.CSSProperties => ({
-    flex: 1,
-    padding: '10px',
-    background: '#EF4444',
-    border: 'none',
-    borderRadius: '8px',
-    fontWeight: 600,
-    fontSize: '0.9375rem',
-    color: '#FFFFFF',
-    cursor: loading ? 'default' : 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '7px',
-    opacity: loading ? 0.65 : 1,
+  // Timeline rendering helpers
+  const PERSON_COL = 180
+  const ROW_H = 72
+
+  // Auto-fit: earliest shift start → latest shift end across all today's rows, with ±1h padding
+  const autoFrom = todayActiveStaff.length > 0
+    ? Math.max(0, Math.floor(Math.min(...todayActiveStaff.flatMap(r => r.shifts.map(s => timeToMinutes(s.start_time)))) / 60) - 1)
+    : 7
+  const autoTo = todayActiveStaff.length > 0
+    ? Math.min(24, Math.ceil(Math.max(...todayActiveStaff.flatMap(r => r.shifts.map(s => timeToMinutes(s.end_time)))) / 60) + 1)
+    : 23
+
+  function positionForTime(minutes: number): number {
+    const start = timeFrom * 60
+    const end = timeTo * 60
+    return ((Math.max(start, Math.min(end, minutes)) - start) / Math.max(end - start, 1)) * 100
+  }
+
+  const visibleTimelineRows = todayActiveStaff.filter(row => {
+    const start = timeFrom * 60
+    const end = timeTo * 60
+    return row.shifts.some(s => timeToMinutes(s.start_time) < end && timeToMinutes(s.end_time) > start)
   })
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  const deptGroups: Record<string, { name: string; rows: TimelineRow[] }> = {}
+  for (const row of visibleTimelineRows) {
+    if (!deptGroups[row.department_id]) deptGroups[row.department_id] = { name: row.department_name, rows: [] }
+    deptGroups[row.department_id].rows.push(row)
+  }
+  for (const group of Object.values(deptGroups)) {
+    group.rows = sortRowsByRole(group.rows)
+  }
 
-  const currentCompany = companies.find((c) => c.id === companyId) ?? companies[0]
+  const deptIds = Object.keys(deptGroups)
 
-  return (
-    <div style={{ display: 'flex', height: '100vh', background: '#F3F4F6', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
-      <OwnerSidebar />
+  const hourTicks: number[] = []
+  for (let h = timeFrom; h <= timeTo; h++) hourTicks.push(h)
 
-      {/* ── MAIN ───────────────────────────────────────────────────────────── */}
-      <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+  function renderTimelineContent(rows: TimelineRow[]) {
+    const segStart = timeFrom * 60
+    const segEnd = timeTo * 60
 
-        {/* Top bar */}
-        <div style={{
-          padding: '18px 32px',
-          background: headerTheme.bg,
-          borderBottom: headerTheme.border,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          position: 'sticky',
-          top: 0,
-          zIndex: 10,
-        }}>
-          {dashboardRole !== 'Manager' && companies.length > 1 ? (
-            <div ref={dropdownRef} style={{ position: 'relative', display: 'inline-block' }}>
-              <button
-                onClick={() => setDropdownOpen((o) => !o)}
+    if (rows.length === 0) {
+      return (
+        <div style={{ padding: '32px 0', textAlign: 'center', fontSize: 13, color: '#9CA3AF' }}>
+          No shifts scheduled today in this range
+        </div>
+      )
+    }
+
+    // Group rows by dept, preserving order of first appearance
+    const deptOrder: string[] = []
+    const deptMap: Record<string, { name: string; color: string; rows: TimelineRow[] }> = {}
+    for (const row of rows) {
+      if (!deptMap[row.department_id]) {
+        deptOrder.push(row.department_id)
+        deptMap[row.department_id] = { name: row.department_name, color: deptColor(row.department_id), rows: [] }
+      }
+      deptMap[row.department_id].rows.push(row)
+    }
+
+    const EDGE = '2px solid rgba(15,23,42,0.45)'
+    return (
+      <div style={{ borderRight: EDGE, borderBottom: EDGE }}>
+        {deptOrder.map((deptId, deptIdx) => {
+          const dept = deptMap[deptId]
+          return dept.rows.map((row, rowIdx) => {
+            const isDeptBoundary = deptIdx > 0 && rowIdx === 0
+            return (
+            <div
+              key={`${row.user_id ?? row.department_id}_${rowIdx}`}
+              style={{ display: 'flex', height: ROW_H, borderTop: isDeptBoundary ? EDGE : '1px solid rgba(15,23,42,0.12)', background: '#FFFFFF' }}
+            >
+              {/* Dept color bar — narrow strip only, no text */}
+              <div style={{ width: 8, flexShrink: 0, background: dept.color, opacity: 0.85 }} />
+
+              {/* Person col */}
+              <div style={{ width: PERSON_COL, flexShrink: 0, display: 'flex', alignItems: 'center', padding: '0 12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: row.role === 'Manager' ? '#FFF7ED' : '#F3F4F6', color: row.role === 'Manager' ? '#EA580C' : '#4B5563', borderRadius: 999 }}>
+                    {row.role === 'Manager' ? <UserCog size={13} /> : <UserRound size={13} />}
+                  </div>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: row.role === 'Manager' ? '#EA580C' : '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {row.full_name}
+                  </span>
+                </div>
+              </div>
+
+              {/* Shift bars */}
+              <div style={{ position: 'relative', flex: 1 }}>
+                {/* Vertical hour grid lines — in front of shift bars */}
+                {hourTicks.map(h => (
+                  <div
+                    key={`grid-${h}`}
+                    style={{
+                      position: 'absolute',
+                      top: 0, bottom: 0,
+                      left: `${positionForTimeWithPad(h * 60)}%`,
+                      width: 0,
+                      borderLeft: '1px solid rgba(15,23,42,0.12)',
+                      pointerEvents: 'none',
+                      zIndex: 2,
+                    }}
+                  />
+                ))}
+                {row.shifts.map((shift: TimelineShiftBlock) => {
+                  const startMin = timeToMinutes(shift.start_time)
+                  const endMin = timeToMinutes(shift.end_time)
+                  if (endMin <= segStart || startMin >= segEnd) return null
+                  const left = positionForTimeWithPad(startMin)
+                  const right = positionForTimeWithPad(endMin)
+                  const width = right - left
+                  if (width <= 0) return null
+                  const color = deptColor(row.department_id)
+                  return (
+                    <div
+                      key={shift.id}
+                      style={{
+                        position: 'absolute',
+                        top: 10, bottom: 10,
+                        left: `${left}%`,
+                        width: `${Math.max(width, 1.5)}%`,
+                        borderRadius: 999,
+                        background: color,
+                        border: 'none',
+                        zIndex: 1,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <span style={{ fontSize: 11, fontWeight: 600, color: '#FFFFFF', whiteSpace: 'nowrap', pointerEvents: 'none', userSelect: 'none', padding: '0 10px' }}>
+                        {formatShiftHour(shift.start_time)} – {formatShiftHour(shift.end_time)}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )})
+        })}
+      </div>
+    )
+  }
+  const TIMELINE_PAD_PCT = 4
+
+  function positionForTimeWithPad(minutes: number): number {
+    const raw = positionForTime(minutes)
+    return TIMELINE_PAD_PCT + (raw / 100) * (100 - TIMELINE_PAD_PCT * 2)
+  }
+
+  function renderHourAxis() {
+    return (
+      <div style={{ display: 'flex', background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', borderRadius: '12px 12px 0 0' }}>
+        <div style={{ width: 8 + PERSON_COL, flexShrink: 0 }} />
+        <div style={{ position: 'relative', height: 36, flex: 1 }}>
+          {hourTicks.map((h) => {
+            const left = `${positionForTimeWithPad(h * 60)}%`
+            return (
+              <div
+                key={h}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: '6px',
-                  background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-                  fontWeight: 700, fontSize: '1.1875rem', color: headerTheme.text,
-                  userSelect: 'none',
+                  position: 'absolute',
+                  top: 0,
+                  left,
+                  transform: 'translateX(-50%)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  height: '100%',
+                  pointerEvents: 'none',
                 }}
               >
-                {companyName ? `${companyName} — Overview` : 'Overview'}
-                <ChevronDown
-                  size={16}
-                  strokeWidth={2.5}
-                  style={{ color: headerTheme.text, opacity: 0.6, transition: 'transform 0.15s', transform: dropdownOpen ? 'rotate(180deg)' : 'none' }}
-                />
-              </button>
-              {dropdownOpen && (
-                <div style={{
-                  position: 'absolute', top: '100%', left: 0, marginTop: '6px',
-                  background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: '10px',
-                  boxShadow: '0 4px 16px rgba(0,0,0,0.1)', minWidth: '200px', zIndex: 50, overflow: 'hidden',
+                <span style={{
+                  display: 'block',
+                  marginTop: 9,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: 'rgba(255,255,255,0.55)',
+                  whiteSpace: 'nowrap',
+                  userSelect: 'none',
+                  letterSpacing: '0.02em',
                 }}>
-                  {companies.map((c) => (
-                    <button
-                      key={c.id}
-                      type="button"
-                      onClick={() => {
-                        if (!userId) return
-                        localStorage.setItem(`tasking_company_id_${userId}`, c.id)
-                        localStorage.setItem(`tasking_last_company_name_${c.id}`, c.name)
-                        setDropdownOpen(false)
-                        setCompanyId(c.id)
-                        setCompanyName(c.name)
-                        void fetchDeptsById(c.id)
-                      }}
-                      style={{
-                        width: '100%', textAlign: 'left', padding: '10px 14px',
-                        background: c.id === companyId ? '#FFF7ED' : 'none',
-                        border: 'none', cursor: 'pointer', fontSize: '0.9rem',
-                        color: c.id === companyId ? '#EA580C' : '#374151',
-                        fontWeight: c.id === companyId ? 600 : 400, transition: 'background 0.1s',
-                      }}
-                      onMouseEnter={(e) => { if (c.id !== companyId) e.currentTarget.style.background = '#F3F4F6' }}
-                      onMouseLeave={(e) => { if (c.id !== companyId) e.currentTarget.style.background = 'none' }}
-                    >
-                      {c.name}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : (
-            <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: headerTheme.text, margin: 0 }}>
-              {dashboardRole === 'Manager' && departmentName
-                ? `${companyName} — ${departmentName}`
-                : companyName ? `${companyName} — Overview` : 'Overview'}
+                  {formatHourLabel(h)}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
+  const selectedDeptRows = selectedDeptId ? (deptGroups[selectedDeptId]?.rows ?? []) : []
+  const selectedDeptName = selectedDeptId ? (deptGroups[selectedDeptId]?.name ?? '') : ''
+
+  // ── Render ────────────────────────────────────────────────────────────────
+
+  return (
+    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: '#F1F5F9', fontFamily: 'inherit' }}>
+      <style>{`
+        @keyframes dotPulse {
+          0%   { box-shadow: 0 0 0 0 rgba(52,211,153,0.55); }
+          70%  { box-shadow: 0 0 0 5px rgba(52,211,153,0); }
+          100% { box-shadow: 0 0 0 0 rgba(52,211,153,0); }
+        }
+        @keyframes fadeSlideUp {
+          from { opacity: 0; transform: translateY(18px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(6px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes scaleIn {
+          from { opacity: 0; transform: scale(0.94); }
+          to   { opacity: 1; transform: scale(1); }
+        }
+        @keyframes slideInLeft {
+          from { opacity: 0; transform: translateX(-14px); }
+          to   { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes numberPop {
+          0%   { transform: scale(1); }
+          40%  { transform: scale(1.18); }
+          100% { transform: scale(1); }
+        }
+        @keyframes iconBounce {
+          0%, 100% { transform: translateY(0); }
+          40%      { transform: translateY(-4px); }
+          70%      { transform: translateY(-2px); }
+        }
+        /* ── Stat cards ── */
+        .stat-card {
+          transition: box-shadow 0.22s ease, transform 0.22s ease, background 0.18s ease;
+          cursor: default;
+        }
+        .stat-card:hover {
+          box-shadow: 0 8px 28px rgba(0,0,0,0.10), 0 0 0 1.5px rgba(249,115,22,0.18) !important;
+          transform: translateY(-3px) scale(1.015);
+        }
+        .stat-card:hover .stat-icon {
+          animation: iconBounce 0.5s ease forwards;
+        }
+        /* ── Panel cards (Focus / Team / Feed / Tasks) ── */
+        .panel-card {
+          transition: box-shadow 0.22s ease, transform 0.22s ease;
+        }
+        .panel-card:hover {
+          box-shadow: 0 8px 32px rgba(0,0,0,0.09), 0 0 0 1.5px rgba(0,0,0,0.07) !important;
+          transform: translateY(-2px);
+        }
+        /* ── Feed items ── */
+        .feed-item {
+          transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+        }
+        .feed-item:hover {
+          background: #F8FAFC !important;
+          transform: translateX(2px);
+          box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+        /* ── Task items ── */
+        .task-item {
+          transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+        }
+        .task-item:hover {
+          background: #F8FAFC !important;
+          transform: translateX(2px);
+          box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+        /* ── Team member rows ── */
+        .team-row {
+          transition: background 0.15s ease, transform 0.12s ease;
+        }
+        .team-row:hover {
+          background: #FFF7ED !important;
+          transform: translateX(2px);
+        }
+        /* ── Dept cards (schedule grid) ── */
+        .dept-card {
+          transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+        }
+        .dept-card:hover {
+          box-shadow: 0 6px 24px rgba(0,0,0,0.10) !important;
+          transform: translateY(-3px);
+          border-color: #FDBA74 !important;
+        }
+        /* ── Mark/read buttons ── */
+        .mark-btn {
+          transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease;
+        }
+        .mark-btn:hover {
+          transform: scale(1.05);
+        }
+        /* ── Message button ── */
+        .msg-btn {
+          transition: color 0.15s ease, transform 0.15s ease, background 0.15s ease !important;
+        }
+        .msg-btn:hover {
+          transform: scale(1.18) !important;
+        }
+        /* ── Staggered entrance for stat cards ── */
+        .stat-card:nth-child(1) { animation: fadeSlideUp 0.38s ease both; animation-delay: 0.04s; }
+        .stat-card:nth-child(2) { animation: fadeSlideUp 0.38s ease both; animation-delay: 0.08s; }
+        .stat-card:nth-child(3) { animation: fadeSlideUp 0.38s ease both; animation-delay: 0.12s; }
+        .stat-card:nth-child(4) { animation: fadeSlideUp 0.38s ease both; animation-delay: 0.16s; }
+        .stat-card:nth-child(5) { animation: fadeSlideUp 0.38s ease both; animation-delay: 0.20s; }
+        .stat-card:nth-child(6) { animation: fadeSlideUp 0.38s ease both; animation-delay: 0.24s; }
+        /* ── Staggered entrance for panel cards ── */
+        .panel-card:nth-child(1) { animation: scaleIn 0.40s ease both; animation-delay: 0.18s; }
+        .panel-card:nth-child(2) { animation: scaleIn 0.40s ease both; animation-delay: 0.24s; }
+        .panel-card:nth-child(3) { animation: scaleIn 0.40s ease both; animation-delay: 0.30s; }
+        .panel-card:nth-child(4) { animation: scaleIn 0.40s ease both; animation-delay: 0.36s; }
+        /* ── Feed items stagger ── */
+        .feed-item:nth-child(1) { animation: slideInLeft 0.28s ease both; animation-delay: 0.05s; }
+        .feed-item:nth-child(2) { animation: slideInLeft 0.28s ease both; animation-delay: 0.10s; }
+        .feed-item:nth-child(3) { animation: slideInLeft 0.28s ease both; animation-delay: 0.15s; }
+        .feed-item:nth-child(4) { animation: slideInLeft 0.28s ease both; animation-delay: 0.20s; }
+        .feed-item:nth-child(5) { animation: slideInLeft 0.28s ease both; animation-delay: 0.25s; }
+      `}</style>
+      <OwnerSidebar />
+
+      <main
+        style={{ marginLeft: 64, height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, padding: '20px 28px', gap: 0 }}
+      >
+
+        {/* ── Page header ────────────────────────────────────────── */}
+        <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, flexShrink: 0 }}>
+          <div>
+            <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#F97316', marginBottom: 4 }}>
+              {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+            </p>
+            <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
+              {companyName ? `Today's Overview for ${companyName}` : "Today's Overview"}
             </h1>
-          )}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          </div>
+
+          {/* Right: user + plan */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
             {ownerName && (
-              <span style={{ fontSize: '0.9rem', color: headerTheme.text, opacity: 0.85 }}>{ownerName}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: '#fff', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: '#0F172A', color: '#FFFFFF', flexShrink: 0 }}>
+                  <Crown size={13} />
+                </span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{ownerName}</span>
+              </div>
             )}
-            {userRole && (
-              <span style={{
-                padding: '4px 10px',
-                borderRadius: '99px',
-                fontSize: '0.8rem',
-                fontWeight: 600,
-                background: 'rgba(128,128,128,0.15)',
-                color: headerTheme.text,
-              }}>
-                {userRole}
-              </span>
-            )}
+            {companyId && <PlanBadge plan={currentPlan} currentCompanyId={companyId} />}
           </div>
         </div>
 
-        {/* Content */}
-        <div style={{ padding: '28px 32px', flex: 1 }}>
+        {/* ── Content ──────────────────────────────────────────────────── */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 24, flex: 1, overflow: 'hidden', minHeight: 0 }}>
 
           {initialReady && !companyId && (
-            <div style={{
-              background: '#FFFBEB',
-              border: '1px solid #FDE68A',
-              borderRadius: '10px',
-              padding: '14px 18px',
-              fontSize: '0.9rem',
-              color: '#92400E',
-              marginBottom: '20px',
-            }}>
-              No company is linked to your profile yet. If you just accepted an invitation, try signing out and signing in again, or contact your administrator.
+            <div style={{ background: '#FFFBEB', borderRadius: 12, padding: '14px 16px', fontSize: 13, color: '#92400E', border: '1px solid #FDE68A' }}>
+              No company is linked to your profile yet. If you just accepted an invitation, try signing out and signing in again.
             </div>
           )}
 
-          {/* ── Section: Departments ─────────────────────────────────────── */}
-          {dashboardRole === 'Manager' ? (
-            <p style={{ color: '#9CA3AF', fontSize: '0.9375rem' }}>Your team and schedule will appear here.</p>
-          ) : (
-          <div>
-            {/* Header row */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-              <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0 }}>Departments</h2>
-              {canManageDepartments && (
-              <button
-                onClick={() => { setAddModal(true); setDeptFormName(''); setDeptError('') }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '5px',
-                  padding: '7px 13px',
-                  background: 'transparent',
-                  border: '1.5px solid #E5E7EB',
-                  borderRadius: '8px',
-                  fontWeight: 600,
-                  fontSize: '0.875rem',
-                  color: '#374151',
-                  cursor: 'pointer',
-                  transition: 'border-color 0.12s',
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#9CA3AF')}
-                onMouseLeave={(e) => (e.currentTarget.style.borderColor = '#E5E7EB')}
-              >
-                <Plus size={14} strokeWidth={2.5} />
-                Add Department
-              </button>
+          {companyId && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 24, flex: 1, overflow: 'hidden', minHeight: 0 }}>
+              {/* ── Last refreshed chip ── */}
+              {lastRefreshed && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0, marginBottom: -8 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10B981', flexShrink: 0, display: 'inline-block', animation: 'dotPulse 1.4s ease-out infinite', marginLeft: 5 }} />
+                  <span style={{ fontSize: 10, fontWeight: 500, color: '#94A3B8', letterSpacing: '0.03em' }}>
+                    Updated {timeAgo(lastRefreshed.toISOString())}
+                  </span>
+                </div>
               )}
-            </div>
 
-            {/* Search */}
-            <div style={{ position: 'relative', marginBottom: '18px', maxWidth: '320px' }}>
-              <Search size={14} style={{ position: 'absolute', left: '11px', top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
-              <input
-                placeholder="Search departments..."
-                value={deptSearch}
-                onChange={(e) => setDeptSearch(e.target.value)}
-                style={{
-                  width: '100%',
-                  paddingLeft: '34px',
-                  paddingRight: deptSearch ? '30px' : '12px',
-                  paddingTop: '8px',
-                  paddingBottom: '8px',
-                  border: '1.5px solid #E5E7EB',
-                  borderRadius: '8px',
-                  fontSize: '0.9rem',
-                  color: '#374151',
-                  background: '#FFFFFF',
-                  outline: 'none',
-                  boxSizing: 'border-box',
-                }}
-              />
-              {deptSearch && (
-                <button
-                  onClick={() => setDeptSearch('')}
-                  style={{
-                    position: 'absolute',
-                    right: '8px',
-                    top: '50%',
-                    transform: 'translateY(-50%)',
-                    background: 'none',
-                    border: 'none',
-                    cursor: 'pointer',
-                    color: '#9CA3AF',
+              {/* ── ROW 1: Stat cards ─────────────── */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: 14, flexShrink: 0 }}>
+                {[
+                  {
+                    label: 'Staff on Shift',
+                    value: timelineLoading ? null : todayShiftCount,
+                    icon: <Users size={16} style={{ color: '#F97316' }} />,
+                    accentBg: '#FFF7ED',
+                  },
+                  {
+                    label: 'Casual Workers',
+                    value: timelineLoading ? null : casualWorkersCount,
+                    icon: <UserRound size={16} style={{ color: '#EC4899' }} />,
+                    accentBg: '#FDF2F8',
+                  },
+                  {
+                    label: 'Total Tasks',
+                    value: taskStatsLoading ? null : totalTasks,
+                    icon: <ClipboardList size={16} style={{ color: '#3B82F6' }} />,
+                    accentBg: '#EFF6FF',
+                  },
+                  {
+                    label: 'Tasks In Progress',
+                    value: taskStatsLoading ? null : (taskStats?.inProgress ?? 0),
+                    icon: <Timer size={16} style={{ color: '#8B5CF6' }} />,
+                    accentBg: '#F5F3FF',
+                  },
+                  {
+                    label: 'Tasks In Review',
+                    value: taskStatsLoading ? null : (taskStats?.review ?? 0),
+                    icon: <Eye size={16} style={{ color: '#F59E0B' }} />,
+                    accentBg: '#FFFBEB',
+                  },
+                  {
+                    label: 'Tasks Complete',
+                    value: taskStatsLoading ? null : (taskStats?.complete ?? 0),
+                    icon: <CheckCircle size={16} style={{ color: '#10B981' }} />,
+                    accentBg: '#ECFDF5',
+                  },
+                ].map(card => (
+                  <article key={card.label} className="stat-card" style={{
+                    background: '#fff',
+                    borderRadius: 16,
+                    padding: '16px 18px',
+                    boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)',
                     display: 'flex',
-                    alignItems: 'center',
-                    padding: 0,
-                  }}
-                >
-                  <X size={14} />
-                </button>
-              )}
-            </div>
-
-            {/* Cards */}
-            {filteredDepts.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '56px 0', color: '#9CA3AF', fontSize: '0.9375rem' }}>
-                {deptSearch
-                  ? 'No departments match your search.'
-                  : canManageDepartments
-                    ? 'No departments yet. Add your first one.'
-                    : 'No departments in this company yet.'}
-              </div>
-            ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '14px' }}>
-                {filteredDepts.map((dept) => (
-                  <div
-                    key={dept.id}
-                    style={{
-                      background: '#FFFFFF',
-                      border: '1px solid #E5E7EB',
-                      borderRadius: '12px',
-                      padding: '18px 20px',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '14px',
-                    }}
-                  >
-                    <div>
-                      <p style={{ fontWeight: 700, fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{dept.name}</p>
-                      <p style={{ fontSize: '0.8125rem', color: deptManagerMap[dept.id] ? '#374151' : '#9CA3AF', margin: '4px 0 0' }}>
-                        {deptManagerMap[dept.id] ?? 'No managers yet'}
-                      </p>
+                    flexDirection: 'column',
+                    gap: 10,
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <p style={{ fontSize: 11, fontWeight: 600, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.07em', margin: 0 }}>{card.label}</p>
+                      <div className="stat-icon" style={{ width: 32, height: 32, borderRadius: 10, background: card.accentBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        {card.icon}
+                      </div>
                     </div>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      {canManageDepartments && (
-                      <>
-                      {/* Edit Department Name */}
-                      <button
-                        onClick={() => { setEditModal(dept); setDeptFormName(dept.name); setDeptError('') }}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '5px',
-                          padding: '6px 10px',
-                          border: '1px solid #E5E7EB',
-                          borderRadius: '7px',
-                          background: 'none',
-                          cursor: 'pointer',
-                          fontSize: '0.8125rem',
-                          color: '#6B7280',
-                          fontWeight: 500,
-                          transition: 'border-color 0.1s',
-                        }}
-                        onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#9CA3AF')}
-                        onMouseLeave={(e) => (e.currentTarget.style.borderColor = '#E5E7EB')}
-                      >
-                        <Pencil size={12} strokeWidth={2} />
-                        Edit
-                      </button>
-
-                      {/* Edit Manager */}
-                      <button
-                        onClick={() => { setEditManagerModal(dept); setEditManagerSelectedId(''); setEditManagerError('') }}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '5px',
-                          padding: '6px 10px',
-                          border: '1px solid #E5E7EB',
-                          borderRadius: '7px',
-                          background: 'none',
-                          cursor: 'pointer',
-                          fontSize: '0.8125rem',
-                          color: '#6B7280',
-                          fontWeight: 500,
-                          transition: 'border-color 0.1s',
-                        }}
-                        onMouseEnter={(e) => (e.currentTarget.style.borderColor = '#9CA3AF')}
-                        onMouseLeave={(e) => (e.currentTarget.style.borderColor = '#E5E7EB')}
-                      >
-                        <Pencil size={12} strokeWidth={2} />
-                        Manager
-                      </button>
-
-                      {/* Delete */}
-                      <button
-                        onClick={() => { setDeleteModal(dept); setDeptError('') }}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '5px',
-                          padding: '6px 10px',
-                          border: '1px solid #E5E7EB',
-                          borderRadius: '7px',
-                          background: 'none',
-                          cursor: 'pointer',
-                          fontSize: '0.8125rem',
-                          color: '#EF4444',
-                          fontWeight: 500,
-                        }}
-                      >
-                        <Trash2 size={12} strokeWidth={2} />
-                        Delete
-                      </button>
-                      </>
-                      )}
-                    </div>
-                  </div>
+                    <p style={{ fontSize: 28, fontWeight: 800, color: '#0F172A', lineHeight: 1, margin: 0, letterSpacing: '-0.5px' }}>
+                      {card.value === null ? <Spinner size={14} dark /> : <AnimatedNumber value={card.value} />}
+                    </p>
+                  </article>
                 ))}
               </div>
-            )}
-          </div>
+
+              {/* ── ROW 2: Timeline full width ─── */}
+              <div style={{ flexShrink: 0 }}>
+
+                {/* Timeline */}
+                <div className="panel-card" style={{ minWidth: 0, padding: '16px 20px', background: '#FFFFFF', borderRadius: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column' }}>
+                  {/* Timeline header */}
+                  <div className="mb-4 flex items-center justify-between gap-4" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 16 }}>
+                    <div className="flex items-center gap-2" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {selectedDeptId ? (
+                        <>
+                          <button
+                            onClick={() => setSelectedDeptId(null)}
+                            className="flex cursor-pointer items-center gap-1 border-0 bg-transparent p-0 text-sm font-medium text-gray-500 hover:text-gray-800"
+                          >
+                            <ChevronLeft size={15} />
+                            All Departments
+                          </button>
+                          <span className="text-gray-200">·</span>
+                          <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: deptColor(selectedDeptId) }} />
+                          <span className="text-sm font-semibold text-gray-900">{selectedDeptName}</span>
+                        </>
+                      ) : (
+                        <>
+                          <CalendarDays className="size-4 text-orange-500" />
+                          <span className="text-base font-semibold text-gray-900">Schedule</span>
+                          {timelineLoading && <Spinner size={13} dark />}
+                        </>
+                      )}
+                    </div>
+
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        data-testid="timeline-menu"
+                        aria-label="Options"
+                        className="flex size-9 cursor-pointer items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-500 transition-colors hover:bg-gray-50"
+                      >
+                        <MoreHorizontal size={16} />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" sideOffset={10} style={{ width: 300, borderRadius: 16, padding: 16, border: '1px solid #E5E7EB', background: '#fff', boxShadow: '0 4px 24px rgba(0,0,0,0.10)' }}>
+                        {/* View mode */}
+                        <p style={{ margin: '0 0 8px 0', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9CA3AF', display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <SlidersHorizontal size={12} style={{ color: '#F97316' }} />
+                          Timeline view
+                        </p>
+                        <div style={{ display: 'grid', gap: 4, marginBottom: 12 }}>
+                          {(['global', 'dept'] as const).map(v => (
+                            <DropdownMenuItem
+                              key={v}
+                              onClick={() => setTimelineView(v)}
+                              style={{
+                                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                borderRadius: 10, padding: '8px 10px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                                background: timelineView === v ? '#FFF7ED' : 'transparent',
+                                color: timelineView === v ? '#EA580C' : '#374151',
+                              }}
+                            >
+                              <span>{v === 'global' ? 'All departments' : 'By department'}</span>
+                              {timelineView === v && <Check size={13} />}
+                            </DropdownMenuItem>
+                          ))}
+                        </div>
+
+                        <div style={{ height: 1, background: '#F3F4F6', margin: '0 0 12px 0' }} />
+
+                        {/* Time window */}
+                        <div style={{ marginBottom: 8 }}>
+                          <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9CA3AF' }}>Time window</span>
+                        </div>
+
+                        {/* Auto-fit / Full presets */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 10 }}>
+                          {[
+                            {
+                              label: 'Auto-fit',
+                              onClick: () => { setTimeFrom(autoFrom); setTimeTo(autoTo); setIsAutoFit(true) },
+                              active: isAutoFit,
+                            },
+                            {
+                              label: 'Full day',
+                              onClick: () => { setTimeFrom(0); setTimeTo(24); setIsAutoFit(false) },
+                              active: !isAutoFit && timeFrom === 0 && timeTo === 24,
+                            },
+                          ].map(opt => (
+                            <button
+                              key={opt.label}
+                              type="button"
+                              onClick={opt.onClick}
+                              style={{
+                                cursor: 'pointer', borderRadius: 10, border: opt.active ? '1.5px solid #FDBA74' : '1px solid #E5E7EB',
+                                background: opt.active ? '#FFF7ED' : '#F9FAFB', padding: '8px 6px', textAlign: 'center',
+                              }}
+                            >
+                              <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: opt.active ? '#EA580C' : '#374151' }}>{opt.label}</p>
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* From / To manual adjust */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                          {[
+                            { label: 'From', val: timeFrom, dec: () => { setIsAutoFit(false); setTimeFrom(Math.max(0, timeFrom - 1)) }, inc: () => { setIsAutoFit(false); setTimeFrom(Math.min(timeTo - 1, timeFrom + 1)) } },
+                            { label: 'To', val: timeTo, dec: () => { setIsAutoFit(false); setTimeTo(Math.max(timeFrom + 1, timeTo - 1)) }, inc: () => { setIsAutoFit(false); setTimeTo(Math.min(24, timeTo + 1)) } },
+                          ].map(ctrl => (
+                            <div key={ctrl.label} style={{ borderRadius: 10, border: '1px solid #E5E7EB', background: '#F9FAFB', padding: '8px 10px' }}>
+                              <p style={{ margin: '0 0 6px 0', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9CA3AF' }}>{ctrl.label}</p>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
+                                <button type="button" onClick={ctrl.dec} aria-label={`Decrease ${ctrl.label}`} style={{ width: 26, height: 26, borderRadius: 8, border: '1px solid #E5E7EB', background: '#fff', cursor: 'pointer', fontSize: 14, color: '#6B7280', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>−</button>
+                                <span style={{ fontSize: 13, fontWeight: 700, color: '#111827' }}>{formatHourLabel(ctrl.val)}</span>
+                                <button type="button" onClick={ctrl.inc} aria-label={`Increase ${ctrl.label}`} style={{ width: 26, height: 26, borderRadius: 8, border: '1px solid #E5E7EB', background: '#fff', cursor: 'pointer', fontSize: 14, color: '#6B7280', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+
+                  {/* Department card grid (default — no drill-down) */}
+                  {!selectedDeptId && (
+                    <>
+                      {timelineLoading ? (
+                        <div className="py-10 flex justify-center"><Spinner size={20} dark /></div>
+                      ) : deptIds.length === 0 ? (
+                        <div style={{ padding: '32px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                          <CalendarDays size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
+                          <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No shifts scheduled today</p>
+                        </div>
+                      ) : timelineView === 'dept' ? (
+                        <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(220px,1fr))]">
+                          {deptIds.map(deptId => (
+                            <DeptCard
+                              key={deptId}
+                              deptId={deptId}
+                              deptName={deptGroups[deptId].name}
+                              rows={deptGroups[deptId].rows}
+                              onClick={() => setSelectedDeptId(deptId)}
+                            />
+                          ))}
+                        </div>
+                      ) : (
+                        <div style={{ borderRadius: 12, overflow: 'hidden', border: '1px solid #E2E8F0' }}>
+                          {renderHourAxis()}
+                          {renderTimelineContent(visibleTimelineRows)}
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {/* Drill-down: single department timeline */}
+                  {selectedDeptId && (
+                    <div style={{ borderRadius: 12, overflow: 'hidden', border: '1px solid #E2E8F0' }}>
+                      {renderHourAxis()}
+                      {renderTimelineContent(selectedDeptRows)}
+                    </div>
+                  )}
+
+                  {/* ── Department legend — only in all-departments view ── */}
+                  {!timelineLoading && deptIds.length > 0 && timelineView === 'global' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 12, paddingTop: 12, borderTop: '1px solid #F1F5F9', flexShrink: 0 }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#94A3B8', marginRight: 4, flexShrink: 0 }}>Departments</span>
+                      {deptIds.map(deptId => {
+                        const color = deptColor(deptId)
+                        const name = deptGroups[deptId]?.name ?? deptId
+                        const count = deptGroups[deptId]?.rows?.length ?? 0
+                        return (
+                          <div key={deptId} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, borderRadius: 999, padding: '4px 10px 4px 6px', background: '#F8FAFC', border: '1px solid #E2E8F0' }}>
+                            <span style={{ width: 10, height: 10, borderRadius: 3, background: color, flexShrink: 0, display: 'inline-block' }} />
+                            <span style={{ fontSize: 12, fontWeight: 600, color: '#334155' }}>{name}</span>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: '#94A3B8' }}>{count}</span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+
+              </div>
+
+              {/* ── ROW 3: Focus | Team | Live Feed | Tasks (4 equal cols) ─── */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 16, alignItems: 'stretch', flex: 1, minHeight: 0 }}>
+
+                {/* ── COL 1: Focus ── */}
+                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+
+                    {/* Card header */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18, flexShrink: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <Target size={15} style={{ color: '#EA580C' }} />
+                        </div>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Focus</span>
+                      </div>
+                    </div>
+
+                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+                    {taskStatsLoading ? (
+                      <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}><Spinner size={20} dark /></div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+                        {/* Donut chart */}
+                        {(() => {
+                          const total = priorityFocusTasks.length
+                          const RM = 55, SW = 16, CX = 80, CY = 80
+                          const C = 2 * Math.PI * RM
+                          return (
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 20 }}>
+                              {/* SVG donut */}
+                              <div style={{ flexShrink: 0 }}>
+                                <svg width={160} height={160} viewBox="0 0 160 160">
+                                  {total === 0 ? (
+                                    <circle cx={CX} cy={CY} r={RM} fill="none" stroke="#F3F4F6" strokeWidth={SW} />
+                                  ) : (
+                                    focusDonutSegs.map((seg, i) => {
+                                      if (seg.count === 0) return null
+                                      return (
+                                        <circle
+                                          key={i}
+                                          cx={CX} cy={CY} r={RM}
+                                          fill="none"
+                                          stroke={seg.color}
+                                          strokeWidth={SW}
+                                          strokeDasharray={`${seg.frac * C} ${C}`}
+                                          transform={`rotate(${-90 + seg.start * 360} ${CX} ${CY})`}
+                                          strokeLinecap="butt"
+                                        />
+                                      )
+                                    })
+                                  )}
+                                  <text x={CX} y={CY - 10} textAnchor="middle" dominantBaseline="middle" fill="#0F172A" fontSize="24" fontWeight="800" fontFamily="inherit">{total}</text>
+                                  <text x={CX} y={CY + 12} textAnchor="middle" dominantBaseline="middle" fill="#94A3B8" fontSize="11" fontWeight="500" fontFamily="inherit">tasks</text>
+                                </svg>
+                              </div>
+                              {/* Legend */}
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                                {focusDonutSegs.map(seg => (
+                                  <div key={seg.label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <div style={{ width: 10, height: 10, borderRadius: 3, background: seg.color, flexShrink: 0 }} />
+                                    <span style={{ fontSize: 12, color: '#374151', width: 68 }}>{seg.label}</span>
+                                    <span style={{ fontSize: 14, fontWeight: 800, color: seg.count > 0 ? seg.color : '#D1D5DB' }}>{seg.count}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )
+                        })()}
+
+                        {/* Task list */}
+                        {priorityFocusTasks.length === 0 ? (
+                          <div style={{ padding: '32px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                            <Target size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
+                            <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No urgent or high priority tasks</p>
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {priorityFocusTasks.map(task => {
+                              const stageMap: Record<string, { color: string; bg: string; label: string }> = {
+                                'Assigned':    { color: '#64748B', bg: '#F1F5F9', label: 'Assigned' },
+                                'In Progress': { color: '#4F46E5', bg: '#EEF2FF', label: 'In Progress' },
+                                'Review':      { color: '#D97706', bg: '#FFFBEB', label: 'Review' },
+                                'Complete':    { color: '#059669', bg: '#ECFDF5', label: 'Complete' },
+                              }
+                              const stage = stageMap[task.status ?? 'Assigned'] ?? stageMap['Assigned']
+                              const { color: stageColor, bg: stageBg, label: stageLabel } = stage
+                              const isComplete = task.status === 'Complete'
+                              const isExpanded = expandedTaskId === task.id
+                              const pStyle = task.priority === 'Urgent'
+                                ? { bg: '#FEE2E2', color: '#B91C1C', border: '#FECACA' }
+                                : { bg: '#FFEDD5', color: '#C2410C', border: '#FDBA74' }
+                              return (
+                                <div
+                                  key={task.id}
+                                  className="task-item"
+                                  style={{ borderRadius: 12, border: '1px solid #EBEBEB', padding: '10px 12px', background: '#FAFAFA', cursor: 'pointer' }}
+                                  onClick={() => setExpandedTaskId(isExpanded ? null : task.id)}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    {/* Priority badge */}
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, width: 60, height: 24, borderRadius: 8, fontSize: 11, fontWeight: 700, background: pStyle.bg, color: pStyle.color, border: `1px solid ${pStyle.border}` }}>
+                                      {task.priority}
+                                    </span>
+                                    {/* Title */}
+                                    <span style={{ fontSize: 12, fontWeight: 600, color: isComplete ? '#94A3B8' : '#0F172A', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: isComplete ? 'line-through' : 'none' }}>
+                                      {task.title}
+                                    </span>
+                                    {/* Assignee */}
+                                    {task.assignee_name && (
+                                      <span style={{ fontSize: 11, fontWeight: 600, color: '#374151', flexShrink: 0 }}>{task.assignee_name}</span>
+                                    )}
+                                    {/* Status badge */}
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, minWidth: 76, height: 24, borderRadius: 999, fontSize: 11, fontWeight: 600, background: stageBg, color: stageColor }}>
+                                      {stageLabel}
+                                    </span>
+                                  </div>
+                                  {isExpanded && task.assignee_name && task.assigned_user_id && (
+                                    <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #F1F5F9' }}>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          router.push(`/owner/communication?tab=messages&partner_id=${task.assigned_user_id}&prefill=${encodeURIComponent(`Regarding: "${task.title}"`)}`)
+                                        }}
+                                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, borderRadius: 8, border: '1px solid #E2E8F0', background: '#fff', padding: '5px 10px', fontSize: 11, color: '#64748B', cursor: 'pointer' }}
+                                      >
+                                        <MessageCircle size={11} />
+                                        Send Message
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    </div>
+                  </div>
+
+                {/* ── COL 2: Team ── */}
+                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexShrink: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <Users size={15} style={{ color: '#F97316' }} />
+                      </div>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Team</span>
+                    </div>
+                  </div>
+                  <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+                  {timelineLoading ? (
+                    <div style={{ display: 'flex', justifyContent: 'center', padding: '24px 0' }}><Spinner size={16} dark /></div>
+                  ) : todayShiftCount === 0 ? (
+                    <div style={{ padding: '32px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                      <Users size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
+                      <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No one is on shift today</p>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                      {Object.entries(teamByDept).map(([deptId, { name: deptName, rows }]) => (
+                        <div key={deptId}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 10px 6px', borderBottom: '2px solid #374151', marginBottom: 2 }}>
+                            <span style={{ width: 8, height: 8, borderRadius: 2, background: deptColor(deptId), flexShrink: 0, display: 'inline-block' }} />
+                            <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: '#94A3B8' }}>{deptName}</span>
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2px 4px' }}>
+                          {rows.map((row, i) => (
+                            <div
+                              key={`${row.user_id}_${i}`}
+                              data-testid="team-member-row"
+                              className="team-row"
+                              style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 8px', borderRadius: 10, minWidth: 0 }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: row.role === 'Manager' ? '#FFF7ED' : '#F3F4F6', color: row.role === 'Manager' ? '#EA580C' : '#4B5563', borderRadius: 999 }}>
+                                {row.role === 'Manager' ? <UserCog size={13} /> : <UserRound size={13} />}
+                              </div>
+                              <p style={{ fontSize: 13, fontWeight: 700, margin: 0, color: row.role === 'Manager' ? '#EA580C' : '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }}>{row.full_name}</p>
+                              <button
+                                onClick={() => router.push(`/owner/communication?tab=messages&partner_id=${row.user_id}`)}
+                                aria-label={`Message ${row.full_name}`}
+                                className="msg-btn"
+                                style={{ flexShrink: 0, cursor: 'pointer', background: 'transparent', border: 'none', padding: 4, borderRadius: 6, color: '#CBD5E1', transition: 'color 0.15s' }}
+                                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = '#F97316' }}
+                                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = '#CBD5E1' }}
+                              >
+                                <MessageCircle size={14} />
+                              </button>
+                            </div>
+                          ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  </div>
+                </div>
+
+                {/* ── COL 3: Live Feed ── */}
+                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }} data-testid="live-feed">
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexShrink: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <Activity size={15} style={{ color: '#F97316' }} />
+                        </div>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Live Feed</span>
+                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10B981', flexShrink: 0, display: 'inline-block', animation: 'dotPulse 1.4s ease-out infinite' }} />
+                      </div>
+                      {activityFeed.length > 0 && (
+                        <button
+                          type="button"
+                          className="mark-btn"
+                          onClick={() => setMarkedFeedItems(new Set(activityFeed.map(event => feedKey(event))))}
+                          style={{ cursor: 'pointer', borderRadius: 999, border: '1px solid #E2E8F0', background: '#fff', padding: '5px 14px', fontSize: 11, fontWeight: 600, color: '#64748B', transition: 'all 0.15s' }}
+                          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#F8FAFC' }}
+                          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '#fff' }}
+                        >
+                          Mark all read
+                        </button>
+                      )}
+                    </div>
+
+                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+                    {activityFeedLoading ? (
+                      <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}><Spinner size={16} dark /></div>
+                    ) : activityFeed.length === 0 ? (
+                      <div style={{ padding: '32px 16px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                        <Activity size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
+                        <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No activity yet today</p>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {activityFeed.map((event) => {
+                          const statusColors: Record<string, { dot: string; bg: string }> = {
+                            'In Progress': { dot: '#4F46E5', bg: '#EEF2FF' },
+                            'Review':      { dot: '#D97706', bg: '#FFFBEB' },
+                            'Complete':    { dot: '#059669', bg: '#ECFDF5' },
+                          }
+                          const matchedStatus = Object.keys(statusColors).find(s => event.description.endsWith(s))
+                          const { dot: dotColor, bg: dotBg } = statusColors[matchedStatus ?? ''] ?? { dot: '#4F46E5', bg: '#EEF2FF' }
+                          const key = feedKey(event)
+                          const isMarked = markedFeedItems.has(key)
+                          return (
+                            <div key={key} className="feed-item" style={{ borderRadius: 14, border: `1px solid ${isMarked ? '#F1F5F9' : '#F1F5F9'}`, background: isMarked ? '#FAFAFA' : '#fff', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                                <div style={{ width: 28, height: 28, borderRadius: 8, background: isMarked ? '#F1F5F9' : dotBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                  <div style={{ width: 7, height: 7, borderRadius: 999, background: isMarked ? '#CBD5E1' : dotColor }} />
+                                </div>
+                                <p style={{ margin: 0, fontSize: 12, color: isMarked ? '#94A3B8' : '#334155', lineHeight: 1.5, flex: 1 }}>{event.description}</p>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <span style={{ fontSize: 10, color: '#94A3B8', fontWeight: 500 }}>{timeAgo(event.timestamp)}</span>
+                                <button
+                                  type="button"
+                                  className="mark-btn"
+                                  onClick={() => setMarkedFeedItems(prev => new Set(prev).add(key))}
+                                  style={{ cursor: isMarked ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4, width: 70, height: 24, borderRadius: 999, border: isMarked ? '1px solid #BBF7D0' : '1px solid #E2E8F0', background: isMarked ? '#F0FDF4' : '#F8FAFC', color: isMarked ? '#16A34A' : '#64748B', fontSize: 11, fontWeight: 600 }}
+                                >
+                                  <CheckCheck size={11} />
+                                  {isMarked ? 'Done' : 'Mark'}
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                    </div>
+                  </div>
+
+                {/* ── COL 4: Tasks ── */}
+                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexShrink: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <ClipboardList size={15} style={{ color: '#F97316' }} />
+                        </div>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Tasks</span>
+                      </div>
+                    </div>
+
+                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+                    {taskStatsLoading ? (
+                      <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}><Spinner size={16} dark /></div>
+                    ) : todayTasks.length === 0 ? (
+                      <div style={{ padding: '32px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                        <ClipboardList size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
+                        <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No tasks assigned today</p>
+                      </div>
+                    ) : (() => {
+                        const medLowTasks = todayTasks.filter(t => t.priority === 'Medium' || t.priority === 'Low')
+                        const pMap: Record<string, { bg: string; color: string; border: string }> = {
+                          Medium: { bg: '#FEF9C3', color: '#A16207', border: '#FDE047' },
+                          Low:    { bg: '#F3F4F6', color: '#6B7280', border: '#E5E7EB' },
+                        }
+                        const sMap: Record<string, { bg: string; color: string }> = {
+                          'Assigned':    { bg: '#F1F5F9', color: '#64748B' },
+                          'In Progress': { bg: '#EEF2FF', color: '#4F46E5' },
+                          'Review':      { bg: '#FFFBEB', color: '#D97706' },
+                          'Complete':    { bg: '#ECFDF5', color: '#059669' },
+                        }
+                        if (medLowTasks.length === 0) return (
+                          <div style={{ padding: '32px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                            <ClipboardList size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
+                            <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No medium or low priority tasks</p>
+                          </div>
+                        )
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {medLowTasks.map(task => {
+                              const isExpanded = expandedTaskId === task.id
+                              const ps = pMap[task.priority ?? ''] ?? { bg: '#F3F4F6', color: '#9CA3AF', border: '#E5E7EB' }
+                              const sc = sMap[task.status ?? 'Assigned'] ?? sMap['Assigned']
+                              return (
+                                <div
+                                  key={task.id}
+                                  data-testid="task-list-item"
+                                  className="task-item"
+                                  style={{ borderRadius: 12, border: '1px solid #EBEBEB', background: '#FAFAFA', padding: '10px 12px', cursor: 'pointer' }}
+                                  onClick={() => setExpandedTaskId(isExpanded ? null : task.id)}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    {/* Priority badge */}
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, width: 60, height: 24, borderRadius: 8, fontSize: 11, fontWeight: 700, background: ps.bg, color: ps.color, border: `1px solid ${ps.border}` }}>
+                                      {task.priority}
+                                    </span>
+                                    {/* Title */}
+                                    <span style={{ fontSize: 12, fontWeight: 600, color: '#0F172A', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                      {task.title}
+                                    </span>
+                                    {/* Assignee */}
+                                    {task.assignee_name && (
+                                      <span style={{ fontSize: 11, fontWeight: 600, color: '#374151', flexShrink: 0 }}>{task.assignee_name}</span>
+                                    )}
+                                    {/* Status badge */}
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, minWidth: 76, height: 24, borderRadius: 999, fontSize: 11, fontWeight: 600, background: sc.bg, color: sc.color }}>
+                                      {task.status ?? 'Assigned'}
+                                    </span>
+                                  </div>
+                                  {isExpanded && (
+                                    <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #F1F5F9' }}>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          if (task.assigned_user_id) {
+                                            router.push(`/owner/communication?tab=messages&partner_id=${task.assigned_user_id}&prefill=${encodeURIComponent(`Regarding: "${task.title}"`)}`)
+                                          }
+                                        }}
+                                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, borderRadius: 8, border: '1px solid #E2E8F0', background: '#fff', padding: '5px 10px', fontSize: 11, color: '#64748B', cursor: 'pointer' }}
+                                      >
+                                        <MessageCircle size={11} />
+                                        Send Message
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )
+                      })()}
+                    </div>
+                  </div>
+
+              </div>
+            </div>
           )}
         </div>
       </main>
 
-      {/* ══════════════ MODALS ══════════════ */}
-
-      {/* ── Invite Partner ────────────────────────────────────────────────── */}
-      {inviteModal === 'owner' && (
-        <ModalOverlay onClose={() => { setInviteModal(null); setInviteCode('') }}>
-          <ModalBox>
-            <ModalHeader title="Invite Partner" onClose={() => { setInviteModal(null); setInviteCode('') }} />
-            <p style={{ fontSize: '0.9rem', color: '#6B7280', margin: '0 0 16px', lineHeight: 1.55 }}>
-              Share this code with someone you want to give full access to.
-            </p>
-            {inviteCode && (
-              <div style={{ marginBottom: '16px' }}>
-                <CodeBox code={inviteCode} loading={false} />
-              </div>
-            )}
-            {inviteCode ? (
-              <CodeActions code={inviteCode} loading={inviteLoading} copied={copied} onCopy={() => copyLink('Owner')} />
-            ) : (
-              <button
-                onClick={() => generateCode('Owner')}
-                disabled={inviteLoading}
-                style={{
-                  width: '100%', height: '48px', padding: '0',
-                  background: '#F97316', color: '#FFFFFF', border: 'none', borderRadius: '10px',
-                  fontWeight: 600, fontSize: '0.9375rem',
-                  cursor: inviteLoading ? 'not-allowed' : 'pointer',
-                  opacity: inviteLoading ? 0.45 : 1,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-                }}
-              >
-                {inviteLoading && <Spinner size={14} />}
-                Generate Invite Code
-              </button>
-            )}
-          </ModalBox>
-        </ModalOverlay>
-      )}
-
-      {/* ── Invite Manager ────────────────────────────────────────────────── */}
-      {inviteModal === 'manager' && (
-        <ModalOverlay onClose={() => { setInviteModal(null); setInviteCode('') }}>
-          <ModalBox>
-            <ModalHeader title="Invite Manager" onClose={() => { setInviteModal(null); setInviteCode('') }} />
-            <p style={{ fontSize: '0.9rem', color: '#6B7280', margin: '0 0 16px', lineHeight: 1.55 }}>
-              Select a department and share the code with your new Manager.
-            </p>
-            {departments.length === 0 ? (
-              <p style={{ fontSize: '0.875rem', color: '#9CA3AF', textAlign: 'center', margin: '16px 0' }}>
-                No departments found. Please add a department first.
-              </p>
-            ) : (
-              <>
-                <label style={modalLabelStyle}>Department</label>
-                <div style={{ position: 'relative' }}>
-                  <select
-                    value={selectedDeptId}
-                    onChange={(e) => handleManagerDeptSelect(e.target.value)}
-                    style={{ ...modalInputStyle, paddingRight: '36px', appearance: 'none', cursor: 'pointer' }}
-                  >
-                    <option value="">Select a department</option>
-                    {departments.map((d) => (
-                      <option key={d.id} value={d.id}>{d.name}</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={15} style={{ position: 'absolute', right: '11px', top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
-                </div>
-              </>
-            )}
-            {inviteCode && (
-              <div style={{ marginTop: '16px', marginBottom: '16px' }}>
-                <CodeBox code={inviteCode} loading={false} />
-              </div>
-            )}
-            <div style={{ marginTop: '20px' }}>
-              {inviteCode ? (
-                <CodeActions code={inviteCode} loading={inviteLoading} copied={copied} onCopy={() => copyLink('Manager')} />
-              ) : (
-                <button
-                  onClick={() => { if (selectedDeptId) generateCode('Manager', selectedDeptId) }}
-                  disabled={!selectedDeptId || inviteLoading || departments.length === 0}
-                  style={{
-                    width: '100%', height: '48px', padding: '0',
-                    background: '#F97316', color: '#FFFFFF', border: 'none', borderRadius: '10px',
-                    fontWeight: 600, fontSize: '0.9375rem',
-                    cursor: (!selectedDeptId || departments.length === 0) ? 'not-allowed' : 'pointer',
-                    opacity: (!selectedDeptId || departments.length === 0) ? 0.45 : 1,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-                  }}
-                >
-                  {inviteLoading && <Spinner size={14} />}
-                  Generate Invite Code
-                </button>
-              )}
-            </div>
-          </ModalBox>
-        </ModalOverlay>
-      )}
-
-      {/* ── Invite Employee ───────────────────────────────────────────────── */}
-      {inviteModal === 'employee' && (
-        <ModalOverlay onClose={() => { setInviteModal(null); setInviteCode('') }}>
-          <ModalBox>
-            <ModalHeader title="Invite Employee" onClose={() => { setInviteModal(null); setInviteCode('') }} />
-            <p style={{ fontSize: '0.9rem', color: '#6B7280', margin: '0 0 16px', lineHeight: 1.55 }}>
-              Select a department and share the code with your new employee.
-            </p>
-            {departments.length === 0 ? (
-              <p style={{ fontSize: '0.875rem', color: '#9CA3AF', textAlign: 'center', margin: '16px 0' }}>
-                No departments found. Please add a department first.
-              </p>
-            ) : (
-              <>
-                <label style={modalLabelStyle}>Department</label>
-                <div style={{ position: 'relative' }}>
-                  <select
-                    value={selectedDeptId}
-                    onChange={(e) => handleEmployeeDeptSelect(e.target.value)}
-                    style={{ ...modalInputStyle, paddingRight: '36px', appearance: 'none', cursor: 'pointer' }}
-                  >
-                    <option value="">Select a department</option>
-                    {departments.map((d) => (
-                      <option key={d.id} value={d.id}>{d.name}</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={15} style={{ position: 'absolute', right: '11px', top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
-                </div>
-              </>
-            )}
-            {inviteCode && (
-              <div style={{ marginTop: '16px', marginBottom: '16px' }}>
-                <CodeBox code={inviteCode} loading={false} />
-              </div>
-            )}
-            <div style={{ marginTop: '20px' }}>
-              {inviteCode ? (
-                <CodeActions code={inviteCode} loading={inviteLoading} copied={copied} onCopy={() => copyLink('Employee')} />
-              ) : (
-                <button
-                  onClick={() => { if (selectedDeptId) generateCode('Employee', selectedDeptId) }}
-                  disabled={!selectedDeptId || inviteLoading || departments.length === 0}
-                  style={{
-                    width: '100%', height: '48px', padding: '0',
-                    background: '#F97316', color: '#FFFFFF', border: 'none', borderRadius: '10px',
-                    fontWeight: 600, fontSize: '0.9375rem',
-                    cursor: (!selectedDeptId || departments.length === 0) ? 'not-allowed' : 'pointer',
-                    opacity: (!selectedDeptId || departments.length === 0) ? 0.45 : 1,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
-                  }}
-                >
-                  {inviteLoading && <Spinner size={14} />}
-                  Generate Invite Code
-                </button>
-              )}
-            </div>
-          </ModalBox>
-        </ModalOverlay>
-      )}
-
-
-      {/* ── Add Department ────────────────────────────────────────────────── */}
-      {addModal && (
-        <ModalOverlay onClose={() => setAddModal(false)}>
-          <ModalBox>
-            <ModalHeader title="Add Department" onClose={() => setAddModal(false)} />
-            <label style={modalLabelStyle}>Department Name</label>
-            <input
-              autoFocus
-              type="text"
-              placeholder="e.g. Operations"
-              value={deptFormName}
-              onChange={(e) => setDeptFormName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleAddDept() }}
-              style={modalInputStyle}
-            />
-            <InlineError message={deptError} />
-            <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-              <button style={ghostBtn} onClick={() => setAddModal(false)}>Cancel</button>
-              <button style={primaryBtn(deptLoading)} onClick={handleAddDept} disabled={deptLoading}>
-                {deptLoading && <Spinner size={14} />}
-                Add Department
-              </button>
-            </div>
-          </ModalBox>
-        </ModalOverlay>
-      )}
-
-      {/* ── Edit Department ───────────────────────────────────────────────── */}
-      {editModal && (
-        <ModalOverlay onClose={() => setEditModal(null)}>
-          <ModalBox>
-            <ModalHeader title="Edit Department" onClose={() => setEditModal(null)} />
-            <label style={modalLabelStyle}>Department Name</label>
-            <input
-              autoFocus
-              type="text"
-              value={deptFormName}
-              onChange={(e) => setDeptFormName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleEditDept() }}
-              style={modalInputStyle}
-            />
-            <InlineError message={deptError} />
-            <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-              <button style={ghostBtn} onClick={() => setEditModal(null)}>Cancel</button>
-              <button style={primaryBtn(deptLoading)} onClick={handleEditDept} disabled={deptLoading}>
-                {deptLoading && <Spinner size={14} />}
-                Save Changes
-              </button>
-            </div>
-          </ModalBox>
-        </ModalOverlay>
-      )}
-
-      {/* ── Delete Department ─────────────────────────────────────────────── */}
-      {deleteModal && (
-        <ModalOverlay onClose={() => setDeleteModal(null)}>
-          <ModalBox>
-            <ModalHeader title="Delete Department" onClose={() => setDeleteModal(null)} />
-            <p style={{ fontSize: '0.9375rem', color: '#374151', margin: 0, lineHeight: 1.6 }}>
-              Are you sure you want to delete <strong>{deleteModal.name}</strong>? This cannot be undone.
-            </p>
-            <InlineError message={deptError} />
-            <div style={{ display: 'flex', gap: '10px', marginTop: '24px' }}>
-              <button style={ghostBtn} onClick={() => setDeleteModal(null)}>Cancel</button>
-              <button style={dangerBtn(deptLoading)} onClick={handleDeleteDept} disabled={deptLoading}>
-                {deptLoading && <Spinner size={14} />}
-                Delete
-              </button>
-            </div>
-          </ModalBox>
-        </ModalOverlay>
-      )}
-
-      {/* ── Edit Department Manager ───────────────────────────────────────── */}
-      {editManagerModal && (
-        <ModalOverlay onClose={() => { setEditManagerModal(null); setEditManagerSelectedId(''); setEditManagerError('') }}>
-          <ModalBox>
-            <ModalHeader
-              title="Edit Department Manager"
-              onClose={() => { setEditManagerModal(null); setEditManagerSelectedId(''); setEditManagerError('') }}
-            />
-            <p style={{ fontSize: '0.875rem', color: '#6B7280', margin: '0 0 16px', lineHeight: 1.55 }}>
-              Assign a manager to <strong>{editManagerModal.name}</strong>.
-            </p>
-            {allCompanyManagers.length === 0 ? (
-              <p style={{ fontSize: '0.875rem', color: '#9CA3AF', textAlign: 'center', margin: '8px 0 16px' }}>
-                No managers in this company yet.
-              </p>
-            ) : (
-              <>
-                <label style={modalLabelStyle}>Manager</label>
-                <div style={{ position: 'relative' }}>
-                  <select
-                    value={editManagerSelectedId}
-                    onChange={(e) => setEditManagerSelectedId(e.target.value)}
-                    style={{ ...modalInputStyle, paddingRight: '36px', appearance: 'none', cursor: 'pointer' }}
-                  >
-                    <option value="">Select a manager</option>
-                    {allCompanyManagers.map((m) => (
-                      <option key={m.id} value={m.id}>{m.full_name}</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={15} style={{ position: 'absolute', right: '11px', top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
-                </div>
-              </>
-            )}
-            <InlineError message={editManagerError} />
-            <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-              <button style={ghostBtn} onClick={() => { setEditManagerModal(null); setEditManagerSelectedId(''); setEditManagerError('') }}>Cancel</button>
-              <button
-                style={primaryBtn(editManagerLoading)}
-                onClick={handleEditDeptManager}
-                disabled={editManagerLoading || !editManagerSelectedId}
-              >
-                {editManagerLoading && <Spinner size={14} />}
-                Save
-              </button>
-            </div>
-          </ModalBox>
-        </ModalOverlay>
-      )}
-
-      {/* ── Change 4: Removal overlay ─────────────────────────────────────── */}
+      {/* ── REMOVAL OVERLAY ───────────────────────────────────────── */}
       {removalOverlay && (
-        <div style={{
-          position: 'fixed', inset: 0, zIndex: 200,
-          background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(4px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
-          <div style={{
-            background: '#FFFFFF', borderRadius: '16px', padding: '40px 48px',
-            boxShadow: '0 8px 48px rgba(0,0,0,0.18)', maxWidth: '460px', textAlign: 'center',
-          }}>
-            <div style={{
-              width: 48, height: 48, borderRadius: '50%', background: '#FEF2F2',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px',
-            }}>
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                <path d="M12 9v4M12 17h.01" stroke="#EF4444" strokeWidth="2" strokeLinecap="round" />
-                <circle cx="12" cy="12" r="9" stroke="#EF4444" strokeWidth="2" />
-              </svg>
-            </div>
-            <h2 style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827', margin: '0 0 12px' }}>
-              You have been removed
-            </h2>
-            <p style={{ fontSize: '0.9375rem', color: '#6B7280', lineHeight: 1.6, margin: '0 0 20px' }}>
-              You have been removed from <strong style={{ color: '#111827' }}>{removalOverlay.companyName}</strong> by the Owner.
-              Switching you to your other company…
+        <div className="fixed inset-0 z-[200] bg-black/70 backdrop-blur-sm flex items-center justify-center">
+          <div className="bg-white rounded-2xl px-12 py-10 shadow-2xl max-w-md text-center">
+            <h2 className="text-base font-bold text-gray-900 mb-2.5">You have been removed</h2>
+            <p className="text-sm text-gray-500 leading-relaxed mb-5">
+              You were removed from <strong className="text-gray-900">{removalOverlay.companyName}</strong>. Switching to your other company…
             </p>
-            <div style={{ height: 4, background: '#F3F4F6', borderRadius: 2, overflow: 'hidden' }}>
-              <div style={{
-                height: '100%', background: '#F97316', borderRadius: 2,
-                animation: 'removal-progress 3s linear forwards',
-              }} />
+            <div className="h-1 bg-gray-100 rounded-full overflow-hidden">
+              <div className="h-full w-full rounded-full bg-orange-500 transition-all duration-200" />
             </div>
-            <style>{`@keyframes removal-progress { from { width: 0% } to { width: 100% } }`}</style>
           </div>
         </div>
       )}
-
     </div>
   )
 }

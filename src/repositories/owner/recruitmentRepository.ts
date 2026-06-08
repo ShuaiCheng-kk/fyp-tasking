@@ -1,0 +1,176 @@
+// LAYER: Repository
+// RULE: Supabase queries only. No business logic.
+
+import { supabase } from '@/lib/supabase'
+import { CasualWorkerStatus, JobApplicant, JobInvitation, JobPosting, JobPostingInput } from '@/types/Recruitment'
+
+export const recruitmentRepository = {
+  async getPublicJobPostings(): Promise<JobPosting[]> {
+    const { data, error } = await supabase
+      .from('job_postings')
+      .select('*')
+      .eq('status', 'open')
+      .order('created_at', { ascending: false })
+    if (error) throw new Error(error.message)
+    return (data ?? []) as JobPosting[]
+  },
+
+  async getJobPostingsByCompany(company_id: string): Promise<JobPosting[]> {
+    const { data, error } = await supabase
+      .from('job_postings')
+      .select('*')
+      .eq('company_id', company_id)
+      .order('created_at', { ascending: false })
+    if (error) throw new Error(error.message)
+    return (data ?? []) as JobPosting[]
+  },
+
+  async getJobPostingById(id: string): Promise<JobPosting | null> {
+    const { data, error } = await supabase
+      .from('job_postings')
+      .select('*')
+      .eq('id', id)
+      .single()
+    if (error) return null
+    return data as JobPosting
+  },
+
+  async createJobPosting(input: JobPostingInput): Promise<JobPosting> {
+    const { data, error } = await supabase
+      .from('job_postings')
+      .insert({
+        company_id: input.company_id,
+        department_id: input.department_id ?? null,
+        created_by: input.created_by,
+        title: input.title,
+        description: input.description,
+        requirements: input.requirements ?? null,
+        location: input.location ?? null,
+        employment_type: input.employment_type ?? null,
+        company_name: input.company_name ?? null,
+        industry: input.industry ?? null,
+        salary_amount: input.salary_amount ?? null,
+        salary_type: input.salary_type ?? 'per hour',
+        is_recurring: input.is_recurring ?? false,
+        recurrence_interval: input.recurrence_interval ?? null,
+        recurrence_unit: input.recurrence_unit ?? null,
+        status: 'open',
+      })
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data as JobPosting
+  },
+
+  async updateJobPosting(id: string, fields: Partial<JobPostingInput> & { status?: string; archived_at?: string | null }): Promise<JobPosting> {
+    const { data, error } = await supabase
+      .from('job_postings')
+      .update(fields)
+      .eq('id', id)
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data as JobPosting
+  },
+
+  async getApplicantsByJob(job_id: string): Promise<JobApplicant[]> {
+    const { data, error } = await supabase
+      .from('job_applicants')
+      .select('*')
+      .eq('job_id', job_id)
+      .order('applied_at', { ascending: false })
+    if (error) throw new Error(error.message)
+    return (data ?? []) as JobApplicant[]
+  },
+
+  async getApplicantCounts(job_ids: string[]): Promise<{ job_id: string; status: string }[]> {
+    if (job_ids.length === 0) return []
+    const { data, error } = await supabase
+      .from('job_applicants')
+      .select('job_id, status')
+      .in('job_id', job_ids)
+    if (error) throw new Error(error.message)
+    return (data ?? []) as { job_id: string; status: string }[]
+  },
+
+  async getApplicantById(id: string): Promise<JobApplicant | null> {
+    const { data, error } = await supabase
+      .from('job_applicants')
+      .select('*')
+      .eq('id', id)
+      .single()
+    if (error) return null
+    return data as JobApplicant
+  },
+
+  async updateApplicantStatus(id: string, status: 'accepted' | 'rejected'): Promise<JobApplicant> {
+    const { data, error } = await supabase
+      .from('job_applicants')
+      .update({ status })
+      .eq('id', id)
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data as JobApplicant
+  },
+
+  async createJobInvitation(input: {
+    job_id: string
+    applicant_id: string
+    sent_by: string
+    message?: string | null
+  }): Promise<JobInvitation> {
+    const { data, error } = await supabase
+      .from('job_invitations')
+      .insert({
+        job_id: input.job_id,
+        applicant_id: input.applicant_id,
+        sent_by: input.sent_by,
+        message: input.message ?? null,
+      })
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data as JobInvitation
+  },
+
+  async getDepartmentsByIds(ids: string[]): Promise<{ id: string; name: string }[]> {
+    if (ids.length === 0) return []
+    const { data, error } = await supabase
+      .from('departments')
+      .select('id, name')
+      .in('id', ids)
+    if (error) throw new Error(error.message)
+    return (data ?? []) as { id: string; name: string }[]
+  },
+
+  async getCasualWorkersByCompany(company_id: string): Promise<CasualWorkerStatus[]> {
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, full_name, email_address, worker_status')
+      .eq('company_id', company_id)
+      .eq('role', 'Casual Worker')
+      .order('full_name', { ascending: true })
+    if (error) throw new Error(error.message)
+
+    const workers = (data ?? []) as Array<{ id: string; full_name: string; email_address: string; worker_status: string | null }>
+
+    return workers.map(worker => ({
+      id: worker.id,
+      full_name: worker.full_name,
+      email_address: worker.email_address,
+      department_id: null,
+      department_name: null,
+      worker_status: (worker.worker_status as CasualWorkerStatus['worker_status']) ?? 'active',
+    }))
+  },
+
+  async updateCasualWorkerStatus(user_id: string, worker_status: 'active' | 'inactive' | 'blocked'): Promise<void> {
+    const { error } = await supabase
+      .from('users')
+      .update({ worker_status })
+      .eq('id', user_id)
+      .eq('role', 'Casual Worker')
+    if (error) throw new Error(error.message)
+  },
+}
