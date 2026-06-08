@@ -18,7 +18,7 @@ test.describe('Owner — Team (My Company)', () => {
   })
 
   test('Invite Member 弹窗可打开', async ({ page }) => {
-    const inviteBtn = page.locator('button').filter({ hasText: 'Invite Member' })
+    const inviteBtn = page.locator('button').filter({ hasText: /Invite/i })
     await expect(inviteBtn).toBeVisible({ timeout: 8000 })
     await inviteBtn.click()
 
