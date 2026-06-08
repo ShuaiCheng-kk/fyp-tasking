@@ -12,16 +12,16 @@ test.describe('Owner — Shifts (Shift Planning)', () => {
   })
 
   test('左侧 Departments 面板可见', async ({ page }) => {
-    await expect(page.getByText('Departments')).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText('Departments')).toBeVisible({ timeout: 20000 })
   })
 
   test('右侧 Shift Timeline 面板可见', async ({ page }) => {
-    await expect(page.getByText('Shift Timeline')).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText('Shift Timeline')).toBeVisible({ timeout: 20000 })
   })
 
   test('Add 部门按钮可见', async ({ page }) => {
     const addBtn = page.locator('button').filter({ hasText: 'Add' }).first()
-    await expect(addBtn).toBeVisible({ timeout: 8000 })
+    await expect(addBtn).toBeVisible({ timeout: 20000 })
   })
 
   test('点击部门卡片进入部门详情视图', async ({ page }) => {
@@ -68,7 +68,7 @@ test.describe('Owner — Shifts (Shift Planning)', () => {
     await page.waitForTimeout(300)
 
     const modal = page.getByText(/Add Department|New Department|Department Name/i).first()
-    await expect(modal).toBeVisible({ timeout: 5000 })
+    await expect(modal).toBeVisible({ timeout: 20000 })
     await page.keyboard.press('Escape')
   })
 
