@@ -20,9 +20,11 @@ import {
   UserCog,
   UserRound,
   X,
+  Crown,
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
+import { deptColor } from '@/lib/deptColor'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import {
@@ -238,7 +240,6 @@ function TimePicker({ value, onChange, compact = false }: { value: string; onCha
 const PANEL_BORDER = '#E2E8F0'
 const TEXT_DARK = '#0F172A'
 const MUTED = '#64748B'
-const DEPT_COLORS = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#06B6D4', '#EC4899', '#F97316', '#EF4444']
 
 function formatDateKey(date: Date): string {
   const year = date.getFullYear()
@@ -499,12 +500,6 @@ function formatHourLabel(hour: number): string {
   return hour < 12 ? `${hour}am` : `${hour - 12}pm`
 }
 
-function deptColor(deptId: string): string {
-  let h = 0
-  for (let i = 0; i < deptId.length; i++) h = deptId.charCodeAt(i) + ((h << 5) - h)
-  return DEPT_COLORS[Math.abs(h) % DEPT_COLORS.length]
-}
-
 function parseDepartmentImportCsv(text: string): string[] {
   const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
   const withoutHeader = lines[0]?.toLowerCase().includes('department') ? lines.slice(1) : lines
@@ -685,6 +680,7 @@ export default function OwnerShiftsPage() {
   const [selectedManagerId, setSelectedManagerId] = useState('')
   const [managerActionError, setManagerActionError] = useState('')
   const [managerActionLoading, setManagerActionLoading] = useState(false)
+  const [managerRemoveLoading, setManagerRemoveLoading] = useState<string | null>(null)
 
   const [batchDepartment, setBatchDepartment] = useState<Department | null>(null)
   const [batchSingleMember, setBatchSingleMember] = useState<TeamMember | null>(null)
@@ -1381,13 +1377,36 @@ export default function OwnerShiftsPage() {
         }),
       })
       const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to set manager')
-      setManagerModalDepartment(null)
+      if (!data.success) throw new Error(data.message || 'Failed to assign manager')
+      setSelectedManagerId('')
       await fetchAssignmentData(companyId, true)
     } catch (err) {
-      setManagerActionError(err instanceof Error ? err.message : 'Failed to set manager')
+      setManagerActionError(err instanceof Error ? err.message : 'Failed to assign manager')
     } finally {
       setManagerActionLoading(false)
+    }
+  }
+
+  const handleRemoveManager = async (managerId: string) => {
+    if (!companyId || !managerModalDepartment) return
+    setManagerRemoveLoading(managerId)
+    setManagerActionError('')
+    try {
+      const res = await fetch('/api/team/department-manager', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          manager_id: managerId,
+          department_id: managerModalDepartment.id,
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to remove manager')
+      await fetchAssignmentData(companyId, true)
+    } catch (err) {
+      setManagerActionError(err instanceof Error ? err.message : 'Failed to remove manager')
+    } finally {
+      setManagerRemoveLoading(null)
     }
   }
 
@@ -1481,7 +1500,7 @@ export default function OwnerShiftsPage() {
 
   const renderTimeAxis = () => (
     <div style={{ display: 'flex', background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', borderRadius: '12px 12px 0 0' }}>
-      <div style={{ width: 188, flexShrink: 0 }} />
+      <div style={{ width: 228, flexShrink: 0 }} />
       <div style={{ position: 'relative', height: 44, flex: 1 }}>
         {tlHourTicks.map(h => (
           <div key={h} style={{ position: 'absolute', top: 0, left: `${tlPad(h * 60)}%`, transform: 'translateX(-50%)', height: '100%', display: 'flex', alignItems: 'center', pointerEvents: 'none' }}>
@@ -1500,7 +1519,7 @@ export default function OwnerShiftsPage() {
     return (
       <div key={row.user_id ?? `${row.department_id}_open`} className="tl-row" style={{ display: 'flex', height: 72, borderTop: isDeptBoundary ? EDGE : '1px solid rgba(15,23,42,0.12)', background: rowSelected ? '#FFF7ED' : '#FFFFFF' }}>
         <div style={{ width: 8, flexShrink: 0, background: barColor, opacity: 0.85 }} />
-        <div style={{ width: 180, flexShrink: 0, display: 'flex', alignItems: 'center', padding: '0 10px 0 12px', overflow: 'hidden' }}>
+        <div style={{ width: 220, flexShrink: 0, display: 'flex', alignItems: 'center', padding: '0 10px 0 12px', overflow: 'hidden' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: row.role === 'Manager' ? '#FFF7ED' : '#F3F4F6', color: row.role === 'Manager' ? '#EA580C' : '#4B5563', borderRadius: 999 }}>
               {row.role === 'Manager' ? <UserCog size={13} /> : <UserRound size={13} />}
@@ -1515,7 +1534,7 @@ export default function OwnerShiftsPage() {
               aria-label={`Select ${row.full_name} for deletion`}
               checked={rowSelected}
               onChange={() => toggleTimelineUserSelection(row.user_id!)}
-              style={{ width: 16, height: 16, flexShrink: 0, marginLeft: 8, accentColor: OWNER_ORANGE, cursor: 'pointer' }}
+              style={{ width: 16, height: 16, flexShrink: 0, marginLeft: 12, accentColor: OWNER_ORANGE, cursor: 'pointer' }}
             />
           ) : null}
         </div>
@@ -1614,7 +1633,7 @@ export default function OwnerShiftsPage() {
     }
     return (
       <div style={{ overflow: 'auto', flex: 1, minHeight: 0, padding: '14px 16px 18px 18px', marginRight: 8, marginBottom: 8, borderRadius: '0 0 14px 14px' }}>
-        <div style={{ minWidth: 820 }}>
+        <div style={{ minWidth: 860 }}>
           {renderTimeAxis()}
           <div style={{ borderLeft: EDGE, borderRight: EDGE, borderBottom: EDGE }}>
             {deptOrder.map((deptId, deptIdx) => {
@@ -1646,44 +1665,17 @@ export default function OwnerShiftsPage() {
       <main style={{ marginLeft: 64, height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, gap: 0 }}>
         <div style={{ padding: '20px 28px 16px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24, flexShrink: 0 }}>
           <div>
-            {companies.length > 1 ? (
-              <div style={{ position: 'relative' }}>
-                <button
-                  type="button"
-                  onClick={() => setDropdownOpen(open => !open)}
-                  className="flex cursor-pointer items-center gap-2 border-0 bg-transparent p-0 font-heading text-3xl font-bold tracking-tight text-gray-950"
-                >
-                  {company?.name ? `Shift Planning for ${company.name}` : 'Shift Planning'}
-                  <ChevronDown size={18} strokeWidth={2.5} className={`mt-1 text-gray-400 transition-transform duration-150 ${dropdownOpen ? 'rotate-180' : ''}`} />
-                </button>
-                {dropdownOpen && (
-                  <div className="absolute left-0 top-[calc(100%+8px)] z-50 min-w-[200px] rounded-xl border border-gray-100 bg-white p-1.5 shadow-lg">
-                    {companies.map(item => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => switchCompany(item)}
-                        className={`w-full cursor-pointer rounded-lg border-0 px-3 py-2 text-left text-sm ${item.id === companyId ? 'bg-orange-50 font-semibold text-orange-600' : 'bg-transparent font-normal text-gray-700'}`}
-                      >
-                        {item.name}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
-                {company?.name ? `Shift Planning for ${company.name}` : 'Shift Planning'}
-              </h1>
-            )}
+            <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
+              {company?.name ? `Shift Planning for ${company.name}` : 'Shift Planning'}
+            </h1>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {ownerName && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: '#fff', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
-                <div style={{ width: 26, height: 26, borderRadius: 999, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color: '#fff' }}>{ownerName.charAt(0).toUpperCase()}</span>
-                </div>
+                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: '#0F172A', color: '#FFFFFF', flexShrink: 0 }}>
+                  <Crown size={13} />
+                </span>
                 <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{ownerName}</span>
               </div>
             )}
@@ -1700,7 +1692,7 @@ export default function OwnerShiftsPage() {
 
           {companyId && (
             <>
-              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 320px) minmax(0, 1fr)', gap: 16, alignItems: 'stretch', flex: 1, minHeight: 0 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(340px, 380px) minmax(0, 1fr)', gap: 16, alignItems: 'stretch', flex: 1, minHeight: 0 }}>
         <section style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'visible' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, padding: '16px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, flexWrap: 'wrap' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1858,28 +1850,32 @@ export default function OwnerShiftsPage() {
                         </div>
 
                         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', alignItems: 'start', gap: 14 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: '#FFF7ED', color: '#EA580C', flexShrink: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, minWidth: 0 }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: '#FFF7ED', color: '#EA580C', flexShrink: 0, marginTop: 1 }}>
                               <UserCog size={13} />
                             </span>
-                            <div style={{ minWidth: 0 }}>
-                              <span style={{ display: 'block', color: managerNamesStr ? '#EA580C' : '#94A3B8', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                {managerNamesStr ?? 'No manager set'}
-                              </span>
-                              {deptManagerList.length > 0 && (
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation()
-                                    router.push(`/owner/communication?tab=messages&partner_id=${deptManagerList[0].manager_id}`)
-                                  }}
-                                  style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: 0, background: 'transparent', color: '#CBD5E1', cursor: 'pointer', padding: 0, marginTop: 4, fontSize: 11, fontWeight: 700 }}
-                                  onMouseEnter={e => { e.currentTarget.style.color = '#F97316' }}
-                                  onMouseLeave={e => { e.currentTarget.style.color = '#CBD5E1' }}
-                                >
-                                  <MessageCircle size={11} /> Send message
-                                </button>
-                              )}
+                            <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
+                              {deptManagerList.length === 0 ? (
+                                <span style={{ color: '#94A3B8', fontSize: 13, fontWeight: 700 }}>No manager set</span>
+                              ) : deptManagerList.map((m) => (
+                                <div key={m.manager_id} style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                                  <span style={{ color: '#EA580C', fontSize: 13, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {m.manager_name}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation()
+                                      router.push(`/owner/communication?tab=messages&partner_id=${m.manager_id}`)
+                                    }}
+                                    style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: 0, background: 'transparent', color: '#CBD5E1', cursor: 'pointer', padding: 0, fontSize: 11, fontWeight: 700, width: 'fit-content' }}
+                                    onMouseEnter={e => { e.currentTarget.style.color = '#F97316' }}
+                                    onMouseLeave={e => { e.currentTarget.style.color = '#CBD5E1' }}
+                                  >
+                                    <MessageCircle size={11} /> Send message
+                                  </button>
+                                </div>
+                              ))}
                             </div>
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
@@ -2350,39 +2346,72 @@ export default function OwnerShiftsPage() {
       )}
 
       {managerModalDepartment && (
-        <Modal title={`Add Manager — ${managerModalDepartment.name}`} onClose={() => setManagerModalDepartment(null)}>
+        <Modal title={`Edit Managers — ${managerModalDepartment.name}`} onClose={() => { setManagerModalDepartment(null); setSelectedManagerId(''); setManagerActionError('') }}>
+          {/* Current managers in this dept */}
+          {(() => {
+            const currentManagers = departmentManagers.filter(a => a.department_id === managerModalDepartment.id)
+            return currentManagers.length > 0 ? (
+              <div style={{ marginBottom: 16 }}>
+                <span style={labelStyle}>Current managers</span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
+                  {currentManagers.map(a => (
+                    <div key={a.manager_id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 8, padding: '8px 12px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <UserCog size={14} color="#EA580C" />
+                        <span style={{ fontSize: 13, fontWeight: 700, color: '#EA580C' }}>{a.manager_name}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveManager(a.manager_id)}
+                        disabled={managerRemoveLoading === a.manager_id}
+                        style={{ border: 'none', background: 'transparent', cursor: managerRemoveLoading === a.manager_id ? 'default' : 'pointer', color: '#9CA3AF', display: 'flex', alignItems: 'center', padding: 4, borderRadius: 6 }}
+                        title="Remove from this department"
+                        onMouseEnter={e => { e.currentTarget.style.color = '#EF4444' }}
+                        onMouseLeave={e => { e.currentTarget.style.color = '#9CA3AF' }}
+                      >
+                        {managerRemoveLoading === a.manager_id ? <Spinner dark size={14} /> : <X size={15} />}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p style={{ fontSize: 13, color: '#9CA3AF', marginBottom: 16 }}>No managers assigned to this department yet.</p>
+            )
+          })()}
+
+          {/* Assign a manager from another dept or unassigned */}
           <div>
-            <span style={labelStyle}>Manager</span>
+            <span style={labelStyle}>Assign manager</span>
+            <p style={{ fontSize: 12, color: '#6B7280', margin: '2px 0 8px' }}>
+              Selecting a manager already in another department will move them here.
+            </p>
             <DropdownField
               value={selectedManagerId}
               options={(() => {
                 const assignedMap = new Map(departmentManagers.map(a => [a.manager_id, a.department_id]))
                 const deptNameMap = new Map(departments.map(d => [d.id, d.name]))
-                // already in this dept — not selectable
                 const alreadyHere = managerOptions.filter(m => assignedMap.get(m.id) === managerModalDepartment.id)
-                // in another dept — disabled with note
                 const inOtherDept = managerOptions.filter(m => assignedMap.has(m.id) && assignedMap.get(m.id) !== managerModalDepartment.id)
-                // free — selectable
                 const free = managerOptions.filter(m => !assignedMap.has(m.id))
                 return [
                   ...free.map(m => ({ value: m.id, label: m.full_name })),
-                  ...inOtherDept.map(m => ({ value: m.id, label: `${m.full_name} · already in ${deptNameMap.get(assignedMap.get(m.id)!) ?? ''}` })),
-                  ...alreadyHere.map(m => ({ value: m.id, label: `${m.full_name} · already in this dept` })),
+                  ...inOtherDept.map(m => ({ value: m.id, label: `${m.full_name} (${deptNameMap.get(assignedMap.get(m.id)!) ?? ''})` })),
+                  ...alreadyHere.map(m => ({ value: m.id, label: `${m.full_name} (${managerModalDepartment.name})` })),
                 ]
               })()}
               onChange={v => {
-                // block selecting managers already assigned anywhere
-                const assignedMap = new Map(departmentManagers.map(a => [a.manager_id, a.department_id]))
-                if (assignedMap.has(v)) return
+                const alreadyHere = departmentManagers.filter(a => a.department_id === managerModalDepartment.id).map(a => a.manager_id)
+                if (alreadyHere.includes(v)) return
                 setSelectedManagerId(v)
               }}
-              placeholder="Select manager"
+              placeholder="Select manager to assign"
             />
           </div>
           {managerActionError && <div style={{ ...errorBoxStyle, marginTop: 12 }}>{managerActionError}</div>}
           <div style={modalFooterStyle}>
-            <button type="button" onClick={() => setManagerModalDepartment(null)} style={secondaryButtonStyle}>Cancel</button>
-            <button type="button" onClick={handleSetManager} disabled={managerActionLoading || !selectedManagerId} style={primaryButtonStyle}>{managerActionLoading ? <Spinner /> : <Check size={16} />} Save</button>
+            <button type="button" onClick={() => { setManagerModalDepartment(null); setSelectedManagerId(''); setManagerActionError('') }} style={secondaryButtonStyle}>Close</button>
+            <button type="button" onClick={handleSetManager} disabled={managerActionLoading || !selectedManagerId} style={primaryButtonStyle}>{managerActionLoading ? <Spinner /> : <Check size={16} />} Assign</button>
           </div>
         </Modal>
       )}
@@ -2478,7 +2507,7 @@ export default function OwnerShiftsPage() {
               Department
             </p>
             <button type="button" onClick={() => { setOpenDepartmentMenuId(null); openEditDepartment(department) }} style={menuButtonStyle}><Pencil size={13} style={{ color: '#F97316' }} /> Edit department</button>
-            <button type="button" onClick={() => { setOpenDepartmentMenuId(null); openManagerModal(department) }} style={menuButtonStyle}><Users size={13} style={{ color: '#F97316' }} /> Add manager</button>
+            <button type="button" onClick={() => { setOpenDepartmentMenuId(null); openManagerModal(department) }} style={menuButtonStyle}><Users size={13} style={{ color: '#F97316' }} /> Edit manager</button>
             <div style={{ height: 1, background: '#F1F5F9', margin: '4px 6px' }} />
             <button type="button" onClick={() => { setOpenDepartmentMenuId(null); openDeleteDepartment(department) }} style={{ ...menuButtonStyle, color: '#DC2626' }}><Trash2 size={13} /> Delete</button>
           </div>

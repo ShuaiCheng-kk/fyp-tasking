@@ -147,24 +147,21 @@ export const recruitmentRepository = {
   async getCasualWorkersByCompany(company_id: string): Promise<CasualWorkerStatus[]> {
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, email_address, department_id, worker_status')
+      .select('id, full_name, email_address, worker_status')
       .eq('company_id', company_id)
       .eq('role', 'Casual Worker')
       .order('full_name', { ascending: true })
     if (error) throw new Error(error.message)
 
-    const workers = (data ?? []) as Array<CasualWorkerStatus & { worker_status: CasualWorkerStatus['worker_status'] | null }>
-    const deptIds = [...new Set(workers.map(worker => worker.department_id).filter((id): id is string => Boolean(id)))]
-    const departments = await this.getDepartmentsByIds(deptIds)
-    const deptMap = new Map(departments.map(department => [department.id, department.name]))
+    const workers = (data ?? []) as Array<{ id: string; full_name: string; email_address: string; worker_status: string | null }>
 
     return workers.map(worker => ({
       id: worker.id,
       full_name: worker.full_name,
       email_address: worker.email_address,
-      department_id: worker.department_id,
-      department_name: worker.department_id ? deptMap.get(worker.department_id) ?? null : null,
-      worker_status: worker.worker_status ?? 'active',
+      department_id: null,
+      department_name: null,
+      worker_status: (worker.worker_status as CasualWorkerStatus['worker_status']) ?? 'active',
     }))
   },
 
