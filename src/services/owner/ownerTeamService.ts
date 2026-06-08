@@ -1,5 +1,5 @@
 import { ownerTeamRepository } from '@/repositories/owner/ownerTeamRepository'
-import { supabaseAdmin } from '@/lib/supabaseAdmin'
+import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
 import { User } from '@/types/auth.types'
 
 
@@ -16,7 +16,7 @@ export const ownerTeamService = {
     return ownerTeamRepository.findManagersByDepartment(company_id, department_id)
   },
 
-  async getAllManagersByCompany(company_id: string): Promise<{ id: string; full_name: string; department_id: string | null }[]> {
+  async getAllManagersByCompany(company_id: string): Promise<{ id: string; full_name: string }[]> {
     return ownerTeamRepository.findManagersByCompany(company_id)
   },
 
@@ -44,27 +44,18 @@ export const ownerTeamService = {
       throw new Error('Insufficient permissions to remove a Partner')
     }
 
-    const removedFromMembers = await ownerTeamRepository.removeCompanyMember(user_id_to_remove, company_id)
-    if (!removedFromMembers) throw new Error('User is not a member of this company')
-
-    await ownerTeamRepository.nullifyUserCompanyId(user_id_to_remove, company_id)
-
-    const remainingCount = await ownerTeamRepository.countMemberCompanies(user_id_to_remove)
-    if (remainingCount > 0) {
-      return { success: true, accountDeleted: false }
-    }
+    const removed = await ownerTeamRepository.nullifyUserCompanyId(user_id_to_remove, company_id)
+    if (!removed) throw new Error('User is not a member of this company')
 
     const supabaseAuthId = target.supabase_auth_id
 
     await ownerTeamRepository.deleteInboxByUserId(user_id_to_remove)
     await ownerTeamRepository.deleteMessagesByUserId(user_id_to_remove)
-    await ownerTeamRepository.deleteNotificationsByUserId(user_id_to_remove)
     await ownerTeamRepository.deleteManagerDepartmentsByUserId(user_id_to_remove)
-    await ownerTeamRepository.deleteAllCompanyMembersByUserId(user_id_to_remove)
     await ownerTeamRepository.deleteUserById(user_id_to_remove)
 
     if (supabaseAuthId) {
-      const { error } = await supabaseAdmin.auth.admin.deleteUser(supabaseAuthId)
+      const { error } = await getSupabaseAdmin().auth.admin.deleteUser(supabaseAuthId)
       if (error) throw new Error(`Failed to delete auth user: ${error.message}`)
     }
 
@@ -93,16 +84,7 @@ export const ownerTeamService = {
     if (!manager || manager.company_id !== data.company_id || manager.role !== 'Manager') {
       throw new Error('Manager not found in this company')
     }
-    const previousDepartmentManagers = await ownerTeamRepository.findDepartmentManagers(data.company_id)
-    const managersToUnassign = previousDepartmentManagers
-      .filter(item => item.department_id === data.department_id && item.manager_id !== data.manager_id)
-      .map(item => item.manager_id)
-    await ownerTeamRepository.removeManagersFromDepartment(data.company_id, data.department_id)
-    await Promise.all(managersToUnassign.map(managerId =>
-      ownerTeamRepository.updateUserDepartment(managerId, null),
-    ))
     await ownerTeamRepository.removeManagerDepartmentsByCompany(data.manager_id, data.company_id)
-    await ownerTeamRepository.updateUserDepartment(data.manager_id, data.department_id)
     await ownerTeamRepository.assignManagerDepartment(
       data.manager_id,
       data.company_id,
@@ -122,9 +104,6 @@ export const ownerTeamService = {
   async removeManagerFromDepartment(manager_id: string, department_id: string): Promise<void> {
     const manager = await ownerTeamRepository.findUserById(manager_id)
     if (!manager) throw new Error('Manager not found')
-    if (manager.department_id === department_id) {
-      throw new Error('Cannot remove manager from their primary department')
-    }
     await ownerTeamRepository.removeManagerDepartment(manager_id, department_id)
   },
 
