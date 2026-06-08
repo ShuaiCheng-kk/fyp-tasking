@@ -4,11 +4,12 @@ import { loginAsOwner } from '../helpers/auth'
 test.describe('Owner — Dashboard', () => {
   test.beforeEach(async ({ page }) => {
     await loginAsOwner(page)
-    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {})
+    // Wait for dashboard shell to render (stat labels are static, don't need networkidle)
+    await expect(page.getByText(/Today's Overview/i).first()).toBeVisible({ timeout: 20000 })
   })
 
   test('显示 6 个 stat 卡片', async ({ page }) => {
-    await expect(page.getByText('Staff on Shift')).toBeVisible({ timeout: 10000 })
+    await expect(page.getByText('Staff on Shift')).toBeVisible({ timeout: 15000 })
     await expect(page.getByText('Casual Workers').first()).toBeVisible()
     await expect(page.getByText('Total Tasks')).toBeVisible()
     await expect(page.getByText('Tasks In Progress')).toBeVisible()
