@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import {
   Briefcase, Check, CheckSquare, Clock, Edit3, RefreshCw, X,
-  AlertTriangle, CalendarDays, Users, ChevronDown,
+  AlertTriangle, CalendarDays, Users, ChevronDown, UserCog,
 } from 'lucide-react'
 import ManagerSidebar from '@/components/ManagerSidebar'
 import {
@@ -245,7 +245,7 @@ export default function ManagerAttendancePage() {
   ]
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: APP_BG, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+    <div style={{ display: 'flex', minHeight: '100vh', background: APP_BG, fontFamily: 'inherit' }}>
       <style>{`
         @keyframes fadeSlideUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
         .mgr-att-row:hover td { background: #EFF6FF !important; }
@@ -253,22 +253,24 @@ export default function ManagerAttendancePage() {
       <ManagerSidebar />
       <main style={{ marginLeft: '64px', flex: 1, minHeight: '100vh', overflowY: 'auto' }}>
 
-        {/* Header */}
-        <div style={{ padding: '20px 28px 16px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
-          <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
-            {companyName ? `Attendance — ${companyName}` : 'Attendance'}
-          </h1>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingTop: 4 }}>
+        {/* Page header */}
+        <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
+          <div>
+            <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
+              {(() => { const n = departments.find(d => d.id === selectedDeptId)?.name; return n ? `Attendance for ${n}` : 'Attendance' })()}
+            </h1>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {managerName && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: PANEL, border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
-                <span style={{ width: 26, height: 26, borderRadius: 999, background: BLUE, color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <Briefcase size={12} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: '#fff', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: '#1E3A5F', color: '#FFFFFF', flexShrink: 0 }}>
+                  <UserCog size={13} />
                 </span>
                 <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{managerName}</span>
               </div>
             )}
             <button onClick={() => void fetchData(companyId)} disabled={loading || !companyId}
-              style={{ height: 36, width: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 9, cursor: 'pointer', color: MUTED }}>
+              style={{ height: 34, width: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 9, cursor: 'pointer', color: MUTED }}>
               {loading ? <Spinner /> : <RefreshCw size={14} />}
             </button>
           </div>

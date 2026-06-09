@@ -22,6 +22,17 @@ export async function GET(req: NextRequest) {
       const workers = await recruitmentService.getCasualWorkers(company_id)
       return NextResponse.json({ success: true, workers })
     }
+    if (resource === 'pending_approval') {
+      if (!company_id) return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
+      const pendingPostings = await recruitmentService.getPendingApprovalPostings(company_id)
+      return NextResponse.json({ success: true, pendingPostings })
+    }
+    if (resource === 'drafts') {
+      const user_id = searchParams.get('user_id')
+      if (!company_id || !user_id) return NextResponse.json({ success: false, message: 'company_id and user_id are required' }, { status: 400 })
+      const drafts = await recruitmentService.getDraftPostings(company_id, user_id)
+      return NextResponse.json({ success: true, drafts })
+    }
     if (!company_id) return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
     const postings = await recruitmentService.getJobPostings(company_id)
     return NextResponse.json({ success: true, postings })
@@ -56,6 +67,7 @@ export async function POST(req: NextRequest) {
     is_recurring: data.is_recurring === true,
     recurrence_interval: typeof data.recurrence_interval === 'number' ? data.recurrence_interval : null,
     recurrence_unit: typeof data.recurrence_unit === 'string' && data.recurrence_unit ? data.recurrence_unit : null,
+    status: data.status === 'draft' ? 'draft' : 'open',
   }
 
   try {
@@ -116,6 +128,26 @@ export async function PATCH(req: NextRequest) {
         message: typeof data.message === 'string' ? data.message : null,
       })
       return NextResponse.json({ success: true, applicant })
+    }
+
+    if (action === 'publish_draft') {
+      const posting = await recruitmentService.publishDraft(String(data.job_id ?? ''))
+      return NextResponse.json({ success: true, posting })
+    }
+
+    if (action === 'delete_draft') {
+      await recruitmentService.deleteDraft(String(data.job_id ?? ''))
+      return NextResponse.json({ success: true })
+    }
+
+    if (action === 'approve_posting') {
+      const posting = await recruitmentService.approveJobPosting(String(data.job_id ?? ''))
+      return NextResponse.json({ success: true, posting })
+    }
+
+    if (action === 'reject_posting') {
+      const posting = await recruitmentService.rejectJobPosting(String(data.job_id ?? ''))
+      return NextResponse.json({ success: true, posting })
     }
 
     if (action === 'update_worker_status') {
