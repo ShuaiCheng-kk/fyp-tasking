@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState } from 'react'
-import { Plus, Briefcase, Search, X } from 'lucide-react'
+import { Plus, Briefcase, Search, X, Users, UserCog } from 'lucide-react'
 import ManagerSidebar from '@/components/ManagerSidebar'
 import { JobPosting } from '@/types/recruitment.types'
 
@@ -28,6 +28,16 @@ export default function ManagerRecruitmentPage() {
   const [confirm, setConfirm]         = useState<ConfirmState>(null)
   const [activeTab, setActiveTab]     = useState<ActiveTab>('all')
   const [search, setSearch]           = useState('')
+  const [managerName, setManagerName] = useState('')
+
+  React.useEffect(() => {
+    const uid = localStorage.getItem('tasking_user_id')
+    if (!uid) return
+    fetch(`/api/user/me?user_id=${uid}`)
+      .then(r => r.json())
+      .then(d => { if (d.success) setManagerName(d.user.full_name ?? '') })
+      .catch(() => {})
+  }, [])
 
   const pageTitle = companyName && deptName
     ? `${companyName} [${deptName}] — Recruitment`
@@ -81,14 +91,28 @@ export default function ManagerRecruitmentPage() {
       {/* Main area */}
       <div style={{ marginLeft: '64px', flex: 1, display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
 
-        {/* Top bar */}
-        <div style={{ padding: '18px 32px', background: '#1E3A5F', borderBottom: '1px solid #163050', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, zIndex: 10 }}>
-          <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#FFFFFF', margin: 0 }}>{pageTitle}</h1>
-          <button
-            onClick={() => { setEditingJob(null); setModalMode('post') }}
-            style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', background: '#2563EB', color: '#FFFFFF', border: 'none', borderRadius: '8px', fontWeight: 600, fontSize: '0.875rem', cursor: 'pointer' }}>
-            <Plus size={15} strokeWidth={2.5} /> Post Job
-          </button>
+        {/* Page header */}
+        <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
+          <div>
+            <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
+              {deptName ? `Recruitment for ${deptName}` : 'Recruitment'}
+            </h1>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
+            {managerName && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: '#fff', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: '#1E3A5F', color: '#FFFFFF', flexShrink: 0 }}>
+                  <UserCog size={13} />
+                </span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{managerName}</span>
+              </div>
+            )}
+            <button
+              onClick={() => { setEditingJob(null); setModalMode('post') }}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', background: '#2563EB', color: '#FFFFFF', border: 'none', borderRadius: '9px', fontWeight: 600, fontSize: '0.875rem', cursor: 'pointer' }}>
+              <Plus size={15} strokeWidth={2.5} /> Post Job
+            </button>
+          </div>
         </div>
 
         {/* Content row: list left, detail panel right */}

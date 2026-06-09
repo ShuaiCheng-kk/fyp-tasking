@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import {
   Briefcase, CalendarDays, ChevronLeft, ChevronRight, ChevronDown,
-  Clock, Plus, Trash2, Pencil, X, Users, Check,
+  Clock, Plus, Trash2, Pencil, X, Users, Check, UserCog,
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import ManagerSidebar from '@/components/ManagerSidebar'
@@ -243,13 +243,15 @@ export default function ManagerShiftsPage() {
       setCompanyId(cid)
       const [compRes, deptRes] = await Promise.all([
         fetch(`/api/company/current?user_id=${uid}&company_id=${cid}`),
-        fetch(`/api/manager/departments?manager_id=${id}`),
+        fetch(`/api/manager/departments?manager_id=${id}&company_id=${cid}`),
       ])
       const compData = await compRes.json()
       const deptData = await deptRes.json()
       if (cancelled) return
       if (compData.success) setCompanyName(compData.company?.name ?? '')
-      const depts: Department[] = deptData.success ? (deptData.departments ?? []) : []
+      const depts: Department[] = deptData.success
+        ? (deptData.departments ?? []).map((d: { department_id: string; department_name: string }) => ({ id: d.department_id, name: d.department_name }))
+        : []
       setDepartments(depts)
       if (depts.length > 0 && !selectedDeptId) setSelectedDeptId(depts[0].id)
     }
@@ -370,6 +372,13 @@ export default function ManagerShiftsPage() {
 
   const assignableMembers = teamMembers.filter(m => ['Employee', 'Casual Worker'].includes(m.role) && (!fDeptId || m.department_id === fDeptId || m.role === 'Casual Worker'))
 
+  // Only show the manager's own row + rows belonging to their assigned dept(s)
+  const assignedDeptIds = new Set(departments.map(d => d.id))
+  const visibleRows = rows.filter(row =>
+    row.user_id === managerId ||
+    (selectedDeptId ? row.department_id === selectedDeptId : assignedDeptIds.has(row.department_id))
+  )
+
   const weekLabel = (() => {
     const s = new Date(`${weekDates[0]}T00:00:00`)
     const e = new Date(`${weekDates[6]}T00:00:00`)
@@ -379,7 +388,7 @@ export default function ManagerShiftsPage() {
   const isCurrentWeek = weekDates.includes(todayStr)
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: APP_BG, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+    <div style={{ display: 'flex', minHeight: '100vh', background: APP_BG, fontFamily: 'inherit' }}>
       <style>{`
         @keyframes fadeSlideUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
         .mgr-shift-row:hover td { background: #EFF6FF !important; }
@@ -387,16 +396,18 @@ export default function ManagerShiftsPage() {
       <ManagerSidebar />
       <main style={{ marginLeft: '64px', flex: 1, minHeight: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
 
-        {/* Header */}
-        <div style={{ padding: '20px 28px 16px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexShrink: 0 }}>
-          <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
-            {companyName ? `Shifts — ${companyName}` : 'Shifts'}
-          </h1>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingTop: 4 }}>
+        {/* Page header */}
+        <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
+          <div>
+            <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
+              {(() => { const n = departments.find(d => d.id === selectedDeptId)?.name; return n ? `Shift Planning for ${n}` : 'Shift Planning' })()}
+            </h1>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {managerName && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: PANEL, border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
-                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: BLUE, color: '#FFFFFF', flexShrink: 0 }}>
-                  <Briefcase size={12} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: '#fff', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: '#1E3A5F', color: '#FFFFFF', flexShrink: 0 }}>
+                  <UserCog size={13} />
                 </span>
                 <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{managerName}</span>
               </div>
@@ -479,7 +490,7 @@ export default function ManagerShiftsPage() {
                 <svg className="animate-spin" width={18} height={18} viewBox="0 0 18 18"><circle cx="9" cy="9" r="7" stroke="rgba(37,99,235,0.2)" strokeWidth="2.5" fill="none" /><path d="M9 2a7 7 0 0 1 7 7" stroke={BLUE} strokeWidth="2.5" strokeLinecap="round" fill="none" /></svg>
                 <span style={{ fontSize: 13, fontWeight: 600 }}>Loading shifts…</span>
               </div>
-            ) : rows.length === 0 ? (
+            ) : visibleRows.length === 0 ? (
               <div style={{ padding: '48px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, color: '#9CA3AF' }}>
                 <div style={{ width: 52, height: 52, borderRadius: 16, background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center', color: BLUE }}>
                   <CalendarDays size={22} strokeWidth={1.5} />
@@ -487,7 +498,7 @@ export default function ManagerShiftsPage() {
                 <p style={{ margin: 0, fontWeight: 700, fontSize: 14 }}>No shifts this week</p>
                 <p style={{ margin: 0, fontSize: 12, fontWeight: 500, color: '#CBD5E1' }}>Use "Assign Shift" to schedule your team</p>
               </div>
-            ) : rows.map((row, ri) => (
+            ) : visibleRows.map((row, ri) => (
               <div key={row.user_id ?? `u-${ri}`} style={{ display: 'grid', gridTemplateColumns: '180px repeat(7, 1fr)', borderBottom: `1px solid ${BORDER}` }}>
                 {/* Name cell */}
                 <div style={{ padding: '12px 14px', borderRight: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', gap: 9 }}>

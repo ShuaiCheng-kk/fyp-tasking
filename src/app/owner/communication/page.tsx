@@ -7,7 +7,7 @@ import { createClient } from '@/lib/supabase'
 import {
   Plus, X, Trash2, Pencil, Megaphone,
   Send, Search, SquarePen, Check, Bell, MessageSquare, Crown,
-  Users, Globe,
+  Users, Globe, UserCog, UserRound,
 } from 'lucide-react'
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
@@ -61,17 +61,17 @@ type InviteFlash = { id: string; message: string }
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const ROLE_COLOR: Record<string, string> = {
-  Owner: '#8B5CF6',
-  Partner: '#8B5CF6',
-  Manager: '#3B82F6',
-  Employee: '#10B981',
+  Owner: '#FFFFFF',
+  Partner: '#FFFFFF',
+  Manager: '#EA580C',
+  Employee: '#4B5563',
 }
 
 const ROLE_BG: Record<string, string> = {
-  Owner: '#F5F3FF',
-  Partner: '#F5F3FF',
-  Manager: '#EFF6FF',
-  Employee: '#ECFDF5',
+  Owner: '#0F172A',
+  Partner: '#0F172A',
+  Manager: '#FFF7ED',
+  Employee: '#F3F4F6',
 }
 
 const ROLE_LABEL: Record<string, string> = {
@@ -114,17 +114,21 @@ function hashColor(name: string): string {
 }
 
 function Avatar({ name, size = 36, role }: { name: string; size?: number; role?: string }) {
-  const initials = name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase()
   const color = role ? (ROLE_COLOR[role] ?? hashColor(name)) : hashColor(name)
   const bg = role ? (ROLE_BG[role] ?? `${color}18`) : `${color}18`
+  const iconSize = Math.round(size * 0.46)
+  const icon = role === 'Owner' || role === 'Partner' ? <Crown size={iconSize} />
+    : role === 'Manager' ? <UserCog size={iconSize} />
+    : role === 'Employee' ? <UserRound size={iconSize} />
+    : <UserRound size={iconSize} />
+  const isDark = role === 'Owner' || role === 'Partner'
   return (
     <div style={{
       width: size, height: size, borderRadius: '50%', background: bg,
-      color, fontWeight: 800, fontSize: size * 0.36,
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      flexShrink: 0, letterSpacing: '-0.5px', border: `2px solid ${color}22`,
+      color, display: 'flex', alignItems: 'center', justifyContent: 'center',
+      flexShrink: 0, border: isDark ? 'none' : `2px solid ${color}22`,
     }}>
-      {initials}
+      {icon}
     </div>
   )
 }
@@ -141,7 +145,7 @@ function Spinner({ size = 15, light = false }: { size?: number; light?: boolean 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function OwnerCommunicationPage() {
-  const [activeTab, setActiveTab] = useState<'announcements' | 'messages'>('announcements')
+  const [activeTab, setActiveTab] = useState<'chat' | 'announcements' | 'invites'>('chat')
 
   const [authUserId, setAuthUserId] = useState<string | null>(null)
   const [internalUserId, setInternalUserId] = useState<string | null>(null)
@@ -212,8 +216,7 @@ export default function OwnerCommunicationPage() {
     if (pid) {
       setPendingPartnerId(pid)
       setPendingPrefill(pre)
-      setActiveTab('messages')
-      setMsgSubTab('messages')
+      setActiveTab('chat')
     }
   }, [])
 
@@ -673,34 +676,20 @@ export default function OwnerCommunicationPage() {
           </div>
         </div>
 
-        {/* Stats chips */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexShrink: 0, animation: 'fadeSlideUp 0.3s ease both 0.05s' }}>
-          {[
-            { icon: <Megaphone size={12} />, label: `${announcements.length} announcements`, accent: '#F97316', bg: '#FFF7ED' },
-            { icon: <Bell size={12} />, label: `${unreadAnnCount} unread`, accent: '#EF4444', bg: '#FEF2F2' },
-            { icon: <MessageSquare size={12} />, label: `${filteredConversations.length} conversations`, accent: '#3B82F6', bg: '#EFF6FF' },
-            { icon: <Users size={12} />, label: `${invites.length} pending invites`, accent: '#10B981', bg: '#ECFDF5' },
-          ].map(item => (
-            <div key={item.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 28, padding: '0 10px', borderRadius: 999, background: item.bg, color: item.accent, fontSize: 11, fontWeight: 700, border: `1px solid ${item.accent}22` }}>
-              {item.icon}
-              {item.label}
-            </div>
-          ))}
-        </div>
 
-        {/* Main communication panel */}
-        <section style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 18, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)' }}>
-
-          {/* Top-level tabs */}
-          <div style={{ height: 60, padding: '0 18px', flexShrink: 0, borderBottom: '1px solid #EDF2F7', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+        {/* Tab bar */}
+        <div style={{ flexShrink: 0, background: '#FFFFFF', borderRadius: 14, padding: '0 18px', height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 10, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              {(['announcements', 'messages'] as const).map(tab => {
-                const active = activeTab === tab
-                const badge = tab === 'announcements' ? unreadAnnCount : unreadMessages
+              {([
+                { key: 'chat', label: 'Chat', icon: <MessageSquare size={14} />, badge: unreadMessages },
+                { key: 'announcements', label: 'Announcements', icon: <Megaphone size={14} />, badge: unreadAnnCount },
+                { key: 'invites', label: 'Invites', icon: <Bell size={14} />, badge: invites.length },
+              ] as const).map(tab => {
+                const active = activeTab === tab.key
                 return (
                   <button
-                    key={tab}
-                    onClick={() => setActiveTab(tab)}
+                    key={tab.key}
+                    onClick={() => setActiveTab(tab.key)}
                     className="comm-tab-btn"
                     style={{
                       height: 38, padding: '0 14px', borderRadius: 10, cursor: 'pointer', fontWeight: 700, fontSize: 13,
@@ -710,42 +699,194 @@ export default function OwnerCommunicationPage() {
                       display: 'flex', alignItems: 'center', gap: 7,
                     }}
                   >
-                    {tab === 'announcements' ? <Megaphone size={14} /> : <MessageSquare size={14} />}
-                    {tab === 'announcements' ? 'Announcements' : 'Messages'}
-                    {badge > 0 && (
+                    {tab.icon}
+                    {tab.label}
+                    {tab.badge > 0 && (
                       <span style={{ minWidth: 18, height: 18, padding: '0 5px', borderRadius: 999, background: '#F97316', color: '#fff', fontSize: 10, fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        {badge}
+                        {tab.badge}
                       </span>
                     )}
                   </button>
                 )
               })}
             </div>
-            <span style={{ fontSize: 12, fontWeight: 600, color: '#94A3B8' }}>
-              {activeTab === 'announcements' ? `${filteredAnnouncements.length} total` : `${filteredConversations.length} conversations`}
-            </span>
-          </div>
+            <div>
+              {activeTab === 'chat' && (
+                <button onClick={openCompose} disabled={!communicationReady}
+                  style={{ height: 36, padding: '0 14px', background: communicationReady ? '#F97316' : '#E5E7EB', color: communicationReady ? '#fff' : '#9CA3AF', border: 'none', borderRadius: 9, cursor: communicationReady ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13 }}
+                >
+                  <SquarePen size={14} strokeWidth={2.5} /> New Message
+                </button>
+              )}
+              {activeTab === 'announcements' && (
+                <button onClick={() => setShowNewAnnModal(true)}
+                  style={{ height: 36, padding: '0 14px', background: '#F97316', color: '#fff', border: 'none', borderRadius: 9, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13 }}
+                >
+                  <Plus size={14} /> Post Announcement
+                </button>
+              )}
+            </div>
+        </div>
+
+        {/* Main communication panel */}
+        <section style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+
+          {/* ── Chat tab ── */}
+          {activeTab === 'chat' && (
+            <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '340px minmax(0, 1fr)', gap: 10, overflow: 'hidden' }}>
+
+              {/* Left: conversations */}
+              <div style={{ minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 16, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)' }}>
+                <div style={{ padding: '12px 12px 0', flexShrink: 0 }}>
+                  <div style={{ height: 34, display: 'flex', alignItems: 'center', gap: 7, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 9, padding: '0 10px' }}>
+                    <Search size={13} color="#94A3B8" />
+                    <input
+                      value={search} onChange={e => setSearch(e.target.value)}
+                      placeholder="Search conversations..."
+                      style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: 12, color: '#0F172A', fontWeight: 500 }}
+                    />
+                  </div>
+                </div>
+
+                <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, padding: 10 }}>
+                    {filteredConversations.length === 0 ? (
+                      <div style={{ height: 180, borderRadius: 12, background: '#F8FAFC', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 8, fontWeight: 600, fontSize: 13 }}>
+                        <MessageSquare size={26} strokeWidth={1.5} />
+                        {search ? 'No results' : 'No conversations yet'}
+                      </div>
+                    ) : filteredConversations.map((conv, i) => {
+                      const active = selectedConv?.partnerId === conv.partnerId
+                      return (
+                        <button
+                          key={conv.partnerId}
+                          onClick={() => setSelectedConv(conv)}
+                          className="comm-conv-card"
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 10, padding: 11,
+                            background: active ? '#FFF7ED' : '#FFFFFF',
+                            border: active ? '1.5px solid rgba(249,115,22,0.35)' : '1.5px solid #EDF2F7',
+                            borderRadius: 12, cursor: 'pointer', textAlign: 'left', width: '100%', marginBottom: 8,
+                            boxShadow: active ? '0 6px 18px rgba(249,115,22,0.08)' : '0 1px 3px rgba(0,0,0,0.03)',
+                            animationDelay: `${i * 0.04}s`,
+                          }}
+                        >
+                          <Avatar name={conv.partnerName} size={38} role={conv.partnerRole} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
+                                <span style={{ fontWeight: conv.unreadCount > 0 ? 800 : 600, fontSize: 13, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {conv.partnerName}
+                                </span>
+                                {conv.partnerDeleted && (
+                                  <span style={{ background: '#F1F5F9', color: '#6B7280', fontSize: 10, padding: '1px 6px', borderRadius: 999, flexShrink: 0, fontWeight: 700 }}>removed</span>
+                                )}
+                              </div>
+                              <span style={{ fontSize: 10.5, color: '#9CA3AF', flexShrink: 0, fontWeight: 600 }}>{formatTime(conv.lastTime)}</span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 3 }}>
+                              <span style={{ fontSize: 12, color: conv.unreadCount > 0 ? '#0F172A' : '#94A3B8', fontWeight: conv.unreadCount > 0 ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                                {conv.lastMessage}
+                              </span>
+                              {conv.unreadCount > 0 && (
+                                <div style={{ minWidth: 18, height: 18, borderRadius: 999, background: '#F97316', color: '#fff', fontSize: 10, fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', flexShrink: 0 }}>
+                                  {conv.unreadCount}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+              </div>
+
+              {/* Right: chat */}
+              <div style={{ minWidth: 0, minHeight: 0, flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#FFFFFF', borderRadius: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)' }}>
+                {selectedConv ? (
+                  <>
+                    {/* Chat header */}
+                    <div style={{ padding: '14px 22px', background: '#FFFFFF', borderBottom: '1px solid #EDF2F7', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0, boxShadow: '0 1px 4px rgba(0,0,0,0.03)' }}>
+                      <Avatar name={selectedConv.partnerName} size={40} role={selectedConv.partnerRole} />
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ fontWeight: 800, fontSize: 15, color: '#0F172A' }}>{selectedConv.partnerName}</span>
+                          {selectedConv.partnerDeleted && (
+                            <span style={{ background: '#F1F5F9', color: '#64748B', fontSize: 11, padding: '2px 8px', borderRadius: 999, fontWeight: 700 }}>Account removed</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Messages */}
+                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {messages.map(msg => {
+                        const isMine = msg.from_user_id === internalUserId
+                        return (
+                          <div key={msg.id} className="comm-msg-bubble" style={{ display: 'flex', justifyContent: isMine ? 'flex-end' : 'flex-start', alignItems: 'flex-end', gap: 7 }}>
+                            {!isMine && <Avatar name={selectedConv.partnerName} size={26} role={selectedConv.partnerRole} />}
+                            <div style={{
+                              maxWidth: '66%', padding: '9px 13px',
+                              borderRadius: isMine ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
+                              background: isMine ? '#DBEAFE' : '#FFFFFF',
+                              border: isMine ? '1px solid #BFDBFE' : '1px solid #EDF2F7',
+                              color: '#0F172A', fontSize: 13, fontWeight: 500, lineHeight: 1.5,
+                              boxShadow: '0 2px 8px rgba(15,23,42,0.04)',
+                            }}>
+                              {msg.content}
+                              <div style={{ fontSize: 10.5, marginTop: 4, color: '#94A3B8', fontWeight: 600, textAlign: isMine ? 'right' : 'left' }}>
+                                {formatTime(msg.created_at)}
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                      <div ref={messagesEndRef} />
+                    </div>
+
+                    {/* Input */}
+                    <div style={{ padding: '12px 20px', background: '#FFFFFF', borderTop: '1px solid #EDF2F7', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                      <input
+                        value={msgInput}
+                        onChange={e => setMsgInput(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !selectedConv.partnerDeleted) { e.preventDefault(); handleSendMessage() } }}
+                        placeholder={selectedConv.partnerDeleted ? "This user's account no longer exists." : 'Type a message…'}
+                        disabled={selectedConv.partnerDeleted}
+                        className="comm-input"
+                        style={{ flex: 1, height: 40, padding: '0 14px', border: '1.5px solid #E2E8F0', borderRadius: 11, fontSize: 13, fontWeight: 500, outline: 'none', background: selectedConv.partnerDeleted ? '#F8FAFC' : '#FFFFFF', color: selectedConv.partnerDeleted ? '#94A3B8' : '#0F172A', transition: 'border-color 0.15s, box-shadow 0.15s', cursor: selectedConv.partnerDeleted ? 'not-allowed' : undefined }}
+                      />
+                      {!selectedConv.partnerDeleted && (
+                        <button
+                          onClick={handleSendMessage}
+                          disabled={sendingMsg || !msgInput.trim()}
+                          style={{ height: 40, padding: '0 16px', background: sendingMsg || !msgInput.trim() ? '#E5E7EB' : '#F97316', color: sendingMsg || !msgInput.trim() ? '#9CA3AF' : '#fff', border: 'none', borderRadius: 11, cursor: sendingMsg || !msgInput.trim() ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, transition: 'background 0.15s' }}
+                        >
+                          {sendingMsg ? <Spinner size={13} light /> : <Send size={13} />} Send
+                        </button>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', borderRadius: 16 }}>
+                    <div style={{ textAlign: 'center', color: '#94A3B8' }}>
+                      <div style={{ width: 56, height: 56, borderRadius: 18, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px', color: '#F97316' }}>
+                        <MessageSquare size={24} strokeWidth={1.5} />
+                      </div>
+                      <p style={{ margin: 0, fontWeight: 600, fontSize: 14 }}>Select a conversation to start messaging</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* ── Announcements tab ── */}
           {activeTab === 'announcements' && (
-            <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '340px minmax(0, 1fr)', overflow: 'hidden' }}>
+            <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '340px minmax(0, 1fr)', gap: 10, overflow: 'hidden' }}>
 
               {/* Left: list */}
-              <div style={{ minHeight: 0, borderRight: '1px solid #EDF2F7', display: 'flex', flexDirection: 'column', background: '#FAFBFC' }}>
-                <div style={{ padding: '14px 16px', borderBottom: '1px solid #EDF2F7', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexShrink: 0, background: '#FFFFFF' }}>
-                  <div>
-                    <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Inbox</p>
-                    <p style={{ margin: '2px 0 0', fontSize: 16, fontWeight: 800, color: '#0F172A' }}>All Announcements</p>
-                  </div>
-                  <button
-                    onClick={() => setShowNewAnnModal(true)}
-                    style={{ height: 34, display: 'flex', alignItems: 'center', gap: 5, padding: '0 12px', background: '#F97316', color: '#fff', border: 'none', borderRadius: 9, fontSize: 12, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
-                  >
-                    <Plus size={13} /> New
-                  </button>
-                </div>
+              <div style={{ minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 16, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)' }}>
 
-                <div style={{ padding: '10px 12px', borderBottom: '1px solid #EDF2F7', background: '#FFFFFF', flexShrink: 0 }}>
+                <div style={{ padding: '10px 12px 0', flexShrink: 0 }}>
                   <div style={{ height: 36, display: 'flex', alignItems: 'center', gap: 8, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 9, padding: '0 11px' }}>
                     <Search size={13} color="#94A3B8" />
                     <input
@@ -808,7 +949,7 @@ export default function OwnerCommunicationPage() {
               </div>
 
               {/* Right: detail */}
-              <div style={{ minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#F8FAFC' }}>
+              <div style={{ minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#FFFFFF', borderRadius: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)' }}>
                 {selectedAnn ? (
                   <>
                     <div style={{ flexShrink: 0, background: '#FFFFFF', borderBottom: '1px solid #EDF2F7', padding: '16px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 18 }}>
@@ -848,13 +989,12 @@ export default function OwnerCommunicationPage() {
                     </div>
                   </>
                 ) : (
-                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, background: '#F8FAFC', borderRadius: 16 }}>
                     <div style={{ textAlign: 'center', color: '#94A3B8' }}>
                       <div style={{ width: 56, height: 56, borderRadius: 18, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px', color: '#F97316' }}>
                         <Megaphone size={24} strokeWidth={1.5} />
                       </div>
                       <p style={{ margin: 0, fontWeight: 600, fontSize: 14 }}>Select an announcement to read</p>
-                      <p style={{ margin: '5px 0 0', fontWeight: 500, fontSize: 12, color: '#CBD5E1' }}>Click any item in the list</p>
                     </div>
                   </div>
                 )}
@@ -862,249 +1002,51 @@ export default function OwnerCommunicationPage() {
             </div>
           )}
 
-          {/* ── Messages tab ── */}
-          {activeTab === 'messages' && (
-            <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '340px minmax(0, 1fr)', overflow: 'hidden' }}>
-
-              {/* Left: conversations */}
-              <div style={{ minHeight: 0, borderRight: '1px solid #EDF2F7', display: 'flex', flexDirection: 'column', background: '#FAFBFC' }}>
-                <div style={{ padding: '12px 12px 10px', borderBottom: '1px solid #EDF2F7', background: '#FFFFFF', flexShrink: 0 }}>
-                  {/* Sub-tabs */}
-                  <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-                    {(['messages', 'invites'] as const).map(sub => (
-                      <button key={sub} onClick={() => setMsgSubTab(sub)}
-                        className="comm-tab-btn"
-                        style={{
-                          flex: 1, height: 34, borderRadius: 9, cursor: 'pointer', fontWeight: 700, fontSize: 12,
-                          background: msgSubTab === sub ? '#FFF7ED' : '#F8FAFC',
-                          border: msgSubTab === sub ? '1.5px solid rgba(249,115,22,0.35)' : '1.5px solid #E2E8F0',
-                          color: msgSubTab === sub ? '#F97316' : '#64748B',
-                          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
-                        }}
-                      >
-                        {sub === 'messages' ? <MessageSquare size={12} /> : <Bell size={12} />}
-                        {sub === 'messages' ? 'Chats' : `Invites${invites.length > 0 ? ` (${invites.length})` : ''}`}
-                      </button>
-                    ))}
+          {/* ── Invites tab ── */}
+          {activeTab === 'invites' && (
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 24, background: '#FFFFFF', borderRadius: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)' }}>
+              {inviteLoading ? (
+                <div style={{ padding: 48, textAlign: 'center' }}><Spinner size={18} /></div>
+              ) : invites.length === 0 ? (
+                <div style={{ height: 240, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 10 }}>
+                  <div style={{ width: 56, height: 56, borderRadius: 18, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#F97316' }}>
+                    <Bell size={24} strokeWidth={1.5} />
                   </div>
-
-                  {msgSubTab === 'messages' && (
-                    <>
-                      <button
-                        onClick={openCompose}
-                        data-testid="new-message-btn"
-                        disabled={!communicationReady}
-                        style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', height: 36, background: '#F97316', border: 'none', borderRadius: 9, color: '#fff', fontWeight: 700, fontSize: 12, cursor: communicationReady ? 'pointer' : 'not-allowed', justifyContent: 'center', opacity: communicationReady ? 1 : 0.6, marginBottom: 8 }}
-                      >
-                        <SquarePen size={13} strokeWidth={2.5} /> New Message
-                      </button>
-                      <div style={{ height: 34, display: 'flex', alignItems: 'center', gap: 7, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 9, padding: '0 10px' }}>
-                        <Search size={13} color="#94A3B8" />
-                        <input
-                          value={search} onChange={e => setSearch(e.target.value)}
-                          placeholder="Search conversations..."
-                          style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: 12, color: '#0F172A', fontWeight: 500 }}
-                        />
-                      </div>
-                    </>
-                  )}
+                  <p style={{ margin: 0, fontWeight: 600, fontSize: 14 }}>No pending invitations</p>
                 </div>
-
-                {msgSubTab === 'messages' ? (
-                  <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, padding: 10 }}>
-                    {filteredConversations.length === 0 ? (
-                      <div style={{ height: 180, borderRadius: 12, background: '#F8FAFC', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 8, fontWeight: 600, fontSize: 13 }}>
-                        <MessageSquare size={26} strokeWidth={1.5} />
-                        {search ? 'No results' : 'No conversations yet'}
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 14 }}>
+                  {invites.map((invite, i) => (
+                    <div key={invite.id} className="comm-ann-card" style={{ padding: 18, background: '#FFFFFF', border: '1.5px solid #EDF2F7', borderRadius: 14, animationDelay: `${i * 0.05}s` }}>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 14 }}>
+                        <div style={{ width: 38, height: 38, borderRadius: 10, background: '#FFF7ED', color: '#F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                          <Bell size={16} />
+                        </div>
+                        <div>
+                          <p style={{ margin: 0, fontSize: 13, color: '#0F172A', fontWeight: 700, lineHeight: 1.45 }}>
+                            <span style={{ color: '#374151' }}>{invite.sender_name}</span> invited you to join <span style={{ color: '#0F172A' }}>{invite.company_name}</span>
+                          </p>
+                          <p style={{ margin: '4px 0 0', fontSize: 11.5, color: '#94A3B8', fontWeight: 600 }}>
+                            As <span style={{ color: '#F97316', fontWeight: 700 }}>{invite.role}</span> · {formatTime(invite.created_at)}
+                          </p>
+                        </div>
                       </div>
-                    ) : filteredConversations.map((conv, i) => {
-                      const active = selectedConv?.partnerId === conv.partnerId
-                      const roleColor = ROLE_COLOR[conv.partnerRole] ?? '#9CA3AF'
-                      return (
-                        <button
-                          key={conv.partnerId}
-                          onClick={() => setSelectedConv(conv)}
-                          className="comm-conv-card"
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: 10, padding: 11,
-                            background: active ? '#FFF7ED' : '#FFFFFF',
-                            border: active ? '1.5px solid rgba(249,115,22,0.35)' : '1.5px solid #EDF2F7',
-                            borderRadius: 12, cursor: 'pointer', textAlign: 'left', width: '100%', marginBottom: 8,
-                            boxShadow: active ? '0 6px 18px rgba(249,115,22,0.08)' : '0 1px 3px rgba(0,0,0,0.03)',
-                            animationDelay: `${i * 0.04}s`,
-                          }}
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button onClick={() => handleAcceptInvite(invite)} disabled={inviteActing === invite.id}
+                          style={{ flex: 1, height: 34, background: '#10B981', color: '#fff', border: 'none', borderRadius: 9, fontWeight: 700, fontSize: 12, cursor: inviteActing === invite.id ? 'not-allowed' : 'pointer', opacity: inviteActing === invite.id ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}
                         >
-                          <Avatar name={conv.partnerName} size={38} role={conv.partnerRole} />
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
-                                <span style={{ fontWeight: conv.unreadCount > 0 ? 800 : 600, fontSize: 13, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  {conv.partnerName}
-                                </span>
-                                {conv.partnerDeleted && (
-                                  <span style={{ background: '#F1F5F9', color: '#6B7280', fontSize: 10, padding: '1px 6px', borderRadius: 999, flexShrink: 0, fontWeight: 700 }}>removed</span>
-                                )}
-                              </div>
-                              <span style={{ fontSize: 10.5, color: '#9CA3AF', flexShrink: 0, fontWeight: 600 }}>{formatTime(conv.lastTime)}</span>
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 2 }}>
-                              <span style={{ fontSize: 10, fontWeight: 700, color: roleColor, background: `${roleColor}14`, padding: '1px 6px', borderRadius: 999, flexShrink: 0 }}>
-                                {conv.partnerRole}
-                              </span>
-                              {conv.companyName && <span style={{ fontSize: 10.5, color: '#94A3B8', fontWeight: 500 }}>{conv.companyName}</span>}
-                            </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 3 }}>
-                              <span style={{ fontSize: 12, color: conv.unreadCount > 0 ? '#0F172A' : '#94A3B8', fontWeight: conv.unreadCount > 0 ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                                {conv.lastMessage}
-                              </span>
-                              {conv.unreadCount > 0 && (
-                                <div style={{ minWidth: 18, height: 18, borderRadius: 999, background: '#F97316', color: '#fff', fontSize: 10, fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', flexShrink: 0 }}>
-                                  {conv.unreadCount}
-                                </div>
-                              )}
-                            </div>
-                          </div>
+                          {inviteActing === invite.id ? <Spinner size={12} light /> : <Check size={13} />} Accept
                         </button>
-                      )
-                    })}
-                  </div>
-                ) : (
-                  <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, padding: 10 }}>
-                    {inviteLoading ? (
-                      <div style={{ padding: 24, textAlign: 'center' }}><Spinner size={16} /></div>
-                    ) : invites.length === 0 ? (
-                      <div style={{ height: 160, borderRadius: 12, background: '#F8FAFC', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 8, fontWeight: 600, fontSize: 13 }}>
-                        <Bell size={24} strokeWidth={1.5} />
-                        No pending invitations
-                      </div>
-                    ) : invites.map((invite, i) => (
-                      <div key={invite.id} className="comm-ann-card" style={{ margin: '0 0 8px', padding: '14px', background: '#FFFFFF', border: '1.5px solid #EDF2F7', borderRadius: 12, animationDelay: `${i * 0.05}s` }}>
-                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10 }}>
-                          <div style={{ width: 34, height: 34, borderRadius: 10, background: '#FFF7ED', color: '#F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                            <Bell size={15} />
-                          </div>
-                          <div>
-                            <p style={{ margin: 0, fontSize: 12.5, color: '#0F172A', fontWeight: 700, lineHeight: 1.45 }}>
-                              <span style={{ color: '#374151' }}>{invite.sender_name}</span> invited you to join{' '}
-                              <span style={{ color: '#0F172A' }}>{invite.company_name}</span>
-                            </p>
-                            <p style={{ margin: '3px 0 0', fontSize: 11, color: '#94A3B8', fontWeight: 600 }}>
-                              As <span style={{ color: '#F97316', fontWeight: 700 }}>{invite.role}</span> · {formatTime(invite.created_at)}
-                            </p>
-                          </div>
-                        </div>
-                        <div style={{ display: 'flex', gap: 6 }}>
-                          <button onClick={() => handleAcceptInvite(invite)} disabled={inviteActing === invite.id}
-                            style={{ flex: 1, height: 32, background: '#10B981', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 12, cursor: inviteActing === invite.id ? 'not-allowed' : 'pointer', opacity: inviteActing === invite.id ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
-                          >
-                            {inviteActing === invite.id ? <Spinner size={11} light /> : <Check size={12} />} Accept
-                          </button>
-                          <button onClick={() => handleDeclineInvite(invite)} disabled={inviteActing === invite.id}
-                            style={{ flex: 1, height: 32, background: '#fff', color: '#64748B', border: '1.5px solid #E2E8F0', borderRadius: 8, fontWeight: 700, fontSize: 12, cursor: inviteActing === invite.id ? 'not-allowed' : 'pointer', opacity: inviteActing === invite.id ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
-                          >
-                            <X size={12} /> Decline
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Right: chat */}
-              <div style={{ minWidth: 0, minHeight: 0, flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#F8FAFC' }}>
-                {msgSubTab === 'invites' ? (
-                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <div style={{ textAlign: 'center', color: '#94A3B8' }}>
-                      <div style={{ width: 56, height: 56, borderRadius: 18, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px', color: '#F97316' }}>
-                        <Bell size={24} strokeWidth={1.5} />
-                      </div>
-                      <p style={{ margin: 0, fontWeight: 600, fontSize: 14 }}>Review invitations from the list</p>
-                    </div>
-                  </div>
-                ) : selectedConv ? (
-                  <>
-                    {/* Chat header */}
-                    <div style={{ padding: '14px 22px', background: '#FFFFFF', borderBottom: '1px solid #EDF2F7', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0, boxShadow: '0 1px 4px rgba(0,0,0,0.03)' }}>
-                      <Avatar name={selectedConv.partnerName} size={40} role={selectedConv.partnerRole} />
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ fontWeight: 800, fontSize: 15, color: '#0F172A' }}>{selectedConv.partnerName}</span>
-                          {selectedConv.partnerDeleted && (
-                            <span style={{ background: '#F1F5F9', color: '#64748B', fontSize: 11, padding: '2px 8px', borderRadius: 999, fontWeight: 700 }}>Account removed</span>
-                          )}
-                        </div>
-                        {selectedConv.partnerRole && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3 }}>
-                            <span style={{ fontSize: 11, fontWeight: 700, color: ROLE_COLOR[selectedConv.partnerRole] ?? '#64748B', background: `${ROLE_COLOR[selectedConv.partnerRole] ?? '#64748B'}14`, padding: '1px 7px', borderRadius: 999 }}>
-                              {selectedConv.partnerRole}
-                            </span>
-                            {selectedConv.companyName && <span style={{ fontSize: 11, color: '#94A3B8', fontWeight: 600 }}>{selectedConv.companyName}</span>}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Messages */}
-                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      {messages.map(msg => {
-                        const isMine = msg.from_user_id === internalUserId
-                        return (
-                          <div key={msg.id} className="comm-msg-bubble" style={{ display: 'flex', justifyContent: isMine ? 'flex-end' : 'flex-start', alignItems: 'flex-end', gap: 7 }}>
-                            {!isMine && <Avatar name={selectedConv.partnerName} size={26} role={selectedConv.partnerRole} />}
-                            <div style={{
-                              maxWidth: '66%', padding: '9px 13px',
-                              borderRadius: isMine ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-                              background: isMine ? '#DBEAFE' : '#FFFFFF',
-                              border: isMine ? '1px solid #BFDBFE' : '1px solid #EDF2F7',
-                              color: '#0F172A', fontSize: 13, fontWeight: 500, lineHeight: 1.5,
-                              boxShadow: '0 2px 8px rgba(15,23,42,0.04)',
-                            }}>
-                              {msg.content}
-                              <div style={{ fontSize: 10.5, marginTop: 4, color: '#94A3B8', fontWeight: 600, textAlign: isMine ? 'right' : 'left' }}>
-                                {formatTime(msg.created_at)}
-                              </div>
-                            </div>
-                          </div>
-                        )
-                      })}
-                      <div ref={messagesEndRef} />
-                    </div>
-
-                    {/* Input */}
-                    <div style={{ padding: '12px 20px', background: '#FFFFFF', borderTop: '1px solid #EDF2F7', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-                      <input
-                        value={msgInput}
-                        onChange={e => setMsgInput(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !selectedConv.partnerDeleted) { e.preventDefault(); handleSendMessage() } }}
-                        placeholder={selectedConv.partnerDeleted ? "This user's account no longer exists." : 'Type a message…'}
-                        disabled={selectedConv.partnerDeleted}
-                        className="comm-input"
-                        style={{ flex: 1, height: 40, padding: '0 14px', border: '1.5px solid #E2E8F0', borderRadius: 11, fontSize: 13, fontWeight: 500, outline: 'none', background: selectedConv.partnerDeleted ? '#F8FAFC' : '#FFFFFF', color: selectedConv.partnerDeleted ? '#94A3B8' : '#0F172A', transition: 'border-color 0.15s, box-shadow 0.15s', cursor: selectedConv.partnerDeleted ? 'not-allowed' : undefined }}
-                      />
-                      {!selectedConv.partnerDeleted && (
-                        <button
-                          onClick={handleSendMessage}
-                          disabled={sendingMsg || !msgInput.trim()}
-                          style={{ height: 40, padding: '0 16px', background: sendingMsg || !msgInput.trim() ? '#E5E7EB' : '#F97316', color: sendingMsg || !msgInput.trim() ? '#9CA3AF' : '#fff', border: 'none', borderRadius: 11, cursor: sendingMsg || !msgInput.trim() ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, transition: 'background 0.15s' }}
+                        <button onClick={() => handleDeclineInvite(invite)} disabled={inviteActing === invite.id}
+                          style={{ flex: 1, height: 34, background: '#fff', color: '#64748B', border: '1.5px solid #E2E8F0', borderRadius: 9, fontWeight: 700, fontSize: 12, cursor: inviteActing === invite.id ? 'not-allowed' : 'pointer', opacity: inviteActing === invite.id ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}
                         >
-                          {sendingMsg ? <Spinner size={13} light /> : <Send size={13} />} Send
+                          <X size={13} /> Decline
                         </button>
-                      )}
-                    </div>
-                  </>
-                ) : (
-                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <div style={{ textAlign: 'center', color: '#94A3B8' }}>
-                      <div style={{ width: 56, height: 56, borderRadius: 18, background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px', color: '#3B82F6' }}>
-                        <MessageSquare size={24} strokeWidth={1.5} />
                       </div>
-                      <p style={{ margin: 0, fontWeight: 600, fontSize: 14 }}>Select a conversation to start messaging</p>
-                      <p style={{ margin: '5px 0 0', fontWeight: 500, fontSize: 12, color: '#CBD5E1' }}>Or compose a new message</p>
                     </div>
-                  </div>
-                )}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </section>
@@ -1260,7 +1202,6 @@ export default function OwnerCommunicationPage() {
                     <Avatar name={selectedRecipient.full_name} size={34} role={selectedRecipient.role} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <p style={{ fontWeight: 700, fontSize: 13.5, color: '#0F172A', margin: 0 }}>{selectedRecipient.full_name}</p>
-                      <p style={{ fontSize: 11.5, color: ROLE_COLOR[selectedRecipient.role] ?? '#94A3B8', margin: 0, fontWeight: 600 }}>{ROLE_LABEL[selectedRecipient.role] ?? selectedRecipient.role}</p>
                     </div>
                     <button onClick={() => setSelectedRecipient(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', display: 'flex', padding: 2 }}><X size={15} /></button>
                   </div>
@@ -1282,7 +1223,6 @@ export default function OwnerCommunicationPage() {
                           <Avatar name={m.full_name} size={34} role={m.role} />
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <p style={{ fontWeight: 700, fontSize: 13, color: '#0F172A', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.full_name}</p>
-                            <p style={{ fontSize: 11.5, margin: 0, color: ROLE_COLOR[m.role] ?? '#9CA3AF', fontWeight: 600 }}>{ROLE_LABEL[m.role] ?? m.role}</p>
                           </div>
                         </button>
                       ))}

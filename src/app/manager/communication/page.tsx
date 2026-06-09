@@ -5,11 +5,11 @@ import ManagerSidebar from '@/components/ManagerSidebar'
 import { createClient } from '@/lib/supabase'
 import {
   Plus, X, Trash2, Pencil, Megaphone,
-  Send, Search, SquarePen, Check, Bell, MessageSquare,
+  Send, Search, SquarePen, Check, Bell, MessageSquare, UserCog,
 } from 'lucide-react'
 
-const ACCENT = '#F97316'
-const ACCENT_LIGHT = '#FFF7ED'
+const ACCENT = '#2563EB'
+const ACCENT_LIGHT = '#EFF6FF'
 
 // ─── Shared types ────────────────────────────────────────────────────────────
 
@@ -121,6 +121,8 @@ export default function ManagerCommunicationPage() {
   const [authUserId, setAuthUserId] = useState<string | null>(null)
   const [internalUserId, setInternalUserId] = useState<string | null>(null)
   const [companyId, setCompanyId] = useState<string | null>(null)
+  const [companyName, setCompanyName] = useState('')
+  const [managerName, setManagerName] = useState('')
   const [userRole, setUserRole] = useState('')
   const [userDeptId, setUserDeptId] = useState<string | null>(null)
   const [departments, setDepartments] = useState<Department[]>([])
@@ -186,6 +188,7 @@ export default function ManagerCommunicationPage() {
         .then(d => {
           if (d.success) {
             setInternalUserId(d.user.id)
+            setManagerName(d.user.full_name ?? '')
             setUserRole(d.user.role ?? '')
             setUserDeptId(d.user.department_id ?? null)
             if (cid) setReadIds(loadReadIds(cid, d.user.id))
@@ -194,13 +197,17 @@ export default function ManagerCommunicationPage() {
     }
   }, [])
 
-  // ── Departments ──
+  // ── Departments + company name ──
   useEffect(() => {
     if (!companyId) return
-    fetch(`/api/company/departments?company_id=${companyId}`)
-      .then(r => r.json())
-      .then(d => { if (d.success) setDepartments(d.departments ?? []) })
-      .catch(() => {})
+    const uid = localStorage.getItem('tasking_user_id') ?? ''
+    Promise.all([
+      fetch(`/api/company/departments?company_id=${companyId}`).then(r => r.json()),
+      fetch(`/api/company/current?user_id=${uid}&company_id=${companyId}`).then(r => r.json()),
+    ]).then(([deptData, compData]) => {
+      if (deptData.success) setDepartments(deptData.departments ?? [])
+      if (compData.success && compData.company?.name) setCompanyName(compData.company.name)
+    }).catch(() => {})
   }, [companyId])
 
   // ── Unread message count ──
@@ -559,10 +566,26 @@ export default function ManagerCommunicationPage() {
 
       <main style={{ marginLeft: '64px', flex: 1, height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
-        {/* Page header + top-level tabs */}
-        <div style={{ padding: '18px 32px 0', background: '#FFFFFF', borderBottom: '1px solid #E5E7EB', flexShrink: 0 }}>
-          <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#111827', margin: '0 0 14px' }}>Communication</h1>
-          <div style={{ display: 'flex', gap: 0 }}>
+        {/* Page header */}
+        <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
+          <div>
+            <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
+              {companyName ? `Communication for ${companyName}` : 'Communication'}
+            </h1>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
+            {managerName && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: '#fff', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: '#1E3A5F', color: '#FFFFFF', flexShrink: 0 }}>
+                  <UserCog size={13} />
+                </span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{managerName}</span>
+              </div>
+            )}
+          </div>
+        </div>
+        {/* Tabs */}
+        <div style={{ padding: '0 28px', flexShrink: 0, display: 'flex', gap: 0, borderBottom: '1px solid #E5E7EB' }}>
             {(['announcements', 'messages'] as const).map(tab => (
               <button
                 key={tab}
@@ -596,7 +619,6 @@ export default function ManagerCommunicationPage() {
                 )}
               </button>
             ))}
-          </div>
         </div>
 
         {/* ── Announcements tab ── */}

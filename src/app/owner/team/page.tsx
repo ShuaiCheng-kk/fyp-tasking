@@ -412,6 +412,7 @@ type TeamMember = {
   phone_number: string | null
   role: string
   department_id: string | null
+  worker_status?: string | null
 }
 type ChangeDeptModal = { member: TeamMember } | null
 type ManageDeptModal = { member: TeamMember } | null
@@ -1305,6 +1306,76 @@ export default function TeamPage() {
               />
             )}
           </div>
+
+          {/* ── CASUAL WORKERS ────────────────────────────────────────────────── */}
+          {(() => {
+            const casualWorkers = teamMembers.filter(m => m.role === 'Casual Worker')
+            return (
+              <div className="team-panel-card" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
+                  <div style={{ width: 30, height: 30, borderRadius: 9, background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <HardHat size={15} style={{ color: '#2563EB' }} />
+                  </div>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', flex: 1 }}>Casual Workers</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: '#2563EB', background: '#EFF6FF', padding: '2px 10px', borderRadius: 99 }}>
+                    {teamLoading ? '—' : casualWorkers.length}
+                  </span>
+                </div>
+
+                {teamLoading ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#9CA3AF', fontSize: '0.9375rem' }}>
+                    <Spinner size={16} dark /> Loading…
+                  </div>
+                ) : casualWorkers.length === 0 ? (
+                  <div style={{ padding: '20px 0', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>
+                    No casual workers have joined this company yet.
+                  </div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
+                    {casualWorkers.map(worker => {
+                      const deptName = worker.department_id
+                        ? companyDepartments.find(d => d.id === worker.department_id)?.name ?? null
+                        : null
+                      const status = worker.worker_status ?? 'active'
+                      const statusColors: Record<string, { bg: string; text: string }> = {
+                        active:   { bg: '#ECFDF5', text: '#047857' },
+                        inactive: { bg: '#F3F4F6', text: '#4B5563' },
+                        blocked:  { bg: '#FEF2F2', text: '#B91C1C' },
+                      }
+                      const sc = statusColors[status] ?? statusColors.active
+                      return (
+                        <button
+                          key={worker.id}
+                          onClick={() => setProfileMember(worker)}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 12,
+                            padding: '12px 14px', borderRadius: 12,
+                            border: '1.5px solid #DBEAFE', background: '#F8FBFF',
+                            cursor: 'pointer', textAlign: 'left',
+                            boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                            transition: 'box-shadow 0.15s',
+                          }}
+                          onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 3px 10px rgba(37,99,235,0.12)' }}
+                          onMouseLeave={e => { e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)' }}
+                        >
+                          <RoleAvatar role="Casual Worker" size={36} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{worker.full_name}</p>
+                            <p style={{ fontSize: '0.75rem', color: '#6B7280', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {deptName ?? worker.email_address}
+                            </p>
+                          </div>
+                          <span style={{ background: sc.bg, color: sc.text, borderRadius: 999, padding: '2px 8px', fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', flexShrink: 0 }}>
+                            {status}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )
+          })()}
         </div>
         </div>
       </main>

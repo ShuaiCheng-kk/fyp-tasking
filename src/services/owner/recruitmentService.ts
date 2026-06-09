@@ -2,7 +2,7 @@
 // RULE: Business logic only. No HTTP handling. No direct DB access.
 
 import { recruitmentRepository } from '@/repositories/owner/recruitmentRepository'
-import { CasualWorkerStatus, JobApplicant, JobPosting, JobPostingInput, JobPostingSummary } from '@/types/Recruitment'
+import { CasualWorkerStatus, JobApplicant, JobPosting, JobPostingInput, JobPostingPendingApproval, JobPostingSummary } from '@/types/Recruitment'
 
 export const recruitmentService = {
   async getPublicJobPostings(): Promise<JobPosting[]> {
@@ -36,6 +36,30 @@ export const recruitmentService = {
   async createJobPosting(input: JobPostingInput): Promise<JobPosting> {
     validateJobPostingInput(input)
     return recruitmentRepository.createJobPosting(input)
+  },
+
+  async getDraftPostings(company_id: string, user_id: string): Promise<JobPostingSummary[]> {
+    if (!company_id || !user_id) throw new Error('company_id and user_id are required')
+    const postings = await recruitmentRepository.getDraftPostings(company_id, user_id)
+    const deptIds = [...new Set(postings.map(p => p.department_id).filter((id): id is string => Boolean(id)))]
+    const departments = await recruitmentRepository.getDepartmentsByIds(deptIds)
+    const deptMap = new Map(departments.map(d => [d.id, d.name]))
+    return postings.map(p => ({
+      ...p,
+      department_name: p.department_id ? deptMap.get(p.department_id) ?? null : null,
+      applicant_count: 0,
+      pending_count: 0,
+    }))
+  },
+
+  async publishDraft(id: string): Promise<JobPosting> {
+    if (!id) throw new Error('job_id is required')
+    return recruitmentRepository.updateJobPosting(id, { status: 'open' })
+  },
+
+  async deleteDraft(id: string): Promise<void> {
+    if (!id) throw new Error('job_id is required')
+    await recruitmentRepository.deleteJobPosting(id)
   },
 
   async editJobPosting(id: string, input: Partial<JobPostingInput>): Promise<JobPosting> {
@@ -99,6 +123,21 @@ export const recruitmentService = {
     return updated
   },
 
+  async getPendingApprovalPostings(company_id: string): Promise<JobPostingPendingApproval[]> {
+    if (!company_id) throw new Error('company_id is required')
+    return recruitmentRepository.getPendingApprovalPostings(company_id)
+  },
+
+  async approveJobPosting(id: string): Promise<JobPosting> {
+    if (!id) throw new Error('job_id is required')
+    return recruitmentRepository.approveJobPosting(id)
+  },
+
+  async rejectJobPosting(id: string): Promise<JobPosting> {
+    if (!id) throw new Error('job_id is required')
+    return recruitmentRepository.rejectJobPosting(id)
+  },
+
   async getCasualWorkers(company_id: string): Promise<CasualWorkerStatus[]> {
     if (!company_id) throw new Error('company_id is required')
     return recruitmentRepository.getCasualWorkersByCompany(company_id)
@@ -117,8 +156,12 @@ export const recruitmentService = {
 }
 
 function validateJobPostingInput(input: JobPostingInput): void {
-  if (!input.company_id || !input.created_by || !input.title?.trim() || !input.description?.trim()) {
-    throw new Error('company_id, created_by, title, and description are required')
+  const isDraft = input.status === 'draft'
+  if (!input.company_id || !input.created_by || !input.title?.trim()) {
+    throw new Error('company_id, created_by, and title are required')
+  }
+  if (!isDraft && !input.description?.trim()) {
+    throw new Error('description is required to publish a job')
   }
   if (input.salary_amount !== undefined && input.salary_amount !== null && input.salary_amount < 0) {
     throw new Error('salary_amount cannot be negative')
