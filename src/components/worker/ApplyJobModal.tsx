@@ -205,13 +205,13 @@ export default function ApplyJobModal({ jobId, onClose }: Props) {
               </label>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 28 }}>
+            <div style={footerStyle}>
               <button onClick={onClose} disabled={submitting} style={secondaryButtonStyle}>
                 Cancel
               </button>
 
               <button onClick={handleSubmit} disabled={submitting} style={primaryButtonStyle}>
-                {submitting ? 'Submitting...' : 'Submit Application'}
+                {submitting ? 'Submitting...' : 'Submit'}
               </button>
             </div>
           </>
@@ -224,18 +224,25 @@ export default function ApplyJobModal({ jobId, onClose }: Props) {
 const overlayStyle: React.CSSProperties = {
   position: 'fixed',
   inset: 0,
-  background: 'rgba(17, 24, 39, 0.48)',
-  backdropFilter: 'blur(4px)',
+
+  background: 'rgba(0,0,0,0.4)',
+
   display: 'flex',
-  alignItems: 'center',
   justifyContent: 'center',
-  zIndex: 100,
+  alignItems: 'center',
+
   padding: 24,
+
+  overflowY: 'auto',
+
+  zIndex: 9999,
 }
 
 const modalStyle: React.CSSProperties = {
   width: '100%',
   maxWidth: 720,
+  maxHeight: '90vh',
+  overflowY: 'auto',
   background: '#FFFFFF',
   borderRadius: 18,
   padding: 32,
@@ -285,6 +292,18 @@ const errorStyle: React.CSSProperties = {
   padding: 12,
   borderRadius: 10,
   marginBottom: 16,
+}
+
+const footerStyle: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'flex-end',
+  gap: 12,
+
+  marginTop: 32,
+  paddingTop: 20,
+
+  borderTop: '1px solid #E5E7EB',
+  background: '#FFFFFF',
 }
 
 const primaryButtonStyle: React.CSSProperties = {

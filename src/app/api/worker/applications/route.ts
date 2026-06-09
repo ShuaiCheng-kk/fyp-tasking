@@ -47,3 +47,36 @@ export async function POST(req: NextRequest) {
     )
   }
 }
+
+export async function GET(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url)
+    const userId = searchParams.get('user_id')
+
+    if (!userId) {
+      return NextResponse.json(
+        { success: false, message: 'Missing user ID' },
+        { status: 400 }
+      )
+    }
+
+    const applications =
+      await workerApplicationService.getApplicationsByUser(userId)
+
+    return NextResponse.json({
+      success: true,
+      applications,
+    })
+  } catch (err) {
+    return NextResponse.json(
+      {
+        success: false,
+        message:
+          err instanceof Error
+            ? err.message
+            : 'Failed to load applications',
+      },
+      { status: 500 }
+    )
+  }
+}

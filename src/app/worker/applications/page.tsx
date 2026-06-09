@@ -2,11 +2,13 @@
 
 import { Suspense, useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
+import ApplicationDetailsModal from '@/components/worker/ApplicationDetailsModal'
 import ApplyJobModal from '@/components/worker/ApplyJobModal'
 
 type ApplicationStatus = 'pending' | 'accepted' | 'rejected' | 'withdrawn'
 
 type Profile = {
+  id: string
   full_name: string
   email_address: string
   phone_number: string
@@ -19,32 +21,126 @@ type Application = {
   company_name: string
   status: ApplicationStatus
   applied_at: string
+  resume_url?: string
+  cover_letter?: string
+
+  location?: string
+  employment_type?: string
+  salary_amount?: number
+  salary_type?: string
+  description?: string
+  requirements?: string
+  benefits?: string
+  openings?: number
+  job_date?: string
+  shift_start_time?: string
+  shift_end_time?: string
 }
 
-const sampleApplications: Application[] = []
+type RawApplication = {
+  id: string
+  status: ApplicationStatus
+  applied_at: string
+  resume_url?: string
+  cover_letter?: string
+  job_postings?: {
+    title?: string
+    company_name?: string
+    location?: string
+    employment_type?: string
+    salary_amount?: number
+    salary_type?: string
+    description?: string
+    requirements?: string
+    benefits?: string
+    openings?: number
+    job_date?: string
+    shift_start_time?: string
+    shift_end_time?: string
+  } | null
+}
 
 function ApplicationsContent() {
   const searchParams = useSearchParams()
 
   const [showApplyModal, setShowApplyModal] = useState(false)
   const [jobId, setJobId] = useState<string | null>(null)
-  const [applications] = useState<Application[]>(sampleApplications)
+  const [applications, setApplications] = useState<Application[]>([])
+  const [selectedApplication, setSelectedApplication] =
+  useState<Application | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  const loadApplications = async (userId: string) => {
+    const res = await fetch(`/api/worker/applications?user_id=${userId}`)
+    const data = await res.json()
+
+    if (!data.success) {
+      throw new Error(data.message || 'Failed to load applications')
+    }
+
+    const mappedApplications: Application[] = data.applications.map(
+      (app: RawApplication) => ({
+        id: app.id,
+        job_title: app.job_postings?.title || 'Job Opening',
+        company_name: app.job_postings?.company_name || 'Company',
+        status: app.status,
+        applied_at: formatDate(app.applied_at),
+
+        resume_url: app.resume_url,
+        cover_letter: app.cover_letter,
+
+        location: app.job_postings?.location,
+        employment_type: app.job_postings?.employment_type,
+        salary_amount: app.job_postings?.salary_amount,
+        salary_type: app.job_postings?.salary_type,
+        description: app.job_postings?.description,
+        requirements: app.job_postings?.requirements,
+        benefits: app.job_postings?.benefits,
+        openings: app.job_postings?.openings,
+
+        job_date: app.job_postings?.job_date
+          ? formatDate(app.job_postings.job_date)
+          : undefined,
+
+        shift_start_time: app.job_postings?.shift_start_time,
+        shift_end_time: app.job_postings?.shift_end_time,
+      })
+    )
+
+    setApplications(mappedApplications)
+  }
 
   useEffect(() => {
-    const loadProfile = async () => {
-      const authId = localStorage.getItem('tasking_user_id')
-      if (!authId) return
+    const loadPageData = async () => {
+      try {
+        setLoading(true)
 
-      const res = await fetch(`/api/worker/profile?user_id=${authId}`)
-      const data = await res.json()
+        const authId = localStorage.getItem('tasking_user_id')
+        if (!authId) {
+          window.location.href = '/signin'
+          return
+        }
 
-      if (data.success) {
-        setProfile(data.profile)
+        const profileRes = await fetch(`/api/worker/profile?user_id=${authId}`)
+        const profileData = await profileRes.json()
+
+        if (!profileData.success) {
+          throw new Error(profileData.message || 'Failed to load profile')
+        }
+
+        setProfile(profileData.profile)
+
+        await loadApplications(profileData.profile.id)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load applications')
+      } finally {
+        setLoading(false)
       }
     }
 
-    loadProfile()
+    loadPageData()
   }, [])
 
   useEffect(() => {
@@ -64,6 +160,14 @@ function ApplicationsContent() {
     localStorage.removeItem('tasking_active_session')
     sessionStorage.removeItem('tasking_session_active')
     window.location.href = '/signin'
+  }
+
+  const handleModalClose = async () => {
+    setShowApplyModal(false)
+
+    if (profile?.id) {
+      await loadApplications(profile.id)
+    }
   }
 
   return (
@@ -93,9 +197,7 @@ function ApplicationsContent() {
 
           <div style={rightHeaderStyle}>
             <div style={userInfoStyle}>
-              <span style={userNameStyle}>
-                {profile?.full_name || 'Guest'}
-              </span>
+              <span style={userNameStyle}>{profile?.full_name || 'Guest'}</span>
               <span style={roleBadgeStyle}>Guest User</span>
             </div>
 
@@ -116,12 +218,14 @@ function ApplicationsContent() {
             </button>
           </div>
 
-          {applications.length === 0 ? (
+          {loading ? (
+            <div style={emptyCardStyle}>Loading applications...</div>
+          ) : error ? (
+            <div style={errorCardStyle}>{error}</div>
+          ) : applications.length === 0 ? (
             <div style={emptyCardStyle}>
               <div style={emptyIconStyle}>📄</div>
-
               <h3 style={emptyTitleStyle}>No applications yet</h3>
-
               <p style={emptyTextStyle}>
                 Your submitted applications will appear here after you apply for a job.
               </p>
@@ -133,24 +237,21 @@ function ApplicationsContent() {
                   <div style={cardHeaderStyle}>
                     <div>
                       <h3 style={cardTitleStyle}>{app.job_title}</h3>
-
                       <p style={cardMetaStyle}>
                         {app.company_name} · Applied on {app.applied_at}
                       </p>
                     </div>
 
-                    <span
-                      style={{
-                        ...statusBadgeBaseStyle,
-                        ...statusStyle(app.status),
-                      }}
-                    >
+                    <span style={{ ...statusBadgeBaseStyle, ...statusStyle(app.status) }}>
                       {formatStatus(app.status)}
                     </span>
                   </div>
 
                   <div style={cardActionsStyle}>
-                    <button style={secondaryActionButtonStyle}>
+                    <button
+                      style={secondaryActionButtonStyle}
+                      onClick={() => setSelectedApplication(app)}
+                    >
                       View Details
                     </button>
 
@@ -167,11 +268,15 @@ function ApplicationsContent() {
         </section>
       </main>
 
-      {showApplyModal && jobId && (
-        <ApplyJobModal
-          jobId={jobId}
-          onClose={() => setShowApplyModal(false)}
+      {selectedApplication && (
+        <ApplicationDetailsModal
+          application={selectedApplication}
+          onClose={() => setSelectedApplication(null)}
         />
+      )}
+      
+      {showApplyModal && jobId && (
+        <ApplyJobModal jobId={jobId} onClose={handleModalClose} />
       )}
     </>
   )
@@ -185,40 +290,32 @@ export default function WorkerApplicationsPage() {
   )
 }
 
-function statusStyle(status: ApplicationStatus): React.CSSProperties {
-  if (status === 'pending') {
-    return {
-      background: '#FEF3C7',
-      color: '#92400E',
-      border: '1px solid #FDE68A',
-    }
-  }
-
-  if (status === 'accepted') {
-    return {
-      background: '#DCFCE7',
-      color: '#15803D',
-      border: '1px solid #BBF7D0',
-    }
-  }
-
-  if (status === 'rejected') {
-    return {
-      background: '#FEE2E2',
-      color: '#B91C1C',
-      border: '1px solid #FECACA',
-    }
-  }
-
-  return {
-    background: '#F3F4F6',
-    color: '#4B5563',
-    border: '1px solid #D1D5DB',
-  }
+function formatDate(date: string) {
+  return new Date(date).toLocaleDateString('en-SG', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  })
 }
 
 function formatStatus(status: ApplicationStatus) {
   return status.charAt(0).toUpperCase() + status.slice(1)
+}
+
+function statusStyle(status: ApplicationStatus): React.CSSProperties {
+  if (status === 'pending') {
+    return { background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A' }
+  }
+
+  if (status === 'accepted') {
+    return { background: '#DCFCE7', color: '#15803D', border: '1px solid #BBF7D0' }
+  }
+
+  if (status === 'rejected') {
+    return { background: '#FEE2E2', color: '#B91C1C', border: '1px solid #FECACA' }
+  }
+
+  return { background: '#F3F4F6', color: '#4B5563', border: '1px solid #D1D5DB' }
 }
 
 const topBarStyle: React.CSSProperties = {
@@ -227,7 +324,6 @@ const topBarStyle: React.CSSProperties = {
   color: '#FFFFFF',
   display: 'flex',
   alignItems: 'center',
-  boxShadow: '0 1px 0 rgba(0,0,0,0.08)',
 }
 
 const topBarInnerStyle: React.CSSProperties = {
@@ -245,8 +341,8 @@ const brandWrapStyle: React.CSSProperties = {
 }
 
 const logoBoxStyle: React.CSSProperties = {
-  width: 30,
-  height: 30,
+  width: 40,
+  height: 40,
   borderRadius: 10,
   background: '#F9FAFB',
   display: 'grid',
@@ -256,9 +352,8 @@ const logoBoxStyle: React.CSSProperties = {
 const headerTitleStyle: React.CSSProperties = {
   margin: 0,
   fontFamily: 'var(--font-heading)',
-  fontSize: '1.2rem',
+  fontSize: '1.375rem',
   fontWeight: 700,
-  letterSpacing: '-0.03em',
 }
 
 const rightHeaderStyle: React.CSSProperties = {
@@ -276,7 +371,6 @@ const userInfoStyle: React.CSSProperties = {
 const userNameStyle: React.CSSProperties = {
   fontSize: '0.875rem',
   fontWeight: 700,
-  color: '#FFFFFF',
 }
 
 const roleBadgeStyle: React.CSSProperties = {
@@ -310,11 +404,9 @@ const sectionStyle: React.CSSProperties = {
 }
 
 const sectionHeaderStyle: React.CSSProperties = {
-  width: '100%',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'space-between',
-  gap: 24,
   marginBottom: 22,
 }
 
@@ -336,7 +428,6 @@ const editContactButtonStyle: React.CSSProperties = {
   fontSize: '0.8125rem',
   fontWeight: 700,
   cursor: 'pointer',
-  boxShadow: '0 1px 2px rgba(15,23,42,0.04)',
 }
 
 const emptyCardStyle: React.CSSProperties = {
@@ -352,6 +443,12 @@ const emptyCardStyle: React.CSSProperties = {
   flexDirection: 'column',
   alignItems: 'center',
   justifyContent: 'center',
+}
+
+const errorCardStyle: React.CSSProperties = {
+  ...emptyCardStyle,
+  color: '#B91C1C',
+  background: '#FEF2F2',
 }
 
 const emptyIconStyle: React.CSSProperties = {
@@ -416,7 +513,6 @@ const statusBadgeBaseStyle: React.CSSProperties = {
   borderRadius: 999,
   fontSize: '0.75rem',
   fontWeight: 700,
-  whiteSpace: 'nowrap',
 }
 
 const cardActionsStyle: React.CSSProperties = {
@@ -434,6 +530,7 @@ const secondaryActionButtonStyle: React.CSSProperties = {
   fontSize: '0.8125rem',
   fontWeight: 700,
   cursor: 'pointer',
+  textDecoration: 'none',
 }
 
 const dangerActionButtonStyle: React.CSSProperties = {

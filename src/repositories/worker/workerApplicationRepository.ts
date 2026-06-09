@@ -53,4 +53,37 @@ export const workerApplicationRepository = {
     if (error) throw new Error(error.message)
     return data
   },
+
+  async getApplicationsByUser(userId: string) {
+    const { data, error } = await supabase
+      .from('job_applicants')
+      .select(`
+        id,
+        status,
+        applied_at,
+        resume_url,
+        cover_letter,
+        job_postings (
+          title,
+          company_name,
+          location,
+          employment_type,
+          salary_amount,
+          salary_type,
+          description,
+          requirements,
+          benefits,
+          openings,
+          job_date,
+          shift_start_time,
+          shift_end_time
+        )
+      `)
+      .eq('user_id', userId)
+      .order('applied_at', { ascending: false })
+
+    if (error) throw new Error(error.message)
+
+    return data
+  },
 }

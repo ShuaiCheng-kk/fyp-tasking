@@ -68,4 +68,10 @@ export const workerApplicationService = {
       cover_letter: coverLetterUrl,
     })
   },
+
+  async getApplicationsByUser(userId: string) {
+    if (!userId) throw new Error('User ID is required')
+
+    return await workerApplicationRepository.getApplicationsByUser(userId)
+  },
 }
