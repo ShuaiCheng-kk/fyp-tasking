@@ -374,9 +374,10 @@ export default function GetStartedPage() {
     }
 
     if (role === 'guest') {
-      setPath('guest');
-      transition(() => setStep(1));
-      return;
+      if (jobId) sessionStorage.setItem('apply_job_id', jobId)
+      setPath('guest')
+      transition(() => setStep(1))
+      return
     }
 
     if (code) {
@@ -663,12 +664,16 @@ export default function GetStartedPage() {
     localStorage.setItem('tasking_user_role', signinData.user.role);
     localStorage.removeItem('tasking_company_id');
 
-    const jobId = sessionStorage.getItem('apply_job_id');
+    const params = new URLSearchParams(window.location.search)
+    const urlJobId = params.get('job_id')
+    const storedJobId = sessionStorage.getItem('apply_job_id')
+    const jobId = urlJobId || storedJobId
 
     if (jobId) {
-      window.location.href =  `/worker/dashboard?apply=true&job_id=${jobId}`;
+      sessionStorage.setItem('apply_job_id', jobId)
+      window.location.href = `/worker/applications?apply=true&job_id=${jobId}`
     } else {
-      window.location.href = '/worker/dashboard';
+      window.location.href = '/worker/applications'
     }
   } catch (err) {
     setError(err instanceof Error ? err.message : 'Registration failed');
