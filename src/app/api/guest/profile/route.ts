@@ -16,7 +16,7 @@ export async function GET(req: Request) {
 
     const profile = await workerProfileService.getProfile(user_id)
 
-    return NextResponse.json({ profile })
+    return NextResponse.json({ success: true, profile })
   } catch (error) {
     console.error('GET worker profile error:', error)
     return NextResponse.json(
