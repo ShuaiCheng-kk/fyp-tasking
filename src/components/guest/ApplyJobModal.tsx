@@ -42,7 +42,7 @@ export default function ApplyJobModal({ jobId, onClose }: Props) {
           return
         }
 
-        const res = await fetch(`/api/worker/profile?user_id=${authId}`)
+        const res = await fetch(`/api/guest/profile?user_id=${authId}`)
         const data = await res.json()
 
         if (!data.success) throw new Error(data.message)
@@ -131,7 +131,7 @@ export default function ApplyJobModal({ jobId, onClose }: Props) {
     try {
       setSubmitting(true)
 
-      const res = await fetch('/api/worker/applications', {
+      const res = await fetch('/api/guest/applications', {
         method: 'POST',
         body: formData,
       })
@@ -142,7 +142,7 @@ export default function ApplyJobModal({ jobId, onClose }: Props) {
 
       sessionStorage.removeItem('apply_job_id')
       onClose()
-      router.replace('/worker/applications')
+      router.replace('/guest/applications')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to submit application')
     } finally {

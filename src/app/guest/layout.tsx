@@ -2,12 +2,12 @@
 
 import { useEffect, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
-import WorkerSidebar from '@/components/WorkerSidebar'
+import CasualSidebar from '@/components/CasualSidebar'
 
 type WorkerRole = 'Guest User' | 'Casual Worker'
 
 const guestAllowedRoutes = [
-  '/worker/applications',
+  '/guest/applications',
 ]
 
 export default function WorkerLayout({
@@ -31,7 +31,7 @@ export default function WorkerLayout({
           return
         }
 
-        const res = await fetch(`/api/worker/profile?user_id=${authId}`)
+        const res = await fetch(`/api/guest/profile?user_id=${authId}`)
         const data = await res.json()
 
         if (!data.success) {
@@ -48,7 +48,7 @@ export default function WorkerLayout({
           )
 
           if (!allowed) {
-            router.replace('/worker/applications')
+            router.replace('/guest/applications')
             return
           }
         }
@@ -76,7 +76,7 @@ export default function WorkerLayout({
 
   return (
     <div style={{ minHeight: '100vh', background: '#F9FAFB' }}>
-      <WorkerSidebar />
+      <CasualSidebar />
 
       <main style={{ marginLeft: 64, minHeight: '100vh' }}>
         {children}

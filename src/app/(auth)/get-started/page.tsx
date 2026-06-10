@@ -671,9 +671,9 @@ export default function GetStartedPage() {
 
     if (jobId) {
       sessionStorage.setItem('apply_job_id', jobId)
-      window.location.href = `/worker/applications?apply=true&job_id=${jobId}`
+      window.location.href = `/guest/applications?apply=true&job_id=${jobId}`
     } else {
-      window.location.href = '/worker/applications'
+      window.location.href = '/guest/applications'
     }
   } catch (err) {
     setError(err instanceof Error ? err.message : 'Registration failed');

@@ -18,14 +18,14 @@ const SIDEBAR_BORDER = '#15803D'
 const ACTIVE_BG = '#15803D'
 
 const navItems = [
-  { label: 'Dashboard', Icon: LayoutDashboard, href: '/worker/dashboard' },
-  { label: 'Attendance', Icon: Clock, href: '/worker/attendance' },
-  { label: 'Availability', Icon: CalendarDays, href: '/worker/availability' },
-  { label: 'Job History', Icon: History, href: '/worker/job-history' },
-  { label: 'Profile', Icon: User, href: '/worker/profile' },
+  { label: 'Dashboard', Icon: LayoutDashboard, href: '/casual/dashboard' },
+  { label: 'Attendance', Icon: Clock, href: '/casual/attendance' },
+  { label: 'Availability', Icon: CalendarDays, href: '/casual/availability' },
+  { label: 'Job History', Icon: History, href: '/casual/job-history' },
+  { label: 'Profile', Icon: User, href: '/casual/profile' },
 ]
 
-export default function WorkerSidebar() {
+export default function CasualSidebar() {
   const pathname = usePathname()
   const [expanded, setExpanded] = useState(false)
 
@@ -66,7 +66,7 @@ export default function WorkerSidebar() {
       }}
     >
       <Link
-        href="/worker/dashboard"
+        href="/casual/dashboard"
         style={{
           display: 'flex',
           alignItems: 'center',

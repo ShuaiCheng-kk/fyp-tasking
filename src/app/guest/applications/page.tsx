@@ -2,8 +2,8 @@
 
 import { Suspense, useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import ApplicationDetailsModal from '@/components/worker/ApplicationDetailsModal'
-import ApplyJobModal from '@/components/worker/ApplyJobModal'
+import ApplicationDetailsModal from '@/components/guest/ApplicationDetailsModal'
+import ApplyJobModal from '@/components/guest/ApplyJobModal'
 
 type ApplicationStatus = 'pending' | 'accepted' | 'rejected' | 'withdrawn'
 
@@ -73,7 +73,7 @@ function ApplicationsContent() {
   const [error, setError] = useState('')
 
   const loadApplications = async (userId: string) => {
-    const res = await fetch(`/api/worker/applications?user_id=${userId}`)
+    const res = await fetch(`/api/guest/applications?user_id=${userId}`)
     const data = await res.json()
 
     if (!data.success) {
@@ -123,7 +123,7 @@ function ApplicationsContent() {
           return
         }
 
-        const profileRes = await fetch(`/api/worker/profile?user_id=${authId}`)
+        const profileRes = await fetch(`/api/guest/profile?user_id=${authId}`)
         const profileData = await profileRes.json()
 
         if (!profileData.success) {

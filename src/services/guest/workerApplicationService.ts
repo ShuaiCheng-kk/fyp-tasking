@@ -1,4 +1,4 @@
-import { workerApplicationRepository } from '@/repositories/worker/workerApplicationRepository'
+import { workerApplicationRepository } from '@/repositories/guest/workerApplicationRepository'
 
 type SubmitApplicationInput = {
   job_id: string

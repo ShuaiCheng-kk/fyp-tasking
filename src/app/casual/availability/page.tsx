@@ -1,6 +1,6 @@
 'use client'
 
-export default function WorkerAvailabilityPage() {
+export default function CasualAvailabilityPage() {
   return (
     <>
       <header style={topBarStyle}>

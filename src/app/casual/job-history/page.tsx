@@ -1,6 +1,6 @@
 'use client'
 
-export default function WorkerJobHistoryPage() {
+export default function CasualJobHistoryPage() {
   return (
     <>
       <header style={topBarStyle}>

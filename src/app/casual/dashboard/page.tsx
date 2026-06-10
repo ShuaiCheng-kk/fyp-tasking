@@ -1,6 +1,6 @@
 'use client'
 
-export default function WorkerDashboardPage() {
+export default function CasualDashboardPage() {
   return (
     <>
       <header style={topBarStyle}>

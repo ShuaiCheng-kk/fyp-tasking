@@ -1,6 +1,6 @@
 'use client'
 
-export default function WorkerAttendancePage() {
+export default function CasualAttendancePage() {
   return (
     <>
       <header style={topBarStyle}>

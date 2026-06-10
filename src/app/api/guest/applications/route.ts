@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { workerApplicationService } from '@/services/worker/workerApplicationService'
+import { workerApplicationService } from '@/services/guest/workerApplicationService'
 
 export async function POST(req: NextRequest) {
   try {

@@ -1,6 +1,6 @@
 'use client'
 
-export default function WorkerProfilePage() {
+export default function CasualProfilePage() {
   return (
     <>
       <header style={topBarStyle}>

@@ -1,15 +1,15 @@
+// src/repositories/workerProfileRepository.ts
 import { supabase } from '@/lib/supabase'
 
 export const workerProfileRepository = {
-  async getProfileByAuthId(authId: string) {
+  async getByAuthId(authId: string) {
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, email_address, phone_number, role')
+      .select('*')
       .eq('supabase_auth_id', authId)
       .single()
 
-    if (error) throw new Error(error.message)
-
+    if (error) throw error
     return data
   },
 }

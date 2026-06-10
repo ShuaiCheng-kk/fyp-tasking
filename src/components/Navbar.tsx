@@ -196,12 +196,13 @@ const MobileNavLink = ({ label, href, onClick }: { label: string; href: string; 
 );
 
 const DASHBOARD_ROUTE_BY_ROLE: Record<string, string> = {
-  'Owner': '/owner/dashboard',
-  'Manager': '/owner/dashboard',
-  'Employee': '/owner/dashboard',
-  'Casual Worker': '/owner/dashboard',
-  'Guest User': '/job-board',
-};
+  Owner: '/owner/dashboard',
+  Partner: '/partner/dashboard',
+  Manager: '/manager/dashboard',
+  Employee: '/employee/dashboard',
+  'Casual Worker': '/casual/dashboard',
+  'Guest User': '/guest/applications',
+}
 
 // ─── Navbar ──────────────────────────────────────────────────────────────────
 
