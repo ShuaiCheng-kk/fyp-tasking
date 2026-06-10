@@ -173,4 +173,35 @@ export const recruitmentRepository = {
       .eq('role', 'Casual Worker')
     if (error) throw new Error(error.message)
   },
+
+  async getDraftPostingsByCompanyAndUser(company_id: string, user_id: string): Promise<JobPosting[]> {
+    const { data, error } = await supabase
+      .from('job_postings')
+      .select('*')
+      .eq('company_id', company_id)
+      .eq('created_by', user_id)
+      .eq('status', 'draft')
+      .order('created_at', { ascending: false })
+    if (error) throw new Error(error.message)
+    return (data ?? []) as JobPosting[]
+  },
+
+  async getPendingApprovalPostingsByCompany(company_id: string): Promise<JobPosting[]> {
+    const { data, error } = await supabase
+      .from('job_postings')
+      .select('*')
+      .eq('company_id', company_id)
+      .eq('status', 'pending_approval')
+      .order('created_at', { ascending: false })
+    if (error) throw new Error(error.message)
+    return (data ?? []) as JobPosting[]
+  },
+
+  async deleteJobPosting(id: string): Promise<void> {
+    const { error } = await supabase
+      .from('job_postings')
+      .delete()
+      .eq('id', id)
+    if (error) throw new Error(error.message)
+  },
 }

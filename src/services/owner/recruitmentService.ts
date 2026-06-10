@@ -114,6 +114,36 @@ export const recruitmentService = {
     return updated
   },
 
+  async getDraftPostings(company_id: string, user_id: string): Promise<JobPosting[]> {
+    if (!company_id || !user_id) throw new Error('company_id and user_id are required')
+    return recruitmentRepository.getDraftPostingsByCompanyAndUser(company_id, user_id)
+  },
+
+  async getPendingApprovalPostings(company_id: string): Promise<JobPosting[]> {
+    if (!company_id) throw new Error('company_id is required')
+    return recruitmentRepository.getPendingApprovalPostingsByCompany(company_id)
+  },
+
+  async publishDraft(id: string): Promise<JobPosting> {
+    if (!id) throw new Error('job_id is required')
+    return recruitmentRepository.updateJobPosting(id, { status: 'open' })
+  },
+
+  async deleteDraft(id: string): Promise<void> {
+    if (!id) throw new Error('job_id is required')
+    await recruitmentRepository.deleteJobPosting(id)
+  },
+
+  async approveJobPosting(id: string): Promise<JobPosting> {
+    if (!id) throw new Error('job_id is required')
+    return recruitmentRepository.updateJobPosting(id, { status: 'open' })
+  },
+
+  async rejectJobPosting(id: string): Promise<JobPosting> {
+    if (!id) throw new Error('job_id is required')
+    return recruitmentRepository.updateJobPosting(id, { status: 'rejected' })
+  },
+
   async getCasualWorkers(company_id: string): Promise<CasualWorkerStatus[]> {
     if (!company_id) throw new Error('company_id is required')
     return recruitmentRepository.getCasualWorkersByCompany(company_id)
