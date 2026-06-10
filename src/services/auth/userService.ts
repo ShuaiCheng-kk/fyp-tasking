@@ -38,6 +38,51 @@ export const userService = {
     return members.sort((a, b) => (ROLE_ORDER[a.role] ?? 99) - (ROLE_ORDER[b.role] ?? 99))
   },
 
+  async getTeamByDepartment(company_id: string, department_id: string): Promise<(User & { department_id: string | null })[]> {
+    const { supabase } = await import('@/lib/supabase')
+    // Get employee IDs in this department via employee_departments (column is employee_id)
+    const { data: edRows, error: edErr } = await supabase
+      .from('employee_departments')
+      .select('employee_id')
+      .eq('department_id', department_id)
+    if (edErr) throw new Error(edErr.message)
+    const empIds = (edRows ?? []).map((r: any) => r.employee_id as string)
+
+    // Get manager IDs for this department via manager_departments
+    const { data: mdRows, error: mdErr } = await supabase
+      .from('manager_departments')
+      .select('manager_id')
+      .eq('department_id', department_id)
+      .eq('company_id', company_id)
+    if (mdErr) throw new Error(mdErr.message)
+    const mgrIds = (mdRows ?? []).map((r: any) => r.manager_id as string)
+
+    // Get all CW ids in the company
+    const { data: cwRows, error: cwErr } = await supabase
+      .from('users')
+      .select('id')
+      .eq('company_id', company_id)
+      .eq('role', 'Casual Worker')
+    if (cwErr) throw new Error(cwErr.message)
+    const cwIds = (cwRows ?? []).map((r: any) => r.id as string)
+
+    const allIds = [...new Set([...empIds, ...mgrIds, ...cwIds])]
+    if (allIds.length === 0) return []
+
+    const { data, error } = await supabase
+      .from('users')
+      .select('*, employee_departments(department_id), manager_departments!manager_departments_manager_id_fkey(department_id)')
+      .in('id', allIds)
+    if (error) throw new Error(error.message)
+    const members = (data || []).map((row: any) => ({
+      ...row,
+      department_id: row.manager_departments?.[0]?.department_id ?? row.employee_departments?.[0]?.department_id ?? null,
+      manager_departments: undefined,
+      employee_departments: undefined,
+    })) as (User & { department_id: string | null })[]
+    return members.sort((a, b) => (ROLE_ORDER[a.role] ?? 99) - (ROLE_ORDER[b.role] ?? 99))
+  },
+
   async countMembersForOwner(internal_owner_id: string): Promise<number> {
     const { supabase } = await import('@/lib/supabase')
     const { data: ownedCompanies, error: compErr } = await supabase

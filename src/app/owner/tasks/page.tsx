@@ -140,9 +140,9 @@ type DeptTaskStats = {
 type PriorityLevel = 'Low' | 'Medium' | 'High' | 'Urgent'
 const PRIORITY_COLORS: Record<string, { bg: string; text: string }> = {
   Low:    { bg: '#F1F5F9', text: '#475569' },
-  Medium: { bg: '#EFF6FF', text: '#2563EB' },
-  High:   { bg: '#FFF7ED', text: '#EA580C' },
-  Urgent: { bg: '#FEF2F2', text: '#DC2626' },
+  Medium: { bg: '#DBEAFE', text: '#1D4ED8' },
+  High:   { bg: '#FFEDD5', text: '#C2410C' },
+  Urgent: { bg: '#FEE2E2', text: '#B91C1C' },
 }
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; colBg: string; icon: React.ReactNode }> = {
@@ -435,10 +435,14 @@ function TaskCard({
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0 })
   const menuRef = useRef<HTMLDivElement>(null)
   const menuBtnRef = useRef<HTMLButtonElement>(null)
+  const menuPortalRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!menuOpen) return
-    const h = (e: MouseEvent) => { if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false) }
+    const h = (e: MouseEvent) => {
+      const t = e.target as Node
+      if (!menuRef.current?.contains(t) && !menuPortalRef.current?.contains(t)) setMenuOpen(false)
+    }
     document.addEventListener('mousedown', h)
     return () => document.removeEventListener('mousedown', h)
   }, [menuOpen])
@@ -447,7 +451,6 @@ function TaskCard({
   const shift = task.shift_id ? shiftOptions.find(s => s.id === task.shift_id) : null
   const priority = task.priority ? PRIORITY_COLORS[task.priority] : null
   const overdue = task.due_at && task.status !== 'Complete' && isDueOverdue(task.due_at)
-  const accentColor = task.department_id ? deptColor(task.department_id) : '#E5E7EB'
 
   const MENU_ITEMS = [
     { label: 'Edit',      icon: <Pencil size={13} style={{ color: '#F97316' }} />,  action: onEdit,      color: '#374151' },
@@ -461,7 +464,7 @@ function TaskCard({
       style={{
         background: '#FFFFFF',
         border: '1px solid #E5E7EB',
-        borderLeft: `3px solid ${accentColor}`,
+        borderLeft: '1px solid #E5E7EB',
         borderRadius: '10px',
         padding: '12px 14px',
         cursor: 'pointer',
@@ -474,7 +477,7 @@ function TaskCard({
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 7 }}>
         <div>
           {priority && task.priority && (
-            <span style={{ fontSize: '0.68rem', fontWeight: 700, padding: '2px 7px', borderRadius: '99px', background: priority.bg, color: priority.text }}>
+            <span style={{ fontSize: '0.75rem', fontWeight: 800, padding: '3px 9px', borderRadius: '99px', background: priority.bg, color: priority.text, letterSpacing: '0.01em' }}>
               {task.priority}
             </span>
           )}
@@ -487,7 +490,9 @@ function TaskCard({
               e.stopPropagation()
               if (!menuOpen && menuBtnRef.current) {
                 const r = menuBtnRef.current.getBoundingClientRect()
-                setMenuPos({ top: r.bottom + 4, left: r.right - 152 })
+                const menuW = 152
+                const left = Math.max(8, Math.min(r.right - menuW, window.innerWidth - menuW - 8))
+                setMenuPos({ top: r.bottom + 4, left })
               }
               setMenuOpen(o => !o)
             }}
@@ -497,8 +502,8 @@ function TaskCard({
           >
             <MoreHorizontal size={14} />
           </button>
-          {menuOpen && (
-            <div style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, boxShadow: '0 4px 20px rgba(0,0,0,0.10)', zIndex: 9999, width: 152, padding: '6px 4px' }}>
+          {menuOpen && typeof document !== 'undefined' && createPortal(
+            <div ref={menuPortalRef} style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.14)', zIndex: 9999, width: 152, padding: '6px 4px' }}>
               <p style={{ margin: '0 6px 3px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9CA3AF' }}>Task</p>
               {MENU_ITEMS.map(item => (
                 <button key={item.label} type="button"
@@ -520,7 +525,8 @@ function TaskCard({
               >
                 <Trash2 size={13} /> Delete
               </button>
-            </div>
+            </div>,
+            document.body
           )}
         </div>
       </div>
@@ -1227,11 +1233,8 @@ export default function OwnerTasksPage() {
           transform: translateY(-1px);
         }
 
-        /* Staggered entry — kanban columns */
-        .kanban-col:nth-child(1) { animation: scaleIn 0.32s ease both; animation-delay: 0.06s; }
-        .kanban-col:nth-child(2) { animation: scaleIn 0.32s ease both; animation-delay: 0.11s; }
-        .kanban-col:nth-child(3) { animation: scaleIn 0.32s ease both; animation-delay: 0.16s; }
-        .kanban-col:nth-child(4) { animation: scaleIn 0.32s ease both; animation-delay: 0.21s; }
+        /* Staggered entry — kanban columns (delay set via inline style) */
+        .kanban-col { animation: scaleIn 0.32s ease both; }
 
         /* Staggered entry — task cards */
         .task-card:nth-child(1) { animation: fadeSlideUp 0.26s ease both; animation-delay: 0.04s; }
@@ -1278,9 +1281,9 @@ export default function OwnerTasksPage() {
             <div style={{ padding: '14px 20px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, gap: 12, flexWrap: 'wrap' }}>
               {/* Dept pills */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#6B7280', flexShrink: 0 }}>
-                  <Users size={13} />
-                  <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>Department:</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                  <Users size={15} style={{ color: '#F97316' }} />
+                  <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Department:</span>
                 </div>
                 <button
                   onClick={() => setSelectedDeptId('')}
@@ -1289,7 +1292,7 @@ export default function OwnerTasksPage() {
                 >
                   All
                 </button>
-                {departments.map(d => (
+                {[...departments].sort((a, b) => a.name.localeCompare(b.name)).map(d => (
                   <button
                     key={d.id}
                     onClick={() => setSelectedDeptId(selectedDeptId === d.id ? '' : d.id)}
@@ -1359,8 +1362,7 @@ export default function OwnerTasksPage() {
                           {m.role === 'Manager' ? <UserCog size={13} /> : <UserRound size={13} />}
                         </span>
                         <div style={{ minWidth: 0 }}>
-                          <p style={{ margin: 0, color: m.role === 'Manager' ? '#EA580C' : '#111827', fontSize: 12, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.full_name}</p>
-                          <p style={{ margin: 0, fontSize: '0.68rem', color: '#9CA3AF' }}>{m.role}</p>
+                          <p style={{ margin: 0, color: '#111827', fontSize: 12, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.full_name}</p>
                         </div>
                       </div>
                       <button
@@ -1411,7 +1413,7 @@ export default function OwnerTasksPage() {
                           </svg>
                         </div>
                       )}
-                      <div className="kanban-col" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: '#F7F8FA', borderRadius: '12px', overflow: 'hidden', minHeight: 0, border: '1px solid #F0F1F3' }}>
+                      <div className="kanban-col" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: '#F7F8FA', borderRadius: '12px', overflow: 'hidden', minHeight: 0, border: '1px solid #F0F1F3', animationDelay: `${0.06 + colIdx * 0.05}s` }}>
                         {/* Column header */}
                         <div style={{ padding: '11px 14px 10px', display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0, borderBottom: '1px solid #ECEEF1' }}>
                           <div style={{ color: cfg.color, display: 'flex', alignItems: 'center' }}>{cfg.icon}</div>
@@ -1432,7 +1434,7 @@ export default function OwnerTasksPage() {
                                 task={task}
                                 members={members}
                                 shiftOptions={shiftOptions}
-                                onClick={() => openTask(task, false)}
+                                onClick={() => openTask(task, true)}
                                 onEdit={() => openTask(task, false)}
                                 onDelete={() => { setDeleteTaskModal(task); setDeleteTaskError('') }}
                                 onDuplicate={() => handleQuickDuplicate(task)}
@@ -1454,7 +1456,143 @@ export default function OwnerTasksPage() {
       </main>
 
       {/* ═══════════════ TASK DETAIL PANEL ═══════════════ */}
-      {selectedTask && (
+      {selectedTask && taskViewMode && (() => {
+        const viewAssigneeName = selectedTask.assigned_user_id
+          ? (members.find(m => m.id === selectedTask.assigned_user_id)?.full_name ?? 'Unknown')
+          : null
+        const viewShift = selectedTask.shift_id ? shiftOptions.find(s => s.id === selectedTask.shift_id) : null
+        const viewDept = departments.find(d => d.id === selectedTask.department_id)
+        const viewPriorityStyle = selectedTask.priority ? PRIORITY_COLORS[selectedTask.priority as keyof typeof PRIORITY_COLORS] : null
+        const viewDeadline = selectedTask.due_at
+          ? (() => {
+              const d = new Date(selectedTask.due_at)
+              return d.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+            })()
+          : null
+        const viewFieldValue: React.CSSProperties = {
+          padding: '10px 12px',
+          border: '1.5px solid #E5E7EB',
+          borderRadius: 8,
+          background: '#F9FAFB',
+          fontSize: '0.9375rem',
+          color: '#111827',
+          minHeight: 40,
+          display: 'flex',
+          alignItems: 'center',
+        }
+        const viewEmpty: React.CSSProperties = { ...viewFieldValue, color: '#9CA3AF', fontStyle: 'italic' }
+        return (
+          <div onClick={closePanel} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
+            <div
+              ref={panelRef}
+              onClick={e => e.stopPropagation()}
+              style={{ width: 540, background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)' }}
+            >
+              {/* Header */}
+              <div style={{ padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ width: 32, height: 32, borderRadius: 9, background: '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Eye size={15} color="#64748B" strokeWidth={2.5} />
+                  </div>
+                  <span style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827' }}>Task Details</span>
+                </div>
+                <button onClick={closePanel} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
+                  onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+                  onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16, maxHeight: 'calc(90vh - 130px)', overflowY: 'auto' }}>
+
+                {/* Title */}
+                <div>
+                  <label style={modalLabelStyle}>Title</label>
+                  <div style={viewFieldValue}>{selectedTask.title}</div>
+                </div>
+
+                {/* Description */}
+                <div>
+                  <label style={modalLabelStyle}>Description</label>
+                  {selectedTask.description
+                    ? <div style={{ ...viewFieldValue, alignItems: 'flex-start', whiteSpace: 'pre-wrap', lineHeight: 1.55 }}>{selectedTask.description}</div>
+                    : <div style={viewEmpty}>No description</div>
+                  }
+                </div>
+
+                {/* Department + Priority */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <label style={modalLabelStyle}>Department</label>
+                    <div style={viewDept ? viewFieldValue : viewEmpty}>{viewDept?.name ?? 'Unknown'}</div>
+                  </div>
+                  <div>
+                    <label style={modalLabelStyle}>Priority</label>
+                    {viewPriorityStyle
+                      ? <div style={{ ...viewFieldValue, background: viewPriorityStyle.bg }}>
+                          <span style={{ color: viewPriorityStyle.text, fontWeight: 700, fontSize: '0.85rem' }}>{selectedTask.priority}</span>
+                        </div>
+                      : <div style={viewEmpty}>None</div>
+                    }
+                  </div>
+                </div>
+
+                {/* Divider */}
+                <div style={{ borderTop: '1px dashed #E5E7EB' }} />
+
+                {/* Assign To */}
+                <div>
+                  <label style={modalLabelStyle}>Assigned To</label>
+                  {viewAssigneeName
+                    ? <div style={viewFieldValue}>{viewAssigneeName}</div>
+                    : <div style={viewEmpty}>Unassigned</div>
+                  }
+                </div>
+
+                {/* Shift */}
+                <div>
+                  <label style={modalLabelStyle}>Shift</label>
+                  {viewShift
+                    ? <div style={viewFieldValue}>
+                        {viewShift.title
+                          ? `${viewShift.title} — `
+                          : ''
+                        }
+                        {new Date(`${viewShift.shift_date}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}{' '}
+                        {viewShift.start_time.slice(0, 5)} – {viewShift.end_time.slice(0, 5)}
+                      </div>
+                    : <div style={viewEmpty}>No shift assigned</div>
+                  }
+                </div>
+
+                {/* Deadline */}
+                <div>
+                  <label style={modalLabelStyle}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                      <Clock size={12} color="#F97316" />
+                      Deadline
+                    </span>
+                  </label>
+                  {viewDeadline
+                    ? <div style={viewFieldValue}>{viewDeadline}</div>
+                    : <div style={viewEmpty}>No deadline set</div>
+                  }
+                </div>
+
+              </div>
+
+              {/* Footer */}
+              <div style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end' }}>
+                <button style={ghostBtn} onClick={closePanel}>Close</button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {selectedTask && !taskViewMode && (
         <div onClick={closePanel} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
           <div
             ref={panelRef}

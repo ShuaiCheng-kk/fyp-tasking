@@ -2,7 +2,7 @@
 // RULE: Supabase queries only. No business logic.
 
 import { supabase } from '@/lib/supabase'
-import { CasualWorkerStatus, JobApplicant, JobInvitation, JobPosting, JobPostingInput } from '@/types/Recruitment'
+import { CasualWorkerStatus, JobApplicant, JobInvitation, JobPosting, JobPostingInput, JobPostingPendingApproval } from '@/types/Recruitment'
 
 export const recruitmentRepository = {
   async getPublicJobPostings(): Promise<JobPosting[]> {
@@ -20,9 +20,75 @@ export const recruitmentRepository = {
       .from('job_postings')
       .select('*')
       .eq('company_id', company_id)
+      .not('status', 'in', '("pending_approval","draft")')
       .order('created_at', { ascending: false })
     if (error) throw new Error(error.message)
     return (data ?? []) as JobPosting[]
+  },
+
+  async getDraftPostings(company_id: string, user_id: string): Promise<JobPosting[]> {
+    const { data, error } = await supabase
+      .from('job_postings')
+      .select('*')
+      .eq('company_id', company_id)
+      .eq('created_by', user_id)
+      .eq('status', 'draft')
+      .order('created_at', { ascending: false })
+    if (error) throw new Error(error.message)
+    return (data ?? []) as JobPosting[]
+  },
+
+  async getPendingApprovalPostings(company_id: string): Promise<JobPostingPendingApproval[]> {
+    const { data, error } = await supabase
+      .from('job_postings')
+      .select('*')
+      .eq('company_id', company_id)
+      .eq('status', 'pending_approval')
+      .order('created_at', { ascending: false })
+    if (error) throw new Error(error.message)
+    const postings = (data ?? []) as JobPosting[]
+
+    const deptIds = [...new Set(postings.map(p => p.department_id).filter((id): id is string => Boolean(id)))]
+    let deptMap = new Map<string, string>()
+    if (deptIds.length > 0) {
+      const { data: depts } = await supabase.from('departments').select('id, name').in('id', deptIds)
+      deptMap = new Map((depts ?? []).map((d: { id: string; name: string }) => [d.id, d.name]))
+    }
+
+    const userIds = [...new Set(postings.map(p => p.created_by).filter(Boolean))]
+    let userMap = new Map<string, string>()
+    if (userIds.length > 0) {
+      const { data: users } = await supabase.from('users').select('id, full_name').in('id', userIds)
+      userMap = new Map((users ?? []).map((u: { id: string; full_name: string }) => [u.id, u.full_name]))
+    }
+
+    return postings.map(p => ({
+      ...p,
+      department_name: p.department_id ? deptMap.get(p.department_id) ?? null : null,
+      submitter_name: userMap.get(p.created_by) ?? null,
+    }))
+  },
+
+  async approveJobPosting(id: string): Promise<JobPosting> {
+    const { data, error } = await supabase
+      .from('job_postings')
+      .update({ status: 'open' })
+      .eq('id', id)
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data as JobPosting
+  },
+
+  async rejectJobPosting(id: string): Promise<JobPosting> {
+    const { data, error } = await supabase
+      .from('job_postings')
+      .update({ status: 'rejected' })
+      .eq('id', id)
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data as JobPosting
   },
 
   async getJobPostingById(id: string): Promise<JobPosting | null> {
@@ -54,12 +120,17 @@ export const recruitmentRepository = {
         is_recurring: input.is_recurring ?? false,
         recurrence_interval: input.recurrence_interval ?? null,
         recurrence_unit: input.recurrence_unit ?? null,
-        status: 'open',
+        status: input.status ?? 'open',
       })
       .select()
       .single()
     if (error) throw new Error(error.message)
     return data as JobPosting
+  },
+
+  async deleteJobPosting(id: string): Promise<void> {
+    const { error } = await supabase.from('job_postings').delete().eq('id', id)
+    if (error) throw new Error(error.message)
   },
 
   async updateJobPosting(id: string, fields: Partial<JobPostingInput> & { status?: string; archived_at?: string | null }): Promise<JobPosting> {
@@ -163,6 +234,19 @@ export const recruitmentRepository = {
       department_name: null,
       worker_status: (worker.worker_status as CasualWorkerStatus['worker_status']) ?? 'active',
     }))
+  },
+
+  async getClosedPostingsByDateRange(company_id: string, date_from: string, date_to: string): Promise<JobPosting[]> {
+    const { data, error } = await supabase
+      .from('job_postings')
+      .select('*')
+      .eq('company_id', company_id)
+      .in('status', ['closed', 'archived'])
+      .gte('created_at', `${date_from}T00:00:00`)
+      .lte('created_at', `${date_to}T23:59:59`)
+      .order('created_at', { ascending: false })
+    if (error) throw new Error(error.message)
+    return (data ?? []) as JobPosting[]
   },
 
   async updateCasualWorkerStatus(user_id: string, worker_status: 'active' | 'inactive' | 'blocked'): Promise<void> {

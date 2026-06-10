@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import {
   Plus, X, ChevronDown, Calendar, AlertCircle,
   CheckCircle, Clock, Eye, Layers, Users, MoreHorizontal,
-  Copy,
+  Copy, UserCog,
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import ManagerSidebar from '@/components/ManagerSidebar'
@@ -376,7 +376,7 @@ export default function ManagerTasksPage() {
     return role === 'Partner'
       ? { bg: '#FFFFFF', text: '#1C1C1E', border: '1px solid #E5E7EB' }
       : role === 'Manager'
-        ? { bg: '#1E3A5F', text: '#FFFFFF', border: '1px solid #163050' }
+        ? { bg: '#FFFFFF', text: '#111827', border: '1px solid #E5E7EB' }
       : { bg: '#1C1C1E', text: '#FFFFFF', border: 'none' }
   })
   const [initialReady,   setInitialReady]   = useState(false)
@@ -820,17 +820,21 @@ export default function ManagerTasksPage() {
 
       <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
 
-        {/* Top bar */}
-        <div style={{ padding: '18px 32px', background: headerTheme.bg, borderBottom: headerTheme.border, display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 10 }}>
-          <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: headerTheme.text, margin: 0 }}>
-            {companyName ? `${companyName} — Tasks` : 'Tasks'}
-          </h1>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            {ownerName && <span style={{ fontSize: '0.9rem', color: headerTheme.text, opacity: 0.85 }}>{ownerName}</span>}
-            {userRole && (
-              <span style={{ padding: '4px 10px', borderRadius: '99px', fontSize: '0.8rem', fontWeight: 600, background: 'rgba(128,128,128,0.15)', color: headerTheme.text }}>
-                {userRole}
-              </span>
+        {/* Page header */}
+        <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
+          <div>
+            <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
+              {(() => { const n = departments.find(d => d.id === selectedDeptId)?.name; return n ? `Tasks for ${n}` : 'Tasks' })()}
+            </h1>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
+            {ownerName && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: '#fff', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: '#1E3A5F', color: '#FFFFFF', flexShrink: 0 }}>
+                  <UserCog size={13} />
+                </span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{ownerName}</span>
+              </div>
             )}
           </div>
         </div>

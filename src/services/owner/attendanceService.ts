@@ -6,6 +6,7 @@ import {
   AttendanceDashboard,
   AttendanceDashboardRecord,
   AttendanceExceptionType,
+  AttendanceManagerReviewInput,
   AttendanceReviewInput,
   ShiftSwapDecisionInput,
   ShiftSwapRequestView,
@@ -111,6 +112,15 @@ export const attendanceService = {
         overtime: dashboardRecords.filter(row => row.exceptions.includes('overtime')).length,
       },
     }
+  },
+
+  async managerReviewAttendance(input: AttendanceManagerReviewInput) {
+    const existing = await attendanceRepository.getAttendanceRecordById(input.id)
+    if (!existing) throw new Error('Attendance record not found')
+    return attendanceRepository.updateAttendanceRecord(input.id, {
+      manager_notes: input.manager_notes,
+      status: 'manager_reviewed',
+    })
   },
 
   async finalReviewAttendance(input: AttendanceReviewInput) {

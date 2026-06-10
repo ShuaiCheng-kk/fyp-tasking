@@ -65,4 +65,26 @@ export const reportRepository = {
     if (error) throw new Error(error.message)
     return (data ?? []) as AttendanceRecord[]
   },
+
+  async getTimeOffRequests(company_id: string, date_from: string, date_to: string): Promise<{ id: string; status: string }[]> {
+    const { data, error } = await supabase
+      .from('time_off_requests')
+      .select('id, status')
+      .eq('company_id', company_id)
+      .gte('created_at', `${date_from}T00:00:00`)
+      .lte('created_at', `${date_to}T23:59:59`)
+    if (error) throw new Error(error.message)
+    return (data ?? []) as { id: string; status: string }[]
+  },
+
+  async getSwapRequests(company_id: string, date_from: string, date_to: string): Promise<{ id: string; status: string }[]> {
+    const { data, error } = await supabase
+      .from('shift_swap_requests')
+      .select('id, status')
+      .eq('company_id', company_id)
+      .gte('created_at', `${date_from}T00:00:00`)
+      .lte('created_at', `${date_to}T23:59:59`)
+    if (error) throw new Error(error.message)
+    return (data ?? []) as { id: string; status: string }[]
+  },
 }

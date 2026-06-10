@@ -255,22 +255,53 @@ function DeptCard({ deptId, deptName, rows, onClick }: {
       data-testid="dept-timeline-card"
       onClick={onClick}
       className="dept-card"
-      style={{ padding: '20px 18px', borderRadius: 18, border: '1px solid #EEF0F4', background: '#fff', minHeight: 130, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', cursor: 'pointer' }}
+      style={{
+        position: 'relative',
+        padding: '12px 12px 12px 15px',
+        borderRadius: 12,
+        border: '1px solid #E2E8F0',
+        background: '#fff',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 14,
+        cursor: 'pointer',
+        overflow: 'hidden',
+        transition: 'box-shadow 0.16s ease, transform 0.16s ease, border-color 0.16s ease',
+      }}
+      onMouseEnter={e => {
+        e.currentTarget.style.transform = 'translateY(-3px)'
+        e.currentTarget.style.boxShadow = '0 10px 28px rgba(15,23,42,0.11)'
+        e.currentTarget.style.borderColor = color
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.transform = 'none'
+        e.currentTarget.style.boxShadow = 'none'
+        e.currentTarget.style.borderColor = '#E2E8F0'
+      }}
     >
-      {/* Header: color block + name */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{ width: 34, height: 34, borderRadius: 12, background: color, flexShrink: 0 }} />
-        <p style={{ margin: 0, fontSize: 16, fontWeight: 700, color: '#0F172A', lineHeight: 1.2 }}>{deptName}</p>
+      {/* Left color bar */}
+      <span style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, background: color, borderRadius: '12px 0 0 12px' }} />
+
+      {/* Dept name row */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ width: 8, height: 8, borderRadius: 999, background: color, flexShrink: 0, display: 'inline-block' }} />
+        <p style={{ margin: 0, fontSize: 15, fontWeight: 800, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', letterSpacing: '-0.15px' }}>{deptName}</p>
       </div>
 
-      {/* Manager + Employee counts — centered */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 20 }}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: '#EA580C' }}>
-          <UserCog size={14} /> {managerCount}
-        </span>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: '#4B5563' }}>
-          <UserRound size={14} /> {employeeCount}
-        </span>
+      {/* Manager + Employee counts */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: '#FFF7ED', color: '#EA580C', flexShrink: 0 }}>
+            <UserCog size={13} />
+          </span>
+          <span style={{ color: '#111827', fontSize: 13, fontWeight: 700 }}>{managerCount}</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: '#F3F4F6', color: '#4B5563', flexShrink: 0 }}>
+            <UserRound size={13} />
+          </span>
+          <span style={{ color: '#111827', fontSize: 13, fontWeight: 700 }}>{employeeCount}</span>
+        </div>
       </div>
     </article>
   )
@@ -561,7 +592,7 @@ export default function OwnerDashboard() {
 
   // Timeline rendering helpers
   const PERSON_COL = 180
-  const ROW_H = 72
+  const ROW_H = 58
 
   // Auto-fit: earliest shift start → latest shift end across all today's rows, with ±1h padding
   const autoFrom = todayActiveStaff.length > 0
@@ -630,7 +661,7 @@ export default function OwnerDashboard() {
             return (
             <div
               key={`${row.user_id ?? row.department_id}_${rowIdx}`}
-              style={{ display: 'flex', height: ROW_H, borderTop: isDeptBoundary ? EDGE : '1px solid rgba(15,23,42,0.12)', background: '#FFFFFF' }}
+              style={{ display: 'flex', height: ROW_H, borderTop: isDeptBoundary ? EDGE : 'none', background: '#FFFFFF' }}
             >
               {/* Dept color bar — narrow strip only, no text */}
               <div style={{ width: 8, flexShrink: 0, background: dept.color, opacity: 0.85 }} />
@@ -641,7 +672,7 @@ export default function OwnerDashboard() {
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: row.role === 'Manager' ? '#FFF7ED' : '#F3F4F6', color: row.role === 'Manager' ? '#EA580C' : '#4B5563', borderRadius: 999 }}>
                     {row.role === 'Manager' ? <UserCog size={13} /> : <UserRound size={13} />}
                   </div>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: row.role === 'Manager' ? '#EA580C' : '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {row.full_name}
                   </span>
                 </div>
@@ -1173,10 +1204,10 @@ export default function OwnerDashboard() {
               </div>
 
               {/* ── ROW 3: Focus | Team | Live Feed | Tasks (4 equal cols) ─── */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 16, alignItems: 'stretch', flex: 1, minHeight: 0 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 16, alignItems: 'start' }}>
 
                 {/* ── COL 1: Focus ── */}
-                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column' }}>
 
                     {/* Card header */}
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18, flexShrink: 0 }}>
@@ -1188,7 +1219,7 @@ export default function OwnerDashboard() {
                       </div>
                     </div>
 
-                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+                    <div style={{ }}>
                     {taskStatsLoading ? (
                       <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}><Spinner size={20} dark /></div>
                     ) : (
@@ -1314,7 +1345,7 @@ export default function OwnerDashboard() {
                   </div>
 
                 {/* ── COL 2: Team ── */}
-                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexShrink: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1323,7 +1354,7 @@ export default function OwnerDashboard() {
                       <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Team</span>
                     </div>
                   </div>
-                  <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+                  <div style={{ }}>
                   {timelineLoading ? (
                     <div style={{ display: 'flex', justifyContent: 'center', padding: '24px 0' }}><Spinner size={16} dark /></div>
                   ) : todayShiftCount === 0 ? (
@@ -1350,7 +1381,7 @@ export default function OwnerDashboard() {
                               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: row.role === 'Manager' ? '#FFF7ED' : '#F3F4F6', color: row.role === 'Manager' ? '#EA580C' : '#4B5563', borderRadius: 999 }}>
                                 {row.role === 'Manager' ? <UserCog size={13} /> : <UserRound size={13} />}
                               </div>
-                              <p style={{ fontSize: 13, fontWeight: 700, margin: 0, color: row.role === 'Manager' ? '#EA580C' : '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }}>{row.full_name}</p>
+                              <p style={{ fontSize: 13, fontWeight: 700, margin: 0, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }}>{row.full_name}</p>
                               <button
                                 onClick={() => router.push(`/owner/communication?tab=messages&partner_id=${row.user_id}`)}
                                 aria-label={`Message ${row.full_name}`}
@@ -1372,7 +1403,7 @@ export default function OwnerDashboard() {
                 </div>
 
                 {/* ── COL 3: Live Feed ── */}
-                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }} data-testid="live-feed">
+                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column' }} data-testid="live-feed">
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexShrink: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1395,7 +1426,7 @@ export default function OwnerDashboard() {
                       )}
                     </div>
 
-                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+                    <div style={{ }}>
                     {activityFeedLoading ? (
                       <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}><Spinner size={16} dark /></div>
                     ) : activityFeed.length === 0 ? (
@@ -1444,7 +1475,7 @@ export default function OwnerDashboard() {
                   </div>
 
                 {/* ── COL 4: Tasks ── */}
-                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column' }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexShrink: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                         <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1454,7 +1485,7 @@ export default function OwnerDashboard() {
                       </div>
                     </div>
 
-                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+                    <div style={{ }}>
                     {taskStatsLoading ? (
                       <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}><Spinner size={16} dark /></div>
                     ) : todayTasks.length === 0 ? (

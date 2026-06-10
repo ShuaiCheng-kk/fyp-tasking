@@ -346,6 +346,8 @@ export const shiftService = {
     for (const member of members) {
       if (!['Manager', 'Employee', 'Casual Worker'].includes(member.role)) continue
       const departmentId = member.department_id ?? 'unassigned'
+      // Skip members whose department has been deleted
+      if (departmentId !== 'unassigned' && !deptMap.has(departmentId)) continue
       rowMap.set(member.id, {
         user_id: member.id,
         full_name: member.full_name,
@@ -365,6 +367,8 @@ export const shiftService = {
 
       if (!rowMap.has(user.id)) {
         const departmentId = (user as any).department_id ?? shift.department_id
+        // Skip if the department no longer exists
+        if (departmentId && !deptMap.has(departmentId)) continue
         rowMap.set(user.id, {
           user_id: user.id,
           full_name: user.full_name,
@@ -385,6 +389,8 @@ export const shiftService = {
 
     for (const shift of shifts) {
       if (assignedShiftIds.has(shift.id)) continue
+      // Skip shifts belonging to a deleted department
+      if (!deptMap.has(shift.department_id)) continue
       const key = `dept_${shift.department_id}`
       if (!rowMap.has(key)) {
         rowMap.set(key, {

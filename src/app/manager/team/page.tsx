@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { Plus, X, ChevronDown } from 'lucide-react'
+import { Plus, X, ChevronDown, Users, UserCog } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import ManagerSidebar from '@/components/ManagerSidebar'
 
@@ -85,6 +85,7 @@ export default function ManagerTeamPage() {
   const [companyId, setCompanyId] = useState('')
   const [primaryDeptId, setPrimaryDeptId] = useState('')
   const [companyName, setCompanyName] = useState('')
+  const [managerName, setManagerName] = useState('')
   const [userEmail, setUserEmail] = useState('')
 
   const [assignedDepts, setAssignedDepts] = useState<AssignedDept[]>([])
@@ -150,9 +151,10 @@ export default function ManagerTeamPage() {
       if (cancelled) return
       if (!meData.success) { router.replace('/signin'); return }
 
-      const { id: internalId, email_address, company_id, department_id } = meData.user
+      const { id: internalId, email_address, full_name, company_id, department_id } = meData.user
       if (internalId) setInternalUserId(internalId)
       if (email_address) setUserEmail(email_address)
+      if (full_name) setManagerName(full_name)
 
       let cid = company_id || localStorage.getItem(`tasking_company_id_${uid}`) || ''
       if (cid) localStorage.setItem(`tasking_company_id_${uid}`, cid)
@@ -252,61 +254,32 @@ export default function ManagerTeamPage() {
       <ManagerSidebar />
 
       <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-        <div style={{
-          padding: '18px 32px',
-          background: '#1E3A5F',
-          borderBottom: '1px solid #163050',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          position: 'sticky',
-          top: 0,
-          zIndex: 10,
-        }}>
+        {/* Page header */}
+        <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
           <div>
-            <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#FFFFFF', margin: 0 }}>
-              {title}
+            <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
+              {selectedDeptName ? `Team for ${selectedDeptName}` : 'Team'}
             </h1>
-            {assignedDepts.length > 1 && (
-              <div style={{ position: 'relative', marginTop: '6px' }}>
-                <select
-                  value={selectedDeptId}
-                  onChange={(e) => setSelectedDeptId(e.target.value)}
-                  style={{
-                    padding: '4px 28px 4px 8px',
-                    border: '1px solid #E5E7EB',
-                    borderRadius: '6px',
-                    fontSize: '0.8125rem',
-                    color: '#374151',
-                    background: '#F9FAFB',
-                    appearance: 'none',
-                    cursor: 'pointer',
-                    outline: 'none',
-                  }}
-                >
-                  {assignedDepts.map(d => (
-                    <option key={d.department_id} value={d.department_id}>
-                      {d.department_name}{d.department_id === primaryDeptId ? ' (Primary)' : ''}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown size={13} style={{ position: 'absolute', right: '7px', top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
+            {managerName && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: '#fff', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: '#1E3A5F', color: '#FFFFFF', flexShrink: 0 }}>
+                  <UserCog size={13} />
+                </span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{managerName}</span>
               </div>
             )}
+            <button
+              onClick={openInviteModal}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', background: '#2563EB', border: 'none', borderRadius: '9px', fontWeight: 600, fontSize: '0.875rem', color: '#FFFFFF', cursor: 'pointer' }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = '#1D4ED8')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = '#2563EB')}
+            >
+              <Plus size={15} strokeWidth={2.5} />
+              Invite Employee
+            </button>
           </div>
-          <button
-            onClick={openInviteModal}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '6px',
-              padding: '9px 16px', background: '#3B82F6', border: 'none',
-              borderRadius: '9px', fontWeight: 600, fontSize: '0.9rem', color: '#FFFFFF', cursor: 'pointer',
-            }}
-            onMouseEnter={(e) => (e.currentTarget.style.background = '#2563EB')}
-            onMouseLeave={(e) => (e.currentTarget.style.background = '#3B82F6')}
-          >
-            <Plus size={15} strokeWidth={2.5} />
-            Invite Employee
-          </button>
         </div>
 
         <div style={{ padding: '28px 32px', flex: 1 }}>

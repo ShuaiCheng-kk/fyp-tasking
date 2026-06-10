@@ -110,21 +110,6 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ success: true, posting })
     }
 
-    if (action === 'close_posting') {
-      const posting = await recruitmentService.closeJobPosting(String(data.job_id ?? ''))
-      return NextResponse.json({ success: true, posting })
-    }
-
-    if (action === 'expire_posting') {
-      const posting = await recruitmentService.expireJobPosting(String(data.job_id ?? ''))
-      return NextResponse.json({ success: true, posting })
-    }
-
-    if (action === 'reopen_posting') {
-      const posting = await recruitmentService.reopenJobPosting(String(data.job_id ?? ''))
-      return NextResponse.json({ success: true, posting })
-    }
-
     if (action === 'duplicate_posting') {
       const posting = await recruitmentService.duplicateJobPosting(
         String(data.job_id ?? ''),
@@ -150,7 +135,7 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ success: true, posting })
     }
 
-    if (action === 'delete_draft' || action === 'delete_posting') {
+    if (action === 'delete_draft') {
       await recruitmentService.deleteDraft(String(data.job_id ?? ''))
       return NextResponse.json({ success: true })
     }
