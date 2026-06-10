@@ -311,7 +311,7 @@ function JobDetailPanel({
 
       {/* Actions */}
       <div style={{ display: 'flex', gap: '10px' }}>
-        <Link href="/get-started" className="btn-press cta-shimmer" style={{
+        <Link href={`/get-started?role=guest&job_id=${job.id}`} className="btn-press cta-shimmer" style={{
           flex: 1, display: 'block', textAlign: 'center',
           background: '#F97316', color: '#FFFFFF', padding: '13px',
           borderRadius: '10px', fontFamily: fB, fontWeight: 700,

@@ -8,16 +8,17 @@ const ROLE_HOME: Record<string, string> = {
   Manager: '/manager/dashboard',
   Employee: '/employee/dashboard',
   'Casual Worker': '/casual/dashboard',
-  'Guest User': '/job-board',
+  'Guest User': '/guest/applications',
 }
 
 // Which roles are allowed on which prefix
-const ROUTE_ROLES: { prefix: string; allowed: string[] }[] = [
+const ROUTE_ROLES = [
   { prefix: '/owner', allowed: ['Owner'] },
   { prefix: '/partner', allowed: ['Partner'] },
   { prefix: '/manager', allowed: ['Manager'] },
   { prefix: '/employee', allowed: ['Employee'] },
   { prefix: '/casual', allowed: ['Casual Worker'] },
+  { prefix: '/guest', allowed: ['Guest User'] },
 ]
 
 export async function proxy(request: NextRequest) {
@@ -85,5 +86,6 @@ export const config = {
     '/manager/:path*',
     '/employee/:path*',
     '/casual/:path*',
+    '/guest/:path*',
   ],
 }

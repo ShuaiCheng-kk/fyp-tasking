@@ -520,7 +520,7 @@ const mainStyle: CSSProperties = {
 }
 
 const headerStyle: CSSProperties = {
-  padding: '14px 24px',
+  padding: '19px 24px',
   background: GREEN,
   borderBottom: '1px solid #15803D',
   display: 'flex',
