@@ -8,7 +8,7 @@ export interface JobPosting {
   requirements: string | null
   location: string | null
   employment_type: string | null
-  status: 'open' | 'archived' | 'closed' | 'pending_approval' | 'rejected'
+  status: 'open' | 'archived' | 'closed' | 'expired' | 'pending_approval' | 'rejected' | 'draft'
   is_recurring: boolean
   recurrence_interval: number | null
   recurrence_unit: string | null
