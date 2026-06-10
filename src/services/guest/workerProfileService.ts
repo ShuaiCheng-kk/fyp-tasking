@@ -1,4 +1,3 @@
-// src/services/workerProfileService.ts
 import { workerProfileRepository } from '@/repositories/guest/workerProfileRepository'
 
 export const workerProfileService = {

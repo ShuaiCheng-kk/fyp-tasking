@@ -74,6 +74,21 @@ const inputStyle: React.CSSProperties = {
   boxSizing: 'border-box',
 };
 
+async function readJsonSafe(res: Response) {
+  const text = await res.text()
+
+  if (!text) {
+    throw new Error(`Empty response from ${res.url}`)
+  }
+
+  try {
+    return JSON.parse(text)
+  } catch {
+    console.error('Non-JSON response:', text)
+    throw new Error('Server returned non-JSON response')
+  }
+}
+
 // ─── Progress bar (visual only, no text) ─────────────────────────────────────
 
 function ProgressBar({ current, total }: { current: number; total: number }) {
@@ -619,13 +634,13 @@ export default function GetStartedPage() {
       }),
     ]);
 
-    const emailData = await emailRes.json();
+    const emailData = await readJsonSafe(emailRes);
     if (emailData.exists) {
       setError('An account with this email already exists. Please sign in instead.');
       return;
     }
 
-    const phoneData = await phoneRes.json();
+    const phoneData = await readJsonSafe(phoneRes);
     if (phoneData.exists) {
       setError('This phone number is already registered to another account. Please use a different number.');
       return;
@@ -643,7 +658,7 @@ export default function GetStartedPage() {
       }),
     });
 
-    const registerData = await registerRes.json();
+    const registerData = await readJsonSafe(registerRes);
     if (!registerData.success) throw new Error(registerData.message);
 
     const signinRes = await fetch('/api/auth/signin', {
@@ -655,7 +670,7 @@ export default function GetStartedPage() {
       }),
     });
 
-    const signinData = await signinRes.json();
+    const signinData = await readJsonSafe(signinRes);
     if (!signinData.success) throw new Error(signinData.message);
 
     const authUid = signinData.user.auth_id;

@@ -1,4 +1,4 @@
-// src/app/api/worker/profile/route.ts
+// src/app/api/guest/profile/route.ts
 import { NextResponse } from 'next/server'
 import { workerProfileService } from '@/services/guest/workerProfileService'
 
@@ -9,18 +9,41 @@ export async function GET(req: Request) {
 
     if (!user_id) {
       return NextResponse.json(
-        { error: 'Missing user_id' },
+        {
+          success: false,
+          message: 'Missing user_id',
+          profile: null,
+        },
         { status: 400 }
       )
     }
 
     const profile = await workerProfileService.getProfile(user_id)
 
-    return NextResponse.json({ success: true, profile })
+    if (!profile) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: 'Guest profile not found',
+          profile: null,
+        },
+        { status: 404 }
+      )
+    }
+
+    return NextResponse.json({
+      success: true,
+      profile,
+    })
   } catch (error) {
-    console.error('GET worker profile error:', error)
+    console.error('GET guest profile error:', error)
+
     return NextResponse.json(
-      { error: 'Failed to load worker profile' },
+      {
+        success: false,
+        message: 'Failed to load guest profile',
+        profile: null,
+      },
       { status: 500 }
     )
   }

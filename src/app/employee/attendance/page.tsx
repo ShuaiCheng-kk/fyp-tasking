@@ -47,7 +47,7 @@ export default function EmployeeAttendancePage() {
 
       <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
         <div style={{
-          padding: '18px 32px',
+          padding: '19px 32px',
           background: GREEN,
           borderBottom: '1px solid #15803D',
           display: 'flex',

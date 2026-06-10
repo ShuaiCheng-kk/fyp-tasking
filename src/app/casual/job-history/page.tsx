@@ -1,68 +1,87 @@
 'use client'
 
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import CasualSidebar from '@/components/CasualSidebar'
+
+const GREY = '#4B5563'
+
 export default function CasualJobHistoryPage() {
+  const router = useRouter()
+  const [userName, setUserName] = useState('')
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+
+    const run = async () => {
+      const userId = localStorage.getItem('tasking_user_id')
+      if (!userId) {
+        router.replace('/signin')
+        return
+      }
+
+      const historyRes = await fetch(`/api/casual/job-history?user_id=${userId}`)
+      const historyData = await historyRes.json()
+
+      if (cancelled) return
+
+      if (!historyData.success) {
+        router.replace('/signin')
+        return
+      }
+
+      setUserName(historyData.jobHistory.user.full_name ?? '')
+
+      if (!cancelled) setLoading(false)
+    }
+
+    void run()
+
+    return () => {
+      cancelled = true
+    }
+  }, [router])
+
   return (
-    <>
-      <header style={topBarStyle}>
-        <h1 style={titleStyle}>Job History</h1>
-        <div style={userStyle}>
-          <span>Casual Worker</span>
+    <div style={{ display: 'flex', height: '100vh', background: '#F3F4F6', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+      <CasualSidebar />
+
+      <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+        <div style={{
+          padding: '19px 32px',
+          background: GREY,
+          borderBottom: '1px solid #374151',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          position: 'sticky',
+          top: 0,
+          zIndex: 10,
+        }}>
+          <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#FFFFFF', margin: 0 }}>
+            {loading ? 'Job History' : 'Job History'}
+          </h1>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            {userName && (
+              <span style={{ fontSize: '0.9rem', color: 'rgba(255,255,255,0.85)' }}>
+                {userName}
+              </span>
+            )}
+
+            <span style={{ padding: '4px 10px', borderRadius: '999px', fontSize: '0.8rem', fontWeight: 600, background: 'rgba(255,255,255,0.2)', color: '#FFFFFF' }}>
+              Casual Worker
+            </span>
+          </div>
         </div>
-      </header>
 
-      <main style={pageStyle}>
-        <section>
-          <p style={sectionLabelStyle}>JOB HISTORY</p>
-          <p style={emptyTextStyle}>No completed jobs yet.</p>
-        </section>
+        <div style={{ padding: '28px 32px', flex: 1 }}>
+          <p style={{ margin: 0, color: '#9CA3AF', fontSize: '0.9rem' }}>
+            No completed jobs yet.
+          </p>
+        </div>
       </main>
-    </>
+    </div>
   )
-}
-
-const topBarStyle: React.CSSProperties = {
-  height: 92,
-  background: '#16A34A',
-  color: '#FFFFFF',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  padding: '0 48px',
-}
-
-const titleStyle: React.CSSProperties = {
-  margin: 0,
-  fontFamily: 'var(--font-heading)',
-  fontSize: '1.5rem',
-  fontWeight: 700,
-}
-
-const userStyle: React.CSSProperties = {
-  padding: '8px 16px',
-  borderRadius: 999,
-  background: 'rgba(255,255,255,0.18)',
-  fontWeight: 700,
-}
-
-const pageStyle: React.CSSProperties = {
-  minHeight: 'calc(100vh - 92px)',
-  background: '#ECFDF3',
-  padding: '42px 48px',
-  fontFamily: 'var(--font-body)',
-}
-
-const sectionLabelStyle: React.CSSProperties = {
-  margin: 0,
-  marginBottom: 20,
-  fontFamily: 'var(--font-heading)',
-  fontSize: '1rem',
-  fontWeight: 700,
-  letterSpacing: '0.08em',
-  color: '#4B5563',
-}
-
-const emptyTextStyle: React.CSSProperties = {
-  margin: 0,
-  color: '#9CA3AF',
-  fontSize: '1rem',
 }
