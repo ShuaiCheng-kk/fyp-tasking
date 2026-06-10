@@ -8,7 +8,7 @@ export interface JobPosting {
   requirements: string | null
   location: string | null
   employment_type: string | null
-  status: 'open' | 'archived' | 'closed'
+  status: 'open' | 'archived' | 'closed' | 'expired' | 'pending_approval' | 'rejected'
   is_recurring: boolean
   recurrence_interval: number | null
   recurrence_unit: string | null
@@ -37,6 +37,7 @@ export interface JobPostingInput {
   is_recurring?: boolean
   recurrence_interval?: number | null
   recurrence_unit?: string | null
+  status?: string
 }
 
 export interface JobPostingSummary extends JobPosting {
@@ -65,6 +66,11 @@ export interface JobInvitation {
   message: string | null
   status: 'sent' | 'accepted' | 'declined'
   sent_at: string
+}
+
+export interface JobPostingPendingApproval extends JobPosting {
+  department_name: string | null
+  submitter_name: string | null
 }
 
 export interface CasualWorkerStatus {

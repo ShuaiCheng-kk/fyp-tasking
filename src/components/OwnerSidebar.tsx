@@ -20,11 +20,11 @@ const NAV_ITEMS = [
   { label: 'Dashboard',     Icon: LayoutDashboard, href: '/owner/dashboard',       dot: null as 'messages' | 'announcements' | null },
   { label: 'Shifts',        Icon: CalendarDays,    href: '/owner/shifts',          dot: null },
   { label: 'Tasks',         Icon: CheckSquare,     href: '/owner/tasks',           dot: null },
-  { label: 'Report',        Icon: BarChart2,        href: '/owner/report',          dot: null },
   { label: 'My Company',    Icon: Users,            href: '/owner/team',            dot: null },
   { label: 'Communication', Icon: MessageCircle,    href: '/owner/communication',   dot: 'messages' as const },
   { label: 'Recruitment',   Icon: UserPlus,         href: '/owner/recruitment',     dot: null },
   { label: 'Attendance',    Icon: ClipboardList,    href: '/owner/attendance',      dot: null },
+  { label: 'Report',        Icon: BarChart2,        href: '/owner/report',          dot: null },
 ]
 
 type Theme = {

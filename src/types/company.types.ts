@@ -6,6 +6,8 @@ export interface Company {
   plan: 'Free' | 'Paid'
   created_at: string
   location: string | null
+  address: string | null
+  postal_code: string | null
   industry: string | null
   size: string | null
   logo_url: string | null

@@ -131,6 +131,8 @@ export const authService = {
     company_name: string
     company_description: string
     company_location: string | null
+    company_address: string | null
+    company_postal_code: string | null
     company_industry: string | null
     company_size: string | null
     company_website: string | null
@@ -170,6 +172,8 @@ export const authService = {
         owner_id: user.id,
         plan: data.plan === 'Paid' ? 'Paid' : 'Free',
         location: data.company_location,
+        address: data.company_address,
+        postal_code: data.company_postal_code,
         industry: data.company_industry,
         size: data.company_size,
         logo_url: data.company_logo_url,

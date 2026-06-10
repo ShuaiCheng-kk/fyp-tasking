@@ -53,6 +53,21 @@ export const recruitmentService = {
     })
   },
 
+  async closeJobPosting(id: string): Promise<JobPosting> {
+    if (!id) throw new Error('job_id is required')
+    return recruitmentRepository.updateJobPosting(id, { status: 'closed' })
+  },
+
+  async expireJobPosting(id: string): Promise<JobPosting> {
+    if (!id) throw new Error('job_id is required')
+    return recruitmentRepository.updateJobPosting(id, { status: 'expired' })
+  },
+
+  async reopenJobPosting(id: string): Promise<JobPosting> {
+    if (!id) throw new Error('job_id is required')
+    return recruitmentRepository.updateJobPosting(id, { status: 'open' })
+  },
+
   async duplicateJobPosting(id: string, created_by: string): Promise<JobPosting> {
     if (!id || !created_by) throw new Error('job_id and created_by are required')
     const original = await recruitmentRepository.getJobPostingById(id)

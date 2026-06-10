@@ -1,8 +1,9 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { Plus, X, ChevronDown, Upload, Building2, Crown, UserCog, UserRound, HardHat } from 'lucide-react'
+import { Plus, X, ChevronDown, Upload, Building2, Network, Crown, UserCog, UserRound, HardHat, Users } from 'lucide-react'
+import { deptColor } from '@/lib/deptColor'
 import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
@@ -16,6 +17,33 @@ function Spinner({ size = 16, dark = false }: { size?: number; dark?: boolean })
       <path d="M9 2a7 7 0 0 1 7 7" stroke={dark ? '#111827' : 'white'} strokeWidth="2.5" strokeLinecap="round" fill="none" />
     </svg>
   )
+}
+
+// ─── Animated counter ────────────────────────────────────────────────────────
+
+function AnimatedNumber({ value, duration = 550 }: { value: number; duration?: number }) {
+  const [display, setDisplay] = useState(value)
+  const prevRef = useRef(value)
+  const rafRef  = useRef<number | null>(null)
+
+  useEffect(() => {
+    const from = prevRef.current
+    const to   = value
+    if (from === to) return
+    if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    const start = performance.now()
+    const tick = (now: number) => {
+      const t = Math.min((now - start) / duration, 1)
+      const eased = 1 - (1 - t) ** 3
+      setDisplay(Math.round(from + (to - from) * eased))
+      if (t < 1) rafRef.current = requestAnimationFrame(tick)
+      else prevRef.current = to
+    }
+    rafRef.current = requestAnimationFrame(tick)
+    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
+  }, [value, duration])
+
+  return <>{display.toLocaleString()}</>
 }
 
 // ─── Modal primitives ─────────────────────────────────────────────────────────
@@ -93,6 +121,84 @@ const modalLabelStyle: React.CSSProperties = {
   marginBottom: 6,
 }
 
+// ─── Custom Dropdown ──────────────────────────────────────────────────────────
+
+function DropdownField({ value, options, onChange, placeholder }: {
+  value: string
+  options: { value: string; label: string }[]
+  onChange: (v: string) => void
+  placeholder?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 })
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const h = (e: MouseEvent) => {
+      if (!triggerRef.current?.contains(e.target as Node) && !dropdownRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [open])
+
+  const selected = options.find(o => o.value === value)
+
+  const handleOpen = () => {
+    if (!open && triggerRef.current) {
+      const r = triggerRef.current.getBoundingClientRect()
+      const DROPDOWN_H = Math.min(options.length * 37 + 8, 208)
+      const fitsBelow = r.bottom + DROPDOWN_H + 4 <= window.innerHeight
+      setPos({ top: fitsBelow ? r.bottom + 4 : r.top - DROPDOWN_H - 4, left: r.left, width: r.width })
+    }
+    setOpen(o => !o)
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button ref={triggerRef} type="button" onClick={handleOpen}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '9px 11px', border: `1px solid ${open ? '#F97316' : '#E2E8F0'}`, borderRadius: 8,
+          background: '#FFFFFF', cursor: 'pointer', fontSize: 13,
+          color: selected ? '#0F172A' : '#94A3B8', fontWeight: selected ? 500 : 400,
+          outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s', minHeight: 40,
+        }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {selected?.label ?? placeholder ?? 'Select...'}
+        </span>
+        <ChevronDown size={13} style={{ color: '#94A3B8', flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+      </button>
+      {open && (
+        <div ref={dropdownRef} style={{
+          position: 'fixed', top: pos.top, left: pos.left, width: pos.width,
+          background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 10,
+          boxShadow: '0 8px 24px rgba(15,23,42,0.12)', zIndex: 9999, maxHeight: 208, overflowY: 'auto',
+          padding: '4px 0',
+        }}>
+          {options.map(opt => {
+            const isSel = opt.value === value
+            return (
+              <button key={opt.value} type="button"
+                onClick={() => { onChange(opt.value); setOpen(false) }}
+                style={{
+                  display: 'block', width: '100%', padding: '8px 14px', textAlign: 'left',
+                  border: 'none', background: isSel ? '#FFF7ED' : 'transparent',
+                  color: isSel ? '#EA580C' : '#374151', fontWeight: isSel ? 700 : 400,
+                  fontSize: 13, cursor: 'pointer',
+                }}
+                onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = '#F9FAFB' }}
+                onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = 'transparent' }}
+              >{opt.label}</button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Role avatar config ───────────────────────────────────────────────────────
 
 function RoleAvatar({ role, size = 36 }: { role: string; size?: number }) {
@@ -113,9 +219,7 @@ function RoleAvatar({ role, size = 36 }: { role: string; size?: number }) {
 
 // ─── Org Chart sub-components ────────────────────────────────────────────────
 
-type OrgMemberType = { id: string; full_name: string; email_address: string; phone_number: string | null; role: string; department_id: string | null }
-
-function OrgMemberCard({ member, onClick }: { member: OrgMemberType; onClick: () => void }) {
+function OrgMemberCard({ member, onClick }: { member: TeamMember; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
@@ -140,7 +244,7 @@ function OrgMemberCard({ member, onClick }: { member: OrgMemberType; onClick: ()
   )
 }
 
-function OrgMemberRow({ member, onClick, onEdit, onRemove }: { member: OrgMemberType; onClick: () => void; onEdit?: () => void; onRemove?: () => void }) {
+function OrgMemberRow({ member, onClick, onEdit, onRemove }: { member: TeamMember; onClick: () => void; onEdit?: () => void; onRemove?: () => void }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
       <button
@@ -158,6 +262,207 @@ function OrgMemberRow({ member, onClick, onEdit, onRemove }: { member: OrgMember
         )}
         {onRemove && (
           <button onClick={onRemove} style={{ height: 28, padding: '0 8px', border: '1px solid #FECACA', borderRadius: 6, background: '#FFFFFF', fontSize: '0.75rem', color: '#DC2626', fontWeight: 500, cursor: 'pointer' }}>Remove</button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Org Chart Node ──────────────────────────────────────────────────────────
+
+function OrgNode({ member, onClick }: { member: TeamMember; onClick: () => void }) {
+  const dark = member.role === 'Owner' || member.role === 'Partner'
+  return (
+    <button
+      onClick={onClick}
+      className="org-node-btn"
+      style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+        padding: '12px 16px', borderRadius: 12,
+        border: `1.5px solid ${dark ? '#0F172A' : '#E5E7EB'}`,
+        background: dark ? '#0F172A' : '#FFFFFF',
+        cursor: 'pointer', width: '100%',
+        boxShadow: '0 1px 4px rgba(0,0,0,0.07)',
+      }}
+    >
+      <RoleAvatar role={member.role} size={36} />
+      <p style={{ fontWeight: 700, fontSize: '0.8125rem', color: dark ? '#FFFFFF' : '#111827', margin: 0, lineHeight: 1.3, textAlign: 'center' }}>{member.full_name}</p>
+    </button>
+  )
+}
+
+// ─── Org Chart Tree ───────────────────────────────────────────────────────────
+
+type OrgChartTreeProps = {
+  topMembers: TeamMember[]
+  departments: { id: string; name: string }[]
+  teamMembers: TeamMember[]
+  onMemberClick: (m: TeamMember) => void
+}
+
+const LINE_COLOR = '#CBD5E1'
+const NODE_W    = 140   // node width inside dept column
+const LEADER_W  = 160   // leadership node width
+const LEADER_GAP = 16   // gap between leadership nodes
+const MGR_GAP   = 12    // horizontal gap between managers in same dept
+const EMP_GAP   = 8     // vertical gap between employees
+const DEPT_PAD  = 12    // horizontal padding inside dept box
+const DEPT_GAP  = 20    // gap between dept columns
+const OUTER_H   = 48    // SVG height: leadership → dept cols
+const INNER_H   = 30    // SVG height: dept header → managers
+const M2E_H     = 16    // connector height: managers → employees
+
+function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick }: OrgChartTreeProps) {
+  // Sort departments A→Z (left to right)
+  const sortedDepts = [...departments].sort((a, b) => a.name.localeCompare(b.name))
+
+  const deptCols = sortedDepts.map(dept => ({
+    dept,
+    managers: teamMembers.filter(m => m.role === 'Manager' && m.department_id === dept.id),
+    employees: teamMembers.filter(m => m.role === 'Employee' && m.department_id === dept.id),
+  }))
+
+  // Each dept column width: fit all managers side-by-side + padding
+  const deptInnerWs = deptCols.map(({ managers }) =>
+    Math.max(NODE_W, managers.length * NODE_W + (managers.length - 1) * MGR_GAP)
+  )
+  const deptColWs = deptInnerWs.map(w => w + 2 * DEPT_PAD)
+
+  // Total dept row width
+  const totalDeptW = deptColWs.reduce((s, w) => s + w, 0) + (deptCols.length - 1) * DEPT_GAP
+
+  // Owner in centre, partners split left/right
+  const owners   = topMembers.filter(m => m.role === 'Owner')
+  const partners = topMembers.filter(m => m.role === 'Partner')
+  const leftPartners  = partners.slice(0, Math.floor(partners.length / 2))
+  const rightPartners = partners.slice(Math.floor(partners.length / 2))
+  const orderedLeaders = [...leftPartners, ...owners, ...rightPartners]
+
+  // Leadership row width
+  const topCount   = orderedLeaders.length
+  const leaderRowW = topCount * LEADER_W + (topCount - 1) * LEADER_GAP
+
+  // Fixed container width — large enough for both rows
+  const totalW = Math.max(totalDeptW, leaderRowW + 60)
+
+  // Dept column left-edge positions (centered within totalW)
+  const deptRowStartX = (totalW - totalDeptW) / 2
+  const deptColStartXs: number[] = []
+  let x = deptRowStartX
+  for (const w of deptColWs) { deptColStartXs.push(x); x += w + DEPT_GAP }
+
+  // Dept column center Xs (for outer SVG connector)
+  const deptCenterXs = deptCols.map((_, i) => deptColStartXs[i] + deptColWs[i] / 2)
+
+  // Owner center X in the ordered leadership row
+  const leaderRowStartX = (totalW - leaderRowW) / 2
+  const ownerIdxInOrdered = orderedLeaders.findIndex(m => m.role === 'Owner')
+  const ownerCenterX = leaderRowStartX + (ownerIdxInOrdered >= 0 ? ownerIdxInOrdered : 0) * (LEADER_W + LEADER_GAP) + LEADER_W / 2
+
+  return (
+    <div style={{ overflowX: 'auto', paddingBottom: 8, paddingTop: 8 }}>
+      <div style={{ width: totalW, margin: '0 auto' }}>
+
+        {/* ── Row 1: Leadership — Owner in centre, Partners on sides ── */}
+        <div style={{ display: 'flex', justifyContent: 'center', gap: LEADER_GAP }}>
+          {orderedLeaders.map(m => (
+            <div key={m.id} style={{ width: LEADER_W, flexShrink: 0 }}>
+              <OrgNode member={m} onClick={() => onMemberClick(m)} />
+            </div>
+          ))}
+        </div>
+
+        {/* ── SVG: leadership → dept columns ── */}
+        {deptCols.length > 0 && topMembers.length > 0 && (
+          <svg width={totalW} height={OUTER_H} style={{ display: 'block', overflow: 'visible' }}>
+            <line x1={ownerCenterX} y1={0} x2={ownerCenterX} y2={OUTER_H / 2} stroke={LINE_COLOR} strokeWidth={1.5} />
+            {deptCols.length > 1 && (
+              <line x1={deptCenterXs[0]} y1={OUTER_H / 2} x2={deptCenterXs[deptCols.length - 1]} y2={OUTER_H / 2} stroke={LINE_COLOR} strokeWidth={1.5} />
+            )}
+            {deptCenterXs.map((cx, i) => (
+              <line key={i} x1={cx} y1={OUTER_H / 2} x2={cx} y2={OUTER_H} stroke={LINE_COLOR} strokeWidth={1.5} />
+            ))}
+          </svg>
+        )}
+
+        {/* ── Row 2: Dept columns ── */}
+        {deptCols.length > 0 && (
+          <div style={{ display: 'flex', gap: DEPT_GAP, alignItems: 'flex-start', justifyContent: 'center' }}>
+            {deptCols.map(({ dept, managers, employees }, di) => {
+              const color    = deptColor(dept.id)
+              const colW     = deptColWs[di]
+              const innerW   = deptInnerWs[di]
+              // Manager center Xs relative to left edge of colW (accounting for DEPT_PAD)
+              const offsetX  = (colW - innerW) / 2
+              const mgrCXs   = managers.map((_, mi) => offsetX + mi * (NODE_W + MGR_GAP) + NODE_W / 2)
+
+              return (
+                <div key={dept.id} style={{
+                  width: colW, flexShrink: 0,
+                  border: `1.5px solid ${color}30`,
+                  borderTop: `3px solid ${color}`,
+                  borderRadius: 14,
+                  background: '#FFFFFF',
+                  boxShadow: '0 1px 6px rgba(0,0,0,0.06)',
+                  display: 'flex', flexDirection: 'column', alignItems: 'center',
+                  overflow: 'hidden',
+                }}>
+
+                  {/* Dept header */}
+                  <div style={{ width: '100%', padding: '9px 12px', background: `${color}10`, borderBottom: `1px solid ${color}28`, textAlign: 'center' }}>
+                    <span style={{ fontWeight: 700, fontSize: '0.8125rem', color: '#111827' }}>{dept.name}</span>
+                  </div>
+
+                  {/* SVG: dept header → managers (fan-out) */}
+                  {managers.length > 0 && (
+                    <svg width={colW} height={INNER_H} style={{ display: 'block', flexShrink: 0, overflow: 'visible' }}>
+                      <line x1={colW / 2} y1={0} x2={colW / 2} y2={INNER_H / 2} stroke={LINE_COLOR} strokeWidth={1.5} />
+                      {managers.length > 1 && (
+                        <line x1={mgrCXs[0]} y1={INNER_H / 2} x2={mgrCXs[managers.length - 1]} y2={INNER_H / 2} stroke={LINE_COLOR} strokeWidth={1.5} />
+                      )}
+                      {mgrCXs.map((cx, i) => (
+                        <line key={i} x1={cx} y1={INNER_H / 2} x2={cx} y2={INNER_H} stroke={LINE_COLOR} strokeWidth={1.5} />
+                      ))}
+                    </svg>
+                  )}
+
+                  {/* Managers — horizontal row */}
+                  {managers.length > 0 && (
+                    <div style={{ display: 'flex', gap: MGR_GAP, flexShrink: 0 }}>
+                      {managers.map(m => (
+                        <div key={m.id} style={{ width: NODE_W }}>
+                          <OrgNode member={m} onClick={() => onMemberClick(m)} />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Connector: managers → employees */}
+                  {employees.length > 0 && (
+                    <div style={{ width: 1.5, height: M2E_H, background: LINE_COLOR, flexShrink: 0 }} />
+                  )}
+
+                  {/* Employees — vertical list, no extra border (dept box already frames them) */}
+                  {employees.length > 0 && (
+                    <div style={{
+                      margin: `0 ${DEPT_PAD}px ${DEPT_PAD}px`,
+                      display: 'flex', flexDirection: 'column', gap: EMP_GAP,
+                      width: `calc(100% - ${DEPT_PAD * 2}px)`,
+                      boxSizing: 'border-box',
+                    }}>
+                      {employees.map(m => (
+                        <OrgNode key={m.id} member={m} onClick={() => onMemberClick(m)} />
+                      ))}
+                    </div>
+                  )}
+
+                  {managers.length === 0 && employees.length === 0 && (
+                    <div style={{ padding: '12px', fontSize: '0.75rem', color: '#9CA3AF' }}>No members</div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
         )}
       </div>
     </div>
@@ -185,6 +490,7 @@ type TeamMember = {
   phone_number: string | null
   role: string
   department_id: string | null
+  worker_status?: string | null
 }
 type ChangeDeptModal = { member: TeamMember } | null
 type ManageDeptModal = { member: TeamMember } | null
@@ -221,17 +527,20 @@ export default function TeamPage() {
   const [companyName,        setCompanyName]        = useState('')
   const [ownerName,          setOwnerName]          = useState('')
   const [currentPlan,        setCurrentPlan]        = useState('Free')
-  const [companyProfile,     setCompanyProfile]     = useState<{ description: string | null; location: string | null; industry: string | null; size: string | null } | null>(null)
+  const [companyProfile,     setCompanyProfile]     = useState<{ description: string | null; location: string | null; address: string | null; postal_code: string | null; industry: string | null; size: string | null } | null>(null)
   const [editProfileOpen,    setEditProfileOpen]    = useState(false)
   const [editProfileName,    setEditProfileName]    = useState('')
   const [editProfileDesc,    setEditProfileDesc]    = useState('')
   const [editProfileLoc,     setEditProfileLoc]     = useState('')
-  const [editProfileIndustry,setEditProfileIndustry] = useState('')
-  const [editProfileSize,    setEditProfileSize]    = useState('')
+  const [editProfileAddress, setEditProfileAddress] = useState('')
+  const [editProfilePostal,  setEditProfilePostal]  = useState('')
+  const [editProfileIndustry,     setEditProfileIndustry]     = useState('')
+  const [editProfileIndustryOther,setEditProfileIndustryOther] = useState('')
+  const [editProfileSize,         setEditProfileSize]          = useState('')
   const [editProfileLoading, setEditProfileLoading] = useState(false)
   const [editProfileError,   setEditProfileError]   = useState('')
 
-  const INDUSTRIES = ['Retail', 'F&B', 'Logistics', 'Event Management']
+  const INDUSTRIES = ['Retail', 'F&B', 'Logistics', 'Event Management', 'Healthcare', 'Education', 'Technology', 'Finance', 'Construction', 'Hospitality', 'Manufacturing', 'Other']
   const SIZES = ['1-10', '11-50', '51-200', '200+']
 
   // Team members
@@ -297,8 +606,9 @@ export default function TeamPage() {
   const [manageDeptSaving, setManageDeptSaving] = useState(false)
   const [manageDeptToast, setManageDeptToast] = useState('')
 
-  // Profile drawer
+  // Profile modal
   const [profileMember, setProfileMember] = useState<TeamMember | null>(null)
+  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null)
 
   // Edit Manager modal (combined home dept + dept access)
   const [editManagerModal, setEditManagerModal] = useState<EditManagerModal>(null)
@@ -343,7 +653,7 @@ export default function TeamPage() {
     try {
       const res = await fetch(`/api/team/members?company_id=${cid}`)
       const data = await res.json()
-      if (data.success) setTeamMembers(data.members)
+      if (data.success) { setTeamMembers(data.members); setLastRefreshed(new Date()) }
     } catch {}
     finally { setTeamLoading(false) }
   }, [])
@@ -462,6 +772,8 @@ export default function TeamPage() {
             setCompanyProfile({
               description: companyData.company.description ?? null,
               location: companyData.company.location ?? null,
+              address: companyData.company.address ?? null,
+              postal_code: companyData.company.postal_code ?? null,
               industry: companyData.company.industry ?? null,
               size: companyData.company.size ?? null,
             })
@@ -486,7 +798,9 @@ export default function TeamPage() {
           name: editProfileName.trim(),
           description: editProfileDesc || null,
           location: editProfileLoc || null,
-          industry: editProfileIndustry || null,
+          address: editProfileAddress || null,
+          postal_code: editProfilePostal || null,
+          industry: editProfileIndustry === 'Other' ? (editProfileIndustryOther.trim() || null) : (editProfileIndustry || null),
           size: editProfileSize || null,
           website: null,
           logo_url: null,
@@ -494,8 +808,9 @@ export default function TeamPage() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
+      const savedIndustry = editProfileIndustry === 'Other' ? (editProfileIndustryOther.trim() || null) : (editProfileIndustry || null)
       setCompanyName(editProfileName.trim())
-      setCompanyProfile({ description: editProfileDesc || null, location: editProfileLoc || null, industry: editProfileIndustry || null, size: editProfileSize || null })
+      setCompanyProfile({ description: editProfileDesc || null, location: editProfileLoc || null, address: editProfileAddress || null, postal_code: editProfilePostal || null, industry: savedIndustry, size: editProfileSize || null })
       setEditProfileOpen(false)
     } catch (err) { setEditProfileError(err instanceof Error ? err.message : 'Failed to update') }
     finally { setEditProfileLoading(false) }
@@ -854,14 +1169,80 @@ export default function TeamPage() {
   const sendDisabled = inviteLoading || !!noManagersInDept ||
     ((inviteRole === 'Manager' || inviteRole === 'Employee') && !inviteDeptId)
 
+  const partnerCount      = teamMembers.filter(m => m.role === 'Partner').length
+  const managerCount      = teamMembers.filter(m => m.role === 'Manager').length
+  const employeeCount     = teamMembers.filter(m => m.role === 'Employee').length
+  const casualWorkerCount = teamMembers.filter(m => m.role === 'Casual Worker').length
+  const totalInternal     = managerCount + employeeCount
+
+  function timeAgo(ts: string): string {
+    const diff = Math.floor((Date.now() - new Date(ts).getTime()) / 1000)
+    if (diff < 60) return 'just now'
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+    return `${Math.floor(diff / 86400)}d ago`
+  }
+
   return (
-    <div style={{ display: 'flex', height: '100vh', background: '#F7F8FA', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+    <div style={{ display: 'flex', height: '100vh', background: '#F1F5F9', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+      <style>{`
+        @keyframes fadeSlideUp {
+          from { opacity: 0; transform: translateY(16px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes scaleIn {
+          from { opacity: 0; transform: scale(0.95); }
+          to   { opacity: 1; transform: scale(1); }
+        }
+        @keyframes dotPulse {
+          0%   { box-shadow: 0 0 0 0 rgba(52,211,153,0.55); }
+          70%  { box-shadow: 0 0 0 5px rgba(52,211,153,0); }
+          100% { box-shadow: 0 0 0 0 rgba(52,211,153,0); }
+        }
+        @keyframes iconBounce {
+          0%, 100% { transform: translateY(0); }
+          40%      { transform: translateY(-4px); }
+          70%      { transform: translateY(-2px); }
+        }
+        .team-stat-card {
+          transition: box-shadow 0.22s ease, transform 0.22s ease;
+        }
+        .team-stat-card:hover {
+          box-shadow: 0 8px 28px rgba(0,0,0,0.10), 0 0 0 1.5px rgba(249,115,22,0.18) !important;
+          transform: translateY(-3px) scale(1.015);
+        }
+        .team-stat-card:hover .stat-icon { animation: iconBounce 0.5s ease forwards; }
+        .team-stat-card:nth-child(1) { animation: fadeSlideUp 0.36s ease both 0.04s; }
+        .team-stat-card:nth-child(2) { animation: fadeSlideUp 0.36s ease both 0.08s; }
+        .team-stat-card:nth-child(3) { animation: fadeSlideUp 0.36s ease both 0.12s; }
+        .team-stat-card:nth-child(4) { animation: fadeSlideUp 0.36s ease both 0.16s; }
+        .team-stat-card:nth-child(5) { animation: fadeSlideUp 0.36s ease both 0.20s; }
+        .team-panel-card {
+          transition: box-shadow 0.22s ease, transform 0.22s ease;
+        }
+        .team-panel-card:hover {
+          box-shadow: 0 8px 32px rgba(0,0,0,0.09), 0 0 0 1.5px rgba(0,0,0,0.07) !important;
+          transform: translateY(-2px);
+        }
+        .team-panel-card:nth-child(1) { animation: scaleIn 0.40s ease both 0.18s; }
+        .team-panel-card:nth-child(2) { animation: scaleIn 0.40s ease both 0.26s; }
+        .org-node-btn {
+          transition: box-shadow 0.15s ease, transform 0.12s ease !important;
+          position: relative;
+          z-index: 0;
+        }
+        .org-node-btn:hover {
+          box-shadow: 0 6px 18px rgba(0,0,0,0.13) !important;
+          transform: translateY(-2px) scale(1.02) !important;
+          z-index: 10;
+        }
+      `}</style>
       <OwnerSidebar />
 
       {/* ── MAIN ───────────────────────────────────────────────────────────── */}
       <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-        {/* Page header — matches Dashboard style */}
-        <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
+        {/* Page header */}
+        <div style={{ padding: '20px 28px 0', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
           <div>
             <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
               {companyName ? `Team for ${companyName}` : 'My Company'}
@@ -880,189 +1261,226 @@ export default function TeamPage() {
           </div>
         </div>
 
+        <div style={{ padding: '16px 28px 28px', flex: 1, display: 'flex', flexDirection: 'column', gap: 0 }}>
 
-        <div style={{ padding: '8px 28px 28px', flex: 1 }}>
+          {/* ── Stat cards ─────────────────────────────────────────────────── */}
+          {companyId && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 14, marginBottom: 24 }}>
+              {[
+                {
+                  label: 'Total Staff',
+                  value: teamLoading ? null : totalInternal,
+                  icon: <Users size={16} style={{ color: '#F97316' }} />,
+                  accentBg: '#FFF7ED',
+                },
+                {
+                  label: 'Departments',
+                  value: teamLoading ? null : companyDepartments.length,
+                  icon: <Building2 size={16} style={{ color: '#3B82F6' }} />,
+                  accentBg: '#EFF6FF',
+                },
+                {
+                  label: 'Managers',
+                  value: teamLoading ? null : managerCount,
+                  icon: <UserCog size={16} style={{ color: '#EA580C' }} />,
+                  accentBg: '#FFF7ED',
+                },
+                {
+                  label: 'Employees',
+                  value: teamLoading ? null : employeeCount,
+                  icon: <UserRound size={16} style={{ color: '#6B7280' }} />,
+                  accentBg: '#F3F4F6',
+                },
+                {
+                  label: 'Casual Workers',
+                  value: teamLoading ? null : casualWorkerCount,
+                  icon: <HardHat size={16} style={{ color: '#2563EB' }} />,
+                  accentBg: '#EFF6FF',
+                },
+              ].map(card => (
+                <article key={card.label} className="team-stat-card" style={{
+                  background: '#fff',
+                  borderRadius: 16,
+                  padding: '16px 18px',
+                  boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 10,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <p style={{ fontSize: 11, fontWeight: 600, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.07em', margin: 0 }}>{card.label}</p>
+                    <div className="stat-icon" style={{ width: 32, height: 32, borderRadius: 10, background: card.accentBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      {card.icon}
+                    </div>
+                  </div>
+                  <p style={{ fontSize: 28, fontWeight: 800, color: '#0F172A', lineHeight: 1, margin: 0, letterSpacing: '-0.5px' }}>
+                    {card.value === null ? <Spinner size={14} dark /> : <AnimatedNumber value={card.value} />}
+                  </p>
+                </article>
+              ))}
+            </div>
+          )}
+
+          {/* Partners badge row (if any) */}
+          {partnerCount > 0 && (
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 20, padding: '10px 16px', background: '#0F172A', borderRadius: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.12)', animation: 'fadeSlideUp 0.4s ease both 0.28s', width: 'fit-content' }}>
+              <Crown size={14} style={{ color: '#F97316', flexShrink: 0 }} />
+              <span style={{ fontSize: 13, fontWeight: 700, color: '#FFFFFF' }}>
+                {partnerCount} Partner{partnerCount !== 1 ? 's' : ''} in this company
+              </span>
+            </div>
+          )}
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
 
           {/* ── COMPANY PROFILE CARD ──────────────────────────────────────────── */}
           {companyName && (
-            <div style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '22px 24px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', marginBottom: 32, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 40, height: 40, borderRadius: 10, background: '#FFF7ED', border: '1.5px solid #FED7AA', color: '#F97316', flexShrink: 0 }}>
-                    <Building2 size={20} />
-                  </span>
-                  <div>
-                    <h2 style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827', margin: 0 }}>{companyName}</h2>
-                    {companyProfile?.industry && (
-                      <p style={{ fontSize: '0.8125rem', color: '#6B7280', margin: 0 }}>{companyProfile.industry}</p>
-                    )}
-                  </div>
+            <div className="team-panel-card" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '20px 24px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+              {/* Title row */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <Building2 size={15} style={{ color: '#F97316' }} />
                 </div>
-                <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-                  {companyProfile?.location && (
-                    <span style={{ fontSize: '0.8125rem', color: '#6B7280' }}>📍 {companyProfile.location}</span>
-                  )}
-                  {companyProfile?.size && (
-                    <span style={{ fontSize: '0.8125rem', color: '#6B7280' }}>👥 {companyProfile.size} employees</span>
-                  )}
-                  {companyProfile?.description && (
-                    <span style={{ fontSize: '0.8125rem', color: '#6B7280' }}>{companyProfile.description}</span>
-                  )}
-                </div>
+                <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>My Company</span>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                {isCreator && (
+              {/* Nested company row */}
+              <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                <span style={{ fontSize: '0.9375rem', fontWeight: 600, color: '#111827' }}>{companyName}</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                  {isCreator && (
+                    <button
+                      onClick={() => {
+                        setEditProfileName(companyName)
+                        setEditProfileDesc(companyProfile?.description ?? '')
+                        setEditProfileLoc(companyProfile?.location ?? '')
+                        setEditProfileAddress(companyProfile?.address ?? '')
+                        setEditProfilePostal(companyProfile?.postal_code ?? '')
+                        const savedIndustry = companyProfile?.industry ?? ''
+                        const knownIndustries = ['Retail', 'F&B', 'Logistics', 'Event Management', 'Healthcare', 'Education', 'Technology', 'Finance', 'Construction', 'Hospitality', 'Manufacturing', 'Other']
+                        if (savedIndustry && !knownIndustries.includes(savedIndustry)) {
+                          setEditProfileIndustry('Other')
+                          setEditProfileIndustryOther(savedIndustry)
+                        } else {
+                          setEditProfileIndustry(savedIndustry)
+                          setEditProfileIndustryOther('')
+                        }
+                        setEditProfileSize(companyProfile?.size ?? '')
+                        setEditProfileError('')
+                        setEditProfileOpen(true)
+                      }}
+                      style={{ padding: '7px 14px', border: '1.5px solid #E5E7EB', borderRadius: '8px', background: 'none', fontWeight: 600, fontSize: '0.875rem', color: '#374151', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = '#9CA3AF' }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
+                    >
+                      Edit
+                    </button>
+                  )}
                   <button
-                    onClick={() => {
-                      setEditProfileName(companyName)
-                      setEditProfileDesc(companyProfile?.description ?? '')
-                      setEditProfileLoc(companyProfile?.location ?? '')
-                      setEditProfileIndustry(companyProfile?.industry ?? '')
-                      setEditProfileSize(companyProfile?.size ?? '')
-                      setEditProfileError('')
-                      setEditProfileOpen(true)
-                    }}
-                    style={{ padding: '7px 14px', border: '1.5px solid #E5E7EB', borderRadius: '8px', background: 'none', fontWeight: 600, fontSize: '0.875rem', color: '#374151', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = '#9CA3AF' }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
+                    onClick={() => { setInviteTab('manual'); openInviteModal() }}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '7px 13px', border: 'none', borderRadius: '8px', background: '#F97316', fontWeight: 700, fontSize: '0.875rem', color: '#FFFFFF', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                    onMouseEnter={e => { e.currentTarget.style.background = '#EA6C0A' }}
+                    onMouseLeave={e => { e.currentTarget.style.background = '#F97316' }}
                   >
-                    Edit
+                    <Plus size={14} strokeWidth={2.5} /> Invite
                   </button>
-                )}
-                <button
-                  onClick={() => { setInviteTab('manual'); openInviteModal() }}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '7px 13px', border: 'none', borderRadius: '8px', background: '#F97316', fontWeight: 700, fontSize: '0.875rem', color: '#FFFFFF', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                  onMouseEnter={e => { e.currentTarget.style.background = '#EA6C0A' }}
-                  onMouseLeave={e => { e.currentTarget.style.background = '#F97316' }}
-                >
-                  <Plus size={14} strokeWidth={2.5} /> Invite
-                </button>
+                </div>
               </div>
             </div>
           )}
 
           {/* ── ORG CHART ─────────────────────────────────────────────────────── */}
-          <div style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
-            <p style={{ fontWeight: 700, fontSize: '0.8125rem', color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 20 }}>
-              Organisation Chart
-            </p>
+          <div className="team-panel-card" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 28 }}>
+              <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <Network size={15} style={{ color: '#F97316' }} />
+              </div>
+              <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Organisation Chart</span>
+            </div>
 
             {teamLoading ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#9CA3AF', fontSize: '0.9375rem' }}>
                 <Spinner size={16} dark /> Loading…
               </div>
             ) : (
-              <>
-                {/* ── Row 1: Owners & Partners ────────────────────────────── */}
-                {(() => {
-                  const topMembers = teamMembers.filter(m => m.role === 'Owner' || m.role === 'Partner')
-                  if (topMembers.length === 0) return null
-                  return (
-                    <div style={{ marginBottom: 32 }}>
-                      <p style={{ fontWeight: 600, fontSize: '0.75rem', color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>
-                        Leadership
-                      </p>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-                        {topMembers.map(m => (
-                          <OrgMemberCard key={m.id} member={m} onClick={() => setProfileMember(m)} />
-                        ))}
-                      </div>
-                    </div>
-                  )
-                })()}
-
-                {/* ── Row 2: Departments ──────────────────────────────────── */}
-                {companyDepartments.length > 0 ? (
-                  <div>
-                    <p style={{ fontWeight: 600, fontSize: '0.75rem', color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>
-                      Departments
-                    </p>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 16 }}>
-                      {companyDepartments.map(dept => {
-                        const managers = teamMembers.filter(m => m.role === 'Manager' && m.department_id === dept.id)
-                        const employees = teamMembers.filter(m => m.role === 'Employee' && m.department_id === dept.id)
-                        const canEdit = currentUserRole === 'Owner'
-                        return (
-                          <div key={dept.id} style={{ border: '1px solid #E5E7EB', borderRadius: 12, overflow: 'hidden' }}>
-                            {/* Dept header */}
-                            <div style={{ padding: '12px 16px', borderBottom: '1px solid #F3F4F6', background: '#F9FAFB', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                              <span style={{ fontWeight: 700, fontSize: '0.9375rem', color: '#111827' }}>{dept.name}</span>
-                              <span style={{ fontSize: '0.75rem', color: '#9CA3AF' }}>
-                                {managers.length + employees.length} member{managers.length + employees.length !== 1 ? 's' : ''}
-                              </span>
-                            </div>
-
-                            {/* Managers */}
-                            {managers.length > 0 && (
-                              <div style={{ padding: '10px 16px 4px' }}>
-                                <p style={{ fontSize: '0.6875rem', fontWeight: 600, color: '#EA580C', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8 }}>Manager</p>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                  {managers.map(m => (
-                                    <OrgMemberRow
-                                      key={m.id}
-                                      member={m}
-                                      onClick={() => setProfileMember(m)}
-                                      onEdit={canEdit ? () => openEditManagerModal(m) : undefined}
-                                      onRemove={canRemove(m) ? () => { setRemoveModal(m); setRemoveError('') } : undefined}
-                                    />
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Employees */}
-                            {employees.length > 0 && (
-                              <div style={{ padding: managers.length > 0 ? '8px 16px 12px' : '10px 16px 12px' }}>
-                                {managers.length > 0 && <div style={{ height: 1, background: '#F3F4F6', marginBottom: 8 }} />}
-                                <p style={{ fontSize: '0.6875rem', fontWeight: 600, color: '#4B5563', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 8 }}>Employee</p>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                  {employees.map(m => (
-                                    <OrgMemberRow
-                                      key={m.id}
-                                      member={m}
-                                      onClick={() => setProfileMember(m)}
-                                      onEdit={canEdit ? () => { setChangeDeptModal({ member: m }); setChangeDeptSelectedId(m.department_id ?? ''); setChangeDeptError('') } : undefined}
-                                      onRemove={canRemove(m) ? () => { setRemoveModal(m); setRemoveError('') } : undefined}
-                                    />
-                                  ))}
-                                </div>
-                              </div>
-                            )}
-
-                            {managers.length === 0 && employees.length === 0 && (
-                              <div style={{ padding: '14px 16px', color: '#9CA3AF', fontSize: '0.8125rem' }}>No members assigned</div>
-                            )}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </div>
-                ) : null}
-
-                {/* ── Unassigned / Casual Workers ─────────────────────────── */}
-                {(() => {
-                  const unassigned = teamMembers.filter(m =>
-                    m.role !== 'Owner' && m.role !== 'Partner' && m.department_id === null
-                  )
-                  const casualWorkers = teamMembers.filter(m => m.role === 'Casual Worker')
-                  const combined = [...new Map([...unassigned, ...casualWorkers].map(m => [m.id, m])).values()]
-                  if (combined.length === 0) return null
-                  return (
-                    <div style={{ marginTop: 28 }}>
-                      <p style={{ fontWeight: 600, fontSize: '0.75rem', color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>
-                        Unassigned / Casual Workers
-                      </p>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-                        {combined.map(m => (
-                          <OrgMemberCard key={m.id} member={m} onClick={() => setProfileMember(m)} />
-                        ))}
-                      </div>
-                    </div>
-                  )
-                })()}
-              </>
+              <OrgChartTree
+                topMembers={teamMembers.filter(m => m.role === 'Owner' || m.role === 'Partner')}
+                departments={companyDepartments}
+                teamMembers={teamMembers}
+                onMemberClick={(m) => setProfileMember(m)}
+              />
             )}
           </div>
+
+          {/* ── CASUAL WORKERS ────────────────────────────────────────────────── */}
+          {(() => {
+            const casualWorkers = teamMembers.filter(m => m.role === 'Casual Worker')
+            return (
+              <div className="team-panel-card" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
+                  <div style={{ width: 30, height: 30, borderRadius: 9, background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <HardHat size={15} style={{ color: '#2563EB' }} />
+                  </div>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', flex: 1 }}>Casual Workers</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: '#2563EB', background: '#EFF6FF', padding: '2px 10px', borderRadius: 99 }}>
+                    {teamLoading ? '—' : casualWorkers.length}
+                  </span>
+                </div>
+
+                {teamLoading ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#9CA3AF', fontSize: '0.9375rem' }}>
+                    <Spinner size={16} dark /> Loading…
+                  </div>
+                ) : casualWorkers.length === 0 ? (
+                  <div style={{ padding: '20px 0', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>
+                    No casual workers have joined this company yet.
+                  </div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
+                    {casualWorkers.map(worker => {
+                      const deptName = worker.department_id
+                        ? companyDepartments.find(d => d.id === worker.department_id)?.name ?? null
+                        : null
+                      const status = worker.worker_status ?? 'active'
+                      const statusColors: Record<string, { bg: string; text: string }> = {
+                        active:   { bg: '#ECFDF5', text: '#047857' },
+                        inactive: { bg: '#F3F4F6', text: '#4B5563' },
+                        blocked:  { bg: '#FEF2F2', text: '#B91C1C' },
+                      }
+                      const sc = statusColors[status] ?? statusColors.active
+                      return (
+                        <button
+                          key={worker.id}
+                          onClick={() => setProfileMember(worker)}
+                          style={{
+                            display: 'flex', alignItems: 'center', gap: 12,
+                            padding: '12px 14px', borderRadius: 12,
+                            border: '1.5px solid #DBEAFE', background: '#F8FBFF',
+                            cursor: 'pointer', textAlign: 'left',
+                            boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+                            transition: 'box-shadow 0.15s',
+                          }}
+                          onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 3px 10px rgba(37,99,235,0.12)' }}
+                          onMouseLeave={e => { e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)' }}
+                        >
+                          <RoleAvatar role="Casual Worker" size={36} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{worker.full_name}</p>
+                            <p style={{ fontSize: '0.75rem', color: '#6B7280', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {deptName ?? worker.email_address}
+                            </p>
+                          </div>
+                          <span style={{ background: sc.bg, color: sc.text, borderRadius: 999, padding: '2px 8px', fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', flexShrink: 0 }}>
+                            {status}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )
+          })()}
+        </div>
         </div>
       </main>
 
@@ -1414,42 +1832,17 @@ export default function TeamPage() {
         </div>
       )}
 
-      {/* ── Profile Drawer ───────────────────────────────────────────────── */}
+      {/* ── Member Profile Modal ─────────────────────────────────────────── */}
       {profileMember && (
-        <div
-          onClick={() => setProfileMember(null)}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.42)', zIndex: 200 }}
-        >
-          <div
-            onClick={e => e.stopPropagation()}
-            style={{
-              position: 'absolute',
-              top: 0,
-              right: 0,
-              width: 340,
-              height: '100%',
-              background: '#FFFFFF',
-              boxShadow: '-8px 0 40px rgba(15,23,42,0.14)',
-              display: 'flex',
-              flexDirection: 'column',
-            }}
-          >
-            {/* Drawer header */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 20px', borderBottom: '1px solid #E2E8F0' }}>
-              <h3 style={{ fontWeight: 800, fontSize: '1rem', color: '#0F172A', margin: 0 }}>Member Profile</h3>
-              <button
-                onClick={() => setProfileMember(null)}
-                style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid #E2E8F0', background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: 'pointer', color: '#64748B' }}
-              >
-                <X size={16} />
-              </button>
-            </div>
+        <ModalOverlay onClose={() => setProfileMember(null)}>
+          <ModalBox>
+            <ModalHeader title="Member Profile" onClose={() => setProfileMember(null)} />
 
             {/* Avatar + name */}
-            <div style={{ padding: '28px 20px 20px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', gap: 16 }}>
+            <div style={{ padding: '24px 24px 20px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', gap: 16 }}>
               <RoleAvatar role={profileMember.role} size={54} />
               <div>
-                <p style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#0F172A', margin: '0 0 4px' }}>{profileMember.full_name}</p>
+                <p style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#0F172A', margin: '0 0 5px' }}>{profileMember.full_name}</p>
                 <span style={{
                   display: 'inline-block',
                   padding: '2px 10px',
@@ -1471,7 +1864,7 @@ export default function TeamPage() {
             </div>
 
             {/* Fields */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
+            <div style={{ padding: '20px 24px' }}>
               <ProfileField label="Email" value={profileMember.email_address} />
               <ProfileField label="Phone" value={profileMember.phone_number ?? '—'} />
               {profileMember.department_id && (
@@ -1483,32 +1876,18 @@ export default function TeamPage() {
             </div>
 
             {/* Actions */}
-            {(canRemove(profileMember) || (currentUserRole === 'Owner' && (profileMember.role === 'Manager' || profileMember.role === 'Employee'))) && (
-              <div style={{ padding: '16px 20px', borderTop: '1px solid #F3F4F6', display: 'flex', gap: 8 }}>
-                {currentUserRole === 'Owner' && (profileMember.role === 'Manager' || profileMember.role === 'Employee') && (
-                  <button
-                    onClick={() => {
-                      setProfileMember(null)
-                      if (profileMember.role === 'Manager') openEditManagerModal(profileMember)
-                      else { setChangeDeptModal({ member: profileMember }); setChangeDeptSelectedId(profileMember.department_id ?? ''); setChangeDeptError('') }
-                    }}
-                    style={{ flex: 1, height: 36, borderRadius: 10, border: '1.5px solid #E5E7EB', background: '#FFFFFF', fontWeight: 600, fontSize: 13, color: '#374151', cursor: 'pointer' }}
-                  >
-                    Edit
-                  </button>
-                )}
-                {canRemove(profileMember) && (
-                  <button
-                    onClick={() => { setProfileMember(null); setRemoveModal(profileMember); setRemoveError('') }}
-                    style={{ flex: 1, height: 36, borderRadius: 10, border: '1.5px solid #FECACA', background: '#FFFFFF', fontWeight: 600, fontSize: 13, color: '#DC2626', cursor: 'pointer' }}
-                  >
-                    Remove
-                  </button>
-                )}
+            {canRemove(profileMember) && (
+              <div style={{ padding: '0 24px 20px', display: 'flex', gap: 8 }}>
+                <button
+                  onClick={() => { setProfileMember(null); setRemoveModal(profileMember); setRemoveError('') }}
+                  style={{ flex: 1, height: 40, borderRadius: 10, border: '1.5px solid #FECACA', background: '#FFFFFF', fontWeight: 600, fontSize: 13, color: '#DC2626', cursor: 'pointer' }}
+                >
+                  Remove
+                </button>
               </div>
             )}
-          </div>
-        </div>
+          </ModalBox>
+        </ModalOverlay>
       )}
 
       {/* ── Invite Member Modal ───────────────────────────────────────────── */}
@@ -1796,24 +2175,41 @@ export default function TeamPage() {
                 </div>
                 <div>
                   <label style={modalLabelStyle}>Size</label>
-                  <div style={{ position: 'relative' }}>
-                    <select value={editProfileSize} onChange={e => setEditProfileSize(e.target.value)} style={{ ...modalInputStyle, paddingRight: 28, appearance: 'none', cursor: 'pointer' }}>
-                      <option value="">Select size</option>
-                      {SIZES.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                    <ChevronDown size={14} style={{ position: 'absolute', right: 9, top: '50%', transform: 'translateY(-50%)', color: '#94A3B8', pointerEvents: 'none' }} />
-                  </div>
+                  <DropdownField
+                    value={editProfileSize}
+                    onChange={setEditProfileSize}
+                    placeholder="Select size"
+                    options={SIZES.map(s => ({ value: s, label: s }))}
+                  />
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div>
+                  <label style={modalLabelStyle}>Address</label>
+                  <input value={editProfileAddress} onChange={e => setEditProfileAddress(e.target.value)} placeholder="e.g. 123 Orchard Road" style={modalInputStyle} />
+                </div>
+                <div>
+                  <label style={modalLabelStyle}>Postal Code</label>
+                  <input value={editProfilePostal} onChange={e => setEditProfilePostal(e.target.value)} placeholder="e.g. 238858" style={modalInputStyle} />
                 </div>
               </div>
               <div>
                 <label style={modalLabelStyle}>Industry</label>
-                <div style={{ position: 'relative' }}>
-                  <select value={editProfileIndustry} onChange={e => setEditProfileIndustry(e.target.value)} style={{ ...modalInputStyle, paddingRight: 28, appearance: 'none', cursor: 'pointer' }}>
-                    <option value="">Select industry</option>
-                    {INDUSTRIES.map(i => <option key={i} value={i}>{i}</option>)}
-                  </select>
-                  <ChevronDown size={14} style={{ position: 'absolute', right: 9, top: '50%', transform: 'translateY(-50%)', color: '#94A3B8', pointerEvents: 'none' }} />
-                </div>
+                <DropdownField
+                  value={editProfileIndustry}
+                  onChange={v => { setEditProfileIndustry(v); if (v !== 'Other') setEditProfileIndustryOther('') }}
+                  placeholder="Select industry"
+                  options={INDUSTRIES.map(i => ({ value: i, label: i }))}
+                />
+                {editProfileIndustry === 'Other' && (
+                  <input
+                    value={editProfileIndustryOther}
+                    onChange={e => setEditProfileIndustryOther(e.target.value)}
+                    placeholder="Please specify your industry"
+                    style={{ ...modalInputStyle, marginTop: 8 }}
+                    autoFocus
+                  />
+                )}
               </div>
               {editProfileError && (
                 <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 12px', fontSize: 13, color: '#B91C1C' }}>
