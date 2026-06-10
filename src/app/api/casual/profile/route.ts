@@ -1,0 +1,34 @@
+import { NextResponse } from 'next/server'
+import { casualProfileService } from '@/services/casual/casualProfileService'
+
+export async function GET(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url)
+    const user_id = searchParams.get('user_id')
+
+    if (!user_id) {
+      return NextResponse.json(
+        { success: false, message: 'Missing user_id' },
+        { status: 400 }
+      )
+    }
+
+    const profile = await casualProfileService.getProfile(user_id)
+
+    return NextResponse.json({
+      success: true,
+      profile,
+    })
+  } catch (error) {
+    return NextResponse.json(
+      {
+        success: false,
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Failed to load casual profile',
+      },
+      { status: 500 }
+    )
+  }
+}
