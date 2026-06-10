@@ -5,8 +5,6 @@ import { usePathname } from 'next/navigation'
 import Link from 'next/link'
 import {
   LayoutDashboard,
-  ClipboardList,
-  BriefcaseBusiness,
   Clock,
   CalendarDays,
   History,
@@ -15,32 +13,21 @@ import {
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 
-type WorkerRole = 'Guest User' | 'Casual Worker'
-
 const SIDEBAR_BG = '#16A34A'
 const SIDEBAR_BORDER = '#15803D'
 const ACTIVE_BG = '#15803D'
 
-const guestItems = [
-  { label: 'My Applications', Icon: ClipboardList, href: '/worker/applications' },
-  { label: 'Profile', Icon: User, href: '/worker/profile' },
-]
-
-const casualWorkerItems = [
+const navItems = [
   { label: 'Dashboard', Icon: LayoutDashboard, href: '/worker/dashboard' },
-  { label: 'My Applications', Icon: ClipboardList, href: '/worker/applications' },
-  { label: 'Assigned Work', Icon: BriefcaseBusiness, href: '/worker/assigned-work' },
   { label: 'Attendance', Icon: Clock, href: '/worker/attendance' },
   { label: 'Availability', Icon: CalendarDays, href: '/worker/availability' },
   { label: 'Job History', Icon: History, href: '/worker/job-history' },
   { label: 'Profile', Icon: User, href: '/worker/profile' },
 ]
 
-export default function WorkerSidebar({ role }: { role: WorkerRole }) {
+export default function WorkerSidebar() {
   const pathname = usePathname()
   const [expanded, setExpanded] = useState(false)
-
-  const navItems = role === 'Casual Worker' ? casualWorkerItems : guestItems
 
   const handleLogout = async () => {
     const supabase = createBrowserClient(
@@ -79,7 +66,7 @@ export default function WorkerSidebar({ role }: { role: WorkerRole }) {
       }}
     >
       <Link
-        href="/worker/applications"
+        href="/worker/dashboard"
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -95,7 +82,13 @@ export default function WorkerSidebar({ role }: { role: WorkerRole }) {
           <rect x="8" y="14.75" width="16" height="2.5" rx="1.25" fill="#16A34A" />
           <rect x="8" y="20.5" width="12" height="2.5" rx="1.25" fill="#16A34A" />
           <circle cx="22" cy="10.25" r="3.5" fill="#4ADE80" />
-          <path d="M20.3 10.25L21.5 11.5L23.8 9" stroke="white" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+          <path
+            d="M20.3 10.25L21.5 11.5L23.8 9"
+            stroke="white"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
         </svg>
 
         <span

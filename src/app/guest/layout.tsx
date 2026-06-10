@@ -76,7 +76,7 @@ export default function WorkerLayout({
 
   return (
     <div style={{ minHeight: '100vh', background: '#F9FAFB' }}>
-      <WorkerSidebar role={role} />
+      <WorkerSidebar />
 
       <main style={{ marginLeft: 64, minHeight: '100vh' }}>
         {children}
