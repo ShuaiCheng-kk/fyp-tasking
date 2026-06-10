@@ -10,7 +10,7 @@ import { emailService } from '@/services/email/emailService'
 export async function POST(req: NextRequest) {
   const body = await req.json()
   const { full_name, email, password, phone, company_name, company_description,
-    company_location, company_industry, company_size, company_website, company_logo_url,
+    company_location, company_address, company_postal_code, company_industry, company_size, company_website, company_logo_url,
     departments, plan } = body
 
   console.log('complete-owner-setup called with:', email)
@@ -96,6 +96,8 @@ export async function POST(req: NextRequest) {
       company_name,
       company_description: company_description || '',
       company_location: company_location || null,
+      company_address: company_address || null,
+      company_postal_code: company_postal_code || null,
       company_industry: company_industry || null,
       company_size: company_size || null,
       company_website: company_website || null,

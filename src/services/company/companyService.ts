@@ -21,6 +21,8 @@ export const companyService = {
     owner_id: string
     plan: Company['plan']
     location?: string | null
+    address?: string | null
+    postal_code?: string | null
     industry?: string | null
     size?: string | null
     logo_url?: string | null
@@ -37,6 +39,8 @@ export const companyService = {
       owner_id: internalOwnerId,
       plan: data.plan,
       location: data.location,
+      address: data.address,
+      postal_code: data.postal_code,
       industry: data.industry,
       size: data.size,
       logo_url: data.logo_url,
@@ -155,6 +159,8 @@ export const companyService = {
     name: string
     description: string | null
     location?: string | null
+    address?: string | null
+    postal_code?: string | null
     industry?: string | null
     size?: string | null
     logo_url?: string | null
@@ -218,6 +224,8 @@ export const companyService = {
     plan: Company['plan']
     departments: string[]
     location?: string | null
+    address?: string | null
+    postal_code?: string | null
     industry?: string | null
     size?: string | null
     logo_url?: string | null
@@ -232,6 +240,8 @@ export const companyService = {
       owner_id: internalOwnerId,
       plan: data.plan,
       location: data.location,
+      address: data.address,
+      postal_code: data.postal_code,
       industry: data.industry,
       size: data.size,
       logo_url: data.logo_url,

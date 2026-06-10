@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase';
-import { Building2, UserPlus, Eye, EyeOff, ChevronLeft, Check, X } from 'lucide-react';
+import { Building2, UserPlus, Eye, EyeOff, ChevronLeft, ChevronDown, Check, X } from 'lucide-react';
 import {
   step1,
   ownerStep2,
@@ -241,6 +241,84 @@ function InlineError({ message }: { message: string }) {
   );
 }
 
+// ─── Custom Dropdown ──────────────────────────────────────────────────────────
+
+function DropdownField({ value, options, onChange, placeholder }: {
+  value: string
+  options: { value: string; label: string }[]
+  onChange: (v: string) => void
+  placeholder?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 })
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const h = (e: MouseEvent) => {
+      if (!triggerRef.current?.contains(e.target as Node) && !dropdownRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [open])
+
+  const selected = options.find(o => o.value === value)
+
+  const handleOpen = () => {
+    if (!open && triggerRef.current) {
+      const r = triggerRef.current.getBoundingClientRect()
+      const DROPDOWN_H = Math.min(options.length * 37 + 8, 208)
+      const fitsBelow = r.bottom + DROPDOWN_H + 4 <= window.innerHeight
+      setPos({ top: fitsBelow ? r.bottom + 4 : r.top - DROPDOWN_H - 4, left: r.left, width: r.width })
+    }
+    setOpen(o => !o)
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button ref={triggerRef} type="button" onClick={handleOpen}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '14px 16px', border: `1.5px solid ${open ? '#F97316' : '#E5E7EB'}`, borderRadius: '10px',
+          background: '#FFFFFF', cursor: 'pointer', fontFamily: fB, fontSize: '1rem',
+          color: selected ? '#1C1917' : '#9CA3AF', fontWeight: selected ? 400 : 400,
+          outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s',
+        }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {selected?.label ?? placeholder ?? 'Select...'}
+        </span>
+        <ChevronDown size={16} style={{ color: '#9CA3AF', flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+      </button>
+      {open && (
+        <div ref={dropdownRef} style={{
+          position: 'fixed', top: pos.top, left: pos.left, width: pos.width,
+          background: '#FFFFFF', border: '1.5px solid #E5E7EB', borderRadius: 10,
+          boxShadow: '0 8px 24px rgba(15,23,42,0.12)', zIndex: 9999, maxHeight: 208, overflowY: 'auto',
+          padding: '4px 0',
+        }}>
+          {options.map(opt => {
+            const isSel = opt.value === value
+            return (
+              <button key={opt.value} type="button"
+                onClick={() => { onChange(opt.value); setOpen(false) }}
+                style={{
+                  display: 'block', width: '100%', padding: '9px 16px', textAlign: 'left',
+                  border: 'none', background: isSel ? '#FFF7ED' : 'transparent',
+                  color: isSel ? '#EA580C' : '#374151', fontWeight: isSel ? 700 : 400,
+                  fontFamily: fB, fontSize: '1rem', cursor: 'pointer',
+                }}
+                onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = '#F9FAFB' }}
+                onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = 'transparent' }}
+              >{opt.label}</button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Account form fields (shared between owner and invited) ───────────────────
 
 function AccountFields({ form, setForm, phoneError, clearPhoneError }: {
@@ -348,7 +426,10 @@ export default function GetStartedPage() {
   const [companyName, setCompanyName] = useState('');
   const [companyDesc, setCompanyDesc] = useState('');
   const [companyLocation, setCompanyLocation] = useState('');
+  const [companyAddress, setCompanyAddress] = useState('');
+  const [companyPostal, setCompanyPostal] = useState('');
   const [companyIndustry, setCompanyIndustry] = useState('');
+  const [companyIndustryOther, setCompanyIndustryOther] = useState('');
   const [companySize, setCompanySize] = useState('');
   const [departments, setDepartments] = useState<string[]>(['']);
 
@@ -480,14 +561,18 @@ export default function GetStartedPage() {
       return;
     }
     if (!companyLocation.trim()) { setError('Location is required.'); return; }
-    if (!companyIndustry.trim()) { setError('Industry is required.'); return; }
+    if (!companyIndustry) { setError('Industry is required.'); return; }
+    if (companyIndustry === 'Other' && !companyIndustryOther.trim()) { setError('Please specify your industry.'); return; }
     if (!companySize) { setError('Please select a company size.'); return; }
     setCompanyNameError('');
     setError('');
+    const resolvedIndustry = companyIndustry === 'Other' ? companyIndustryOther.trim() : companyIndustry;
     sessionStorage.setItem('company_name', companyName);
     sessionStorage.setItem('company_description', companyDesc);
     sessionStorage.setItem('company_location', companyLocation);
-    sessionStorage.setItem('company_industry', companyIndustry);
+    sessionStorage.setItem('company_address', companyAddress);
+    sessionStorage.setItem('company_postal', companyPostal);
+    sessionStorage.setItem('company_industry', resolvedIndustry);
     sessionStorage.setItem('company_size', companySize);
     goNext();
   };
@@ -515,6 +600,8 @@ export default function GetStartedPage() {
           company_name: sessionStorage.getItem('company_name'),
           company_description: sessionStorage.getItem('company_description'),
           company_location: sessionStorage.getItem('company_location'),
+          company_address: sessionStorage.getItem('company_address'),
+          company_postal_code: sessionStorage.getItem('company_postal'),
           company_industry: sessionStorage.getItem('company_industry'),
           company_size: sessionStorage.getItem('company_size'),
           company_website: null,
@@ -527,8 +614,8 @@ export default function GetStartedPage() {
       if (!data.success) throw new Error(data.message);
 
       ['owner_full_name', 'owner_email', 'owner_password', 'owner_phone',
-        'company_name', 'company_description', 'company_location', 'company_industry',
-        'company_size', 'departments'].forEach((k) =>
+        'company_name', 'company_description', 'company_location', 'company_address', 'company_postal',
+        'company_industry', 'company_size', 'departments'].forEach((k) =>
         sessionStorage.removeItem(k));
 
       if (data.requiresConfirmation) {
@@ -813,29 +900,64 @@ export default function GetStartedPage() {
                   style={inputStyle}
                 />
               </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div>
+                  <label style={labelStyle}>Address</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 123 Orchard Road"
+                    value={companyAddress}
+                    onChange={(e) => setCompanyAddress(e.target.value)}
+                    style={inputStyle}
+                  />
+                </div>
+                <div>
+                  <label style={labelStyle}>Postal Code</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 238858"
+                    value={companyPostal}
+                    onChange={(e) => setCompanyPostal(e.target.value)}
+                    style={inputStyle}
+                  />
+                </div>
+              </div>
               <div>
                 <label style={labelStyle}>Industry <span style={{ color: '#DC2626' }}>*</span></label>
-                <input
-                  type="text"
-                  placeholder="e.g. Retail, Logistics, Healthcare"
+                <DropdownField
                   value={companyIndustry}
-                  onChange={(e) => { const v = e.target.value; if (/^ /.test(v) || /  /.test(v)) return; setCompanyIndustry(v); }}
-                  style={inputStyle}
+                  onChange={v => { setCompanyIndustry(v); if (v !== 'Other') setCompanyIndustryOther(''); }}
+                  placeholder="Select industry"
+                  options={[
+                    'Retail', 'F&B', 'Logistics', 'Event Management', 'Healthcare',
+                    'Education', 'Technology', 'Finance', 'Construction', 'Hospitality',
+                    'Manufacturing', 'Other',
+                  ].map(i => ({ value: i, label: i }))}
                 />
+                {companyIndustry === 'Other' && (
+                  <input
+                    type="text"
+                    placeholder="Please specify your industry"
+                    value={companyIndustryOther}
+                    onChange={e => setCompanyIndustryOther(e.target.value)}
+                    style={{ ...inputStyle, marginTop: '10px' }}
+                    autoFocus
+                  />
+                )}
               </div>
               <div>
                 <label style={labelStyle}>Number of Staff <span style={{ color: '#DC2626' }}>*</span></label>
-                <select
+                <DropdownField
                   value={companySize}
-                  onChange={(e) => setCompanySize(e.target.value)}
-                  style={{ ...inputStyle, appearance: 'auto' }}
-                >
-                  <option value="">Select size…</option>
-                  <option value="1-10">1–10</option>
-                  <option value="11-50">11–50</option>
-                  <option value="51-200">51–200</option>
-                  <option value="200+">200+</option>
-                </select>
+                  onChange={setCompanySize}
+                  placeholder="Select size…"
+                  options={[
+                    { value: '1-10', label: '1–10' },
+                    { value: '11-50', label: '11–50' },
+                    { value: '51-200', label: '51–200' },
+                    { value: '200+', label: '200+' },
+                  ]}
+                />
               </div>
             </div>
             <div style={{ marginTop: '28px' }}>

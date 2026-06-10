@@ -1925,28 +1925,17 @@ export default function OwnerShiftsPage() {
                         </span>
                         <div style={{ minWidth: 0 }}>
                           <p style={{ margin: 0, color: TEXT_DARK, fontSize: 13, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{member.full_name}</p>
-                          {member.role === 'Manager' ? (
-                            <button
-                              type="button"
-                              onClick={() => router.push(`/owner/communication?tab=messages&partner_id=${member.id}`)}
-                              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, border: 0, background: 'transparent', color: '#CBD5E1', cursor: 'pointer', padding: 0, marginTop: 3, fontSize: 11, fontWeight: 700 }}
-                              onMouseEnter={e => { e.currentTarget.style.color = '#F97316' }}
-                              onMouseLeave={e => { e.currentTarget.style.color = '#CBD5E1' }}
-                            >
-                              <MessageCircle size={11} /> Send message
-                            </button>
-                          ) : (
-                            <p style={{ margin: '3px 0 0', color: '#94A3B8', fontSize: 11, fontWeight: 600 }}>{member.role}</p>
-                          )}
                         </div>
                       </div>
                       <button
                         type="button"
-                        className="assign-btn"
-                        onClick={() => openBatchDrawer(selectedDepartment, member.id)}
-                        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5, border: `1px solid #FDBA74`, borderRadius: 9, background: '#FFF7ED', color: '#EA580C', height: 30, padding: '0 9px', fontSize: 12, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}
+                        onClick={() => router.push(`/owner/communication?tab=messages&partner_id=${member.id}`)}
+                        title="Send message"
+                        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: `1px solid #E2E8F0`, borderRadius: 9, background: '#F8FAFC', color: '#CBD5E1', width: 30, height: 30, cursor: 'pointer', flexShrink: 0 }}
+                        onMouseEnter={e => { e.currentTarget.style.color = '#F97316'; e.currentTarget.style.borderColor = '#FDBA74'; e.currentTarget.style.background = '#FFF7ED' }}
+                        onMouseLeave={e => { e.currentTarget.style.color = '#CBD5E1'; e.currentTarget.style.borderColor = '#E2E8F0'; e.currentTarget.style.background = '#F8FAFC' }}
                       >
-                        <CalendarDays size={13} /> Assign
+                        <MessageCircle size={13} />
                       </button>
                     </div>
                   ))}
@@ -2511,16 +2500,31 @@ export default function OwnerShiftsPage() {
 
       {departmentModal && (
         <Modal title={departmentModal === 'delete' ? 'Delete Department' : departmentModal === 'edit' ? 'Edit Department' : 'Add Department'} onClose={() => setDepartmentModal(null)}>
-          {departmentModal === 'delete' ? (
-            <>
-              <p style={{ color: MUTED, marginTop: 0, fontSize: 13, whiteSpace: 'nowrap' }}>Are you sure you want to delete <strong>{activeDepartment?.name}</strong>? This cannot be undone.</p>
-              {departmentActionError && <div style={errorBoxStyle}>{departmentActionError}</div>}
-              <div style={modalFooterStyle}>
-                <button type="button" onClick={() => setDepartmentModal(null)} style={secondaryButtonStyle}>Cancel</button>
-                <button type="button" onClick={handleDeleteDepartment} disabled={departmentActionLoading} style={{ ...primaryButtonStyle, background: '#DC2626' }}>{departmentActionLoading ? <Spinner /> : <Trash2 size={16} />} Delete</button>
-              </div>
-            </>
-          ) : (
+          {departmentModal === 'delete' ? (() => {
+            const deptMembers = activeDepartment ? (membersByDepartment.get(activeDepartment.id) ?? []) : []
+            const hasMembers = deptMembers.length > 0
+            const managerCount = deptMembers.filter(m => m.role === 'Manager').length
+            const employeeCount = deptMembers.filter(m => m.role === 'Employee').length
+            return (
+              <>
+                {hasMembers ? (
+                  <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 10, padding: '14px 16px', marginTop: 0 }}>
+                    <p style={{ fontSize: 13, color: '#B91C1C', margin: '0 0 4px' }}>Department still has active members.</p>
+                    <p style={{ fontSize: 13, color: '#B91C1C', margin: 0 }}>Reassign or remove all members before deleting this department.</p>
+                  </div>
+                ) : (
+                  <p style={{ color: MUTED, marginTop: 0, fontSize: 13 }}>Are you sure you want to delete <strong>{activeDepartment?.name}</strong>? This cannot be undone.</p>
+                )}
+                {departmentActionError && <div style={errorBoxStyle}>{departmentActionError}</div>}
+                <div style={modalFooterStyle}>
+                  <button type="button" onClick={() => setDepartmentModal(null)} style={secondaryButtonStyle}>Cancel</button>
+                  {!hasMembers && (
+                    <button type="button" onClick={handleDeleteDepartment} disabled={departmentActionLoading} style={{ ...primaryButtonStyle, background: '#DC2626' }}>{departmentActionLoading ? <Spinner /> : <Trash2 size={16} />} Delete</button>
+                  )}
+                </div>
+              </>
+            )
+          })() : (
             <>
               {departmentModal === 'add' && (
                 <div style={{ display: 'inline-flex', border: `1px solid ${PANEL_BORDER}`, borderRadius: 9, overflow: 'hidden', marginBottom: 16 }}>

@@ -7,7 +7,8 @@ import { createClient } from '@/lib/supabase'
 import {
   Plus, X, Trash2, Pencil, Megaphone,
   Send, Search, SquarePen, Check, Bell, MessageSquare, Crown,
-  Users, Globe, UserCog, UserRound,
+  Users, Globe, UserCog, UserRound, Pin, PinOff,
+  ImagePlus, Paperclip, FileText, Download,
 } from 'lucide-react'
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
@@ -182,13 +183,26 @@ export default function OwnerCommunicationPage() {
 
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [filteredConversations, setFilteredConversations] = useState<Conversation[]>([])
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set())
   const [search, setSearch] = useState('')
-  const [selectedConv, setSelectedConv] = useState<Conversation | null>(null)
-  const [messages, setMessages] = useState<Message[]>([])
-  const [msgInput, setMsgInput] = useState('')
-  const [sendingMsg, setSendingMsg] = useState(false)
+
+  // Multi-panel chat state (up to 4 panels)
+  const [openPanelIds, setOpenPanelIds] = useState<string[]>([])
+  const [panelMessages, setPanelMessages] = useState<Record<string, Message[]>>({})
+  const [panelInputs, setPanelInputs] = useState<Record<string, string>>({})
+  const [panelSending, setPanelSending] = useState<Record<string, boolean>>({})
+  const [panelAttachFile, setPanelAttachFile] = useState<Record<string, File | null>>({})
+  const [panelAttachPreview, setPanelAttachPreview] = useState<Record<string, string | null>>({})
+  const [panelUploading, setPanelUploading] = useState<Record<string, boolean>>({})
+  const [dragOver, setDragOver] = useState<string | null>(null) // panelId being dragged over
+  const [draggingPanel, setDraggingPanel] = useState<string | null>(null)
+  const panelPhotoRefs = useRef<Record<string, HTMLInputElement | null>>({})
+  const panelFileRefs = useRef<Record<string, HTMLInputElement | null>>({})
+  const panelEndRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
   const [msgSubTab, setMsgSubTab] = useState<'messages' | 'invites'>('messages')
+  // kept for backward compat (pendingPartnerId flow)
+  const [selectedConv, setSelectedConv] = useState<Conversation | null>(null)
   const [invites, setInvites] = useState<InboxInvite[]>([])
   const [inviteFlashes, setInviteFlashes] = useState<InviteFlash[]>([])
   const [inviteLoading, setInviteLoading] = useState(false)
@@ -206,7 +220,6 @@ export default function OwnerCommunicationPage() {
   const [pendingPrefill, setPendingPrefill] = useState('')
   const [conversationsFetched, setConversationsFetched] = useState(false)
 
-  const messagesEndRef = useRef<HTMLDivElement>(null)
   const supabase = createClient()
 
   useEffect(() => {
@@ -316,6 +329,11 @@ export default function OwnerCommunicationPage() {
     if (!internalUserId) return
     fetchConversations()
     fetchUnreadCount()
+    // Load pinned conversations from localStorage
+    try {
+      const raw = localStorage.getItem(`pinned_convs_${internalUserId}`)
+      if (raw) setPinnedIds(new Set(JSON.parse(raw)))
+    } catch {}
   }, [internalUserId, fetchConversations, fetchUnreadCount])
 
   useEffect(() => {
@@ -327,8 +345,8 @@ export default function OwnerCommunicationPage() {
     window.history.replaceState({}, '', '/owner/communication')
     const found = conversations.find(c => c.partnerId === pid)
     if (found) {
-      setSelectedConv(found)
-      if (pre) setMsgInput(pre)
+      openPanel(found.partnerId)
+      if (pre) setPanelInputs(p => ({ ...p, [found.partnerId]: pre }))
     } else {
       fetch(`/api/team/members?company_id=${companyId}`)
         .then(r => r.json())
@@ -339,7 +357,7 @@ export default function OwnerCommunicationPage() {
           const partner = eligible.find(m => m.id === pid)
           if (partner) {
             setSelectedRecipient(partner)
-            setComposeText(pre)
+            setComposeText(pre ?? '')
             setComposeOpen(true)
             setComposeSearch('')
             setComposeError('')
@@ -355,25 +373,36 @@ export default function OwnerCommunicationPage() {
 
   useEffect(() => {
     const q = search.toLowerCase()
-    setFilteredConversations(q ? conversations.filter(c => c.partnerName.toLowerCase().includes(q)) : conversations)
-  }, [search, conversations])
+    const base = q ? conversations.filter(c => c.partnerName.toLowerCase().includes(q)) : conversations
+    const sorted = [...base].sort((a, b) => {
+      const aPin = pinnedIds.has(a.partnerId) ? 0 : 1
+      const bPin = pinnedIds.has(b.partnerId) ? 0 : 1
+      return aPin - bPin
+    })
+    setFilteredConversations(sorted)
+  }, [search, conversations, pinnedIds])
 
-  useEffect(() => {
-    if (!selectedConv || !internalUserId) return
-    fetch(`/api/inbox/messages/${selectedConv.partnerId}?user_id=${internalUserId}`)
+  // Fetch messages when a panel is opened
+  function fetchPanelMessages(partnerId: string) {
+    if (!internalUserId) return
+    fetch(`/api/inbox/messages/${partnerId}?user_id=${internalUserId}`)
       .then(r => r.json())
       .then(d => {
         if (d.success) {
-          setMessages(d.messages ?? [])
+          setPanelMessages(prev => ({ ...prev, [partnerId]: d.messages ?? [] }))
           fetchUnreadCount()
           fetchConversations()
         }
       })
-  }, [selectedConv, internalUserId])
+  }
 
+  // Scroll panel to bottom when messages arrive
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+    for (const pid of openPanelIds) {
+      panelEndRefs.current[pid]?.scrollIntoView({ behavior: 'smooth' })
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panelMessages])
 
   useEffect(() => {
     if (!internalUserId) return
@@ -382,15 +411,19 @@ export default function OwnerCommunicationPage() {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `to_user_id=eq.${internalUserId}` },
         (payload) => {
           const newMsg = payload.new as Message
-          if (selectedConv && newMsg.from_user_id === selectedConv.partnerId) {
-            setMessages(prev => [...prev, newMsg])
-          }
+          // Append to any open panel that matches the sender
+          setPanelMessages(prev => {
+            if (prev[newMsg.from_user_id] !== undefined) {
+              return { ...prev, [newMsg.from_user_id]: [...prev[newMsg.from_user_id], newMsg] }
+            }
+            return prev
+          })
           fetchConversations()
           fetchUnreadCount()
         })
       .subscribe()
     return () => { supabase.removeChannel(channel) }
-  }, [internalUserId, selectedConv])
+  }, [internalUserId])
 
   function handleSelectAnn(ann: Announcement) {
     setSelectedAnn(ann)
@@ -558,36 +591,138 @@ export default function OwnerCommunicationPage() {
       const convData = await convRes.json()
       if (convData.success) {
         setConversations(convData.conversations ?? [])
-        const found = (convData.conversations as Conversation[]).find(c => c.partnerId === selectedRecipient.id)
-        if (found) setSelectedConv(found)
+        if (selectedRecipient) openPanel(selectedRecipient.id)
       }
     } catch (err) {
       setComposeError(err instanceof Error ? err.message : 'Something went wrong')
     } finally { setComposeSending(false) }
   }
 
-  async function handleSendMessage() {
-    if (!msgInput.trim() || !selectedConv || !internalUserId || !companyId) return
-    setSendingMsg(true)
-    const optimistic: Message = {
-      id: `tmp-${Date.now()}`, from_user_id: internalUserId, to_user_id: selectedConv.partnerId,
-      content: msgInput.trim(), created_at: new Date().toISOString(), is_read: false,
+  // ── Panel management ──────────────────────────────────────────────────────────
+
+  function openPanel(partnerId: string) {
+    setOpenPanelIds(prev => {
+      if (prev.includes(partnerId)) return prev // already open
+      const next = prev.length >= 4 ? [...prev.slice(1), partnerId] : [...prev, partnerId]
+      return next
+    })
+    // Fetch messages if not loaded yet
+    if (!panelMessages[partnerId]) {
+      fetchPanelMessages(partnerId)
     }
-    setMessages(prev => [...prev, optimistic])
-    const content = msgInput.trim()
-    setMsgInput('')
+  }
+
+  function closePanel(partnerId: string) {
+    setOpenPanelIds(prev => prev.filter(id => id !== partnerId))
+    setPanelMessages(prev => { const n = { ...prev }; delete n[partnerId]; return n })
+    setPanelInputs(prev => { const n = { ...prev }; delete n[partnerId]; return n })
+    setPanelSending(prev => { const n = { ...prev }; delete n[partnerId]; return n })
+    setPanelAttachFile(prev => { const n = { ...prev }; delete n[partnerId]; return n })
+    setPanelAttachPreview(prev => { const n = { ...prev }; delete n[partnerId]; return n })
+    setPanelUploading(prev => { const n = { ...prev }; delete n[partnerId]; return n })
+  }
+
+  function swapPanels(idA: string, idB: string) {
+    setOpenPanelIds(prev => {
+      const next = [...prev]
+      const iA = next.indexOf(idA)
+      const iB = next.indexOf(idB)
+      if (iA === -1 || iB === -1) return prev
+      ;[next[iA], next[iB]] = [next[iB], next[iA]]
+      return next
+    })
+  }
+
+  async function handleSendMessage(partnerId: string) {
+    const conv = conversations.find(c => c.partnerId === partnerId)
+    const content = (panelInputs[partnerId] ?? '').trim()
+    if (!content || !conv || !internalUserId || !companyId) return
+    setPanelSending(prev => ({ ...prev, [partnerId]: true }))
+    const optimistic: Message = {
+      id: `tmp-${Date.now()}`, from_user_id: internalUserId, to_user_id: partnerId,
+      content, created_at: new Date().toISOString(), is_read: false,
+    }
+    setPanelMessages(prev => ({ ...prev, [partnerId]: [...(prev[partnerId] ?? []), optimistic] }))
+    setPanelInputs(prev => ({ ...prev, [partnerId]: '' }))
     try {
       const res = await fetch('/api/inbox/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from_user_id: internalUserId, to_user_id: selectedConv.partnerId, company_id: companyId, content }),
+        body: JSON.stringify({ from_user_id: internalUserId, to_user_id: partnerId, company_id: companyId, content }),
       })
       const data = await res.json()
       if (data.success) {
-        setMessages(prev => prev.map(m => m.id === optimistic.id ? data.message : m))
+        setPanelMessages(prev => ({
+          ...prev,
+          [partnerId]: (prev[partnerId] ?? []).map(m => m.id === optimistic.id ? data.message : m),
+        }))
         fetchConversations()
       }
-    } finally { setSendingMsg(false) }
+    } finally { setPanelSending(prev => ({ ...prev, [partnerId]: false })) }
+  }
+
+  function pickPanelAttachment(partnerId: string, file: File) {
+    setPanelAttachFile(prev => ({ ...prev, [partnerId]: file }))
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader()
+      reader.onload = e => setPanelAttachPreview(prev => ({ ...prev, [partnerId]: e.target?.result as string }))
+      reader.readAsDataURL(file)
+    } else {
+      setPanelAttachPreview(prev => ({ ...prev, [partnerId]: null }))
+    }
+  }
+
+  function clearPanelAttachment(partnerId: string) {
+    setPanelAttachFile(prev => ({ ...prev, [partnerId]: null }))
+    setPanelAttachPreview(prev => ({ ...prev, [partnerId]: null }))
+    const photoEl = panelPhotoRefs.current[partnerId]
+    const fileEl = panelFileRefs.current[partnerId]
+    if (photoEl) photoEl.value = ''
+    if (fileEl) fileEl.value = ''
+  }
+
+  async function uploadAndSendPanelAttachment(partnerId: string) {
+    const file = panelAttachFile[partnerId]
+    const conv = conversations.find(c => c.partnerId === partnerId)
+    if (!file || !conv || !internalUserId || !companyId) return
+    setPanelUploading(prev => ({ ...prev, [partnerId]: true }))
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      form.append('company_id', companyId)
+      const upRes = await fetch('/api/inbox/upload', { method: 'POST', body: form })
+      const upData = await upRes.json()
+      if (!upData.success) throw new Error(upData.error ?? 'Upload failed')
+      const isImage = file.type.startsWith('image/')
+      const prefix = isImage ? '[image:]' : `[file:${upData.name}]`
+      const content = `${prefix}${upData.url}`
+      const msgRes = await fetch('/api/inbox/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from_user_id: internalUserId, to_user_id: partnerId, company_id: companyId, content }),
+      })
+      const msgData = await msgRes.json()
+      if (msgData.success) {
+        setPanelMessages(prev => ({ ...prev, [partnerId]: [...(prev[partnerId] ?? []), msgData.message] }))
+        fetchConversations()
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Upload failed')
+    } finally {
+      setPanelUploading(prev => ({ ...prev, [partnerId]: false }))
+      clearPanelAttachment(partnerId)
+    }
+  }
+
+  function togglePin(partnerId: string) {
+    if (!internalUserId) return
+    setPinnedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(partnerId)) next.delete(partnerId)
+      else next.add(partnerId)
+      localStorage.setItem(`pinned_convs_${internalUserId}`, JSON.stringify([...next]))
+      return next
+    })
   }
 
   const filteredMembers = composeSearch
@@ -605,7 +740,7 @@ export default function OwnerCommunicationPage() {
   // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ display: 'flex', height: '100vh', background: '#F1F5F9', color: '#0F172A', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+    <div style={{ display: 'flex', height: '100vh', background: '#F7F8FA', color: '#0F172A', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
       <style>{`
         @keyframes fadeSlideUp {
           from { opacity: 0; transform: translateY(12px); }
@@ -639,9 +774,20 @@ export default function OwnerCommunicationPage() {
           animation: msgPop 0.2s ease both;
         }
         .comm-tab-btn {
-          transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+          transition: all 0.13s ease;
         }
-        .comm-tab-btn:hover { transform: translateY(-1px); }
+        .comm-tab-btn:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        .comm-action-btn {
+          transition: background 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease;
+        }
+        .comm-action-btn:hover {
+          background: #EA6C0A !important;
+          transform: translateY(-1px);
+          box-shadow: 0 4px 14px rgba(249,115,22,0.30);
+        }
         .comm-input:focus {
           border-color: #F97316 !important;
           box-shadow: 0 0 0 3px rgba(249,115,22,0.10) !important;
@@ -654,10 +800,10 @@ export default function OwnerCommunicationPage() {
 
       <OwnerSidebar unreadMessages={unreadMessages} unreadAnnouncements={unreadAnnCount} />
 
-      <main style={{ marginLeft: '64px', flex: 1, minWidth: 0, height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: '20px 28px 24px' }}>
+      <main style={{ marginLeft: '64px', flex: 1, minWidth: 0, height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
         {/* Page header */}
-        <div style={{ paddingBottom: 16, flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
+        <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
           <div>
             <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
               {companyName ? `Communication for ${companyName}` : 'Communication'}
@@ -676,14 +822,18 @@ export default function OwnerCommunicationPage() {
           </div>
         </div>
 
+        {/* Single content card — matches Tasks page */}
+        <div style={{ padding: '0 28px 28px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <div style={{ background: '#FFFFFF', borderRadius: 16, border: '1px solid #E5E7EB', boxShadow: '0 1px 6px rgba(0,0,0,0.06)', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
 
-        {/* Tab bar */}
-        <div style={{ flexShrink: 0, background: '#FFFFFF', borderRadius: 14, padding: '0 18px', height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 10, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          {/* ── Card top bar: tabs + action button ── */}
+          <div style={{ padding: '14px 20px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, gap: 12 }}>
+            {/* Tab pills — same style as Task page dept pills */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {([
-                { key: 'chat', label: 'Chat', icon: <MessageSquare size={14} />, badge: unreadMessages },
-                { key: 'announcements', label: 'Announcements', icon: <Megaphone size={14} />, badge: unreadAnnCount },
-                { key: 'invites', label: 'Invites', icon: <Bell size={14} />, badge: invites.length },
+                { key: 'chat',          label: 'Chat',          icon: <MessageSquare size={13} />, badge: unreadMessages  },
+                { key: 'announcements', label: 'Announcements', icon: <Megaphone size={13} />,     badge: unreadAnnCount  },
+                { key: 'invites',       label: 'Invites',       icon: <Bell size={13} />,           badge: invites.length },
               ] as const).map(tab => {
                 const active = activeTab === tab.key
                 return (
@@ -692,17 +842,23 @@ export default function OwnerCommunicationPage() {
                     onClick={() => setActiveTab(tab.key)}
                     className="comm-tab-btn"
                     style={{
-                      height: 38, padding: '0 14px', borderRadius: 10, cursor: 'pointer', fontWeight: 700, fontSize: 13,
-                      background: active ? '#FFF7ED' : '#F8FAFC',
-                      border: active ? '1.5px solid rgba(249,115,22,0.35)' : '1.5px solid #E2E8F0',
-                      color: active ? '#F97316' : '#64748B',
-                      display: 'flex', alignItems: 'center', gap: 7,
+                      padding: '5px 13px', borderRadius: '99px', cursor: 'pointer',
+                      fontWeight: 600, fontSize: '0.8rem',
+                      background: active ? '#111827' : 'transparent',
+                      border: active ? '2px solid #111827' : '1.5px solid #E5E7EB',
+                      color: active ? '#FFFFFF' : '#374151',
+                      display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
                     }}
                   >
                     {tab.icon}
                     {tab.label}
                     {tab.badge > 0 && (
-                      <span style={{ minWidth: 18, height: 18, padding: '0 5px', borderRadius: 999, background: '#F97316', color: '#fff', fontSize: 10, fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <span style={{
+                        minWidth: 17, height: 17, padding: '0 4px', borderRadius: 999,
+                        background: active ? '#F97316' : '#F97316',
+                        color: '#fff', fontSize: 10, fontWeight: 900,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}>
                         {tab.badge}
                       </span>
                     )}
@@ -710,34 +866,37 @@ export default function OwnerCommunicationPage() {
                 )
               })}
             </div>
-            <div>
+            {/* Action button — same style as Task page "+ New Task" */}
+            <div style={{ flexShrink: 0 }}>
               {activeTab === 'chat' && (
                 <button onClick={openCompose} disabled={!communicationReady}
-                  style={{ height: 36, padding: '0 14px', background: communicationReady ? '#F97316' : '#E5E7EB', color: communicationReady ? '#fff' : '#9CA3AF', border: 'none', borderRadius: 9, cursor: communicationReady ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13 }}
+                  className={communicationReady ? 'comm-action-btn' : ''}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: communicationReady ? '#F97316' : '#E5E7EB', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: communicationReady ? '#fff' : '#9CA3AF', cursor: communicationReady ? 'pointer' : 'not-allowed', height: 38 }}
                 >
-                  <SquarePen size={14} strokeWidth={2.5} /> New Message
+                  <SquarePen size={13} strokeWidth={2.5} /> New Message
                 </button>
               )}
               {activeTab === 'announcements' && (
                 <button onClick={() => setShowNewAnnModal(true)}
-                  style={{ height: 36, padding: '0 14px', background: '#F97316', color: '#fff', border: 'none', borderRadius: 9, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13 }}
+                  className="comm-action-btn"
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: '#F97316', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#fff', cursor: 'pointer', height: 38 }}
                 >
-                  <Plus size={14} /> Post Announcement
+                  <Plus size={13} strokeWidth={2.5} /> Post Announcement
                 </button>
               )}
             </div>
-        </div>
+          </div>
 
         {/* Main communication panel */}
-        <section style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+        <section style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
           {/* ── Chat tab ── */}
           {activeTab === 'chat' && (
-            <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '340px minmax(0, 1fr)', gap: 10, overflow: 'hidden' }}>
+            <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '300px minmax(0, 1fr)', gap: 12, overflow: 'hidden', padding: 12 }}>
 
-              {/* Left: conversations */}
-              <div style={{ minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 16, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)' }}>
-                <div style={{ padding: '12px 12px 0', flexShrink: 0 }}>
+              {/* Left: conversations — own card */}
+              <div style={{ minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+                <div style={{ padding: '12px 12px 10px', flexShrink: 0 }}>
                   <div style={{ height: 34, display: 'flex', alignItems: 'center', gap: 7, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 9, padding: '0 10px' }}>
                     <Search size={13} color="#94A3B8" />
                     <input
@@ -748,44 +907,52 @@ export default function OwnerCommunicationPage() {
                   </div>
                 </div>
 
-                <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, padding: 10 }}>
+                <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, padding: '0 10px 10px' }}>
                     {filteredConversations.length === 0 ? (
                       <div style={{ height: 180, borderRadius: 12, background: '#F8FAFC', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 8, fontWeight: 600, fontSize: 13 }}>
                         <MessageSquare size={26} strokeWidth={1.5} />
                         {search ? 'No results' : 'No conversations yet'}
                       </div>
                     ) : filteredConversations.map((conv, i) => {
-                      const active = selectedConv?.partnerId === conv.partnerId
+                      const active = openPanelIds.includes(conv.partnerId)
+                      const isPinned = pinnedIds.has(conv.partnerId)
+                      // clean up preview text for attachments
+                      const previewText = conv.lastMessage.startsWith('[image:]') ? '📷 Photo'
+                        : conv.lastMessage.match(/^\[file:(.+?)\]/) ? `📎 ${conv.lastMessage.match(/^\[file:(.+?)\]/)![1]}`
+                        : conv.lastMessage
                       return (
                         <button
                           key={conv.partnerId}
-                          onClick={() => setSelectedConv(conv)}
+                          onClick={() => openPanel(conv.partnerId)}
                           className="comm-conv-card"
                           style={{
-                            display: 'flex', alignItems: 'center', gap: 10, padding: 11,
-                            background: active ? '#FFF7ED' : '#FFFFFF',
-                            border: active ? '1.5px solid rgba(249,115,22,0.35)' : '1.5px solid #EDF2F7',
-                            borderRadius: 12, cursor: 'pointer', textAlign: 'left', width: '100%', marginBottom: 8,
-                            boxShadow: active ? '0 6px 18px rgba(249,115,22,0.08)' : '0 1px 3px rgba(0,0,0,0.03)',
+                            display: 'flex', alignItems: 'center', gap: 10, padding: '10px 10px',
+                            background: active ? '#FFF7ED' : 'transparent',
+                            border: 'none',
+                            borderRadius: 10, cursor: 'pointer', textAlign: 'left', width: '100%', marginBottom: 2,
+                            borderLeft: active ? '3px solid #F97316' : '3px solid transparent',
                             animationDelay: `${i * 0.04}s`,
                           }}
                         >
-                          <Avatar name={conv.partnerName} size={38} role={conv.partnerRole} />
+                          <Avatar name={conv.partnerName} size={40} role={conv.partnerRole} />
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
                                 <span style={{ fontWeight: conv.unreadCount > 0 ? 800 : 600, fontSize: 13, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                   {conv.partnerName}
                                 </span>
+                                {isPinned && (
+                                  <Pin size={10} strokeWidth={2.5} style={{ color: '#F97316', flexShrink: 0 }} />
+                                )}
                                 {conv.partnerDeleted && (
                                   <span style={{ background: '#F1F5F9', color: '#6B7280', fontSize: 10, padding: '1px 6px', borderRadius: 999, flexShrink: 0, fontWeight: 700 }}>removed</span>
                                 )}
                               </div>
-                              <span style={{ fontSize: 10.5, color: '#9CA3AF', flexShrink: 0, fontWeight: 600 }}>{formatTime(conv.lastTime)}</span>
+                              <span style={{ fontSize: 10.5, color: '#9CA3AF', flexShrink: 0, fontWeight: 500 }}>{formatTime(conv.lastTime)}</span>
                             </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 3 }}>
-                              <span style={{ fontSize: 12, color: conv.unreadCount > 0 ? '#0F172A' : '#94A3B8', fontWeight: conv.unreadCount > 0 ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                                {conv.lastMessage}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                              <span style={{ fontSize: 12, color: conv.unreadCount > 0 ? '#374151' : '#9CA3AF', fontWeight: conv.unreadCount > 0 ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                                {previewText}
                               </span>
                               {conv.unreadCount > 0 && (
                                 <div style={{ minWidth: 18, height: 18, borderRadius: 999, background: '#F97316', color: '#fff', fontSize: 10, fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', flexShrink: 0 }}>
@@ -800,79 +967,223 @@ export default function OwnerCommunicationPage() {
                   </div>
               </div>
 
-              {/* Right: chat */}
-              <div style={{ minWidth: 0, minHeight: 0, flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#FFFFFF', borderRadius: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)' }}>
-                {selectedConv ? (
-                  <>
-                    {/* Chat header */}
-                    <div style={{ padding: '14px 22px', background: '#FFFFFF', borderBottom: '1px solid #EDF2F7', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0, boxShadow: '0 1px 4px rgba(0,0,0,0.03)' }}>
-                      <Avatar name={selectedConv.partnerName} size={40} role={selectedConv.partnerRole} />
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ fontWeight: 800, fontSize: 15, color: '#0F172A' }}>{selectedConv.partnerName}</span>
-                          {selectedConv.partnerDeleted && (
-                            <span style={{ background: '#F1F5F9', color: '#64748B', fontSize: 11, padding: '2px 8px', borderRadius: 999, fontWeight: 700 }}>Account removed</span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Messages */}
-                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      {messages.map(msg => {
-                        const isMine = msg.from_user_id === internalUserId
-                        return (
-                          <div key={msg.id} className="comm-msg-bubble" style={{ display: 'flex', justifyContent: isMine ? 'flex-end' : 'flex-start', alignItems: 'flex-end', gap: 7 }}>
-                            {!isMine && <Avatar name={selectedConv.partnerName} size={26} role={selectedConv.partnerRole} />}
-                            <div style={{
-                              maxWidth: '66%', padding: '9px 13px',
-                              borderRadius: isMine ? '16px 16px 4px 16px' : '16px 16px 16px 4px',
-                              background: isMine ? '#DBEAFE' : '#FFFFFF',
-                              border: isMine ? '1px solid #BFDBFE' : '1px solid #EDF2F7',
-                              color: '#0F172A', fontSize: 13, fontWeight: 500, lineHeight: 1.5,
-                              boxShadow: '0 2px 8px rgba(15,23,42,0.04)',
-                            }}>
-                              {msg.content}
-                              <div style={{ fontSize: 10.5, marginTop: 4, color: '#94A3B8', fontWeight: 600, textAlign: isMine ? 'right' : 'left' }}>
-                                {formatTime(msg.created_at)}
-                              </div>
-                            </div>
-                          </div>
-                        )
-                      })}
-                      <div ref={messagesEndRef} />
-                    </div>
-
-                    {/* Input */}
-                    <div style={{ padding: '12px 20px', background: '#FFFFFF', borderTop: '1px solid #EDF2F7', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-                      <input
-                        value={msgInput}
-                        onChange={e => setMsgInput(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !selectedConv.partnerDeleted) { e.preventDefault(); handleSendMessage() } }}
-                        placeholder={selectedConv.partnerDeleted ? "This user's account no longer exists." : 'Type a message…'}
-                        disabled={selectedConv.partnerDeleted}
-                        className="comm-input"
-                        style={{ flex: 1, height: 40, padding: '0 14px', border: '1.5px solid #E2E8F0', borderRadius: 11, fontSize: 13, fontWeight: 500, outline: 'none', background: selectedConv.partnerDeleted ? '#F8FAFC' : '#FFFFFF', color: selectedConv.partnerDeleted ? '#94A3B8' : '#0F172A', transition: 'border-color 0.15s, box-shadow 0.15s', cursor: selectedConv.partnerDeleted ? 'not-allowed' : undefined }}
-                      />
-                      {!selectedConv.partnerDeleted && (
-                        <button
-                          onClick={handleSendMessage}
-                          disabled={sendingMsg || !msgInput.trim()}
-                          style={{ height: 40, padding: '0 16px', background: sendingMsg || !msgInput.trim() ? '#E5E7EB' : '#F97316', color: sendingMsg || !msgInput.trim() ? '#9CA3AF' : '#fff', border: 'none', borderRadius: 11, cursor: sendingMsg || !msgInput.trim() ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, transition: 'background 0.15s' }}
-                        >
-                          {sendingMsg ? <Spinner size={13} light /> : <Send size={13} />} Send
-                        </button>
-                      )}
-                    </div>
-                  </>
-                ) : (
-                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', borderRadius: 16 }}>
+              {/* Right: multi-panel chat area */}
+              <div style={{ minWidth: 0, minHeight: 0, flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                {openPanelIds.length === 0 ? (
+                  /* Empty state */
+                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
                     <div style={{ textAlign: 'center', color: '#94A3B8' }}>
                       <div style={{ width: 56, height: 56, borderRadius: 18, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px', color: '#F97316' }}>
                         <MessageSquare size={24} strokeWidth={1.5} />
                       </div>
-                      <p style={{ margin: 0, fontWeight: 600, fontSize: 14 }}>Select a conversation to start messaging</p>
+                      <p style={{ margin: 0, fontWeight: 700, fontSize: 14, color: '#374151' }}>Select a conversation to start chatting</p>
+                      <p style={{ margin: '6px 0 0', fontSize: 12, color: '#9CA3AF', fontWeight: 500 }}>You can open up to 4 conversations side by side</p>
                     </div>
+                  </div>
+                ) : (
+                  /* Panel grid — layout depends on count */
+                  <div style={{
+                    flex: 1, minHeight: 0,
+                    display: 'grid',
+                    gridTemplateColumns: openPanelIds.length === 1 ? '1fr'
+                      : openPanelIds.length === 2 ? '1fr 1fr'
+                      : openPanelIds.length === 3 ? '1fr 1fr'
+                      : '1fr 1fr',
+                    gridTemplateRows: openPanelIds.length <= 2 ? '1fr'
+                      : openPanelIds.length === 3 ? '1fr 1fr'
+                      : '1fr 1fr',
+                    gap: 8,
+                  }}>
+                    {openPanelIds.map((partnerId, idx) => {
+                      const conv = conversations.find(c => c.partnerId === partnerId)
+                      if (!conv) return null
+                      const msgs = panelMessages[partnerId] ?? []
+                      const input = panelInputs[partnerId] ?? ''
+                      const sending = panelSending[partnerId] ?? false
+                      const attachFile = panelAttachFile[partnerId] ?? null
+                      const attachPreview = panelAttachPreview[partnerId] ?? null
+                      const uploading = panelUploading[partnerId] ?? false
+                      const isPinned = pinnedIds.has(partnerId)
+                      // 3-panel: slot 0 spans both rows in the left column
+                      const spanStyle: React.CSSProperties = openPanelIds.length === 3 && idx === 0
+                        ? { gridRow: '1 / 3' } : {}
+
+                      return (
+                        <div
+                          key={partnerId}
+                          style={{
+                            ...spanStyle,
+                            display: 'flex', flexDirection: 'column', overflow: 'hidden',
+                            background: '#FFFFFF', borderRadius: 14,
+                            border: dragOver === partnerId ? '2px dashed #F97316' : '1px solid #E5E7EB',
+                            boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
+                            transition: 'border-color 0.15s',
+                          }}
+                          onDragOver={e => { e.preventDefault(); setDragOver(partnerId) }}
+                          onDragLeave={() => setDragOver(null)}
+                          onDrop={e => {
+                            e.preventDefault()
+                            setDragOver(null)
+                            const draggedId = e.dataTransfer.getData('panelId')
+                            if (draggedId && draggedId !== partnerId) swapPanels(draggedId, partnerId)
+                            setDraggingPanel(null)
+                          }}
+                        >
+                          {/* Panel header */}
+                          <div
+                            draggable
+                            onDragStart={e => { e.dataTransfer.setData('panelId', partnerId); setDraggingPanel(partnerId) }}
+                            onDragEnd={() => setDraggingPanel(null)}
+                            style={{ padding: '10px 14px 0', background: '#FFFFFF', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, cursor: openPanelIds.length > 1 ? 'grab' : 'default', userSelect: 'none' }}
+                            title={openPanelIds.length > 1 ? 'Drag to swap panels' : undefined}
+                          >
+                            <Avatar name={conv.partnerName} size={30} role={conv.partnerRole} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                                <span style={{ fontWeight: 800, fontSize: 13, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{conv.partnerName}</span>
+                                {conv.partnerDeleted && <span style={{ background: '#F1F5F9', color: '#64748B', fontSize: 9, padding: '1px 5px', borderRadius: 999, fontWeight: 700, flexShrink: 0 }}>removed</span>}
+                                {isPinned && <Pin size={9} strokeWidth={2.5} style={{ color: '#F97316', flexShrink: 0 }} />}
+                              </div>
+                            </div>
+                            {/* Pin button */}
+                            <button
+                              onClick={() => togglePin(partnerId)}
+                              title={isPinned ? 'Unpin' : 'Pin'}
+                              style={{ flexShrink: 0, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', background: isPinned ? '#FFF7ED' : '#F8FAFC', border: isPinned ? '1.5px solid rgba(249,115,22,0.35)' : '1.5px solid #E2E8F0', borderRadius: 7, cursor: 'pointer', color: isPinned ? '#F97316' : '#94A3B8', transition: 'all 0.15s' }}
+                              onMouseEnter={e => { if (!isPinned) { e.currentTarget.style.background = '#FFF7ED'; e.currentTarget.style.color = '#F97316' } }}
+                              onMouseLeave={e => { if (!isPinned) { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.color = '#94A3B8' } }}
+                            >
+                              {isPinned ? <PinOff size={11} strokeWidth={2.5} /> : <Pin size={11} strokeWidth={2.5} />}
+                            </button>
+                            {/* Close button */}
+                            <button
+                              onClick={() => closePanel(partnerId)}
+                              title="Close"
+                              style={{ flexShrink: 0, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: 7, cursor: 'pointer', color: '#94A3B8', transition: 'all 0.15s' }}
+                              onMouseEnter={e => { e.currentTarget.style.background = '#FEF2F2'; e.currentTarget.style.color = '#DC2626'; e.currentTarget.style.borderColor = 'rgba(220,38,38,0.3)' }}
+                              onMouseLeave={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.color = '#94A3B8'; e.currentTarget.style.borderColor = '#E2E8F0' }}
+                            >
+                              <X size={11} strokeWidth={2.5} />
+                            </button>
+                          </div>
+                          {/* Divider */}
+                          <div style={{ height: 1, background: '#111827', margin: '8px 0 0', flexShrink: 0 }} />
+
+                          {/* Messages */}
+                          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 7 }}>
+                            {msgs.map(msg => {
+                              const isMine = msg.from_user_id === internalUserId
+                              const isImage = msg.content.startsWith('[image:]')
+                              const fileMatch = msg.content.match(/^\[file:(.+?)\](.+)$/)
+                              const isFile = Boolean(fileMatch)
+                              const imgUrl = isImage ? msg.content.slice('[image:]'.length) : null
+                              const fileName = fileMatch?.[1] ?? null
+                              const fileUrl = fileMatch?.[2] ?? null
+                              return (
+                                <div key={msg.id} className="comm-msg-bubble" style={{ display: 'flex', justifyContent: isMine ? 'flex-end' : 'flex-start', alignItems: 'flex-end', gap: 6 }}>
+                                  {!isMine && <Avatar name={conv.partnerName} size={22} role={conv.partnerRole} />}
+                                  {isImage && imgUrl ? (
+                                    <div style={{ maxWidth: '65%', display: 'flex', flexDirection: 'column', alignItems: isMine ? 'flex-end' : 'flex-start', gap: 3 }}>
+                                      <a href={imgUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'block', borderRadius: isMine ? '12px 12px 3px 12px' : '12px 12px 12px 3px', overflow: 'hidden', border: '1px solid #E2E8F0' }}>
+                                        <img src={imgUrl} alt="attachment" style={{ display: 'block', maxWidth: '100%', maxHeight: 180, objectFit: 'cover' }} />
+                                      </a>
+                                      <span style={{ fontSize: 10, color: '#94A3B8', fontWeight: 600 }}>{formatTime(msg.created_at)}</span>
+                                    </div>
+                                  ) : isFile && fileUrl ? (
+                                    <div style={{ maxWidth: '70%', padding: '8px 11px', borderRadius: isMine ? '13px 13px 3px 13px' : '13px 13px 13px 3px', background: isMine ? '#DBEAFE' : '#FFFFFF', border: isMine ? '1px solid #BFDBFE' : '1px solid #EDF2F7', boxShadow: '0 1px 4px rgba(15,23,42,0.04)' }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                                        <div style={{ width: 30, height: 30, borderRadius: 8, background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><FileText size={14} color="#3B82F6" /></div>
+                                        <div style={{ minWidth: 0, flex: 1 }}>
+                                          <p style={{ margin: 0, fontSize: 11.5, fontWeight: 700, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fileName}</p>
+                                          <a href={fileUrl} target="_blank" rel="noopener noreferrer" download={fileName ?? true} style={{ fontSize: 10.5, color: '#3B82F6', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 2, marginTop: 1, textDecoration: 'none' }}><Download size={9} /> Download</a>
+                                        </div>
+                                      </div>
+                                      <div style={{ fontSize: 10, marginTop: 4, color: '#94A3B8', fontWeight: 600, textAlign: isMine ? 'right' : 'left' }}>{formatTime(msg.created_at)}</div>
+                                    </div>
+                                  ) : (
+                                    <div style={{ maxWidth: '70%', padding: '8px 11px', borderRadius: isMine ? '13px 13px 3px 13px' : '13px 13px 13px 3px', background: isMine ? '#DBEAFE' : '#FFFFFF', border: isMine ? '1px solid #BFDBFE' : '1px solid #EDF2F7', color: '#0F172A', fontSize: 12.5, fontWeight: 500, lineHeight: 1.5, boxShadow: '0 1px 4px rgba(15,23,42,0.04)' }}>
+                                      {msg.content}
+                                      <div style={{ fontSize: 10, marginTop: 3, color: '#94A3B8', fontWeight: 600, textAlign: isMine ? 'right' : 'left' }}>{formatTime(msg.created_at)}</div>
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })}
+                            <div ref={el => { panelEndRefs.current[partnerId] = el }} />
+                          </div>
+
+                          {/* Attachment preview */}
+                          {attachFile && (
+                            <div style={{ padding: '6px 14px 0', background: '#FFFFFF', flexShrink: 0 }}>
+                              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: 9, padding: '5px 9px', maxWidth: '100%' }}>
+                                {attachPreview ? (
+                                  <img src={attachPreview} alt="preview" style={{ width: 36, height: 36, objectFit: 'cover', borderRadius: 6, flexShrink: 0 }} />
+                                ) : (
+                                  <div style={{ width: 30, height: 30, borderRadius: 7, background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><FileText size={14} color="#3B82F6" /></div>
+                                )}
+                                <div style={{ minWidth: 0 }}>
+                                  <p style={{ margin: 0, fontSize: 11.5, fontWeight: 700, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>{attachFile.name}</p>
+                                  <p style={{ margin: '1px 0 0', fontSize: 10.5, color: '#94A3B8', fontWeight: 500 }}>{(attachFile.size / 1024).toFixed(1)} KB</p>
+                                </div>
+                                <button onClick={() => clearPanelAttachment(partnerId)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', padding: 2, display: 'flex', flexShrink: 0 }}><X size={12} /></button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Divider above input */}
+                          <div style={{ height: 1, background: '#111827', flexShrink: 0 }} />
+
+                          {/* Input bar */}
+                          <div style={{ padding: '8px 12px', background: '#FFFFFF', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                            {/* Hidden file inputs scoped to this panel */}
+                            <input
+                              type="file" accept="image/*" style={{ display: 'none' }}
+                              ref={el => { panelPhotoRefs.current[partnerId] = el }}
+                              onChange={e => { const f = e.target.files?.[0]; if (f) pickPanelAttachment(partnerId, f) }}
+                            />
+                            <input
+                              type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.zip" style={{ display: 'none' }}
+                              ref={el => { panelFileRefs.current[partnerId] = el }}
+                              onChange={e => { const f = e.target.files?.[0]; if (f) pickPanelAttachment(partnerId, f) }}
+                            />
+                            {!conv.partnerDeleted && (
+                              <button onClick={() => panelPhotoRefs.current[partnerId]?.click()} title="Send photo"
+                                style={{ flexShrink: 0, width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: 9, cursor: 'pointer', color: '#64748B', transition: 'all 0.15s' }}
+                                onMouseEnter={e => { e.currentTarget.style.background = '#FFF7ED'; e.currentTarget.style.borderColor = 'rgba(249,115,22,0.35)'; e.currentTarget.style.color = '#F97316' }}
+                                onMouseLeave={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.borderColor = '#E2E8F0'; e.currentTarget.style.color = '#64748B' }}>
+                                <ImagePlus size={14} strokeWidth={2} />
+                              </button>
+                            )}
+                            {!conv.partnerDeleted && (
+                              <button onClick={() => panelFileRefs.current[partnerId]?.click()} title="Send file"
+                                style={{ flexShrink: 0, width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: 9, cursor: 'pointer', color: '#64748B', transition: 'all 0.15s' }}
+                                onMouseEnter={e => { e.currentTarget.style.background = '#EFF6FF'; e.currentTarget.style.borderColor = 'rgba(59,130,246,0.35)'; e.currentTarget.style.color = '#3B82F6' }}
+                                onMouseLeave={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.borderColor = '#E2E8F0'; e.currentTarget.style.color = '#64748B' }}>
+                                <Paperclip size={13} strokeWidth={2} />
+                              </button>
+                            )}
+                            <input
+                              value={input}
+                              onChange={e => setPanelInputs(p => ({ ...p, [partnerId]: e.target.value }))}
+                              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !conv.partnerDeleted) { e.preventDefault(); if (attachFile) uploadAndSendPanelAttachment(partnerId); else handleSendMessage(partnerId) } }}
+                              placeholder={conv.partnerDeleted ? "Account removed" : 'Type a message…'}
+                              disabled={conv.partnerDeleted}
+                              className="comm-input"
+                              style={{ flex: 1, height: 34, padding: '0 11px', border: '1.5px solid #E2E8F0', borderRadius: 9, fontSize: 12.5, fontWeight: 500, outline: 'none', background: conv.partnerDeleted ? '#F8FAFC' : '#FFFFFF', color: conv.partnerDeleted ? '#94A3B8' : '#0F172A', cursor: conv.partnerDeleted ? 'not-allowed' : undefined, transition: 'border-color 0.15s, box-shadow 0.15s' }}
+                            />
+                            {!conv.partnerDeleted && (
+                              <button
+                                onClick={() => { if (attachFile) uploadAndSendPanelAttachment(partnerId); else handleSendMessage(partnerId) }}
+                                disabled={sending || uploading || (!input.trim() && !attachFile)}
+                                style={{ height: 34, padding: '0 12px', background: (sending || uploading || (!input.trim() && !attachFile)) ? '#E5E7EB' : '#F97316', color: (sending || uploading || (!input.trim() && !attachFile)) ? '#9CA3AF' : '#fff', border: 'none', borderRadius: 9, cursor: (sending || uploading || (!input.trim() && !attachFile)) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 5, fontWeight: 700, fontSize: 12, transition: 'background 0.15s', flexShrink: 0 }}
+                              >
+                                {(sending || uploading) ? <Spinner size={12} light /> : <Send size={12} />} Send
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
               </div>
@@ -881,12 +1192,12 @@ export default function OwnerCommunicationPage() {
 
           {/* ── Announcements tab ── */}
           {activeTab === 'announcements' && (
-            <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '340px minmax(0, 1fr)', gap: 10, overflow: 'hidden' }}>
+            <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '300px minmax(0, 1fr)', gap: 12, overflow: 'hidden', padding: 12 }}>
 
               {/* Left: list */}
-              <div style={{ minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 16, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)' }}>
+              <div style={{ minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
 
-                <div style={{ padding: '10px 12px 0', flexShrink: 0 }}>
+                <div style={{ padding: '10px 12px 0', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <div style={{ height: 36, display: 'flex', alignItems: 'center', gap: 8, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 9, padding: '0 11px' }}>
                     <Search size={13} color="#94A3B8" />
                     <input
@@ -896,6 +1207,24 @@ export default function OwnerCommunicationPage() {
                       style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: 12, color: '#0F172A', fontWeight: 500 }}
                     />
                   </div>
+                  {unreadAnnCount > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!companyId || !internalUserId) return
+                          const allIds = new Set(announcements.map(a => a.id))
+                          setReadIds(allIds)
+                          saveReadIds(companyId, internalUserId, allIds)
+                        }}
+                        style={{ cursor: 'pointer', borderRadius: 999, border: '1px solid #E2E8F0', background: '#fff', padding: '4px 12px', fontSize: 11, fontWeight: 600, color: '#64748B', transition: 'all 0.15s' }}
+                        onMouseEnter={e => { e.currentTarget.style.background = '#F8FAFC' }}
+                        onMouseLeave={e => { e.currentTarget.style.background = '#fff' }}
+                      >
+                        Mark all read
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, padding: 10 }}>
@@ -929,14 +1258,7 @@ export default function OwnerCommunicationPage() {
                           </span>
                           <span style={{ fontSize: 11, color: '#94A3B8', whiteSpace: 'nowrap', flexShrink: 0, fontWeight: 600 }}>{formatTime(ann.created_at)}</span>
                         </div>
-                        <p style={{ margin: 0, fontSize: 11.5, color: '#64748B', lineHeight: 1.4, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-                          {ann.content}
-                        </p>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          {ann.created_by_name && (
-                            <span style={{ fontSize: 11, color: '#94A3B8', fontWeight: 600 }}>{ann.created_by_name}</span>
-                          )}
-                          <div style={{ flex: 1 }} />
+                        <div style={{ paddingLeft: 14 }}>
                           <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999, display: 'inline-flex', alignItems: 'center', gap: 3, background: deptName ? '#EFF6FF' : '#F1F5F9', color: deptName ? '#2563EB' : '#64748B' }}>
                             {deptName ? null : <Globe size={9} />}
                             {deptName ?? 'Company-wide'}
@@ -949,7 +1271,7 @@ export default function OwnerCommunicationPage() {
               </div>
 
               {/* Right: detail */}
-              <div style={{ minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#FFFFFF', borderRadius: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)' }}>
+              <div style={{ minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
                 {selectedAnn ? (
                   <>
                     <div style={{ flexShrink: 0, background: '#FFFFFF', borderBottom: '1px solid #EDF2F7', padding: '16px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 18 }}>
@@ -982,14 +1304,13 @@ export default function OwnerCommunicationPage() {
                       </div>
                     </div>
                     <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 28 }}>
-                      <article style={{ maxWidth: 760, background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 16, padding: '28px 32px', boxShadow: '0 4px 20px rgba(15,23,42,0.05)', position: 'relative', overflow: 'hidden' }}>
-                        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: 'linear-gradient(90deg, #F97316, #FB923C)' }} />
+                      <article style={{ maxWidth: 760, background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 16, padding: '28px 32px', boxShadow: '0 4px 20px rgba(15,23,42,0.05)' }}>
                         <p style={{ margin: 0, color: '#334155', fontSize: 14.5, lineHeight: 1.85, whiteSpace: 'pre-wrap' }}>{selectedAnn.content}</p>
                       </article>
                     </div>
                   </>
                 ) : (
-                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, background: '#F8FAFC', borderRadius: 16 }}>
+                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, background: '#FFFFFF' }}>
                     <div style={{ textAlign: 'center', color: '#94A3B8' }}>
                       <div style={{ width: 56, height: 56, borderRadius: 18, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px', color: '#F97316' }}>
                         <Megaphone size={24} strokeWidth={1.5} />
@@ -1004,7 +1325,7 @@ export default function OwnerCommunicationPage() {
 
           {/* ── Invites tab ── */}
           {activeTab === 'invites' && (
-            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 24, background: '#FFFFFF', borderRadius: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)' }}>
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 24, background: '#FFFFFF' }}>
               {inviteLoading ? (
                 <div style={{ padding: 48, textAlign: 'center' }}><Spinner size={18} /></div>
               ) : invites.length === 0 ? (
@@ -1050,6 +1371,8 @@ export default function OwnerCommunicationPage() {
             </div>
           )}
         </section>
+          </div>{/* /card inner */}
+        </div>{/* /card outer padding */}
       </main>
 
       {/* ── Toast flash ── */}
@@ -1075,7 +1398,7 @@ export default function OwnerCommunicationPage() {
               <h3 style={{ fontWeight: 800, fontSize: '1rem', color: '#0F172A', margin: 0 }}>Delete Announcement</h3>
             </div>
             <p style={{ fontSize: 13.5, color: '#64748B', margin: '0 0 20px', lineHeight: 1.6 }}>
-              Are you sure you want to delete this announcement? This cannot be undone.
+              Are you sure you want to delete this announcement?
             </p>
             <div style={{ display: 'flex', gap: 10 }}>
               <button onClick={() => setDeleteConfirmId(null)} disabled={deleting}

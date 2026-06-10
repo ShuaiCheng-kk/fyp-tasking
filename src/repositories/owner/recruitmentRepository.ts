@@ -257,4 +257,5 @@ export const recruitmentRepository = {
       .eq('role', 'Casual Worker')
     if (error) throw new Error(error.message)
   },
+
 }

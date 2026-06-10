@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { owner_id, name, description, plan, location, industry, size, logo_url, website } = body as Record<string, unknown>
+  const { owner_id, name, description, plan, location, address, postal_code, industry, size, logo_url, website } = body as Record<string, unknown>
 
   if (!owner_id || typeof owner_id !== 'string') {
     return NextResponse.json({ success: false, message: 'owner_id is required' }, { status: 400 })
@@ -37,6 +37,8 @@ export async function POST(req: NextRequest) {
       description: typeof description === 'string' ? description : null,
       plan: plan as Company['plan'],
       location: typeof location === 'string' ? location.trim() || null : null,
+      address: typeof address === 'string' ? address.trim() || null : null,
+      postal_code: typeof postal_code === 'string' ? postal_code.trim() || null : null,
       industry: typeof industry === 'string' ? industry.trim() || null : null,
       size: typeof size === 'string' ? size.trim() || null : null,
       logo_url: typeof logo_url === 'string' ? logo_url.trim() || null : null,

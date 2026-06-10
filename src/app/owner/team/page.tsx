@@ -121,6 +121,84 @@ const modalLabelStyle: React.CSSProperties = {
   marginBottom: 6,
 }
 
+// ─── Custom Dropdown ──────────────────────────────────────────────────────────
+
+function DropdownField({ value, options, onChange, placeholder }: {
+  value: string
+  options: { value: string; label: string }[]
+  onChange: (v: string) => void
+  placeholder?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 })
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const h = (e: MouseEvent) => {
+      if (!triggerRef.current?.contains(e.target as Node) && !dropdownRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [open])
+
+  const selected = options.find(o => o.value === value)
+
+  const handleOpen = () => {
+    if (!open && triggerRef.current) {
+      const r = triggerRef.current.getBoundingClientRect()
+      const DROPDOWN_H = Math.min(options.length * 37 + 8, 208)
+      const fitsBelow = r.bottom + DROPDOWN_H + 4 <= window.innerHeight
+      setPos({ top: fitsBelow ? r.bottom + 4 : r.top - DROPDOWN_H - 4, left: r.left, width: r.width })
+    }
+    setOpen(o => !o)
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button ref={triggerRef} type="button" onClick={handleOpen}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '9px 11px', border: `1px solid ${open ? '#F97316' : '#E2E8F0'}`, borderRadius: 8,
+          background: '#FFFFFF', cursor: 'pointer', fontSize: 13,
+          color: selected ? '#0F172A' : '#94A3B8', fontWeight: selected ? 500 : 400,
+          outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s', minHeight: 40,
+        }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {selected?.label ?? placeholder ?? 'Select...'}
+        </span>
+        <ChevronDown size={13} style={{ color: '#94A3B8', flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+      </button>
+      {open && (
+        <div ref={dropdownRef} style={{
+          position: 'fixed', top: pos.top, left: pos.left, width: pos.width,
+          background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 10,
+          boxShadow: '0 8px 24px rgba(15,23,42,0.12)', zIndex: 9999, maxHeight: 208, overflowY: 'auto',
+          padding: '4px 0',
+        }}>
+          {options.map(opt => {
+            const isSel = opt.value === value
+            return (
+              <button key={opt.value} type="button"
+                onClick={() => { onChange(opt.value); setOpen(false) }}
+                style={{
+                  display: 'block', width: '100%', padding: '8px 14px', textAlign: 'left',
+                  border: 'none', background: isSel ? '#FFF7ED' : 'transparent',
+                  color: isSel ? '#EA580C' : '#374151', fontWeight: isSel ? 700 : 400,
+                  fontSize: 13, cursor: 'pointer',
+                }}
+                onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = '#F9FAFB' }}
+                onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = 'transparent' }}
+              >{opt.label}</button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Role avatar config ───────────────────────────────────────────────────────
 
 function RoleAvatar({ role, size = 36 }: { role: string; size?: number }) {
@@ -449,17 +527,20 @@ export default function TeamPage() {
   const [companyName,        setCompanyName]        = useState('')
   const [ownerName,          setOwnerName]          = useState('')
   const [currentPlan,        setCurrentPlan]        = useState('Free')
-  const [companyProfile,     setCompanyProfile]     = useState<{ description: string | null; location: string | null; industry: string | null; size: string | null } | null>(null)
+  const [companyProfile,     setCompanyProfile]     = useState<{ description: string | null; location: string | null; address: string | null; postal_code: string | null; industry: string | null; size: string | null } | null>(null)
   const [editProfileOpen,    setEditProfileOpen]    = useState(false)
   const [editProfileName,    setEditProfileName]    = useState('')
   const [editProfileDesc,    setEditProfileDesc]    = useState('')
   const [editProfileLoc,     setEditProfileLoc]     = useState('')
-  const [editProfileIndustry,setEditProfileIndustry] = useState('')
-  const [editProfileSize,    setEditProfileSize]    = useState('')
+  const [editProfileAddress, setEditProfileAddress] = useState('')
+  const [editProfilePostal,  setEditProfilePostal]  = useState('')
+  const [editProfileIndustry,     setEditProfileIndustry]     = useState('')
+  const [editProfileIndustryOther,setEditProfileIndustryOther] = useState('')
+  const [editProfileSize,         setEditProfileSize]          = useState('')
   const [editProfileLoading, setEditProfileLoading] = useState(false)
   const [editProfileError,   setEditProfileError]   = useState('')
 
-  const INDUSTRIES = ['Retail', 'F&B', 'Logistics', 'Event Management']
+  const INDUSTRIES = ['Retail', 'F&B', 'Logistics', 'Event Management', 'Healthcare', 'Education', 'Technology', 'Finance', 'Construction', 'Hospitality', 'Manufacturing', 'Other']
   const SIZES = ['1-10', '11-50', '51-200', '200+']
 
   // Team members
@@ -691,6 +772,8 @@ export default function TeamPage() {
             setCompanyProfile({
               description: companyData.company.description ?? null,
               location: companyData.company.location ?? null,
+              address: companyData.company.address ?? null,
+              postal_code: companyData.company.postal_code ?? null,
               industry: companyData.company.industry ?? null,
               size: companyData.company.size ?? null,
             })
@@ -715,7 +798,9 @@ export default function TeamPage() {
           name: editProfileName.trim(),
           description: editProfileDesc || null,
           location: editProfileLoc || null,
-          industry: editProfileIndustry || null,
+          address: editProfileAddress || null,
+          postal_code: editProfilePostal || null,
+          industry: editProfileIndustry === 'Other' ? (editProfileIndustryOther.trim() || null) : (editProfileIndustry || null),
           size: editProfileSize || null,
           website: null,
           logo_url: null,
@@ -723,8 +808,9 @@ export default function TeamPage() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
+      const savedIndustry = editProfileIndustry === 'Other' ? (editProfileIndustryOther.trim() || null) : (editProfileIndustry || null)
       setCompanyName(editProfileName.trim())
-      setCompanyProfile({ description: editProfileDesc || null, location: editProfileLoc || null, industry: editProfileIndustry || null, size: editProfileSize || null })
+      setCompanyProfile({ description: editProfileDesc || null, location: editProfileLoc || null, address: editProfileAddress || null, postal_code: editProfilePostal || null, industry: savedIndustry, size: editProfileSize || null })
       setEditProfileOpen(false)
     } catch (err) { setEditProfileError(err instanceof Error ? err.message : 'Failed to update') }
     finally { setEditProfileLoading(false) }
@@ -1083,10 +1169,11 @@ export default function TeamPage() {
   const sendDisabled = inviteLoading || !!noManagersInDept ||
     ((inviteRole === 'Manager' || inviteRole === 'Employee') && !inviteDeptId)
 
-  const partnerCount  = teamMembers.filter(m => m.role === 'Partner').length
-  const managerCount  = teamMembers.filter(m => m.role === 'Manager').length
-  const employeeCount = teamMembers.filter(m => m.role === 'Employee').length
-  const totalInternal = teamMembers.filter(m => !['Owner', 'Partner'].includes(m.role)).length
+  const partnerCount      = teamMembers.filter(m => m.role === 'Partner').length
+  const managerCount      = teamMembers.filter(m => m.role === 'Manager').length
+  const employeeCount     = teamMembers.filter(m => m.role === 'Employee').length
+  const casualWorkerCount = teamMembers.filter(m => m.role === 'Casual Worker').length
+  const totalInternal     = managerCount + employeeCount
 
   function timeAgo(ts: string): string {
     const diff = Math.floor((Date.now() - new Date(ts).getTime()) / 1000)
@@ -1129,6 +1216,7 @@ export default function TeamPage() {
         .team-stat-card:nth-child(2) { animation: fadeSlideUp 0.36s ease both 0.08s; }
         .team-stat-card:nth-child(3) { animation: fadeSlideUp 0.36s ease both 0.12s; }
         .team-stat-card:nth-child(4) { animation: fadeSlideUp 0.36s ease both 0.16s; }
+        .team-stat-card:nth-child(5) { animation: fadeSlideUp 0.36s ease both 0.20s; }
         .team-panel-card {
           transition: box-shadow 0.22s ease, transform 0.22s ease;
         }
@@ -1177,7 +1265,7 @@ export default function TeamPage() {
 
           {/* ── Stat cards ─────────────────────────────────────────────────── */}
           {companyId && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 14, marginBottom: 24 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 14, marginBottom: 24 }}>
               {[
                 {
                   label: 'Total Staff',
@@ -1202,6 +1290,12 @@ export default function TeamPage() {
                   value: teamLoading ? null : employeeCount,
                   icon: <UserRound size={16} style={{ color: '#6B7280' }} />,
                   accentBg: '#F3F4F6',
+                },
+                {
+                  label: 'Casual Workers',
+                  value: teamLoading ? null : casualWorkerCount,
+                  icon: <HardHat size={16} style={{ color: '#2563EB' }} />,
+                  accentBg: '#EFF6FF',
                 },
               ].map(card => (
                 <article key={card.label} className="team-stat-card" style={{
@@ -1229,7 +1323,7 @@ export default function TeamPage() {
 
           {/* Partners badge row (if any) */}
           {partnerCount > 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20, padding: '10px 16px', background: '#0F172A', borderRadius: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.12)', animation: 'fadeSlideUp 0.4s ease both 0.28s' }}>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 20, padding: '10px 16px', background: '#0F172A', borderRadius: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.12)', animation: 'fadeSlideUp 0.4s ease both 0.28s', width: 'fit-content' }}>
               <Crown size={14} style={{ color: '#F97316', flexShrink: 0 }} />
               <span style={{ fontSize: 13, fontWeight: 700, color: '#FFFFFF' }}>
                 {partnerCount} Partner{partnerCount !== 1 ? 's' : ''} in this company
@@ -1259,7 +1353,17 @@ export default function TeamPage() {
                         setEditProfileName(companyName)
                         setEditProfileDesc(companyProfile?.description ?? '')
                         setEditProfileLoc(companyProfile?.location ?? '')
-                        setEditProfileIndustry(companyProfile?.industry ?? '')
+                        setEditProfileAddress(companyProfile?.address ?? '')
+                        setEditProfilePostal(companyProfile?.postal_code ?? '')
+                        const savedIndustry = companyProfile?.industry ?? ''
+                        const knownIndustries = ['Retail', 'F&B', 'Logistics', 'Event Management', 'Healthcare', 'Education', 'Technology', 'Finance', 'Construction', 'Hospitality', 'Manufacturing', 'Other']
+                        if (savedIndustry && !knownIndustries.includes(savedIndustry)) {
+                          setEditProfileIndustry('Other')
+                          setEditProfileIndustryOther(savedIndustry)
+                        } else {
+                          setEditProfileIndustry(savedIndustry)
+                          setEditProfileIndustryOther('')
+                        }
                         setEditProfileSize(companyProfile?.size ?? '')
                         setEditProfileError('')
                         setEditProfileOpen(true)
@@ -1772,28 +1876,14 @@ export default function TeamPage() {
             </div>
 
             {/* Actions */}
-            {(canRemove(profileMember) || (currentUserRole === 'Owner' && (profileMember.role === 'Manager' || profileMember.role === 'Employee'))) && (
+            {canRemove(profileMember) && (
               <div style={{ padding: '0 24px 20px', display: 'flex', gap: 8 }}>
-                {currentUserRole === 'Owner' && (profileMember.role === 'Manager' || profileMember.role === 'Employee') && (
-                  <button
-                    onClick={() => {
-                      setProfileMember(null)
-                      if (profileMember.role === 'Manager') openEditManagerModal(profileMember)
-                      else { setChangeDeptModal({ member: profileMember }); setChangeDeptSelectedId(profileMember.department_id ?? ''); setChangeDeptError('') }
-                    }}
-                    style={{ flex: 1, height: 40, borderRadius: 10, border: '1.5px solid #E5E7EB', background: '#FFFFFF', fontWeight: 600, fontSize: 13, color: '#374151', cursor: 'pointer' }}
-                  >
-                    Edit
-                  </button>
-                )}
-                {canRemove(profileMember) && (
-                  <button
-                    onClick={() => { setProfileMember(null); setRemoveModal(profileMember); setRemoveError('') }}
-                    style={{ flex: 1, height: 40, borderRadius: 10, border: '1.5px solid #FECACA', background: '#FFFFFF', fontWeight: 600, fontSize: 13, color: '#DC2626', cursor: 'pointer' }}
-                  >
-                    Remove
-                  </button>
-                )}
+                <button
+                  onClick={() => { setProfileMember(null); setRemoveModal(profileMember); setRemoveError('') }}
+                  style={{ flex: 1, height: 40, borderRadius: 10, border: '1.5px solid #FECACA', background: '#FFFFFF', fontWeight: 600, fontSize: 13, color: '#DC2626', cursor: 'pointer' }}
+                >
+                  Remove
+                </button>
               </div>
             )}
           </ModalBox>
@@ -2085,24 +2175,41 @@ export default function TeamPage() {
                 </div>
                 <div>
                   <label style={modalLabelStyle}>Size</label>
-                  <div style={{ position: 'relative' }}>
-                    <select value={editProfileSize} onChange={e => setEditProfileSize(e.target.value)} style={{ ...modalInputStyle, paddingRight: 28, appearance: 'none', cursor: 'pointer' }}>
-                      <option value="">Select size</option>
-                      {SIZES.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                    <ChevronDown size={14} style={{ position: 'absolute', right: 9, top: '50%', transform: 'translateY(-50%)', color: '#94A3B8', pointerEvents: 'none' }} />
-                  </div>
+                  <DropdownField
+                    value={editProfileSize}
+                    onChange={setEditProfileSize}
+                    placeholder="Select size"
+                    options={SIZES.map(s => ({ value: s, label: s }))}
+                  />
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div>
+                  <label style={modalLabelStyle}>Address</label>
+                  <input value={editProfileAddress} onChange={e => setEditProfileAddress(e.target.value)} placeholder="e.g. 123 Orchard Road" style={modalInputStyle} />
+                </div>
+                <div>
+                  <label style={modalLabelStyle}>Postal Code</label>
+                  <input value={editProfilePostal} onChange={e => setEditProfilePostal(e.target.value)} placeholder="e.g. 238858" style={modalInputStyle} />
                 </div>
               </div>
               <div>
                 <label style={modalLabelStyle}>Industry</label>
-                <div style={{ position: 'relative' }}>
-                  <select value={editProfileIndustry} onChange={e => setEditProfileIndustry(e.target.value)} style={{ ...modalInputStyle, paddingRight: 28, appearance: 'none', cursor: 'pointer' }}>
-                    <option value="">Select industry</option>
-                    {INDUSTRIES.map(i => <option key={i} value={i}>{i}</option>)}
-                  </select>
-                  <ChevronDown size={14} style={{ position: 'absolute', right: 9, top: '50%', transform: 'translateY(-50%)', color: '#94A3B8', pointerEvents: 'none' }} />
-                </div>
+                <DropdownField
+                  value={editProfileIndustry}
+                  onChange={v => { setEditProfileIndustry(v); if (v !== 'Other') setEditProfileIndustryOther('') }}
+                  placeholder="Select industry"
+                  options={INDUSTRIES.map(i => ({ value: i, label: i }))}
+                />
+                {editProfileIndustry === 'Other' && (
+                  <input
+                    value={editProfileIndustryOther}
+                    onChange={e => setEditProfileIndustryOther(e.target.value)}
+                    placeholder="Please specify your industry"
+                    style={{ ...modalInputStyle, marginTop: 8 }}
+                    autoFocus
+                  />
+                )}
               </div>
               {editProfileError && (
                 <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 12px', fontSize: 13, color: '#B91C1C' }}>

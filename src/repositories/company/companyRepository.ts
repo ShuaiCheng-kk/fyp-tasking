@@ -9,6 +9,8 @@ export const companyRepository = {
     owner_id: string
     plan: Company['plan']
     location?: string | null
+    address?: string | null
+    postal_code?: string | null
     industry?: string | null
     size?: string | null
     logo_url?: string | null
@@ -63,6 +65,8 @@ export const companyRepository = {
     name: string
     description: string | null
     location?: string | null
+    address?: string | null
+    postal_code?: string | null
     industry?: string | null
     size?: string | null
     logo_url?: string | null
@@ -84,6 +88,8 @@ export const companyRepository = {
     owner_id: string
     plan: Company['plan']
     location?: string | null
+    address?: string | null
+    postal_code?: string | null
     industry?: string | null
     size?: string | null
     logo_url?: string | null
