@@ -6,12 +6,11 @@ import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import {
   Archive, Briefcase, Check, CheckCircle, ChevronLeft, ChevronRight, ClipboardList,
-  FileText, MoreHorizontal, Pencil, Repeat, Send, Sparkles, Trash2, UserCheck, UserX,
+  FileText, MoreHorizontal, Pencil, Repeat, Send, Sparkles, Trash2,
   UserCog, X, Zap,
 } from 'lucide-react'
 import ManagerSidebar from '@/components/ManagerSidebar'
-import { CandidateRecommendation } from '@/types/AI'
-import { JobApplicant, JobPostingSummary } from '@/types/Recruitment'
+import { JobPostingSummary } from '@/types/Recruitment'
 
 type Tab = 'jobs' | 'archived' | 'drafts'
 type Department = { id: string; name: string }
@@ -261,9 +260,7 @@ export default function ManagerRecruitmentPage() {
   const [departments, setDepartments] = useState<Department[]>([])
   const [livePostings, setLivePostings] = useState<JobPostingSummary[]>([])
   const [drafts, setDrafts] = useState<JobPostingSummary[]>([])
-  const [selectedLiveId, setSelectedLiveId] = useState('')
-  const [applicants, setApplicants] = useState<JobApplicant[]>([])
-  const [recommendations, setRecommendations] = useState<CandidateRecommendation[]>([])
+  const [menuTargetPosting, setMenuTargetPosting] = useState<JobPostingSummary | null>(null)
 
   // ui state
   const [activeTab, setActiveTab] = useState<Tab>('jobs')
@@ -313,10 +310,7 @@ export default function ManagerRecruitmentPage() {
 
   const [jobMenuOpen, setJobMenuOpen] = useState(false)
   const [jobMenuPos, setJobMenuPos] = useState({ top: 0, right: 0 })
-  const jobMenuBtnRef = useRef<HTMLButtonElement>(null)
   const jobMenuDropRef = useRef<HTMLDivElement>(null)
-
-  const selectedLive = useMemo(() => livePostings.find(p => p.id === selectedLiveId) ?? null, [livePostings, selectedLiveId])
 
   // ── data fetching ─────────────────────────────────────────────────────────
 
@@ -337,25 +331,11 @@ export default function ManagerRecruitmentPage() {
       setLivePostings(liveData.postings ?? [])
       setDrafts(draftsData.drafts ?? [])
       if (deptData.success) setDepartments(deptData.departments ?? [])
-      setSelectedLiveId(prev => {
-        const list = liveData.postings ?? []
-        if (prev && list.some((p: JobPostingSummary) => p.id === prev)) return prev
-        return list[0]?.id ?? ''
-      })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch recruitment data')
     } finally {
       setLoading(false)
     }
-  }, [])
-
-  const fetchApplicants = useCallback(async (jobId: string) => {
-    if (!jobId) { setApplicants([]); return }
-    try {
-      const res = await fetch(`/api/recruitment?resource=applicants&job_id=${jobId}`)
-      const data = await res.json()
-      if (data.success) setApplicants(data.applicants ?? [])
-    } catch { setApplicants([]) }
   }, [])
 
   useEffect(() => {
@@ -391,14 +371,8 @@ export default function ManagerRecruitmentPage() {
   }, [router, fetchAll])
 
   useEffect(() => {
-    void fetchApplicants(selectedLiveId)
-    setRecommendations([])
-  }, [selectedLiveId, fetchApplicants])
-
-  useEffect(() => {
     if (!jobMenuOpen) return
     const handler = (e: MouseEvent) => {
-      if (jobMenuBtnRef.current?.contains(e.target as Node)) return
       if (jobMenuDropRef.current?.contains(e.target as Node)) return
       setJobMenuOpen(false)
     }
@@ -541,22 +515,6 @@ export default function ManagerRecruitmentPage() {
     } finally { setActionLoading(false) }
   }
 
-  const decideApplicant = async (applicantId: string, decision: 'accepted' | 'rejected') => {
-    if (!internalUserId) return
-    setActionLoading(true); setError('')
-    try {
-      const res = await fetch('/api/recruitment', {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'decide_applicant', applicant_id: applicantId, decision, decided_by: internalUserId }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to update applicant')
-      await Promise.all([fetchApplicants(selectedLiveId), fetchAll(companyId, internalUserId)])
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update applicant')
-    } finally { setActionLoading(false) }
-  }
-
   const deleteDraft = async (id: string, isDraft = true) => {
     setActionLoading(true); setError('')
     try {
@@ -567,7 +525,6 @@ export default function ManagerRecruitmentPage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to delete')
       setDeleteConfirm(null)
-      setSelectedLiveId('')
       await fetchAll(companyId, internalUserId)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete')
@@ -605,19 +562,6 @@ export default function ManagerRecruitmentPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to publish draft')
     } finally { setActionLoading(false) }
-  }
-
-  const recommendCandidates = async () => {
-    if (!selectedLiveId) return
-    setAiLoading(true); setError('')
-    try {
-      const res = await fetch(`/api/ai/candidates?job_id=${selectedLiveId}`)
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to recommend candidates')
-      setRecommendations(data.recommendations ?? [])
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to recommend candidates')
-    } finally { setAiLoading(false) }
   }
 
   // ── derived lists ─────────────────────────────────────────────────────────
@@ -697,178 +641,57 @@ export default function ManagerRecruitmentPage() {
 
           {/* ══ JOBS tab ════════════════════════════════════════════════════ */}
           {activeTab === 'jobs' && (
-            <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 16, alignItems: 'start' }}>
-
-              {/* Left: job list */}
-              <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden' }}>
-                <div style={{ padding: '14px 18px 12px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div style={{ width: 30, height: 30, borderRadius: 9, background: MGR_BLUE_BG, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <Briefcase size={15} style={{ color: MGR_BLUE }} />
-                  </div>
-                  <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', flex: 1 }}>All Jobs</span>
-                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: MGR_BLUE_DK, background: MGR_BLUE_BG, padding: '2px 8px', borderRadius: 99 }}>{jobsPostings.length}</span>
+            <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden' }}>
+              <div style={{ padding: '14px 18px 12px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ width: 30, height: 30, borderRadius: 9, background: MGR_BLUE_BG, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <Briefcase size={15} style={{ color: MGR_BLUE }} />
                 </div>
-                {loading ? (
-                  <div style={{ padding: '24px 18px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-                    <Spinner size={14} dark /> Loading...
-                  </div>
-                ) : jobsPostings.length === 0 ? (
-                  <div style={{ padding: '28px 18px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>No job postings yet.</div>
-                ) : jobsPostings.map(p => {
-                  const isSelected = selectedLiveId === p.id
-                  return (
-                    <button
-                      key={p.id}
-                      onClick={() => setSelectedLiveId(p.id)}
-                      style={{
-                        width: '100%', border: 'none', borderBottom: '1px solid #F0F4F8',
-                        background: isSelected ? MGR_BLUE_BG : '#FFFFFF',
-                        padding: '13px 18px', textAlign: 'left', cursor: 'pointer',
-                        borderLeft: isSelected ? `3px solid ${MGR_BLUE}` : '3px solid transparent',
-                      }}
-                      onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = '#FAFBFC' }}
-                      onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = '#FFFFFF' }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start', marginBottom: 5 }}>
-                        <strong style={{ fontSize: '0.875rem', color: '#111827', lineHeight: 1.3, flex: 1 }}>{p.title}</strong>
-                        {statusBadge(p.status)}
-                      </div>
-                      <p style={{ margin: 0, fontSize: '0.775rem', color: '#9CA3AF' }}>
-                        {p.department_name ?? 'Any dept'} · {p.applicant_count} applicant{p.applicant_count !== 1 ? 's' : ''}
-                      </p>
-                    </button>
-                  )
-                })}
+                <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', flex: 1 }}>All Jobs</span>
+                <span style={{ fontSize: '0.72rem', fontWeight: 700, color: MGR_BLUE_DK, background: MGR_BLUE_BG, padding: '2px 8px', borderRadius: 99 }}>{jobsPostings.length}</span>
               </div>
-
-              {/* Right: posting detail + applicants */}
-              <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden' }}>
-                {!selectedLive ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 24px', color: '#CBD5E0', gap: 10 }}>
-                    <ClipboardList size={32} strokeWidth={1.5} />
-                    <p style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 500 }}>Select a job posting</p>
-                  </div>
-                ) : (
-                  <>
-                    {/* Posting header */}
-                    <div style={{ padding: '20px 24px 18px', borderBottom: '1px solid #F0F4F8', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                          <h2 style={{ margin: 0, fontSize: '1.1rem', color: '#111827', fontWeight: 700, lineHeight: 1.3 }}>{selectedLive.title}</h2>
-                          {statusBadge(selectedLive.status)}
-                        </div>
-                        <p style={{ margin: 0, color: '#9CA3AF', fontSize: '0.8375rem' }}>
-                          {[selectedLive.department_name ?? 'Any department', selectedLive.location, selectedLive.employment_type].filter(Boolean).join(' · ')}
-                          {selectedLive.salary_amount ? ` · $${selectedLive.salary_amount} ${selectedLive.salary_type ?? ''}` : ''}
-                        </p>
-                      </div>
-                      <div style={{ display: 'flex', gap: 8, flexShrink: 0, alignItems: 'center' }}>
-                        <button
-                          ref={jobMenuBtnRef}
-                          onClick={e => {
-                            e.stopPropagation()
-                            if (!jobMenuOpen) {
-                              const r = e.currentTarget.getBoundingClientRect()
-                              setJobMenuPos({ top: r.bottom + 4, right: window.innerWidth - r.right })
-                            }
-                            setJobMenuOpen(o => !o)
-                          }}
-                          style={{ width: 34, height: 34, borderRadius: 9, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'grid', placeItems: 'center', cursor: 'pointer', color: '#374151', flexShrink: 0 }}
-                          onMouseEnter={e => (e.currentTarget.style.background = '#F9FAFB')}
-                          onMouseLeave={e => (e.currentTarget.style.background = '#FFFFFF')}
-                        >
-                          <MoreHorizontal size={16} />
-                        </button>
-                      </div>
+              {loading ? (
+                <div style={{ padding: '24px 18px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                  <Spinner size={14} dark /> Loading...
+                </div>
+              ) : jobsPostings.length === 0 ? (
+                <div style={{ padding: '28px 18px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>No job postings yet.</div>
+              ) : jobsPostings.map(p => (
+                <div
+                  key={p.id}
+                  style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid #F0F4F8', background: '#FFFFFF', padding: '13px 18px', gap: 10 }}
+                  onMouseEnter={e => (e.currentTarget.style.background = '#F0F7FF')}
+                  onMouseLeave={e => (e.currentTarget.style.background = '#FFFFFF')}
+                >
+                  <button
+                    type="button"
+                    onClick={() => openEditForm(p)}
+                    style={{ flex: 1, border: 'none', background: 'transparent', textAlign: 'left', cursor: 'pointer', padding: 0 }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                      <strong style={{ fontSize: '0.875rem', color: '#111827', lineHeight: 1.3 }}>{p.title}</strong>
+                      {statusBadge(p.status)}
                     </div>
-
-                    {/* Stats row */}
-                    <div style={{ padding: '16px 24px 0' }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
-                        {[
-                          { label: 'Pay', value: selectedLive.salary_amount ? `$${selectedLive.salary_amount} ${selectedLive.salary_type ?? ''}` : '—' },
-                          { label: 'Pending', value: selectedLive.pending_count },
-                          { label: 'Total Applicants', value: selectedLive.applicant_count },
-                        ].map(({ label, value }) => (
-                          <div key={label} style={{ padding: '11px 14px', background: '#F7F8FA', borderRadius: 10 }}>
-                            <span style={labelStyle}>{label}</span>
-                            <strong style={{ fontSize: '1.1rem', color: '#111827' }}>{value}</strong>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div style={{ padding: '16px 24px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-                      <div>
-                        <span style={labelStyle}>Description</span>
-                        <p style={{ margin: 0, color: '#374151', lineHeight: 1.7, fontSize: '0.9rem' }}>{selectedLive.description}</p>
-                      </div>
-                      {selectedLive.requirements && (
-                        <div>
-                          <span style={labelStyle}>Requirements</span>
-                          <p style={{ margin: 0, color: '#374151', lineHeight: 1.7, fontSize: '0.9rem', whiteSpace: 'pre-wrap' }}>{selectedLive.requirements}</p>
-                        </div>
-                      )}
-
-                      {/* Applicants */}
-                      <div style={{ borderTop: '1px solid #F3F4F6', paddingTop: 16 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                          <span style={labelStyle}>Applicants ({applicants.length})</span>
-                          <button
-                            onClick={recommendCandidates}
-                            disabled={aiLoading || applicants.length === 0}
-                            style={{ border: 'none', borderRadius: 7, background: '#111827', color: '#FFFFFF', padding: '6px 14px', display: 'flex', gap: 6, alignItems: 'center', cursor: aiLoading || applicants.length === 0 ? 'default' : 'pointer', opacity: aiLoading || applicants.length === 0 ? 0.5 : 1, fontSize: '0.775rem', fontWeight: 700 }}
-                          >
-                            {aiLoading ? <Spinner size={12} /> : <Sparkles size={12} />} AI Recommend
-                          </button>
-                        </div>
-
-                        {applicants.length === 0 ? (
-                          <div style={{ padding: '20px 16px', color: '#9CA3AF', background: '#F7F8FA', borderRadius: 10, textAlign: 'center', fontSize: '0.875rem' }}>No applicants yet.</div>
-                        ) : applicants.map(applicant => {
-                          const rec = recommendations.find(r => r.applicant_id === applicant.id)
-                          return (
-                            <div key={applicant.id} style={{ padding: '14px 16px', border: '1.5px solid #E5E7EB', borderRadius: 10, marginBottom: 10, display: 'flex', justifyContent: 'space-between', gap: 12, background: '#FFFFFF' }}>
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
-                                  <div style={{ width: 28, height: 28, borderRadius: '50%', background: MGR_AVATAR, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FFFFFF', fontWeight: 700, fontSize: '0.7rem', flexShrink: 0 }}>
-                                    {applicant.full_name?.charAt(0)?.toUpperCase() ?? '?'}
-                                  </div>
-                                  <strong style={{ color: '#111827', fontSize: '0.9rem' }}>{applicant.full_name}</strong>
-                                </div>
-                                <p style={{ margin: '2px 0 0 36px', color: '#9CA3AF', fontSize: '0.775rem' }}>{applicant.email_address}</p>
-                                {applicant.cover_letter && (
-                                  <p style={{ margin: '8px 0 0', color: '#4B5563', fontSize: '0.8125rem', lineHeight: 1.5 }}>{applicant.cover_letter}</p>
-                                )}
-                                {rec && (
-                                  <div style={{ marginTop: 10, padding: '10px 12px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, fontSize: '0.78rem', lineHeight: 1.5 }}>
-                                    <strong style={{ color: '#059669' }}>AI Score: {rec.score}/100 — {rec.recommendation}</strong>
-                                    <p style={{ margin: '4px 0 0', color: '#374151' }}>{rec.reasons[0] ?? rec.suggested_next_step}</p>
-                                    {rec.risks[0] && <p style={{ margin: '3px 0 0', color: '#B45309' }}>{rec.risks[0]}</p>}
-                                  </div>
-                                )}
-                              </div>
-                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, flexShrink: 0 }}>
-                                {statusBadge(applicant.status)}
-                                {applicant.status === 'pending' && (
-                                  <div style={{ display: 'flex', gap: 6 }}>
-                                    <button onClick={() => decideApplicant(applicant.id, 'accepted')} disabled={actionLoading}
-                                      style={{ border: 'none', borderRadius: 7, background: '#059669', color: '#FFFFFF', padding: '6px 10px', display: 'flex', gap: 5, alignItems: 'center', cursor: 'pointer', fontSize: '0.775rem', fontWeight: 600 }}
-                                    ><UserCheck size={13} /> Accept</button>
-                                    <button onClick={() => decideApplicant(applicant.id, 'rejected')} disabled={actionLoading}
-                                      style={{ border: 'none', borderRadius: 7, background: '#DC2626', color: '#FFFFFF', padding: '6px 10px', display: 'flex', gap: 5, alignItems: 'center', cursor: 'pointer', fontSize: '0.775rem', fontWeight: 600 }}
-                                    ><UserX size={13} /> Reject</button>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
+                    <p style={{ margin: 0, fontSize: '0.775rem', color: '#9CA3AF' }}>
+                      {p.department_name ?? 'Any dept'} · {p.applicant_count} applicant{p.applicant_count !== 1 ? 's' : ''}
+                    </p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={e => {
+                      e.stopPropagation()
+                      const r = e.currentTarget.getBoundingClientRect()
+                      setJobMenuPos({ top: r.bottom + 4, right: window.innerWidth - r.right })
+                      setMenuTargetPosting(p)
+                      setJobMenuOpen(o => !o)
+                    }}
+                    style={{ width: 30, height: 30, borderRadius: 7, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'grid', placeItems: 'center', cursor: 'pointer', color: '#374151', flexShrink: 0 }}
+                    onMouseEnter={e => (e.currentTarget.style.background = '#F9FAFB')}
+                    onMouseLeave={e => (e.currentTarget.style.background = '#FFFFFF')}
+                  >
+                    <MoreHorizontal size={14} />
+                  </button>
+                </div>
+              ))}
             </div>
           )}
 
@@ -1408,36 +1231,22 @@ export default function ManagerRecruitmentPage() {
       })()}
 
       {/* ══ Job action dropdown menu ════════════════════════════════════════ */}
-      {jobMenuOpen && selectedLive && typeof document !== 'undefined' && createPortal(
+      {jobMenuOpen && menuTargetPosting && typeof document !== 'undefined' && createPortal(
         <div
           ref={jobMenuDropRef}
           onClick={e => e.stopPropagation()}
           style={{ position: 'fixed', top: jobMenuPos.top, right: jobMenuPos.right, zIndex: 9999, width: 170, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, boxShadow: '0 4px 24px rgba(0,0,0,0.10)', padding: '8px 6px' }}
         >
-          <p style={{ margin: '0 6px 4px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9CA3AF' }}>Job</p>
-          <button
-            type="button"
-            onClick={() => { setJobMenuOpen(false); openEditForm(selectedLive) }}
-            style={jobMenuItemStyle}
-            onMouseEnter={e => (e.currentTarget.style.background = '#F9FAFB')}
-            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-          ><Pencil size={13} style={{ color: MGR_BLUE }} /> Edit</button>
-          <button
-            type="button"
-            onClick={() => { setJobMenuOpen(false); void runPostingAction('archive_posting') }}
-            disabled={actionLoading}
-            style={jobMenuItemStyle}
-            onMouseEnter={e => (e.currentTarget.style.background = '#F9FAFB')}
-            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-          ><Archive size={13} style={{ color: MGR_BLUE }} /> Archive</button>
-          <div style={{ height: 1, background: '#F1F5F9', margin: '4px 6px' }} />
-          <button
-            type="button"
-            onClick={() => { setJobMenuOpen(false); setDeleteConfirm({ id: selectedLive.id, title: selectedLive.title, isDraft: false }) }}
-            style={{ ...jobMenuItemStyle, color: '#DC2626' }}
-            onMouseEnter={e => (e.currentTarget.style.background = '#FEF2F2')}
-            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-          ><Trash2 size={13} /> Delete</button>
+          {(() => {
+            const p = menuTargetPosting
+            return (<>
+              <span style={{ display: 'block', margin: '0 6px 4px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9CA3AF' }}>Job</span>
+              <button type="button" onClick={() => { setJobMenuOpen(false); openEditForm(p) }} style={jobMenuItemStyle} onMouseEnter={e => (e.currentTarget.style.background = '#F9FAFB')} onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}><Pencil size={13} style={{ color: MGR_BLUE }} /> Edit</button>
+              <button type="button" onClick={() => { setJobMenuOpen(false); void runPostingAction('archive_posting', p.id) }} disabled={actionLoading} style={jobMenuItemStyle} onMouseEnter={e => (e.currentTarget.style.background = '#F9FAFB')} onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}><Archive size={13} style={{ color: MGR_BLUE }} /> Archive</button>
+              <div style={{ height: 1, background: '#F1F5F9', margin: '4px 6px' }} />
+              <button type="button" onClick={() => { setJobMenuOpen(false); setDeleteConfirm({ id: p.id, title: p.title, isDraft: false }) }} style={{ ...jobMenuItemStyle, color: '#DC2626' }} onMouseEnter={e => (e.currentTarget.style.background = '#FEF2F2')} onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}><Trash2 size={13} /> Delete</button>
+            </>)
+          })()}
         </div>,
         document.body
       )}
