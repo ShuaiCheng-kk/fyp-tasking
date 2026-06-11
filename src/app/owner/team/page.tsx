@@ -354,19 +354,23 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick }: O
   // Dept column center Xs (for outer SVG connector)
   const deptCenterXs = deptCols.map((_, i) => deptColStartXs[i] + deptColWs[i] / 2)
 
-  // Owner center X in the ordered leadership row
-  const leaderRowStartX = (totalW - leaderRowW) / 2
+  // Owner pinned to totalW/2; place leader row symmetrically around it
   const ownerIdxInOrdered = orderedLeaders.findIndex(m => m.role === 'Owner')
-  const ownerCenterX = leaderRowStartX + (ownerIdxInOrdered >= 0 ? ownerIdxInOrdered : 0) * (LEADER_W + LEADER_GAP) + LEADER_W / 2
+  const leaderRowStartX2 = totalW / 2 - (ownerIdxInOrdered >= 0 ? ownerIdxInOrdered : 0) * (LEADER_W + LEADER_GAP) - LEADER_W / 2
 
   return (
     <div style={{ overflowX: 'auto', paddingBottom: 8, paddingTop: 8 }}>
       <div style={{ width: totalW, margin: '0 auto' }}>
 
-        {/* ── Row 1: Leadership — Owner in centre, Partners on sides ── */}
-        <div style={{ display: 'flex', justifyContent: 'center', gap: LEADER_GAP }}>
-          {orderedLeaders.map(m => (
-            <div key={m.id} style={{ width: LEADER_W, flexShrink: 0 }}>
+        {/* ── Row 1: Leadership — Owner pinned to totalW/2 ── */}
+        <div style={{ position: 'relative', height: 80, flexShrink: 0 }}>
+          {orderedLeaders.map((m, i) => (
+            <div key={m.id} style={{
+              position: 'absolute',
+              left: leaderRowStartX2 + i * (LEADER_W + LEADER_GAP),
+              top: 0,
+              width: LEADER_W,
+            }}>
               <OrgNode member={m} onClick={() => onMemberClick(m)} />
             </div>
           ))}
@@ -375,7 +379,7 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick }: O
         {/* ── SVG: leadership → dept columns ── */}
         {deptCols.length > 0 && topMembers.length > 0 && (
           <svg width={totalW} height={OUTER_H} style={{ display: 'block', overflow: 'visible' }}>
-            <line x1={ownerCenterX} y1={0} x2={ownerCenterX} y2={OUTER_H / 2} stroke={LINE_COLOR} strokeWidth={1.5} />
+            <line x1={totalW / 2} y1={0} x2={totalW / 2} y2={OUTER_H / 2} stroke={LINE_COLOR} strokeWidth={1.5} />
             {deptCols.length > 1 && (
               <line x1={deptCenterXs[0]} y1={OUTER_H / 2} x2={deptCenterXs[deptCols.length - 1]} y2={OUTER_H / 2} stroke={LINE_COLOR} strokeWidth={1.5} />
             )}
@@ -1245,7 +1249,7 @@ export default function TeamPage() {
         <div style={{ padding: '20px 28px 0', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
           <div>
             <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
-              {companyName ? `Team for ${companyName}` : 'My Company'}
+              Team
             </h1>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>

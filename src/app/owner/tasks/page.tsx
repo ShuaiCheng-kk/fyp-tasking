@@ -23,10 +23,12 @@ const TASK_TEXT   = '#0F172A'
 
 // ─── Task Date Picker ──────────────────────────────────────────────────────────
 
-function TaskDatePicker({ value, onChange, taskDates }: {
+function TaskDatePicker({ value, onChange, taskDates, minDate, accentColor }: {
   value: string
   onChange: (date: string) => void
   taskDates: Set<string>
+  minDate: string
+  accentColor: string
 }) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState({ top: 0, left: 0, width: 292 })
@@ -56,6 +58,7 @@ function TaskDatePicker({ value, onChange, taskDates }: {
   }
 
   const todayStr = formatDateKey(new Date())
+  const minMonth = minDate.slice(0, 7)
   const [cy, cm] = viewMonth.split('-').map(Number)
   const firstDay = new Date(cy, cm - 1, 1).getDay()
   const daysInMonth = new Date(cy, cm, 0).getDate()
@@ -64,8 +67,8 @@ function TaskDatePicker({ value, onChange, taskDates }: {
   for (let i = 0; i < firstDay; i++) cells.push(null)
   for (let d = 1; d <= daysInMonth; d++) cells.push(`${cy}-${String(cm).padStart(2, '0')}-${String(d).padStart(2, '0')}`)
 
-  const todayMonth = todayStr.slice(0, 7)
-  const goPrev = () => { const d = new Date(cy, cm - 2, 1); const nm = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; if (nm < todayMonth) return; setViewMonth(nm) }
+  const canGoPrev = viewMonth > minMonth
+  const goPrev = () => { const d = new Date(cy, cm - 2, 1); const nm = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; if (nm < minMonth) return; setViewMonth(nm) }
   const goNext = () => { const d = new Date(cy, cm, 1); setViewMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`) }
 
   const displayLabel = new Date(`${value}T00:00:00`).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
@@ -73,7 +76,7 @@ function TaskDatePicker({ value, onChange, taskDates }: {
   const popover = open ? (
     <div ref={popoverRef} style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 9999, background: '#FFFFFF', border: `1px solid ${TASK_BORDER}`, borderRadius: 16, boxShadow: '0 8px 32px rgba(15,23,42,0.14)', padding: '14px 16px', width: pos.width }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-        <button type="button" onClick={goPrev} disabled={viewMonth <= todayMonth} style={{ width: 26, height: 26, border: `1px solid ${TASK_BORDER}`, borderRadius: 7, background: '#FFFFFF', cursor: viewMonth <= todayMonth ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: viewMonth <= todayMonth ? '#D1D5DB' : '#64748B' }}><ChevronLeft size={13} /></button>
+        <button type="button" onClick={goPrev} disabled={!canGoPrev} style={{ width: 26, height: 26, border: `1px solid ${TASK_BORDER}`, borderRadius: 7, background: '#FFFFFF', cursor: canGoPrev ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', color: canGoPrev ? '#64748B' : '#D1D5DB' }}><ChevronLeft size={13} /></button>
         <span style={{ fontSize: 13, fontWeight: 700, color: TASK_TEXT }}>{monthLabel}</span>
         <button type="button" onClick={goNext} style={{ width: 26, height: 26, border: `1px solid ${TASK_BORDER}`, borderRadius: 7, background: '#FFFFFF', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748B' }}><ChevronRight size={13} /></button>
       </div>
@@ -85,19 +88,19 @@ function TaskDatePicker({ value, onChange, taskDates }: {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
         {cells.map((date, i) => {
           if (!date) return <div key={`e-${i}`} style={{ height: 36 }} />
-          const isPast = date < todayStr
-          if (isPast) return <div key={date} style={{ height: 36 }} />
+          if (date < minDate) return <div key={date} style={{ height: 36 }} />
           const isSel = date === value
           const isToday = date === todayStr
+          const isPast = date < todayStr
           const hasTask = taskDates.has(date)
           return (
             <button key={date} type="button" onClick={() => { onChange(date); setOpen(false) }}
-              style={{ height: 36, width: '100%', border: isToday && !isSel ? `2px solid ${TASK_ORANGE}` : 'none', borderRadius: 8, background: isSel ? TASK_ORANGE : 'transparent', color: isSel ? '#FFFFFF' : isToday ? TASK_ORANGE : TASK_TEXT, fontWeight: isSel || isToday ? 700 : 400, fontSize: 13, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: 0 }}
+              style={{ height: 36, width: '100%', border: isToday && !isSel ? `2px solid ${accentColor}` : 'none', borderRadius: 8, background: isSel ? accentColor : 'transparent', color: isSel ? '#FFFFFF' : isToday ? accentColor : TASK_TEXT, fontWeight: isSel || isToday ? 700 : 400, fontSize: 13, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: 0 }}
               onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = '#F8FAFC' }}
               onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = 'transparent' }}
             >
               <span style={{ lineHeight: 1 }}>{parseInt(date.split('-')[2])}</span>
-              {hasTask && <span style={{ width: 4, height: 4, borderRadius: '50%', background: isSel ? 'rgba(255,255,255,0.8)' : TASK_ORANGE, flexShrink: 0 }} />}
+              {hasTask && <span style={{ width: 4, height: 4, borderRadius: '50%', background: isPast ? '#94A3B8' : isSel ? 'rgba(255,255,255,0.8)' : accentColor, flexShrink: 0 }} />}
             </button>
           )
         })}
@@ -1063,6 +1066,12 @@ export default function OwnerTasksPage() {
     return dates
   }, [kanban, shiftOptions])
 
+  const minTaskDate = useMemo(() => {
+    const d = addDays(new Date(), -7)
+    const dow = (d.getDay() + 6) % 7
+    return formatDateKey(addDays(d, -dow))
+  }, [])
+
   // ── Filtered tasks per column ──────────────────────────────────────────────
 
   const filteredTasks = (col: Task['status']): Task[] => {
@@ -1257,7 +1266,7 @@ export default function OwnerTasksPage() {
         <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
           <div>
             <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
-              {companyName ? `Tasks for ${companyName}` : 'Tasks'}
+              Tasks
             </h1>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
@@ -1315,10 +1324,10 @@ export default function OwnerTasksPage() {
                 <button
                   type="button"
                   onClick={() => setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), -1)))}
-                  disabled={taskDate <= formatDateKey(new Date())}
-                  style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${TASK_BORDER}`, background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: taskDate <= formatDateKey(new Date()) ? 'default' : 'pointer', color: TASK_TEXT, opacity: taskDate <= formatDateKey(new Date()) ? 0.3 : 1 }}
+                  disabled={taskDate <= minTaskDate}
+                  style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${TASK_BORDER}`, background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: taskDate <= minTaskDate ? 'default' : 'pointer', color: TASK_TEXT, opacity: taskDate <= minTaskDate ? 0.3 : 1 }}
                 ><ChevronLeft size={16} /></button>
-                <TaskDatePicker value={taskDate} onChange={setTaskDate} taskDates={datesWithTasks} />
+                <TaskDatePicker value={taskDate} onChange={setTaskDate} taskDates={datesWithTasks} minDate={minTaskDate} accentColor={TASK_ORANGE} />
                 <button
                   type="button"
                   onClick={() => setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), 1)))}

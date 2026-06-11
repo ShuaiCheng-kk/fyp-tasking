@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import { createClient } from '@/lib/supabase'
@@ -8,7 +9,7 @@ import {
   Plus, X, Trash2, Pencil, Megaphone,
   Send, Search, SquarePen, Check, Bell, MessageSquare, Crown,
   Users, Globe, UserCog, UserRound, Pin, PinOff,
-  ImagePlus, Paperclip, FileText, Download,
+  ImagePlus, Paperclip, FileText, Download, ChevronDown,
 } from 'lucide-react'
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
@@ -140,6 +141,91 @@ function Spinner({ size = 15, light = false }: { size?: number; light?: boolean 
       <circle cx="9" cy="9" r="7" stroke={light ? 'rgba(255,255,255,0.35)' : 'rgba(17,24,39,0.15)'} strokeWidth="2.5" fill="none" />
       <path d="M9 2a7 7 0 0 1 7 7" stroke={light ? 'white' : '#111827'} strokeWidth="2.5" strokeLinecap="round" fill="none" />
     </svg>
+  )
+}
+
+// ─── Custom Dropdown Field ────────────────────────────────────────────────────
+
+function DropdownField({ value, options, onChange, placeholder, disabled = false }: {
+  value: string
+  options: { value: string; label: string }[]
+  onChange: (v: string) => void
+  placeholder?: string
+  disabled?: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 })
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const h = (e: MouseEvent) => {
+      if (!triggerRef.current?.contains(e.target as Node) && !dropdownRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [open])
+
+  const selected = options.find(o => o.value === value)
+  const canOpen = !disabled && options.length > 0
+
+  const handleOpen = () => {
+    if (!canOpen) return
+    if (!open && triggerRef.current) {
+      const r = triggerRef.current.getBoundingClientRect()
+      const DROPDOWN_H = Math.min(options.length * 37 + 8, 208)
+      const fitsBelow = r.bottom + DROPDOWN_H + 4 <= window.innerHeight
+      setPos({ top: fitsBelow ? r.bottom + 4 : r.top - DROPDOWN_H - 4, left: r.left, width: r.width })
+    }
+    setOpen(o => !o)
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button ref={triggerRef} type="button" disabled={disabled}
+        onClick={handleOpen}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '10px 12px', border: `1.5px solid ${open ? '#F97316' : '#E2E8F0'}`, borderRadius: 9,
+          background: disabled ? '#F9FAFB' : '#FAFBFC', cursor: canOpen ? 'pointer' : 'default',
+          fontSize: 13, color: selected ? '#0F172A' : '#9CA3AF',
+          fontWeight: selected ? 500 : 400, outline: 'none', boxSizing: 'border-box' as const,
+          transition: 'border-color 0.15s',
+          boxShadow: open ? '0 0 0 3px rgba(249,115,22,0.10)' : 'none',
+        }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {selected?.label ?? placeholder ?? 'Select...'}
+        </span>
+        <ChevronDown size={13} style={{ color: '#9CA3AF', flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+      </button>
+      {open && typeof document !== 'undefined' && createPortal(
+        <div ref={dropdownRef} style={{
+          position: 'fixed', top: pos.top, left: pos.left, width: pos.width,
+          background: '#FFFFFF', border: '1.5px solid #E5E7EB', borderRadius: 10,
+          boxShadow: '0 8px 24px rgba(15,23,42,0.12)', zIndex: 9999, maxHeight: 208, overflowY: 'auto',
+          padding: '4px 0',
+        }}>
+          {options.map(opt => {
+            const isSel = opt.value === value
+            return (
+              <button key={opt.value} type="button"
+                onClick={() => { onChange(opt.value); setOpen(false) }}
+                style={{
+                  display: 'block', width: '100%', padding: '8px 14px', textAlign: 'left',
+                  border: 'none', background: isSel ? '#FFF7ED' : 'transparent',
+                  color: isSel ? '#EA580C' : '#374151', fontWeight: isSel ? 700 : 400,
+                  fontSize: 13, cursor: 'pointer',
+                }}
+                onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = '#F9FAFB' }}
+                onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = 'transparent' }}
+              >{opt.label}</button>
+            )
+          })}
+        </div>,
+        document.body
+      )}
+    </div>
   )
 }
 
@@ -390,8 +476,11 @@ export default function OwnerCommunicationPage() {
       .then(d => {
         if (d.success) {
           setPanelMessages(prev => ({ ...prev, [partnerId]: d.messages ?? [] }))
-          fetchUnreadCount()
-          fetchConversations()
+          fetch(`/api/inbox/messages/${partnerId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: internalUserId }),
+          }).then(() => { fetchUnreadCount(); fetchConversations() }).catch(() => {})
         }
       })
   }
@@ -414,6 +503,11 @@ export default function OwnerCommunicationPage() {
           // Append to any open panel that matches the sender
           setPanelMessages(prev => {
             if (prev[newMsg.from_user_id] !== undefined) {
+              fetch(`/api/inbox/messages/${newMsg.from_user_id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ user_id: internalUserId }),
+              }).catch(() => {})
               return { ...prev, [newMsg.from_user_id]: [...prev[newMsg.from_user_id], newMsg] }
             }
             return prev
@@ -806,7 +900,7 @@ export default function OwnerCommunicationPage() {
         <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
           <div>
             <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
-              {companyName ? `Communication for ${companyName}` : 'Communication'}
+              Communication
             </h1>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
@@ -1207,24 +1301,6 @@ export default function OwnerCommunicationPage() {
                       style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: 12, color: '#0F172A', fontWeight: 500 }}
                     />
                   </div>
-                  {unreadAnnCount > 0 && (
-                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!companyId || !internalUserId) return
-                          const allIds = new Set(announcements.map(a => a.id))
-                          setReadIds(allIds)
-                          saveReadIds(companyId, internalUserId, allIds)
-                        }}
-                        style={{ cursor: 'pointer', borderRadius: 999, border: '1px solid #E2E8F0', background: '#fff', padding: '4px 12px', fontSize: 11, fontWeight: 600, color: '#64748B', transition: 'all 0.15s' }}
-                        onMouseEnter={e => { e.currentTarget.style.background = '#F8FAFC' }}
-                        onMouseLeave={e => { e.currentTarget.style.background = '#fff' }}
-                      >
-                        Mark all read
-                      </button>
-                    </div>
-                  )}
                 </div>
 
                 <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, padding: 10 }}>
@@ -1429,28 +1505,28 @@ export default function OwnerCommunicationPage() {
             </div>
             <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div>
-                <label style={labelStyle}>Title *</label>
+                <label style={labelStyle}>Title</label>
                 <input value={editTitle} onChange={e => setEditTitle(e.target.value)} placeholder="Announcement title" className="comm-input" style={inputStyle} />
               </div>
               <div>
-                <label style={labelStyle}>Content *</label>
+                <label style={labelStyle}>Content</label>
                 <textarea value={editContent} onChange={e => setEditContent(e.target.value)} placeholder="Write your announcement..." rows={5} className="comm-textarea" style={textareaStyle} />
               </div>
               <div>
                 <label style={labelStyle}>Audience</label>
-                <select value={editAudience} onChange={e => { setEditAudience(e.target.value); if (e.target.value === 'company-wide') setEditDeptId(null); else if (departments.length > 0) setEditDeptId(departments[0].id) }} className="comm-input" style={inputStyle}>
-                  <option value="company-wide">Company-wide</option>
-                  <option value="specific-dept">Specific Department</option>
-                </select>
+                <DropdownField
+                  value={editAudience === 'company-wide' ? 'company-wide' : (editDeptId ?? '')}
+                  options={[
+                    { value: 'company-wide', label: 'Company-wide' },
+                    ...departments.map(d => ({ value: d.id, label: d.name })),
+                  ]}
+                  onChange={v => {
+                    if (v === 'company-wide') { setEditAudience('company-wide'); setEditDeptId(null) }
+                    else { setEditAudience('specific-dept'); setEditDeptId(v) }
+                  }}
+                  placeholder="Select audience"
+                />
               </div>
-              {editAudience === 'specific-dept' && (
-                <div>
-                  <label style={labelStyle}>Department</label>
-                  <select value={editDeptId ?? ''} onChange={e => setEditDeptId(e.target.value)} disabled={departments.length === 0} className="comm-input" style={{ ...inputStyle, opacity: departments.length === 0 ? 0.6 : 1 }}>
-                    {departments.length === 0 ? <option value="">No departments available</option> : departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                  </select>
-                </div>
-              )}
               {editError && <div style={{ fontSize: 12.5, color: '#DC2626', background: '#FEF2F2', padding: '9px 12px', borderRadius: 8, fontWeight: 600 }}>{editError}</div>}
             </div>
             <div style={{ padding: '0 24px 20px', display: 'flex', gap: 10 }}>
@@ -1478,19 +1554,24 @@ export default function OwnerCommunicationPage() {
             </div>
             <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div>
-                <label style={labelStyle}>Title *</label>
+                <label style={labelStyle}>Title</label>
                 <input value={annTitle} onChange={e => setAnnTitle(e.target.value)} placeholder="Announcement title" className="comm-input" style={inputStyle} />
               </div>
               <div>
-                <label style={labelStyle}>Content *</label>
+                <label style={labelStyle}>Content</label>
                 <textarea data-testid="announcement-content" value={annContent} onChange={e => setAnnContent(e.target.value)} placeholder="Write your announcement here..." rows={5} className="comm-textarea" style={textareaStyle} />
               </div>
               <div>
                 <label style={labelStyle}>Audience</label>
-                <select value={annDeptId} onChange={e => setAnnDeptId(e.target.value)} className="comm-input" style={inputStyle}>
-                  {canPostCompanyWide && <option value="company-wide">Company-wide</option>}
-                  {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                </select>
+                <DropdownField
+                  value={annDeptId}
+                  options={[
+                    ...(canPostCompanyWide ? [{ value: 'company-wide', label: 'Company-wide' }] : []),
+                    ...departments.map(d => ({ value: d.id, label: d.name })),
+                  ]}
+                  onChange={v => setAnnDeptId(v)}
+                  placeholder="Select audience"
+                />
               </div>
             </div>
             <div style={{ padding: '0 24px 20px' }}>
@@ -1509,7 +1590,7 @@ export default function OwnerCommunicationPage() {
           <div onClick={e => e.stopPropagation()} style={{ width: 480, background: '#fff', borderRadius: 18, boxShadow: '0 24px 70px rgba(0,0,0,0.18)', display: 'flex', flexDirection: 'column', maxHeight: '88vh', overflow: 'hidden', animation: 'fadeSlideUp 0.22s ease both' }}>
             <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ width: 34, height: 34, borderRadius: 9, background: '#EFF6FF', color: '#3B82F6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ width: 34, height: 34, borderRadius: 9, background: '#FFF7ED', color: '#F97316', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <SquarePen size={15} />
                 </div>
                 <h2 style={{ fontWeight: 800, fontSize: '1rem', color: '#0F172A', margin: 0 }}>New Message</h2>

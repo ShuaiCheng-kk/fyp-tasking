@@ -362,6 +362,7 @@ function TimelineDatePicker({ value, onChange, shiftDates, anchorRef, triggerSty
           if (isTooOld) return <div key={date} style={{ height: 36 }} />
           const isSel = date === value
           const isToday = date === todayStr
+          const isPast = date < todayStr
           const hasShift = shiftDates.has(date)
           return (
             <button key={date} type="button" onClick={() => { onChange(date); setOpen(false) }}
@@ -378,7 +379,7 @@ function TimelineDatePicker({ value, onChange, shiftDates, anchorRef, triggerSty
             >
               <span style={{ lineHeight: 1 }}>{parseInt(date.split('-')[2])}</span>
               {hasShift && (
-                <span style={{ width: 4, height: 4, borderRadius: '50%', background: isSel ? 'rgba(255,255,255,0.8)' : OWNER_ORANGE, flexShrink: 0 }} />
+                <span style={{ width: 4, height: 4, borderRadius: '50%', background: isPast ? '#94A3B8' : isSel ? 'rgba(255,255,255,0.8)' : OWNER_ORANGE, flexShrink: 0 }} />
               )}
             </button>
           )
@@ -938,6 +939,7 @@ export default function OwnerShiftsPage() {
         }
       })
   }, [departments, getDepartmentPeople, members, selectedDepartment, timelineRows])
+  const timelineIsPast = timelineDate < formatDateKey(new Date())
   const autoFitRange = useMemo(() => {
     const allShifts = visibleTimelineRows.flatMap(r => r.shifts)
     if (allShifts.length === 0) return { from: 7, to: 23 }
@@ -958,8 +960,8 @@ export default function OwnerShiftsPage() {
   }, [timelineRows])
 
   const selectedTimelineRows = useMemo(
-    () => visibleTimelineRows.filter(row => row.user_id && selectedTimelineUserIds.includes(row.user_id)),
-    [selectedTimelineUserIds, visibleTimelineRows],
+    () => timelineIsPast ? [] : visibleTimelineRows.filter(row => row.user_id && selectedTimelineUserIds.includes(row.user_id)),
+    [selectedTimelineUserIds, timelineIsPast, visibleTimelineRows],
   )
   const selectedTimelineAssignmentIds = useMemo(() => {
     const ids = new Set<string>()
@@ -1051,6 +1053,7 @@ export default function OwnerShiftsPage() {
   }
 
   const toggleTimelineUserSelection = (userId: string) => {
+    if (timelineIsPast) return
     setTimelineDeleteError('')
     setSelectedTimelineUserIds(prev => (
       prev.includes(userId) ? prev.filter(id => id !== userId) : [...prev, userId]
@@ -1058,6 +1061,7 @@ export default function OwnerShiftsPage() {
   }
 
   const deleteSelectedTimelineAssignments = async () => {
+    if (timelineIsPast) return
     if (selectedTimelineUserIds.length === 0 || timelineBulkDeleting) return
     if (selectedTimelineAssignmentIds.length === 0) {
       setSelectedTimelineUserIds([])
@@ -1203,6 +1207,7 @@ export default function OwnerShiftsPage() {
   }
 
   const openBatchDrawerForSelection = () => {
+    if (timelineIsPast) return
     if (selectedTimelineRows.length === 0) return
     const firstRow = selectedTimelineRows[0]
     const dept = departments.find(d => d.id === firstRow.department_id)
@@ -1444,10 +1449,8 @@ export default function OwnerShiftsPage() {
     }
   }
 
-  const [selectedShiftReadOnly, setSelectedShiftReadOnly] = useState(false)
-
-  const openShiftDetail = (shift: TimelineShiftBlock, row: TimelineRow, readOnly = false) => {
-    setSelectedShiftReadOnly(readOnly)
+  const openShiftDetail = (shift: TimelineShiftBlock, row: TimelineRow, isPast = false) => {
+    if (isPast) return
     setSelectedShift(shift)
     setShiftEditForm({
       shift_date: shift.shift_date,
@@ -1552,7 +1555,7 @@ export default function OwnerShiftsPage() {
 
   const renderShiftRow = (row: TimelineRow, isDeptBoundary = false, barColor = deptColor(row.department_id)) => {
     const EDGE = '2px solid rgba(15,23,42,0.45)'
-    const rowSelected = !!row.user_id && selectedTimelineUserIds.includes(row.user_id)
+    const rowSelected = !timelineIsPast && !!row.user_id && selectedTimelineUserIds.includes(row.user_id)
     const borderTop = isDeptBoundary ? EDGE : 'none'
     return (
       <div key={row.user_id ?? `${row.department_id}_open`} className="tl-row" style={{ display: 'flex', height: 58, borderTop, background: rowSelected ? '#FFF7ED' : '#FFFFFF' }}>
@@ -1566,7 +1569,7 @@ export default function OwnerShiftsPage() {
               {row.full_name}
             </span>
           </div>
-          {row.user_id ? (
+          {row.user_id && !timelineIsPast ? (
             <input
               type="checkbox"
               aria-label={`Select ${row.full_name} for deletion`}
@@ -1619,7 +1622,7 @@ export default function OwnerShiftsPage() {
                   background: shiftColor,
                   color: '#FFFFFF',
                   boxShadow: '0 2px 8px rgba(15,23,42,0.18)',
-                  cursor: 'pointer',
+                  cursor: timelineDate < formatDateKey(new Date()) ? 'default' : 'pointer',
                   padding: '0 8px',
                   textAlign: 'center',
                   overflow: 'hidden',
@@ -1762,10 +1765,10 @@ export default function OwnerShiftsPage() {
                                     padding: '0 8px', height: 28, flexShrink: 0,
                                     background: barColor,
                                     border: 'none', borderRadius: 999,
-                                    cursor: 'pointer', width: '100%',
+                                    cursor: isPastDate ? 'default' : 'pointer', width: '100%',
                                     opacity: isPastDate ? 0.7 : 1,
                                   }}
-                                  onMouseEnter={e => { e.currentTarget.style.filter = 'brightness(1.08)' }}
+                                  onMouseEnter={e => { if (!isPastDate) e.currentTarget.style.filter = 'brightness(1.08)' }}
                                   onMouseLeave={e => { e.currentTarget.style.filter = 'none' }}
                                 >
                                   <span style={{ fontSize: 10.5, fontWeight: 700, color: '#FFFFFF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -1851,7 +1854,7 @@ export default function OwnerShiftsPage() {
         <div style={{ padding: '20px 28px 16px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24, flexShrink: 0 }}>
           <div>
             <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
-              {company?.name ? `Shift Planning for ${company.name}` : 'Shift Planning'}
+              Shifts
             </h1>
           </div>
 
@@ -2059,7 +2062,7 @@ export default function OwnerShiftsPage() {
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <div ref={timelineControlsRef} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                {selectedTimelineUserIds.length > 0 ? (
+                {!timelineIsPast && selectedTimelineUserIds.length > 0 ? (
                   <>
                     <button
                       type="button"
@@ -2636,77 +2639,46 @@ export default function OwnerShiftsPage() {
       )}
 
       {selectedShift && (
-        <Modal title={selectedShiftReadOnly ? 'Shift Details' : 'Edit Shift'} onClose={() => setSelectedShift(null)}>
+        <Modal title="Edit Shift" onClose={() => setSelectedShift(null)}>
           <div style={{ display: 'grid', gap: 12 }}>
-            {selectedShiftReadOnly ? (
-              <>
-                <div style={{ display: 'grid', gap: 6 }}>
-                  <span style={labelStyle}>Assigned to</span>
-                  <div style={{ padding: '9px 11px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#F8FAFC', fontSize: 13, color: TEXT_DARK }}>
-                    {members.find(m => m.id === shiftEditForm.assigned_user_id)?.full_name ?? '—'}
-                  </div>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
-                  <div style={{ display: 'grid', gap: 6 }}>
-                    <span style={labelStyle}>Date</span>
-                    <div style={{ padding: '9px 11px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#F8FAFC', fontSize: 13, color: TEXT_DARK }}>{prettyDate(shiftEditForm.shift_date)}</div>
-                  </div>
-                  <div style={{ display: 'grid', gap: 6 }}>
-                    <span style={labelStyle}>Start</span>
-                    <div style={{ padding: '9px 11px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#F8FAFC', fontSize: 13, color: TEXT_DARK }}>{formatShiftHour(shiftEditForm.start_time)}</div>
-                  </div>
-                  <div style={{ display: 'grid', gap: 6 }}>
-                    <span style={labelStyle}>End</span>
-                    <div style={{ padding: '9px 11px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#F8FAFC', fontSize: 13, color: TEXT_DARK }}>{formatShiftHour(shiftEditForm.end_time)}</div>
-                  </div>
-                </div>
-              </>
-            ) : (
-              <>
+            <div>
+              <span style={labelStyle}>Reassign to</span>
+              <DropdownField
+                value={shiftEditForm.assigned_user_id}
+                options={members
+                  .filter(member => member.department_id === shiftEditForm.department_id)
+                  .map(member => ({ value: member.id, label: `${member.full_name} · ${member.role}` }))}
+                onChange={v => setShiftEditForm(prev => ({ ...prev, assigned_user_id: v }))}
+                placeholder="Select person"
+              />
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, alignItems: 'start' }}>
+              <div>
+                <span style={labelStyle}>Date</span>
+                <InlineDatePicker
+                  value={shiftEditForm.shift_date}
+                  onChange={date => setShiftEditForm(prev => ({ ...prev, shift_date: date }))}
+                  shiftDates={editUserShiftDates}
+                />
+              </div>
+              <div style={{ display: 'grid', gap: 8 }}>
                 <div>
-                  <span style={labelStyle}>Reassign to</span>
-                  <DropdownField
-                    value={shiftEditForm.assigned_user_id}
-                    options={members
-                      .filter(member => member.department_id === shiftEditForm.department_id)
-                      .map(member => ({ value: member.id, label: `${member.full_name} · ${member.role}` }))}
-                    onChange={v => setShiftEditForm(prev => ({ ...prev, assigned_user_id: v }))}
-                    placeholder="Select person"
-                  />
+                  <span style={labelStyle}>Start</span>
+                  <TimePicker value={shiftEditForm.start_time} onChange={val => setShiftEditForm(prev => ({ ...prev, start_time: val }))} />
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, alignItems: 'start' }}>
-                  <div>
-                    <span style={labelStyle}>Date</span>
-                    <InlineDatePicker
-                      value={shiftEditForm.shift_date}
-                      onChange={date => setShiftEditForm(prev => ({ ...prev, shift_date: date }))}
-                      shiftDates={editUserShiftDates}
-                    />
-                  </div>
-                  <div style={{ display: 'grid', gap: 8 }}>
-                    <div>
-                      <span style={labelStyle}>Start</span>
-                      <TimePicker value={shiftEditForm.start_time} onChange={val => setShiftEditForm(prev => ({ ...prev, start_time: val }))} />
-                    </div>
-                    <div>
-                      <span style={labelStyle}>End</span>
-                      <TimePicker value={shiftEditForm.end_time} onChange={val => setShiftEditForm(prev => ({ ...prev, end_time: val }))} />
-                    </div>
-                  </div>
+                <div>
+                  <span style={labelStyle}>End</span>
+                  <TimePicker value={shiftEditForm.end_time} onChange={val => setShiftEditForm(prev => ({ ...prev, end_time: val }))} />
                 </div>
-              </>
-            )}
+              </div>
+            </div>
           </div>
           {shiftActionError && <div style={{ ...errorBoxStyle, marginTop: 12 }}>{shiftActionError}</div>}
           <div style={modalFooterStyle}>
-            {!selectedShiftReadOnly && (
-              <button type="button" onClick={deleteShift} disabled={shiftActionLoading} style={{ ...secondaryButtonStyle, color: '#DC2626' }}><Trash2 size={16} /> Delete</button>
-            )}
+            <button type="button" onClick={deleteShift} disabled={shiftActionLoading} style={{ ...secondaryButtonStyle, color: '#DC2626' }}><Trash2 size={16} /> Delete</button>
             <div style={{ flex: 1 }} />
             <button type="button" onClick={() => setSelectedShift(null)} style={secondaryButtonStyle}>Close</button>
-            {!selectedShiftReadOnly && (
-              <button type="button" onClick={saveShiftEdit} disabled={shiftActionLoading} style={primaryButtonStyle}>{shiftActionLoading ? <Spinner /> : <Check size={16} />} Save</button>
-            )}
+            <button type="button" onClick={saveShiftEdit} disabled={shiftActionLoading} style={primaryButtonStyle}>{shiftActionLoading ? <Spinner /> : <Check size={16} />} Save</button>
           </div>
         </Modal>
       )}

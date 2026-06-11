@@ -363,7 +363,7 @@ export default function ManagerDashboard() {
 
   // ── Timeline rendering helpers ──────────────────────────────────────────────
   const PERSON_COL = 180
-  const ROW_H = 72
+  const ROW_H = 58
   const TIMELINE_PAD_PCT = 4
 
   const activeRows = timelineRows.filter(r => r.shifts.length > 0)
@@ -433,13 +433,13 @@ export default function ManagerDashboard() {
           return dept.rows.map((row, rowIdx) => {
             const isDeptBoundary = deptIdx > 0 && rowIdx === 0
             return (
-              <div key={`${row.user_id ?? row.department_id}_${rowIdx}`} style={{ display: 'flex', height: ROW_H, borderTop: isDeptBoundary ? EDGE : '1px solid rgba(15,23,42,0.12)', background: '#FFFFFF' }}>
+              <div key={`${row.user_id ?? row.department_id}_${rowIdx}`} style={{ display: 'flex', height: ROW_H, borderTop: isDeptBoundary ? EDGE : 'none', background: '#FFFFFF' }}>
                 <div style={{ width: PERSON_COL, flexShrink: 0, display: 'flex', alignItems: 'center', padding: '0 12px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: row.role === 'Manager' ? '#EFF6FF' : '#F3F4F6', color: row.role === 'Manager' ? BLUE : '#4B5563', borderRadius: 999 }}>
                       {row.role === 'Manager' ? <UserCog size={13} /> : <UserRound size={13} />}
                     </div>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: row.role === 'Manager' ? BLUE : '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {row.full_name}
                     </span>
                   </div>
@@ -491,6 +491,7 @@ export default function ManagerDashboard() {
         .task-item:hover { background: #F8FAFC !important; transform: translateX(2px); }
         .team-row { transition: background 0.15s ease, transform 0.12s ease; }
         .team-row:hover { background: #EFF6FF !important; transform: translateX(2px); }
+
         .mark-btn { transition: background 0.15s ease, transform 0.12s ease; }
         .mark-btn:hover { transform: scale(1.05); }
         .msg-btn { transition: color 0.15s ease, transform 0.15s ease; }
@@ -506,7 +507,7 @@ export default function ManagerDashboard() {
               {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
             </p>
             <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
-              {selectedDeptName ? `Today's Overview for ${selectedDeptName}` : "Today's Overview"}
+              {selectedDeptName ? `Today's Overview · ${selectedDeptName}` : "Today's Overview"}
             </h1>
             {!loading && departments.length > 1 && (
               <div ref={deptDropdownRef} style={{ position: 'relative', display: 'inline-block', marginTop: 8 }}>
@@ -565,7 +566,7 @@ export default function ManagerDashboard() {
               {/* Stat cards */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: 14, flexShrink: 0 }}>
                 {[
-                  { label: 'Staff on Shift',    value: statsLoading ? null : staffOnShift,    icon: <Users size={16} style={{ color: '#F97316' }} />,    accentBg: '#FFF7ED' },
+                  { label: 'Staff on Shift',    value: statsLoading ? null : staffOnShift,    icon: <Users size={16} style={{ color: '#2563EB' }} />,    accentBg: '#EFF6FF' },
                   { label: 'Casual Workers',    value: statsLoading ? null : casualOnShift,   icon: <UserRound size={16} style={{ color: '#EC4899' }} />, accentBg: '#FDF2F8' },
                   { label: 'Total Tasks',       value: statsLoading ? null : totalTasks,      icon: <ClipboardList size={16} style={{ color: '#3B82F6' }} />, accentBg: '#EFF6FF' },
                   { label: 'Tasks In Progress', value: statsLoading ? null : tasksInProgress, icon: <Timer size={16} style={{ color: '#8B5CF6' }} />,     accentBg: '#F5F3FF' },
@@ -664,17 +665,19 @@ export default function ManagerDashboard() {
               </div>
 
               {/* ── ROW 3: Focus | Team | Live Feed | Tasks ─── */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 16, alignItems: 'stretch', flex: 1, minHeight: 0 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 16, alignItems: 'start' }}>
 
                 {/* ── Focus ── */}
-                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 18, flexShrink: 0 }}>
-                    <div style={{ width: 30, height: 30, borderRadius: 9, background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <Target size={15} style={{ color: BLUE }} />
+                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18, flexShrink: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ width: 30, height: 30, borderRadius: 9, background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <Target size={15} style={{ color: BLUE }} />
+                      </div>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Focus</span>
                     </div>
-                    <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Focus</span>
                   </div>
-                  <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+                  <div style={{ }}>
                     {deptTasksLoading ? (
                       <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}><Spinner size={20} dark /></div>
                     ) : (
@@ -766,14 +769,16 @@ export default function ManagerDashboard() {
                 </div>
 
                 {/* ── Team ── */}
-                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, flexShrink: 0 }}>
-                    <div style={{ width: 30, height: 30, borderRadius: 9, background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <Users size={15} style={{ color: BLUE }} />
+                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexShrink: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ width: 30, height: 30, borderRadius: 9, background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <Users size={15} style={{ color: BLUE }} />
+                      </div>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Team</span>
                     </div>
-                    <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Team</span>
                   </div>
-                  <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+                  <div style={{ }}>
                     {timelineLoading ? (
                       <div style={{ display: 'flex', justifyContent: 'center', padding: '24px 0' }}><Spinner size={16} dark /></div>
                     ) : deptTeamRows.length === 0 ? (
@@ -789,7 +794,7 @@ export default function ManagerDashboard() {
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: row.role === 'Manager' ? '#EFF6FF' : '#F3F4F6', color: row.role === 'Manager' ? BLUE : '#4B5563', borderRadius: 999 }}>
                               {row.role === 'Manager' ? <UserCog size={13} /> : <UserRound size={13} />}
                             </div>
-                            <p style={{ fontSize: 13, fontWeight: 700, margin: 0, color: row.role === 'Manager' ? BLUE : '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }}>{row.full_name}</p>
+                            <p style={{ fontSize: 13, fontWeight: 700, margin: 0, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }}>{row.full_name}</p>
                             <button onClick={() => router.push(`/manager/communication?tab=messages&partner_id=${row.user_id}`)}
                               aria-label={`Message ${row.full_name}`} className="msg-btn"
                               style={{ flexShrink: 0, cursor: 'pointer', background: 'transparent', border: 'none', padding: 4, borderRadius: 6, color: '#CBD5E1' }}
@@ -805,7 +810,7 @@ export default function ManagerDashboard() {
                 </div>
 
                 {/* ── Live Feed ── */}
-                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column' }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexShrink: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <div style={{ width: 30, height: 30, borderRadius: 9, background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -824,7 +829,7 @@ export default function ManagerDashboard() {
                       </button>
                     )}
                   </div>
-                  <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+                  <div style={{ }}>
                     {deptTasksLoading ? (
                       <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}><Spinner size={16} dark /></div>
                     ) : activityFeed.length === 0 ? (
@@ -869,14 +874,16 @@ export default function ManagerDashboard() {
                 </div>
 
                 {/* ── Tasks ── */}
-                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, flexShrink: 0 }}>
-                    <div style={{ width: 30, height: 30, borderRadius: 9, background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <ClipboardList size={15} style={{ color: BLUE }} />
+                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexShrink: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ width: 30, height: 30, borderRadius: 9, background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <ClipboardList size={15} style={{ color: BLUE }} />
+                      </div>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Tasks</span>
                     </div>
-                    <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Tasks</span>
                   </div>
-                  <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+                  <div style={{ }}>
                     {deptTasksLoading ? (
                       <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}><Spinner size={16} dark /></div>
                     ) : sortedTasks.length === 0 ? (

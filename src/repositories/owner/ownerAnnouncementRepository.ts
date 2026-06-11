@@ -2,7 +2,7 @@ import { supabase } from '@/lib/supabase'
 
 export const ownerAnnouncementRepository = {
 
-  async getAnnouncements(companyId: string, requestingUserId?: string | null) {
+  async getAnnouncements(companyId: string, requestingUserId?: string | null, role?: string | null, departmentId?: string | null) {
     const { data, error } = await supabase
       .from('announcements')
       .select('*, poster:users!announcements_from_user_id_fkey(full_name, role)')
@@ -10,8 +10,16 @@ export const ownerAnnouncementRepository = {
       .order('created_at', { ascending: false })
     if (error) throw error
 
+    const isOwnerOrPartner = role?.toLowerCase() === 'owner' || role?.toLowerCase() === 'partner'
+
     return (data ?? [])
-      .filter((row: any) => row.poster?.role !== 'Manager')
+      .filter((row: any) => {
+        // Non-owners only see company-wide or their own department's announcements
+        if (!isOwnerOrPartner && departmentId) {
+          return row.department_id === null || row.department_id === departmentId
+        }
+        return true
+      })
       .map((row: any) => {
         const { poster, ...rest } = row
         return { ...rest, created_by_name: poster?.full_name ?? null }
