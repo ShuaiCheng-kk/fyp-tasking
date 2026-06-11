@@ -42,12 +42,18 @@ export default function PartnerLayout({
       }
     })
 
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (!session) {
+    async function checkAuth() {
+      // Use the Supabase session as the authoritative source.
+      // createBrowserClient reads from cookies (set by the SSR signin route).
+      const { data: { session } } = await supabase.auth.getSession()
+      const userId = session?.user?.id ?? localStorage.getItem('tasking_user_id')
+
+      if (!userId) {
         router.replace('/')
         return
       }
-      const res = await fetch(`/api/user/me?user_id=${session.user.id}`)
+
+      const res = await fetch(`/api/user/me?user_id=${userId}`)
       if (res.status === 404) {
         setShowDeletedModal(true)
         setChecking(false)
@@ -58,10 +64,14 @@ export default function PartnerLayout({
       const redirect = ROLE_DASHBOARD[role]
       if (redirect) {
         router.replace(redirect)
+      } else if (!data.success || !role) {
+        router.replace('/')
       } else {
         setChecking(false)
       }
-    })
+    }
+
+    checkAuth()
 
     return () => subscription.unsubscribe()
   }, [router])

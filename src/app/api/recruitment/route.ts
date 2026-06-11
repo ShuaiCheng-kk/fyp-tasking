@@ -140,6 +140,16 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ success: true })
     }
 
+    if (action === 'delete_posting') {
+      await recruitmentService.deleteJobPosting(String(data.job_id ?? ''))
+      return NextResponse.json({ success: true })
+    }
+
+    if (action === 'unarchive_posting') {
+      const posting = await recruitmentService.unarchiveJobPosting(String(data.job_id ?? ''))
+      return NextResponse.json({ success: true, posting })
+    }
+
     if (action === 'approve_posting') {
       const posting = await recruitmentService.approveJobPosting(String(data.job_id ?? ''))
       return NextResponse.json({ success: true, posting })

@@ -77,6 +77,16 @@ export const recruitmentService = {
     })
   },
 
+  async unarchiveJobPosting(id: string): Promise<JobPosting> {
+    if (!id) throw new Error('job_id is required')
+    return recruitmentRepository.updateJobPosting(id, { status: 'open', archived_at: null })
+  },
+
+  async deleteJobPosting(id: string): Promise<void> {
+    if (!id) throw new Error('job_id is required')
+    await recruitmentRepository.deleteJobPosting(id)
+  },
+
   async duplicateJobPosting(id: string, created_by: string): Promise<JobPosting> {
     if (!id || !created_by) throw new Error('job_id and created_by are required')
     const original = await recruitmentRepository.getJobPostingById(id)

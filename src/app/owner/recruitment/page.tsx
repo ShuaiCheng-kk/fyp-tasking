@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import {
-  Archive, Briefcase, Check, CheckCircle, ChevronLeft, ChevronRight, ClipboardList, Copy, Crown,
+  Archive, ArchiveRestore, Briefcase, Check, CheckCircle, ChevronLeft, ChevronRight, ClipboardList, Copy, Crown,
   FileText, MoreHorizontal, Pencil, Repeat, Send, Sparkles, Timer, Trash2, UserCheck, UserX,
   X, XCircle, Zap,
 } from 'lucide-react'
@@ -318,6 +318,11 @@ export default function OwnerRecruitmentPage() {
   // detail / delete confirm
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; title: string; isDraft?: boolean } | null>(null)
   const [archivedSelected, setArchivedSelected] = useState<Set<string>>(new Set())
+  const [selectedArchivedId, setSelectedArchivedId] = useState('')
+  const [archivedApplicants, setArchivedApplicants] = useState<JobApplicant[]>([])
+  const [selectedDraftId, setSelectedDraftId] = useState('')
+  const [selectedPendingId, setSelectedPendingId] = useState('')
+  const [jobsSelected, setJobsSelected] = useState<Set<string>>(new Set())
 
   // job action menu (... button)
   const [jobMenuOpen, setJobMenuOpen] = useState(false)
@@ -326,6 +331,9 @@ export default function OwnerRecruitmentPage() {
   const jobMenuDropRef = useRef<HTMLDivElement>(null)
 
   const selectedLive = useMemo(() => livePostings.find(p => p.id === selectedLiveId) ?? null, [livePostings, selectedLiveId])
+  const selectedArchived = useMemo(() => livePostings.find(p => p.id === selectedArchivedId) ?? null, [livePostings, selectedArchivedId])
+  const selectedDraft = useMemo(() => drafts.find(p => p.id === selectedDraftId) ?? null, [drafts, selectedDraftId])
+  const selectedPending = useMemo(() => pendingPostings.find(p => p.id === selectedPendingId) ?? null, [pendingPostings, selectedPendingId])
 
   // ── data fetching ────────────────────────────────────────────────────────────
 
@@ -348,11 +356,10 @@ export default function OwnerRecruitmentPage() {
       setPendingPostings(pendingData.pendingPostings ?? [])
       setDrafts(draftsData.drafts ?? [])
       if (deptData.success) setDepartments(deptData.departments ?? [])
-      // auto-select first live posting
       setSelectedLiveId(prev => {
         const list = liveData.postings ?? []
         if (prev && list.some((p: JobPostingSummary) => p.id === prev)) return prev
-        return list[0]?.id ?? ''
+        return ''
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch recruitment data')
@@ -368,6 +375,15 @@ export default function OwnerRecruitmentPage() {
       const data = await res.json()
       if (data.success) setApplicants(data.applicants ?? [])
     } catch { setApplicants([]) }
+  }, [])
+
+  const fetchArchivedApplicants = useCallback(async (jobId: string) => {
+    if (!jobId) { setArchivedApplicants([]); return }
+    try {
+      const res = await fetch(`/api/recruitment?resource=applicants&job_id=${jobId}`)
+      const data = await res.json()
+      if (data.success) setArchivedApplicants(data.applicants ?? [])
+    } catch { setArchivedApplicants([]) }
   }, [])
 
   // initial auth + load
@@ -410,6 +426,10 @@ export default function OwnerRecruitmentPage() {
     void fetchApplicants(selectedLiveId)
     setRecommendations([])
   }, [selectedLiveId, fetchApplicants])
+
+  useEffect(() => {
+    void fetchArchivedApplicants(selectedArchivedId)
+  }, [selectedArchivedId, fetchArchivedApplicants])
 
   useEffect(() => {
     if (!jobMenuOpen) return
@@ -587,6 +607,7 @@ export default function OwnerRecruitmentPage() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to update posting')
+      setSelectedPendingId('')
       await fetchAll(companyId, internalUserId)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update posting')
@@ -604,6 +625,8 @@ export default function OwnerRecruitmentPage() {
       if (!data.success) throw new Error(data.message || 'Failed to delete')
       setDeleteConfirm(null)
       setSelectedLiveId('')
+      setSelectedArchivedId('')
+      setSelectedDraftId('')
       await fetchAll(companyId, internalUserId)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete')
@@ -627,6 +650,60 @@ export default function OwnerRecruitmentPage() {
     } finally { setActionLoading(false) }
   }
 
+  const unarchiveArchivedSelected = async () => {
+    if (archivedSelected.size === 0) return
+    setActionLoading(true); setError('')
+    try {
+      await Promise.all([...archivedSelected].map(id =>
+        fetch('/api/recruitment', {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'unarchive_posting', job_id: id }),
+        })
+      ))
+      setArchivedSelected(new Set())
+      await fetchAll(companyId, internalUserId)
+      setActiveTab('jobs')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to unarchive')
+    } finally { setActionLoading(false) }
+  }
+
+  const archiveJobsSelected = async () => {
+    if (jobsSelected.size === 0) return
+    setActionLoading(true); setError('')
+    try {
+      await Promise.all([...jobsSelected].map(id =>
+        fetch('/api/recruitment', {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'archive_posting', job_id: id }),
+        })
+      ))
+      setJobsSelected(new Set())
+      setSelectedLiveId('')
+      await fetchAll(companyId, internalUserId)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to archive')
+    } finally { setActionLoading(false) }
+  }
+
+  const deleteJobsSelected = async () => {
+    if (jobsSelected.size === 0) return
+    setActionLoading(true); setError('')
+    try {
+      await Promise.all([...jobsSelected].map(id =>
+        fetch('/api/recruitment', {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'delete_posting', job_id: id }),
+        })
+      ))
+      setJobsSelected(new Set())
+      setSelectedLiveId('')
+      await fetchAll(companyId, internalUserId)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete')
+    } finally { setActionLoading(false) }
+  }
+
   const publishDraft = async (id: string) => {
     setActionLoading(true); setError('')
     try {
@@ -636,6 +713,7 @@ export default function OwnerRecruitmentPage() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to publish draft')
+      setSelectedDraftId('')
       await fetchAll(companyId, internalUserId)
       setActiveTab('jobs')
     } catch (err) {
@@ -691,12 +769,12 @@ export default function OwnerRecruitmentPage() {
           </div>
         </div>
 
-        {error && (
-          <div style={{ margin: '0 28px 0', padding: '11px 14px', background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 10, fontSize: '0.84rem', fontWeight: 600 }}>{error}</div>
-        )}
+        {/* ── Card wrapper (tab bar + content) ── */}
+        <div style={{ padding: '0 28px 28px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <div style={{ background: '#FFFFFF', borderRadius: 16, border: '1px solid #E5E7EB', boxShadow: '0 1px 6px rgba(0,0,0,0.06)', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
 
         {/* ── Tab bar ── */}
-        <div style={{ padding: '0 28px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <div style={{ padding: '14px 20px', borderBottom: '1px solid #F3F4F6', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             {([
               { key: 'jobs' as Tab,     label: 'Jobs',    Icon: Briefcase    },
@@ -708,7 +786,7 @@ export default function OwnerRecruitmentPage() {
               return (
                 <button
                   key={tab.key}
-                  onClick={() => setActiveTab(tab.key)}
+                  onClick={() => { setActiveTab(tab.key); setSelectedArchivedId(''); setArchivedSelected(new Set()); setSelectedDraftId(''); setSelectedPendingId(''); setJobsSelected(new Set()) }}
                   style={{
                     padding: '5px 13px', borderRadius: '99px', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem',
                     border: active ? '2px solid #F97316' : '1.5px solid #E5E7EB',
@@ -723,29 +801,26 @@ export default function OwnerRecruitmentPage() {
               )
             })}
           </div>
-          {activeTab === 'review' ? (
-            <button
-              onClick={() => {/* AI review all — to be implemented */}}
-              style={{ height: 36, padding: '0 16px', background: '#F97316', color: '#fff', border: 'none', borderRadius: 9, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontWeight: 700, fontSize: 13, flexShrink: 0 }}
-              onMouseEnter={e => (e.currentTarget.style.background = '#EA580C')}
-              onMouseLeave={e => (e.currentTarget.style.background = '#F97316')}
-            >
-              <Sparkles size={14} /> AI Review All
-            </button>
-          ) : (
-            <button
-              onClick={openNewForm}
-              style={{ height: 36, padding: '0 16px', background: '#F97316', color: '#fff', border: 'none', borderRadius: 9, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontWeight: 700, fontSize: 13, flexShrink: 0 }}
-              onMouseEnter={e => (e.currentTarget.style.background = '#EA580C')}
-              onMouseLeave={e => (e.currentTarget.style.background = '#F97316')}
-            >
-              <Sparkles size={14} /> AI Post Job
-            </button>
-          )}
+          <button
+            onClick={activeTab === 'review' ? () => {} : activeTab === 'archived' ? undefined : openNewForm}
+            style={{
+              height: 36, padding: '0 16px', background: '#F97316', color: '#fff', border: 'none', borderRadius: 9,
+              cursor: activeTab === 'archived' ? 'default' : 'pointer',
+              display: 'flex', alignItems: 'center', gap: 7, fontWeight: 700, fontSize: 13, flexShrink: 0,
+              visibility: activeTab === 'archived' ? 'hidden' : 'visible',
+            }}
+            onMouseEnter={e => { if (activeTab !== 'archived') e.currentTarget.style.background = '#EA580C' }}
+            onMouseLeave={e => { if (activeTab !== 'archived') e.currentTarget.style.background = '#F97316' }}
+          >
+            <Sparkles size={14} /> {activeTab === 'review' ? 'AI Review All' : 'AI Post Job'}
+          </button>
         </div>
 
         {/* ── Tab content ── */}
-        <div style={{ padding: '12px 28px 28px', flex: 1, minHeight: 0 }}>
+        <div style={{ padding: '16px 20px 20px', flex: 1, minHeight: 0, overflowY: 'auto' }}>
+          {error && (
+            <div style={{ marginBottom: 12, padding: '11px 14px', background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 10, fontSize: '0.84rem', fontWeight: 600 }}>{error}</div>
+          )}
 
           {/* ══ JOBS tab (Open / Closed / Expired) ════════════════════════════ */}
           {activeTab === 'jobs' && (
@@ -757,48 +832,90 @@ export default function OwnerRecruitmentPage() {
                   <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <Briefcase size={15} style={{ color: '#F97316' }} />
                   </div>
-                  <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', flex: 1 }}>All Jobs</span>
-                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#EA580C', background: '#FFF7ED', padding: '2px 8px', borderRadius: 99 }}>{jobsPostings.length}</span>
+                  <span className="font-heading" style={{ fontSize: 15, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.3px', flex: 1 }}>All Jobs</span>
+                  {jobsSelected.size > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <button
+                        onClick={archiveJobsSelected}
+                        disabled={actionLoading}
+                        title={`Archive ${jobsSelected.size} selected`}
+                        style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid #FED7AA', background: '#FFF7ED', color: '#EA580C', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}
+                        onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FFEDD5' }}
+                        onMouseLeave={e => { e.currentTarget.style.background = '#FFF7ED' }}
+                      >
+                        <Archive size={14} />
+                      </button>
+                      <button
+                        onClick={deleteJobsSelected}
+                        disabled={actionLoading}
+                        title={`Delete ${jobsSelected.size} selected`}
+                        style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid #FECACA', background: '#FEF2F2', color: '#DC2626', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}
+                        onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FEE2E2' }}
+                        onMouseLeave={e => { e.currentTarget.style.background = '#FEF2F2' }}
+                      >
+                        {actionLoading ? <Spinner size={12} dark /> : <Trash2 size={14} />}
+                      </button>
+                    </div>
+                  )}
                 </div>
                 {loading ? (
                   <div style={{ padding: '24px 18px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                     <Spinner size={14} dark /> Loading...
                   </div>
                 ) : jobsPostings.length === 0 ? (
-                  <div style={{ padding: '28px 18px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>No job postings yet.</div>
-                ) : jobsPostings.map(p => {
+                  <div style={{ margin: '12px 14px', padding: '28px 16px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                    <Briefcase size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
+                    <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No job postings yet.</p>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '12px 14px' }}>
+                  {jobsPostings.map(p => {
                   const isSelected = selectedLiveId === p.id
+                  const checked = jobsSelected.has(p.id)
                   return (
-                    <button
+                    <div
                       key={p.id}
                       onClick={() => setSelectedLiveId(p.id)}
                       style={{
-                        width: '100%', border: 'none', borderBottom: '1px solid #F0F4F8',
-                        background: isSelected ? '#FFF7ED' : '#FFFFFF',
-                        padding: '13px 18px', textAlign: 'left', cursor: 'pointer',
-                        borderLeft: isSelected ? '3px solid #F97316' : '3px solid transparent',
+                        border: (isSelected || checked) ? '2px solid #F97316' : '1.5px solid #E5E7EB',
+                        borderRadius: 14,
+                        padding: '14px 14px 12px',
+                        background: '#FFFFFF',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        cursor: 'pointer',
+                        boxShadow: (isSelected || checked) ? '0 0 0 3px rgba(249,115,22,0.10)' : '0 1px 3px rgba(0,0,0,0.06)',
+                        transition: 'border-color 0.12s, box-shadow 0.12s',
                       }}
-                      onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = '#FAFBFC' }}
-                      onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = '#FFFFFF' }}
                     >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start', marginBottom: 5 }}>
-                        <strong style={{ fontSize: '0.875rem', color: '#111827', lineHeight: 1.3, flex: 1 }}>{p.title}</strong>
-                        {statusBadge(p.status)}
+                      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
+                        <strong style={{ fontSize: '0.875rem', color: '#1C1C1E', lineHeight: 1.4, flex: 1, minWidth: 0 }}>{p.title}</strong>
+                        <button
+                          type="button"
+                          onClick={e => { e.stopPropagation(); setJobsSelected(prev => { const s = new Set(prev); checked ? s.delete(p.id) : s.add(p.id); return s }) }}
+                          style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 5, border: checked ? '2px solid #F97316' : '1.5px solid #D1D5DB', background: checked ? '#F97316' : '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0 }}
+                        >
+                          {checked && <Check size={11} color="#FFFFFF" strokeWidth={3} />}
+                        </button>
                       </div>
-                      <p style={{ margin: 0, fontSize: '0.775rem', color: '#9CA3AF' }}>
-                        {p.department_name ?? 'Any dept'} · {p.applicant_count} applicant{p.applicant_count !== 1 ? 's' : ''}
-                      </p>
-                    </button>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                        <span style={{ fontSize: '0.725rem', color: '#C4C9D4' }}>{new Date(p.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                      </div>
+                    </div>
                   )
-                })}
+                  })}
+                  </div>
+                )}
               </div>
 
               {/* Right: posting detail + applicants */}
               <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden' }}>
                 {!selectedLive ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 24px', color: '#CBD5E0', gap: 10 }}>
-                    <ClipboardList size={32} strokeWidth={1.5} />
-                    <p style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 500 }}>Select a job posting</p>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, padding: '32px 24px' }}>
+                    <div style={{ padding: '40px 48px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14, width: '100%' }}>
+                      <ClipboardList size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
+                      <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>Select a job posting</p>
+                    </div>
                   </div>
                 ) : (
                   <>
@@ -927,185 +1044,405 @@ export default function OwnerRecruitmentPage() {
 
           {/* ══ ARCHIVED tab ══════════════════════════════════════════════════ */}
           {activeTab === 'archived' && (
-            <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden' }}>
-              <div style={{ padding: '16px 20px 14px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <Archive size={15} style={{ color: '#F97316' }} />
-                </div>
-                <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Archived Jobs</span>
-                {archivedPostings.length > 0 && (
-                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#EA580C', background: '#FFF7ED', padding: '2px 9px', borderRadius: 99 }}>{archivedPostings.length}</span>
-                )}
-                {archivedSelected.size > 0 && (
-                  <button
-                    onClick={deleteArchivedSelected}
-                    disabled={actionLoading}
-                    title={`Delete ${archivedSelected.size} selected`}
-                    style={{ marginLeft: 'auto', width: 38, height: 38, borderRadius: 9, border: '1px solid #FECACA', background: '#FEF2F2', color: '#DC2626', display: 'inline-grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1, flexShrink: 0 }}
-                  >
-                    {actionLoading ? <Spinner size={14} dark /> : <Trash2 size={16} />}
-                  </button>
-                )}
-              </div>
-              {loading ? (
-                <div style={{ padding: '28px 20px', color: '#9CA3AF', fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Spinner size={14} dark /> Loading...
-                </div>
-              ) : archivedPostings.length === 0 ? (
-                <div style={{ padding: '48px 20px', color: '#9CA3AF', fontSize: '0.875rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-                  <Archive size={28} strokeWidth={1.5} />
-                  <span>No archived postings.</span>
-                </div>
-              ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12, padding: 20 }}>
-                  {archivedPostings.map(p => {
-                    const checked = archivedSelected.has(p.id)
-                    const jobTypeLabel = p.is_recurring ? 'Shift Job' : 'One-off Job'
-                    return (
-                      <div key={p.id}
-                        style={{ border: checked ? '2px solid #F97316' : '1.5px solid #E5E7EB', borderRadius: 12, padding: '12px 14px', background: checked ? '#FFFBF7' : '#F9FAFB', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}
+            <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 16, alignItems: 'start' }}>
+
+              {/* Left: archived list */}
+              <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden' }}>
+                <div style={{ padding: '14px 18px 12px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <Archive size={15} style={{ color: '#F97316' }} />
+                  </div>
+                  <span className="font-heading" style={{ fontSize: 15, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.3px', flex: 1 }}>Archived Jobs</span>
+                  {archivedSelected.size > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <button
+                        onClick={unarchiveArchivedSelected}
+                        disabled={actionLoading}
+                        title={`Unarchive ${archivedSelected.size} selected`}
+                        style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid #BBF7D0', background: '#F0FDF4', color: '#059669', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}
+                        onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#DCFCE7' }}
+                        onMouseLeave={e => { e.currentTarget.style.background = '#F0FDF4' }}
                       >
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <strong style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.35, display: 'block', marginBottom: 5 }}>{p.title}</strong>
-                          <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{jobTypeLabel}</span>
-                        </div>
-                        {/* Checkbox — only click target for selection */}
+                        <ArchiveRestore size={14} />
+                      </button>
+                      <button
+                        onClick={deleteArchivedSelected}
+                        disabled={actionLoading}
+                        title={`Delete ${archivedSelected.size} selected`}
+                        style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid #FECACA', background: '#FEF2F2', color: '#DC2626', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}
+                        onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FEE2E2' }}
+                        onMouseLeave={e => { e.currentTarget.style.background = '#FEF2F2' }}
+                      >
+                        {actionLoading ? <Spinner size={12} dark /> : <Trash2 size={14} />}
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {loading ? (
+                  <div style={{ padding: '24px 18px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                    <Spinner size={14} dark /> Loading...
+                  </div>
+                ) : archivedPostings.length === 0 ? (
+                  <div style={{ margin: '12px 14px', padding: '28px 16px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                    <Archive size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
+                    <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No archived postings.</p>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '12px 14px' }}>
+                  {archivedPostings.map(p => {
+                  const isSelected = selectedArchivedId === p.id
+                  const checked = archivedSelected.has(p.id)
+                  return (
+                    <div
+                      key={p.id}
+                      onClick={() => setSelectedArchivedId(p.id)}
+                      style={{
+                        border: (isSelected || checked) ? '2px solid #F97316' : '1.5px solid #E5E7EB',
+                        borderRadius: 14,
+                        padding: '14px 14px 12px',
+                        background: '#FFFFFF',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        cursor: 'pointer',
+                        boxShadow: (isSelected || checked) ? '0 0 0 3px rgba(249,115,22,0.10)' : '0 1px 3px rgba(0,0,0,0.06)',
+                        transition: 'border-color 0.12s, box-shadow 0.12s',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
+                        <strong style={{ fontSize: '0.875rem', color: '#1C1C1E', lineHeight: 1.4, flex: 1, minWidth: 0 }}>{p.title}</strong>
                         <button
                           type="button"
-                          onClick={() => setArchivedSelected(prev => { const s = new Set(prev); checked ? s.delete(p.id) : s.add(p.id); return s })}
+                          onClick={e => { e.stopPropagation(); setArchivedSelected(prev => { const s = new Set(prev); checked ? s.delete(p.id) : s.add(p.id); return s }) }}
                           style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 5, border: checked ? '2px solid #F97316' : '1.5px solid #D1D5DB', background: checked ? '#F97316' : '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0 }}
                         >
                           {checked && <Check size={11} color="#FFFFFF" strokeWidth={3} />}
                         </button>
                       </div>
-                    )
+                      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                        <span style={{ fontSize: '0.725rem', color: '#C4C9D4' }}>{new Date(p.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                      </div>
+                    </div>
+                  )
                   })}
-                </div>
-              )}
+                  </div>
+                )}
+              </div>
+
+              {/* Right: archived detail (view-only) */}
+              <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden' }}>
+                {!selectedArchived ? (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, padding: '32px 24px' }}>
+                    <div style={{ padding: '40px 48px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14, width: '100%' }}>
+                      <Archive size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
+                      <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>Select an archived job</p>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ padding: '20px 24px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+                      {/* Job fields */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        {selectedArchived.employment_type && (
+                          <div style={{ padding: '11px 14px', background: '#F7F8FA', borderRadius: 10 }}>
+                            <span style={labelStyle}>Employment Type</span>
+                            <p style={{ margin: 0, fontSize: '0.9rem', color: '#111827', fontWeight: 600 }}>{selectedArchived.employment_type}</p>
+                          </div>
+                        )}
+                        {selectedArchived.location && (
+                          <div style={{ padding: '11px 14px', background: '#F7F8FA', borderRadius: 10 }}>
+                            <span style={labelStyle}>Location</span>
+                            <p style={{ margin: 0, fontSize: '0.9rem', color: '#111827', fontWeight: 600 }}>{selectedArchived.location}</p>
+                          </div>
+                        )}
+                        {selectedArchived.salary_amount && (
+                          <div style={{ padding: '11px 14px', background: '#F7F8FA', borderRadius: 10 }}>
+                            <span style={labelStyle}>Pay</span>
+                            <p style={{ margin: 0, fontSize: '0.9rem', color: '#111827', fontWeight: 600 }}>${selectedArchived.salary_amount} {selectedArchived.salary_type ?? ''}</p>
+                          </div>
+                        )}
+                        {selectedArchived.department_name && (
+                          <div style={{ padding: '11px 14px', background: '#F7F8FA', borderRadius: 10 }}>
+                            <span style={labelStyle}>Department</span>
+                            <p style={{ margin: 0, fontSize: '0.9rem', color: '#111827', fontWeight: 600 }}>{selectedArchived.department_name}</p>
+                          </div>
+                        )}
+                      </div>
+                      {selectedArchived.description && (
+                        <div>
+                          <span style={labelStyle}>Description</span>
+                          <p style={{ margin: 0, color: '#374151', lineHeight: 1.7, fontSize: '0.9rem' }}>{selectedArchived.description}</p>
+                        </div>
+                      )}
+                      {selectedArchived.requirements && (
+                        <div>
+                          <span style={labelStyle}>Requirements</span>
+                          <p style={{ margin: 0, color: '#374151', lineHeight: 1.7, fontSize: '0.9rem', whiteSpace: 'pre-wrap' }}>{selectedArchived.requirements}</p>
+                        </div>
+                      )}
+
+                      {/* Applicants — view only, no accept/reject */}
+                      <div style={{ borderTop: '1px solid #F3F4F6', paddingTop: 16 }}>
+                        <span style={labelStyle}>Applicants ({archivedApplicants.length})</span>
+                        {archivedApplicants.length === 0 ? (
+                          <div style={{ marginTop: 10, padding: '20px 16px', color: '#9CA3AF', background: '#F7F8FA', borderRadius: 10, textAlign: 'center', fontSize: '0.875rem' }}>No applicants.</div>
+                        ) : archivedApplicants.map(applicant => (
+                          <div key={applicant.id} style={{ marginTop: 10, padding: '14px 16px', border: '1.5px solid #E5E7EB', borderRadius: 10, display: 'flex', justifyContent: 'space-between', gap: 12, background: '#FFFFFF' }}>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
+                                <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#1C1C1E', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FFFFFF', fontWeight: 700, fontSize: '0.7rem', flexShrink: 0 }}>
+                                  {applicant.full_name?.charAt(0)?.toUpperCase() ?? '?'}
+                                </div>
+                                <strong style={{ color: '#111827', fontSize: '0.9rem' }}>{applicant.full_name}</strong>
+                              </div>
+                              <p style={{ margin: '2px 0 0 36px', color: '#9CA3AF', fontSize: '0.775rem' }}>{applicant.email_address}</p>
+                              {applicant.cover_letter && (
+                                <p style={{ margin: '8px 0 0', color: '#4B5563', fontSize: '0.8125rem', lineHeight: 1.5 }}>{applicant.cover_letter}</p>
+                              )}
+                            </div>
+                            <div style={{ flexShrink: 0 }}>
+                              {statusBadge(applicant.status)}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           )}
 
           {/* ══ REVIEW tab ════════════════════════════════════════════════════ */}
           {activeTab === 'review' && (
-            <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden' }}>
-              <div style={{ padding: '16px 20px 14px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <ClipboardList size={15} style={{ color: '#F97316' }} />
+            <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 16, alignItems: 'start' }}>
+
+              {/* Left: pending list */}
+              <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden' }}>
+                <div style={{ padding: '14px 18px 12px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <ClipboardList size={15} style={{ color: '#F97316' }} />
+                  </div>
+                  <span className="font-heading" style={{ fontSize: 15, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.3px', flex: 1 }}>Review Jobs</span>
                 </div>
-                <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Review Posting Jobs</span>
-                {pendingPostings.length > 0 && (
-                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#EA580C', background: '#FFF7ED', padding: '2px 9px', borderRadius: 99 }}>{pendingPostings.length}</span>
+                {loading ? (
+                  <div style={{ padding: '24px 18px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                    <Spinner size={14} dark /> Loading...
+                  </div>
+                ) : pendingPostings.length === 0 ? (
+                  <div style={{ margin: '12px 14px', padding: '28px 16px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                    <CheckCircle size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
+                    <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>All caught up.</p>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '12px 14px' }}>
+                  {pendingPostings.map(p => {
+                  const isSelected = selectedPendingId === p.id
+                  return (
+                    <div
+                      key={p.id}
+                      onClick={() => setSelectedPendingId(p.id)}
+                      style={{
+                        border: isSelected ? '2px solid #F97316' : '1.5px solid #E5E7EB',
+                        borderRadius: 14,
+                        padding: '14px 14px 12px',
+                        background: '#FFFFFF',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        cursor: 'pointer',
+                        boxShadow: isSelected ? '0 0 0 3px rgba(249,115,22,0.10)' : '0 1px 3px rgba(0,0,0,0.06)',
+                        transition: 'border-color 0.12s, box-shadow 0.12s',
+                      }}
+                    >
+                      <strong style={{ fontSize: '0.875rem', color: '#1C1C1E', lineHeight: 1.4, display: 'block', marginBottom: 8 }}>{p.title}</strong>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                        <span style={{ fontSize: '0.725rem', color: '#C4C9D4' }}>{new Date(p.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                      </div>
+                    </div>
+                  )
+                  })}
+                  </div>
                 )}
               </div>
-              {loading ? (
-                <div style={{ padding: '28px 20px', color: '#9CA3AF', fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Spinner size={14} dark /> Loading...
-                </div>
-              ) : pendingPostings.length === 0 ? (
-                <div style={{ padding: '40px 20px', color: '#9CA3AF', fontSize: '0.875rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-                  <CheckCircle size={28} strokeWidth={1.5} style={{ color: '#10B981' }} />
-                  <span>All caught up — no manager submissions pending.</span>
-                </div>
-              ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16, padding: 20 }}>
-                  {pendingPostings.map(p => (
-                    <div key={p.id} style={{ border: '1.5px solid #FDE68A', borderRadius: 12, padding: '16px 18px', background: '#FFFDF7', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-                        <strong style={{ fontSize: '0.9375rem', color: '#111827', lineHeight: 1.3, flex: 1 }}>{p.title}</strong>
-                        {statusBadge('pending_approval')}
+
+              {/* Right: pending detail */}
+              <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden' }}>
+                {!selectedPending ? (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, padding: '32px 24px' }}>
+                    <div style={{ padding: '40px 48px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14, width: '100%' }}>
+                      <ClipboardList size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
+                      <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>Select a posting to review</p>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ padding: '20px 24px 18px', borderBottom: '1px solid #F0F4F8', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                          <h2 style={{ margin: 0, fontSize: '1.1rem', color: '#111827', fontWeight: 700, lineHeight: 1.3 }}>{selectedPending.title}</h2>
+                          {statusBadge('pending_approval')}
+                        </div>
+                        <p style={{ margin: 0, color: '#9CA3AF', fontSize: '0.8375rem' }}>
+                          {[selectedPending.department_name ?? 'Any department', selectedPending.employment_type].filter(Boolean).join(' · ')}
+                          {' · '}Submitted by <strong style={{ color: '#374151' }}>{selectedPending.submitter_name ?? 'Manager'}</strong>
+                          {' · '}{new Date(selectedPending.created_at).toLocaleDateString()}
+                        </p>
                       </div>
-                      <div style={{ fontSize: '0.8rem', color: '#6B7280', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        <span>{p.department_name ?? 'Any dept'}{p.employment_type ? ` · ${p.employment_type}` : ''}</span>
-                        <span>Submitted by <strong style={{ color: '#374151' }}>{p.submitter_name ?? 'Manager'}</strong> · {new Date(p.created_at).toLocaleDateString()}</span>
-                      </div>
-                      {p.description && (
-                        <p style={{ margin: 0, fontSize: '0.825rem', color: '#4B5563', lineHeight: 1.55, maxHeight: 60, overflow: 'hidden' }}>{p.description}</p>
-                      )}
-                      {p.requirements && (
-                        <p style={{ margin: 0, fontSize: '0.8rem', color: '#6B7280', lineHeight: 1.5, maxHeight: 44, overflow: 'hidden', whiteSpace: 'pre-wrap' }}>{p.requirements}</p>
-                      )}
-                      <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                      <div style={{ display: 'flex', gap: 8, flexShrink: 0, alignItems: 'center' }}>
                         <button
-                          onClick={() => decidePosting(p.id, 'approve_posting')}
+                          onClick={() => decidePosting(selectedPending.id, 'approve_posting')}
                           disabled={actionLoading}
-                          style={{ flex: 1, border: 'none', borderRadius: 8, background: '#059669', color: '#FFFFFF', padding: '8px 0', fontWeight: 700, fontSize: '0.825rem', cursor: actionLoading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, opacity: actionLoading ? 0.6 : 1 }}
+                          style={{ height: 34, padding: '0 14px', border: 'none', borderRadius: 9, background: '#059669', color: '#FFFFFF', cursor: actionLoading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, opacity: actionLoading ? 0.6 : 1 }}
                         ><CheckCircle size={13} /> Approve</button>
                         <button
-                          onClick={() => decidePosting(p.id, 'reject_posting')}
+                          onClick={() => decidePosting(selectedPending.id, 'reject_posting')}
                           disabled={actionLoading}
-                          style={{ flex: 1, border: 'none', borderRadius: 8, background: '#DC2626', color: '#FFFFFF', padding: '8px 0', fontWeight: 700, fontSize: '0.825rem', cursor: actionLoading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, opacity: actionLoading ? 0.6 : 1 }}
+                          style={{ height: 34, padding: '0 14px', border: 'none', borderRadius: 9, background: '#DC2626', color: '#FFFFFF', cursor: actionLoading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, opacity: actionLoading ? 0.6 : 1 }}
                         ><XCircle size={13} /> Reject</button>
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
+                    <div style={{ padding: '16px 24px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+                      {selectedPending.description && (
+                        <div>
+                          <span style={labelStyle}>Description</span>
+                          <p style={{ margin: 0, color: '#374151', lineHeight: 1.7, fontSize: '0.9rem' }}>{selectedPending.description}</p>
+                        </div>
+                      )}
+                      {selectedPending.requirements && (
+                        <div>
+                          <span style={labelStyle}>Requirements</span>
+                          <p style={{ margin: 0, color: '#374151', lineHeight: 1.7, fontSize: '0.9rem', whiteSpace: 'pre-wrap' }}>{selectedPending.requirements}</p>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           )}
 
           {/* ══ DRAFTS tab ════════════════════════════════════════════════════ */}
           {activeTab === 'drafts' && (
-            <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden' }}>
-              <div style={{ padding: '16px 20px 14px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <FileText size={15} style={{ color: '#F97316' }} />
+            <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 16, alignItems: 'start' }}>
+
+              {/* Left: draft list */}
+              <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden' }}>
+                <div style={{ padding: '14px 18px 12px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <FileText size={15} style={{ color: '#F97316' }} />
+                  </div>
+                  <span className="font-heading" style={{ fontSize: 15, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.3px', flex: 1 }}>Draft Jobs</span>
                 </div>
-                <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Draft Jobs</span>
-                {drafts.length > 0 && (
-                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#EA580C', background: '#FFF7ED', padding: '2px 9px', borderRadius: 99 }}>{drafts.length}</span>
-                )}
-              </div>
-              {loading ? (
-                <div style={{ padding: '28px 20px', color: '#9CA3AF', fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Spinner size={14} dark /> Loading...
-                </div>
-              ) : drafts.length === 0 ? (
-                <div style={{ padding: '48px 20px', color: '#9CA3AF', fontSize: '0.875rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-                  <FileText size={28} strokeWidth={1.5} />
-                  <span>No drafts saved. Click <strong style={{ color: '#111827' }}>AI Post Job</strong> and save as draft.</span>
-                </div>
-              ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16, padding: 20 }}>
-                  {drafts.map(p => (
-                    <div key={p.id} style={{ border: '1.5px solid #BFDBFE', borderRadius: 12, padding: '16px 18px', background: '#F8FAFF', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-                        <strong style={{ fontSize: '0.9375rem', color: '#111827', lineHeight: 1.3, flex: 1 }}>{p.title}</strong>
-                        {statusBadge('draft')}
-                      </div>
-                      <div style={{ fontSize: '0.8rem', color: '#6B7280', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        {p.department_name && <span>{p.department_name}{p.employment_type ? ` · ${p.employment_type}` : ''}</span>}
-                        <span>Last updated {new Date(p.updated_at).toLocaleDateString()}</span>
-                      </div>
-                      {p.description && (
-                        <p style={{ margin: 0, fontSize: '0.825rem', color: '#4B5563', lineHeight: 1.55, maxHeight: 60, overflow: 'hidden' }}>{p.description}</p>
-                      )}
-                      <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-                        <button
-                          onClick={() => openEditForm(p, true)}
-                          style={{ flex: 1, border: '1.5px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', color: '#374151', padding: '7px 0', fontWeight: 700, fontSize: '0.825rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}
-                          onMouseEnter={e => (e.currentTarget.style.background = '#F9FAFB')}
-                          onMouseLeave={e => (e.currentTarget.style.background = '#FFFFFF')}
-                        >Edit</button>
-                        <button
-                          onClick={() => publishDraft(p.id)}
-                          disabled={actionLoading || !p.description?.trim()}
-                          title={!p.description?.trim() ? 'Add a description before publishing' : undefined}
-                          style={{ flex: 1, border: 'none', borderRadius: 8, background: '#111827', color: '#FFFFFF', padding: '7px 0', fontWeight: 700, fontSize: '0.825rem', cursor: actionLoading || !p.description?.trim() ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, opacity: actionLoading || !p.description?.trim() ? 0.5 : 1 }}
-                        ><Send size={12} /> Publish</button>
-                        <button
-                          onClick={() => setDeleteConfirm({ id: p.id, title: p.title })}
-                          style={{ border: 'none', borderRadius: 8, background: '#FEF2F2', color: '#DC2626', padding: '7px 10px', fontWeight: 700, fontSize: '0.825rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                          onMouseEnter={e => (e.currentTarget.style.background = '#FEE2E2')}
-                          onMouseLeave={e => (e.currentTarget.style.background = '#FEF2F2')}
-                        ><Trash2 size={13} /></button>
+                {loading ? (
+                  <div style={{ padding: '24px 18px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                    <Spinner size={14} dark /> Loading...
+                  </div>
+                ) : drafts.length === 0 ? (
+                  <div style={{ margin: '12px 14px', padding: '28px 16px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                    <FileText size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
+                    <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No drafts saved.</p>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '12px 14px' }}>
+                  {drafts.map(p => {
+                  const isSelected = selectedDraftId === p.id
+                  return (
+                    <div
+                      key={p.id}
+                      onClick={() => setSelectedDraftId(p.id)}
+                      style={{
+                        border: isSelected ? '2px solid #F97316' : '1.5px solid #E5E7EB',
+                        borderRadius: 14,
+                        padding: '14px 14px 12px',
+                        background: '#FFFFFF',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        cursor: 'pointer',
+                        boxShadow: isSelected ? '0 0 0 3px rgba(249,115,22,0.10)' : '0 1px 3px rgba(0,0,0,0.06)',
+                        transition: 'border-color 0.12s, box-shadow 0.12s',
+                      }}
+                    >
+                      <strong style={{ fontSize: '0.875rem', color: '#1C1C1E', lineHeight: 1.4, display: 'block', marginBottom: 8 }}>{p.title}</strong>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                        <span style={{ fontSize: '0.725rem', color: '#C4C9D4' }}>{new Date(p.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
+                  )
+                  })}
+                  </div>
+                )}
+              </div>
+
+              {/* Right: draft detail */}
+              <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden' }}>
+                {!selectedDraft ? (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, padding: '32px 24px' }}>
+                    <div style={{ padding: '40px 48px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14, width: '100%' }}>
+                      <FileText size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
+                      <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>Select a draft</p>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ padding: '20px 24px 18px', borderBottom: '1px solid #F0F4F8', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                          <h2 style={{ margin: 0, fontSize: '1.1rem', color: '#111827', fontWeight: 700, lineHeight: 1.3 }}>{selectedDraft.title}</h2>
+                          {statusBadge('draft')}
+                        </div>
+                        <p style={{ margin: 0, color: '#9CA3AF', fontSize: '0.8375rem' }}>
+                          {[selectedDraft.department_name ?? 'Any department', selectedDraft.location, selectedDraft.employment_type].filter(Boolean).join(' · ')}
+                          {selectedDraft.salary_amount ? ` · $${selectedDraft.salary_amount} ${selectedDraft.salary_type ?? ''}` : ''}
+                        </p>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, flexShrink: 0, alignItems: 'center' }}>
+                        <button
+                          onClick={() => openEditForm(selectedDraft, true)}
+                          style={{ height: 34, padding: '0 14px', border: '1.5px solid #E5E7EB', borderRadius: 9, background: '#FFFFFF', color: '#374151', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13 }}
+                          onMouseEnter={e => (e.currentTarget.style.background = '#F9FAFB')}
+                          onMouseLeave={e => (e.currentTarget.style.background = '#FFFFFF')}
+                        ><Pencil size={13} /> Edit</button>
+                        <button
+                          onClick={() => publishDraft(selectedDraft.id)}
+                          disabled={actionLoading || !selectedDraft.description?.trim()}
+                          title={!selectedDraft.description?.trim() ? 'Add a description before publishing' : undefined}
+                          style={{ height: 34, padding: '0 14px', border: 'none', borderRadius: 9, background: '#111827', color: '#FFFFFF', cursor: actionLoading || !selectedDraft.description?.trim() ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, opacity: actionLoading || !selectedDraft.description?.trim() ? 0.5 : 1 }}
+                        ><Send size={13} /> Publish</button>
+                        <button
+                          onClick={() => setDeleteConfirm({ id: selectedDraft.id, title: selectedDraft.title, isDraft: true })}
+                          disabled={actionLoading}
+                          title="Delete draft"
+                          style={{ width: 34, height: 34, borderRadius: 9, border: '1px solid #FECACA', background: '#FEF2F2', color: '#DC2626', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', flexShrink: 0 }}
+                          onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FEE2E2' }}
+                          onMouseLeave={e => { e.currentTarget.style.background = '#FEF2F2' }}
+                        ><Trash2 size={15} /></button>
+                      </div>
+                    </div>
+                    <div style={{ padding: '16px 24px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+                      {selectedDraft.description ? (
+                        <div>
+                          <span style={labelStyle}>Description</span>
+                          <p style={{ margin: 0, color: '#374151', lineHeight: 1.7, fontSize: '0.9rem' }}>{selectedDraft.description}</p>
+                        </div>
+                      ) : (
+                        <div style={{ padding: '20px 16px', color: '#9CA3AF', background: '#F7F8FA', borderRadius: 10, textAlign: 'center', fontSize: '0.875rem' }}>
+                          No description yet. Click <strong style={{ color: '#111827' }}>Edit</strong> to add one before publishing.
+                        </div>
+                      )}
+                      {selectedDraft.requirements && (
+                        <div>
+                          <span style={labelStyle}>Requirements</span>
+                          <p style={{ margin: 0, color: '#374151', lineHeight: 1.7, fontSize: '0.9rem', whiteSpace: 'pre-wrap' }}>{selectedDraft.requirements}</p>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           )}
 
+        </div>
+        </div>
         </div>
       </main>
 
@@ -1170,7 +1507,7 @@ export default function OwnerRecruitmentPage() {
         const divider: React.CSSProperties = { borderTop: '1px dashed #E5E7EB', margin: '0' }
 
         return (
-          <div onClick={() => { setFormOpen(false); resetForm() }} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
             <div onClick={e => e.stopPropagation()} style={{ width: 540, background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', maxHeight: '90vh' }}>
 
               {/* Header */}
