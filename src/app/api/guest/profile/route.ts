@@ -48,3 +48,39 @@ export async function GET(req: Request) {
     )
   }
 }
+
+export async function PATCH(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url)
+    const user_id = searchParams.get('user_id')
+
+    if (!user_id) {
+      return NextResponse.json(
+        { success: false, message: 'Missing user_id', profile: null },
+        { status: 400 }
+      )
+    }
+
+    const body = await req.json()
+
+    const profile = await workerProfileService.updateProfile(user_id, {
+      full_name: body.full_name,
+      phone_number: body.phone_number,
+    })
+
+    return NextResponse.json({
+      success: true,
+      profile,
+    })
+  } catch (error) {
+    return NextResponse.json(
+      {
+        success: false,
+        message:
+          error instanceof Error ? error.message : 'Failed to update guest profile',
+        profile: null,
+      },
+      { status: 500 }
+    )
+  }
+}

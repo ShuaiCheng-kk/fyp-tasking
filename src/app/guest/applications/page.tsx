@@ -2,8 +2,10 @@
 
 import { Suspense, useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
+import { createBrowserClient } from '@supabase/ssr'
 import ApplicationDetailsModal from '@/components/guest/ApplicationDetailsModal'
 import ApplyJobModal from '@/components/guest/ApplyJobModal'
+import GuestProfileMenu from '@/components/guest/GuestProfileMenu'
 
 type ApplicationStatus = 'pending' | 'accepted' | 'rejected' | 'withdrawn'
 
@@ -23,7 +25,6 @@ type Application = {
   applied_at: string
   resume_url?: string
   cover_letter?: string
-
   location?: string
   employment_type?: string
   salary_amount?: number
@@ -43,31 +44,15 @@ type RawApplication = {
   applied_at: string
   resume_url?: string
   cover_letter?: string
-  job_postings?: {
-    title?: string
-    company_name?: string
-    location?: string
-    employment_type?: string
-    salary_amount?: number
-    salary_type?: string
-    description?: string
-    requirements?: string
-    benefits?: string
-    openings?: number
-    job_date?: string
-    shift_start_time?: string
-    shift_end_time?: string
-  } | null
+  job_postings?: Partial<Application> | null
 }
 
 function ApplicationsContent() {
   const searchParams = useSearchParams()
-
   const [showApplyModal, setShowApplyModal] = useState(false)
   const [jobId, setJobId] = useState<string | null>(null)
   const [applications, setApplications] = useState<Application[]>([])
-  const [selectedApplication, setSelectedApplication] =
-  useState<Application | null>(null)
+  const [selectedApplication, setSelectedApplication] = useState<Application | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -80,36 +65,18 @@ function ApplicationsContent() {
       throw new Error(data.message || 'Failed to load applications')
     }
 
-    const mappedApplications: Application[] = data.applications.map(
-      (app: RawApplication) => ({
+    setApplications(
+      data.applications.map((app: RawApplication) => ({
         id: app.id,
-        job_title: app.job_postings?.title || 'Job Opening',
+        job_title: app.job_postings?.job_title || 'Job Opening',
         company_name: app.job_postings?.company_name || 'Company',
         status: app.status,
         applied_at: formatDate(app.applied_at),
-
         resume_url: app.resume_url,
         cover_letter: app.cover_letter,
-
-        location: app.job_postings?.location,
-        employment_type: app.job_postings?.employment_type,
-        salary_amount: app.job_postings?.salary_amount,
-        salary_type: app.job_postings?.salary_type,
-        description: app.job_postings?.description,
-        requirements: app.job_postings?.requirements,
-        benefits: app.job_postings?.benefits,
-        openings: app.job_postings?.openings,
-
-        job_date: app.job_postings?.job_date
-          ? formatDate(app.job_postings.job_date)
-          : undefined,
-
-        shift_start_time: app.job_postings?.shift_start_time,
-        shift_end_time: app.job_postings?.shift_end_time,
-      })
+        ...app.job_postings,
+      }))
     )
-
-    setApplications(mappedApplications)
   }
 
   useEffect(() => {
@@ -131,7 +98,6 @@ function ApplicationsContent() {
         }
 
         setProfile(profileData.profile)
-
         await loadApplications(profileData.profile.id)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load applications')
@@ -153,21 +119,21 @@ function ApplicationsContent() {
     }
   }, [searchParams])
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    )
+
+    await supabase.auth.signOut()
+
     localStorage.removeItem('tasking_user_id')
     localStorage.removeItem('tasking_user_role')
     localStorage.removeItem('tasking_company_id')
     localStorage.removeItem('tasking_active_session')
     sessionStorage.removeItem('tasking_session_active')
-    window.location.href = '/signin'
-  }
 
-  const handleModalClose = async () => {
-    setShowApplyModal(false)
-
-    if (profile?.id) {
-      await loadApplications(profile.id)
-    }
+    window.location.href = '/signout'
   }
 
   return (
@@ -175,35 +141,26 @@ function ApplicationsContent() {
       <header style={topBarStyle}>
         <div style={topBarInnerStyle}>
           <div style={brandWrapStyle}>
-            <div style={logoBoxStyle}>
-              <svg width="24" height="24" viewBox="0 0 32 32" fill="none">
-                <rect width="32" height="32" rx="8" fill="white" />
-                <rect x="8" y="9" width="9" height="2.5" rx="1.25" fill="#6B7280" />
-                <rect x="8" y="14.75" width="16" height="2.5" rx="1.25" fill="#6B7280" />
-                <rect x="8" y="20.5" width="12" height="2.5" rx="1.25" fill="#6B7280" />
-                <circle cx="22" cy="10.25" r="3.5" fill="#D1D5DB" />
-                <path
-                  d="M20.3 10.25L21.5 11.5L23.8 9"
-                  stroke="#6B7280"
-                  strokeWidth="1.4"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </div>
+            <svg width="28" height="28" viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
+              <rect width="32" height="32" rx="8" fill="#F97316" />
+              <rect x="8" y="9" width="9" height="2.5" rx="1.25" fill="white" />
+              <rect x="8" y="14.75" width="16" height="2.5" rx="1.25" fill="white" />
+              <rect x="8" y="20.5" width="12" height="2.5" rx="1.25" fill="white" />
+              <circle cx="22" cy="10.25" r="3.5" fill="#10B981" />
+              <path
+                d="M20.3 10.25L21.5 11.5L23.8 9"
+                stroke="white"
+                strokeWidth="1.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
 
             <h1 style={headerTitleStyle}>Tasking</h1>
           </div>
 
           <div style={rightHeaderStyle}>
-            <div style={userInfoStyle}>
-              <span style={userNameStyle}>{profile?.full_name || 'Guest'}</span>
-              <span style={roleBadgeStyle}>Guest User</span>
-            </div>
-
-            <button onClick={handleLogout} style={logoutButtonStyle}>
-              Log Out
-            </button>
+            <GuestProfileMenu profile={profile} onLogout={handleLogout} />
           </div>
         </div>
       </header>
@@ -212,10 +169,6 @@ function ApplicationsContent() {
         <section style={sectionStyle}>
           <div style={sectionHeaderStyle}>
             <p style={sectionLabelStyle}>MY APPLICATIONS</p>
-
-            <button style={editContactButtonStyle}>
-              Edit Contact Information
-            </button>
           </div>
 
           {loading ? (
@@ -256,9 +209,7 @@ function ApplicationsContent() {
                     </button>
 
                     {app.status === 'pending' && (
-                      <button style={dangerActionButtonStyle}>
-                        Withdraw Application
-                      </button>
+                      <button style={dangerActionButtonStyle}>Withdraw Application</button>
                     )}
                   </div>
                 </article>
@@ -274,9 +225,15 @@ function ApplicationsContent() {
           onClose={() => setSelectedApplication(null)}
         />
       )}
-      
+
       {showApplyModal && jobId && (
-        <ApplyJobModal jobId={jobId} onClose={handleModalClose} />
+        <ApplyJobModal
+          jobId={jobId}
+          onClose={async () => {
+            setShowApplyModal(false)
+            if (profile?.id) await loadApplications(profile.id)
+          }}
+        />
       )}
     </>
   )
@@ -320,7 +277,7 @@ function statusStyle(status: ApplicationStatus): React.CSSProperties {
 
 const topBarStyle: React.CSSProperties = {
   height: 72,
-  background: '#4B5563',
+  background: '#1C1C1E',
   color: '#FFFFFF',
   display: 'flex',
   alignItems: 'center',
@@ -337,59 +294,21 @@ const topBarInnerStyle: React.CSSProperties = {
 const brandWrapStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
-  gap: 14,
-}
-
-const logoBoxStyle: React.CSSProperties = {
-  width: 40,
-  height: 40,
-  borderRadius: 10,
-  background: '#F9FAFB',
-  display: 'grid',
-  placeItems: 'center',
+  gap: 10,
 }
 
 const headerTitleStyle: React.CSSProperties = {
   margin: 0,
   fontFamily: 'var(--font-heading)',
-  fontSize: '1.375rem',
+  fontSize: '1.0625rem',
   fontWeight: 700,
+  letterSpacing: '-0.01em',
 }
 
 const rightHeaderStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
-  gap: 12,
-}
-
-const userInfoStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 10,
-}
-
-const userNameStyle: React.CSSProperties = {
-  fontSize: '0.875rem',
-  fontWeight: 700,
-}
-
-const roleBadgeStyle: React.CSSProperties = {
-  padding: '6px 12px',
-  borderRadius: 999,
-  background: 'rgba(255,255,255,0.16)',
-  fontSize: '0.8125rem',
-  fontWeight: 700,
-}
-
-const logoutButtonStyle: React.CSSProperties = {
-  border: '1px solid #FCA5A5',
-  background: '#DC2626',
-  color: '#FFFFFF',
-  padding: '8px 13px',
-  borderRadius: 10,
-  fontSize: '0.8125rem',
-  fontWeight: 700,
-  cursor: 'pointer',
+  gap: 14,
 }
 
 const pageStyle: React.CSSProperties = {
@@ -417,17 +336,6 @@ const sectionLabelStyle: React.CSSProperties = {
   fontWeight: 700,
   letterSpacing: '0.08em',
   color: '#4B5563',
-}
-
-const editContactButtonStyle: React.CSSProperties = {
-  border: '1px solid #D1D5DB',
-  background: '#FFFFFF',
-  color: '#374151',
-  padding: '9px 14px',
-  borderRadius: 10,
-  fontSize: '0.8125rem',
-  fontWeight: 700,
-  cursor: 'pointer',
 }
 
 const emptyCardStyle: React.CSSProperties = {
@@ -530,7 +438,6 @@ const secondaryActionButtonStyle: React.CSSProperties = {
   fontSize: '0.8125rem',
   fontWeight: 700,
   cursor: 'pointer',
-  textDecoration: 'none',
 }
 
 const dangerActionButtonStyle: React.CSSProperties = {
