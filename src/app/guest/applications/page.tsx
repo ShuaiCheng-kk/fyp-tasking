@@ -45,7 +45,7 @@ type RawApplication = {
   applied_at: string
   resume_url?: string
   cover_letter?: string
-  job_postings?: Partial<Application> | null
+  job_postings?: (Partial<Application> & { title?: string }) | null
 }
 
 function ApplicationsContent() {
@@ -57,6 +57,8 @@ function ApplicationsContent() {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [withdrawTargetId, setWithdrawTargetId] = useState<string | null>(null)
+  const [withdrawing, setWithdrawing] = useState(false)
 
   const loadApplications = async (userId: string) => {
     const res = await fetch(`/api/guest/applications?user_id=${userId}`)
@@ -69,7 +71,10 @@ function ApplicationsContent() {
     setApplications(
       data.applications.map((app: RawApplication) => ({
         id: app.id,
-        job_title: app.job_postings?.job_title || 'Job Opening',
+        job_title:
+          app.job_postings?.job_title ||
+          app.job_postings?.title ||
+          'Job Opening',
         company_name: app.job_postings?.company_name || 'Company',
         status: app.status,
         applied_at: formatDate(app.applied_at),
@@ -119,6 +124,32 @@ function ApplicationsContent() {
       setShowApplyModal(true)
     }
   }, [searchParams])
+
+  const confirmWithdrawApplication = async () => {
+    if (!withdrawTargetId) return
+
+    try {
+      setWithdrawing(true)
+
+      const res = await fetch(`/api/guest/applications/${withdrawTargetId}/withdraw`, {
+        method: 'PATCH',
+      })
+
+      const data = await res.json()
+
+      if (!data.success) {
+        alert(data.message || 'Failed to withdraw application.')
+        return
+      }
+
+      if (profile?.id) await loadApplications(profile.id)
+
+      setSelectedApplication(null)
+      setWithdrawTargetId(null)
+    } finally {
+      setWithdrawing(false)
+    }
+  }
 
   const handleLogout = async () => {
     const supabase = createBrowserClient(
@@ -185,32 +216,48 @@ function ApplicationsContent() {
               </p>
             </div>
           ) : (
-            <div style={{ display: 'grid', gap: 16 }}>
+            <div style={applicationsGridStyle}>
               {applications.map((app) => (
                 <article key={app.id} style={applicationCardStyle}>
-                  <div style={cardHeaderStyle}>
-                    <div>
-                      <h3 style={cardTitleStyle}>{app.job_title}</h3>
-                      <p style={cardMetaStyle}>
-                        {app.company_name} · Applied on {app.applied_at}
-                      </p>
-                    </div>
+                  <div style={cardTopRowStyle}>
+                    <p style={companyLabelStyle}>{app.company_name}</p>
 
                     <span style={{ ...statusBadgeBaseStyle, ...statusStyle(app.status) }}>
                       {formatStatus(app.status)}
                     </span>
                   </div>
 
+                  <h3 style={cardTitleStyle}>{app.job_title}</h3>
+
+                  <div style={cardInfoStyle}>
+                    <div>
+                      <p style={infoLabelStyle}>Applied on</p>
+                      <p style={infoValueStyle}>{app.applied_at}</p>
+                    </div>
+
+                    <div>
+                      <p style={infoLabelStyle}>Description</p>
+                      <p style={infoValueStyle}>
+                        {app.description || 'No description provided'}
+                      </p>
+                    </div>
+                  </div>
+
                   <div style={cardActionsStyle}>
                     <button
-                      style={secondaryActionButtonStyle}
+                      style={primaryActionButtonStyle}
                       onClick={() => setSelectedApplication(app)}
                     >
                       View Details
                     </button>
 
                     {app.status === 'pending' && (
-                      <button style={dangerActionButtonStyle}>Withdraw Application</button>
+                      <button
+                        style={dangerActionButtonStyle}
+                        onClick={() => setWithdrawTargetId(app.id)}
+                      >
+                        Withdraw Application
+                      </button>
                     )}
                   </div>
                 </article>
@@ -224,6 +271,7 @@ function ApplicationsContent() {
         <ApplicationDetailsModal
           application={selectedApplication}
           onClose={() => setSelectedApplication(null)}
+          onWithdraw={() => setWithdrawTargetId(selectedApplication.id)}
         />
       )}
 
@@ -235,6 +283,36 @@ function ApplicationsContent() {
             if (profile?.id) await loadApplications(profile.id)
           }}
         />
+      )}
+
+      {withdrawTargetId && (
+        <div style={confirmOverlayStyle}>
+          <div style={confirmModalStyle}>
+            <h2 style={confirmTitleStyle}>Withdraw Application</h2>
+
+            <p style={confirmTextStyle}>
+              Are you sure you want to withdraw this application?
+            </p>
+
+            <div style={confirmActionsStyle}>
+              <button
+                onClick={() => setWithdrawTargetId(null)}
+                disabled={withdrawing}
+                style={confirmCancelButtonStyle}
+              >
+                Cancel
+              </button>
+
+              <button
+                onClick={confirmWithdrawApplication}
+                disabled={withdrawing}
+                style={confirmWithdrawButtonStyle}
+              >
+                {withdrawing ? 'Withdrawing...' : 'Withdraw'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   )
@@ -306,6 +384,7 @@ const headerTitleStyle: React.CSSProperties = {
   fontSize: '1.0625rem',
   fontWeight: 700,
   letterSpacing: '-0.01em',
+  color: '#FFFFFF',
 }
 
 const rightHeaderStyle: React.CSSProperties = {
@@ -339,6 +418,106 @@ const sectionLabelStyle: React.CSSProperties = {
   fontWeight: 700,
   letterSpacing: '0.08em',
   color: '#4B5563',
+}
+
+const applicationsGridStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))',
+  gap: 24,
+}
+
+const applicationCardStyle: React.CSSProperties = {
+  background: '#FFFFFF',
+  border: '1px solid #D1D5DB',
+  borderRadius: 18,
+  padding: 26,
+  boxShadow: '0 8px 22px rgba(15,23,42,0.05)',
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 18,
+  minHeight: 280,
+}
+
+const cardTopRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: 12,
+}
+
+const companyLabelStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.78rem',
+  fontWeight: 700,
+  letterSpacing: '0.08em',
+  textTransform: 'uppercase',
+  color: '#F97316',
+}
+
+const cardTitleStyle: React.CSSProperties = {
+  margin: 0,
+  fontFamily: 'var(--font-heading)',
+  fontSize: '1.25rem',
+  fontWeight: 700,
+  color: '#111827',
+  lineHeight: 1.3,
+}
+
+const cardInfoStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: 14,
+}
+
+const infoLabelStyle: React.CSSProperties = {
+  margin: '0 0 4px',
+  color: '#6B7280',
+  fontSize: '0.85rem',
+  fontWeight: 600,
+}
+
+const infoValueStyle: React.CSSProperties = {
+  margin: 0,
+  color: '#111827',
+  fontSize: '0.9rem',
+  fontWeight: 700,
+  lineHeight: 1.5,
+}
+
+const statusBadgeBaseStyle: React.CSSProperties = {
+  padding: '5px 11px',
+  borderRadius: 999,
+  fontSize: '0.75rem',
+  fontWeight: 700,
+  whiteSpace: 'nowrap',
+}
+
+const cardActionsStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: '1fr 1fr',
+  gap: 12,
+  marginTop: 'auto',
+}
+
+const primaryActionButtonStyle: React.CSSProperties = {
+  border: 'none',
+  background: '#F97316',
+  color: '#FFFFFF',
+  padding: '13px 14px',
+  borderRadius: 10,
+  fontSize: '0.85rem',
+  fontWeight: 700,
+  cursor: 'pointer',
+}
+
+const dangerActionButtonStyle: React.CSSProperties = {
+  border: '1px solid #FECACA',
+  background: '#FEF2F2',
+  color: '#DC2626',
+  padding: '13px 14px',
+  borderRadius: 10,
+  fontSize: '0.85rem',
+  fontWeight: 700,
+  cursor: 'pointer',
 }
 
 const emptyCardStyle: React.CSSProperties = {
@@ -389,67 +568,62 @@ const emptyTextStyle: React.CSSProperties = {
   lineHeight: 1.6,
 }
 
-const applicationCardStyle: React.CSSProperties = {
-  width: '100%',
-  background: '#FFFFFF',
-  border: '1px solid #D1D5DB',
-  borderRadius: 16,
-  padding: 22,
-  boxShadow: '0 8px 22px rgba(15,23,42,0.04)',
-}
-
-const cardHeaderStyle: React.CSSProperties = {
+const confirmOverlayStyle: React.CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  background: 'rgba(17,24,39,0.45)',
   display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'flex-start',
-  gap: 18,
+  alignItems: 'center',
+  justifyContent: 'center',
+  zIndex: 9999,
+  padding: 24,
 }
 
-const cardTitleStyle: React.CSSProperties = {
+const confirmModalStyle: React.CSSProperties = {
+  width: '100%',
+  maxWidth: 520,
+  background: '#FFFFFF',
+  borderRadius: 22,
+  padding: 32,
+  boxShadow: '0 24px 80px rgba(0,0,0,0.28)',
+}
+
+const confirmTitleStyle: React.CSSProperties = {
   margin: 0,
   fontFamily: 'var(--font-heading)',
-  fontSize: '1rem',
+  fontSize: '1.5rem',
   fontWeight: 700,
   color: '#111827',
 }
 
-const cardMetaStyle: React.CSSProperties = {
-  margin: '7px 0 0',
-  fontSize: '0.8125rem',
+const confirmTextStyle: React.CSSProperties = {
+  margin: '22px 0 32px',
   color: '#6B7280',
+  fontSize: '1rem',
 }
 
-const statusBadgeBaseStyle: React.CSSProperties = {
-  padding: '4px 10px',
-  borderRadius: 999,
-  fontSize: '0.75rem',
-  fontWeight: 700,
-}
-
-const cardActionsStyle: React.CSSProperties = {
+const confirmActionsStyle: React.CSSProperties = {
   display: 'flex',
-  gap: 10,
-  marginTop: 18,
+  justifyContent: 'flex-end',
+  gap: 14,
 }
 
-const secondaryActionButtonStyle: React.CSSProperties = {
+const confirmCancelButtonStyle: React.CSSProperties = {
+  padding: '12px 20px',
+  borderRadius: 10,
   border: '1px solid #D1D5DB',
   background: '#FFFFFF',
   color: '#374151',
-  padding: '8px 12px',
-  borderRadius: 9,
-  fontSize: '0.8125rem',
   fontWeight: 700,
   cursor: 'pointer',
 }
 
-const dangerActionButtonStyle: React.CSSProperties = {
+const confirmWithdrawButtonStyle: React.CSSProperties = {
   border: '1px solid #FECACA',
   background: '#FEF2F2',
-  color: '#B91C1C',
-  padding: '8px 12px',
-  borderRadius: 9,
-  fontSize: '0.8125rem',
+  color: '#DC2626',
+  padding: '12px 20px',
+  borderRadius: 10,
   fontWeight: 700,
   cursor: 'pointer',
 }

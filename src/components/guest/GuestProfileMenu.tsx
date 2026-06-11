@@ -113,15 +113,15 @@ export default function GuestProfileMenu({
                     onChange={setFullName}
                   />
 
+                   <ProfileField
+                    label="Email"
+                    value={currentProfile?.email_address || 'Not added'}
+                  />
+
                   <FormField
                     label="Phone Number"
                     value={phoneNumber}
                     onChange={setPhoneNumber}
-                  />
-
-                  <ProfileField
-                    label="Email"
-                    value={currentProfile?.email_address || 'Not added'}
                   />
 
                   {error && <p style={errorStyle}>{error}</p>}
@@ -289,8 +289,8 @@ const avatarStyle: React.CSSProperties = {
   width: 64,
   height: 64,
   borderRadius: '50%',
-  background: '#1F2937',
-  color: '#F9FAFB',
+  background: '#F9FAFB',
+  color: '#1F2937',
   display: 'grid',
   placeItems: 'center',
   fontSize: '1.5rem',

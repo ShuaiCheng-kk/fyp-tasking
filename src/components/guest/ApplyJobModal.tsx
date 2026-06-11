@@ -22,7 +22,10 @@ const ALLOWED_TYPES = [
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ]
 
-export default function ApplyJobModal({ jobId, onClose }: Props) {
+export default function ApplyJobModal({
+  jobId,
+  onClose,
+}: Props) {
   const router = useRouter()
 
   const [profile, setProfile] = useState<Profile | null>(null)
@@ -31,6 +34,20 @@ export default function ApplyJobModal({ jobId, onClose }: Props) {
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const [jobTitle, setJobTitle] = useState('Job Opening')
+
+  useEffect(() => {
+  const loadJob = async () => {
+    const jobRes = await fetch(`/api/guest/jobs/${jobId}`)
+    const jobData = await jobRes.json()
+
+    if (jobData.success) {
+      setJobTitle(jobData.job.title || 'Job Opening')
+    }
+  }
+
+  void loadJob()
+}, [jobId])
 
   useEffect(() => {
     const loadProfile = async () => {
@@ -156,10 +173,9 @@ export default function ApplyJobModal({ jobId, onClose }: Props) {
     <div style={overlayStyle}>
       <div style={modalStyle}>
         <div style={{ marginBottom: 24 }}>
-          <h2 style={modalTitleStyle}>Submit Job Application</h2>
-          <p style={modalSubtitleStyle}>
-            Your contact details are auto-filled from your account.
-          </p>
+          <h2 style={modalTitleStyle}>
+            Submit Job Application — {jobTitle}
+          </h2>
         </div>
 
         {loading ? (
@@ -326,11 +342,6 @@ const uploadButtonStyle: React.CSSProperties = {
   fontWeight: 700,
   cursor: 'pointer',
   whiteSpace: 'nowrap',
-}
-
-const uploadedButtonStyle: React.CSSProperties = {
-  ...uploadButtonStyle,
-  background: '#FFF7ED',
 }
 
 const fileNameStyle: React.CSSProperties = {
