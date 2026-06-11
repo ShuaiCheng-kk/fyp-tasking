@@ -186,7 +186,7 @@ function TaskCard({
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
         {assignee ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div style={{ width: 22, height: 22, borderRadius: '50%', background: '#1C1C1E', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FFFFFF', fontWeight: 700, fontSize: '0.65rem', flexShrink: 0 }}>
+            <div style={{ width: 22, height: 22, borderRadius: '50%', background: '#1E3A5F', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FFFFFF', fontWeight: 700, fontSize: '0.65rem', flexShrink: 0 }}>
               {assignee.full_name.charAt(0).toUpperCase()}
             </div>
             <span style={{ fontSize: '0.75rem', color: '#6B7280', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -346,9 +346,9 @@ function DeptInfoCard({
               </div>
               <button
                 onClick={() => onAssignTask(m.id, dept.id)}
-                style={{ padding: '5px 10px', background: '#F97316', border: 'none', borderRadius: '6px', fontWeight: 600, fontSize: '0.75rem', color: '#FFFFFF', cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap' }}
-                onMouseEnter={e => (e.currentTarget.style.background = '#EA6C0A')}
-                onMouseLeave={e => (e.currentTarget.style.background = '#F97316')}
+                style={{ padding: '5px 10px', background: '#2563EB', border: 'none', borderRadius: '6px', fontWeight: 600, fontSize: '0.75rem', color: '#FFFFFF', cursor: 'pointer', flexShrink: 0, whiteSpace: 'nowrap' }}
+                onMouseEnter={e => (e.currentTarget.style.background = '#1D4ED8')}
+                onMouseLeave={e => (e.currentTarget.style.background = '#2563EB')}
               >
                 Assign Task
               </button>
@@ -790,7 +790,7 @@ export default function ManagerTasksPage() {
   // ── Button helpers ────────────────────────────────────────────────────────
 
   const primaryBtn = (loading: boolean): React.CSSProperties => ({
-    flex: 1, padding: '10px', background: '#111827', border: 'none', borderRadius: '8px',
+    flex: 1, padding: '10px', background: '#2563EB', border: 'none', borderRadius: '8px',
     fontWeight: 600, fontSize: '0.9375rem', color: '#FFFFFF',
     cursor: loading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '7px', opacity: loading ? 0.65 : 1,
   })
@@ -823,9 +823,10 @@ export default function ManagerTasksPage() {
         {/* Page header */}
         <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
           <div>
-            <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
-              {(() => { const n = departments.find(d => d.id === selectedDeptId)?.name; return n ? `Tasks for ${n}` : 'Tasks' })()}
+            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: '#0F172A', letterSpacing: '-0.4px' }}>
+              {(() => { const n = departments.find(d => d.id === selectedDeptId)?.name; return n ? `Tasks · ${n}` : 'Tasks' })()}
             </h1>
+            <p style={{ margin: '3px 0 0', fontSize: 13, color: '#64748B', fontWeight: 500 }}>Manage and assign tasks for your department</p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {ownerName && (
@@ -856,8 +857,8 @@ export default function ManagerTasksPage() {
                   style={{
                     padding: '6px 14px',
                     borderRadius: '99px',
-                    border: selectedDeptId === '' ? '2px solid #111827' : '1.5px solid #E5E7EB',
-                    background: selectedDeptId === '' ? '#111827' : '#FFFFFF',
+                    border: selectedDeptId === '' ? '2px solid #2563EB' : '1.5px solid #E5E7EB',
+                    background: selectedDeptId === '' ? '#2563EB' : '#FFFFFF',
                     color: selectedDeptId === '' ? '#FFFFFF' : '#374151',
                     fontWeight: 600,
                     fontSize: '0.8125rem',
@@ -925,9 +926,9 @@ export default function ManagerTasksPage() {
             </h2>
             <button
               onClick={() => { setNewTaskModal(true); setNewError(''); if (selectedDeptId) setNewDeptId(selectedDeptId) }}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: '#F97316', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.875rem', color: '#fff', cursor: 'pointer', flexShrink: 0 }}
-              onMouseEnter={e => (e.currentTarget.style.background = '#EA6C0A')}
-              onMouseLeave={e => (e.currentTarget.style.background = '#F97316')}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: '#2563EB', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.875rem', color: '#fff', cursor: 'pointer', flexShrink: 0 }}
+              onMouseEnter={e => (e.currentTarget.style.background = '#1D4ED8')}
+              onMouseLeave={e => (e.currentTarget.style.background = '#2563EB')}
             >
               <Plus size={14} strokeWidth={2.5} /> New Task
             </button>
@@ -1068,7 +1069,7 @@ export default function ManagerTasksPage() {
               </div>
               <div>
                 <label style={modalLabelStyle}>Progress — {editPercent}%</label>
-                <input type="range" min={0} max={100} step={5} value={editPercent} onChange={e => setEditPercent(Number(e.target.value))} style={{ width: '100%', accentColor: '#F97316', cursor: 'pointer' }} />
+                <input type="range" min={0} max={100} step={5} value={editPercent} onChange={e => setEditPercent(Number(e.target.value))} style={{ width: '100%', accentColor: '#2563EB', cursor: 'pointer' }} />
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
                   <span style={{ fontSize: '0.7rem', color: '#9CA3AF' }}>0%</span>
                   <span style={{ fontSize: '0.7rem', color: '#9CA3AF' }}>100%</span>
@@ -1088,7 +1089,7 @@ export default function ManagerTasksPage() {
                 )}
                 <div style={{ display: 'flex', gap: 8 }}>
                   <input value={subTaskTitle} onChange={e => setSubTaskTitle(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleCreateSubTask() }} placeholder="Add a sub-task" style={modalInputStyle} />
-                  <button onClick={handleCreateSubTask} disabled={subTaskLoading || !subTaskTitle.trim()} style={{ padding: '0 12px', border: 'none', borderRadius: 8, background: '#F97316', color: '#FFFFFF', fontWeight: 700, fontSize: '0.82rem', cursor: subTaskLoading || !subTaskTitle.trim() ? 'default' : 'pointer', opacity: subTaskLoading || !subTaskTitle.trim() ? 0.6 : 1 }}>
+                  <button onClick={handleCreateSubTask} disabled={subTaskLoading || !subTaskTitle.trim()} style={{ padding: '0 12px', border: 'none', borderRadius: 8, background: '#2563EB', color: '#FFFFFF', fontWeight: 700, fontSize: '0.82rem', cursor: subTaskLoading || !subTaskTitle.trim() ? 'default' : 'pointer', opacity: subTaskLoading || !subTaskTitle.trim() ? 0.6 : 1 }}>
                     Add
                   </button>
                 </div>

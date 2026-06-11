@@ -505,8 +505,8 @@ export default function ManagerDashboard() {
             <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: BLUE, marginBottom: 4 }}>
               {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
             </p>
-            <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
-              {selectedDeptName ? `Today's Overview for ${selectedDeptName}` : "Today's Overview"}
+            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: '#0F172A', letterSpacing: '-0.4px' }}>
+              {selectedDeptName ? `Today's Overview · ${selectedDeptName}` : "Today's Overview"}
             </h1>
             {!loading && departments.length > 1 && (
               <div ref={deptDropdownRef} style={{ position: 'relative', display: 'inline-block', marginTop: 8 }}>
@@ -565,7 +565,7 @@ export default function ManagerDashboard() {
               {/* Stat cards */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: 14, flexShrink: 0 }}>
                 {[
-                  { label: 'Staff on Shift',    value: statsLoading ? null : staffOnShift,    icon: <Users size={16} style={{ color: '#F97316' }} />,    accentBg: '#FFF7ED' },
+                  { label: 'Staff on Shift',    value: statsLoading ? null : staffOnShift,    icon: <Users size={16} style={{ color: '#2563EB' }} />,    accentBg: '#EFF6FF' },
                   { label: 'Casual Workers',    value: statsLoading ? null : casualOnShift,   icon: <UserRound size={16} style={{ color: '#EC4899' }} />, accentBg: '#FDF2F8' },
                   { label: 'Total Tasks',       value: statsLoading ? null : totalTasks,      icon: <ClipboardList size={16} style={{ color: '#3B82F6' }} />, accentBg: '#EFF6FF' },
                   { label: 'Tasks In Progress', value: statsLoading ? null : tasksInProgress, icon: <Timer size={16} style={{ color: '#8B5CF6' }} />,     accentBg: '#F5F3FF' },

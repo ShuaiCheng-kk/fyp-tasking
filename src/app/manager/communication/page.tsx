@@ -561,7 +561,7 @@ export default function ManagerCommunicationPage() {
   // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ display: 'flex', height: '100vh', background: '#F3F4F6', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+    <div style={{ display: 'flex', height: '100vh', background: '#F1F5F9', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
       <ManagerSidebar unreadMessages={unreadMessages} unreadAnnouncements={unreadAnnCount} />
 
       <main style={{ marginLeft: '64px', flex: 1, height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -569,9 +569,10 @@ export default function ManagerCommunicationPage() {
         {/* Page header */}
         <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
           <div>
-            <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
-              {companyName ? `Communication for ${companyName}` : 'Communication'}
+            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: '#0F172A', letterSpacing: '-0.4px' }}>
+              {companyName ? `Communication · ${companyName}` : 'Communication'}
             </h1>
+            <p style={{ margin: '3px 0 0', fontSize: 13, color: '#64748B', fontWeight: 500 }}>Announcements and messages for your team</p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {managerName && (
@@ -787,7 +788,7 @@ export default function ManagerCommunicationPage() {
                         cursor: communicationReady ? 'pointer' : 'not-allowed',
                         justifyContent: 'center', opacity: communicationReady ? 1 : 0.6,
                       }}
-                      onMouseEnter={e => { if (communicationReady) e.currentTarget.style.background = '#EA6C0A' }}
+                      onMouseEnter={e => { if (communicationReady) e.currentTarget.style.background = '#1D4ED8' }}
                       onMouseLeave={e => (e.currentTarget.style.background = ACCENT)}
                     >
                       <SquarePen size={14} strokeWidth={2.5} /> New Message

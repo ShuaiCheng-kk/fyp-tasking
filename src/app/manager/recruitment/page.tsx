@@ -65,10 +65,10 @@ export default function ManagerRecruitmentPage() {
   ]
 
   const stats = [
-    { label: 'Active',       count: jobs.filter(j => j.status === 'open' && !isExpired(j)).length, color: '#15803D', bg: '#DCFCE7' },
+    { label: 'Active',       count: jobs.filter(j => j.status === 'open' && !isExpired(j)).length, color: '#2563EB', bg: '#EFF6FF' },
     { label: 'Shift Jobs',   count: jobs.filter(j => (j as any).formType === 'shift' || j.is_recurring).length, color: '#1D4ED8', bg: '#DBEAFE' },
-    { label: 'One-off Jobs', count: jobs.filter(j => (j as any).formType === 'oneoff' && !j.is_recurring).length, color: '#D97706', bg: '#FEF3C7' },
-    { label: 'Expired',      count: jobs.filter(j => isExpired(j)).length, color: '#6B7280', bg: '#F3F4F6' },
+    { label: 'One-off Jobs', count: jobs.filter(j => (j as any).formType === 'oneoff' && !j.is_recurring).length, color: '#0369A1', bg: '#E0F2FE' },
+    { label: 'Expired',      count: jobs.filter(j => isExpired(j)).length, color: '#64748B', bg: '#F1F5F9' },
   ]
 
   // ── Helpers ────────────────────────────────────────────────────────────────
@@ -85,7 +85,7 @@ export default function ManagerRecruitmentPage() {
   const panelOpen = selectedJob !== null
 
   return (
-    <div style={{ display: 'flex', height: '100vh', background: '#F3F4F6', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+    <div style={{ display: 'flex', height: '100vh', background: '#F1F5F9', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
       <ManagerSidebar />
 
       {/* Main area */}
@@ -94,9 +94,10 @@ export default function ManagerRecruitmentPage() {
         {/* Page header */}
         <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
           <div>
-            <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
-              {deptName ? `Recruitment for ${deptName}` : 'Recruitment'}
+            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: '#0F172A', letterSpacing: '-0.4px' }}>
+              {deptName ? `Recruitment · ${deptName}` : 'Recruitment'}
             </h1>
+            <p style={{ margin: '3px 0 0', fontSize: 13, color: '#64748B', fontWeight: 500 }}>Post and manage job listings for your department</p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {managerName && (
@@ -144,10 +145,10 @@ export default function ManagerRecruitmentPage() {
               <div style={{ display: 'flex', gap: '2px', marginBottom: '16px', background: '#EBEBEB', borderRadius: '10px', padding: '4px', width: 'fit-content' }}>
                 {tabs.map(t => (
                   <button key={t.key} onClick={() => setActiveTab(t.key)}
-                    style={{ padding: '6px 12px', borderRadius: '7px', border: 'none', fontWeight: 600, fontSize: panelOpen ? '0.75rem' : '0.8125rem', cursor: 'pointer', transition: 'all 0.15s', background: activeTab === t.key ? '#FFFFFF' : 'transparent', color: activeTab === t.key ? '#111827' : '#6B7280', boxShadow: activeTab === t.key ? '0 1px 3px rgba(0,0,0,0.08)' : 'none', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    style={{ padding: '6px 12px', borderRadius: '7px', border: 'none', fontWeight: 600, fontSize: panelOpen ? '0.75rem' : '0.8125rem', cursor: 'pointer', transition: 'all 0.15s', background: activeTab === t.key ? '#FFFFFF' : 'transparent', color: activeTab === t.key ? '#2563EB' : '#6B7280', boxShadow: activeTab === t.key ? '0 1px 3px rgba(37,99,235,0.1)' : 'none', display: 'flex', alignItems: 'center', gap: '5px' }}>
                     {t.label}
                     {t.count > 0 && (
-                      <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '1px 5px', borderRadius: 999, background: activeTab === t.key ? '#F3F4F6' : '#E5E7EB', color: activeTab === t.key ? '#374151' : '#9CA3AF' }}>
+                      <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '1px 5px', borderRadius: 999, background: activeTab === t.key ? '#EFF6FF' : '#E5E7EB', color: activeTab === t.key ? '#2563EB' : '#9CA3AF' }}>
                         {t.count}
                       </span>
                     )}

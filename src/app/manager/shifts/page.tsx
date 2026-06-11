@@ -394,14 +394,17 @@ export default function ManagerShiftsPage() {
         .mgr-shift-row:hover td { background: #EFF6FF !important; }
       `}</style>
       <ManagerSidebar />
-      <main style={{ marginLeft: '64px', flex: 1, minHeight: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+      <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', scrollbarGutter: 'stable' }}>
 
         {/* Page header */}
         <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
           <div>
-            <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
-              {(() => { const n = departments.find(d => d.id === selectedDeptId)?.name; return n ? `Shift Planning for ${n}` : 'Shift Planning' })()}
+            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 800, color: TEXT, letterSpacing: '-0.4px' }}>
+              {(() => { const n = departments.find(d => d.id === selectedDeptId)?.name; return n ? `Shift Planning · ${n}` : 'Shift Planning' })()}
             </h1>
+            <p style={{ margin: '3px 0 0', fontSize: 13, color: MUTED, fontWeight: 500 }}>
+              Schedule and manage shifts for your department
+            </p>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {managerName && (
