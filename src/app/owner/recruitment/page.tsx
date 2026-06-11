@@ -317,6 +317,7 @@ export default function OwnerRecruitmentPage() {
 
   // detail / delete confirm
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; title: string; isDraft?: boolean } | null>(null)
+  const [archivedSelected, setArchivedSelected] = useState<Set<string>>(new Set())
 
   // job action menu (... button)
   const [jobMenuOpen, setJobMenuOpen] = useState(false)
@@ -609,6 +610,23 @@ export default function OwnerRecruitmentPage() {
     } finally { setActionLoading(false) }
   }
 
+  const deleteArchivedSelected = async () => {
+    if (archivedSelected.size === 0) return
+    setActionLoading(true); setError('')
+    try {
+      await Promise.all([...archivedSelected].map(id =>
+        fetch('/api/recruitment', {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'delete_posting', job_id: id }),
+        })
+      ))
+      setArchivedSelected(new Set())
+      await fetchAll(companyId, internalUserId)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete')
+    } finally { setActionLoading(false) }
+  }
+
   const publishDraft = async (id: string) => {
     setActionLoading(true); setError('')
     try {
@@ -657,7 +675,7 @@ export default function OwnerRecruitmentPage() {
         <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
           <div>
             <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
-              {companyName ? `Recruitment for ${companyName}` : 'Recruitment'}
+              Recruitment
             </h1>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
@@ -677,60 +695,57 @@ export default function OwnerRecruitmentPage() {
           <div style={{ margin: '0 28px 0', padding: '11px 14px', background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 10, fontSize: '0.84rem', fontWeight: 600 }}>{error}</div>
         )}
 
-        {/* ── Tab bar (Communication style) ── */}
-        <div style={{ padding: '12px 28px 0', flexShrink: 0 }}>
-          <div style={{ background: '#FFFFFF', borderRadius: 14, padding: '0 18px', height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              {([
-                { key: 'jobs' as Tab,     label: 'Jobs',     Icon: Briefcase,     badge: jobsPostings.length },
-                { key: 'archived' as Tab, label: 'Archived', Icon: Archive,        badge: archivedPostings.length },
-                { key: 'drafts' as Tab,   label: 'Drafts',   Icon: FileText,       badge: drafts.length },
-                { key: 'review' as Tab,   label: 'Review',   Icon: ClipboardList,  badge: pendingPostings.length },
-              ]).map(tab => {
-                const active = activeTab === tab.key
-                return (
-                  <button
-                    key={tab.key}
-                    onClick={() => setActiveTab(tab.key)}
-                    style={{
-                      height: 38, padding: '0 14px', borderRadius: 10, cursor: 'pointer', fontWeight: 700, fontSize: 13,
-                      background: active ? '#FFF7ED' : '#F8FAFC',
-                      border: active ? '1.5px solid rgba(249,115,22,0.35)' : '1.5px solid #E2E8F0',
-                      color: active ? '#F97316' : '#64748B',
-                      display: 'flex', alignItems: 'center', gap: 7,
-                    }}
-                  >
-                    <tab.Icon size={14} style={{ color: active ? '#F97316' : '#64748B' }} />
-                    {tab.label}
-                  </button>
-                )
-              })}
-            </div>
-            {/* Right-side action button — changes based on active tab */}
-            {activeTab === 'review' ? (
-              <button
-                onClick={() => {/* AI review all — to be implemented */}}
-                style={{ height: 36, padding: '0 16px', background: '#F97316', color: '#fff', border: 'none', borderRadius: 9, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontWeight: 700, fontSize: 13, flexShrink: 0 }}
-                onMouseEnter={e => (e.currentTarget.style.background = '#EA580C')}
-                onMouseLeave={e => (e.currentTarget.style.background = '#F97316')}
-              >
-                <Sparkles size={14} /> AI Review All
-              </button>
-            ) : (
-              <button
-                onClick={openNewForm}
-                style={{ height: 36, padding: '0 16px', background: '#F97316', color: '#fff', border: 'none', borderRadius: 9, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontWeight: 700, fontSize: 13, flexShrink: 0 }}
-                onMouseEnter={e => (e.currentTarget.style.background = '#EA580C')}
-                onMouseLeave={e => (e.currentTarget.style.background = '#F97316')}
-              >
-                <Sparkles size={14} /> AI Post Job
-              </button>
-            )}
+        {/* ── Tab bar ── */}
+        <div style={{ padding: '0 28px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            {([
+              { key: 'jobs' as Tab,     label: 'Jobs',    Icon: Briefcase    },
+              { key: 'archived' as Tab, label: 'Archived', Icon: Archive     },
+              { key: 'drafts' as Tab,   label: 'Drafts',   Icon: FileText    },
+              { key: 'review' as Tab,   label: 'Review',   Icon: ClipboardList },
+            ]).map(tab => {
+              const active = activeTab === tab.key
+              return (
+                <button
+                  key={tab.key}
+                  onClick={() => setActiveTab(tab.key)}
+                  style={{
+                    padding: '5px 13px', borderRadius: '99px', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem',
+                    border: active ? '2px solid #F97316' : '1.5px solid #E5E7EB',
+                    background: active ? '#F97316' : 'transparent',
+                    color: active ? '#FFFFFF' : '#374151',
+                    display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
+                  }}
+                >
+                  <tab.Icon size={13} />
+                  {tab.label}
+                </button>
+              )
+            })}
           </div>
+          {activeTab === 'review' ? (
+            <button
+              onClick={() => {/* AI review all — to be implemented */}}
+              style={{ height: 36, padding: '0 16px', background: '#F97316', color: '#fff', border: 'none', borderRadius: 9, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontWeight: 700, fontSize: 13, flexShrink: 0 }}
+              onMouseEnter={e => (e.currentTarget.style.background = '#EA580C')}
+              onMouseLeave={e => (e.currentTarget.style.background = '#F97316')}
+            >
+              <Sparkles size={14} /> AI Review All
+            </button>
+          ) : (
+            <button
+              onClick={openNewForm}
+              style={{ height: 36, padding: '0 16px', background: '#F97316', color: '#fff', border: 'none', borderRadius: 9, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontWeight: 700, fontSize: 13, flexShrink: 0 }}
+              onMouseEnter={e => (e.currentTarget.style.background = '#EA580C')}
+              onMouseLeave={e => (e.currentTarget.style.background = '#F97316')}
+            >
+              <Sparkles size={14} /> AI Post Job
+            </button>
+          )}
         </div>
 
         {/* ── Tab content ── */}
-        <div style={{ padding: '16px 28px 28px', flex: 1, minHeight: 0 }}>
+        <div style={{ padding: '12px 28px 28px', flex: 1, minHeight: 0 }}>
 
           {/* ══ JOBS tab (Open / Closed / Expired) ════════════════════════════ */}
           {activeTab === 'jobs' && (
@@ -921,6 +936,16 @@ export default function OwnerRecruitmentPage() {
                 {archivedPostings.length > 0 && (
                   <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#EA580C', background: '#FFF7ED', padding: '2px 9px', borderRadius: 99 }}>{archivedPostings.length}</span>
                 )}
+                {archivedSelected.size > 0 && (
+                  <button
+                    onClick={deleteArchivedSelected}
+                    disabled={actionLoading}
+                    title={`Delete ${archivedSelected.size} selected`}
+                    style={{ marginLeft: 'auto', width: 38, height: 38, borderRadius: 9, border: '1px solid #FECACA', background: '#FEF2F2', color: '#DC2626', display: 'inline-grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1, flexShrink: 0 }}
+                  >
+                    {actionLoading ? <Spinner size={14} dark /> : <Trash2 size={16} />}
+                  </button>
+                )}
               </div>
               {loading ? (
                 <div style={{ padding: '28px 20px', color: '#9CA3AF', fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -932,32 +957,29 @@ export default function OwnerRecruitmentPage() {
                   <span>No archived postings.</span>
                 </div>
               ) : (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 16, padding: 20 }}>
-                  {archivedPostings.map(p => (
-                    <div key={p.id} style={{ border: '1.5px solid #E5E7EB', borderRadius: 12, padding: '16px 18px', background: '#F9FAFB', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-                        <strong style={{ fontSize: '0.9375rem', color: '#374151', lineHeight: 1.3, flex: 1 }}>{p.title}</strong>
-                        {statusBadge(p.status)}
-                      </div>
-                      <div style={{ fontSize: '0.8rem', color: '#9CA3AF', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        {p.department_name && <span>{p.department_name}{p.employment_type ? ` · ${p.employment_type}` : ''}</span>}
-                        <span>{p.applicant_count} applicant{p.applicant_count !== 1 ? 's' : ''}</span>
-                        {p.salary_amount && <span>${p.salary_amount} {p.salary_type ?? ''}</span>}
-                      </div>
-                      {p.description && (
-                        <p style={{ margin: 0, fontSize: '0.825rem', color: '#6B7280', lineHeight: 1.55, maxHeight: 60, overflow: 'hidden' }}>{p.description}</p>
-                      )}
-                      <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 12, padding: 20 }}>
+                  {archivedPostings.map(p => {
+                    const checked = archivedSelected.has(p.id)
+                    const jobTypeLabel = p.is_recurring ? 'Shift Job' : 'One-off Job'
+                    return (
+                      <div key={p.id}
+                        style={{ border: checked ? '2px solid #F97316' : '1.5px solid #E5E7EB', borderRadius: 12, padding: '12px 14px', background: checked ? '#FFFBF7' : '#F9FAFB', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}
+                      >
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <strong style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.35, display: 'block', marginBottom: 5 }}>{p.title}</strong>
+                          <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{jobTypeLabel}</span>
+                        </div>
+                        {/* Checkbox — only click target for selection */}
                         <button
-                          onClick={() => runPostingAction('duplicate_posting', p.id)}
-                          disabled={actionLoading}
-                          style={{ flex: 1, border: '1.5px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', color: '#374151', padding: '7px 0', fontWeight: 700, fontSize: '0.825rem', cursor: actionLoading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, opacity: actionLoading ? 0.6 : 1 }}
-                          onMouseEnter={e => (e.currentTarget.style.background = '#F3F4F6')}
-                          onMouseLeave={e => (e.currentTarget.style.background = '#FFFFFF')}
-                        ><Copy size={13} /> Duplicate</button>
+                          type="button"
+                          onClick={() => setArchivedSelected(prev => { const s = new Set(prev); checked ? s.delete(p.id) : s.add(p.id); return s })}
+                          style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 5, border: checked ? '2px solid #F97316' : '1.5px solid #D1D5DB', background: checked ? '#F97316' : '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0 }}
+                        >
+                          {checked && <Check size={11} color="#FFFFFF" strokeWidth={3} />}
+                        </button>
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </div>

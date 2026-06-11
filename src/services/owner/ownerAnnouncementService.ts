@@ -2,8 +2,8 @@ import { ownerAnnouncementRepository } from '@/repositories/owner/ownerAnnouncem
 
 export const ownerAnnouncementService = {
 
-  async getAnnouncements(companyId: string, requestingUserId?: string | null) {
-    return ownerAnnouncementRepository.getAnnouncements(companyId, requestingUserId)
+  async getAnnouncements(companyId: string, requestingUserId?: string | null, role?: string | null, departmentId?: string | null) {
+    return ownerAnnouncementRepository.getAnnouncements(companyId, requestingUserId, role, departmentId)
   },
 
   async postAnnouncement(fromUserId: string, companyId: string, departmentId: string | null, title: string, content: string) {

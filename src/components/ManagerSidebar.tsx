@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
 import {
-  LayoutDashboard, BarChart2, Users, MessageSquare,
+  LayoutDashboard, BarChart2, Users, MessageCircle,
   LogOut, UserPlus, ClipboardList, CalendarDays, CheckSquare,
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
@@ -17,11 +17,11 @@ const NAV_ITEMS = [
   { label: 'Dashboard',     Icon: LayoutDashboard, href: '/manager/dashboard',     dot: null as 'messages' | 'announcements' | null },
   { label: 'Shifts',        Icon: CalendarDays,    href: '/manager/shifts',        dot: null },
   { label: 'Tasks',         Icon: CheckSquare,     href: '/manager/tasks',         dot: null },
-  { label: 'Report',        Icon: BarChart2,       href: '/manager/report',        dot: null },
   { label: 'Team',          Icon: Users,           href: '/manager/team',          dot: null },
-  { label: 'Communication', Icon: MessageSquare,   href: '/manager/communication', dot: 'messages' as const },
+  { label: 'Communication', Icon: MessageCircle,   href: '/manager/communication', dot: 'messages' as const },
   { label: 'Recruitment',   Icon: UserPlus,        href: '/manager/recruitment',   dot: null },
   { label: 'Attendance',    Icon: ClipboardList,   href: '/manager/attendance',    dot: null },
+  { label: 'Report',        Icon: BarChart2,       href: '/manager/report',        dot: null },
 ]
 
 export default function ManagerSidebar({
@@ -60,7 +60,9 @@ export default function ManagerSidebar({
           if (raw) readIds = new Set(JSON.parse(raw))
         } catch {}
 
-        fetch(`/api/inbox/announcements?company_id=${cid}&role=manager`)
+        const deptId: string | null = d.user.department_id ?? null
+        const annUrl = `/api/inbox/announcements?company_id=${cid}&role=manager&user_id=${internalId}${deptId ? `&department_id=${deptId}` : ''}`
+        fetch(annUrl)
           .then(r => r.json())
           .then(data => {
             if (data.success) {
@@ -81,10 +83,20 @@ export default function ManagerSidebar({
             () => setMsgCount(c => c + 1))
           .subscribe()
 
+        const refreshAnnCount = () => {
+          const readKey2 = `ann_read_ids_${cid}_${internalId}`
+          let rids: Set<string> = new Set()
+          try { const raw2 = localStorage.getItem(readKey2); if (raw2) rids = new Set(JSON.parse(raw2)) } catch {}
+          const url2 = `/api/inbox/announcements?company_id=${cid}&role=manager&user_id=${internalId}${deptId ? `&department_id=${deptId}` : ''}`
+          fetch(url2).then(r => r.json()).then(data => {
+            if (data.success) setAnnCount((data.announcements as { id: string }[]).filter((a: { id: string }) => !rids.has(a.id)).length)
+          }).catch(() => {})
+        }
+
         const annChannel = supabase
           .channel('manager-sidebar-announcements')
           .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'announcements', filter: `company_id=eq.${cid}` },
-            () => setAnnCount(c => c + 1))
+            refreshAnnCount)
           .subscribe()
 
         return () => {
@@ -202,20 +214,22 @@ export default function ManagerSidebar({
       </nav>
 
       <div style={{ padding: '12px 8px', borderTop: `1px solid ${SIDEBAR_BORDER}`, flexShrink: 0 }}>
-        <button
-          onClick={handleLogout}
-          style={{
-            width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
-            padding: '10px 12px', background: 'none', border: 'none', cursor: 'pointer',
-            borderRadius: '8px', color: '#FCA5A5', fontWeight: 500, fontSize: '0.9rem',
-            transition: 'color 0.12s, background 0.12s', whiteSpace: 'nowrap',
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.color = '#FECACA'; e.currentTarget.style.background = 'rgba(239,68,68,0.15)' }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = '#FCA5A5'; e.currentTarget.style.background = 'none' }}
-        >
-          <LogOut size={18} strokeWidth={2} style={{ flexShrink: 0, color: 'inherit' }} />
-          <span style={{ opacity: expanded ? 1 : 0, transition: 'opacity 0.15s' }}>Logout</span>
-        </button>
+        <div style={{ borderTop: `1px solid ${SIDEBAR_BORDER}`, paddingTop: '8px', marginTop: '2px' }}>
+          <button
+            onClick={handleLogout}
+            style={{
+              width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
+              padding: '10px 12px', background: 'none', border: 'none', cursor: 'pointer',
+              borderRadius: '8px', color: '#EF4444', fontWeight: 500, fontSize: '0.9rem',
+              transition: 'color 0.12s, background 0.12s', whiteSpace: 'nowrap',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = '#DC2626'; e.currentTarget.style.background = '#FEF2F2' }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = '#EF4444'; e.currentTarget.style.background = 'none' }}
+          >
+            <LogOut size={18} strokeWidth={2} style={{ flexShrink: 0, color: 'inherit' }} />
+            <span style={{ opacity: expanded ? 1 : 0, transition: 'opacity 0.15s' }}>Logout</span>
+          </button>
+        </div>
       </div>
     </aside>
   )

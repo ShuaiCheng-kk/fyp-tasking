@@ -20,7 +20,7 @@ const NAV_ITEMS = [
   { label: 'Dashboard',     Icon: LayoutDashboard, href: '/owner/dashboard',       dot: null as 'messages' | 'announcements' | null },
   { label: 'Shifts',        Icon: CalendarDays,    href: '/owner/shifts',          dot: null },
   { label: 'Tasks',         Icon: CheckSquare,     href: '/owner/tasks',           dot: null },
-  { label: 'My Company',    Icon: Users,            href: '/owner/team',            dot: null },
+  { label: 'Team',          Icon: Users,            href: '/owner/team',            dot: null },
   { label: 'Communication', Icon: MessageCircle,    href: '/owner/communication',   dot: 'messages' as const },
   { label: 'Recruitment',   Icon: UserPlus,         href: '/owner/recruitment',     dot: null },
   { label: 'Attendance',    Icon: ClipboardList,    href: '/owner/attendance',      dot: null },
@@ -112,12 +112,23 @@ export default function OwnerSidebar({
           }, () => { setMsgCount(c => c + 1) })
           .subscribe()
 
+        const refreshAnnCount = () => {
+          const rkey = `ann_read_ids_${cid}_${internalId}`
+          let rids: Set<string> = new Set()
+          try { const raw2 = localStorage.getItem(rkey); if (raw2) rids = new Set(JSON.parse(raw2)) } catch {}
+          fetch(`/api/inbox/announcements?company_id=${cid}&role=owner`)
+            .then(r => r.json())
+            .then(data => {
+              if (data.success) setAnnCount((data.announcements as { id: string }[]).filter(a => !rids.has(a.id)).length)
+            }).catch(() => {})
+        }
+
         const annChannel = supabase
           .channel('owner-sidebar-announcements')
           .on('postgres_changes', {
             event: 'INSERT', schema: 'public', table: 'announcements',
             filter: `company_id=eq.${cid}`,
-          }, () => { setAnnCount(c => c + 1) })
+          }, refreshAnnCount)
           .subscribe()
 
         return () => {
@@ -128,9 +139,28 @@ export default function OwnerSidebar({
       .catch(() => {})
   }, [])
 
-  // Clear message dot immediately when user opens communication page
+  // When user opens communication page, mark all announcements as read in localStorage
   useEffect(() => {
-    if (pathname === '/owner/communication') setMsgCount(0)
+    if (pathname !== '/owner/communication') return
+    setMsgCount(0)
+    setAnnCount(0)
+    const authUid = typeof localStorage !== 'undefined' ? localStorage.getItem('tasking_user_id') : null
+    if (!authUid) return
+    fetch(`/api/user/me?user_id=${authUid}`)
+      .then(r => r.json())
+      .then(d => {
+        if (!d.success) return
+        const internalId: string = d.user.id
+        const cid = localStorage.getItem('tasking_company_id') ?? localStorage.getItem(`tasking_company_id_${authUid}`)
+        if (!cid) return
+        fetch(`/api/inbox/announcements?company_id=${cid}&role=owner`)
+          .then(r => r.json())
+          .then(data => {
+            if (!data.success) return
+            const allIds = (data.announcements as { id: string }[]).map(a => a.id)
+            localStorage.setItem(`ann_read_ids_${cid}_${internalId}`, JSON.stringify(allIds))
+          }).catch(() => {})
+      }).catch(() => {})
   }, [pathname])
 
   useEffect(() => {

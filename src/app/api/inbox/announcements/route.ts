@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
     if (!company_id) {
       return NextResponse.json({ success: false, error: 'Missing company_id' }, { status: 400 })
     }
-    const announcements = await ownerAnnouncementService.getAnnouncements(company_id, user_id)
+    const announcements = await ownerAnnouncementService.getAnnouncements(company_id, user_id, role, department_id)
     return NextResponse.json({ success: true, announcements })
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 })
