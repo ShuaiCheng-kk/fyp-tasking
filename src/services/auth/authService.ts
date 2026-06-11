@@ -52,10 +52,15 @@ export const authService = {
     phone_number: string | null
     role: User['role']
   }): Promise<User> {
-    const { data: authData, error: authError } = await supabase.auth.signUp({
-      email: data.email_address,
-      password: data.password,
-    })
+    const admin = getAdminClient()
+
+    const { data: authData, error: authError } =
+      await admin.auth.admin.createUser({
+        email: data.email_address,
+        password: data.password,
+        email_confirm: true,
+      })
+
     if (authError) throw new Error(authError.message)
     if (!authData.user) throw new Error('Registration failed')
 

@@ -72,6 +72,7 @@ export default function ApplyJobModal({ jobId, onClose }: Props) {
 
   const handleResumeChange = (file: File | null) => {
     setError('')
+
     if (!file) {
       setResumeFile(null)
       return
@@ -89,6 +90,7 @@ export default function ApplyJobModal({ jobId, onClose }: Props) {
 
   const handleCoverLetterChange = (file: File | null) => {
     setError('')
+
     if (!file) {
       setCoverLetterFile(null)
       return
@@ -154,8 +156,8 @@ export default function ApplyJobModal({ jobId, onClose }: Props) {
     <div style={overlayStyle}>
       <div style={modalStyle}>
         <div style={{ marginBottom: 24 }}>
-          <h2 style={{ margin: 0, fontSize: 24 }}>Submit Job Application</h2>
-          <p style={{ color: '#6B7280', marginTop: 8 }}>
+          <h2 style={modalTitleStyle}>Submit Job Application</h2>
+          <p style={modalSubtitleStyle}>
             Your contact details are auto-filled from your account.
           </p>
         </div>
@@ -182,27 +184,51 @@ export default function ApplyJobModal({ jobId, onClose }: Props) {
                 <input value={profile?.phone_number ?? ''} readOnly style={readOnlyInputStyle} />
               </label>
 
-              <label style={labelStyle}>
+              <div style={labelStyle}>
                 Resume File
-                <input
-                  type="file"
-                  accept=".pdf,.doc,.docx"
-                  onChange={(e) => handleResumeChange(e.target.files?.[0] ?? null)}
-                  style={fileInputStyle}
-                />
-                <small style={hintStyle}>Accepted: PDF, DOC, DOCX. Max 5MB.</small>
-              </label>
 
-              <label style={labelStyle}>
-                Cover Letter File
-                <input
-                  type="file"
-                  accept=".pdf,.doc,.docx"
-                  onChange={(e) => handleCoverLetterChange(e.target.files?.[0] ?? null)}
-                  style={fileInputStyle}
-                />
+                <label style={fileUploadRowStyle}>
+                  <span style={uploadButtonStyle}>
+                    {resumeFile ? 'Change Resume' : 'Upload Resume'}
+                  </span>
+
+                  <span style={resumeFile ? uploadedFileNameStyle : fileNameStyle}>
+                    {resumeFile ? resumeFile.name : 'No file selected'}
+                  </span>
+
+                  <input
+                    type="file"
+                    accept=".pdf,.doc,.docx"
+                    onChange={(e) => handleResumeChange(e.target.files?.[0] ?? null)}
+                    style={{ display: 'none' }}
+                  />
+                </label>
+
                 <small style={hintStyle}>Accepted: PDF, DOC, DOCX. Max 5MB.</small>
-              </label>
+              </div>
+
+              <div style={labelStyle}>
+                Cover Letter File
+
+                <label style={fileUploadRowStyle}>
+                  <span style={uploadButtonStyle}>
+                    {coverLetterFile ? 'Change Cover Letter' : 'Upload Cover Letter'}
+                  </span>
+
+                  <span style={coverLetterFile ? uploadedFileNameStyle : fileNameStyle}>
+                    {coverLetterFile ? coverLetterFile.name : 'No file selected'}
+                  </span>
+
+                  <input
+                    type="file"
+                    accept=".pdf,.doc,.docx"
+                    onChange={(e) => handleCoverLetterChange(e.target.files?.[0] ?? null)}
+                    style={{ display: 'none' }}
+                  />
+                </label>
+
+                <small style={hintStyle}>Accepted: PDF, DOC, DOCX. Max 5MB.</small>
+              </div>
             </div>
 
             <div style={footerStyle}>
@@ -224,17 +250,12 @@ export default function ApplyJobModal({ jobId, onClose }: Props) {
 const overlayStyle: React.CSSProperties = {
   position: 'fixed',
   inset: 0,
-
   background: 'rgba(0,0,0,0.4)',
-
   display: 'flex',
   justifyContent: 'center',
   alignItems: 'center',
-
   padding: 24,
-
   overflowY: 'auto',
-
   zIndex: 9999,
 }
 
@@ -247,6 +268,20 @@ const modalStyle: React.CSSProperties = {
   borderRadius: 18,
   padding: 32,
   boxShadow: '0 24px 80px rgba(0,0,0,0.28)',
+}
+
+const modalTitleStyle: React.CSSProperties = {
+  margin: 0,
+  fontFamily: 'var(--font-heading)',
+  fontSize: 24,
+  fontWeight: 700,
+  color: '#111827',
+}
+
+const modalSubtitleStyle: React.CSSProperties = {
+  color: '#6B7280',
+  marginTop: 8,
+  fontFamily: 'var(--font-body)',
 }
 
 const gridStyle: React.CSSProperties = {
@@ -270,13 +305,50 @@ const readOnlyInputStyle: React.CSSProperties = {
   color: '#4B5563',
 }
 
-const fileInputStyle: React.CSSProperties = {
+const fileUploadRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 14,
   width: '100%',
-  padding: 12,
   marginTop: 6,
-  borderRadius: 10,
+}
+
+const uploadButtonStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: '8px 14px',
+  borderRadius: 8,
   border: '1px solid #D1D5DB',
-  background: '#FFFFFF',
+  background: '#F9FAFB',
+  color: '#111827',
+  fontSize: '0.875rem',
+  fontWeight: 700,
+  cursor: 'pointer',
+  whiteSpace: 'nowrap',
+}
+
+const uploadedButtonStyle: React.CSSProperties = {
+  ...uploadButtonStyle,
+  background: '#FFF7ED',
+}
+
+const fileNameStyle: React.CSSProperties = {
+  color: '#F97316',
+  fontSize: '0.875rem',
+  fontWeight: 700,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+}
+
+const uploadedFileNameStyle: React.CSSProperties = {
+  color: '#F97316',
+  fontSize: '0.875rem',
+  fontWeight: 700,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
 }
 
 const hintStyle: React.CSSProperties = {
@@ -298,10 +370,8 @@ const footerStyle: React.CSSProperties = {
   display: 'flex',
   justifyContent: 'flex-end',
   gap: 12,
-
   marginTop: 32,
   paddingTop: 20,
-
   borderTop: '1px solid #E5E7EB',
   background: '#FFFFFF',
 }
@@ -310,7 +380,7 @@ const primaryButtonStyle: React.CSSProperties = {
   padding: '12px 18px',
   borderRadius: 10,
   border: 'none',
-  background: '#16A34A',
+  background: '#F97316',
   color: 'white',
   fontWeight: 700,
   cursor: 'pointer',

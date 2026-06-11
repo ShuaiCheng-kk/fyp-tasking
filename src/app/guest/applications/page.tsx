@@ -1,6 +1,7 @@
 'use client'
 
 import { Suspense, useEffect, useState } from 'react'
+import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import ApplicationDetailsModal from '@/components/guest/ApplicationDetailsModal'
@@ -140,7 +141,7 @@ function ApplicationsContent() {
     <>
       <header style={topBarStyle}>
         <div style={topBarInnerStyle}>
-          <div style={brandWrapStyle}>
+          <Link href="/" style={brandWrapStyle}>
             <svg width="28" height="28" viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
               <rect width="32" height="32" rx="8" fill="#F97316" />
               <rect x="8" y="9" width="9" height="2.5" rx="1.25" fill="white" />
@@ -157,7 +158,7 @@ function ApplicationsContent() {
             </svg>
 
             <h1 style={headerTitleStyle}>Tasking</h1>
-          </div>
+          </Link>
 
           <div style={rightHeaderStyle}>
             <GuestProfileMenu profile={profile} onLogout={handleLogout} />
@@ -295,6 +296,8 @@ const brandWrapStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   gap: 10,
+  textDecoration: 'none',
+  cursor: 'pointer',
 }
 
 const headerTitleStyle: React.CSSProperties = {
