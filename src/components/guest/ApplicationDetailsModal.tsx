@@ -1,11 +1,28 @@
 'use client'
 
+import {
+  Briefcase,
+  Building2,
+  CalendarDays,
+  Clock,
+  DollarSign,
+  FileText,
+  ListChecks,
+  Users,
+  ChevronRight,
+  MapPin,
+  AlertCircle,
+  Gift,
+} from 'lucide-react'
+
 type ApplicationStatus = 'pending' | 'accepted' | 'rejected' | 'withdrawn'
 
 type Application = {
   id: string
   job_title: string
+  title?: string
   company_name: string
+  industry?: string
   status: ApplicationStatus
   applied_at: string
   resume_url?: string
@@ -17,43 +34,83 @@ type Application = {
   description?: string
   requirements?: string
   benefits?: string
+  urgency?: string
   openings?: number
-  job_date?: string
   shift_start_time?: string
   shift_end_time?: string
+  shift_days?: string[]
+  job_date?: string
+  job_end_date?: string
+  estimated_hours?: string
 }
 
 type Props = {
   application: Application
   onClose: () => void
+  onWithdraw: () => void
 }
 
-function DetailRow({
+function DetailItem({
+  icon,
   label,
   value,
 }: {
+  icon: React.ReactNode
   label: string
   value?: string | number | null
 }) {
   if (value === null || value === undefined || value === '') return null
 
   return (
-    <div style={detailRowStyle}>
-      <div style={detailLabelStyle}>{label}</div>
-      <div style={detailValueStyle}>{value}</div>
+    <div style={detailItemStyle}>
+      <div style={iconBoxStyle}>{icon}</div>
+
+      <div>
+        <p style={detailLabelStyle}>{label}</p>
+        <p style={detailValueStyle}>{value}</p>
+      </div>
     </div>
   )
 }
 
-export default function ApplicationDetailsModal({ application, onClose }: Props) {
+function DocumentCard({
+  label,
+  helper,
+  href,
+  tone,
+}: {
+  label: string
+  helper: string
+  href?: string
+  tone: 'blue' | 'green'
+}) {
+  if (!href) return null
+
+  const iconStyle =
+    tone === 'blue'
+      ? { background: '#EFF6FF', color: '#2563EB' }
+      : { background: '#ECFDF5', color: '#16A34A' }
+
+  return (
+    <a href={href} target="_blank" rel="noreferrer" style={documentCardStyle}>
+      <div style={{ ...documentIconStyle, ...iconStyle }}>
+        <FileText size={22} strokeWidth={2.2} />
+      </div>
+
+      <div style={{ flex: 1 }}>
+        <p style={documentTitleStyle}>{label}</p>
+        <p style={documentHelperStyle}>{helper}</p>
+      </div>
+
+      <ChevronRight size={18} color="#6B7280" />
+    </a>
+  )
+}
+
+export default function ApplicationDetailsModal({ application, onClose, onWithdraw }: Props) {
   const salary =
     application.salary_amount
       ? `$${application.salary_amount}${application.salary_type ? ` / ${application.salary_type}` : ''}`
-      : null
-
-  const shiftTime =
-    application.shift_start_time && application.shift_end_time
-      ? `${application.shift_start_time} - ${application.shift_end_time}`
       : null
 
   return (
@@ -62,58 +119,73 @@ export default function ApplicationDetailsModal({ application, onClose }: Props)
         <div style={headerStyle}>
           <div>
             <h2 style={titleStyle}>Application Details</h2>
-            <p style={subTextStyle}>{application.job_title}</p>
+            <p style={subTextStyle}>{application.job_title || application.title}</p>
           </div>
 
-          <button onClick={onClose} style={closeButtonStyle}>
-            ✕
-          </button>
+          <span style={{ ...statusBadgeBaseStyle, ...statusStyle(application.status) }}>
+            {formatStatus(application.status)}
+          </span>
         </div>
 
         <section style={sectionStyle}>
           <h3 style={sectionTitleStyle}>Job Details</h3>
 
           <div style={detailsGridStyle}>
-            <DetailRow label="Title" value={application.job_title} />
-            <DetailRow label="Company" value={application.company_name} />
-            <DetailRow label="Location" value={application.location} />
-            <DetailRow label="Employment Type" value={application.employment_type} />
-            <DetailRow label="Salary" value={salary} />
-            <DetailRow label="Job Date" value={application.job_date} />
-            <DetailRow label="Shift Time" value={shiftTime} />
-            <DetailRow label="Description" value={application.description} />
-            <DetailRow label="Requirements" value={application.requirements} />
-            <DetailRow label="Benefits" value={application.benefits} />
-            <DetailRow label="Openings" value={application.openings} />
+            <DetailItem icon={<Briefcase size={18} />} label="Title" value={application.job_title || application.title} />
+            <DetailItem icon={<Building2 size={18} />} label="Company Name" value={application.company_name} />
+            <DetailItem icon={<Building2 size={18} />} label="Industry" value={application.industry} />
+            <DetailItem icon={<MapPin size={18} />} label="Location" value={application.location} />
+            <DetailItem icon={<Clock size={18} />} label="Employment Type" value={application.employment_type} />
+            <DetailItem icon={<DollarSign size={18} />} label="Salary" value={salary} />
+            <DetailItem icon={<AlertCircle size={18} />} label="Urgency" value={application.urgency} />
+            <DetailItem icon={<Users size={18} />} label="Openings" value={application.openings} />
+            <DetailItem icon={<Gift size={18} />} label="Benefits" value={application.benefits} />
+            <DetailItem icon={<ListChecks size={18} />} label="Requirements" value={application.requirements} />
+            <DetailItem icon={<FileText size={18} />} label="Description" value={application.description} />
+            <DetailItem icon={<Clock size={18} />} label="Shift Start Time" value={application.shift_start_time} />
+            <DetailItem icon={<Clock size={18} />} label="Shift End Time" value={application.shift_end_time} />
+            <DetailItem icon={<CalendarDays size={18} />} label="Shift Days" value={application.shift_days?.join(', ')} />
+            <DetailItem icon={<CalendarDays size={18} />} label="Job Date" value={application.job_date} />
+            <DetailItem icon={<CalendarDays size={18} />} label="Job End Date" value={application.job_end_date} />
+            <DetailItem icon={<Clock size={18} />} label="Estimated Hours" value={application.estimated_hours} />
           </div>
         </section>
 
         <section style={sectionStyle}>
-          <h3 style={sectionTitleStyle}>Application Status</h3>
-          <span style={statusBadgeStyle}>{application.status}</span>
+          <h3 style={sectionTitleStyle}>Application Submitted On</h3>
+
+          <div style={submittedDateStyle}>
+            <div style={submittedDateIconStyle}>
+              <CalendarDays size={18} />
+            </div>
+
+            <span style={submittedDateTextStyle}>{application.applied_at}</span>
+          </div>
         </section>
 
         <section style={sectionStyle}>
           <h3 style={sectionTitleStyle}>Submitted Documents</h3>
 
-          <div style={documentActionsStyle}>
-            {application.resume_url && (
-              <a href={application.resume_url} target="_blank" style={docButtonStyle}>
-                View Resume
-              </a>
-            )}
+          <div style={documentsGridStyle}>
+            <DocumentCard
+              label="Resume"
+              helper="Click to view your resume"
+              href={application.resume_url}
+              tone="blue"
+            />
 
-            {application.cover_letter && (
-              <a href={application.cover_letter} target="_blank" style={docButtonStyle}>
-                View Cover Letter
-              </a>
-            )}
+            <DocumentCard
+              label="Cover Letter"
+              helper="Click to view your cover letter"
+              href={application.cover_letter}
+              tone="green"
+            />
           </div>
         </section>
 
         <div style={footerStyle}>
           {application.status === 'pending' && (
-            <button style={withdrawButtonStyle}>
+            <button onClick={onWithdraw} style={withdrawButtonStyle}>
               Withdraw Application
             </button>
           )}
@@ -125,6 +197,42 @@ export default function ApplicationDetailsModal({ application, onClose }: Props)
       </div>
     </div>
   )
+}
+
+function formatStatus(status: ApplicationStatus) {
+  return status.charAt(0).toUpperCase() + status.slice(1)
+}
+
+function statusStyle(status: ApplicationStatus): React.CSSProperties {
+  if (status === 'pending') {
+    return {
+      background: '#FEF3C7',
+      color: '#92400E',
+      border: '1px solid #FDE68A',
+    }
+  }
+
+  if (status === 'accepted') {
+    return {
+      background: '#DCFCE7',
+      color: '#15803D',
+      border: '1px solid #BBF7D0',
+    }
+  }
+
+  if (status === 'rejected') {
+    return {
+      background: '#FEE2E2',
+      color: '#B91C1C',
+      border: '1px solid #FECACA',
+    }
+  }
+
+  return {
+    background: '#F3F4F6',
+    color: '#4B5563',
+    border: '1px solid #D1D5DB',
+  }
 }
 
 const overlayStyle: React.CSSProperties = {
@@ -141,126 +249,183 @@ const overlayStyle: React.CSSProperties = {
 
 const modalStyle: React.CSSProperties = {
   width: '100%',
-  maxWidth: 760,
+  maxWidth: 900,
   maxHeight: '88vh',
   overflowY: 'auto',
   background: '#FFFFFF',
-  borderRadius: 18,
-  padding: 28,
+  borderRadius: 20,
+  padding: 32,
   boxShadow: '0 24px 80px rgba(0,0,0,0.28)',
 }
 
 const headerStyle: React.CSSProperties = {
   display: 'flex',
   justifyContent: 'space-between',
+  alignItems: 'flex-start',
   gap: 20,
-  marginBottom: 20,
+  paddingBottom: 22,
+  borderBottom: '1px solid #E5E7EB',
 }
 
 const titleStyle: React.CSSProperties = {
   margin: 0,
   fontFamily: 'var(--font-heading)',
-  fontSize: '1.25rem',
+  fontSize: '1.6rem',
   fontWeight: 700,
   color: '#111827',
 }
 
 const subTextStyle: React.CSSProperties = {
-  margin: '6px 0 0',
-  fontSize: '0.875rem',
+  margin: '8px 0 0',
+  fontSize: '0.95rem',
   color: '#6B7280',
 }
 
-const closeButtonStyle: React.CSSProperties = {
-  width: 34,
-  height: 34,
+const statusBadgeBaseStyle: React.CSSProperties = {
+  padding: '7px 14px',
   borderRadius: 999,
-  border: '1px solid #D1D5DB',
-  background: '#FFFFFF',
-  cursor: 'pointer',
+  fontSize: '0.85rem',
+  fontWeight: 700,
+  whiteSpace: 'nowrap',
 }
 
 const sectionStyle: React.CSSProperties = {
-  borderTop: '1px solid #E5E7EB',
-  paddingTop: 18,
-  marginTop: 18,
+  paddingTop: 24,
 }
 
 const sectionTitleStyle: React.CSSProperties = {
-  margin: '0 0 14px',
-  fontSize: '0.875rem',
+  margin: '0 0 16px',
+  fontFamily: 'var(--font-heading)',
+  fontSize: '1rem',
   fontWeight: 700,
-  color: '#374151',
+  color: '#111827',
 }
 
 const detailsGridStyle: React.CSSProperties = {
   display: 'grid',
   gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-  gap: '14px 24px',
+  borderTop: '1px solid #E5E7EB',
+  borderLeft: '1px solid #E5E7EB',
 }
 
-const detailRowStyle: React.CSSProperties = {
+const detailItemStyle: React.CSSProperties = {
+  display: 'flex',
+  gap: 16,
+  padding: '18px 18px',
+  borderRight: '1px solid #E5E7EB',
+  borderBottom: '1px solid #E5E7EB',
   minWidth: 0,
 }
 
+const iconBoxStyle: React.CSSProperties = {
+  width: 38,
+  height: 38,
+  borderRadius: 12,
+  background: '#FFF7ED',
+  color: '#F97316',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  flexShrink: 0,
+}
+
 const detailLabelStyle: React.CSSProperties = {
-  fontSize: '0.75rem',
+  margin: '0 0 6px',
+  fontSize: '0.8rem',
   fontWeight: 700,
   color: '#6B7280',
-  marginBottom: 4,
 }
 
 const detailValueStyle: React.CSSProperties = {
-  fontSize: '0.875rem',
+  margin: 0,
+  fontSize: '0.95rem',
   color: '#111827',
   lineHeight: 1.5,
   whiteSpace: 'pre-wrap',
+  wordBreak: 'break-word',
 }
 
-const statusBadgeStyle: React.CSSProperties = {
-  display: 'inline-block',
-  padding: '5px 11px',
-  borderRadius: 999,
-  background: '#FEF3C7',
-  color: '#92400E',
-  border: '1px solid #FDE68A',
-  fontSize: '0.75rem',
-  fontWeight: 700,
-  textTransform: 'capitalize',
-}
-
-const documentActionsStyle: React.CSSProperties = {
+const submittedDateStyle: React.CSSProperties = {
   display: 'flex',
-  gap: 10,
-  flexWrap: 'wrap',
+  alignItems: 'center',
+  gap: 12,
 }
 
-const docButtonStyle: React.CSSProperties = {
-  border: '1px solid #D1D5DB',
-  background: '#FFFFFF',
+const submittedDateIconStyle: React.CSSProperties = {
+  width: 36,
+  height: 36,
+  borderRadius: 10,
+  background: '#F3F4F6',
   color: '#374151',
-  padding: '8px 12px',
-  borderRadius: 9,
-  fontSize: '0.8125rem',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+}
+
+const submittedDateTextStyle: React.CSSProperties = {
+  fontSize: '0.95rem',
   fontWeight: 700,
-  cursor: 'pointer',
+  color: '#111827',
+}
+
+const documentsGridStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+  gap: 14,
+}
+
+const documentCardStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 14,
+  border: '1px solid #D1D5DB',
+  borderRadius: 12,
+  background: '#FFFFFF',
+  padding: 14,
   textDecoration: 'none',
+  color: '#111827',
+  cursor: 'pointer',
+}
+
+const documentIconStyle: React.CSSProperties = {
+  width: 42,
+  height: 42,
+  borderRadius: 12,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  flexShrink: 0,
+}
+
+const documentTitleStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '0.95rem',
+  fontWeight: 700,
+  color: '#111827',
+}
+
+const documentHelperStyle: React.CSSProperties = {
+  margin: '4px 0 0',
+  fontSize: '0.8rem',
+  color: '#6B7280',
 }
 
 const footerStyle: React.CSSProperties = {
   display: 'flex',
   justifyContent: 'flex-end',
-  gap: 10,
-  marginTop: 24,
+  gap: 14,
+  marginTop: 30,
+  paddingTop: 24,
+  borderTop: '1px solid #E5E7EB',
 }
 
 const withdrawButtonStyle: React.CSSProperties = {
   border: '1px solid #FECACA',
   background: '#FEF2F2',
-  color: '#B91C1C',
-  padding: '9px 14px',
-  borderRadius: 9,
-  fontSize: '0.8125rem',
+  color: '#DC2626',
+  padding: '13px 18px',
+  borderRadius: 10,
+  fontSize: '0.9rem',
   fontWeight: 700,
   cursor: 'pointer',
 }
@@ -269,9 +434,9 @@ const secondaryButtonStyle: React.CSSProperties = {
   border: '1px solid #D1D5DB',
   background: '#FFFFFF',
   color: '#374151',
-  padding: '9px 14px',
-  borderRadius: 9,
-  fontSize: '0.8125rem',
+  padding: '13px 18px',
+  borderRadius: 10,
+  fontSize: '0.9rem',
   fontWeight: 700,
   cursor: 'pointer',
 }
