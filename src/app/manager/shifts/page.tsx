@@ -1237,7 +1237,7 @@ export default function ManagerShiftsPage() {
               <p style={{ margin: 0, fontWeight: 700, fontSize: 14 }}>No shifts this week</p>
             </div>
           ) : (
-            <div style={{ borderLeft: EDGE, borderRight: EDGE, borderBottom: EDGE }}>
+            <div style={{ borderLeft: `1px solid ${BORDER}`, borderRight: EDGE, borderBottom: EDGE }}>
               {(() => {
                 const lastMgrIdx = sortedRows.reduce((acc, r, i) => r.role === 'Manager' ? i : acc, -1)
                 return sortedRows.map((row, rowIdx) => {
@@ -1342,7 +1342,7 @@ export default function ManagerShiftsPage() {
       <div style={{ overflowX: 'auto', padding: '14px 16px 18px 18px', borderRadius: '0 0 14px 14px' }}>
         <div style={{ minWidth: 860 }}>
           {renderTimeAxis()}
-          <div style={{ borderLeft: EDGE, borderRight: EDGE, borderBottom: EDGE }}>
+          <div style={{ borderLeft: `1px solid ${PANEL_BORDER}`, borderRight: EDGE, borderBottom: EDGE }}>
             {(() => {
               const allRows = deptOrder.flatMap(deptId => deptMap[deptId].rows)
               const lastManagerIdx = allRows.reduce((acc, r, i) => r.role === 'Manager' ? i : acc, -1)
