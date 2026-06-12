@@ -237,7 +237,7 @@ function Header({ title, userName }: { title: string; userName: string }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
         {userName && (
           <div style={userPillStyle}>
-            <span style={userPillIconStyle}>
+            <span style={userPillStyle}>
               <UserRound size={13} />
             </span>
             <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{userName}</span>
