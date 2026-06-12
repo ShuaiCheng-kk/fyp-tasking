@@ -209,7 +209,6 @@ function ApplicationsContent() {
             <div style={errorCardStyle}>{error}</div>
           ) : applications.length === 0 ? (
             <div style={emptyCardStyle}>
-              <div style={emptyIconStyle}>📄</div>
               <h3 style={emptyTitleStyle}>No applications yet</h3>
               <p style={emptyTextStyle}>
                 Your submitted applications will appear here after you apply for a job.
@@ -521,14 +520,8 @@ const dangerActionButtonStyle: React.CSSProperties = {
 }
 
 const emptyCardStyle: React.CSSProperties = {
-  width: '100%',
-  minHeight: 280,
-  background: '#FFFFFF',
-  border: '1px solid #D1D5DB',
-  borderRadius: 16,
   padding: '42px 28px',
   textAlign: 'center',
-  boxShadow: '0 8px 22px rgba(15,23,42,0.04)',
   display: 'flex',
   flexDirection: 'column',
   alignItems: 'center',
@@ -541,17 +534,6 @@ const errorCardStyle: React.CSSProperties = {
   background: '#FEF2F2',
 }
 
-const emptyIconStyle: React.CSSProperties = {
-  width: 56,
-  height: 56,
-  marginBottom: 16,
-  borderRadius: 16,
-  background: '#F3F4F6',
-  display: 'grid',
-  placeItems: 'center',
-  fontSize: 26,
-}
-
 const emptyTitleStyle: React.CSSProperties = {
   margin: 0,
   fontFamily: 'var(--font-heading)',
@@ -562,7 +544,6 @@ const emptyTitleStyle: React.CSSProperties = {
 
 const emptyTextStyle: React.CSSProperties = {
   margin: '8px auto 0',
-  maxWidth: 420,
   fontSize: '0.875rem',
   color: '#6B7280',
   lineHeight: 1.6,
