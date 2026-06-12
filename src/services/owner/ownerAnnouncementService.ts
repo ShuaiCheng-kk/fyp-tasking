@@ -22,4 +22,12 @@ export const ownerAnnouncementService = {
     await ownerAnnouncementRepository.deleteAnnouncement(announcementId, requestingUserId)
   },
 
+  async markAnnouncementsRead(userId: string, announcementIds: string[]) {
+    await ownerAnnouncementRepository.markAnnouncementsRead(userId, announcementIds)
+  },
+
+  async getReadAnnouncementIds(userId: string, companyId: string): Promise<string[]> {
+    return ownerAnnouncementRepository.getReadAnnouncementIds(userId, companyId)
+  },
+
 }
