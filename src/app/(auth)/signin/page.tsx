@@ -43,7 +43,7 @@ const ROLE_ROUTES: Record<string, string> = {
   'Manager': '/manager/dashboard',
   'Employee': '/employee/dashboard',
   'Casual Worker': '/casual/dashboard',
-  'Guest User': '/job-board',
+  'Guest User': '/guest/applications',
 };
 
 function SignInContent() {
