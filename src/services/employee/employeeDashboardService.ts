@@ -18,8 +18,11 @@ export const employeeDashboardService = {
   async getDashboard(
     auth_user_id: string
   ): Promise<{
+    company_id: string
     company_name: string
+    department_id: string
     department_name: string
+    employee_id: string
     assigned_work: AssignedWorkDTO[]
   }> {
     const user =
@@ -42,8 +45,11 @@ export const employeeDashboardService = {
       await employeeDashboardRepository.getAssignedWork(internalUserId)
 
     return {
+      company_id: dashboard.company_id,
       company_name: dashboard.company_name,
+      department_id: dashboard.department_id,
       department_name: dashboard.department_name,
+      employee_id: internalUserId,
       assigned_work: assignedWork,
     }
   },
