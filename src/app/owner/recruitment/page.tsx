@@ -5,8 +5,9 @@ import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import {
-  Archive, ArchiveRestore, Briefcase, Check, CheckCircle, ChevronLeft, ChevronRight, ClipboardList, Copy, Crown,
-  FileText, MoreHorizontal, Pencil, Repeat, Send, Sparkles, Timer, Trash2, UserCheck, UserX,
+  Archive, ArchiveRestore, Briefcase, Building2, CalendarDays, Check, CheckCircle, ChevronLeft, ChevronRight,
+  ClipboardList, Clock, Coffee, Copy, Crown, DollarSign, FileText, LayoutGrid, MapPin,
+  MoreHorizontal, Pencil, Repeat, Send, Sparkles, Timer, Trash2, UserCheck, UserX,
   X, XCircle, Zap,
 } from 'lucide-react'
 import OwnerSidebar from '@/components/OwnerSidebar'
@@ -249,6 +250,8 @@ export default function OwnerRecruitmentPage() {
   const [internalUserId, setInternalUserId] = useState('')
   const [companyId, setCompanyId] = useState('')
   const [companyName, setCompanyName] = useState('')
+  const [companyLocation, setCompanyLocation] = useState('')
+  const [companyAddress, setCompanyAddress] = useState('')
   const [ownerName, setOwnerName] = useState('')
   const [currentPlan, setCurrentPlan] = useState('Free')
 
@@ -321,14 +324,15 @@ export default function OwnerRecruitmentPage() {
   const [selectedArchivedId, setSelectedArchivedId] = useState('')
   const [archivedApplicants, setArchivedApplicants] = useState<JobApplicant[]>([])
   const [selectedDraftId, setSelectedDraftId] = useState('')
+  const [draftsSelected, setDraftsSelected] = useState<Set<string>>(new Set())
   const [selectedPendingId, setSelectedPendingId] = useState('')
   const [jobsSelected, setJobsSelected] = useState<Set<string>>(new Set())
 
-  // job action menu (... button)
-  const [jobMenuOpen, setJobMenuOpen] = useState(false)
-  const [jobMenuPos, setJobMenuPos] = useState({ top: 0, right: 0 })
-  const jobMenuBtnRef = useRef<HTMLButtonElement>(null)
-  const jobMenuDropRef = useRef<HTMLDivElement>(null)
+  // draft action menu (... button)
+  const [draftMenuOpen, setDraftMenuOpen] = useState(false)
+  const [draftMenuPos, setDraftMenuPos] = useState({ top: 0, right: 0 })
+  const draftMenuBtnRef = useRef<HTMLButtonElement>(null)
+  const draftMenuDropRef = useRef<HTMLDivElement>(null)
 
   const selectedLive = useMemo(() => livePostings.find(p => p.id === selectedLiveId) ?? null, [livePostings, selectedLiveId])
   const selectedArchived = useMemo(() => livePostings.find(p => p.id === selectedArchivedId) ?? null, [livePostings, selectedArchivedId])
@@ -414,6 +418,8 @@ export default function OwnerRecruitmentPage() {
       const currentData = await currentRes.json()
       if (!cancelled && currentData.success) {
         setCompanyName(currentData.company?.name ?? '')
+        setCompanyLocation(currentData.company?.location ?? '')
+        setCompanyAddress(currentData.company?.address ?? '')
         setCurrentPlan(currentData.company?.plan ?? 'Free')
       }
       if (!cancelled) await fetchAll(storedCid, uid)
@@ -432,15 +438,15 @@ export default function OwnerRecruitmentPage() {
   }, [selectedArchivedId, fetchArchivedApplicants])
 
   useEffect(() => {
-    if (!jobMenuOpen) return
+    if (!draftMenuOpen) return
     const handler = (e: MouseEvent) => {
-      if (jobMenuBtnRef.current?.contains(e.target as Node)) return
-      if (jobMenuDropRef.current?.contains(e.target as Node)) return
-      setJobMenuOpen(false)
+      if (draftMenuBtnRef.current?.contains(e.target as Node)) return
+      if (draftMenuDropRef.current?.contains(e.target as Node)) return
+      setDraftMenuOpen(false)
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
-  }, [jobMenuOpen])
+  }, [draftMenuOpen])
 
   // ── form helpers ─────────────────────────────────────────────────────────────
 
@@ -461,20 +467,74 @@ export default function OwnerRecruitmentPage() {
 
   const openNewForm = () => { resetForm(); setFormOpen(true) }
 
-  const openEditForm = (p: JobPostingSummary, isDraft = false) => {
+  const openEditForm = async (p: JobPostingSummary, isDraft = false) => {
     setEditingId(p.id); setEditingDraft(isDraft); setWizardStep('form')
+    const isShift = p.is_recurring
+    setFormJobType(isShift ? 'shift' : 'oneoff')
     setFormTitle(p.title); setFormDeptId(p.department_id ?? '')
     setFormEmpType(p.employment_type ?? 'casual'); setFormLocation(p.location ?? '')
-    setFormSalaryAmt(p.salary_amount?.toString() ?? ''); setFormSalaryType(p.salary_type ?? 'per hour')
+    setFormSalaryAmt(p.salary_amount?.toString() ?? ''); setFormSalaryType(p.salary_type ?? (isShift ? 'per hour' : 'flat rate'))
     setFormDescription(p.description); setFormRequirements(p.requirements ?? '')
     setFormIndustry(''); setFormCompanyName(companyName); setFormBenefits('')
     setFormOpenings(1); setFormExpiryPreset('none'); setFormExpiresAt('')
-    setFormShiftStart('09:00'); setFormShiftEnd('17:00'); setFormBreakStart('12:00'); setFormBreakEnd('13:00'); setFormShiftDays([])
     setFormIsRecurring(false); setFormRecurInterval(1); setFormRecurUnit('week')
-    setFormShiftDate(''); setFormAssignedEmployeeId('')
-    setShiftDeptEmployees([]); setShiftAvailableDates([]); setShiftDateEmployees([])
-    setFormJobDate(''); setFormJobEndDate(''); setFormEstHours(''); setFormUrgency('normal')
-    setAiPrompt(''); setAiPreview(null); setFormError(''); setFormOpen(true)
+    setFormJobDate(''); setFormJobEndDate('')
+    setAiPrompt(''); setAiPreview(null); setFormError('')
+
+    const raw = p as unknown as Record<string, unknown>
+    const savedShiftDate = typeof raw.shift_date === 'string' ? raw.shift_date : ''
+    const savedShiftStart = typeof raw.shift_start_time === 'string' ? raw.shift_start_time.slice(0, 5) : '09:00'
+    const savedShiftEnd = typeof raw.shift_end_time === 'string' ? raw.shift_end_time.slice(0, 5) : '17:00'
+    const savedBreakStart = typeof raw.break_start_time === 'string' ? raw.break_start_time.slice(0, 5) : '12:00'
+    const savedBreakEnd = typeof raw.break_end_time === 'string' ? raw.break_end_time.slice(0, 5) : '13:00'
+    const savedEmployeeId = typeof raw.assigned_employee_id === 'string' ? raw.assigned_employee_id : ''
+    const savedEstHours = typeof raw.estimated_hours === 'string' ? raw.estimated_hours : ''
+    const savedUrgency = typeof raw.urgency === 'string' ? raw.urgency : 'normal'
+    setFormEstHours(savedEstHours)
+    setFormUrgency(savedUrgency)
+
+    if (p.department_id) {
+      setShiftDeptEmployees([]); setShiftAvailableDates([]); setShiftDateEmployees([])
+      const res = await fetch(`/api/shifts/department-employees?company_id=${companyId}&department_id=${p.department_id}`)
+      const data = await res.json()
+      if (data.success) {
+        const employees = data.employees ?? []
+        setShiftDeptEmployees(employees)
+        const dateMap = new Map<string, { start_time: string; end_time: string }>()
+        employees.forEach((emp: { shifts?: { shift_date: string; start_time: string; end_time: string }[] }) => {
+          (emp.shifts ?? []).forEach((s) => { if (!dateMap.has(s.shift_date)) dateMap.set(s.shift_date, { start_time: s.start_time, end_time: s.end_time }) })
+        })
+        // Ensure the saved shift date is always an option even if the shift no longer exists
+        if (savedShiftDate && !dateMap.has(savedShiftDate)) {
+          dateMap.set(savedShiftDate, { start_time: savedShiftStart, end_time: savedShiftEnd })
+        }
+        setShiftAvailableDates(Array.from(dateMap.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([date, t]) => ({ date, start_time: t.start_time, end_time: t.end_time })))
+
+        setFormShiftDate(savedShiftDate)
+        if (savedShiftDate) {
+          let dateEmps = employees.filter((emp: { shifts?: { shift_date: string }[] }) =>
+            emp.shifts?.some((s: { shift_date: string }) => s.shift_date === savedShiftDate)
+          )
+          // If saved employee isn't in the filtered list, inject them from dept employees or as a placeholder
+          if (savedEmployeeId && !dateEmps.some((e: { id: string }) => e.id === savedEmployeeId)) {
+            const found = employees.find((e: { id: string }) => e.id === savedEmployeeId)
+            dateEmps = found ? [...dateEmps, found] : [...dateEmps, { id: savedEmployeeId, full_name: 'Previously assigned employee', shifts: [] }]
+          }
+          setShiftDateEmployees(dateEmps)
+        }
+      }
+      setFormShiftStart(isShift ? savedShiftStart : '09:00')
+      setFormShiftEnd(isShift ? savedShiftEnd : '17:00')
+      setFormBreakStart(isShift ? savedBreakStart : '12:00')
+      setFormBreakEnd(isShift ? savedBreakEnd : '13:00')
+      setFormAssignedEmployeeId(savedEmployeeId)
+    } else {
+      setFormShiftStart('09:00'); setFormShiftEnd('17:00'); setFormBreakStart('12:00'); setFormBreakEnd('13:00')
+      setFormShiftDate(''); setFormAssignedEmployeeId('')
+      setShiftDeptEmployees([]); setShiftAvailableDates([]); setShiftDateEmployees([])
+    }
+    setFormShiftDays([])
+    setFormOpen(true)
   }
 
   const buildBody = (status: 'open' | 'draft') => ({
@@ -488,7 +548,16 @@ export default function OwnerRecruitmentPage() {
     employment_type: formEmpType || null,
     company_name: formCompanyName || companyName || null,
     salary_amount: formSalaryAmt ? Number(formSalaryAmt) : null,
-    salary_type: formSalaryType || 'per hour',
+    salary_type: formJobType === 'shift' ? 'per hour' : 'flat rate',
+    urgency: formJobType === 'oneoff' ? (formUrgency || 'normal') : null,
+    estimated_hours: formJobType === 'oneoff' ? (formEstHours || null) : null,
+    is_recurring: formJobType === 'shift',
+    shift_date: formShiftDate || null,
+    shift_start_time: formJobType === 'shift' ? (formShiftStart || null) : null,
+    shift_end_time: formJobType === 'shift' ? (formShiftEnd || null) : null,
+    break_start_time: formJobType === 'shift' ? (formBreakStart || null) : null,
+    break_end_time: formJobType === 'shift' ? (formBreakEnd || null) : null,
+    assigned_employee_id: formAssignedEmployeeId || null,
     status,
   })
 
@@ -614,6 +683,46 @@ export default function OwnerRecruitmentPage() {
     } finally { setActionLoading(false) }
   }
 
+  const duplicateDraft = async (draft: typeof selectedDraft) => {
+    if (!draft || !companyId || !internalUserId) return
+    setActionLoading(true); setError('')
+    try {
+      const res = await fetch('/api/recruitment', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          company_id: companyId,
+          created_by: internalUserId,
+          title: `${draft.title} (copy)`,
+          description: draft.description ?? '',
+          requirements: draft.requirements ?? null,
+          location: draft.location ?? null,
+          employment_type: draft.employment_type ?? null,
+          department_id: draft.department_id ?? null,
+          salary_amount: draft.salary_amount ?? null,
+          salary_type: draft.salary_type ?? null,
+          urgency: draft.urgency ?? null,
+          estimated_hours: draft.estimated_hours ?? null,
+          is_recurring: draft.is_recurring ?? false,
+          recurrence_interval: draft.recurrence_interval ?? null,
+          recurrence_unit: draft.recurrence_unit ?? null,
+          shift_date: draft.shift_date ?? null,
+          shift_start_time: draft.shift_start_time ?? null,
+          shift_end_time: draft.shift_end_time ?? null,
+          break_start_time: draft.break_start_time ?? null,
+          break_end_time: draft.break_end_time ?? null,
+          assigned_employee_id: draft.assigned_employee_id ?? null,
+          status: 'draft',
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to duplicate')
+      await fetchAll(companyId, internalUserId)
+      if (data.posting?.id) setSelectedDraftId(data.posting.id)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to duplicate draft')
+    } finally { setActionLoading(false) }
+  }
+
   const deleteDraft = async (id: string, isDraft = true) => {
     setActionLoading(true); setError('')
     try {
@@ -704,6 +813,41 @@ export default function OwnerRecruitmentPage() {
     } finally { setActionLoading(false) }
   }
 
+  const publishDraftsSelected = async () => {
+    if (draftsSelected.size === 0) return
+    setActionLoading(true); setError('')
+    try {
+      await Promise.all([...draftsSelected].map(id =>
+        fetch('/api/recruitment', {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'publish_draft', job_id: id }),
+        })
+      ))
+      setDraftsSelected(new Set()); setSelectedDraftId('')
+      await fetchAll(companyId, internalUserId)
+      setActiveTab('jobs')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to publish drafts')
+    } finally { setActionLoading(false) }
+  }
+
+  const deleteDraftsSelected = async () => {
+    if (draftsSelected.size === 0) return
+    setActionLoading(true); setError('')
+    try {
+      await Promise.all([...draftsSelected].map(id =>
+        fetch('/api/recruitment', {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'delete_posting', job_id: id }),
+        })
+      ))
+      setDraftsSelected(new Set()); setSelectedDraftId('')
+      await fetchAll(companyId, internalUserId)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete drafts')
+    } finally { setActionLoading(false) }
+  }
+
   const publishDraft = async (id: string) => {
     setActionLoading(true); setError('')
     try {
@@ -739,7 +883,7 @@ export default function OwnerRecruitmentPage() {
   const openPostings    = useMemo(() => livePostings.filter(p => p.status === 'open'),     [livePostings])
   const closedPostings  = useMemo(() => livePostings.filter(p => p.status === 'closed'),   [livePostings])
   const expiredPostings = useMemo(() => livePostings.filter(p => p.status === 'expired'),  [livePostings])
-  const jobsPostings    = useMemo(() => livePostings.filter(p => ['open','closed','expired'].includes(p.status)), [livePostings])
+  const jobsPostings    = useMemo(() => livePostings.filter(p => ['open','closed'].includes(p.status)), [livePostings])
   const archivedPostings = useMemo(() => livePostings.filter(p => p.status === 'archived'), [livePostings])
 
   // ── render ───────────────────────────────────────────────────────────────────
@@ -801,19 +945,20 @@ export default function OwnerRecruitmentPage() {
               )
             })}
           </div>
-          <button
-            onClick={activeTab === 'review' ? () => {} : activeTab === 'archived' ? undefined : openNewForm}
-            style={{
-              height: 36, padding: '0 16px', background: '#F97316', color: '#fff', border: 'none', borderRadius: 9,
-              cursor: activeTab === 'archived' ? 'default' : 'pointer',
-              display: 'flex', alignItems: 'center', gap: 7, fontWeight: 700, fontSize: 13, flexShrink: 0,
-              visibility: activeTab === 'archived' ? 'hidden' : 'visible',
-            }}
-            onMouseEnter={e => { if (activeTab !== 'archived') e.currentTarget.style.background = '#EA580C' }}
-            onMouseLeave={e => { if (activeTab !== 'archived') e.currentTarget.style.background = '#F97316' }}
-          >
-            <Sparkles size={14} /> {activeTab === 'review' ? 'AI Review All' : 'AI Post Job'}
-          </button>
+          {activeTab === 'review' && (
+            <button
+              onClick={() => {}}
+              style={{
+                height: 36, padding: '0 16px', background: '#F97316', color: '#fff', border: 'none', borderRadius: 9,
+                cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 7, fontWeight: 700, fontSize: 13, flexShrink: 0,
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = '#EA580C' }}
+              onMouseLeave={e => { e.currentTarget.style.background = '#F97316' }}
+            >
+              <Sparkles size={14} /> AI Review All
+            </button>
+          )}
         </div>
 
         {/* ── Tab content ── */}
@@ -824,7 +969,7 @@ export default function OwnerRecruitmentPage() {
 
           {/* ══ JOBS tab (Open / Closed / Expired) ════════════════════════════ */}
           {activeTab === 'jobs' && (
-            <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 16, alignItems: 'start' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '340px 1fr', gap: 16, alignItems: 'start' }}>
 
               {/* Left: job list */}
               <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden' }}>
@@ -833,7 +978,7 @@ export default function OwnerRecruitmentPage() {
                     <Briefcase size={15} style={{ color: '#F97316' }} />
                   </div>
                   <span className="font-heading" style={{ fontSize: 15, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.3px', flex: 1 }}>All Jobs</span>
-                  {jobsSelected.size > 0 && (
+                  {jobsSelected.size > 0 ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <button
                         onClick={archiveJobsSelected}
@@ -856,6 +1001,19 @@ export default function OwnerRecruitmentPage() {
                         {actionLoading ? <Spinner size={12} dark /> : <Trash2 size={14} />}
                       </button>
                     </div>
+                  ) : (
+                    <button
+                      onClick={openNewForm}
+                      style={{
+                        height: 36, padding: '0 16px', background: '#F97316', color: '#fff', border: 'none', borderRadius: 9,
+                        cursor: 'pointer',
+                        display: 'flex', alignItems: 'center', gap: 7, fontWeight: 700, fontSize: 13, flexShrink: 0,
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.background = '#EA580C' }}
+                      onMouseLeave={e => { e.currentTarget.style.background = '#F97316' }}
+                    >
+                      <Sparkles size={14} /> AI Post Job
+                    </button>
                   )}
                 </div>
                 {loading ? (
@@ -868,7 +1026,7 @@ export default function OwnerRecruitmentPage() {
                     <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No job postings yet.</p>
                   </div>
                 ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '12px 14px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '14px 16px' }}>
                   {jobsPostings.map(p => {
                   const isSelected = selectedLiveId === p.id
                   const checked = jobsSelected.has(p.id)
@@ -879,7 +1037,7 @@ export default function OwnerRecruitmentPage() {
                       style={{
                         border: (isSelected || checked) ? '2px solid #F97316' : '1.5px solid #E5E7EB',
                         borderRadius: 14,
-                        padding: '14px 14px 12px',
+                        padding: '16px 16px 14px',
                         background: '#FFFFFF',
                         display: 'flex',
                         flexDirection: 'column',
@@ -888,8 +1046,9 @@ export default function OwnerRecruitmentPage() {
                         transition: 'border-color 0.12s, box-shadow 0.12s',
                       }}
                     >
-                      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
-                        <strong style={{ fontSize: '0.875rem', color: '#1C1C1E', lineHeight: 1.4, flex: 1, minWidth: 0 }}>{p.title}</strong>
+                      {/* Badge row above title */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                        {statusBadge(p.status)}
                         <button
                           type="button"
                           onClick={e => { e.stopPropagation(); setJobsSelected(prev => { const s = new Set(prev); checked ? s.delete(p.id) : s.add(p.id); return s }) }}
@@ -898,8 +1057,10 @@ export default function OwnerRecruitmentPage() {
                           {checked && <Check size={11} color="#FFFFFF" strokeWidth={3} />}
                         </button>
                       </div>
-                      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                        <span style={{ fontSize: '0.725rem', color: '#C4C9D4' }}>{new Date(p.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                      {/* Title + date row */}
+                      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10 }}>
+                        <strong style={{ fontSize: '0.9rem', color: '#1C1C1E', lineHeight: 1.4, flex: 1, minWidth: 0 }}>{p.title}</strong>
+                        <span style={{ fontSize: '0.75rem', color: '#C4C9D4', flexShrink: 0 }}>{new Date(p.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
                       </div>
                     </div>
                   )
@@ -909,7 +1070,7 @@ export default function OwnerRecruitmentPage() {
               </div>
 
               {/* Right: posting detail + applicants */}
-              <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden' }}>
+              <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                 {!selectedLive ? (
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, padding: '32px 24px' }}>
                     <div style={{ padding: '40px 48px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14, width: '100%' }}>
@@ -919,118 +1080,263 @@ export default function OwnerRecruitmentPage() {
                   </div>
                 ) : (
                   <>
-                    {/* Posting header */}
-                    <div style={{ padding: '20px 24px 18px', borderBottom: '1px solid #F0F4F8', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    {/* Posting header — split to mirror the two-column body */}
+                    <div style={{ borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center' }}>
+                      {/* Left section: title + badge + action buttons */}
+                      <div style={{ flex: '0 0 min(860px, 62%)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '18px 24px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                           <h2 style={{ margin: 0, fontSize: '1.1rem', color: '#111827', fontWeight: 700, lineHeight: 1.3 }}>{selectedLive.title}</h2>
-                          {statusBadge(selectedLive.status)}
+                          {selectedLive.is_recurring ? (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', padding: '2px 10px', borderRadius: 99, fontSize: '0.75rem', fontWeight: 600, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', lineHeight: '1.4', whiteSpace: 'nowrap' }}>
+                              Shift Job
+                            </span>
+                          ) : (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', padding: '2px 10px', borderRadius: 99, fontSize: '0.75rem', fontWeight: 600, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE', lineHeight: '1.4', whiteSpace: 'nowrap' }}>
+                              One-Off Job
+                            </span>
+                          )}
                         </div>
-                        <p style={{ margin: 0, color: '#9CA3AF', fontSize: '0.8375rem' }}>
-                          {[selectedLive.department_name ?? 'Any department', selectedLive.location, selectedLive.employment_type].filter(Boolean).join(' · ')}
-                          {selectedLive.salary_amount ? ` · $${selectedLive.salary_amount} ${selectedLive.salary_type ?? ''}` : ''}
-                        </p>
+                        <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                          <button
+                            onClick={() => void runPostingAction('archive_posting')}
+                            disabled={actionLoading}
+                            title="Archive job"
+                            style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid #BBF7D0', background: '#F0FDF4', color: '#059669', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}
+                            onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#DCFCE7' }}
+                            onMouseLeave={e => { e.currentTarget.style.background = '#F0FDF4' }}
+                          ><Archive size={14} /></button>
+                          <button
+                            onClick={() => setDeleteConfirm({ id: selectedLive.id, title: selectedLive.title, isDraft: false })}
+                            disabled={actionLoading}
+                            title="Delete job"
+                            style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid #FECACA', background: '#FEF2F2', color: '#DC2626', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}
+                            onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FEE2E2' }}
+                            onMouseLeave={e => { e.currentTarget.style.background = '#FEF2F2' }}
+                          ><Trash2 size={14} /></button>
+                        </div>
                       </div>
-                      <div style={{ display: 'flex', gap: 8, flexShrink: 0, alignItems: 'center' }}>
-                        <button
-                          ref={jobMenuBtnRef}
-                          onClick={e => {
-                            e.stopPropagation()
-                            if (!jobMenuOpen) {
-                              const r = e.currentTarget.getBoundingClientRect()
-                              setJobMenuPos({ top: r.bottom + 4, right: window.innerWidth - r.right })
-                            }
-                            setJobMenuOpen(o => !o)
-                          }}
-                          style={{ width: 34, height: 34, borderRadius: 9, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'grid', placeItems: 'center', cursor: 'pointer', color: '#374151', flexShrink: 0 }}
-                          onMouseEnter={e => (e.currentTarget.style.background = '#F9FAFB')}
-                          onMouseLeave={e => (e.currentTarget.style.background = '#FFFFFF')}
-                        >
-                          <MoreHorizontal size={16} />
-                        </button>
-                      </div>
+                      {/* Right section: empty — applicants header is inside the column */}
+                      <div style={{ flex: 1 }} />
                     </div>
 
-                    {/* Stats row */}
-                    <div style={{ padding: '16px 24px 0' }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
-                        {[
-                          { label: 'Pay', value: selectedLive.salary_amount ? `$${selectedLive.salary_amount} ${selectedLive.salary_type ?? ''}` : '—' },
-                          { label: 'Pending', value: selectedLive.pending_count },
-                          { label: 'Total Applicants', value: selectedLive.applicant_count },
-                        ].map(({ label, value }) => (
-                          <div key={label} style={{ padding: '11px 14px', background: '#F7F8FA', borderRadius: 10 }}>
-                            <span style={labelStyle}>{label}</span>
-                            <strong style={{ fontSize: '1.1rem', color: '#111827' }}>{value}</strong>
+                    {/* ── Two-column body ── */}
+                    <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+
+                      {/* LEFT: job details */}
+                      {(() => {
+                        const fmt = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return `${h12}:${String(m).padStart(2, '0')} ${ap}` }
+                        const toMins = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m }
+                        const isShiftJob = selectedLive.is_recurring
+                        const shiftDate = selectedLive.shift_date
+                        const shiftStart = selectedLive.shift_start_time
+                        const shiftEnd = selectedLive.shift_end_time
+                        const breakStart = selectedLive.break_start_time
+                        const breakEnd = selectedLive.break_end_time
+                        const estimatedHours = selectedLive.estimated_hours
+                        const urgency = selectedLive.urgency ?? 'normal'
+                        const urgencyLabel = urgency === 'urgent' ? 'Urgent' : urgency === 'high' ? 'High' : 'Normal'
+                        let totalAmt: number | null = null
+                        if (isShiftJob && selectedLive.salary_amount != null && shiftStart && shiftEnd) {
+                          let worked = toMins(shiftEnd) - toMins(shiftStart)
+                          if (breakStart && breakEnd) worked -= (toMins(breakEnd) - toMins(breakStart))
+                          if (worked > 0) totalAmt = Math.round(selectedLive.salary_amount * (worked / 60) * 100) / 100
+                        }
+                        const fmtShort = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return m === 0 ? `${h12}${ap}` : `${h12}:${String(m).padStart(2, '0')}${ap}` }
+                        const infoRow: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: '1px solid #F3F4F6' }
+                        const statCard: React.CSSProperties = { borderRadius: 12, padding: '10px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'center', minHeight: 72 }
+                        const statLabel: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }
+                        const statLabelText = (color: string): React.CSSProperties => ({ fontSize: '0.75rem', fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: '0.06em' })
+                        const statValue: React.CSSProperties = { margin: 0, fontSize: '0.8rem', fontWeight: 600, color: '#374151', lineHeight: 1.3 }
+                        const statSub: React.CSSProperties = { margin: '3px 0 0', fontSize: '0.7rem', color: '#9CA3AF', fontWeight: 400 }
+                        return (
+                          <div style={{ flex: '0 0 min(860px, 62%)', borderRight: '1px solid #F0F4F8', overflowY: 'auto', padding: '20px 24px 24px' }}>
+
+                            {/* ── Key Stats ── */}
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 20 }}>
+                              {/* Pay */}
+                              {selectedLive.salary_amount != null ? (
+                                <div style={{ ...statCard, background: '#FFF7ED', border: '1px solid #FED7AA' }}>
+                                  <div style={statLabel}>
+                                    <DollarSign size={11} style={{ color: '#F97316' }} />
+                                    <span style={statLabelText('#F97316')}>Pay</span>
+                                  </div>
+                                  <p style={statValue}>
+                                    {isShiftJob
+                                      ? `$${selectedLive.salary_amount}/Hr${totalAmt != null ? ` ($${totalAmt % 1 === 0 ? totalAmt.toFixed(0) : totalAmt.toFixed(2)})` : ''}`
+                                      : `$${selectedLive.salary_amount} Flat Rate`}
+                                  </p>
+                                </div>
+                              ) : (
+                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}>
+                                  <span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No pay set</span>
+                                </div>
+                              )}
+                              {/* Date */}
+                              {shiftDate ? (
+                                <div style={{ ...statCard, background: '#F0F9FF', border: '1px solid #BAE6FD' }}>
+                                  <div style={statLabel}>
+                                    <CalendarDays size={11} style={{ color: '#0284C7' }} />
+                                    <span style={statLabelText('#0284C7')}>Date</span>
+                                  </div>
+                                  <p style={statValue}>{new Date(shiftDate).toLocaleDateString('en-SG', { weekday: 'short', day: 'numeric', month: 'short' })}</p>
+                                </div>
+                              ) : (
+                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}>
+                                  <span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No date set</span>
+                                </div>
+                              )}
+                              {/* Hours */}
+                              {isShiftJob ? ((shiftStart || shiftEnd) ? (
+                                <div style={{ ...statCard, background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
+                                  <div style={statLabel}>
+                                    <Clock size={11} style={{ color: '#059669' }} />
+                                    <span style={statLabelText('#059669')}>Hours</span>
+                                  </div>
+                                  <p style={statValue}>{shiftStart ? fmtShort(shiftStart) : '—'} – {shiftEnd ? fmtShort(shiftEnd) : '—'}</p>
+                                </div>
+                              ) : (
+                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}>
+                                  <span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No hours set</span>
+                                </div>
+                              )) : (estimatedHours ? (
+                                <div style={{ ...statCard, background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
+                                  <div style={statLabel}>
+                                    <Clock size={11} style={{ color: '#059669' }} />
+                                    <span style={statLabelText('#059669')}>Est. Hours</span>
+                                  </div>
+                                  <p style={statValue}>{estimatedHours}</p>
+                                </div>
+                              ) : (
+                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}>
+                                  <span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No hours set</span>
+                                </div>
+                              ))}
+                              {/* Break / Urgency */}
+                              {isShiftJob ? ((breakStart || breakEnd) ? (
+                                <div style={{ ...statCard, background: '#FDF4FF', border: '1px solid #E9D5FF' }}>
+                                  <div style={statLabel}>
+                                    <Coffee size={11} style={{ color: '#9333EA' }} />
+                                    <span style={statLabelText('#9333EA')}>Break</span>
+                                  </div>
+                                  <p style={statValue}>{breakStart ? fmtShort(breakStart) : '—'} – {breakEnd ? fmtShort(breakEnd) : '—'}</p>
+                                </div>
+                              ) : (
+                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}>
+                                  <span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No break</span>
+                                </div>
+                              )) : (
+                                <div style={{ ...statCard, background: '#FDF4FF', border: '1px solid #E9D5FF' }}>
+                                  <div style={statLabel}>
+                                    <Zap size={11} style={{ color: '#9333EA' }} />
+                                    <span style={statLabelText('#9333EA')}>Urgency</span>
+                                  </div>
+                                  <p style={statValue}>{urgencyLabel}</p>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* ── Secondary info rows ── */}
+                            {(selectedLive.department_name || selectedLive.assigned_employee_name) && (
+                              <div style={{ display: 'flex', borderTop: '1px solid #F3F4F6', border: '1px solid #E5E7EB', borderRadius: 10, overflow: 'hidden', marginTop: 4 }}>
+                                {/* Left half — Department */}
+                                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 0', borderRight: '1px solid #E5E7EB', background: '#FAFAFA' }}>
+                                  <LayoutGrid size={14} style={{ color: '#9CA3AF', flexShrink: 0 }} />
+                                  <span style={{ fontSize: '0.875rem', color: '#374151' }}>{selectedLive.department_name ?? '—'}</span>
+                                </div>
+                                {/* Right half — Employee */}
+                                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 0', background: '#FAFAFA' }}>
+                                  <UserCheck size={14} style={{ color: '#9CA3AF', flexShrink: 0 }} />
+                                  <span style={{ fontSize: '0.875rem', color: '#374151' }}>{selectedLive.assigned_employee_name ?? '—'}</span>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* ── Scope & Requirements ── */}
+                            {(selectedLive.description || selectedLive.requirements) && (
+                              <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                                {selectedLive.description && (
+                                  <div style={{ background: '#FFFFFF', borderRadius: 10, padding: '14px 16px', border: '1px solid #E5E7EB' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                                      <FileText size={13} style={{ color: '#F97316' }} />
+                                      <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Scope</span>
+                                    </div>
+                                    <p style={{ margin: 0, fontSize: '0.875rem', color: '#374151', lineHeight: 1.75 }}>{selectedLive.description}</p>
+                                  </div>
+                                )}
+                                {selectedLive.requirements && (
+                                  <div style={{ background: '#FFFFFF', borderRadius: 10, padding: '14px 16px', border: '1px solid #E5E7EB' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                                      <ClipboardList size={13} style={{ color: '#F97316' }} />
+                                      <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Requirements</span>
+                                    </div>
+                                    <p style={{ margin: 0, fontSize: '0.875rem', color: '#374151', lineHeight: 1.75, whiteSpace: 'pre-wrap' }}>{selectedLive.requirements}</p>
+                                  </div>
+                                )}
+                              </div>
+                            )}
                           </div>
-                        ))}
-                      </div>
-                    </div>
+                        )
+                      })()}
 
-                    <div style={{ padding: '16px 24px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-                      {/* Description */}
-                      <div>
-                        <span style={labelStyle}>Description</span>
-                        <p style={{ margin: 0, color: '#374151', lineHeight: 1.7, fontSize: '0.9rem' }}>{selectedLive.description}</p>
-                      </div>
-                      {selectedLive.requirements && (
-                        <div>
-                          <span style={labelStyle}>Requirements</span>
-                          <p style={{ margin: 0, color: '#374151', lineHeight: 1.7, fontSize: '0.9rem', whiteSpace: 'pre-wrap' }}>{selectedLive.requirements}</p>
-                        </div>
-                      )}
-
-                      {/* Applicants */}
-                      <div style={{ borderTop: '1px solid #F3F4F6', paddingTop: 16 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                          <span style={labelStyle}>Applicants ({applicants.length})</span>
+                      {/* RIGHT: applicants */}
+                      <div style={{ flex: 1, overflowY: 'auto', padding: '20px 20px 24px', background: '#FAFAFA', borderRadius: '0 0 16px 0' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                          <div>
+                            <p style={{ margin: 0, fontSize: '0.75rem', fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Applicants</p>
+                          </div>
                           <button
                             onClick={recommendCandidates}
                             disabled={aiLoading || applicants.length === 0}
-                            style={{ border: 'none', borderRadius: 7, background: '#111827', color: '#FFFFFF', padding: '6px 14px', display: 'flex', gap: 6, alignItems: 'center', cursor: aiLoading || applicants.length === 0 ? 'default' : 'pointer', opacity: aiLoading || applicants.length === 0 ? 0.5 : 1, fontSize: '0.775rem', fontWeight: 700 }}
+                            style={{ height: 36, padding: '0 16px', background: '#F97316', color: '#fff', border: 'none', borderRadius: 9, cursor: aiLoading || applicants.length === 0 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontWeight: 700, fontSize: 13, flexShrink: 0 }}
+                            onMouseEnter={e => { if (!aiLoading && applicants.length > 0) e.currentTarget.style.background = '#EA580C' }}
+                            onMouseLeave={e => { e.currentTarget.style.background = '#F97316' }}
                           >
-                            {aiLoading ? <Spinner size={12} /> : <Sparkles size={12} />} AI Recommend
+                            {aiLoading ? <Spinner size={14} /> : <Sparkles size={14} />} AI Recommend
                           </button>
                         </div>
-
                         {applicants.length === 0 ? (
-                          <div style={{ padding: '20px 16px', color: '#9CA3AF', background: '#F7F8FA', borderRadius: 10, textAlign: 'center', fontSize: '0.875rem' }}>No applicants yet.</div>
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '48px 24px', background: '#FFFFFF', borderRadius: 12, border: '1.5px dashed #E5E7EB' }}>
+                            <div style={{ width: 48, height: 48, borderRadius: 14, background: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
+                              <UserX size={22} style={{ color: '#D1D5DB' }} />
+                            </div>
+                            <p style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600, color: '#6B7280' }}>No applicants yet</p>
+                          </div>
                         ) : applicants.map(applicant => {
                           const rec = recommendations.find(r => r.applicant_id === applicant.id)
                           return (
-                            <div key={applicant.id} style={{ padding: '14px 16px', border: '1.5px solid #E5E7EB', borderRadius: 10, marginBottom: 10, display: 'flex', justifyContent: 'space-between', gap: 12, background: '#FFFFFF' }}>
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 3 }}>
-                                  <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#1C1C1E', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FFFFFF', fontWeight: 700, fontSize: '0.7rem', flexShrink: 0 }}>
+                            <div key={applicant.id} style={{ padding: '13px 14px', border: '1.5px solid #E5E7EB', borderRadius: 10, marginBottom: 10, background: '#FFFFFF' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                                  <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#1C1C1E', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FFFFFF', fontWeight: 700, fontSize: '0.75rem', flexShrink: 0 }}>
                                     {applicant.full_name?.charAt(0)?.toUpperCase() ?? '?'}
                                   </div>
-                                  <strong style={{ color: '#111827', fontSize: '0.9rem' }}>{applicant.full_name}</strong>
+                                  <div>
+                                    <strong style={{ color: '#111827', fontSize: '0.875rem', display: 'block', lineHeight: 1.3 }}>{applicant.full_name}</strong>
+                                    <span style={{ color: '#9CA3AF', fontSize: '0.75rem' }}>{applicant.email_address}</span>
+                                  </div>
                                 </div>
-                                <p style={{ margin: '2px 0 0 36px', color: '#9CA3AF', fontSize: '0.775rem' }}>{applicant.email_address}</p>
-                                {applicant.cover_letter && (
-                                  <p style={{ margin: '8px 0 0', color: '#4B5563', fontSize: '0.8125rem', lineHeight: 1.5 }}>{applicant.cover_letter}</p>
-                                )}
-                                {rec && (
-                                  <div style={{ marginTop: 10, padding: '10px 12px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, fontSize: '0.78rem', lineHeight: 1.5 }}>
-                                    <strong style={{ color: '#059669' }}>AI Score: {rec.score}/100 — {rec.recommendation}</strong>
-                                    <p style={{ margin: '4px 0 0', color: '#374151' }}>{rec.reasons[0] ?? rec.suggested_next_step}</p>
-                                    {rec.risks[0] && <p style={{ margin: '3px 0 0', color: '#B45309' }}>{rec.risks[0]}</p>}
-                                  </div>
-                                )}
-                              </div>
-                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8, flexShrink: 0 }}>
                                 {statusBadge(applicant.status)}
-                                {applicant.status === 'pending' && (
-                                  <div style={{ display: 'flex', gap: 6 }}>
-                                    <button onClick={() => decideApplicant(applicant.id, 'accepted')} disabled={actionLoading}
-                                      style={{ border: 'none', borderRadius: 7, background: '#059669', color: '#FFFFFF', padding: '6px 10px', display: 'flex', gap: 5, alignItems: 'center', cursor: 'pointer', fontSize: '0.775rem', fontWeight: 600 }}
-                                    ><UserCheck size={13} /> Accept</button>
-                                    <button onClick={() => decideApplicant(applicant.id, 'rejected')} disabled={actionLoading}
-                                      style={{ border: 'none', borderRadius: 7, background: '#DC2626', color: '#FFFFFF', padding: '6px 10px', display: 'flex', gap: 5, alignItems: 'center', cursor: 'pointer', fontSize: '0.775rem', fontWeight: 600 }}
-                                    ><UserX size={13} /> Reject</button>
-                                  </div>
-                                )}
                               </div>
+                              {applicant.cover_letter && (
+                                <p style={{ margin: '8px 0 0', color: '#4B5563', fontSize: '0.8rem', lineHeight: 1.55, paddingLeft: 41 }}>{applicant.cover_letter}</p>
+                              )}
+                              {rec && (
+                                <div style={{ marginTop: 10, padding: '10px 12px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, fontSize: '0.775rem', lineHeight: 1.5 }}>
+                                  <strong style={{ color: '#059669' }}>AI Score: {rec.score}/100 — {rec.recommendation}</strong>
+                                  <p style={{ margin: '4px 0 0', color: '#374151' }}>{rec.reasons[0] ?? rec.suggested_next_step}</p>
+                                  {rec.risks[0] && <p style={{ margin: '3px 0 0', color: '#B45309' }}>{rec.risks[0]}</p>}
+                                </div>
+                              )}
+                              {applicant.status === 'pending' && (
+                                <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+                                  <button onClick={() => decideApplicant(applicant.id, 'accepted')} disabled={actionLoading}
+                                    style={{ flex: 1, border: 'none', borderRadius: 7, background: '#059669', color: '#FFFFFF', padding: '6px 10px', display: 'flex', gap: 5, alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: '0.775rem', fontWeight: 600 }}
+                                  ><UserCheck size={13} /> Accept</button>
+                                  <button onClick={() => decideApplicant(applicant.id, 'rejected')} disabled={actionLoading}
+                                    style={{ flex: 1, border: 'none', borderRadius: 7, background: '#DC2626', color: '#FFFFFF', padding: '6px 10px', display: 'flex', gap: 5, alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: '0.775rem', fontWeight: 600 }}
+                                  ><UserX size={13} /> Reject</button>
+                                </div>
+                              )}
                             </div>
                           )
                         })}
@@ -1182,7 +1488,7 @@ export default function OwnerRecruitmentPage() {
 
                       {/* Applicants — view only, no accept/reject */}
                       <div style={{ borderTop: '1px solid #F3F4F6', paddingTop: 16 }}>
-                        <span style={labelStyle}>Applicants ({archivedApplicants.length})</span>
+                        <span style={{ ...labelStyle, fontSize: '0.75rem', color: '#111827' }}>Applicants ({archivedApplicants.length})</span>
                         {archivedApplicants.length === 0 ? (
                           <div style={{ marginTop: 10, padding: '20px 16px', color: '#9CA3AF', background: '#F7F8FA', borderRadius: 10, textAlign: 'center', fontSize: '0.875rem' }}>No applicants.</div>
                         ) : archivedApplicants.map(applicant => (
@@ -1331,6 +1637,30 @@ export default function OwnerRecruitmentPage() {
                     <FileText size={15} style={{ color: '#F97316' }} />
                   </div>
                   <span className="font-heading" style={{ fontSize: 15, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.3px', flex: 1 }}>Draft Jobs</span>
+                  {draftsSelected.size > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <button
+                        onClick={publishDraftsSelected}
+                        disabled={actionLoading}
+                        title={`Post ${draftsSelected.size} selected`}
+                        style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid #BBF7D0', background: '#F0FDF4', color: '#059669', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}
+                        onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#DCFCE7' }}
+                        onMouseLeave={e => { e.currentTarget.style.background = '#F0FDF4' }}
+                      >
+                        {actionLoading ? <Spinner size={12} dark /> : <Send size={14} />}
+                      </button>
+                      <button
+                        onClick={deleteDraftsSelected}
+                        disabled={actionLoading}
+                        title={`Delete ${draftsSelected.size} selected`}
+                        style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid #FECACA', background: '#FEF2F2', color: '#DC2626', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}
+                        onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FEE2E2' }}
+                        onMouseLeave={e => { e.currentTarget.style.background = '#FEF2F2' }}
+                      >
+                        {actionLoading ? <Spinner size={12} dark /> : <Trash2 size={14} />}
+                      </button>
+                    </div>
+                  )}
                 </div>
                 {loading ? (
                   <div style={{ padding: '24px 18px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
@@ -1345,23 +1675,33 @@ export default function OwnerRecruitmentPage() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '12px 14px' }}>
                   {drafts.map(p => {
                   const isSelected = selectedDraftId === p.id
+                  const checked = draftsSelected.has(p.id)
                   return (
                     <div
                       key={p.id}
                       onClick={() => setSelectedDraftId(p.id)}
                       style={{
-                        border: isSelected ? '2px solid #F97316' : '1.5px solid #E5E7EB',
+                        border: (isSelected || checked) ? '2px solid #F97316' : '1.5px solid #E5E7EB',
                         borderRadius: 14,
                         padding: '14px 14px 12px',
                         background: '#FFFFFF',
                         display: 'flex',
                         flexDirection: 'column',
                         cursor: 'pointer',
-                        boxShadow: isSelected ? '0 0 0 3px rgba(249,115,22,0.10)' : '0 1px 3px rgba(0,0,0,0.06)',
+                        boxShadow: (isSelected || checked) ? '0 0 0 3px rgba(249,115,22,0.10)' : '0 1px 3px rgba(0,0,0,0.06)',
                         transition: 'border-color 0.12s, box-shadow 0.12s',
                       }}
                     >
-                      <strong style={{ fontSize: '0.875rem', color: '#1C1C1E', lineHeight: 1.4, display: 'block', marginBottom: 8 }}>{p.title}</strong>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
+                        <strong style={{ fontSize: '0.875rem', color: '#1C1C1E', lineHeight: 1.4, flex: 1, minWidth: 0 }}>{p.title}</strong>
+                        <button
+                          type="button"
+                          onClick={e => { e.stopPropagation(); setDraftsSelected(prev => { const s = new Set(prev); checked ? s.delete(p.id) : s.add(p.id); return s }) }}
+                          style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 5, border: checked ? '2px solid #F97316' : '1.5px solid #D1D5DB', background: checked ? '#F97316' : '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0 }}
+                        >
+                          {checked && <Check size={11} color="#FFFFFF" strokeWidth={3} />}
+                        </button>
+                      </div>
                       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                         <span style={{ fontSize: '0.725rem', color: '#C4C9D4' }}>{new Date(p.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
                       </div>
@@ -1396,25 +1736,19 @@ export default function OwnerRecruitmentPage() {
                       </div>
                       <div style={{ display: 'flex', gap: 8, flexShrink: 0, alignItems: 'center' }}>
                         <button
-                          onClick={() => openEditForm(selectedDraft, true)}
-                          style={{ height: 34, padding: '0 14px', border: '1.5px solid #E5E7EB', borderRadius: 9, background: '#FFFFFF', color: '#374151', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13 }}
+                          ref={draftMenuBtnRef}
+                          onClick={e => {
+                            e.stopPropagation()
+                            if (!draftMenuOpen) {
+                              const r = e.currentTarget.getBoundingClientRect()
+                              setDraftMenuPos({ top: r.bottom + 4, right: window.innerWidth - r.right })
+                            }
+                            setDraftMenuOpen(o => !o)
+                          }}
+                          style={{ width: 34, height: 34, borderRadius: 9, border: '1.5px solid #E5E7EB', background: '#FFFFFF', color: '#374151', display: 'grid', placeItems: 'center', cursor: 'pointer', flexShrink: 0 }}
                           onMouseEnter={e => (e.currentTarget.style.background = '#F9FAFB')}
                           onMouseLeave={e => (e.currentTarget.style.background = '#FFFFFF')}
-                        ><Pencil size={13} /> Edit</button>
-                        <button
-                          onClick={() => publishDraft(selectedDraft.id)}
-                          disabled={actionLoading || !selectedDraft.description?.trim()}
-                          title={!selectedDraft.description?.trim() ? 'Add a description before publishing' : undefined}
-                          style={{ height: 34, padding: '0 14px', border: 'none', borderRadius: 9, background: '#111827', color: '#FFFFFF', cursor: actionLoading || !selectedDraft.description?.trim() ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, opacity: actionLoading || !selectedDraft.description?.trim() ? 0.5 : 1 }}
-                        ><Send size={13} /> Publish</button>
-                        <button
-                          onClick={() => setDeleteConfirm({ id: selectedDraft.id, title: selectedDraft.title, isDraft: true })}
-                          disabled={actionLoading}
-                          title="Delete draft"
-                          style={{ width: 34, height: 34, borderRadius: 9, border: '1px solid #FECACA', background: '#FEF2F2', color: '#DC2626', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', flexShrink: 0 }}
-                          onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FEE2E2' }}
-                          onMouseLeave={e => { e.currentTarget.style.background = '#FEF2F2' }}
-                        ><Trash2 size={15} /></button>
+                        ><MoreHorizontal size={16} /></button>
                       </div>
                     </div>
                     <div style={{ padding: '16px 24px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -1541,9 +1875,9 @@ export default function OwnerRecruitmentPage() {
               {/* Scrollable body */}
               <div style={{ padding: '20px 24px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 14 }}>
 
-                {/* Back + Save Draft row */}
+                {/* Back row */}
                 {wizardStep !== 'type' && !editingId && (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <div style={{ display: 'flex', alignItems: 'center' }}>
                     <button onClick={() => setWizardStep('type')}
                       style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', cursor: 'pointer', color: '#6B7280', fontWeight: 600, fontSize: '0.8125rem', padding: 0 }}
                       onMouseEnter={e => { e.currentTarget.style.color = '#111827' }}
@@ -1551,12 +1885,6 @@ export default function OwnerRecruitmentPage() {
                       <ChevronLeft size={15} />
                       Back
                     </button>
-                    {wizardStep === 'form' && (
-                      <button onClick={() => saveForm('draft')} disabled={actionLoading}
-                        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: '1px solid #E5E7EB', borderRadius: 10, background: '#FFFFFF', color: '#111827', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}>
-                        {actionLoading ? <Spinner size={13} dark /> : <FileText size={13} />} Save Draft
-                      </button>
-                    )}
                   </div>
                 )}
 
@@ -1690,7 +2018,7 @@ export default function OwnerRecruitmentPage() {
                               }
                             }} />
                         </div>
-                        {formDeptId && (
+                        {(formDeptId || editingId) && (
                           <div>
                             <label style={lStyle}>Shift Date <span style={{ color: '#F97316' }}>*</span></label>
                             {shiftAvailableDates.length > 0 ? (
@@ -1711,7 +2039,7 @@ export default function OwnerRecruitmentPage() {
                             )}
                           </div>
                         )}
-                        {formShiftDate && (
+                        {(formShiftDate || editingId) && (
                           <div>
                             <label style={lStyle}>Assigned Employee <span style={{ color: '#F97316' }}>*</span></label>
                             {shiftDateEmployees.length > 0 ? (
@@ -1728,7 +2056,7 @@ export default function OwnerRecruitmentPage() {
                             )}
                           </div>
                         )}
-                        {formAssignedEmployeeId && (
+                        {(formAssignedEmployeeId || editingId) && (
                           <>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                               <div>
@@ -1852,7 +2180,7 @@ export default function OwnerRecruitmentPage() {
               {wizardStep === 'form' && (
                 <div style={{ padding: '0 24px 16px', display: 'flex', justifyContent: 'flex-end', gap: 10, flexShrink: 0 }}>
                   <button onClick={() => { setFormOpen(false); resetForm() }} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: '1px solid #E5E7EB', borderRadius: 10, background: '#FFFFFF', color: '#111827', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Cancel</button>
-                  {editingId && (
+                  {!editingId && (
                     <button onClick={() => saveForm('draft')} disabled={actionLoading}
                       style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: '1px solid #E5E7EB', borderRadius: 10, background: '#FFFFFF', color: '#111827', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}>
                       {actionLoading ? <Spinner size={13} dark /> : <FileText size={13} />} Save Draft
@@ -1870,33 +2198,44 @@ export default function OwnerRecruitmentPage() {
         )
       })()}
 
-      {/* ══ Job action dropdown menu ══════════════════════════════════════════ */}
-      {jobMenuOpen && selectedLive && typeof document !== 'undefined' && createPortal(
+
+
+      {/* ══ Draft action dropdown menu ════════════════════════════════════════ */}
+      {draftMenuOpen && selectedDraft && typeof document !== 'undefined' && createPortal(
         <div
-          ref={jobMenuDropRef}
+          ref={draftMenuDropRef}
           onClick={e => e.stopPropagation()}
-          style={{ position: 'fixed', top: jobMenuPos.top, right: jobMenuPos.right, zIndex: 9999, width: 170, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, boxShadow: '0 4px 24px rgba(0,0,0,0.10)', padding: '8px 6px' }}
+          style={{ position: 'fixed', top: draftMenuPos.top, right: draftMenuPos.right, zIndex: 9999, width: 170, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, boxShadow: '0 4px 24px rgba(0,0,0,0.10)', padding: '8px 6px' }}
         >
-          <p style={{ margin: '0 6px 4px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9CA3AF' }}>Job</p>
+          <p style={{ margin: '0 6px 4px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9CA3AF' }}>Draft</p>
           <button
             type="button"
-            onClick={() => { setJobMenuOpen(false); openEditForm(selectedLive) }}
+            onClick={() => { setDraftMenuOpen(false); duplicateDraft(selectedDraft) }}
+            disabled={actionLoading}
+            style={jobMenuItemStyle}
+            onMouseEnter={e => (e.currentTarget.style.background = '#F9FAFB')}
+            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+          ><Copy size={13} style={{ color: '#F97316' }} /> Duplicate</button>
+          <button
+            type="button"
+            onClick={() => { setDraftMenuOpen(false); openEditForm(selectedDraft, true) }}
             style={jobMenuItemStyle}
             onMouseEnter={e => (e.currentTarget.style.background = '#F9FAFB')}
             onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
           ><Pencil size={13} style={{ color: '#F97316' }} /> Edit</button>
           <button
             type="button"
-            onClick={() => { setJobMenuOpen(false); void runPostingAction('archive_posting') }}
-            disabled={actionLoading}
-            style={jobMenuItemStyle}
-            onMouseEnter={e => (e.currentTarget.style.background = '#F9FAFB')}
+            onClick={() => { setDraftMenuOpen(false); publishDraft(selectedDraft.id) }}
+            disabled={actionLoading || !selectedDraft.description?.trim()}
+            title={!selectedDraft.description?.trim() ? 'Add a description before publishing' : undefined}
+            style={{ ...jobMenuItemStyle, opacity: !selectedDraft.description?.trim() ? 0.45 : 1 }}
+            onMouseEnter={e => { if (selectedDraft.description?.trim()) e.currentTarget.style.background = '#F9FAFB' }}
             onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-          ><Archive size={13} style={{ color: '#F97316' }} /> Archive</button>
+          ><Send size={13} style={{ color: '#F97316' }} /> Publish</button>
           <div style={{ height: 1, background: '#F1F5F9', margin: '4px 6px' }} />
           <button
             type="button"
-            onClick={() => { setJobMenuOpen(false); setDeleteConfirm({ id: selectedLive.id, title: selectedLive.title, isDraft: false }) }}
+            onClick={() => { setDraftMenuOpen(false); setDeleteConfirm({ id: selectedDraft.id, title: selectedDraft.title, isDraft: true }) }}
             style={{ ...jobMenuItemStyle, color: '#DC2626' }}
             onMouseEnter={e => (e.currentTarget.style.background = '#FEF2F2')}
             onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}

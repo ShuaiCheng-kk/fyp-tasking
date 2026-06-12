@@ -117,10 +117,18 @@ export const recruitmentRepository = {
         industry: input.industry ?? null,
         salary_amount: input.salary_amount ?? null,
         salary_type: input.salary_type ?? 'per hour',
+        urgency: input.urgency ?? null,
+        estimated_hours: input.estimated_hours ?? null,
         is_recurring: input.is_recurring ?? false,
         recurrence_interval: input.recurrence_interval ?? null,
         recurrence_unit: input.recurrence_unit ?? null,
         status: input.status ?? 'open',
+        shift_date: input.shift_date ?? null,
+        shift_start_time: input.shift_start_time ?? null,
+        shift_end_time: input.shift_end_time ?? null,
+        break_start_time: input.break_start_time ?? null,
+        break_end_time: input.break_end_time ?? null,
+        assigned_employee_id: input.assigned_employee_id ?? null,
       })
       .select()
       .single()
@@ -213,6 +221,16 @@ export const recruitmentRepository = {
       .in('id', ids)
     if (error) throw new Error(error.message)
     return (data ?? []) as { id: string; name: string }[]
+  },
+
+  async getUsersByIds(ids: string[]): Promise<{ id: string; full_name: string }[]> {
+    if (ids.length === 0) return []
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, full_name')
+      .in('id', ids)
+    if (error) throw new Error(error.message)
+    return (data ?? []) as { id: string; full_name: string }[]
   },
 
   async getCasualWorkersByCompany(company_id: string): Promise<CasualWorkerStatus[]> {

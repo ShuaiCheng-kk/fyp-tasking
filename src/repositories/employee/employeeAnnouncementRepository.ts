@@ -4,6 +4,9 @@ export const employeeAnnouncementRepository = {
 
   async getEmployeeAnnouncements(user_id: string): Promise<{
     id: string
+    from_user_id: string
+    company_id: string
+    department_id: string | null
     title: string
     content: string
     created_at: string
@@ -16,14 +19,6 @@ export const employeeAnnouncementRepository = {
       .single()
     if (!empDept?.department_id) return []
 
-    const { data: mgrDept } = await supabase
-      .from('manager_departments')
-      .select('manager_id')
-      .eq('department_id', empDept.department_id)
-      .limit(1)
-      .single()
-    if (!mgrDept?.manager_id) return []
-
     const { data: user } = await supabase
       .from('users')
       .select('company_id')
@@ -33,14 +28,17 @@ export const employeeAnnouncementRepository = {
 
     const { data, error } = await supabase
       .from('announcements')
-      .select('id, title, content, created_at, poster:users!announcements_from_user_id_fkey(full_name)')
+      .select('id, from_user_id, company_id, department_id, title, content, created_at, poster:users!announcements_from_user_id_fkey(full_name)')
       .eq('company_id', user.company_id)
-      .eq('from_user_id', mgrDept.manager_id)
+      .eq('department_id', empDept.department_id)
       .order('created_at', { ascending: false })
     if (error) throw error
 
     return (data ?? []).map((row: any) => ({
       id: row.id,
+      from_user_id: row.from_user_id,
+      company_id: row.company_id,
+      department_id: row.department_id,
       title: row.title,
       content: row.content,
       created_at: row.created_at,

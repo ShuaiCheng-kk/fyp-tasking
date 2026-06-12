@@ -16,6 +16,9 @@ export const recruitmentService = {
     const deptIds = [...new Set(postings.map(posting => posting.department_id).filter((id): id is string => Boolean(id)))]
     const departments = await recruitmentRepository.getDepartmentsByIds(deptIds)
     const deptMap = new Map(departments.map(department => [department.id, department.name]))
+    const empIds = [...new Set(postings.map(posting => posting.assigned_employee_id).filter((id): id is string => Boolean(id)))]
+    const employees = await recruitmentRepository.getUsersByIds(empIds)
+    const empMap = new Map(employees.map(e => [e.id, e.full_name]))
 
     return postings.map(posting => {
       const rows = applicantRows.filter(row => row.job_id === posting.id)
@@ -24,6 +27,7 @@ export const recruitmentService = {
         department_name: posting.department_id ? deptMap.get(posting.department_id) ?? null : null,
         applicant_count: rows.length,
         pending_count: rows.filter(row => row.status === 'pending').length,
+        assigned_employee_name: posting.assigned_employee_id ? empMap.get(posting.assigned_employee_id) ?? null : null,
       }
     })
   },
@@ -49,6 +53,7 @@ export const recruitmentService = {
       department_name: p.department_id ? deptMap.get(p.department_id) ?? null : null,
       applicant_count: 0,
       pending_count: 0,
+      assigned_employee_name: null,
     }))
   },
 
@@ -104,9 +109,17 @@ export const recruitmentService = {
       industry: original.industry,
       salary_amount: original.salary_amount,
       salary_type: original.salary_type,
+      urgency: original.urgency,
+      estimated_hours: original.estimated_hours,
       is_recurring: original.is_recurring,
       recurrence_interval: original.recurrence_interval,
       recurrence_unit: original.recurrence_unit,
+      shift_date: original.shift_date,
+      shift_start_time: original.shift_start_time,
+      shift_end_time: original.shift_end_time,
+      break_start_time: original.break_start_time,
+      break_end_time: original.break_end_time,
+      assigned_employee_id: original.assigned_employee_id,
     })
   },
 
