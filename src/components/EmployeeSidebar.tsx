@@ -3,12 +3,11 @@
 import { useState, useEffect } from 'react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { LayoutDashboard, ClipboardList, MessageCircle, CheckSquare, LogOut } from 'lucide-react'
+import { LayoutDashboard, ClipboardList, MessageCircle, LogOut } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 
 const NAV_ITEMS = [
   { label: 'Dashboard',     Icon: LayoutDashboard, href: '/employee/dashboard',     dot: null as 'messages' | 'announcements' | null },
-  { label: 'Tasks',         Icon: CheckSquare,     href: '/employee/tasks',         dot: null },
   { label: 'Communication', Icon: MessageCircle,   href: '/employee/communication', dot: 'messages' as const },
   { label: 'Attendance',    Icon: ClipboardList,   href: '/employee/attendance',    dot: null },
 ]

@@ -3,10 +3,10 @@ import { supabase } from '@/lib/supabase'
 export const employeeDashboardRepository = {
   async getEmployeeDashboard(
     user_id: string
-  ): Promise<{ company_name: string; department_name: string } | null> {
+  ): Promise<{ company_id: string; company_name: string; department_id: string; department_name: string } | null> {
     const { data: user, error: userErr } = await supabase
       .from('users')
-      .select('company_id, companies(name)')
+      .select('company_id, companies!users_company_id_fkey(name)')
       .eq('id', user_id)
       .single()
 
@@ -14,13 +14,25 @@ export const employeeDashboardRepository = {
 
     const { data: empDept } = await supabase
       .from('employee_departments')
-      .select('department_id, departments(name)')
+      .select('department_id')
       .eq('employee_id', user_id)
       .single()
 
+    let department_name = ''
+    if (empDept?.department_id) {
+      const { data: dept } = await supabase
+        .from('departments')
+        .select('name')
+        .eq('id', empDept.department_id)
+        .single()
+      department_name = dept?.name ?? ''
+    }
+
     return {
+      company_id: user.company_id,
       company_name: (user.companies as any)?.name ?? '',
-      department_name: (empDept?.departments as any)?.name ?? '',
+      department_id: empDept?.department_id ?? '',
+      department_name,
     }
   },
 
