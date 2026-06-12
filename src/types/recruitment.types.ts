@@ -21,6 +21,11 @@ export interface JobPosting {
   created_at: string
   updated_at: string
   company_name: string | null
+  company_location: string | null
+  company_description: string | null
+  company_size: string | null
+  company_address: string | null
+  company_industry: string | null
   industry: string | null
   salary_amount: number | null
   salary_type: string | null   // 'per hour' | 'per day' | 'per month'
@@ -31,6 +36,7 @@ export interface JobPosting {
   expires_at: string | null     // ISO date string
   expiry_preset: string | null  // '7d' | '14d' | '30d' | '60d' | 'custom' | 'none'
   form_type: string | null      // 'shift' | 'oneoff'
+  department_name: string | null
   // Shift-specific
   shift_start_time: string | null
   shift_end_time: string | null

@@ -129,6 +129,7 @@ export const recruitmentRepository = {
         break_start_time: input.break_start_time ?? null,
         break_end_time: input.break_end_time ?? null,
         assigned_employee_id: input.assigned_employee_id ?? null,
+        form_type: input.form_type ?? null,
       })
       .select()
       .single()

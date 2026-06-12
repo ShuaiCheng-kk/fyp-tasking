@@ -257,6 +257,16 @@ export const companyRepository = {
     if (error) throw new Error(error.message)
   },
 
+  async getDistinctIndustriesAndLocations(): Promise<{ industries: string[]; locations: string[] }> {
+    const { data, error } = await supabase
+      .from('companies')
+      .select('industry, location')
+    if (error) throw new Error(error.message)
+    const industries = [...new Set((data ?? []).map((r: any) => r.industry).filter(Boolean) as string[])].sort()
+    const locations  = [...new Set((data ?? []).map((r: any) => r.location).filter(Boolean) as string[])].sort()
+    return { industries, locations }
+  },
+
   async deleteManagerDepartmentsByCompanyId(company_id: string): Promise<void> {
     const { error } = await supabase
       .from('manager_departments')

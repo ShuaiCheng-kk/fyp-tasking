@@ -46,14 +46,19 @@ export const recruitmentService = {
     if (!company_id || !user_id) throw new Error('company_id and user_id are required')
     const postings = await recruitmentRepository.getDraftPostings(company_id, user_id)
     const deptIds = [...new Set(postings.map(p => p.department_id).filter((id): id is string => Boolean(id)))]
-    const departments = await recruitmentRepository.getDepartmentsByIds(deptIds)
+    const empIds = [...new Set(postings.map(p => p.assigned_employee_id).filter((id): id is string => Boolean(id)))]
+    const [departments, employees] = await Promise.all([
+      recruitmentRepository.getDepartmentsByIds(deptIds),
+      recruitmentRepository.getUsersByIds(empIds),
+    ])
     const deptMap = new Map(departments.map(d => [d.id, d.name]))
+    const empMap = new Map(employees.map(e => [e.id, e.full_name]))
     return postings.map(p => ({
       ...p,
       department_name: p.department_id ? deptMap.get(p.department_id) ?? null : null,
       applicant_count: 0,
       pending_count: 0,
-      assigned_employee_name: null,
+      assigned_employee_name: p.assigned_employee_id ? empMap.get(p.assigned_employee_id) ?? null : null,
     }))
   },
 
