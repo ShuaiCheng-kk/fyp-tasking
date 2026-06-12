@@ -253,4 +253,8 @@ export const companyService = {
     return company
   },
 
+  async getJobBoardFilters(): Promise<{ industries: string[]; locations: string[] }> {
+    return companyRepository.getDistinctIndustriesAndLocations()
+  },
+
 }

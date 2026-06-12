@@ -284,6 +284,21 @@ export default function ManagerCommunicationPage() {
   }, [internalUserId, companyId, userRole, fetchAnnouncements, fetchUnreadCount])
 
   useEffect(() => {
+    if (!internalUserId || !companyId || announcements.length === 0) return
+    const next = new Set(readIds)
+    let changed = false
+    announcements.forEach(ann => {
+      if (!next.has(ann.id)) {
+        next.add(ann.id)
+        changed = true
+      }
+    })
+    if (!changed) return
+    setReadIds(next)
+    saveReadIds(companyId, internalUserId, next)
+  }, [announcements, companyId, internalUserId, readIds])
+
+  useEffect(() => {
     if (!companyId) return
     const channel = supabase
       .channel('manager-comm-announcements')

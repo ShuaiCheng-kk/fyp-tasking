@@ -7,14 +7,39 @@ export async function GET() {
   try {
     const { data, error } = await supabase
       .from('job_postings')
-      .select('*')
+      .select('*, departments(name), companies(location, description, size, address, industry)')
       .eq('status', 'open')
       .is('archived_at', null)
       .order('created_at', { ascending: false })
 
     if (error) throw new Error(error.message)
 
-    return NextResponse.json({ success: true, jobs: data ?? [] })
+    const jobs = (data ?? []).map((row: any) => {
+      const { departments, companies, ...rest } = row
+      return {
+        ...rest,
+        department_name: Array.isArray(departments)
+          ? (departments[0]?.name ?? null)
+          : (departments?.name ?? null),
+        company_location: Array.isArray(companies)
+          ? (companies[0]?.location ?? null)
+          : (companies?.location ?? null),
+        company_description: Array.isArray(companies)
+          ? (companies[0]?.description ?? null)
+          : (companies?.description ?? null),
+        company_size: Array.isArray(companies)
+          ? (companies[0]?.size ?? null)
+          : (companies?.size ?? null),
+        company_address: Array.isArray(companies)
+          ? (companies[0]?.address ?? null)
+          : (companies?.address ?? null),
+        company_industry: Array.isArray(companies)
+          ? (companies[0]?.industry ?? null)
+          : (companies?.industry ?? null),
+      }
+    })
+
+    return NextResponse.json({ success: true, jobs })
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 })
   }

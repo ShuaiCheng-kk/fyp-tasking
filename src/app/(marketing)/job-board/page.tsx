@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
-import { Zap, Shield, Star, X, Search, Bookmark, BookmarkCheck, MapPin, Briefcase, Clock, DollarSign, Timer } from 'lucide-react';
+import { Zap, Shield, Star, X, Search, MapPin, Briefcase, Clock, Banknote, Timer, ChevronDown, LayoutGrid, Users, FileText } from 'lucide-react';
 import { hero, search, whyTasking, listings } from './content';
 import { JobPosting } from '@/types/recruitment.types';
 
@@ -18,7 +18,7 @@ type IconName = keyof typeof iconMap;
 
 // ─── Tab type ─────────────────────────────────────────────────────────────────
 
-type ActiveTab = 'all' | 'full-time' | 'part-time' | 'contract' | 'saved';
+type ActiveTab = 'all' | 'shift' | 'oneoff';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -127,26 +127,28 @@ function closingInfo(job: JobPosting): { label: string; value: string; urgent?: 
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
-function Badge({ children, color = '#15803D', bg = '#DCFCE7' }: { children: React.ReactNode; color?: string; bg?: string }) {
+function Badge({ children, color = '#15803D', bg = '#DCFCE7', border }: { children: React.ReactNode; color?: string; bg?: string; border?: string }) {
   return (
     <span style={{
       display: 'inline-block', background: bg, color,
       fontFamily: fB, fontSize: '0.6875rem', fontWeight: 700,
       padding: '3px 9px', borderRadius: '100px',
       textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap',
+      border: border ? `1px solid ${border}` : undefined,
     }}>
       {children}
     </span>
   );
 }
 
-function Pill({ children }: { children: React.ReactNode }) {
+function Pill({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: '4px',
-      fontFamily: fB, fontSize: '0.75rem', color: '#78716C',
+      fontFamily: fB, fontSize: '0.8125rem', fontWeight: 500, color: '#57534E',
       background: '#F5F5F4', border: '1px solid #E7E5E4',
-      borderRadius: '100px', padding: '3px 10px',
+      borderRadius: '100px', padding: '4px 11px',
+      ...style,
     }}>
       {children}
     </span>
@@ -165,14 +167,10 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 function JobDetailPanel({
   job,
-  saved,
   onClose,
-  onToggleSave,
 }: {
   job: JobPosting;
-  saved: boolean;
   onClose: () => void;
-  onToggleSave: () => void;
 }) {
   const { rating, count } = seedRating(job.company_id);
   const recur = recurrenceLabel(job);
@@ -181,29 +179,42 @@ function JobDetailPanel({
 
   return (
     <div style={{
-      background: '#FFFFFF', border: '1px solid #F0E8D8', borderRadius: '20px',
+      background: '#FFFFFF', border: '1px solid #EDE9E3', borderRadius: '20px',
       padding: '32px', position: 'sticky', top: '24px',
       maxHeight: 'calc(100vh - 48px)', overflowY: 'auto', display: 'flex',
-      flexDirection: 'column', gap: '20px',
+      flexDirection: 'column', gap: '28px',
     }}>
 
-      {/* Header */}
+      {/* ── Header ── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px' }}>
-            <Badge color="#15803D" bg="#DCFCE7">{capitalize(job.status)}</Badge>
-            {job.employment_type && <Badge color="#92400E" bg="#FEF3C7">{capitalize(job.employment_type)}</Badge>}
-            {job.is_recurring && <Badge color="#1D4ED8" bg="#DBEAFE">Recurring</Badge>}
-          </div>
-          <h2 style={{ fontFamily: fH, fontWeight: 700, fontSize: '1.375rem', color: '#1C1917', lineHeight: 1.3, marginBottom: '6px' }}>
+          <h2 style={{ fontFamily: fH, fontWeight: 800, fontSize: '1.5rem', color: '#111827', lineHeight: 1.25, margin: '0 0 4px' }}>
             {job.title}
           </h2>
-          {/* Company + star rating */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <p style={{ fontFamily: fB, fontSize: '0.9375rem', fontWeight: 600, color: '#44403C' }}>
-              {job.company_name ?? '—'}
-            </p>
-            <StarRating rating={rating} count={count} size={13} />
+          <p style={{ fontFamily: fB, fontSize: '0.9375rem', fontWeight: 500, color: '#6B7280', margin: '0 0 18px' }}>
+            {job.company_name ?? '—'}
+          </p>
+
+          {/* Icon rows */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {job.company_location && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <MapPin size={15} color="#9CA3AF" strokeWidth={1.75} style={{ flexShrink: 0 }} />
+                <span style={{ fontFamily: fB, fontSize: '0.9375rem', color: '#374151' }}>{job.company_location}</span>
+              </div>
+            )}
+            {job.department_name && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <LayoutGrid size={15} color="#9CA3AF" strokeWidth={1.75} style={{ flexShrink: 0 }} />
+                <span style={{ fontFamily: fB, fontSize: '0.9375rem', color: '#374151' }}>{job.department_name}</span>
+              </div>
+            )}
+            {job.salary_amount && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Banknote size={15} color="#9CA3AF" strokeWidth={1.75} style={{ flexShrink: 0 }} />
+                <span style={{ fontFamily: fB, fontSize: '0.9375rem', fontWeight: 600, color: '#059669' }}>{formatSalary(job)}</span>
+              </div>
+            )}
           </div>
         </div>
         <button onClick={onClose} aria-label="Close panel"
@@ -212,26 +223,16 @@ function JobDetailPanel({
         </button>
       </div>
 
-      {/* Meta pills */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '7px' }}>
-        {job.location         && <Pill><MapPin size={11} />{job.location}</Pill>}
-        {job.industry         && <Pill><Briefcase size={11} />{job.industry}</Pill>}
-        {job.employment_type  && <Pill>{capitalize(job.employment_type)}</Pill>}
-        {job.salary_amount    && <Pill><DollarSign size={11} />${job.salary_amount} {job.salary_type}</Pill>}
-        {recur                && <Pill><Clock size={11} />{recur}</Pill>}
-        <Pill><Clock size={11} />Posted {timeAgo(job.created_at)}</Pill>
-      </div>
-
-      {/* Expiry / closing notice */}
+      {/* ── Expiry / closing notice ── */}
       {expiry && (
         <div style={{
-          display: 'flex', alignItems: 'center', gap: '8px',
-          background: expiry.expired ? '#F3F4F6' : expiry.urgent ? '#FEF3C7' : '#FEF3C7',
-          border: `1px solid ${expiry.expired ? '#E5E7EB' : expiry.urgent ? '#FCD34D' : '#FDE68A'}`,
-          borderRadius: '8px', padding: '10px 14px',
+          display: 'flex', alignItems: 'center', gap: '10px',
+          background: expiry.expired ? '#F9FAFB' : '#FFFBEB',
+          border: `1px solid ${expiry.expired ? '#E5E7EB' : '#FCD34D'}`,
+          borderRadius: '10px', padding: '12px 16px',
         }}>
-          <Timer size={14} color={expiry.expired ? '#6B7280' : '#D97706'} />
-          <p style={{ fontFamily: fB, fontSize: '0.8125rem', color: expiry.expired ? '#6B7280' : '#92400E', margin: 0, fontWeight: 600 }}>
+          <Timer size={14} color={expiry.expired ? '#9CA3AF' : '#D97706'} style={{ flexShrink: 0 }} />
+          <p style={{ fontFamily: fB, fontSize: '0.875rem', color: expiry.expired ? '#6B7280' : '#92400E', margin: 0, fontWeight: 600 }}>
             {expiry.label}
             {job.expires_at && !expiry.expired && ` — ${new Date(job.expires_at).toLocaleDateString('en-SG', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' })}`}
           </p>
@@ -239,72 +240,95 @@ function JobDetailPanel({
       )}
       {closing && !expiry && (
         <div style={{
-          display: 'flex', alignItems: 'center', gap: '8px',
-          background: '#F3F4F6', border: '1px solid #E5E7EB',
-          borderRadius: '8px', padding: '10px 14px',
+          display: 'flex', alignItems: 'center', gap: '10px',
+          background: '#F9FAFB', border: '1px solid #E5E7EB',
+          borderRadius: '10px', padding: '12px 16px',
         }}>
-          <Clock size={14} color="#6B7280" />
-          <p style={{ fontFamily: fB, fontSize: '0.8125rem', color: '#6B7280', margin: 0 }}>
+          <Clock size={14} color="#9CA3AF" style={{ flexShrink: 0 }} />
+          <p style={{ fontFamily: fB, fontSize: '0.875rem', color: '#6B7280', margin: 0 }}>
             <strong>{closing.label}:</strong> {closing.value}
           </p>
         </div>
       )}
 
-      {/* Description */}
+      {/* ── About this role ── */}
       <div>
         <SectionLabel>About this role</SectionLabel>
-        <p style={{ fontFamily: fB, fontSize: '0.9375rem', color: '#1C1917', lineHeight: 1.75, whiteSpace: 'pre-line' }}>
+        <p style={{ fontFamily: fB, fontSize: '0.9375rem', color: '#374151', lineHeight: 1.8, whiteSpace: 'pre-line', margin: 0 }}>
           {job.description}
         </p>
       </div>
 
-      {/* Requirements */}
+      {/* ── Requirements ── */}
       {job.requirements && (
-        <div style={{ borderTop: '1px solid #F0E8D8', paddingTop: '20px' }}>
+        <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: '24px' }}>
           <SectionLabel>Requirements</SectionLabel>
-          <p style={{ fontFamily: fB, fontSize: '0.9375rem', color: '#1C1917', lineHeight: 1.75, whiteSpace: 'pre-line' }}>
+          <p style={{ fontFamily: fB, fontSize: '0.9375rem', color: '#374151', lineHeight: 1.8, whiteSpace: 'pre-line', margin: 0 }}>
             {job.requirements}
           </p>
         </div>
       )}
 
-      {/* Job details table */}
-      <div style={{ borderTop: '1px solid #F0E8D8', paddingTop: '20px' }}>
-        <SectionLabel>Job details</SectionLabel>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          {[
-            { label: 'Company',    value: job.company_name },
-            { label: 'Industry',   value: job.industry },
-            { label: 'Location',   value: job.location },
-            { label: 'Job type',   value: job.employment_type ? capitalize(job.employment_type) : null },
-            { label: 'Schedule',   value: recur },
-            { label: 'Salary',     value: job.salary_amount ? `$${job.salary_amount} ${job.salary_type ?? ''}`.trim() : null },
-            { label: 'Posted',     value: formatDate(job.created_at) },
-            { label: 'Last updated', value: formatDate(job.updated_at) },
-            { label: 'Expires on', value: job.expires_at ? formatDate(job.expires_at) : null },
-            { label: 'Closed on',  value: job.archived_at ? formatDate(job.archived_at) : null },
-          ].filter(r => r.value).map(({ label, value }) => (
-            <div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', fontSize: '0.875rem' }}>
-              <span style={{ fontFamily: fB, color: '#9CA3AF', flexShrink: 0 }}>{label}</span>
-              <span style={{ fontFamily: fB, color: '#1C1917', textAlign: 'right' }}>{value}</span>
-            </div>
-          ))}
+      {/* ── Company profile ── */}
+      <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: '24px' }}>
+        <SectionLabel>Company profile</SectionLabel>
+        <div style={{
+          background: '#FAFAF9', border: '1px solid #EDE9E3',
+          borderRadius: '14px', padding: '20px 22px',
+          display: 'flex', flexDirection: 'column', gap: '14px',
+        }}>
+          <p style={{ fontFamily: fH, fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0 }}>
+            {job.company_name ?? '—'}
+          </p>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {job.company_location && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <MapPin size={14} color="#9CA3AF" strokeWidth={1.75} style={{ flexShrink: 0 }} />
+                <span style={{ fontFamily: fB, fontSize: '0.875rem', color: '#4B5563' }}>{job.company_location}</span>
+              </div>
+            )}
+            {job.company_address && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <MapPin size={14} color="#9CA3AF" strokeWidth={1.75} style={{ flexShrink: 0 }} />
+                <span style={{ fontFamily: fB, fontSize: '0.875rem', color: '#4B5563' }}>{job.company_address}</span>
+              </div>
+            )}
+            {job.company_size && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Users size={14} color="#9CA3AF" strokeWidth={1.75} style={{ flexShrink: 0 }} />
+                <span style={{ fontFamily: fB, fontSize: '0.875rem', color: '#4B5563' }}>{job.company_size} employees</span>
+              </div>
+            )}
+            {job.company_industry && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <Briefcase size={14} color="#9CA3AF" strokeWidth={1.75} style={{ flexShrink: 0 }} />
+                <span style={{ fontFamily: fB, fontSize: '0.875rem', color: '#4B5563' }}>{job.company_industry}</span>
+              </div>
+            )}
+            {job.company_description && (
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', paddingTop: '4px', borderTop: '1px solid #EDE9E3', marginTop: '2px' }}>
+                <FileText size={14} color="#9CA3AF" strokeWidth={1.75} style={{ flexShrink: 0, marginTop: '3px' }} />
+                <span style={{ fontFamily: fB, fontSize: '0.875rem', color: '#6B7280', lineHeight: 1.7 }}>{job.company_description}</span>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Company rating callout */}
-      <div style={{ borderTop: '1px solid #F0E8D8', paddingTop: '20px' }}>
+      {/* ── Company rating ── */}
+      <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: '24px' }}>
         <SectionLabel>Company rating</SectionLabel>
-        <div style={{ background: '#FFFBF5', border: '1px solid #F0E8D8', borderRadius: '10px', padding: '14px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
+        <div style={{ background: '#FFFBF5', border: '1px solid #FDE8C8', borderRadius: '12px', padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
           <div>
-            <p style={{ fontFamily: fB, fontWeight: 600, fontSize: '0.9375rem', color: '#1C1917', marginBottom: '4px' }}>
+            <p style={{ fontFamily: fB, fontWeight: 600, fontSize: '0.9375rem', color: '#1C1917', margin: '0 0 6px' }}>
               {job.company_name ?? 'This company'}
             </p>
             <StarRating rating={rating} count={count} size={14} />
           </div>
           <div style={{ textAlign: 'right' }}>
-            <p style={{ fontFamily: fH, fontWeight: 700, fontSize: '1.75rem', color: '#F97316', lineHeight: 1 }}>{rating.toFixed(1)}</p>
-            <p style={{ fontFamily: fB, fontSize: '0.75rem', color: '#9CA3AF' }}>out of 5</p>
+            <p style={{ fontFamily: fH, fontWeight: 800, fontSize: '2rem', color: '#F97316', lineHeight: 1, margin: 0 }}>{rating.toFixed(1)}</p>
+            <p style={{ fontFamily: fB, fontSize: '0.75rem', color: '#9CA3AF', margin: '2px 0 0' }}>out of 5</p>
           </div>
         </div>
       </div>
@@ -319,14 +343,6 @@ function JobDetailPanel({
         }}>
           Apply Now
         </Link>
-        <button onClick={onToggleSave} aria-label={saved ? 'Unsave job' : 'Save job'} style={{
-          width: 48, height: 48, flexShrink: 0, display: 'flex', alignItems: 'center',
-          justifyContent: 'center', border: `1.5px solid ${saved ? '#F97316' : '#E5E7EB'}`,
-          borderRadius: '10px', background: saved ? '#FFF7ED' : '#FFFFFF',
-          cursor: 'pointer', transition: 'all 0.15s',
-        }}>
-          {saved ? <BookmarkCheck size={18} color="#F97316" /> : <Bookmark size={18} color="#9CA3AF" />}
-        </button>
       </div>
     </div>
   );
@@ -337,86 +353,162 @@ function JobDetailPanel({
 function JobCard({
   job,
   selected,
-  saved,
   onClick,
-  onToggleSave,
 }: {
   job: JobPosting;
   selected: boolean;
-  saved: boolean;
   onClick: () => void;
-  onToggleSave: (e: React.MouseEvent) => void;
 }) {
-  const { rating, count } = seedRating(job.company_id);
-  const recur = recurrenceLabel(job);
-  const expiry = expiryInfo(job);
-  const closing = closingInfo(job);
+  const [hovered, setHovered] = useState(false);
 
   return (
-    <div onClick={onClick} style={{
-      background: '#FFFFFF',
-      border: `1.5px solid ${selected ? '#F97316' : '#F0E8D8'}`,
-      borderRadius: '14px', padding: '20px', cursor: 'pointer',
-      display: 'flex', flexDirection: 'column', gap: '12px',
-      transition: 'border-color 0.15s, box-shadow 0.15s',
-      boxShadow: selected ? '0 0 0 3px rgba(249,115,22,0.1)' : 'none',
-    }}>
+    <div
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        background: '#FFFFFF',
+        border: `1.5px solid ${selected ? '#F97316' : hovered ? '#F97316' : '#EDE9E3'}`,
+        borderRadius: '16px', padding: '24px', cursor: 'pointer',
+        display: 'flex', flexDirection: 'column', gap: '14px',
+        transition: 'border-color 0.2s, box-shadow 0.2s, transform 0.2s',
+        boxShadow: selected
+          ? '0 0 0 3px rgba(249,115,22,0.15), 0 8px 24px rgba(249,115,22,0.1)'
+          : hovered
+            ? '0 8px 28px rgba(0,0,0,0.10), 0 2px 8px rgba(0,0,0,0.06)'
+            : '0 1px 4px rgba(0,0,0,0.04)',
+        transform: hovered && !selected ? 'translateY(-3px)' : 'translateY(0)',
+      }}
+    >
 
-      {/* Top row: badges + bookmark */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px' }}>
-        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-          <Badge color="#15803D" bg="#DCFCE7">{capitalize(job.status)}</Badge>
-          {job.employment_type && <Badge color="#92400E" bg="#FEF3C7">{capitalize(job.employment_type)}</Badge>}
-          {job.is_recurring    && <Badge color="#1D4ED8" bg="#DBEAFE">Recurring</Badge>}
-        </div>
-        <button onClick={onToggleSave} aria-label={saved ? 'Unsave' : 'Save'}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px', flexShrink: 0, color: saved ? '#F97316' : '#D1D5DB' }}>
-          {saved ? <BookmarkCheck size={17} /> : <Bookmark size={17} />}
-        </button>
+      {/* Job type + department badges */}
+      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+        {resolveJobType(job) === 'shift'
+          ? <Badge color="#C2410C" bg="#FFF7ED" border="#FED7AA">Shift Job</Badge>
+          : <Badge color="#7C3AED" bg="#F5F3FF" border="#DDD6FE">One-Off Job</Badge>
+        }
+        {job.department_name && <Badge color="#1D4ED8" bg="#DBEAFE" border="#BFDBFE">{job.department_name}</Badge>}
       </div>
 
-      {/* Title + company + stars */}
-      <div>
-        <p style={{ fontFamily: fH, fontWeight: 700, fontSize: '1rem', color: '#1C1917', lineHeight: 1.3, marginBottom: '3px' }}>
+      {/* Title + company */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+        <p style={{ fontFamily: fH, fontWeight: 700, fontSize: '1.0625rem', color: '#111827', lineHeight: 1.35, margin: 0 }}>
           {job.title}
         </p>
-        <p style={{ fontFamily: fB, fontSize: '0.875rem', fontWeight: 600, color: '#44403C', marginBottom: '4px' }}>
+        <p style={{ fontFamily: fB, fontSize: '0.875rem', fontWeight: 500, color: '#6B7280', margin: 0 }}>
           {job.company_name ?? '—'}
         </p>
-        <StarRating rating={rating} count={count} size={12} />
       </div>
 
-      {/* Meta pills */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px' }}>
-        {job.location      && <Pill><MapPin size={10} />{job.location}</Pill>}
-        {job.industry      && <Pill>{job.industry}</Pill>}
-        {job.salary_amount && <Pill><DollarSign size={10} />${job.salary_amount} {job.salary_type}</Pill>}
-        {recur             && <Pill><Clock size={10} />{recur}</Pill>}
-      </div>
+      {/* Location + pay */}
+      {(job.company_location || job.salary_amount) && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+          {job.company_location && <Pill><MapPin size={11} />{job.company_location}</Pill>}
+          {formatSalary(job)    && <Pill style={{ color: '#065F46', background: '#ECFDF5', border: '1px solid #A7F3D0' }}>{formatSalary(job)}</Pill>}
+        </div>
+      )}
 
-      {/* Description snippet */}
-      <p style={{ fontFamily: fB, fontSize: '0.8125rem', color: '#78716C', lineHeight: 1.6, flex: 1 }}>
-        {job.description.length > 110 ? job.description.slice(0, 110) + '…' : job.description}
+      {/* Description — max 2 lines */}
+      <p style={{
+        fontFamily: fB, fontSize: '0.875rem', color: '#6B7280', lineHeight: 1.65,
+        display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+        overflow: 'hidden', margin: 0,
+      }}>
+        {job.description}
       </p>
 
-      {/* Footer: posted time + expiry badge */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
-        <p style={{ fontFamily: fB, fontSize: '0.75rem', color: '#9CA3AF', margin: 0 }}>
-          Posted {timeAgo(job.created_at)}
-        </p>
-        {expiry && (
-          <span style={{
-            display: 'inline-flex', alignItems: 'center', gap: '4px',
-            fontFamily: fB, fontSize: '0.6875rem', fontWeight: 600,
-            color:      expiry.expired ? '#6B7280' : expiry.urgent ? '#92400E' : '#92400E',
-            background: expiry.expired ? '#F3F4F6' : expiry.urgent ? '#FEF3C7' : '#FEF3C7',
-            border: `1px solid ${expiry.expired ? '#E5E7EB' : expiry.urgent ? '#FCD34D' : '#FDE68A'}`,
-            borderRadius: '100px', padding: '2px 8px',
-          }}>
-            <Timer size={10} />{expiry.label}
-          </span>
-        )}
-      </div>
+      {/* Posted time */}
+      <p style={{ fontFamily: fB, fontSize: '0.75rem', color: '#9CA3AF', margin: 0, paddingTop: '2px' }}>
+        Posted {timeAgo(job.created_at)}
+      </p>
+    </div>
+  );
+}
+
+// Resolve effective job type — prefer explicit form_type, fall back to is_recurring
+function resolveJobType(job: JobPosting): 'shift' | 'oneoff' {
+  if (job.form_type === 'shift' || job.form_type === 'oneoff') return job.form_type as 'shift' | 'oneoff';
+  return job.is_recurring ? 'shift' : 'oneoff';
+}
+
+// Format salary: shift → "$15/hr", one-off → "$80"
+function formatSalary(job: JobPosting): string | null {
+  if (!job.salary_amount) return null;
+  if (resolveJobType(job) === 'shift') return `$${job.salary_amount}/hr`;
+  return `$${job.salary_amount}`;
+}
+
+// ─── DropdownField ────────────────────────────────────────────────────────────
+
+function DropdownField({ value, options, onChange }: {
+  value: string
+  options: string[]
+  onChange: (v: string) => void
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 });
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const h = (e: MouseEvent) => {
+      if (!triggerRef.current?.contains(e.target as Node) && !dropdownRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [open]);
+
+  const handleOpen = () => {
+    if (!open && triggerRef.current) {
+      const r = triggerRef.current.getBoundingClientRect();
+      const DROPDOWN_H = Math.min(options.length * 37 + 8, 208);
+      const fitsBelow = r.bottom + DROPDOWN_H + 4 <= window.innerHeight;
+      setPos({ top: fitsBelow ? r.bottom + 4 : r.top - DROPDOWN_H - 4, left: r.left, width: r.width });
+    }
+    setOpen(o => !o);
+  };
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button ref={triggerRef} type="button" onClick={handleOpen}
+        style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '10px 14px', border: `1px solid ${open ? '#F97316' : '#E5E7EB'}`, borderRadius: 8,
+          background: '#FFFFFF', cursor: 'pointer', fontFamily: fB, fontSize: '0.9375rem',
+          color: '#374151', fontWeight: 400, outline: 'none', boxSizing: 'border-box',
+          transition: 'border-color 0.15s', minHeight: 42, minWidth: 160, whiteSpace: 'nowrap',
+        }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginRight: 8 }}>
+          {value}
+        </span>
+        <ChevronDown size={14} style={{ color: '#9CA3AF', flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+      </button>
+      {open && (
+        <div ref={dropdownRef} style={{
+          position: 'fixed', top: pos.top, left: pos.left, width: pos.width,
+          background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 10,
+          boxShadow: '0 8px 24px rgba(15,23,42,0.12)', zIndex: 9999, maxHeight: 208, overflowY: 'auto',
+          padding: '4px 0',
+        }}>
+          {options.map(opt => {
+            const isSel = opt === value;
+            return (
+              <button key={opt} type="button"
+                onClick={() => { onChange(opt); setOpen(false); }}
+                style={{
+                  display: 'block', width: '100%', padding: '8px 14px', textAlign: 'left',
+                  border: 'none', background: isSel ? '#FFF7ED' : 'transparent',
+                  color: isSel ? '#EA580C' : '#374151', fontWeight: isSel ? 700 : 400,
+                  fontFamily: fB, fontSize: '0.9375rem', cursor: 'pointer',
+                }}
+                onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = '#F9FAFB'; }}
+                onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = 'transparent'; }}
+              >{opt}</button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -430,8 +522,9 @@ export default function JobBoardPage() {
   const [selectedLocation, setSelectedLocation] = useState('All Locations');
   const [selectedIndustry, setSelectedIndustry] = useState('All Industries');
   const [activeTab, setActiveTab] = useState<ActiveTab>('all');
-  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const [selectedJob, setSelectedJob] = useState<JobPosting | null>(null);
+  const [industryOptions, setIndustryOptions] = useState<string[]>(['All Industries']);
+  const [locationOptions, setLocationOptions] = useState<string[]>(['All Locations']);
 
   // ── Fetch open jobs ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -442,6 +535,19 @@ export default function JobBoardPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  // ── Fetch filter options from companies ──────────────────────────────────
+  useEffect(() => {
+    fetch('/api/jobs/public/filters')
+      .then(r => r.json())
+      .then(d => {
+        if (d.success) {
+          setIndustryOptions(['All Industries', ...(d.industries as string[])]);
+          setLocationOptions(['All Locations', ...(d.locations as string[])]);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   // ── Keyboard close ───────────────────────────────────────────────────────
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setSelectedJob(null); };
@@ -449,43 +555,26 @@ export default function JobBoardPage() {
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
-  // ── Derive filter options ────────────────────────────────────────────────
-  const locationOptions = ['All Locations', ...Array.from(new Set(jobs.map(j => j.location).filter(Boolean) as string[]))];
-  const industryOptions = ['All Industries', ...Array.from(new Set(jobs.map(j => j.industry).filter(Boolean) as string[]))];
-
   // ── Filter logic ─────────────────────────────────────────────────────────
   const filtered = jobs.filter(job => {
     const q = searchQuery.toLowerCase();
-    if (activeTab === 'saved' && !savedIds.has(job.id)) return false;
-    if (activeTab === 'full-time' && job.employment_type !== 'full-time') return false;
-    if (activeTab === 'part-time' && job.employment_type !== 'part-time') return false;
-    if (activeTab === 'contract' && job.employment_type !== 'contract') return false;
-    if (selectedLocation !== 'All Locations' && job.location !== selectedLocation) return false;
-    if (selectedIndustry !== 'All Industries' && job.industry !== selectedIndustry) return false;
-    if (q && ![job.title, job.description, job.location, job.industry, job.company_name]
+    if (activeTab === 'shift' && resolveJobType(job) !== 'shift') return false;
+    if (activeTab === 'oneoff' && resolveJobType(job) !== 'oneoff') return false;
+    if (selectedLocation !== 'All Locations' && job.company_location !== selectedLocation) return false;
+    if (selectedIndustry !== 'All Industries' && job.company_industry !== selectedIndustry) return false;
+    if (q && ![job.title, job.description, job.company_location, job.company_industry, job.company_name]
       .filter(Boolean).some(v => v!.toLowerCase().includes(q))) return false;
     return true;
   });
 
-  const countByType = useCallback((type: string) =>
-    jobs.filter(j => j.employment_type === type).length, [jobs]);
+  const countByFormType = useCallback((type: string) =>
+    jobs.filter(j => resolveJobType(j) === type).length, [jobs]);
 
   const tabs: { key: ActiveTab; label: string; count: number }[] = [
-    { key: 'all',        label: 'All Jobs',   count: jobs.length },
-    { key: 'full-time',  label: 'Full-time',  count: countByType('full-time') },
-    { key: 'part-time',  label: 'Part-time',  count: countByType('part-time') },
-    { key: 'contract',   label: 'Contract',   count: countByType('contract') },
-    { key: 'saved',      label: 'Saved',      count: savedIds.size },
+    { key: 'all',    label: 'All Jobs',   count: jobs.length },
+    { key: 'shift',  label: 'Shift Job',  count: countByFormType('shift') },
+    { key: 'oneoff', label: 'One-Off Job', count: countByFormType('oneoff') },
   ];
-
-  const toggleSave = (e: React.MouseEvent, id: string) => {
-    e.stopPropagation();
-    setSavedIds(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  };
 
   return (
     <>
@@ -577,30 +666,16 @@ export default function JobBoardPage() {
                   }}
                 />
               </div>
-              <select
+              <DropdownField
                 value={selectedIndustry}
-                onChange={e => setSelectedIndustry(e.target.value)}
-                style={{
-                  fontFamily: fB, fontSize: '0.9375rem', color: '#374151',
-                  border: '1px solid #E5E7EB', borderRadius: '8px',
-                  padding: '10px 14px', background: '#FFFFFF', cursor: 'pointer',
-                  minWidth: '160px', outline: 'none',
-                }}
-              >
-                {industryOptions.map(o => <option key={o}>{o}</option>)}
-              </select>
-              <select
+                options={industryOptions}
+                onChange={setSelectedIndustry}
+              />
+              <DropdownField
                 value={selectedLocation}
-                onChange={e => setSelectedLocation(e.target.value)}
-                style={{
-                  fontFamily: fB, fontSize: '0.9375rem', color: '#374151',
-                  border: '1px solid #E5E7EB', borderRadius: '8px',
-                  padding: '10px 14px', background: '#FFFFFF', cursor: 'pointer',
-                  minWidth: '160px', outline: 'none',
-                }}
-              >
-                {locationOptions.map(o => <option key={o}>{o}</option>)}
-              </select>
+                options={locationOptions}
+                onChange={setSelectedLocation}
+              />
             </div>
           </div>
 
@@ -620,7 +695,7 @@ export default function JobBoardPage() {
                 }}
               >
                 {t.label}
-                {(t.count > 0 || t.key === 'saved') && (
+                {t.count > 0 && (
                   <span style={{
                     fontSize: '0.6875rem', fontWeight: 700, padding: '1px 6px',
                     borderRadius: '100px', background: activeTab === t.key ? '#FFEDD5' : '#F3F4F6',
@@ -632,13 +707,6 @@ export default function JobBoardPage() {
               </button>
             ))}
           </div>
-
-          {/* Results count */}
-          {!loading && jobs.length > 0 && (
-            <p style={{ fontFamily: fB, fontSize: '0.875rem', color: '#9CA3AF', marginBottom: '16px' }}>
-              {filtered.length} {filtered.length === 1 ? 'role' : 'roles'} found
-            </p>
-          )}
 
           {/* Main content */}
           {loading ? (
@@ -664,9 +732,7 @@ export default function JobBoardPage() {
                     key={job.id}
                     job={job}
                     selected={selectedJob?.id === job.id}
-                    saved={savedIds.has(job.id)}
                     onClick={() => setSelectedJob(prev => prev?.id === job.id ? null : job)}
-                    onToggleSave={e => toggleSave(e, job.id)}
                   />
                 ))}
               </div>
@@ -675,13 +741,7 @@ export default function JobBoardPage() {
               {selectedJob && (
                 <JobDetailPanel
                   job={selectedJob}
-                  saved={savedIds.has(selectedJob.id)}
                   onClose={() => setSelectedJob(null)}
-                  onToggleSave={() => setSavedIds(prev => {
-                    const next = new Set(prev);
-                    next.has(selectedJob.id) ? next.delete(selectedJob.id) : next.add(selectedJob.id);
-                    return next;
-                  })}
                 />
               )}
             </div>

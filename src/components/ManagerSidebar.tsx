@@ -107,12 +107,31 @@ export default function ManagerSidebar({
       .catch(() => {})
   }, [])
 
-  // Clear dots when user visits Communication page
+  // When user opens Communication page, mark all announcements as read in localStorage
   useEffect(() => {
-    if (pathname === '/manager/communication') {
-      setMsgCount(0)
-      setAnnCount(0)
-    }
+    if (pathname !== '/manager/communication') return
+    setMsgCount(0)
+    setAnnCount(0)
+    const authUid = typeof localStorage !== 'undefined' ? localStorage.getItem('tasking_user_id') : null
+    if (!authUid) return
+    fetch(`/api/user/me?user_id=${authUid}`)
+      .then(r => r.json())
+      .then(d => {
+        if (!d.success) return
+        const internalId: string = d.user.id
+        const cid = localStorage.getItem('tasking_company_id') ?? localStorage.getItem(`tasking_company_id_${authUid}`)
+        if (!cid) return
+        const deptId: string | null = d.user.department_id ?? null
+        const annUrl = `/api/inbox/announcements?company_id=${cid}&role=manager&user_id=${internalId}${deptId ? `&department_id=${deptId}` : ''}`
+        fetch(annUrl)
+          .then(r => r.json())
+          .then(data => {
+            if (!data.success) return
+            const allIds = (data.announcements as { id: string }[]).map(a => a.id)
+            localStorage.setItem(`ann_read_ids_${cid}_${internalId}`, JSON.stringify(allIds))
+            setAnnCount(0)
+          }).catch(() => {})
+      }).catch(() => {})
   }, [pathname])
 
   useEffect(() => { if (unreadMessages !== undefined) setMsgCount(unreadMessages) }, [unreadMessages])

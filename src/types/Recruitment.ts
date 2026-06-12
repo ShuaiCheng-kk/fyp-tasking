@@ -16,6 +16,11 @@ export interface JobPosting {
   created_at: string
   updated_at: string
   company_name: string | null
+  company_location: string | null
+  company_description: string | null
+  company_size: string | null
+  company_address: string | null
+  company_industry: string | null
   industry: string | null
   salary_amount: number | null
   salary_type: string | null
@@ -54,6 +59,7 @@ export interface JobPostingInput {
   break_start_time?: string | null
   break_end_time?: string | null
   assigned_employee_id?: string | null
+  form_type?: string | null
 }
 
 export interface JobPostingSummary extends JobPosting {
