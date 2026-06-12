@@ -21,9 +21,9 @@ const NAV_ITEMS = [
   { label: 'Profile', Icon: User, href: '/casual/profile' },
 ]
 
-const SIDEBAR_BG = '#4B5563'
-const SIDEBAR_BORDER = '#374151'
-const ACTIVE_BG = '#374151'
+const SIDEBAR_BG = '#334155'
+const SIDEBAR_BORDER = '#1E293B'
+const ACTIVE_BG = '#475569'
 
 export default function CasualSidebar() {
   const pathname = usePathname()
@@ -80,13 +80,13 @@ export default function CasualSidebar() {
       >
         <svg width="28" height="28" viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
           <rect width="32" height="32" rx="8" fill="white" />
-          <rect x="8" y="9" width="9" height="2.5" rx="1.25" fill="#4B5563" />
-          <rect x="8" y="14.75" width="16" height="2.5" rx="1.25" fill="#4B5563" />
-          <rect x="8" y="20.5" width="12" height="2.5" rx="1.25" fill="#4B5563" />
-          <circle cx="22" cy="10.25" r="3.5" fill="#D1D5DB" />
+          <rect x="8" y="9" width="9" height="2.5" rx="1.25" fill="#334155" />
+          <rect x="8" y="14.75" width="16" height="2.5" rx="1.25" fill="#334155" />
+          <rect x="8" y="20.5" width="12" height="2.5" rx="1.25" fill="#334155" />
+          <circle cx="22" cy="10.25" r="3.5" fill="#CBD5E1" />
           <path
             d="M20.3 10.25L21.5 11.5L23.8 9"
-            stroke="#4B5563"
+            stroke="#334155"
             strokeWidth="1.4"
             strokeLinecap="round"
             strokeLinejoin="round"

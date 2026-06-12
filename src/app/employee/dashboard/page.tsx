@@ -540,11 +540,12 @@ const headerTitleStyle: CSSProperties = {
 }
 
 const roleBadgeStyle: CSSProperties = {
-  padding: '3px 8px',
+  padding: '6px 14px 6px 8px',
   borderRadius: '999px',
-  fontSize: '0.72rem',
-  fontWeight: 600,
+  fontSize: '0.875rem',
+  fontWeight: 700,
   background: 'rgba(255,255,255,0.2)',
+  boxShadow: '0 2px 8px rgba(15,23,42,0.12)',
   color: '#FFFFFF',
 }
 

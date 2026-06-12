@@ -2,12 +2,12 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { User } from 'lucide-react'
 import CasualSidebar from '@/components/CasualSidebar'
-
-const GREY = '#4B5563'
 
 export default function CasualDashboardPage() {
   const router = useRouter()
+
   const [userName, setUserName] = useState('')
   const [loading, setLoading] = useState(true)
 
@@ -16,12 +16,15 @@ export default function CasualDashboardPage() {
 
     const run = async () => {
       const userId = localStorage.getItem('tasking_user_id')
+
       if (!userId) {
         router.replace('/signin')
         return
       }
 
-      const dashRes = await fetch(`/api/casual/dashboard?user_id=${userId}`)
+      const dashRes = await fetch(
+        `/api/casual/dashboard?user_id=${userId}`
+      )
       const dashData = await dashRes.json()
 
       if (cancelled) return
@@ -31,9 +34,12 @@ export default function CasualDashboardPage() {
         return
       }
 
-      setUserName(dashData.dashboard.user.full_name ?? '')
+      setUserName(
+        dashData.dashboard.user.full_name ??
+        'Casual Worker'
+      )
 
-      if (!cancelled) setLoading(false)
+      setLoading(false)
     }
 
     void run()
@@ -44,44 +50,90 @@ export default function CasualDashboardPage() {
   }, [router])
 
   return (
-    <div style={{ display: 'flex', height: '100vh', background: '#F3F4F6', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+    <div style={pageStyle}>
       <CasualSidebar />
 
-      <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-        <div style={{
-          padding: '19px 32px',
-          background: GREY,
-          borderBottom: '1px solid #374151',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          position: 'sticky',
-          top: 0,
-          zIndex: 10,
-        }}>
-          <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#FFFFFF', margin: 0 }}>
-            {loading ? 'Dashboard' : 'Dashboard'}
-          </h1>
+      <main style={mainStyle}>
+        <div style={headerStyle}>
+          <h1 style={titleStyle}>Dashboard</h1>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            {userName && (
-              <span style={{ fontSize: '0.9rem', color: 'rgba(255,255,255,0.85)' }}>
-                {userName}
+          {!loading && (
+            <div style={userBadgeStyle}>
+              <span style={userIconStyle}>
+                <User size={15} strokeWidth={2.2} />
               </span>
-            )}
 
-            <span style={{ padding: '4px 10px', borderRadius: '999px', fontSize: '0.8rem', fontWeight: 600, background: 'rgba(255,255,255,0.2)', color: '#FFFFFF' }}>
-              Casual Worker
-            </span>
-          </div>
+              <span>{userName}</span>
+            </div>
+          )}
         </div>
 
-        <div style={{ padding: '28px 32px', flex: 1 }}>
-          <p style={{ margin: 0, color: '#9CA3AF', fontSize: '0.9rem' }}>
-            No data available yet.
-          </p>
-        </div>
+        <p style={emptyTextStyle}>
+          No assigned work yet.
+        </p>
       </main>
     </div>
   )
+}
+
+const pageStyle: React.CSSProperties = {
+  display: 'flex',
+  minHeight: '100vh',
+  background: '#F3F4F6',
+  fontFamily: 'var(--font-body)',
+}
+
+const mainStyle: React.CSSProperties = {
+  marginLeft: '64px',
+  flex: 1,
+  minHeight: '100vh',
+  padding: '24px 32px',
+}
+
+const headerStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  paddingBottom: '22px',
+  borderBottom: '1px solid #E5E7EB',
+  marginBottom: '24px',
+}
+
+const titleStyle: React.CSSProperties = {
+  margin: 0,
+  fontSize: '1.75rem',
+  fontWeight: 700,
+  color: '#111827',
+  letterSpacing: '-0.04em',
+}
+
+const userBadgeStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: '10px',
+  padding: '5px 12px 5px 7px',
+  borderRadius: '999px',
+  background: '#FFFFFF',
+  border: '1px solid #E5E7EB',
+  boxShadow: '0 2px 8px rgba(15,23,42,0.12)',
+  color: '#111827',
+  fontSize: '0.82rem',
+  fontWeight: 700,
+}
+
+const userIconStyle: React.CSSProperties = {
+  width: 22,
+  height: 22,
+  borderRadius: '999px',
+  background: '#334155',
+  color: '#FFFFFF',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+}
+
+const emptyTextStyle: React.CSSProperties = {
+  margin: 0,
+  color: '#6B7280',
+  fontSize: '0.95rem',
 }
