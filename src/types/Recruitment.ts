@@ -19,6 +19,14 @@ export interface JobPosting {
   industry: string | null
   salary_amount: number | null
   salary_type: string | null
+  urgency: string | null
+  estimated_hours: string | null
+  shift_date: string | null
+  shift_start_time: string | null
+  shift_end_time: string | null
+  break_start_time: string | null
+  break_end_time: string | null
+  assigned_employee_id: string | null
 }
 
 export interface JobPostingInput {
@@ -34,16 +42,25 @@ export interface JobPostingInput {
   industry?: string | null
   salary_amount?: number | null
   salary_type?: string | null
+  urgency?: string | null
+  estimated_hours?: string | null
   is_recurring?: boolean
   recurrence_interval?: number | null
   recurrence_unit?: string | null
   status?: string
+  shift_date?: string | null
+  shift_start_time?: string | null
+  shift_end_time?: string | null
+  break_start_time?: string | null
+  break_end_time?: string | null
+  assigned_employee_id?: string | null
 }
 
 export interface JobPostingSummary extends JobPosting {
   department_name: string | null
   applicant_count: number
   pending_count: number
+  assigned_employee_name: string | null
 }
 
 export interface JobApplicant {

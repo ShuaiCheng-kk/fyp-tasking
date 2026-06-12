@@ -4,6 +4,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 
+type JoinedUser = { id: string; full_name: string }
+
+function getJoinedUser(row: { users?: JoinedUser | JoinedUser[] | null }): JoinedUser | null {
+  if (!row.users) return null
+  return Array.isArray(row.users) ? row.users[0] ?? null : row.users
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const company_id = searchParams.get('company_id')
@@ -51,20 +58,15 @@ export async function GET(req: NextRequest) {
     const shiftMap = new Map(shifts.map(s => [s.id, s]))
 
     if (assignments && assignments.length > 0) {
-      // Shifts have assignments — return assigned employees with their shift times
-      const userIds = [...new Set(assignments.map(a => a.user_id))]
-      const { data: users, error: usersError } = await supabase
-        .from('users')
-        .select('id, full_name')
-        .in('id', userIds)
-      if (usersError) throw new Error(usersError.message)
-
-      const userMap = new Map((users ?? []).map(u => [u.id, u.full_name as string]))
+      // Only keep assigned users who are actual Employees in this department
+      const empIds = new Set((empDepts ?? []).map((row: any) => getJoinedUser(row)?.id).filter(Boolean))
       const employeeMap = new Map<string, { id: string; full_name: string; shifts: { shift_date: string; start_time: string; end_time: string }[] }>()
 
       for (const a of assignments) {
+        if (!empIds.has(a.user_id)) continue
         const shift = shiftMap.get(a.shift_id)
-        const full_name = userMap.get(a.user_id)
+        const empRow = (empDepts ?? []).find((row: any) => getJoinedUser(row)?.id === a.user_id)
+        const full_name = empRow ? getJoinedUser(empRow)?.full_name : null
         if (!shift || !full_name) continue
         if (!employeeMap.has(a.user_id)) {
           employeeMap.set(a.user_id, { id: a.user_id, full_name, shifts: [] })
@@ -80,7 +82,8 @@ export async function GET(req: NextRequest) {
 
     // No assignments — return department employees each paired with all shifts
     const deptEmployees = (empDepts ?? []).map((row: any) => {
-      const user = row.users as { id: string; full_name: string }
+      const user = getJoinedUser(row)
+      if (!user) return null
       return {
         id: user.id,
         full_name: user.full_name,
@@ -90,7 +93,7 @@ export async function GET(req: NextRequest) {
           end_time: s.end_time,
         })),
       }
-    })
+    }).filter(Boolean)
 
     return NextResponse.json({ success: true, employees: deptEmployees })
   } catch (err) {

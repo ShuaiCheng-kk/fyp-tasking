@@ -1,15 +1,16 @@
-'use client'
+﻿'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import EmployeeSidebar from '@/components/EmployeeSidebar'
 import { createClient } from '@/lib/supabase'
 import {
-  Plus, X, Trash2, Pencil, Megaphone,
-  Send, Search, SquarePen, Check, Bell, MessageSquare,
+  X, Trash2, Pencil, Megaphone,
+  Send, Search, SquarePen, Check, MessageSquare, UserRound,
 } from 'lucide-react'
 
-const ACCENT = '#F97316'
-const ACCENT_LIGHT = '#FFF7ED'
+const ACCENT = '#16A34A'
+const ACCENT_LIGHT = '#F0FDF4'
+const ACCENT_HOVER = '#15803D'
 
 // ─── Shared types ────────────────────────────────────────────────────────────
 
@@ -116,6 +117,7 @@ function Avatar({ name, size = 36, color = ACCENT }: { name: string; size?: numb
 
 export default function EmployeeCommunicationPage() {
   const [activeTab, setActiveTab] = useState<'announcements' | 'messages'>('announcements')
+  const [employeeName, setEmployeeName] = useState('')
 
   // Shared auth state
   const [authUserId, setAuthUserId] = useState<string | null>(null)
@@ -188,7 +190,14 @@ export default function EmployeeCommunicationPage() {
             setInternalUserId(d.user.id)
             setUserRole(d.user.role ?? '')
             setUserDeptId(d.user.department_id ?? null)
-            if (cid) setReadIds(loadReadIds(cid, d.user.id))
+            setEmployeeName(d.user.full_name ?? '')
+            const resolvedCompanyId = cid ?? d.user.company_id ?? null
+            if (resolvedCompanyId) {
+              setCompanyId(resolvedCompanyId)
+              localStorage.setItem('tasking_company_id', resolvedCompanyId)
+              localStorage.setItem(`tasking_company_id_${uid}`, resolvedCompanyId)
+              setReadIds(loadReadIds(resolvedCompanyId, d.user.id))
+            }
           }
         })
     }
@@ -415,7 +424,7 @@ export default function EmployeeCommunicationPage() {
   }
 
   const canPostCompanyWide = ['owner', 'partner'].includes(userRole?.toLowerCase())
-  const communicationReady = Boolean(internalUserId && companyId)
+  const communicationReady = Boolean(authUserId && internalUserId && companyId)
 
   // ── Message actions ──
   const openCompose = useCallback(() => {
@@ -425,17 +434,18 @@ export default function EmployeeCommunicationPage() {
     setComposeText('')
     setComposeSearch('')
     setComposeError('')
-    fetch(`/api/team/members?company_id=${companyId}`)
+    const departmentQuery = userDeptId ? `&department_id=${userDeptId}` : ''
+    fetch(`/api/team/members?company_id=${companyId}${departmentQuery}`)
       .then(r => r.json())
       .then(d => {
         if (d.success) {
           const eligible = (d.members as CompanyMember[]).filter(
-            m => m.role !== 'Casual Worker' && m.id !== internalUserId
+            m => ['manager', 'employee'].includes(m.role.toLowerCase()) && m.id !== internalUserId
           )
           setCompanyMembers(eligible)
         }
       })
-  }, [companyId, internalUserId])
+  }, [companyId, internalUserId, userDeptId])
 
   async function handleAcceptInvite(invite: InboxInvite) {
     if (!internalUserId) return
@@ -554,64 +564,116 @@ export default function EmployeeCommunicationPage() {
   // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ display: 'flex', height: '100vh', background: '#F3F4F6', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+    <div style={{ display: 'flex', height: '100vh', background: '#F7F8FA', color: '#0F172A', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+      <style>{`
+        @keyframes fadeSlideUp {
+          from { opacity: 0; transform: translateY(12px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        .comm-tab-btn {
+          transition: all 0.13s ease;
+        }
+        .comm-tab-btn:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        .comm-action-btn {
+          transition: background 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease;
+        }
+        .comm-action-btn:hover {
+          background: ${ACCENT_HOVER} !important;
+          transform: translateY(-1px);
+          box-shadow: 0 4px 14px rgba(22,163,74,0.24);
+        }
+        .comm-panel-card {
+          animation: fadeSlideUp 0.28s ease both;
+          min-height: 0;
+        }
+      `}</style>
       <EmployeeSidebar unreadMessages={unreadMessages} unreadAnnouncements={unreadAnnCount} />
 
-      <main style={{ marginLeft: '64px', flex: 1, height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-
-        {/* Page header + top-level tabs */}
-        <div style={{ padding: '18px 32px 0', background: '#FFFFFF', borderBottom: '1px solid #E5E7EB', flexShrink: 0 }}>
-          <h1 style={{ fontWeight: 700, fontSize: '1.1875rem', color: '#111827', margin: '0 0 14px' }}>Communication</h1>
-          <div style={{ display: 'flex', gap: 0 }}>
-            {(['announcements', 'messages'] as const).map(tab => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                style={{
-                  padding: '9px 22px',
-                  background: 'none',
-                  border: 'none',
-                  borderBottom: activeTab === tab ? `2.5px solid ${ACCENT}` : '2.5px solid transparent',
-                  cursor: 'pointer',
-                  fontWeight: activeTab === tab ? 700 : 500,
-                  fontSize: '0.9rem',
-                  color: activeTab === tab ? ACCENT : '#6B7280',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                  transition: 'color 0.12s',
-                }}
-              >
-                {tab === 'announcements' ? <Megaphone size={15} /> : <MessageSquare size={15} />}
-                {tab === 'announcements' ? 'Announcements' : 'Messages'}
-                {tab === 'announcements' && unreadAnnCount > 0 && (
-                  <span style={{ background: ACCENT, color: '#fff', borderRadius: '50%', width: 16, height: 16, fontSize: '0.65rem', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {unreadAnnCount}
-                  </span>
-                )}
-                {tab === 'messages' && unreadMessages > 0 && (
-                  <span style={{ background: ACCENT, color: '#fff', borderRadius: '50%', width: 16, height: 16, fontSize: '0.65rem', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {unreadMessages}
-                  </span>
-                )}
-              </button>
-            ))}
+      <main style={{ marginLeft: '64px', flex: 1, minWidth: 0, height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
+          <div>
+            <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
+              Communication
+            </h1>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
+            {employeeName && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: '#fff', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: '#14532D', color: '#FFFFFF', flexShrink: 0 }}>
+                  <UserRound size={13} />
+                </span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{employeeName}</span>
+              </div>
+            )}
           </div>
         </div>
 
+        <div style={{ padding: '0 28px 28px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+          <div style={{ background: '#FFFFFF', borderRadius: 16, border: '1px solid #E5E7EB', boxShadow: '0 1px 6px rgba(0,0,0,0.06)', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
+            <div style={{ padding: '14px 20px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, gap: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {([
+                  { key: 'messages', label: 'Chat', icon: <MessageSquare size={13} />, badge: unreadMessages },
+                  { key: 'announcements', label: 'Announcements', icon: <Megaphone size={13} />, badge: unreadAnnCount },
+                ] as const).map(tab => {
+                  const active = activeTab === tab.key
+                  return (
+                    <button
+                      key={tab.key}
+                      onClick={() => setActiveTab(tab.key)}
+                      className="comm-tab-btn"
+                      style={{
+                        padding: '5px 13px',
+                        borderRadius: '99px',
+                        cursor: 'pointer',
+                        fontWeight: 600,
+                        fontSize: '0.8rem',
+                        background: active ? '#14532D' : 'transparent',
+                        border: active ? '2px solid #14532D' : '1.5px solid #E5E7EB',
+                        color: active ? '#FFFFFF' : '#374151',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {tab.icon}
+                      {tab.label}
+                      {tab.badge > 0 && (
+                        <span style={{ minWidth: 17, height: 17, padding: '0 4px', borderRadius: 999, background: '#16A34A', color: '#fff', fontSize: 10, fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          {tab.badge}
+                        </span>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+
+              <div style={{ flexShrink: 0 }}>
+                {activeTab === 'messages' && (
+                  <button
+                    onClick={openCompose}
+                    disabled={!communicationReady}
+                    className={communicationReady ? 'comm-action-btn' : ''}
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: communicationReady ? ACCENT : '#E5E7EB', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: communicationReady ? '#fff' : '#9CA3AF', cursor: communicationReady ? 'pointer' : 'not-allowed', height: 38 }}
+                  >
+                    <SquarePen size={13} strokeWidth={2.5} /> New Message
+                  </button>
+                )}
+             </div>
+            </div>
+
+        <section style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden' }}>
         {/* ── Announcements tab ── */}
         {activeTab === 'announcements' && (
-          <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden' }}>
             {/* Left: list */}
             <div style={{ width: '33%', minWidth: 260, maxWidth: 360, background: '#FFFFFF', borderRight: '1px solid #E5E7EB', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
               <div style={{ padding: '13px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-                <span style={{ fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>All Announcements</span>
-                <button
-                  onClick={() => setShowNewAnnModal(true)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 12px', background: ACCENT, color: '#fff', border: 'none', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' }}
-                >
-                  <Plus size={13} /> New
-                </button>
+                <span style={{ fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Department Announcements</span>
               </div>
 
               <div style={{ overflowY: 'auto', flex: 1 }}>
@@ -665,28 +727,6 @@ export default function EmployeeCommunicationPage() {
                         <span style={{ fontSize: '0.75rem', background: selectedAnn.department_id ? '#EFF6FF' : '#F3F4F6', color: selectedAnn.department_id ? '#3B82F6' : '#6B7280', padding: '3px 10px', borderRadius: 5, fontWeight: 600 }}>
                           {selectedAnn.department_id ? (departments.find(d => d.id === selectedAnn.department_id)?.name ?? 'Department') : 'Company-wide'}
                         </span>
-                        {selectedAnn.from_user_id === internalUserId && (
-                          <>
-                            <button
-                              onClick={() => handleOpenEdit(selectedAnn)}
-                              title="Edit announcement"
-                              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: 'none', border: '1px solid #E5E7EB', borderRadius: 6, cursor: 'pointer', color: '#374151', fontSize: '0.8rem', fontWeight: 500 }}
-                              onMouseEnter={e => { e.currentTarget.style.background = '#F9FAFB' }}
-                              onMouseLeave={e => { e.currentTarget.style.background = 'none' }}
-                            >
-                              <Pencil size={13} /> Edit
-                            </button>
-                            <button
-                              onClick={() => setDeleteConfirmId(selectedAnn.id)}
-                              title="Delete announcement"
-                              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: 'none', border: '1px solid #FECACA', borderRadius: 6, cursor: 'pointer', color: '#DC2626', fontSize: '0.8rem', fontWeight: 500 }}
-                              onMouseEnter={e => { e.currentTarget.style.background = '#FEF2F2' }}
-                              onMouseLeave={e => { e.currentTarget.style.background = 'none' }}
-                            >
-                              <Trash2 size={13} /> Delete
-                            </button>
-                          </>
-                        )}
                       </div>
                     </div>
                     <div style={{ fontSize: '0.8125rem', color: '#9CA3AF', marginBottom: 4 }}>
@@ -711,170 +751,73 @@ export default function EmployeeCommunicationPage() {
 
         {/* ── Messages tab ── */}
         {activeTab === 'messages' && (
-          <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+          <div style={{ flex: 1, minHeight: 0, display: 'flex', overflow: 'hidden' }}>
             {/* Left: conversation list */}
-            <div style={{ width: '33%', minWidth: 260, maxWidth: 360, background: '#FFFFFF', borderRight: '1px solid #E5E7EB', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-              {/* Sub-tabs: Messages / Invitations */}
-              <div style={{ display: 'flex', borderBottom: '1px solid #E5E7EB' }}>
-                <button
-                  onClick={() => setMsgSubTab('messages')}
-                  style={{
-                    flex: 1, padding: '11px 0', background: 'none', border: 'none', cursor: 'pointer',
-                    fontWeight: msgSubTab === 'messages' ? 700 : 500, fontSize: '0.875rem',
-                    color: msgSubTab === 'messages' ? ACCENT : '#6B7280',
-                    borderBottom: msgSubTab === 'messages' ? `2px solid ${ACCENT}` : '2px solid transparent',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                  }}
-                >
-                  <SquarePen size={14} /> Messages
-                </button>
-                <button
-                  onClick={() => setMsgSubTab('invites')}
-                  style={{
-                    flex: 1, padding: '11px 0', background: 'none', border: 'none', cursor: 'pointer',
-                    fontWeight: msgSubTab === 'invites' ? 700 : 500, fontSize: '0.875rem',
-                    color: msgSubTab === 'invites' ? ACCENT : '#6B7280',
-                    borderBottom: msgSubTab === 'invites' ? `2px solid ${ACCENT}` : '2px solid transparent',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                    position: 'relative',
-                  }}
-                >
-                  <Bell size={14} /> Invitations
-                  {invites.length > 0 && (
-                    <span style={{
-                      position: 'absolute', top: 6, right: 18,
-                      background: ACCENT, color: '#fff', borderRadius: '50%',
-                      width: 16, height: 16, fontSize: '0.65rem', fontWeight: 700,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}>{invites.length}</span>
-                  )}
-                </button>
+            <div style={{ width: '33%', minWidth: 260, maxWidth: 360, background: '#FFFFFF', borderRight: '1px solid #E5E7EB', display: 'flex', flexDirection: 'column', flexShrink: 0, minHeight: 0 }}>
+              <div style={{ padding: '10px 14px', borderBottom: '1px solid #F3F4F6' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 8, padding: '7px 12px' }}>
+                  <Search size={14} color="#9CA3AF" />
+                  <input
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                    placeholder="Search conversations..."
+                    style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: '0.875rem', color: '#374151' }}
+                  />
+                </div>
               </div>
 
-              {msgSubTab === 'messages' ? (
-                <>
-                  <div style={{ padding: '12px 14px', borderBottom: '1px solid #F3F4F6' }}>
-                    <button
-                      onClick={openCompose}
-                      data-testid="new-message-btn"
-                      disabled={!communicationReady}
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: 6, width: '100%',
-                        padding: '8px 14px', background: ACCENT, border: 'none', borderRadius: 8,
-                        color: '#fff', fontWeight: 600, fontSize: '0.875rem',
-                        cursor: communicationReady ? 'pointer' : 'not-allowed',
-                        justifyContent: 'center', opacity: communicationReady ? 1 : 0.6,
-                      }}
-                      onMouseEnter={e => { if (communicationReady) e.currentTarget.style.background = '#EA6C0A' }}
-                      onMouseLeave={e => (e.currentTarget.style.background = ACCENT)}
-                    >
-                      <SquarePen size={14} strokeWidth={2.5} /> New Message
-                    </button>
+              <div style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
+                {filteredConversations.length === 0 ? (
+                  <div style={{ padding: 24, color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>
+                    {search ? 'No results' : 'No conversations yet'}
                   </div>
-
-                  <div style={{ padding: '10px 14px', borderBottom: '1px solid #F3F4F6' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 8, padding: '7px 12px' }}>
-                      <Search size={14} color="#9CA3AF" />
-                      <input
-                        value={search}
-                        onChange={e => setSearch(e.target.value)}
-                        placeholder="Search conversations..."
-                        style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: '0.875rem', color: '#374151' }}
-                      />
-                    </div>
-                  </div>
-
-                  <div style={{ overflowY: 'auto', flex: 1 }}>
-                    {filteredConversations.length === 0 ? (
-                      <div style={{ padding: 24, color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>
-                        {search ? 'No results' : 'No conversations yet'}
-                      </div>
-                    ) : filteredConversations.map(conv => (
-                      <button
-                        key={conv.partnerId}
-                        onClick={() => setSelectedConv(conv)}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: 10, padding: '13px 16px',
-                          background: selectedConv?.partnerId === conv.partnerId ? ACCENT_LIGHT : 'transparent',
-                          border: 'none', cursor: 'pointer', textAlign: 'left', width: '100%',
-                          borderBottom: '1px solid #F9FAFB', transition: 'background 0.1s',
-                        }}
-                      >
-                        <Avatar name={conv.partnerName} size={38} />
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
-                              <span style={{ fontWeight: conv.unreadCount > 0 ? 700 : 500, fontSize: '0.875rem', color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {conv.partnerName}
-                              </span>
-                              {conv.partnerDeleted && (
-                                <span style={{ background: '#F3F4F6', color: '#6B7280', fontSize: '11px', padding: '2px 8px', borderRadius: '20px', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                                  Account removed
-                                </span>
-                              )}
-                            </div>
-                            <span style={{ fontSize: '0.7rem', color: '#9CA3AF', flexShrink: 0, marginLeft: 6 }}>{formatTime(conv.lastTime)}</span>
-                          </div>
-                          {(conv.companyName || conv.partnerRole) && (
-                            <div style={{ fontSize: '0.75rem', color: '#9CA3AF', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {[conv.companyName, conv.partnerRole].filter(Boolean).join(' · ')}
-                            </div>
-                          )}
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                            <span style={{ fontSize: '0.8125rem', color: conv.unreadCount > 0 ? '#111827' : '#9CA3AF', fontWeight: conv.unreadCount > 0 ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                              {conv.lastMessage}
+                ) : filteredConversations.map(conv => (
+                  <button
+                    key={conv.partnerId}
+                    onClick={() => setSelectedConv(conv)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10, padding: '13px 16px',
+                      background: selectedConv?.partnerId === conv.partnerId ? ACCENT_LIGHT : 'transparent',
+                      border: 'none', cursor: 'pointer', textAlign: 'left', width: '100%',
+                      borderBottom: '1px solid #F9FAFB', transition: 'background 0.1s',
+                    }}
+                  >
+                    <Avatar name={conv.partnerName} size={38} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
+                          <span style={{ fontWeight: conv.unreadCount > 0 ? 700 : 500, fontSize: '0.875rem', color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {conv.partnerName}
+                          </span>
+                          {conv.partnerDeleted && (
+                            <span style={{ background: '#F3F4F6', color: '#6B7280', fontSize: '11px', padding: '2px 8px', borderRadius: '20px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                              Account removed
                             </span>
-                            {conv.unreadCount > 0 && (
-                              <div style={{ width: 8, height: 8, borderRadius: '50%', background: ACCENT, flexShrink: 0 }} />
-                            )}
-                          </div>
+                          )}
                         </div>
-                      </button>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                /* Invites list */
-                <div style={{ overflowY: 'auto', flex: 1, padding: '8px 0' }}>
-                  {inviteLoading ? (
-                    <div style={{ padding: 24, color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>Loading…</div>
-                  ) : invites.length === 0 ? (
-                    <div style={{ padding: 24, color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>No pending invitations</div>
-                  ) : invites.map(invite => (
-                    <div
-                      key={invite.id}
-                      style={{ margin: '8px 12px', padding: '14px 16px', background: '#FAFAFA', border: '1px solid #E5E7EB', borderRadius: 12 }}
-                    >
-                      <p style={{ margin: '0 0 4px', fontSize: '0.875rem', color: '#111827', fontWeight: 500 }}>
-                        <strong>{invite.sender_name}</strong> invited you to join{' '}
-                        <strong>{invite.company_name}</strong> as{' '}
-                        <span style={{ color: ACCENT }}>{invite.role}</span>
-                      </p>
-                      <p style={{ margin: '0 0 12px', fontSize: '0.75rem', color: '#9CA3AF' }}>{formatTime(invite.created_at)}</p>
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <button
-                          onClick={() => handleAcceptInvite(invite)}
-                          disabled={inviteActing === invite.id}
-                          style={{ flex: 1, padding: '7px 0', background: '#10B981', color: '#fff', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', cursor: inviteActing === invite.id ? 'not-allowed' : 'pointer', opacity: inviteActing === invite.id ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}
-                        >
-                          <Check size={13} /> Accept
-                        </button>
-                        <button
-                          onClick={() => handleDeclineInvite(invite)}
-                          disabled={inviteActing === invite.id}
-                          style={{ flex: 1, padding: '7px 0', background: '#fff', color: '#6B7280', border: '1.5px solid #E5E7EB', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', cursor: inviteActing === invite.id ? 'not-allowed' : 'pointer', opacity: inviteActing === invite.id ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}
-                        >
-                          <X size={13} /> Decline
-                        </button>
+                        <span style={{ fontSize: '0.7rem', color: '#9CA3AF', flexShrink: 0, marginLeft: 6 }}>{formatTime(conv.lastTime)}</span>
+                      </div>
+                      {(conv.companyName || conv.partnerRole) && (
+                        <div style={{ fontSize: '0.75rem', color: '#9CA3AF', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {[conv.companyName, conv.partnerRole].filter(Boolean).join(' · ')}
+                        </div>
+                      )}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                        <span style={{ fontSize: '0.8125rem', color: conv.unreadCount > 0 ? '#111827' : '#9CA3AF', fontWeight: conv.unreadCount > 0 ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                          {conv.lastMessage}
+                        </span>
+                        {conv.unreadCount > 0 && (
+                          <div style={{ width: 8, height: 8, borderRadius: '50%', background: ACCENT, flexShrink: 0 }} />
+                        )}
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            {/* Right: chat view (hidden on invites sub-tab) */}
-            <div style={{ flex: 1, display: msgSubTab === 'invites' ? 'none' : 'flex', flexDirection: 'column', overflow: 'hidden', background: '#F9FAFB' }}>
+            {/* Right: chat view */}
+            <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#F9FAFB' }}>
               {selectedConv ? (
                 <>
                   <div style={{ padding: '14px 24px', background: '#FFFFFF', borderBottom: '1px solid #E5E7EB', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
@@ -944,19 +887,10 @@ export default function EmployeeCommunicationPage() {
             </div>
           </div>
         )}
-      </main>
-
-      {/* Invite flash toasts */}
-      {inviteFlashes.length > 0 && (
-        <div style={{ position: 'fixed', bottom: 24, right: 24, display: 'flex', flexDirection: 'column', gap: 10, zIndex: 200 }}>
-          {inviteFlashes.map(f => (
-            <div key={f.id} style={{ background: '#111827', color: '#fff', padding: '12px 18px', borderRadius: 10, fontSize: '0.875rem', fontWeight: 500, boxShadow: '0 4px 16px rgba(0,0,0,0.18)', display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Check size={14} color="#10B981" />
-              {f.message}
-            </div>
-          ))}
+        </section>
+          </div>
         </div>
-      )}
+      </main>
 
       {/* Delete Announcement Confirmation */}
       {deleteConfirmId && (
@@ -1056,51 +990,57 @@ export default function EmployeeCommunicationPage() {
       {composeOpen && (
         <div
           onClick={() => { if (!composeSending) setComposeOpen(false) }}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}
         >
           <div
             onClick={e => e.stopPropagation()}
-            style={{ width: 460, background: '#fff', borderRadius: 16, boxShadow: '0 20px 60px rgba(0,0,0,0.18)', display: 'flex', flexDirection: 'column', maxHeight: '85vh', overflow: 'hidden' }}
+            className="comm-panel-card"
+            style={{ width: 480, background: '#fff', borderRadius: 18, boxShadow: '0 24px 70px rgba(0,0,0,0.18)', display: 'flex', flexDirection: 'column', maxHeight: '88vh', overflow: 'hidden' }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px 16px', borderBottom: '1px solid #F3F4F6' }}>
-              <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0 }}>New Message</h2>
+            <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 34, height: 34, borderRadius: 9, background: ACCENT_LIGHT, color: ACCENT, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <SquarePen size={15} />
+                </div>
+                <h2 style={{ fontWeight: 800, fontSize: '1rem', color: '#0F172A', margin: 0 }}>New Message</h2>
+              </div>
               <button onClick={() => setComposeOpen(false)} disabled={composeSending} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', display: 'flex', padding: 4, borderRadius: 6 }}>
                 <X size={18} />
               </button>
             </div>
 
-            <div style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 16, overflowY: 'auto', flex: 1 }}>
+            <div style={{ padding: '18px 24px', display: 'flex', flexDirection: 'column', gap: 16, overflowY: 'auto', flex: 1 }}>
               <div>
-                <p style={{ fontWeight: 600, fontSize: '0.8125rem', color: '#374151', margin: '0 0 10px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>To</p>
+                <p style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#374151', margin: '0 0 5px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>To</p>
                 {selectedRecipient ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: ACCENT_LIGHT, border: `1.5px solid ${ACCENT}33`, borderRadius: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 13px', background: ACCENT_LIGHT, border: `1.5px solid ${ACCENT}4D`, borderRadius: 11 }}>
                     <Avatar name={selectedRecipient.full_name} size={32} color={ROLE_COLOR[selectedRecipient.role] ?? ACCENT} />
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: 0 }}>{selectedRecipient.full_name}</p>
+                      <p style={{ fontWeight: 700, fontSize: 13.5, color: '#0F172A', margin: 0 }}>{selectedRecipient.full_name}</p>
                       <p style={{ fontSize: '0.75rem', color: '#9CA3AF', margin: 0 }}>{ROLE_LABEL[selectedRecipient.role] ?? selectedRecipient.role}</p>
                     </div>
                     <button onClick={() => setSelectedRecipient(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', display: 'flex', padding: 2 }}><X size={15} /></button>
                   </div>
                 ) : (
                   <>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#F9FAFB', border: '1.5px solid #E5E7EB', borderRadius: 9, padding: '8px 12px', marginBottom: 8 }}>
-                      <Search size={14} color="#9CA3AF" />
-                      <input autoFocus value={composeSearch} onChange={e => setComposeSearch(e.target.value)} placeholder="Search people…" style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: '0.875rem', color: '#374151' }} />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: 10, padding: '8px 12px', marginBottom: 8 }}>
+                      <Search size={13} color="#9CA3AF" />
+                      <input autoFocus value={composeSearch} onChange={e => setComposeSearch(e.target.value)} placeholder="Search people..." style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: 13, color: '#374151', fontWeight: 500 }} />
                     </div>
                     <div style={{ maxHeight: 220, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
                       {filteredMembers.length === 0 ? (
-                        <p style={{ fontSize: '0.875rem', color: '#9CA3AF', textAlign: 'center', padding: '12px 0', margin: 0 }}>No people found</p>
+                        <p style={{ fontSize: 13, color: '#9CA3AF', textAlign: 'center', padding: '14px 0', margin: 0, fontWeight: 500 }}>No people found</p>
                       ) : filteredMembers.map(m => {
                         const roleColor = ROLE_COLOR[m.role] ?? '#9CA3AF'
                         return (
                           <button key={m.id} onClick={() => setSelectedRecipient(m)}
-                            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', background: 'none', border: '1px solid transparent', borderRadius: 9, cursor: 'pointer', textAlign: 'left', width: '100%', transition: 'background 0.1s' }}
-                            onMouseEnter={e => { e.currentTarget.style.background = '#F9FAFB'; e.currentTarget.style.borderColor = '#E5E7EB' }}
+                            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', background: 'none', border: '1px solid transparent', borderRadius: 10, cursor: 'pointer', textAlign: 'left', width: '100%', transition: 'background 0.12s' }}
+                            onMouseEnter={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.borderColor = '#E2E8F0' }}
                             onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.borderColor = 'transparent' }}
                           >
                             <Avatar name={m.full_name} size={34} color={roleColor} />
                             <div style={{ flex: 1, minWidth: 0 }}>
-                              <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.full_name}</p>
+                              <p style={{ fontWeight: 700, fontSize: 13, color: '#0F172A', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.full_name}</p>
                               <p style={{ fontSize: '0.75rem', margin: 0, color: roleColor, fontWeight: 500 }}>{ROLE_LABEL[m.role] ?? m.role}</p>
                             </div>
                           </button>
@@ -1113,26 +1053,27 @@ export default function EmployeeCommunicationPage() {
 
               {selectedRecipient && (
                 <div>
-                  <p style={{ fontWeight: 600, fontSize: '0.8125rem', color: '#374151', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Message</p>
+                  <p style={{ display: 'block', fontSize: 12, fontWeight: 700, color: '#374151', margin: '0 0 5px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Message</p>
                   <textarea autoFocus value={composeText} onChange={e => setComposeText(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && composeText.trim()) { e.preventDefault(); handleComposeSend() } }}
-                    placeholder="Type your message…" rows={4}
-                    style={{ width: '100%', padding: '10px 12px', border: '1.5px solid #E5E7EB', borderRadius: 9, fontSize: '0.9375rem', color: '#111827', outline: 'none', boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.5 }}
+                    placeholder="Type your message..." rows={4}
+                    className="comm-textarea"
+                    style={{ width: '100%', padding: '10px 12px', border: '1.5px solid #E2E8F0', borderRadius: 9, fontSize: 13, color: '#0F172A', outline: 'none', boxSizing: 'border-box', resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.55, background: '#FAFBFC', fontWeight: 500 }}
                   />
                 </div>
               )}
 
               {composeError && (
-                <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>
+                <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 9, padding: '10px 14px', fontSize: 12.5, color: '#DC2626', fontWeight: 600 }}>
                   {composeError}
                 </div>
               )}
             </div>
 
-            <div style={{ display: 'flex', gap: 10, padding: '14px 24px', borderTop: '1px solid #F3F4F6' }}>
-              <button onClick={() => setComposeOpen(false)} disabled={composeSending} style={{ flex: 1, padding: '10px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: 9, fontWeight: 600, fontSize: '0.9rem', color: '#6B7280', cursor: composeSending ? 'not-allowed' : 'pointer' }}>Cancel</button>
+            <div style={{ display: 'flex', gap: 10, padding: '14px 24px', borderTop: '1px solid #F0F4F8' }}>
+              <button onClick={() => setComposeOpen(false)} disabled={composeSending} style={{ flex: 1, height: 40, background: 'none', border: '1.5px solid #E2E8F0', borderRadius: 10, fontWeight: 700, fontSize: 13, color: '#64748B', cursor: composeSending ? 'not-allowed' : 'pointer' }}>Cancel</button>
               <button onClick={handleComposeSend} disabled={composeSending || !selectedRecipient || !composeText.trim()}
-                style={{ flex: 1, padding: '10px', background: ACCENT, border: 'none', borderRadius: 9, fontWeight: 600, fontSize: '0.9rem', color: '#fff', cursor: (composeSending || !selectedRecipient || !composeText.trim()) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, opacity: (composeSending || !selectedRecipient || !composeText.trim()) ? 0.55 : 1, transition: 'opacity 0.15s' }}
+                style={{ flex: 1, height: 40, background: ACCENT, border: 'none', borderRadius: 10, fontWeight: 700, fontSize: 13, color: '#fff', cursor: (composeSending || !selectedRecipient || !composeText.trim()) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, opacity: (composeSending || !selectedRecipient || !composeText.trim()) ? 0.55 : 1, transition: 'opacity 0.15s' }}
               >
                 {composeSending
                   ? <svg className="animate-spin" width={15} height={15} viewBox="0 0 18 18"><circle cx="9" cy="9" r="7" stroke="rgba(255,255,255,0.35)" strokeWidth="2.5" fill="none" /><path d="M9 2a7 7 0 0 1 7 7" stroke="white" strokeWidth="2.5" strokeLinecap="round" fill="none" /></svg>

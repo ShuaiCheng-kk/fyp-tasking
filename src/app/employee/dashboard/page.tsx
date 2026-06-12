@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
+import { UserRound } from 'lucide-react'
 import EmployeeSidebar from '@/components/EmployeeSidebar'
 
 const GREEN = '#16A34A'
@@ -179,9 +180,9 @@ export default function EmployeeDashboard() {
       <EmployeeSidebar />
 
       <main style={mainStyle}>
-        <Header title={loading ? '' : title} userName={userName} />
+        <Header title={loading ? 'Dashboard' : title} userName={userName} />
 
-        <div style={{ padding: '18px 22px', flex: 1 }}>
+        <div style={{ padding: '0 28px 28px', flex: 1 }}>
           {loading ? (
             <p style={{ color: '#6B7280', fontSize: '0.82rem' }}>
               Loading assigned work...
@@ -227,16 +228,21 @@ export default function EmployeeDashboard() {
 function Header({ title, userName }: { title: string; userName: string }) {
   return (
     <div style={headerStyle}>
-      <h1 style={headerTitleStyle}>{title}</h1>
+      <div>
+        <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
+          Dashboard
+        </h1>
+      </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
         {userName && (
-          <span style={{ fontSize: '0.8rem', color: '#FFFFFF' }}>
-            {userName}
-          </span>
+          <div style={userPillStyle}>
+            <span style={userPillIconStyle}>
+              <UserRound size={13} />
+            </span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{userName}</span>
+          </div>
         )}
-
-        <span style={roleBadgeStyle}>Employee</span>
       </div>
     </div>
   )
@@ -288,8 +294,8 @@ function CalendarPanel({
                 ...calendarDayStyle,
                 opacity: isCurrentMonth ? 1 : 0.35,
                 background: isSelected ? GREEN : '#FFFFFF',
-                color: isSelected ? '#FFFFFF' : '#14532D',
-                border: isSelected ? `1px solid ${GREEN}` : '1px solid #DCFCE7',
+                color: isSelected ? '#FFFFFF' : '#374151',
+                border: isSelected ? `1px solid ${GREEN}` : '1px solid #E5E7EB',
               }}
             >
               <span>{day.date.getDate()}</span>
@@ -506,7 +512,7 @@ function formatTime(timeValue: string) {
 const pageStyle: CSSProperties = {
   display: 'flex',
   height: '100vh',
-  background: '#F0FDF4',
+  background: '#F7F8FA',
   fontFamily: 'var(--font-body)',
 }
 
@@ -520,23 +526,24 @@ const mainStyle: CSSProperties = {
 }
 
 const headerStyle: CSSProperties = {
-  padding: '19px 24px',
-  background: GREEN,
-  borderBottom: '1px solid #15803D',
+  padding: '20px 28px 16px',
   display: 'flex',
-  alignItems: 'center',
+  alignItems: 'flex-start',
   justifyContent: 'space-between',
-  position: 'sticky',
-  top: 0,
-  zIndex: 10,
+  gap: 24,
+  flexShrink: 0,
 }
 
-const headerTitleStyle: CSSProperties = {
-  fontWeight: 700, 
-  fontSize: '1.1875rem',
-  color: '#FFFFFF',
-  margin: 0,
-  fontFamily: 'system-ui, -apple-system, sans-serif',
+const userPillStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  height: 36,
+  background: '#fff',
+  border: '1.5px solid #E5E7EB',
+  borderRadius: 999,
+  padding: '0 14px 0 6px',
+  boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
 }
 
 const roleBadgeStyle: CSSProperties = {
@@ -547,14 +554,14 @@ const roleBadgeStyle: CSSProperties = {
   background: 'rgba(255,255,255,0.2)',
   boxShadow: '0 2px 8px rgba(15,23,42,0.12)',
   color: '#FFFFFF',
+  flexShrink: 0,
 }
 
 const sectionStyle: CSSProperties = {
   background: '#FFFFFF',
   borderRadius: '12px',
   padding: '18px',
-  border: '1px solid #DCFCE7',
-  boxShadow: '0 4px 10px rgba(22, 163, 74, 0.06)',
+  border: '1px solid #E5E7EB',
 }
 
 const sectionHeaderStyle: CSSProperties = {
@@ -573,11 +580,6 @@ const headingStyle: CSSProperties = {
   margin: 0,
 }
 
-const subTextStyle: CSSProperties = {
-  margin: 0,
-  color: '#6B7280',
-  fontSize: '0.8rem',
-}
 
 const layoutStyle: CSSProperties = {
   display: 'grid',
@@ -587,14 +589,14 @@ const layoutStyle: CSSProperties = {
 }
 
 const calendarCardStyle: CSSProperties = {
-  border: '1px solid #BBF7D0',
+  border: '1px solid #E5E7EB',
   borderRadius: '14px',
   padding: '16px',
-  background: '#F0FDF4',
+  background: '#F8FAFC',
 }
 
 const timelineCardStyle: CSSProperties = {
-  border: '1px solid #BBF7D0',
+  border: '1px solid #E5E7EB',
   borderRadius: '14px',
   padding: '16px',
   background: '#FFFFFF',
@@ -602,9 +604,9 @@ const timelineCardStyle: CSSProperties = {
 
 const cardTitleStyle: CSSProperties = {
   margin: '0 0 14px',
-  color: '#14532D',
+  color: '#111827',
   fontSize: '1rem',
-  fontWeight: 900,
+  fontWeight: 700,
 }
 
 const weekGridStyle: CSSProperties = {
@@ -618,7 +620,7 @@ const weekDayStyle: CSSProperties = {
   textAlign: 'center',
   fontSize: '0.7rem',
   fontWeight: 800,
-  color: GREEN,
+  color: '#6B7280',
 }
 
 const calendarGridStyle: CSSProperties = {
@@ -649,13 +651,13 @@ const timeColumnStyle: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
   fontSize: '0.74rem',
-  color: '#14532D',
+  color: '#374151',
   paddingTop: '4px',
 }
 
 const timelineLineStyle: CSSProperties = {
   position: 'relative',
-  borderLeft: '2px solid #BBF7D0',
+  borderLeft: '2px solid #E5E7EB',
   minHeight: '100%',
 }
 
@@ -673,15 +675,15 @@ const timelineDotStyle: CSSProperties = {
 const workCardStyle: CSSProperties = {
   padding: '14px',
   borderRadius: '12px',
-  border: '1px solid #BBF7D0',
-  background: '#F0FDF4',
+  border: '1px solid #E5E7EB',
+  background: '#F8FAFC',
 }
 
 const labelStyle: CSSProperties = {
   margin: '0 0 4px',
   fontSize: '0.65rem',
   fontWeight: 900,
-  color: GREEN,
+  color: '#6B7280',
   textTransform: 'uppercase',
   letterSpacing: '0.04em',
 }
@@ -689,8 +691,8 @@ const labelStyle: CSSProperties = {
 const workTitleStyle: CSSProperties = {
   margin: '0 0 12px',
   fontSize: '1rem',
-  fontWeight: 900,
-  color: '#14532D',
+  fontWeight: 700,
+  color: '#111827',
 }
 
 const infoGridStyle: CSSProperties = {
@@ -704,14 +706,14 @@ const infoBoxStyle: CSSProperties = {
   padding: '10px 12px',
   borderRadius: '10px',
   background: '#FFFFFF',
-  border: '1px solid #BBF7D0',
+  border: '1px solid #E5E7EB',
 }
 
 const infoLabelStyle: CSSProperties = {
   margin: '0 0 5px',
   fontSize: '0.65rem',
   fontWeight: 800,
-  color: GREEN,
+  color: '#6B7280',
   textTransform: 'uppercase',
   letterSpacing: '0.04em',
 }
@@ -725,13 +727,13 @@ const infoValueStyle: CSSProperties = {
 
 const smallTitleStyle: CSSProperties = {
   margin: '12px 0 8px',
-  color: '#14532D',
+  color: '#374151',
   fontSize: '0.84rem',
-  fontWeight: 900,
+  fontWeight: 700,
 }
 
 const cwListStyle: CSSProperties = {
-  border: '1px solid #BBF7D0',
+  border: '1px solid #E5E7EB',
   borderRadius: '10px',
   background: '#FFFFFF',
   overflow: 'hidden',
@@ -743,7 +745,7 @@ const cwRowStyle: CSSProperties = {
   alignItems: 'center',
   justifyContent: 'space-between',
   gap: '10px',
-  borderBottom: '1px solid #DCFCE7',
+  borderBottom: '1px solid #F3F4F6',
 }
 
 const cwNameStyle: CSSProperties = {
@@ -774,8 +776,8 @@ const instructionStyle: CSSProperties = {
 const emptyBoxStyle: CSSProperties = {
   padding: '14px',
   borderRadius: '10px',
-  border: '1px dashed #BBF7D0',
-  background: '#F0FDF4',
+  border: '1px dashed #D1D5DB',
+  background: '#F9FAFB',
   color: '#6B7280',
   fontSize: '0.82rem',
 }
@@ -795,7 +797,7 @@ const modalBoxStyle: CSSProperties = {
   background: '#FFFFFF',
   borderRadius: '14px',
   padding: '18px',
-  border: '1px solid #BBF7D0',
+  border: '1px solid #E5E7EB',
   boxShadow: '0 20px 40px rgba(0,0,0,0.18)',
   display: 'grid',
   gap: '10px',
@@ -804,8 +806,8 @@ const modalBoxStyle: CSSProperties = {
 const modalTitleStyle: CSSProperties = {
   margin: '0 0 6px',
   fontSize: '1rem',
-  fontWeight: 900,
-  color: '#14532D',
+  fontWeight: 700,
+  color: '#111827',
 }
 
 const closeButtonStyle: CSSProperties = {

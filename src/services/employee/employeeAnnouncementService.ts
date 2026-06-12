@@ -5,6 +5,9 @@ export const employeeAnnouncementService = {
 
   async getAnnouncements(auth_user_id: string): Promise<{
     id: string
+    from_user_id: string
+    company_id: string
+    department_id: string | null
     title: string
     content: string
     created_at: string
