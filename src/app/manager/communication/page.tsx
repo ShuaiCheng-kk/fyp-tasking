@@ -93,21 +93,6 @@ function formatTime(iso: string) {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
 }
 
-function getReadIdsKey(companyId: string, userId: string) {
-  return `ann_read_ids_${companyId}_${userId}`
-}
-
-function loadReadIds(companyId: string, userId: string): Set<string> {
-  try {
-    const raw = localStorage.getItem(getReadIdsKey(companyId, userId))
-    if (raw) return new Set(JSON.parse(raw))
-  } catch {}
-  return new Set()
-}
-
-function saveReadIds(companyId: string, userId: string, ids: Set<string>) {
-  localStorage.setItem(getReadIdsKey(companyId, userId), JSON.stringify([...ids]))
-}
 
 function hashColor(name: string): string {
   const palette = ['#2563EB', '#8B5CF6', '#0EA5E9', '#10B981', '#EC4899', '#F97316', '#D97706', '#6366F1']
@@ -243,7 +228,12 @@ export default function ManagerCommunicationPage() {
             setManagerName(d.user.full_name ?? '')
             setUserRole(d.user.role ?? '')
             setUserDeptId(d.user.department_id ?? null)
-            if (cid) setReadIds(loadReadIds(cid, d.user.id))
+            if (cid) {
+              fetch(`/api/inbox/announcements/read?user_id=${d.user.id}&company_id=${cid}`)
+                .then(r => r.json())
+                .then(rd => { if (rd.success) setReadIds(new Set(rd.readIds)) })
+                .catch(() => {})
+            }
           }
         })
     }
@@ -285,18 +275,17 @@ export default function ManagerCommunicationPage() {
 
   useEffect(() => {
     if (!internalUserId || !companyId || announcements.length === 0) return
+    const unreadIds = announcements.filter(a => !readIds.has(a.id)).map(a => a.id)
+    if (unreadIds.length === 0) return
     const next = new Set(readIds)
-    let changed = false
-    announcements.forEach(ann => {
-      if (!next.has(ann.id)) {
-        next.add(ann.id)
-        changed = true
-      }
-    })
-    if (!changed) return
+    unreadIds.forEach(id => next.add(id))
     setReadIds(next)
-    saveReadIds(companyId, internalUserId, next)
-  }, [announcements, companyId, internalUserId, readIds])
+    fetch('/api/inbox/announcements/read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: internalUserId, announcement_ids: unreadIds }),
+    }).catch(() => {})
+  }, [announcements, companyId, internalUserId])
 
   useEffect(() => {
     if (!companyId) return
@@ -456,11 +445,16 @@ export default function ManagerCommunicationPage() {
 
   function handleSelectAnn(ann: Announcement) {
     setSelectedAnn(ann)
-    if (!companyId || !internalUserId) return
+    if (!internalUserId) return
+    if (readIds.has(ann.id)) return
     const next = new Set(readIds)
     next.add(ann.id)
     setReadIds(next)
-    saveReadIds(companyId, internalUserId, next)
+    fetch('/api/inbox/announcements/read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: internalUserId, announcement_ids: [ann.id] }),
+    }).catch(() => {})
   }
 
   const unreadAnnCount = announcements.filter(a => !readIds.has(a.id)).length

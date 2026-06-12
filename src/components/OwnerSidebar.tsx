@@ -17,12 +17,12 @@ import {
 import { createBrowserClient } from '@supabase/ssr'
 
 const NAV_ITEMS = [
-  { label: 'Dashboard',     Icon: LayoutDashboard, href: '/owner/dashboard',       dot: null as 'messages' | 'announcements' | null },
+  { label: 'Dashboard',     Icon: LayoutDashboard, href: '/owner/dashboard',       dot: null as 'messages' | 'announcements' | 'review' | null },
   { label: 'Shifts',        Icon: CalendarDays,    href: '/owner/shifts',          dot: null },
   { label: 'Tasks',         Icon: CheckSquare,     href: '/owner/tasks',           dot: null },
   { label: 'Team',          Icon: Users,            href: '/owner/team',            dot: null },
   { label: 'Communication', Icon: MessageCircle,    href: '/owner/communication',   dot: 'messages' as const },
-  { label: 'Recruitment',   Icon: UserPlus,         href: '/owner/recruitment',     dot: null },
+  { label: 'Recruitment',   Icon: UserPlus,         href: '/owner/recruitment',     dot: 'review' as const },
   { label: 'Attendance',    Icon: ClipboardList,    href: '/owner/attendance',      dot: null },
   { label: 'Report',        Icon: BarChart2,        href: '/owner/report',          dot: null },
 ]
@@ -60,6 +60,7 @@ export default function OwnerSidebar({
   const theme = OWNER_THEME
   const [msgCount, setMsgCount] = useState(unreadMessages ?? 0)
   const [annCount, setAnnCount] = useState(unreadAnnouncements ?? 0)
+  const [reviewCount, setReviewCount] = useState(0)
 
   useEffect(() => {
     const authUid = typeof localStorage !== 'undefined' ? localStorage.getItem('tasking_user_id') : null
@@ -78,6 +79,12 @@ export default function OwnerSidebar({
         fetch(`/api/inbox/unread-count?user_id=${internalId}&company_id=${cid}`)
           .then(r => r.json())
           .then(data => { if (data.success) setMsgCount(data.unread_messages ?? 0) })
+          .catch(() => {})
+
+        // Pending review jobs
+        fetch(`/api/recruitment?company_id=${cid}&resource=pending_approval`)
+          .then(r => r.json())
+          .then(data => { if (data.success) setReviewCount((data.pendingPostings as unknown[]).length ?? 0) })
           .catch(() => {})
 
         // Unread announcements: from localStorage per-ID read set (page writes this)
@@ -112,6 +119,21 @@ export default function OwnerSidebar({
           }, () => { setMsgCount(c => c + 1) })
           .subscribe()
 
+        const refreshReviewCount = () => {
+          fetch(`/api/recruitment?company_id=${cid}&resource=pending_approval`)
+            .then(r => r.json())
+            .then(data => { if (data.success) setReviewCount((data.pendingPostings as unknown[]).length ?? 0) })
+            .catch(() => {})
+        }
+
+        const reviewChannel = supabase
+          .channel('owner-sidebar-review')
+          .on('postgres_changes', {
+            event: 'UPDATE', schema: 'public', table: 'job_postings',
+            filter: `company_id=eq.${cid}`,
+          }, refreshReviewCount)
+          .subscribe()
+
         const refreshAnnCount = () => {
           const rkey = `ann_read_ids_${cid}_${internalId}`
           let rids: Set<string> = new Set()
@@ -134,9 +156,17 @@ export default function OwnerSidebar({
         return () => {
           supabase.removeChannel(msgChannel)
           supabase.removeChannel(annChannel)
+          supabase.removeChannel(reviewChannel)
         }
       })
       .catch(() => {})
+  }, [])
+
+  // Clear review dot when user opens the Review tab (event from the page)
+  useEffect(() => {
+    const handler = () => setReviewCount(0)
+    window.addEventListener('recruitment-review-opened', handler)
+    return () => window.removeEventListener('recruitment-review-opened', handler)
   }, [])
 
   // When user opens communication page, mark all announcements as read in localStorage
@@ -243,7 +273,7 @@ export default function OwnerSidebar({
       <nav style={{ flex: 1, padding: '12px 8px', overflow: 'hidden' }}>
         {visibleNavItems.map(({ label, Icon, href, dot }) => {
           const active = pathname === href
-          const showDot = dot === 'messages' ? msgCount > 0 : dot === 'announcements' ? annCount > 0 : false
+          const showDot = dot === 'messages' ? msgCount > 0 : dot === 'announcements' ? annCount > 0 : dot === 'review' ? reviewCount > 0 : false
           return (
             <a
               key={label}

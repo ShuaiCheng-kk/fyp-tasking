@@ -9,6 +9,47 @@ export const recruitmentService = {
     return recruitmentRepository.getPublicJobPostings()
   },
 
+  async getJobPostingsByDepartment(company_id: string, department_id: string): Promise<JobPostingSummary[]> {
+    if (!company_id || !department_id) throw new Error('company_id and department_id are required')
+    const postings = await recruitmentRepository.getJobPostingsByDepartment(company_id, department_id)
+    const applicantRows = await recruitmentRepository.getApplicantCounts(postings.map(posting => posting.id))
+    const deptIds = [...new Set(postings.map(posting => posting.department_id).filter((id): id is string => Boolean(id)))]
+    const departments = await recruitmentRepository.getDepartmentsByIds(deptIds)
+    const deptMap = new Map(departments.map(department => [department.id, department.name]))
+    const empIds = [...new Set(postings.map(posting => posting.assigned_employee_id).filter((id): id is string => Boolean(id)))]
+    const employees = await recruitmentRepository.getUsersByIds(empIds)
+    const empMap = new Map(employees.map(e => [e.id, e.full_name]))
+    return postings.map(posting => ({
+      ...posting,
+      department_name: posting.department_id ? deptMap.get(posting.department_id) ?? null : null,
+      applicant_count: applicantRows.filter(row => row.job_id === posting.id).length,
+      pending_count: applicantRows.filter(row => row.job_id === posting.id && row.status === 'pending').length,
+      assigned_employee_name: posting.assigned_employee_id ? empMap.get(posting.assigned_employee_id) ?? null : null,
+    }))
+  },
+
+  async getJobPostingsForManager(company_id: string, manager_id: string): Promise<JobPostingSummary[]> {
+    if (!company_id || !manager_id) throw new Error('company_id and manager_id are required')
+    const deptIds = await recruitmentRepository.getManagerDepartmentIds(manager_id, company_id)
+    const postings = await recruitmentRepository.getJobPostingsByManagerDepts(company_id, deptIds)
+    const applicantRows = await recruitmentRepository.getApplicantCounts(postings.map(p => p.id))
+    const uniqueDeptIds = [...new Set(postings.map(p => p.department_id).filter((id): id is string => Boolean(id)))]
+    const empIds = [...new Set(postings.map(p => p.assigned_employee_id).filter((id): id is string => Boolean(id)))]
+    const [departments, employees] = await Promise.all([
+      recruitmentRepository.getDepartmentsByIds(uniqueDeptIds),
+      recruitmentRepository.getUsersByIds(empIds),
+    ])
+    const deptMap = new Map(departments.map(d => [d.id, d.name]))
+    const empMap = new Map(employees.map(e => [e.id, e.full_name]))
+    return postings.map(posting => ({
+      ...posting,
+      department_name: posting.department_id ? deptMap.get(posting.department_id) ?? null : null,
+      applicant_count: applicantRows.filter(r => r.job_id === posting.id).length,
+      pending_count: applicantRows.filter(r => r.job_id === posting.id && r.status === 'pending').length,
+      assigned_employee_name: posting.assigned_employee_id ? empMap.get(posting.assigned_employee_id) ?? null : null,
+    }))
+  },
+
   async getJobPostings(company_id: string): Promise<JobPostingSummary[]> {
     if (!company_id) throw new Error('company_id is required')
     const postings = await recruitmentRepository.getJobPostingsByCompany(company_id)
@@ -65,6 +106,11 @@ export const recruitmentService = {
   async publishDraft(id: string): Promise<JobPosting> {
     if (!id) throw new Error('job_id is required')
     return recruitmentRepository.updateJobPosting(id, { status: 'open' })
+  },
+
+  async submitForReview(id: string): Promise<JobPosting> {
+    if (!id) throw new Error('job_id is required')
+    return recruitmentRepository.updateJobPosting(id, { status: 'pending_approval' })
   },
 
   async deleteDraft(id: string): Promise<void> {
@@ -161,9 +207,10 @@ export const recruitmentService = {
     return recruitmentRepository.approveJobPosting(id)
   },
 
-  async rejectJobPosting(id: string): Promise<JobPosting> {
+  async rejectJobPosting(id: string, rejection_reason: string): Promise<JobPosting> {
     if (!id) throw new Error('job_id is required')
-    return recruitmentRepository.rejectJobPosting(id)
+    if (!rejection_reason?.trim()) throw new Error('rejection_reason is required')
+    return recruitmentRepository.rejectJobPosting(id, rejection_reason.trim())
   },
 
   async getCasualWorkers(company_id: string): Promise<CasualWorkerStatus[]> {

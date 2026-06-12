@@ -71,4 +71,22 @@ export const ownerAnnouncementRepository = {
     if (error) throw error
   },
 
+  async markAnnouncementsRead(userId: string, announcementIds: string[]) {
+    if (announcementIds.length === 0) return
+    const rows = announcementIds.map(id => ({ user_id: userId, announcement_id: id }))
+    const { error } = await supabase
+      .from('announcement_reads')
+      .upsert(rows, { onConflict: 'user_id,announcement_id', ignoreDuplicates: true })
+    if (error) throw error
+  },
+
+  async getReadAnnouncementIds(userId: string, companyId: string): Promise<string[]> {
+    const { data, error } = await supabase
+      .from('announcement_reads')
+      .select('announcement_id')
+      .eq('user_id', userId)
+    if (error) throw error
+    return (data ?? []).map((r: any) => r.announcement_id)
+  },
+
 }

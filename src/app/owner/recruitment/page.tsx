@@ -330,6 +330,9 @@ export default function OwnerRecruitmentPage() {
   const [draftsSelected, setDraftsSelected] = useState<Set<string>>(new Set())
   const [selectedPendingId, setSelectedPendingId] = useState('')
   const [jobsSelected, setJobsSelected] = useState<Set<string>>(new Set())
+  const [rejectModalOpen, setRejectModalOpen] = useState(false)
+  const [rejectReason, setRejectReason] = useState('')
+  const [pendingRejectId, setPendingRejectId] = useState('')
 
   // draft action menu (... button)
   const [draftMenuOpen, setDraftMenuOpen] = useState(false)
@@ -528,7 +531,7 @@ export default function OwnerRecruitmentPage() {
         if (savedShiftDate && !dateMap.has(savedShiftDate)) {
           dateMap.set(savedShiftDate, { start_time: savedShiftStart, end_time: savedShiftEnd })
         }
-        setShiftAvailableDates(Array.from(dateMap.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([date, t]) => ({ date, start_time: t.start_time, end_time: t.end_time })))
+        setShiftAvailableDates(Array.from(dateMap.entries()).sort(([a], [b]) => a.localeCompare(b)).filter(([date]) => date >= new Date().toISOString().slice(0, 10)).map(([date, t]) => ({ date, start_time: t.start_time, end_time: t.end_time })))
 
         setFormShiftDate(savedShiftDate)
         if (savedShiftDate) {
@@ -710,18 +713,25 @@ export default function OwnerRecruitmentPage() {
     } finally { setActionLoading(false) }
   }
 
-  const decidePosting = async (jobId: string, decision: 'approve_posting' | 'reject_posting') => {
+  const decidePosting = async (jobId: string, decision: 'approve_posting' | 'reject_posting', rejection_reason?: string) => {
     setActionLoading(true); setError('')
     try {
       const res = await fetch('/api/recruitment', {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: decision, job_id: jobId }),
+        body: JSON.stringify({ action: decision, job_id: jobId, rejection_reason: rejection_reason ?? '' }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to update posting')
       setSelectedPendingId('')
+      setRejectModalOpen(false); setRejectReason(''); setPendingRejectId('')
       await fetchAll(companyId, internalUserId)
-      showToast(decision === 'approve_posting' ? 'Job approved' : 'Job rejected')
+      if (decision === 'approve_posting') {
+        setActiveTab('jobs')
+        setSelectedLiveId(jobId)
+        showToast('Job approved and moved to Jobs')
+      } else {
+        showToast('Job rejected')
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update posting')
     } finally { setActionLoading(false) }
@@ -983,17 +993,21 @@ export default function OwnerRecruitmentPage() {
               return (
                 <button
                   key={tab.key}
-                  onClick={() => { setActiveTab(tab.key); setSelectedArchivedId(''); setArchivedSelected(new Set()); setSelectedDraftId(''); setSelectedPendingId(''); setJobsSelected(new Set()) }}
+                  onClick={() => { setActiveTab(tab.key); setSelectedArchivedId(''); setArchivedSelected(new Set()); setSelectedDraftId(''); setSelectedPendingId(''); setJobsSelected(new Set()); if (tab.key === 'review') window.dispatchEvent(new CustomEvent('recruitment-review-opened')) }}
                   style={{
                     padding: '5px 13px', borderRadius: '99px', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem',
                     border: active ? '2px solid #F97316' : '2px solid #E5E7EB',
                     background: active ? '#F97316' : 'transparent',
                     color: active ? '#FFFFFF' : '#374151',
                     display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
+                    position: 'relative',
                   }}
                 >
                   <tab.Icon size={13} />
                   {tab.label}
+                  {tab.key === 'review' && pendingPostings.length > 0 && activeTab !== 'review' && (
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#EF4444', flexShrink: 0 }} />
+                  )}
                 </button>
               )
             })}
@@ -1101,7 +1115,10 @@ export default function OwnerRecruitmentPage() {
                     >
                       {/* Badge row above title */}
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                        {statusBadge(p.status)}
+                        {p.department_name
+                          ? <span style={{ fontSize: '0.7rem', background: '#FFF7ED', color: '#C2410C', borderRadius: 6, padding: '2px 8px', fontWeight: 600 }}>{p.department_name}</span>
+                          : <span style={{ fontSize: '0.7rem', background: '#F1F5F9', color: '#64748B', borderRadius: 6, padding: '2px 8px', fontWeight: 600 }}>Company-wide</span>
+                        }
                         <button
                           type="button"
                           onClick={e => { e.stopPropagation(); setJobsSelected(prev => { const s = new Set(prev); checked ? s.delete(p.id) : s.add(p.id); return s }) }}
@@ -1768,6 +1785,7 @@ export default function OwnerRecruitmentPage() {
                         cursor: 'pointer',
                         boxShadow: isSelected ? '0 0 0 3px rgba(249,115,22,0.10)' : '0 1px 3px rgba(0,0,0,0.06)',
                         transition: 'border-color 0.15s, box-shadow 0.15s, transform 0.15s',
+                        position: 'relative',
                       }}
                       onMouseEnter={e => {
                         if (isSelected) return
@@ -1782,9 +1800,21 @@ export default function OwnerRecruitmentPage() {
                         e.currentTarget.style.borderColor = '#E5E7EB'
                       }}
                     >
-                      <strong style={{ fontSize: '0.875rem', color: '#1C1C1E', lineHeight: 1.4, display: 'block', marginBottom: 8 }}>{p.title}</strong>
-                      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                        <span style={{ fontSize: '0.725rem', color: '#C4C9D4' }}>{new Date(p.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                      {/* Red dot indicator */}
+                      {!isSelected && (
+                        <span style={{ position: 'absolute', top: 10, right: 10, width: 8, height: 8, borderRadius: '50%', background: '#EF4444', border: '1.5px solid #fff' }} />
+                      )}
+                      {/* Badge row */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                        {p.department_name
+                          ? <span style={{ fontSize: '0.7rem', background: '#FFF7ED', color: '#C2410C', borderRadius: 6, padding: '2px 8px', fontWeight: 600 }}>{p.department_name}</span>
+                          : <span style={{ fontSize: '0.7rem', background: '#F1F5F9', color: '#64748B', borderRadius: 6, padding: '2px 8px', fontWeight: 600 }}>Company-wide</span>
+                        }
+                      </div>
+                      {/* Title + date row */}
+                      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10 }}>
+                        <strong style={{ fontSize: '0.9rem', color: '#1C1C1E', lineHeight: 1.4, flex: 1, minWidth: 0 }}>{p.title}</strong>
+                        <span style={{ fontSize: '0.75rem', color: '#C4C9D4', flexShrink: 0 }}>{new Date(p.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
                       </div>
                     </div>
                   )
@@ -1804,45 +1834,146 @@ export default function OwnerRecruitmentPage() {
                   </div>
                 ) : (
                   <>
-                    <div style={{ padding: '20px 24px 18px', borderBottom: '1px solid #F0F4F8', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                          <h2 style={{ margin: 0, fontSize: '1.1rem', color: '#111827', fontWeight: 700, lineHeight: 1.3 }}>{selectedPending.title}</h2>
-                          {statusBadge('pending_approval')}
-                        </div>
-                        <p style={{ margin: 0, color: '#9CA3AF', fontSize: '0.8375rem' }}>
-                          {[selectedPending.department_name ?? 'Any department', selectedPending.employment_type].filter(Boolean).join(' · ')}
-                          {' · '}Submitted by <strong style={{ color: '#374151' }}>{selectedPending.submitter_name ?? 'Manager'}</strong>
-                          {' · '}{new Date(selectedPending.created_at).toLocaleDateString()}
-                        </p>
+                    {/* Header */}
+                    <div style={{ padding: '18px 24px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flexWrap: 'nowrap' }}>
+                        <h2 style={{ margin: 0, fontSize: '1.1rem', color: '#111827', fontWeight: 700, lineHeight: 1, alignSelf: 'center' }}>{selectedPending.title}</h2>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F1F5F9', color: '#475569', border: '1px solid #E2E8F0', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                          {selectedPending.submitter_name ?? 'Manager'}
+                        </span>
                       </div>
-                      <div style={{ display: 'flex', gap: 8, flexShrink: 0, alignItems: 'center' }}>
-                        <button
-                          onClick={() => decidePosting(selectedPending.id, 'approve_posting')}
-                          disabled={actionLoading}
+                      <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                        <button onClick={() => decidePosting(selectedPending.id, 'approve_posting')} disabled={actionLoading}
                           style={{ height: 34, padding: '0 14px', border: 'none', borderRadius: 9, background: '#059669', color: '#FFFFFF', cursor: actionLoading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, opacity: actionLoading ? 0.6 : 1 }}
                         ><CheckCircle size={13} /> Approve</button>
-                        <button
-                          onClick={() => decidePosting(selectedPending.id, 'reject_posting')}
-                          disabled={actionLoading}
+                        <button onClick={() => { setPendingRejectId(selectedPending.id); setRejectReason(''); setRejectModalOpen(true) }} disabled={actionLoading}
                           style={{ height: 34, padding: '0 14px', border: 'none', borderRadius: 9, background: '#DC2626', color: '#FFFFFF', cursor: actionLoading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, opacity: actionLoading ? 0.6 : 1 }}
                         ><XCircle size={13} /> Reject</button>
                       </div>
                     </div>
-                    <div style={{ padding: '16px 24px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-                      {selectedPending.description && (
-                        <div>
-                          <span style={labelStyle}>Description</span>
-                          <p style={{ margin: 0, color: '#374151', lineHeight: 1.7, fontSize: '0.9rem' }}>{selectedPending.description}</p>
+
+                    {/* Body — same layout as All Jobs detail */}
+                    {(() => {
+                      const fmt = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return `${h12}:${String(m).padStart(2, '0')} ${ap}` }
+                      const toMins = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m }
+                      const fmtShort = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return m === 0 ? `${h12}${ap}` : `${h12}:${String(m).padStart(2, '0')}${ap}` }
+                      const isShiftJob = selectedPending.is_recurring
+                      const shiftDate = selectedPending.shift_date
+                      const shiftStart = selectedPending.shift_start_time
+                      const shiftEnd = selectedPending.shift_end_time
+                      const breakStart = selectedPending.break_start_time
+                      const breakEnd = selectedPending.break_end_time
+                      const estimatedHours = selectedPending.estimated_hours
+                      const urgency = selectedPending.urgency ?? 'normal'
+                      const urgencyLabel = urgency === 'urgent' ? 'Urgent' : urgency === 'high' ? 'High' : 'Normal'
+                      let totalAmt: number | null = null
+                      if (isShiftJob && selectedPending.salary_amount != null && shiftStart && shiftEnd) {
+                        let worked = toMins(shiftEnd) - toMins(shiftStart)
+                        if (breakStart && breakEnd) worked -= (toMins(breakEnd) - toMins(breakStart))
+                        if (worked > 0) totalAmt = Math.round(selectedPending.salary_amount * (worked / 60) * 100) / 100
+                      }
+                      const statCard: React.CSSProperties = { borderRadius: 12, padding: '10px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'center', minHeight: 72 }
+                      const statLabel: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }
+                      const statLabelText = (color: string): React.CSSProperties => ({ fontSize: '0.75rem', fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: '0.06em' })
+                      const statValue: React.CSSProperties = { margin: 0, fontSize: '0.8rem', fontWeight: 600, color: '#374151', lineHeight: 1.3 }
+                      return (
+                        <div style={{ padding: '20px 24px 24px', overflowY: 'auto' }}>
+                          {/* Stat cards */}
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 20 }}>
+                            {selectedPending.salary_amount != null ? (
+                              <div style={{ ...statCard, background: '#FFF7ED', border: '1px solid #FED7AA' }}>
+                                <div style={statLabel}><DollarSign size={11} style={{ color: '#F97316' }} /><span style={statLabelText('#F97316')}>{isShiftJob ? 'Pay' : 'Flat Rate'}</span></div>
+                                <p style={statValue}>{isShiftJob ? `$${selectedPending.salary_amount}/Hr${totalAmt != null ? ` ($${totalAmt % 1 === 0 ? totalAmt.toFixed(0) : totalAmt.toFixed(2)})` : ''}` : `$${selectedPending.salary_amount}`}</p>
+                              </div>
+                            ) : (
+                              <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}>
+                                <span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No pay set</span>
+                              </div>
+                            )}
+                            {shiftDate ? (
+                              <div style={{ ...statCard, background: '#F0F9FF', border: '1px solid #BAE6FD' }}>
+                                <div style={statLabel}><CalendarDays size={11} style={{ color: '#0284C7' }} /><span style={statLabelText('#0284C7')}>Date</span></div>
+                                <p style={statValue}>{new Date(shiftDate).toLocaleDateString('en-SG', { weekday: 'short', day: 'numeric', month: 'short' })}</p>
+                              </div>
+                            ) : (
+                              <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}>
+                                <span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No date set</span>
+                              </div>
+                            )}
+                            {isShiftJob ? ((shiftStart || shiftEnd) ? (
+                              <div style={{ ...statCard, background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
+                                <div style={statLabel}><Clock size={11} style={{ color: '#059669' }} /><span style={statLabelText('#059669')}>Hours</span></div>
+                                <p style={statValue}>{shiftStart ? fmtShort(shiftStart) : '—'} – {shiftEnd ? fmtShort(shiftEnd) : '—'}</p>
+                              </div>
+                            ) : (
+                              <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}>
+                                <span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No hours set</span>
+                              </div>
+                            )) : (estimatedHours ? (
+                              <div style={{ ...statCard, background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
+                                <div style={statLabel}><Clock size={11} style={{ color: '#059669' }} /><span style={statLabelText('#059669')}>Estimation</span></div>
+                                <p style={statValue}>{estimatedHours} Hours</p>
+                              </div>
+                            ) : (
+                              <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}>
+                                <span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No hours set</span>
+                              </div>
+                            ))}
+                            {isShiftJob ? ((breakStart || breakEnd) ? (
+                              <div style={{ ...statCard, background: '#FDF4FF', border: '1px solid #E9D5FF' }}>
+                                <div style={statLabel}><Coffee size={11} style={{ color: '#9333EA' }} /><span style={statLabelText('#9333EA')}>Break</span></div>
+                                <p style={statValue}>{breakStart ? fmtShort(breakStart) : '—'} – {breakEnd ? fmtShort(breakEnd) : '—'}</p>
+                              </div>
+                            ) : (
+                              <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}>
+                                <span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No break</span>
+                              </div>
+                            )) : (
+                              <div style={{ ...statCard, background: '#FFF1F2', border: '1px solid #FECDD3' }}>
+                                <div style={statLabel}><Zap size={11} style={{ color: '#E11D48' }} /><span style={statLabelText('#E11D48')}>Urgency</span></div>
+                                <p style={statValue}>{urgencyLabel}</p>
+                              </div>
+                            )}
+                          </div>
+                          {/* Department row */}
+                          {(selectedPending.department_name || selectedPending.assigned_employee_name) && (
+                            <div style={{ display: 'flex', border: '1px solid #E5E7EB', borderRadius: 10, overflow: 'hidden', marginBottom: 20 }}>
+                              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 0', borderRight: selectedPending.assigned_employee_name ? '1px solid #E5E7EB' : undefined, background: '#FAFAFA' }}>
+                                <LayoutGrid size={14} style={{ color: '#9CA3AF', flexShrink: 0 }} />
+                                <span style={{ fontSize: '0.875rem', color: '#374151' }}>{selectedPending.department_name ?? '—'}</span>
+                              </div>
+                              {selectedPending.assigned_employee_name && (
+                                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 0', background: '#FAFAFA' }}>
+                                  <UserCheck size={14} style={{ color: '#9CA3AF', flexShrink: 0 }} />
+                                  <span style={{ fontSize: '0.875rem', color: '#374151' }}>{selectedPending.assigned_employee_name}</span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          {/* Scope & Requirements */}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                            {selectedPending.description && (
+                              <div style={{ background: '#FFFFFF', borderRadius: 10, padding: '14px 16px', border: '1px solid #E5E7EB' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                                  <FileText size={13} style={{ color: '#F97316' }} />
+                                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Scope</span>
+                                </div>
+                                <p style={{ margin: 0, fontSize: '0.875rem', color: '#374151', lineHeight: 1.75 }}>{selectedPending.description}</p>
+                              </div>
+                            )}
+                            {selectedPending.requirements && (
+                              <div style={{ background: '#FFFFFF', borderRadius: 10, padding: '14px 16px', border: '1px solid #E5E7EB' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                                  <ClipboardList size={13} style={{ color: '#F97316' }} />
+                                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Requirements</span>
+                                </div>
+                                <p style={{ margin: 0, fontSize: '0.875rem', color: '#374151', lineHeight: 1.75, whiteSpace: 'pre-wrap' }}>{selectedPending.requirements}</p>
+                              </div>
+                            )}
+                          </div>
                         </div>
-                      )}
-                      {selectedPending.requirements && (
-                        <div>
-                          <span style={labelStyle}>Requirements</span>
-                          <p style={{ margin: 0, color: '#374151', lineHeight: 1.7, fontSize: '0.9rem', whiteSpace: 'pre-wrap' }}>{selectedPending.requirements}</p>
-                        </div>
-                      )}
-                    </div>
+                      )
+                    })()}
                   </>
                 )}
               </div>
@@ -2130,6 +2261,42 @@ export default function OwnerRecruitmentPage() {
         </div>
       )}
 
+      {/* ══ Reject reason modal ════════════════════════════════════════════════ */}
+      {rejectModalOpen && createPortal(
+        <div onClick={() => { setRejectModalOpen(false); setRejectReason(''); setPendingRejectId('') }} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.42)', zIndex: 10000, display: 'grid', placeItems: 'center', padding: 20 }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: 420, background: '#FFFFFF', borderRadius: 16, padding: '24px', boxShadow: '0 24px 70px rgba(15,23,42,0.28)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+              <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#111827' }}>Reject Job Posting</h2>
+              <button onClick={() => { setRejectModalOpen(false); setRejectReason(''); setPendingRejectId('') }} style={{ border: 'none', background: '#F9FAFB', color: '#6B7280', cursor: 'pointer', padding: '5px', borderRadius: 7, display: 'flex' }}><X size={15} /></button>
+            </div>
+            <p style={{ margin: '0 0 14px', color: '#6B7280', fontSize: '0.9rem', lineHeight: 1.55 }}>
+              Provide a reason so the manager can understand what needs to be fixed.
+            </p>
+            <textarea
+              value={rejectReason}
+              onChange={e => setRejectReason(e.target.value)}
+              placeholder="e.g. Salary range is missing, please add before resubmitting."
+              rows={4}
+              style={{ width: '100%', padding: '10px 12px', border: '1.5px solid #E5E7EB', borderRadius: 8, fontSize: '0.875rem', color: '#111827', resize: 'vertical', outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit', lineHeight: 1.55 }}
+              onFocus={e => { e.currentTarget.style.borderColor = '#F97316' }}
+              onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
+            />
+            {error && <p style={{ margin: '8px 0 0', fontSize: '0.8rem', color: '#DC2626' }}>{error}</p>}
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 20 }}>
+              <button onClick={() => { setRejectModalOpen(false); setRejectReason(''); setPendingRejectId('') }}
+                style={{ border: '1.5px solid #E5E7EB', background: '#FFFFFF', color: '#374151', borderRadius: 8, padding: '8px 18px', fontWeight: 700, cursor: 'pointer', fontSize: '0.875rem' }}>
+                Cancel
+              </button>
+              <button onClick={() => decidePosting(pendingRejectId, 'reject_posting', rejectReason)} disabled={actionLoading || !rejectReason.trim()}
+                style={{ border: 'none', background: '#DC2626', color: '#FFFFFF', borderRadius: 8, padding: '8px 18px', fontWeight: 700, cursor: actionLoading || !rejectReason.trim() ? 'default' : 'pointer', fontSize: '0.875rem', opacity: actionLoading || !rejectReason.trim() ? 0.65 : 1, display: 'flex', alignItems: 'center', gap: 6 }}>
+                {actionLoading ? <Spinner size={13} /> : <Trash2 size={13} />} Reject
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
       {/* ══ Post Job / Edit modal — 3-step wizard ═════════════════════════════ */}
       {formOpen && (() => {
         const WIZARD_STEPS = ['type', 'ai', 'form'] as const
@@ -2364,7 +2531,7 @@ export default function OwnerRecruitmentPage() {
                                 ;(data.employees ?? []).forEach((emp: { shifts?: { shift_date: string; start_time: string; end_time: string }[] }) => {
                                   (emp.shifts ?? []).forEach((s) => { if (!dateMap.has(s.shift_date)) dateMap.set(s.shift_date, { start_time: s.start_time, end_time: s.end_time }) })
                                 })
-                                setShiftAvailableDates(Array.from(dateMap.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([date, t]) => ({ date, start_time: t.start_time, end_time: t.end_time })))
+                                setShiftAvailableDates(Array.from(dateMap.entries()).sort(([a], [b]) => a.localeCompare(b)).filter(([date]) => date >= new Date().toISOString().slice(0, 10)).map(([date, t]) => ({ date, start_time: t.start_time, end_time: t.end_time })))
                               }
                             }} />
                         </div>
@@ -2454,7 +2621,7 @@ export default function OwnerRecruitmentPage() {
                                 ;(data.employees ?? []).forEach((emp: { shifts?: { shift_date: string; start_time: string; end_time: string }[] }) => {
                                   (emp.shifts ?? []).forEach((s) => { if (!dateMap.has(s.shift_date)) dateMap.set(s.shift_date, { start_time: s.start_time, end_time: s.end_time }) })
                                 })
-                                setShiftAvailableDates(Array.from(dateMap.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([date, t]) => ({ date, start_time: t.start_time, end_time: t.end_time })))
+                                setShiftAvailableDates(Array.from(dateMap.entries()).sort(([a], [b]) => a.localeCompare(b)).filter(([date]) => date >= new Date().toISOString().slice(0, 10)).map(([date, t]) => ({ date, start_time: t.start_time, end_time: t.end_time })))
                               }
                             }} />
                         </div>
