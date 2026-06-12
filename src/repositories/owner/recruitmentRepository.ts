@@ -26,6 +26,18 @@ export const recruitmentRepository = {
     return (data ?? []) as JobPosting[]
   },
 
+  async getJobPostingsByDepartment(company_id: string, department_id: string): Promise<JobPosting[]> {
+    const { data, error } = await supabase
+      .from('job_postings')
+      .select('*')
+      .eq('company_id', company_id)
+      .eq('department_id', department_id)
+      .not('status', 'in', '("pending_approval","draft")')
+      .order('created_at', { ascending: false })
+    if (error) throw new Error(error.message)
+    return (data ?? []) as JobPosting[]
+  },
+
   async getDraftPostings(company_id: string, user_id: string): Promise<JobPosting[]> {
     const { data, error } = await supabase
       .from('job_postings')
@@ -55,10 +67,13 @@ export const recruitmentRepository = {
       deptMap = new Map((depts ?? []).map((d: { id: string; name: string }) => [d.id, d.name]))
     }
 
-    const userIds = [...new Set(postings.map(p => p.created_by).filter(Boolean))]
+    const allUserIds = [...new Set([
+      ...postings.map(p => p.created_by),
+      ...postings.map(p => p.assigned_employee_id).filter((id): id is string => Boolean(id)),
+    ].filter(Boolean))]
     let userMap = new Map<string, string>()
-    if (userIds.length > 0) {
-      const { data: users } = await supabase.from('users').select('id, full_name').in('id', userIds)
+    if (allUserIds.length > 0) {
+      const { data: users } = await supabase.from('users').select('id, full_name').in('id', allUserIds)
       userMap = new Map((users ?? []).map((u: { id: string; full_name: string }) => [u.id, u.full_name]))
     }
 
@@ -66,6 +81,7 @@ export const recruitmentRepository = {
       ...p,
       department_name: p.department_id ? deptMap.get(p.department_id) ?? null : null,
       submitter_name: userMap.get(p.created_by) ?? null,
+      assigned_employee_name: p.assigned_employee_id ? userMap.get(p.assigned_employee_id) ?? null : null,
     }))
   },
 
@@ -80,10 +96,10 @@ export const recruitmentRepository = {
     return data as JobPosting
   },
 
-  async rejectJobPosting(id: string): Promise<JobPosting> {
+  async rejectJobPosting(id: string, rejection_reason: string): Promise<JobPosting> {
     const { data, error } = await supabase
       .from('job_postings')
-      .update({ status: 'rejected' })
+      .update({ status: 'rejected', rejection_reason })
       .eq('id', id)
       .select()
       .single()
@@ -232,6 +248,38 @@ export const recruitmentRepository = {
       .in('id', ids)
     if (error) throw new Error(error.message)
     return (data ?? []) as { id: string; full_name: string }[]
+  },
+
+  async getManagerDepartmentIds(manager_id: string, company_id: string): Promise<string[]> {
+    const { data, error } = await supabase
+      .from('manager_departments')
+      .select('department_id')
+      .eq('manager_id', manager_id)
+      .eq('company_id', company_id)
+    if (error) throw new Error(error.message)
+    return (data ?? []).map((r: { department_id: string }) => r.department_id)
+  },
+
+  async getJobPostingsByManagerDepts(company_id: string, department_ids: string[]): Promise<JobPosting[]> {
+    if (department_ids.length === 0) return []
+    const { data: managerUsers, error: userError } = await supabase
+      .from('users')
+      .select('id')
+      .eq('company_id', company_id)
+      .eq('role', 'Manager')
+    if (userError) throw new Error(userError.message)
+    const managerIds = (managerUsers ?? []).map((u: { id: string }) => u.id)
+    if (managerIds.length === 0) return []
+    const { data, error } = await supabase
+      .from('job_postings')
+      .select('*')
+      .eq('company_id', company_id)
+      .in('department_id', department_ids)
+      .in('created_by', managerIds)
+      .not('status', 'in', '("draft")')
+      .order('created_at', { ascending: false })
+    if (error) throw new Error(error.message)
+    return (data ?? []) as JobPosting[]
   },
 
   async getCasualWorkersByCompany(company_id: string): Promise<CasualWorkerStatus[]> {

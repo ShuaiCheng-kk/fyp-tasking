@@ -14,12 +14,12 @@ const SIDEBAR_BG  = '#1E3A5F'
 const SIDEBAR_BORDER = '#163050'
 
 const NAV_ITEMS = [
-  { label: 'Dashboard',     Icon: LayoutDashboard, href: '/manager/dashboard',     dot: null as 'messages' | 'announcements' | null },
+  { label: 'Dashboard',     Icon: LayoutDashboard, href: '/manager/dashboard',     dot: null as 'messages' | 'announcements' | 'rejected' | null },
   { label: 'Shifts',        Icon: CalendarDays,    href: '/manager/shifts',        dot: null },
   { label: 'Tasks',         Icon: CheckSquare,     href: '/manager/tasks',         dot: null },
   { label: 'Team',          Icon: Users,           href: '/manager/team',          dot: null },
   { label: 'Communication', Icon: MessageCircle,   href: '/manager/communication', dot: 'messages' as const },
-  { label: 'Recruitment',   Icon: UserPlus,        href: '/manager/recruitment',   dot: null },
+  { label: 'Recruitment',   Icon: UserPlus,        href: '/manager/recruitment',   dot: 'rejected' as const },
   { label: 'Attendance',    Icon: ClipboardList,   href: '/manager/attendance',    dot: null },
   { label: 'Report',        Icon: BarChart2,       href: '/manager/report',        dot: null },
 ]
@@ -35,6 +35,7 @@ export default function ManagerSidebar({
   const [expanded, setExpanded] = useState(false)
   const [msgCount, setMsgCount] = useState(unreadMessages ?? 0)
   const [annCount, setAnnCount] = useState(unreadAnnouncements ?? 0)
+  const [rejectedCount, setRejectedCount] = useState(0)
 
   useEffect(() => {
     const authUid = typeof localStorage !== 'undefined' ? localStorage.getItem('tasking_user_id') : null
@@ -53,24 +54,36 @@ export default function ManagerSidebar({
           .then(data => { if (data.success) setMsgCount(data.unread_messages ?? 0) })
           .catch(() => {})
 
-        const readKey = `ann_read_ids_${cid}_${internalId}`
-        let readIds: Set<string> = new Set()
-        try {
-          const raw = localStorage.getItem(readKey)
-          if (raw) readIds = new Set(JSON.parse(raw))
-        } catch {}
+        const refreshRejectedCount = () => {
+          fetch(`/api/recruitment?company_id=${cid}&manager_id=${internalId}`)
+            .then(r => r.json())
+            .then(data => {
+              if (data.success) {
+                const count = (data.postings as { status: string; created_by: string }[])
+                  .filter(p => p.status === 'rejected' && p.created_by === internalId).length
+                setRejectedCount(count)
+              }
+            })
+            .catch(() => {})
+        }
+        refreshRejectedCount()
 
         const deptId: string | null = d.user.department_id ?? null
-        const annUrl = `/api/inbox/announcements?company_id=${cid}&role=manager&user_id=${internalId}${deptId ? `&department_id=${deptId}` : ''}`
-        fetch(annUrl)
-          .then(r => r.json())
-          .then(data => {
-            if (data.success) {
-              const unread = (data.announcements as { id: string }[]).filter(a => !readIds.has(a.id)).length
+
+        const refreshAnnCountFromDB = () => {
+          Promise.all([
+            fetch(`/api/inbox/announcements?company_id=${cid}&role=manager&user_id=${internalId}${deptId ? `&department_id=${deptId}` : ''}`).then(r => r.json()),
+            fetch(`/api/inbox/announcements/read?user_id=${internalId}&company_id=${cid}`).then(r => r.json()),
+          ]).then(([annData, readData]) => {
+            if (annData.success && readData.success) {
+              const readSet = new Set<string>(readData.readIds ?? [])
+              const unread = (annData.announcements as { id: string }[]).filter(a => !readSet.has(a.id)).length
               setAnnCount(unread)
             }
-          })
-          .catch(() => {})
+          }).catch(() => {})
+        }
+
+        refreshAnnCountFromDB()
 
         const supabase = createBrowserClient(
           process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -83,55 +96,37 @@ export default function ManagerSidebar({
             () => setMsgCount(c => c + 1))
           .subscribe()
 
-        const refreshAnnCount = () => {
-          const readKey2 = `ann_read_ids_${cid}_${internalId}`
-          let rids: Set<string> = new Set()
-          try { const raw2 = localStorage.getItem(readKey2); if (raw2) rids = new Set(JSON.parse(raw2)) } catch {}
-          const url2 = `/api/inbox/announcements?company_id=${cid}&role=manager&user_id=${internalId}${deptId ? `&department_id=${deptId}` : ''}`
-          fetch(url2).then(r => r.json()).then(data => {
-            if (data.success) setAnnCount((data.announcements as { id: string }[]).filter((a: { id: string }) => !rids.has(a.id)).length)
-          }).catch(() => {})
-        }
-
         const annChannel = supabase
           .channel('manager-sidebar-announcements')
           .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'announcements', filter: `company_id=eq.${cid}` },
-            refreshAnnCount)
+            refreshAnnCountFromDB)
+          .subscribe()
+
+        const rejectedChannel = supabase
+          .channel('manager-sidebar-rejected')
+          .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'job_postings', filter: `company_id=eq.${cid}` },
+            refreshRejectedCount)
           .subscribe()
 
         return () => {
           supabase.removeChannel(msgChannel)
           supabase.removeChannel(annChannel)
+          supabase.removeChannel(rejectedChannel)
         }
       })
       .catch(() => {})
   }, [])
 
-  // When user opens Communication page, mark all announcements as read in localStorage
+  // When user opens Communication page, badge clears
   useEffect(() => {
     if (pathname !== '/manager/communication') return
     setMsgCount(0)
     setAnnCount(0)
-    const authUid = typeof localStorage !== 'undefined' ? localStorage.getItem('tasking_user_id') : null
-    if (!authUid) return
-    fetch(`/api/user/me?user_id=${authUid}`)
-      .then(r => r.json())
-      .then(d => {
-        if (!d.success) return
-        const internalId: string = d.user.id
-        const cid = localStorage.getItem('tasking_company_id') ?? localStorage.getItem(`tasking_company_id_${authUid}`)
-        if (!cid) return
-        const deptId: string | null = d.user.department_id ?? null
-        const annUrl = `/api/inbox/announcements?company_id=${cid}&role=manager&user_id=${internalId}${deptId ? `&department_id=${deptId}` : ''}`
-        fetch(annUrl)
-          .then(r => r.json())
-          .then(data => {
-            if (!data.success) return
-            const allIds = (data.announcements as { id: string }[]).map(a => a.id)
-            localStorage.setItem(`ann_read_ids_${cid}_${internalId}`, JSON.stringify(allIds))
-            setAnnCount(0)
-          }).catch(() => {})
-      }).catch(() => {})
+  }, [pathname])
+
+  // Clear rejected dot when user visits recruitment page
+  useEffect(() => {
+    if (pathname === '/manager/recruitment') setRejectedCount(0)
   }, [pathname])
 
   useEffect(() => { if (unreadMessages !== undefined) setMsgCount(unreadMessages) }, [unreadMessages])
@@ -191,7 +186,7 @@ export default function ManagerSidebar({
       <nav style={{ flex: 1, padding: '12px 8px', overflow: 'hidden' }}>
         {NAV_ITEMS.map(({ label, Icon, href, dot }) => {
           const active = pathname === href || (href === '/manager/communication' && (pathname === '/manager/announcements' || pathname === '/manager/inbox'))
-          const showDot = dot === 'messages' ? totalDot > 0 : false
+          const showDot = dot === 'messages' ? totalDot > 0 : dot === 'rejected' ? rejectedCount > 0 : false
           return (
             <a
               key={label}

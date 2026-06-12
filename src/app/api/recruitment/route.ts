@@ -34,7 +34,16 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: true, drafts })
     }
     if (!company_id) return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
-    const postings = await recruitmentService.getJobPostings(company_id)
+    const department_id = searchParams.get('department_id')
+    const manager_id = searchParams.get('manager_id')
+    let postings
+    if (manager_id) {
+      postings = await recruitmentService.getJobPostingsForManager(company_id, manager_id)
+    } else if (department_id) {
+      postings = await recruitmentService.getJobPostingsByDepartment(company_id, department_id)
+    } else {
+      postings = await recruitmentService.getJobPostings(company_id)
+    }
     return NextResponse.json({ success: true, postings })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to fetch recruitment data'
@@ -69,7 +78,7 @@ export async function POST(req: NextRequest) {
     is_recurring: data.is_recurring === true,
     recurrence_interval: typeof data.recurrence_interval === 'number' ? data.recurrence_interval : null,
     recurrence_unit: typeof data.recurrence_unit === 'string' && data.recurrence_unit ? data.recurrence_unit : null,
-    status: data.status === 'draft' ? 'draft' : 'open',
+    status: data.status === 'draft' ? 'draft' : data.status === 'pending_approval' ? 'pending_approval' : 'open',
     shift_date: typeof data.shift_date === 'string' && data.shift_date ? data.shift_date : null,
     shift_start_time: typeof data.shift_start_time === 'string' && data.shift_start_time ? data.shift_start_time : null,
     shift_end_time: typeof data.shift_end_time === 'string' && data.shift_end_time ? data.shift_end_time : null,
@@ -153,6 +162,11 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ success: true, posting })
     }
 
+    if (action === 'submit_for_review') {
+      const posting = await recruitmentService.submitForReview(String(data.job_id ?? ''))
+      return NextResponse.json({ success: true, posting })
+    }
+
     if (action === 'delete_draft') {
       await recruitmentService.deleteDraft(String(data.job_id ?? ''))
       return NextResponse.json({ success: true })
@@ -174,7 +188,8 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (action === 'reject_posting') {
-      const posting = await recruitmentService.rejectJobPosting(String(data.job_id ?? ''))
+      const rejection_reason = typeof data.rejection_reason === 'string' ? data.rejection_reason : ''
+      const posting = await recruitmentService.rejectJobPosting(String(data.job_id ?? ''), rejection_reason)
       return NextResponse.json({ success: true, posting })
     }
 

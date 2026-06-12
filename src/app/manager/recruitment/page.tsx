@@ -12,9 +12,9 @@ import {
 } from 'lucide-react'
 import ManagerSidebar from '@/components/ManagerSidebar'
 import { CandidateRecommendation } from '@/types/AI'
-import { JobApplicant, JobPostingPendingApproval, JobPostingSummary } from '@/types/Recruitment'
+import { JobApplicant, JobPostingSummary } from '@/types/Recruitment'
 
-type Tab = 'jobs' | 'archived' | 'drafts' | 'history'
+type Tab = 'jobs' | 'archived' | 'drafts'
 type Department = { id: string; name: string }
 
 // ─── shared tiny styles ──────────────────────────────────────────────────────
@@ -259,7 +259,6 @@ export default function ManagerRecruitmentPage() {
   const [managerDeptId, setManagerDeptId] = useState('')
   const [livePostings, setLivePostings] = useState<JobPostingSummary[]>([])
   const [drafts, setDrafts] = useState<JobPostingSummary[]>([])
-  const [pendingPostings, setPendingPostings] = useState<JobPostingPendingApproval[]>([])
   const [selectedLiveId, setSelectedLiveId] = useState('')
   const [applicants, setApplicants] = useState<JobApplicant[]>([])
   const [recommendations, setRecommendations] = useState<CandidateRecommendation[]>([])
@@ -278,6 +277,7 @@ export default function ManagerRecruitmentPage() {
   const [formOpen, setFormOpen] = useState(false)
   const [editingId, setEditingId] = useState('')
   const [editingDraft, setEditingDraft] = useState(false)
+  const [editingRejected, setEditingRejected] = useState(false)
   // wizard step: 'type' | 'ai' | 'form'
   const [wizardStep, setWizardStep] = useState<'type' | 'ai' | 'form'>('type')
   const [formJobType, setFormJobType] = useState<'shift' | 'oneoff'>('oneoff')
@@ -328,7 +328,6 @@ export default function ManagerRecruitmentPage() {
   const [archivedApplicants, setArchivedApplicants] = useState<JobApplicant[]>([])
   const [selectedDraftId, setSelectedDraftId] = useState('')
   const [draftsSelected, setDraftsSelected] = useState<Set<string>>(new Set())
-  const [selectedPendingId, setSelectedPendingId] = useState('')
   const [jobsSelected, setJobsSelected] = useState<Set<string>>(new Set())
 
   // draft action menu (... button)
@@ -340,7 +339,6 @@ export default function ManagerRecruitmentPage() {
   const selectedLive = useMemo(() => livePostings.find(p => p.id === selectedLiveId) ?? null, [livePostings, selectedLiveId])
   const selectedArchived = useMemo(() => livePostings.find(p => p.id === selectedArchivedId) ?? null, [livePostings, selectedArchivedId])
   const selectedDraft = useMemo(() => drafts.find(p => p.id === selectedDraftId) ?? null, [drafts, selectedDraftId])
-  const selectedPending = useMemo(() => pendingPostings.find(p => p.id === selectedPendingId) ?? null, [pendingPostings, selectedPendingId])
   const formDepartmentName = useMemo(() => {
     const deptId = formDeptId || managerDeptId
     return departments.find(d => d.id === deptId)?.name ?? 'Assigned department'
@@ -361,18 +359,16 @@ export default function ManagerRecruitmentPage() {
     setLoading(true)
     setError('')
     try {
-      const [liveRes, pendingRes, draftsRes, deptRes] = await Promise.all([
-        fetch(`/api/recruitment?company_id=${cid}`),
-        fetch(`/api/recruitment?company_id=${cid}&resource=pending_approval`),
+      const [liveRes, draftsRes, deptRes] = await Promise.all([
+        fetch(`/api/recruitment?company_id=${cid}&manager_id=${uid}`),
         fetch(`/api/recruitment?company_id=${cid}&resource=drafts&user_id=${uid}`),
         fetch(`/api/company/departments?company_id=${cid}`),
       ])
-      const [liveData, pendingData, draftsData, deptData] = await Promise.all([
-        liveRes.json(), pendingRes.json(), draftsRes.json(), deptRes.json(),
+      const [liveData, draftsData, deptData] = await Promise.all([
+        liveRes.json(), draftsRes.json(), deptRes.json(),
       ])
       if (!liveData.success) throw new Error(liveData.message || 'Failed to fetch jobs')
       setLivePostings(liveData.postings ?? [])
-      setPendingPostings(pendingData.pendingPostings ?? [])
       setDrafts(draftsData.drafts ?? [])
       if (deptData.success) setDepartments(deptData.departments ?? [])
       setSelectedLiveId(prev => {
@@ -496,7 +492,7 @@ export default function ManagerRecruitmentPage() {
         if (!dateMap.has(s.shift_date)) dateMap.set(s.shift_date, { start_time: s.start_time, end_time: s.end_time })
       })
     })
-    setShiftAvailableDates(Array.from(dateMap.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([date, t]) => ({ date, start_time: t.start_time, end_time: t.end_time })))
+    setShiftAvailableDates(Array.from(dateMap.entries()).sort(([a], [b]) => a.localeCompare(b)).filter(([date]) => date >= new Date().toISOString().slice(0, 10)).map(([date, t]) => ({ date, start_time: t.start_time, end_time: t.end_time })))
     if (savedDate) {
       setShiftDateEmployees(employees.filter((emp: { shifts?: { shift_date: string }[] }) =>
         emp.shifts?.some((s: { shift_date: string }) => s.shift_date === savedDate)
@@ -505,7 +501,7 @@ export default function ManagerRecruitmentPage() {
   }, [companyId])
 
   const resetForm = () => {
-    setEditingId(''); setEditingDraft(false); setWizardStep('type'); setFormJobType('oneoff')
+    setEditingId(''); setEditingDraft(false); setEditingRejected(false); setWizardStep('type'); setFormJobType('oneoff')
     setFormTitle(''); setFormDeptId(managerDeptId); setFormEmpType('casual')
     setFormLocation(''); setFormSalaryAmt(''); setFormSalaryType('per hour')
     setFormDescription(''); setFormRequirements(''); setFormIndustry('')
@@ -526,7 +522,7 @@ export default function ManagerRecruitmentPage() {
   }
 
   const openEditForm = async (p: JobPostingSummary, isDraft = false) => {
-    setEditingId(p.id); setEditingDraft(isDraft); setWizardStep('form')
+    setEditingId(p.id); setEditingDraft(isDraft); setEditingRejected(p.status === 'rejected'); setWizardStep('form')
     const isShift = p.is_recurring
     setFormJobType(isShift ? 'shift' : 'oneoff')
     setFormTitle(p.title); setFormDeptId(p.department_id ?? '')
@@ -566,7 +562,7 @@ export default function ManagerRecruitmentPage() {
         if (savedShiftDate && !dateMap.has(savedShiftDate)) {
           dateMap.set(savedShiftDate, { start_time: savedShiftStart, end_time: savedShiftEnd })
         }
-        setShiftAvailableDates(Array.from(dateMap.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([date, t]) => ({ date, start_time: t.start_time, end_time: t.end_time })))
+        setShiftAvailableDates(Array.from(dateMap.entries()).sort(([a], [b]) => a.localeCompare(b)).filter(([date]) => date >= new Date().toISOString().slice(0, 10)).map(([date, t]) => ({ date, start_time: t.start_time, end_time: t.end_time })))
 
         setFormShiftDate(savedShiftDate)
         if (savedShiftDate) {
@@ -595,7 +591,7 @@ export default function ManagerRecruitmentPage() {
     setFormOpen(true)
   }
 
-  const buildBody = (status: 'open' | 'draft') => ({
+  const buildBody = (status: 'pending_approval' | 'draft') => ({
     company_id: companyId,
     department_id: formDeptId || managerDeptId || null,
     created_by: internalUserId,
@@ -620,10 +616,10 @@ export default function ManagerRecruitmentPage() {
     status,
   })
 
-  const saveForm = async (status: 'open' | 'draft') => {
+  const saveForm = async (status: 'pending_approval' | 'draft') => {
     if (!companyId || !internalUserId) return
     if (!formTitle.trim()) { setFormError('Title is required'); return }
-    if (status === 'open' && !formDescription.trim()) { setFormError('Description is required to publish'); return }
+    if (status === 'pending_approval' && !formDescription.trim()) { setFormError('Description is required to send for review'); return }
     setActionLoading(true); setFormError('')
     try {
       const body = buildBody(status)
@@ -634,12 +630,12 @@ export default function ManagerRecruitmentPage() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ...body, action: 'edit_posting', job_id: editingId }),
         })
-        // if publishing a draft, also flip its status
-        if (status === 'open' && editingDraft) {
+        // flip status to pending_approval when submitting a draft or a rejected job for review
+        if (status === 'pending_approval' && (editingDraft || editingRejected)) {
           await fetch('/api/recruitment', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'publish_draft', job_id: editingId }),
+            body: JSON.stringify({ action: 'submit_for_review', job_id: editingId }),
           })
         }
       } else {
@@ -653,7 +649,7 @@ export default function ManagerRecruitmentPage() {
       if (!data.success) throw new Error(data.message || 'Failed to save job')
       setFormOpen(false); resetForm()
       await fetchAll(companyId, internalUserId)
-      if (status === 'open') { setActiveTab('jobs'); showToast(editingId ? 'Job updated' : 'Job posted') }
+      if (status === 'pending_approval') { setActiveTab('jobs'); showToast(editingId ? 'Job updated and sent for review' : 'Sent for review') }
       else { setActiveTab('drafts'); showToast(editingId ? 'Draft saved' : 'Saved as draft') }
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Failed to save job')
@@ -759,23 +755,6 @@ export default function ManagerRecruitmentPage() {
       showToast(decision === 'accepted' ? 'Applicant accepted' : 'Applicant rejected')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update applicant')
-    } finally { setActionLoading(false) }
-  }
-
-  const decidePosting = async (jobId: string, decision: 'approve_posting' | 'reject_posting') => {
-    setActionLoading(true); setError('')
-    try {
-      const res = await fetch('/api/recruitment', {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: decision, job_id: jobId }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to update posting')
-      setSelectedPendingId('')
-      await fetchAll(companyId, internalUserId)
-      showToast(decision === 'approve_posting' ? 'Job approved' : 'Job rejected')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update posting')
     } finally { setActionLoading(false) }
   }
 
@@ -931,15 +910,15 @@ export default function ManagerRecruitmentPage() {
       await Promise.all([...draftsSelected].map(id =>
         fetch('/api/recruitment', {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'publish_draft', job_id: id }),
+          body: JSON.stringify({ action: 'submit_for_review', job_id: id }),
         })
       ))
       setDraftsSelected(new Set()); setSelectedDraftId('')
       await fetchAll(companyId, internalUserId)
       setActiveTab('jobs')
-      showToast('Drafts published')
+      showToast('Sent for review')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to publish drafts')
+      setError(err instanceof Error ? err.message : 'Failed to send for review')
     } finally { setActionLoading(false) }
   }
 
@@ -966,16 +945,16 @@ export default function ManagerRecruitmentPage() {
     try {
       const res = await fetch('/api/recruitment', {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'publish_draft', job_id: id }),
+        body: JSON.stringify({ action: 'submit_for_review', job_id: id }),
       })
       const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to publish draft')
+      if (!data.success) throw new Error(data.message || 'Failed to send for review')
       setSelectedDraftId('')
       await fetchAll(companyId, internalUserId)
       setActiveTab('jobs')
-      showToast('Draft published')
+      showToast('Sent for review')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to publish draft')
+      setError(err instanceof Error ? err.message : 'Failed to send for review')
     } finally { setActionLoading(false) }
   }
 
@@ -997,7 +976,7 @@ export default function ManagerRecruitmentPage() {
   const openPostings    = useMemo(() => livePostings.filter(p => p.status === 'open'),     [livePostings])
   const closedPostings  = useMemo(() => livePostings.filter(p => p.status === 'closed'),   [livePostings])
   const expiredPostings = useMemo(() => livePostings.filter(p => p.status === 'expired'),  [livePostings])
-  const jobsPostings    = useMemo(() => livePostings.filter(p => ['open','closed'].includes(p.status)), [livePostings])
+  const jobsPostings    = useMemo(() => livePostings.filter(p => ['open','closed','pending_approval','rejected'].includes(p.status)), [livePostings])
   const archivedPostings = useMemo(
     () => livePostings.filter(p => p.status === 'archived' && p.created_by === internalUserId),
     [livePostings, internalUserId],
@@ -1058,13 +1037,12 @@ export default function ManagerRecruitmentPage() {
               { key: 'jobs' as Tab,     label: 'Jobs',    Icon: Briefcase    },
               { key: 'archived' as Tab, label: 'Archived', Icon: Archive     },
               { key: 'drafts' as Tab,   label: 'Drafts',   Icon: FileText    },
-              { key: 'history' as Tab,   label: 'History',   Icon: ClipboardList },
             ]).map(tab => {
               const active = activeTab === tab.key
               return (
                 <button
                   key={tab.key}
-                  onClick={() => { setActiveTab(tab.key); setSelectedArchivedId(''); setArchivedSelected(new Set()); setSelectedDraftId(''); setSelectedPendingId(''); setJobsSelected(new Set()) }}
+                  onClick={() => { setActiveTab(tab.key); setSelectedArchivedId(''); setArchivedSelected(new Set()); setSelectedDraftId(''); setJobsSelected(new Set()) }}
                   style={{
                     padding: '5px 13px', borderRadius: '99px', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem',
                     border: active ? '2px solid #2563EB' : '2px solid #E5E7EB',
@@ -1184,7 +1162,7 @@ export default function ManagerRecruitmentPage() {
                       {/* Badge row above title */}
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
                         {statusBadge(p.status)}
-                        {canManage && (
+                        {canManage && p.status !== 'rejected' && p.status !== 'pending_approval' && (
                           <button
                             type="button"
                             onClick={e => { e.stopPropagation(); setJobsSelected(prev => { const s = new Set(prev); checked ? s.delete(p.id) : s.add(p.id); return s }) }}
@@ -1217,50 +1195,76 @@ export default function ManagerRecruitmentPage() {
                   </div>
                 ) : (
                   <>
-                    {/* Posting header — split to mirror the two-column body */}
-                    <div style={{ borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center' }}>
-                      {/* Left section: title + badge + action buttons */}
-                      <div style={{ flex: '0 0 min(860px, 62%)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '18px 24px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flexWrap: 'nowrap' }}>
-                          <h2 style={{ margin: 0, fontSize: '1.1rem', color: '#111827', fontWeight: 700, lineHeight: 1, alignSelf: 'center' }}>{selectedLive.title}</h2>
-                          {selectedLive.is_recurring ? (
-                            <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#EFF6FF', color: '#1D4ED8', border: '1px solid #BFDBFE', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                              Shift Job
-                            </span>
-                          ) : (
-                            <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                              One-Off Job
-                            </span>
-                          )}
+                    {/* Posting header */}
+                    {(() => {
+                      const isPendingJob = selectedLive.status === 'pending_approval'
+                      const isRejectedJob = selectedLive.status === 'rejected'
+                      const isFullWidth = isPendingJob || isRejectedJob
+                      return (
+                        <div style={{ borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center' }}>
+                          <div style={{ flex: isFullWidth ? 1 : '0 0 min(860px, 62%)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '18px 24px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flexWrap: 'nowrap' }}>
+                              <h2 style={{ margin: 0, fontSize: '1.1rem', color: '#111827', fontWeight: 700, lineHeight: 1, alignSelf: 'center' }}>{selectedLive.title}</h2>
+                              {isPendingJob ? (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F1F5F9', color: '#475569', border: '1px solid #E2E8F0', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                                  {managerName || 'Manager'}
+                                </span>
+                              ) : selectedLive.is_recurring ? (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#EFF6FF', color: '#1D4ED8', border: '1px solid #BFDBFE', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                                  Shift Job
+                                </span>
+                              ) : (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                                  One-Off Job
+                                </span>
+                              )}
+                            </div>
+                            {canManagePosting(selectedLive) && (
+                              <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                                {!isPendingJob && !isRejectedJob && (
+                                  <button
+                                    onClick={() => void runPostingAction('archive_posting')}
+                                    disabled={actionLoading}
+                                    title="Archive job"
+                                    style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid #BFDBFE', background: '#EFF6FF', color: '#1D4ED8', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}
+                                    onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FFEDD5' }}
+                                    onMouseLeave={e => { e.currentTarget.style.background = '#EFF6FF' }}
+                                  ><Archive size={14} /></button>
+                                )}
+                                {isRejectedJob && (
+                                  <button
+                                    onClick={() => openEditForm(selectedLive, false)}
+                                    disabled={actionLoading}
+                                    title="Edit job"
+                                    style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid #BFDBFE', background: '#EFF6FF', color: '#1D4ED8', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}
+                                    onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#DBEAFE' }}
+                                    onMouseLeave={e => { e.currentTarget.style.background = '#EFF6FF' }}
+                                  ><Pencil size={14} /></button>
+                                )}
+                                <button
+                                  onClick={() => setDeleteConfirm({ id: selectedLive.id, title: selectedLive.title, isDraft: false })}
+                                  disabled={actionLoading}
+                                  title="Delete job"
+                                  style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid #FECACA', background: '#FEF2F2', color: '#DC2626', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}
+                                  onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FEE2E2' }}
+                                  onMouseLeave={e => { e.currentTarget.style.background = '#FEF2F2' }}
+                                ><Trash2 size={14} /></button>
+                              </div>
+                            )}
+                          </div>
+                          {!isFullWidth && <div style={{ flex: 1 }} />}
                         </div>
-                        {canManagePosting(selectedLive) && <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-                          <button
-                            onClick={() => void runPostingAction('archive_posting')}
-                            disabled={actionLoading}
-                            title="Archive job"
-                            style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid #BFDBFE', background: '#EFF6FF', color: '#1D4ED8', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}
-                            onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FFEDD5' }}
-                            onMouseLeave={e => { e.currentTarget.style.background = '#EFF6FF' }}
-                          ><Archive size={14} /></button>
-                          <button
-                            onClick={() => setDeleteConfirm({ id: selectedLive.id, title: selectedLive.title, isDraft: false })}
-                            disabled={actionLoading}
-                            title="Delete job"
-                            style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid #FECACA', background: '#FEF2F2', color: '#DC2626', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}
-                            onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FEE2E2' }}
-                            onMouseLeave={e => { e.currentTarget.style.background = '#FEF2F2' }}
-                          ><Trash2 size={14} /></button>
-                        </div>}
-                      </div>
-                      {/* Right section: empty — applicants header is inside the column */}
-                      <div style={{ flex: 1 }} />
-                    </div>
+                      )
+                    })()}
 
-                    {/* ── Two-column body ── */}
+                    {/* ── Two-column body (single column for pending) ── */}
                     <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
 
                       {/* LEFT: job details */}
                       {(() => {
+                        const isPendingJob = selectedLive.status === 'pending_approval'
+                        const isRejectedJob = selectedLive.status === 'rejected'
+                        const isFullWidth = isPendingJob || isRejectedJob
                         const fmt = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return `${h12}:${String(m).padStart(2, '0')} ${ap}` }
                         const toMins = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m }
                         const isShiftJob = selectedLive.is_recurring
@@ -1286,7 +1290,7 @@ export default function ManagerRecruitmentPage() {
                         const statValue: React.CSSProperties = { margin: 0, fontSize: '0.8rem', fontWeight: 600, color: '#374151', lineHeight: 1.3 }
                         const statSub: React.CSSProperties = { margin: '3px 0 0', fontSize: '0.7rem', color: '#9CA3AF', fontWeight: 400 }
                         return (
-                          <div style={{ flex: '0 0 min(860px, 62%)', borderRight: '1px solid #F0F4F8', overflowY: 'auto', padding: '20px 24px 24px' }}>
+                          <div style={{ flex: isFullWidth ? 1 : '0 0 min(860px, 62%)', borderRight: isFullWidth ? 'none' : '1px solid #F0F4F8', overflowY: 'auto', padding: '20px 24px 24px' }}>
 
                             {/* ── Key Stats ── */}
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 20 }}>
@@ -1409,14 +1413,23 @@ export default function ManagerRecruitmentPage() {
                                     <p style={{ margin: 0, fontSize: '0.875rem', color: '#374151', lineHeight: 1.75, whiteSpace: 'pre-wrap' }}>{selectedLive.requirements}</p>
                                   </div>
                                 )}
+                                {selectedLive.status === 'rejected' && selectedLive.rejection_reason && (
+                                  <div style={{ background: '#FEF2F2', borderRadius: 10, padding: '14px 16px', border: '1px solid #FECACA' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                                      <XCircle size={13} style={{ color: '#DC2626' }} />
+                                      <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#B91C1C', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Rejection Reason</span>
+                                    </div>
+                                    <p style={{ margin: 0, fontSize: '0.875rem', color: '#7F1D1D', lineHeight: 1.75, whiteSpace: 'pre-wrap' }}>{selectedLive.rejection_reason}</p>
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>
                         )
                       })()}
 
-                      {/* RIGHT: applicants */}
-                      <div style={{ flex: 1, overflowY: 'auto', padding: '20px 20px 24px', background: '#FAFAFA', borderRadius: '0 0 16px 0' }}>
+                      {/* RIGHT: applicants — hidden for pending and rejected jobs */}
+                      {selectedLive.status !== 'pending_approval' && selectedLive.status !== 'rejected' && <div style={{ flex: 1, overflowY: 'auto', padding: '20px 20px 24px', background: '#FAFAFA', borderRadius: '0 0 16px 0' }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
                           <div>
                             <p style={{ margin: 0, fontSize: '0.75rem', fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Applicants</p>
@@ -1477,7 +1490,7 @@ export default function ManagerRecruitmentPage() {
                             </div>
                           )
                         })}
-                      </div>
+                      </div>}
                     </div>
                   </>
                 )}
@@ -1789,128 +1802,6 @@ export default function ManagerRecruitmentPage() {
             </div>
           )}
 
-          {/* ══ HISTORY tab ════════════════════════════════════════════════════ */}
-          {activeTab === 'history' && (
-            <div style={{ display: 'grid', gridTemplateColumns: '340px 1fr', gap: 16, alignItems: 'start' }}>
-
-              {/* Left: pending list */}
-              <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden' }}>
-                <div style={{ padding: '14px 18px 12px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div style={{ width: 30, height: 30, borderRadius: 9, background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <ClipboardList size={15} style={{ color: '#2563EB' }} />
-                  </div>
-                  <span className="font-heading" style={{ fontSize: 15, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.3px', flex: 1 }}>History Jobs</span>
-                </div>
-                {loading ? (
-                  <div style={{ padding: '24px 18px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-                    <Spinner size={14} dark /> Loading...
-                  </div>
-                ) : pendingPostings.length === 0 ? (
-                  <div style={{ margin: '12px 14px', padding: '28px 16px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
-                    <CheckCircle size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
-                    <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>All caught up.</p>
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '12px 14px' }}>
-                  {pendingPostings.map((p, idx) => {
-                  const isSelected = selectedPendingId === p.id
-                  return (
-                    <div
-                      key={p.id}
-                      className="dept-card"
-                      onClick={() => setSelectedPendingId(p.id)}
-                      style={{
-                        animationDelay: `${idx * 55}ms`,
-                        border: isSelected ? '2px solid #2563EB' : '2px solid #E5E7EB',
-                        borderRadius: 14,
-                        padding: '14px 14px 12px',
-                        background: '#FFFFFF',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        cursor: 'pointer',
-                        boxShadow: isSelected ? '0 0 0 3px rgba(37,99,235,0.10)' : '0 1px 3px rgba(0,0,0,0.06)',
-                        transition: 'border-color 0.15s, box-shadow 0.15s, transform 0.15s',
-                      }}
-                      onMouseEnter={e => {
-                        if (isSelected) return
-                        e.currentTarget.style.transform = 'translateY(-2px)'
-                        e.currentTarget.style.boxShadow = '0 6px 18px rgba(0,0,0,0.10)'
-                        e.currentTarget.style.borderColor = '#93C5FD'
-                      }}
-                      onMouseLeave={e => {
-                        if (isSelected) return
-                        e.currentTarget.style.transform = 'none'
-                        e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.06)'
-                        e.currentTarget.style.borderColor = '#E5E7EB'
-                      }}
-                    >
-                      <strong style={{ fontSize: '0.875rem', color: '#1C1C1E', lineHeight: 1.4, display: 'block', marginBottom: 8 }}>{p.title}</strong>
-                      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                        <span style={{ fontSize: '0.725rem', color: '#C4C9D4' }}>{new Date(p.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
-                      </div>
-                    </div>
-                  )
-                  })}
-                  </div>
-                )}
-              </div>
-
-              {/* Right: pending detail */}
-              <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden' }}>
-                {!selectedPending ? (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, padding: '32px 24px' }}>
-                    <div style={{ padding: '40px 48px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14, width: '100%' }}>
-                      <ClipboardList size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
-                      <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>Select a history job</p>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <div style={{ padding: '20px 24px 18px', borderBottom: '1px solid #F0F4F8', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                          <h2 style={{ margin: 0, fontSize: '1.1rem', color: '#111827', fontWeight: 700, lineHeight: 1.3 }}>{selectedPending.title}</h2>
-                          {statusBadge('pending_approval')}
-                        </div>
-                        <p style={{ margin: 0, color: '#9CA3AF', fontSize: '0.8375rem' }}>
-                          {[selectedPending.department_name ?? 'Any department', selectedPending.employment_type].filter(Boolean).join(' · ')}
-                          {' · '}Submitted by <strong style={{ color: '#374151' }}>{selectedPending.submitter_name ?? 'Manager'}</strong>
-                          {' · '}{new Date(selectedPending.created_at).toLocaleDateString()}
-                        </p>
-                      </div>
-                      <div style={{ display: 'flex', gap: 8, flexShrink: 0, alignItems: 'center' }}>
-                        <button
-                          onClick={() => decidePosting(selectedPending.id, 'approve_posting')}
-                          disabled={actionLoading}
-                          style={{ height: 34, padding: '0 14px', border: 'none', borderRadius: 9, background: '#059669', color: '#FFFFFF', cursor: actionLoading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, opacity: actionLoading ? 0.6 : 1 }}
-                        ><CheckCircle size={13} /> Approve</button>
-                        <button
-                          onClick={() => decidePosting(selectedPending.id, 'reject_posting')}
-                          disabled={actionLoading}
-                          style={{ height: 34, padding: '0 14px', border: 'none', borderRadius: 9, background: '#DC2626', color: '#FFFFFF', cursor: actionLoading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, opacity: actionLoading ? 0.6 : 1 }}
-                        ><XCircle size={13} /> Reject</button>
-                      </div>
-                    </div>
-                    <div style={{ padding: '16px 24px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-                      {selectedPending.description && (
-                        <div>
-                          <span style={labelStyle}>Description</span>
-                          <p style={{ margin: 0, color: '#374151', lineHeight: 1.7, fontSize: '0.9rem' }}>{selectedPending.description}</p>
-                        </div>
-                      )}
-                      {selectedPending.requirements && (
-                        <div>
-                          <span style={labelStyle}>Requirements</span>
-                          <p style={{ margin: 0, color: '#374151', lineHeight: 1.7, fontSize: '0.9rem', whiteSpace: 'pre-wrap' }}>{selectedPending.requirements}</p>
-                        </div>
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          )}
-
           {/* ══ DRAFTS tab ════════════════════════════════════════════════════ */}
           {activeTab === 'drafts' && (
             <div style={{ display: 'grid', gridTemplateColumns: '340px 1fr', gap: 16, alignItems: 'start' }}>
@@ -1927,7 +1818,7 @@ export default function ManagerRecruitmentPage() {
                       <button
                         onClick={publishDraftsSelected}
                         disabled={actionLoading}
-                        title={`Post ${draftsSelected.size} selected`}
+                        title={`Send ${draftsSelected.size} selected for review`}
                         style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid #BBF7D0', background: '#F0FDF4', color: '#059669', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}
                         onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#DCFCE7' }}
                         onMouseLeave={e => { e.currentTarget.style.background = '#F0FDF4' }}
@@ -2198,7 +2089,7 @@ export default function ManagerRecruitmentPage() {
         const displayStep = wizardStep === 'form' ? 'ai' : wizardStep
         const stepIdx = WIZARD_STEPS.indexOf(displayStep)
         const modalTitle = editingId
-          ? (editingDraft ? 'Edit Draft' : 'Edit Job Posting')
+          ? (editingDraft && !editingRejected ? 'Edit Draft' : 'Edit Job Posting')
           : wizardStep === 'type' ? 'Choose Job Type'
           : 'Complete Job Description'
 
@@ -2567,9 +2458,9 @@ export default function ManagerRecruitmentPage() {
                       {actionLoading ? <Spinner size={13} dark /> : <FileText size={13} />} Save Draft
                     </button>
                   )}
-                  <button onClick={() => saveForm(editingDraft ? 'draft' : 'open')} disabled={actionLoading}
+                  <button onClick={() => saveForm('pending_approval')} disabled={actionLoading}
                     style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: actionLoading ? '#93C5FD' : '#2563EB', color: '#FFFFFF', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: actionLoading ? 'default' : 'pointer' }}>
-                    {actionLoading ? <Spinner size={13} /> : <Check size={13} />} {editingDraft ? 'Save Changes' : editingId ? 'Save Changes' : 'Post Job'}
+                    {actionLoading ? <Spinner size={13} /> : <Send size={13} />} {editingId && !editingDraft && !editingRejected ? 'Save Changes' : 'Send For Review'}
                   </button>
                 </div>
               )}
@@ -2612,7 +2503,7 @@ export default function ManagerRecruitmentPage() {
             style={{ ...jobMenuItemStyle, opacity: !selectedDraft.description?.trim() ? 0.45 : 1 }}
             onMouseEnter={e => { if (selectedDraft.description?.trim()) e.currentTarget.style.background = '#F9FAFB' }}
             onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-          ><Send size={13} style={{ color: '#2563EB' }} /> Publish</button>
+          ><Send size={13} style={{ color: '#2563EB' }} /> Send For Review</button>
           <div style={{ height: 1, background: '#F1F5F9', margin: '4px 6px' }} />
           <button
             type="button"

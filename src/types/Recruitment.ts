@@ -32,6 +32,7 @@ export interface JobPosting {
   break_start_time: string | null
   break_end_time: string | null
   assigned_employee_id: string | null
+  rejection_reason: string | null
 }
 
 export interface JobPostingInput {
@@ -94,6 +95,7 @@ export interface JobInvitation {
 export interface JobPostingPendingApproval extends JobPosting {
   department_name: string | null
   submitter_name: string | null
+  assigned_employee_name: string | null
 }
 
 export interface CasualWorkerStatus {
