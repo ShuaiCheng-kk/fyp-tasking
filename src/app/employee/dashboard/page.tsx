@@ -237,7 +237,7 @@ function Header({ title, userName }: { title: string; userName: string }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
         {userName && (
           <div style={userPillStyle}>
-            <span style={userPillIconStyle}>
+            <span style={userPillStyle}>
               <UserRound size={13} />
             </span>
             <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{userName}</span>
@@ -546,14 +546,13 @@ const userPillStyle: CSSProperties = {
   boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
 }
 
-const userPillIconStyle: CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  width: 26,
-  height: 26,
-  borderRadius: 999,
-  background: '#14532D',
+const roleBadgeStyle: CSSProperties = {
+  padding: '6px 14px 6px 8px',
+  borderRadius: '999px',
+  fontSize: '0.875rem',
+  fontWeight: 700,
+  background: 'rgba(255,255,255,0.2)',
+  boxShadow: '0 2px 8px rgba(15,23,42,0.12)',
   color: '#FFFFFF',
   flexShrink: 0,
 }
