@@ -3,20 +3,19 @@
 import { useState, useEffect } from 'react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { LayoutDashboard, Users, Megaphone, ClipboardList, MessageSquare, LogOut } from 'lucide-react'
+import { LayoutDashboard, ClipboardList, MessageCircle, CheckSquare, LogOut } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 
 const NAV_ITEMS = [
   { label: 'Dashboard',     Icon: LayoutDashboard, href: '/employee/dashboard',     dot: null as 'messages' | 'announcements' | null },
-  { label: 'Team',          Icon: Users,           href: '/employee/team',          dot: null },
-  { label: 'Announcements', Icon: Megaphone,       href: '/employee/announcements', dot: 'announcements' as const },
+  { label: 'Tasks',         Icon: CheckSquare,     href: '/employee/tasks',         dot: null },
+  { label: 'Communication', Icon: MessageCircle,   href: '/employee/communication', dot: 'messages' as const },
   { label: 'Attendance',    Icon: ClipboardList,   href: '/employee/attendance',    dot: null },
-  { label: 'Inbox',         Icon: MessageSquare,   href: '/employee/inbox',         dot: 'messages' as const },
 ]
 
-const SIDEBAR_BG = '#16A34A'
-const SIDEBAR_BORDER = '#15803D'
-const ACTIVE_BG = '#15803D'
+const EMPLOYEE_GREEN = '#16A34A'
+const SIDEBAR_BG = '#14532D'
+const SIDEBAR_BORDER = '#0F3F24'
 
 export default function EmployeeSidebar({ unreadMessages, unreadAnnouncements }: { unreadMessages?: number; unreadAnnouncements?: number }) {
   const pathname = usePathname()
@@ -87,8 +86,10 @@ export default function EmployeeSidebar({ unreadMessages, unreadAnnouncements }:
   }, [])
 
   useEffect(() => {
-    if (pathname === '/employee/inbox') setMsgCount(0)
-    if (pathname === '/employee/announcements') setAnnCount(0)
+    if (pathname === '/employee/communication') {
+      setMsgCount(0)
+      setAnnCount(0)
+    }
   }, [pathname])
 
   useEffect(() => { if (unreadMessages !== undefined) setMsgCount(unreadMessages) }, [unreadMessages])
@@ -104,6 +105,8 @@ export default function EmployeeSidebar({ unreadMessages, unreadAnnouncements }:
     localStorage.removeItem('tasking_company_id')
     window.location.href = '/signout'
   }
+
+  const totalDot = msgCount + annCount
 
   return (
     <aside
@@ -138,10 +141,10 @@ export default function EmployeeSidebar({ unreadMessages, unreadAnnouncements }:
         }}
       >
         <svg width="28" height="28" viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
-          <rect width="32" height="32" rx="8" fill="white" />
-          <rect x="8" y="9" width="9" height="2.5" rx="1.25" fill="#16A34A" />
-          <rect x="8" y="14.75" width="16" height="2.5" rx="1.25" fill="#16A34A" />
-          <rect x="8" y="20.5" width="12" height="2.5" rx="1.25" fill="#16A34A" />
+          <rect width="32" height="32" rx="8" fill="#16A34A" />
+          <rect x="8" y="9" width="9" height="2.5" rx="1.25" fill="white" />
+          <rect x="8" y="14.75" width="16" height="2.5" rx="1.25" fill="white" />
+          <rect x="8" y="20.5" width="12" height="2.5" rx="1.25" fill="white" />
           <circle cx="22" cy="10.25" r="3.5" fill="#4ADE80" />
           <path d="M20.3 10.25L21.5 11.5L23.8 9" stroke="white" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
@@ -160,8 +163,8 @@ export default function EmployeeSidebar({ unreadMessages, unreadAnnouncements }:
 
       <nav style={{ flex: 1, padding: '12px 8px', overflow: 'hidden' }}>
         {NAV_ITEMS.map(({ label, Icon, href, dot }) => {
-          const active = pathname === href
-          const showDot = dot === 'messages' ? msgCount > 0 : dot === 'announcements' ? annCount > 0 : false
+          const active = pathname === href || (href === '/employee/communication' && (pathname === '/employee/announcements' || pathname === '/employee/inbox'))
+          const showDot = dot === 'messages' ? totalDot > 0 : false
           return (
             <a
               key={label}
@@ -172,8 +175,8 @@ export default function EmployeeSidebar({ unreadMessages, unreadAnnouncements }:
                 gap: '10px',
                 padding: '10px 12px',
                 borderRadius: '8px',
-                background: active ? ACTIVE_BG : 'transparent',
-                color: active ? '#FFFFFF' : '#BBF7D0',
+                background: active ? EMPLOYEE_GREEN : 'transparent',
+                color: active ? '#FFFFFF' : '#DCFCE7',
                 fontWeight: active ? 600 : 500,
                 fontSize: '0.9rem',
                 cursor: 'pointer',
@@ -183,7 +186,7 @@ export default function EmployeeSidebar({ unreadMessages, unreadAnnouncements }:
                 transition: 'background 0.12s, color 0.12s',
                 position: 'relative',
               }}
-              onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.12)' }}
+              onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.08)' }}
               onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent' }}
             >
               <span style={{ position: 'relative', flexShrink: 0 }}>
@@ -192,12 +195,17 @@ export default function EmployeeSidebar({ unreadMessages, unreadAnnouncements }:
                   <span style={{
                     position: 'absolute', top: -3, right: -3,
                     width: 8, height: 8, borderRadius: '50%',
-                    background: '#EF4444', border: '1.5px solid #16A34A',
+                    background: '#EF4444', border: `1.5px solid ${SIDEBAR_BG}`,
                   }} />
                 )}
               </span>
-              <span style={{ opacity: expanded ? 1 : 0, transition: 'opacity 0.15s' }}>
+              <span style={{ opacity: expanded ? 1 : 0, transition: 'opacity 0.15s', display: 'flex', alignItems: 'center', gap: 6 }}>
                 {label}
+                {showDot && totalDot > 0 && (
+                  <span style={{ minWidth: 18, height: 18, padding: '0 4px', borderRadius: 999, background: '#EF4444', color: '#fff', fontSize: 10, fontWeight: 800, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {totalDot}
+                  </span>
+                )}
               </span>
             </a>
           )

@@ -1198,6 +1198,16 @@ export default function TeamPage() {
           from { opacity: 0; transform: scale(0.95); }
           to   { opacity: 1; transform: scale(1); }
         }
+        @keyframes shimmer {
+          0%   { background-position: -400px 0; }
+          100% { background-position: 400px 0; }
+        }
+        .skeleton-line {
+          border-radius: 6px;
+          background: linear-gradient(90deg, #F3F4F6 25%, #E9EAEC 50%, #F3F4F6 75%);
+          background-size: 800px 100%;
+          animation: shimmer 1.4s infinite linear;
+        }
         @keyframes dotPulse {
           0%   { box-shadow: 0 0 0 0 rgba(52,211,153,0.55); }
           70%  { box-shadow: 0 0 0 5px rgba(52,211,153,0); }
@@ -1230,6 +1240,7 @@ export default function TeamPage() {
         }
         .team-panel-card:nth-child(1) { animation: scaleIn 0.40s ease both 0.18s; }
         .team-panel-card:nth-child(2) { animation: scaleIn 0.40s ease both 0.26s; }
+        .team-panel-card:nth-child(3) { animation: scaleIn 0.40s ease both 0.34s; }
         .org-node-btn {
           transition: box-shadow 0.15s ease, transform 0.12s ease !important;
           position: relative;
@@ -1338,16 +1349,24 @@ export default function TeamPage() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
 
           {/* ── COMPANY PROFILE CARD ──────────────────────────────────────────── */}
-          {companyName && (
-            <div className="team-panel-card" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '20px 24px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
-              {/* Title row */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <Building2 size={15} style={{ color: '#F97316' }} />
-                </div>
-                <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>My Company</span>
+          <div className="team-panel-card" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '20px 24px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+            {/* Title row */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+              <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <Building2 size={15} style={{ color: '#F97316' }} />
               </div>
-              {/* Nested company row */}
+              <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>My Company</span>
+            </div>
+            {/* Loading skeleton or real content */}
+            {!companyName ? (
+              <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                <div className="skeleton-line" style={{ height: 18, width: '40%' }} />
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <div className="skeleton-line" style={{ height: 32, width: 60, borderRadius: 8 }} />
+                  <div className="skeleton-line" style={{ height: 32, width: 72, borderRadius: 8 }} />
+                </div>
+              </div>
+            ) : (
               <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
                 <span style={{ fontSize: '0.9375rem', fontWeight: 600, color: '#111827' }}>{companyName}</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
@@ -1389,8 +1408,8 @@ export default function TeamPage() {
                   </button>
                 </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
           {/* ── ORG CHART ─────────────────────────────────────────────────────── */}
           <div className="team-panel-card" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>

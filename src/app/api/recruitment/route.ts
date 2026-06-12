@@ -64,10 +64,18 @@ export async function POST(req: NextRequest) {
     industry: typeof data.industry === 'string' && data.industry ? data.industry : null,
     salary_amount: typeof data.salary_amount === 'number' ? data.salary_amount : null,
     salary_type: typeof data.salary_type === 'string' && data.salary_type ? data.salary_type : 'per hour',
+    urgency: typeof data.urgency === 'string' && data.urgency ? data.urgency : null,
+    estimated_hours: typeof data.estimated_hours === 'string' && data.estimated_hours ? data.estimated_hours : null,
     is_recurring: data.is_recurring === true,
     recurrence_interval: typeof data.recurrence_interval === 'number' ? data.recurrence_interval : null,
     recurrence_unit: typeof data.recurrence_unit === 'string' && data.recurrence_unit ? data.recurrence_unit : null,
     status: data.status === 'draft' ? 'draft' : 'open',
+    shift_date: typeof data.shift_date === 'string' && data.shift_date ? data.shift_date : null,
+    shift_start_time: typeof data.shift_start_time === 'string' && data.shift_start_time ? data.shift_start_time : null,
+    shift_end_time: typeof data.shift_end_time === 'string' && data.shift_end_time ? data.shift_end_time : null,
+    break_start_time: typeof data.break_start_time === 'string' && data.break_start_time ? data.break_start_time : null,
+    break_end_time: typeof data.break_end_time === 'string' && data.break_end_time ? data.break_end_time : null,
+    assigned_employee_id: typeof data.assigned_employee_id === 'string' && data.assigned_employee_id ? data.assigned_employee_id : null,
   }
 
   try {
@@ -101,6 +109,15 @@ export async function PATCH(req: NextRequest) {
         employment_type: typeof data.employment_type === 'string' ? data.employment_type : null,
         salary_amount: typeof data.salary_amount === 'number' ? data.salary_amount : null,
         salary_type: typeof data.salary_type === 'string' ? data.salary_type : null,
+        urgency: typeof data.urgency === 'string' ? data.urgency : null,
+        estimated_hours: typeof data.estimated_hours === 'string' ? data.estimated_hours : null,
+        is_recurring: typeof data.is_recurring === 'boolean' ? data.is_recurring : undefined,
+        shift_date: typeof data.shift_date === 'string' ? data.shift_date : null,
+        shift_start_time: typeof data.shift_start_time === 'string' ? data.shift_start_time : null,
+        shift_end_time: typeof data.shift_end_time === 'string' ? data.shift_end_time : null,
+        break_start_time: typeof data.break_start_time === 'string' ? data.break_start_time : null,
+        break_end_time: typeof data.break_end_time === 'string' ? data.break_end_time : null,
+        assigned_employee_id: typeof data.assigned_employee_id === 'string' ? data.assigned_employee_id : null,
       })
       return NextResponse.json({ success: true, posting })
     }
