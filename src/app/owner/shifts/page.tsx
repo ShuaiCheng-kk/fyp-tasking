@@ -81,6 +81,7 @@ type ShiftEditForm = {
   end_time: string
   assigned_user_id: string
   department_id: string
+  acceptance_deadline_at: string
 }
 
 type DepartmentModalMode = 'add' | 'edit' | 'delete' | null
@@ -709,6 +710,7 @@ export default function OwnerShiftsPage() {
   const [bulkError, setBulkError] = useState('')
   const [bulkResult, setBulkResult] = useState('')
   const [bulkFailures, setBulkFailures] = useState<BulkFailure[]>([])
+  const [batchDeadline, setBatchDeadline] = useState('')
   const [successToast, setSuccessToast] = useState<string | null>(null)
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -719,6 +721,7 @@ export default function OwnerShiftsPage() {
     end_time: '17:00',
     assigned_user_id: '',
     department_id: '',
+    acceptance_deadline_at: '',
   })
   const [shiftActionLoading, setShiftActionLoading] = useState(false)
   const [shiftActionError, setShiftActionError] = useState('')
@@ -1235,6 +1238,7 @@ export default function OwnerShiftsPage() {
     setBulkError('')
     setBulkResult('')
     setBulkFailures([])
+    setBatchDeadline('')
   }
 
   const submitBulkAssignment = async () => {
@@ -1266,6 +1270,9 @@ export default function OwnerShiftsPage() {
             shift_date: cell.shift_date,
             start_time: cell.start_time,
             end_time: cell.end_time,
+            acceptance_deadline_at: batchDeadline
+              ? new Date(Date.now() + Number(batchDeadline) * 3600 * 1000).toISOString()
+              : null,
           })),
         }),
       })
@@ -1458,6 +1465,9 @@ export default function OwnerShiftsPage() {
       end_time: shift.end_time,
       assigned_user_id: row.user_id ?? '',
       department_id: shift.department_id,
+      acceptance_deadline_at: shift.acceptance_deadline_at
+        ? shift.acceptance_deadline_at.slice(0, 16)
+        : '',
     })
     setShiftActionError('')
   }
@@ -1486,7 +1496,7 @@ export default function OwnerShiftsPage() {
           start_time: shiftEditForm.start_time,
           end_time: shiftEditForm.end_time,
           publication_status: 'published',
-          acceptance_deadline_at: null,
+          acceptance_deadline_at: shiftEditForm.acceptance_deadline_at || null,
           assigned_user_id: shiftEditForm.assigned_user_id || null,
           assigned_by: internalUserId,
         }),
@@ -2478,6 +2488,33 @@ export default function OwnerShiftsPage() {
                 )}
               </div>
 
+              {/* UC1: Acceptance Deadline */}
+              <div style={{ marginBottom: 20 }}>
+                <p style={{ margin: '0 0 10px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: '#94A3B8' }}>Acceptance Deadline</p>
+                <div style={{ background: '#F8FAFC', border: `1px solid ${PANEL_BORDER}`, borderRadius: 12, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <span style={labelStyle}>Response window (hours)</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 0, border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, overflow: 'hidden', background: '#FFFFFF', width: 140 }}>
+                      <input
+                        type="number"
+                        min={1}
+                        max={168}
+                        value={batchDeadline}
+                        onChange={e => setBatchDeadline(e.target.value)}
+                        placeholder="e.g. 24"
+                        style={{ flex: 1, padding: '9px 11px', border: 'none', outline: 'none', fontSize: 13, fontWeight: 500, color: TEXT_DARK, background: 'transparent' }}
+                      />
+                      <span style={{ padding: '9px 11px 9px 0', fontSize: 13, fontWeight: 600, color: MUTED, background: 'transparent', whiteSpace: 'nowrap' }}>hrs</span>
+                    </div>
+                  </label>
+                  {batchDeadline && (
+                    <p style={{ margin: 0, fontSize: 12, fontWeight: 500, color: MUTED }}>
+                      Workers must accept or decline within <strong style={{ color: TEXT_DARK }}>{batchDeadline} hour{Number(batchDeadline) === 1 ? '' : 's'}</strong> of being assigned.
+                    </p>
+                  )}
+                </div>
+              </div>
+
               {(bulkError || bulkFailures.length > 0) && (
                 <div style={{ marginBottom: 16 }}>
                   {bulkError && <div style={errorBoxStyle}>{bulkError}</div>}
@@ -2672,6 +2709,7 @@ export default function OwnerShiftsPage() {
                 </div>
               </div>
             </div>
+
           </div>
           {shiftActionError && <div style={{ ...errorBoxStyle, marginTop: 12 }}>{shiftActionError}</div>}
           <div style={modalFooterStyle}>

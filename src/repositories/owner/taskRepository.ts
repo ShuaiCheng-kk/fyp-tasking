@@ -95,6 +95,25 @@ export const taskRepository = {
     return data as User
   },
 
+  async getManagerDepartmentIds(manager_id: string, company_id: string): Promise<string[]> {
+    const { data, error } = await supabase
+      .from('manager_departments')
+      .select('department_id')
+      .eq('manager_id', manager_id)
+      .eq('company_id', company_id)
+    if (error) throw new Error(error.message)
+    return (data ?? []).map((row: { department_id: string }) => row.department_id)
+  },
+
+  async getEmployeeDepartmentIds(user_id: string): Promise<string[]> {
+    const { data, error } = await supabase
+      .from('employee_departments')
+      .select('department_id')
+      .eq('employee_id', user_id)
+    if (error) throw new Error(error.message)
+    return (data ?? []).map((row: { department_id: string }) => row.department_id)
+  },
+
   async getShiftById(id: string): Promise<Shift | null> {
     const { data, error } = await supabase
       .from('shifts')

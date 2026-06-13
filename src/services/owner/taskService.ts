@@ -21,7 +21,7 @@ export const taskService = {
     if (!input.company_id || !input.department_id || !input.title?.trim()) {
       throw new Error('company_id, department_id, and title are required')
     }
-    await validateOwnerTaskAssignment(input)
+    await validateTaskAssignment(input)
     if (input.percentage_complete !== undefined) {
       if (input.percentage_complete < 0 || input.percentage_complete > 100) {
         throw new Error('percentage_complete must be between 0 and 100')
@@ -33,7 +33,7 @@ export const taskService = {
   async editTask(id: string, input: Partial<TaskInput>): Promise<Task> {
     if (!id) throw new Error('Task id is required')
     const existing = await taskRepository.getTaskById(id)
-    await validateOwnerTaskAssignment({
+    await validateTaskAssignment({
       ...existing,
       ...input,
       company_id: input.company_id ?? existing.company_id,
@@ -171,11 +171,36 @@ export const taskService = {
 
 }
 
-async function validateOwnerTaskAssignment(input: TaskInput): Promise<void> {
+async function validateTaskAssignment(input: TaskInput): Promise<void> {
+  const creator = input.assigned_by ? await taskRepository.getUserById(input.assigned_by) : null
+
   if (input.assigned_user_id) {
     const assignee = await taskRepository.getUserById(input.assigned_user_id)
-    if (!assignee || assignee.role !== 'Manager') {
-      throw new Error('Owner tasks can only be assigned to Managers')
+    if (!assignee) throw new Error('Selected assignee not found')
+    if (assignee.company_id !== input.company_id) throw new Error('Selected assignee does not belong to this company')
+
+    if (!creator || creator.role === 'Owner' || creator.role === 'Partner') {
+      if (assignee.role !== 'Manager') {
+        throw new Error('Owner tasks can only be assigned to Managers')
+      }
+    } else if (creator.role === 'Manager') {
+      if (!['Employee', 'Casual Worker'].includes(assignee.role)) {
+        throw new Error('Manager tasks can only be assigned to Employees or Casual Workers')
+      }
+
+      const managerDeptIds = await taskRepository.getManagerDepartmentIds(creator.id, input.company_id)
+      if (!managerDeptIds.includes(input.department_id)) {
+        throw new Error('Managers can only create tasks for their own departments')
+      }
+
+      const assigneeDeptIds = assignee.role === 'Employee'
+        ? await taskRepository.getEmployeeDepartmentIds(assignee.id)
+        : [input.department_id]
+      if (assignee.role === 'Employee' && !assigneeDeptIds.includes(input.department_id)) {
+        throw new Error('Managers can only assign tasks to employees in their own department')
+      }
+    } else {
+      throw new Error('This role cannot assign tasks')
     }
   }
 

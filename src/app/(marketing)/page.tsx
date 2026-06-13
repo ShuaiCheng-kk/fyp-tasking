@@ -281,7 +281,7 @@ export default function HomePage() {
   return (
     <>
       {/* ========== HERO SECTION ========== */}
-      <section id="hero" className="page-section" style={{ background: '#1C1C1E', padding: '80px 0 100px' }}>
+      <section id="hero" className="page-section" style={{ background: '#1C1C1E', padding: '80px 0 120px' }}>
         <div
           className="hero-flex section-inner"
           style={{
@@ -366,26 +366,227 @@ export default function HomePage() {
             </p>
           </div>
 
-          {/* Right side – dashboard mockup placeholder */}
+          {/* Right side – hardcoded dashboard mockup component */}
           <div
             className="hero-mockup"
             style={{
               flex: '1.1',
               minWidth: 0,
-              background: '#2C2C2E',
-              borderRadius: '20px',
-              height: '440px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              border: '1px solid rgba(255,255,255,0.08)',
-              boxShadow: '0 0 60px rgba(249,115,22,0.3)',
+              borderRadius: '16px',
+              overflow: 'hidden',
+              boxShadow: '0 0 80px rgba(249,115,22,0.22), 0 32px 80px rgba(0,0,0,0.55)',
+              border: '1px solid #333',
+              background: '#111',
+              padding: 3,
             }}
           >
-            {/* TODO: Add dashboard mockup image here */}
-            <p style={{ color: 'rgba(255,255,255,0.3)', fontFamily: 'var(--font-body)', fontSize: '0.9375rem' }}>
-              Dashboard Mockup
-            </p>
+            {/* Inner rounded container */}
+            <div style={{ background: '#1A1A1A', borderRadius: 14, overflow: 'hidden' }}>
+
+              {/* Browser chrome */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', background: '#1A1A1A', borderBottom: '1px solid #2A2A2A' }}>
+                <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#FF5F57' }} />
+                <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#FFBD2E' }} />
+                <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#28CA41' }} />
+                <div style={{ flex: 1, background: '#2C2C2C', borderRadius: 5, padding: '3px 10px', textAlign: 'center', color: '#555', fontSize: 9 }}>tasking.app/dashboard</div>
+              </div>
+
+              {/* Dashboard body */}
+              <div style={{ display: 'flex', height: 400 }}>
+
+                {/* Sidebar */}
+                <div style={{ width: 40, background: '#111', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '12px 0', gap: 14, borderRight: '1px solid #222', flexShrink: 0 }}>
+                  <div style={{ width: 22, height: 22, background: '#F97316', borderRadius: 5, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="1" y="1" width="6" height="6" rx="1.5" fill="white"/><rect x="9" y="1" width="6" height="6" rx="1.5" fill="white"/><rect x="1" y="9" width="6" height="6" rx="1.5" fill="white"/><rect x="9" y="9" width="6" height="6" rx="1.5" fill="white"/></svg>
+                  </div>
+                  {[
+                    <svg key="cal" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#444" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
+                    <svg key="task" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#F97316" strokeWidth="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>,
+                    <svg key="chart" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#444" strokeWidth="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
+                    <svg key="users" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#444" strokeWidth="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>,
+                    <svg key="msg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#444" strokeWidth="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>,
+                    <svg key="rec" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#444" strokeWidth="2"><path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>,
+                    <svg key="brief" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#444" strokeWidth="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2"/></svg>,
+                  ].map((icon, i) => <div key={i}>{icon}</div>)}
+                </div>
+
+                {/* Main */}
+                <div style={{ flex: 1, background: '#F7F6F2', display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+
+                  {/* Top bar */}
+                  <div style={{ background: '#fff', padding: '10px 14px', borderBottom: '1px solid #EEECE6', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+                    <div>
+                      <div style={{ fontSize: 7, color: '#F97316', fontWeight: 700, letterSpacing: '0.8px', marginBottom: 2 }}>SATURDAY, JUNE 13, 2026</div>
+                      <div style={{ fontSize: 12, fontWeight: 800, color: '#111' }}>Today&apos;s Overview for Sunrise Café</div>
+                      <div style={{ fontSize: 7, color: '#22C55E', marginTop: 1, display: 'flex', alignItems: 'center', gap: 3 }}>
+                        <span style={{ display: 'inline-block', width: 5, height: 5, borderRadius: '50%', background: '#22C55E' }} />
+                        Updated just now
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+                      <div style={{ fontSize: 8, color: '#333', background: '#F0EEE8', borderRadius: 20, padding: '3px 8px', display: 'flex', alignItems: 'center', gap: 3, border: '1px solid #E0DDD6' }}>
+                        <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#F97316" strokeWidth="2.5"><path d="M2 20h20M5 20V10l7-7 7 7v10"/></svg>
+                        Sarah Wong
+                      </div>
+                      <div style={{ fontSize: 8, color: '#fff', background: '#22C55E', borderRadius: 20, padding: '3px 8px', fontWeight: 600 }}>✓ Pro Plan</div>
+                    </div>
+                  </div>
+
+                  {/* Stats */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 4, padding: '7px 10px', background: '#fff', borderBottom: '1px solid #EEECE6', flexShrink: 0 }}>
+                    {[
+                      { label: 'STAFF ON SHIFT', val: '8', valCol: '#111' },
+                      { label: 'CASUAL WORKERS', val: '5', valCol: '#111' },
+                      { label: 'TOTAL TASKS', val: '12', valCol: '#111' },
+                      { label: 'IN PROGRESS', val: '4', valCol: '#A855F7' },
+                      { label: 'IN REVIEW', val: '2', valCol: '#F59E0B' },
+                      { label: 'COMPLETE', val: '6', valCol: '#22C55E' },
+                    ].map(s => (
+                      <div key={s.label} style={{ background: '#F9F8F4', borderRadius: 7, padding: '7px 8px', border: '1px solid #E8E6DE' }}>
+                        <div style={{ fontSize: 6, color: '#999', marginBottom: 4, fontWeight: 600, letterSpacing: '0.3px' }}>{s.label}</div>
+                        <div style={{ fontSize: 15, fontWeight: 800, color: s.valCol, lineHeight: 1 }}>{s.val}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Schedule */}
+                  <div style={{ padding: '7px 10px', background: '#fff', borderBottom: '1px solid #EEECE6', flexShrink: 0 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#F97316" strokeWidth="2.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                        <span style={{ fontSize: 9, fontWeight: 700, color: '#111' }}>Schedule</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                        <div style={{ fontSize: 7, color: '#fff', background: '#F97316', borderRadius: 4, padding: '2px 6px', fontWeight: 600 }}>Today</div>
+                        <div style={{ fontSize: 7, color: '#888', background: '#F0EEE8', borderRadius: 4, padding: '2px 6px', border: '1px solid #E0DDD6' }}>06/13/2026</div>
+                      </div>
+                    </div>
+                    <div style={{ borderRadius: 6, overflow: 'hidden', border: '1px solid #E0DDD6' }}>
+                      {/* Hour axis */}
+                      <div style={{ background: '#111', display: 'flex', alignItems: 'center', padding: '4px 8px' }}>
+                        <div style={{ width: 88, flexShrink: 0 }} />
+                        <div style={{ flex: 1, display: 'flex', justifyContent: 'space-between', padding: '0 4px' }}>
+                          {['7am','9am','11am','1pm','3pm','5pm','7pm'].map(h => (
+                            <span key={h} style={{ fontSize: 6, color: '#555' }}>{h}</span>
+                          ))}
+                        </div>
+                      </div>
+                      {[
+                        { name: 'Sarah Manager', icon: 'manager', left: '20%', width: '48%', color: '#F97316', label: '9am – 5pm' },
+                        { name: 'James Employee', icon: 'employee', left: '20%', width: '48%', color: '#F97316', label: '9am – 5pm' },
+                        { name: 'Mia (CW)', icon: 'casual', left: '26%', width: '28%', color: '#A855F7', label: '10am – 2pm' },
+                      ].map((row, i) => (
+                        <div key={row.name} style={{ display: 'flex', alignItems: 'center', padding: '4px 8px', borderBottom: i < 2 ? '1px solid #F0EEE8' : 'none', background: '#fff' }}>
+                          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke={row.icon === 'manager' ? '#F97316' : '#888'} strokeWidth="2.5" style={{ marginRight: 3, flexShrink: 0 }}><circle cx="12" cy="8" r="4"/><path d="M4 20a8 8 0 0116 0"/></svg>
+                          <div style={{ width: 80, fontSize: 7, fontWeight: 600, color: '#111', flexShrink: 0 }}>{row.name}</div>
+                          <div style={{ flex: 1, position: 'relative', height: 13, background: '#F7F6F2', borderRadius: 4 }}>
+                            <div style={{ position: 'absolute', left: row.left, width: row.width, height: 13, background: row.color, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              <span style={{ fontSize: 6, color: '#fff', fontWeight: 700 }}>{row.label}</span>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {/* Dept tags */}
+                    <div style={{ display: 'flex', gap: 3, marginTop: 5, alignItems: 'center' }}>
+                      <span style={{ fontSize: 6, color: '#999', fontWeight: 600, letterSpacing: '0.3px', lineHeight: '16px' }}>DEPTS</span>
+                      {[
+                        { label: '● Front of House 3', bg: '#FFF0E5', color: '#C2410C', border: '#FED7AA' },
+                        { label: '● Kitchen 3', bg: '#F0FDF4', color: '#15803D', border: '#BBF7D0' },
+                        { label: '● Delivery 2', bg: '#EFF6FF', color: '#1D4ED8', border: '#BFDBFE' },
+                      ].map(d => (
+                        <span key={d.label} style={{ fontSize: 6, background: d.bg, color: d.color, borderRadius: 4, padding: '1px 6px', border: `1px solid ${d.border}`, fontWeight: 600 }}>{d.label}</span>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Bottom 4 panels */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 5, padding: '7px 10px', flex: 1, minHeight: 0 }}>
+
+                    {/* Focus */}
+                    <div style={{ background: '#fff', borderRadius: 7, border: '1px solid #E8E6DE', padding: 8 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 3, marginBottom: 6 }}>
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#F97316" strokeWidth="2.5"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/></svg>
+                        <span style={{ fontSize: 8, fontWeight: 700, color: '#111' }}>Focus</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 5 }}>
+                        <div style={{ width: 40, height: 40, borderRadius: '50%', border: '3px solid #F0EEE8', borderTopColor: '#F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
+                          <div style={{ fontSize: 11, fontWeight: 800, color: '#111', lineHeight: 1 }}>12</div>
+                          <div style={{ fontSize: 5, color: '#999', marginTop: 1 }}>tasks</div>
+                        </div>
+                      </div>
+                      {[['Assigned','#999','4'],['In Progress','#A855F7','4'],['Review','#F97316','2'],['Complete','#22C55E','6']].map(([l,c,v]) => (
+                        <div key={l} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
+                          <span style={{ fontSize: 6, color: c as string }}>● {l}</span>
+                          <span style={{ fontSize: 6, fontWeight: 700, color: '#111' }}>{v}</span>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Team */}
+                    <div style={{ background: '#fff', borderRadius: 7, border: '1px solid #E8E6DE', padding: 8 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 3, marginBottom: 5 }}>
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#F97316" strokeWidth="2.5"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+                        <span style={{ fontSize: 8, fontWeight: 700, color: '#111' }}>Team</span>
+                      </div>
+                      <div style={{ fontSize: 6, fontWeight: 700, color: '#F97316', marginBottom: 4, paddingBottom: 3, borderBottom: '1px solid #F0EEE8', letterSpacing: '0.3px' }}>● FRONT OF HOUSE</div>
+                      {[['Sarah M.','#F97316'],['James E.','#888'],['Mia C.','#888']].map(([name, col]) => (
+                        <div key={name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 3 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke={col as string} strokeWidth="2.5"><circle cx="12" cy="8" r="4"/><path d="M4 20a8 8 0 0116 0"/></svg>
+                            <span style={{ fontSize: 7, color: '#111', fontWeight: 500 }}>{name}</span>
+                          </div>
+                          <div style={{ width: 10, height: 10, borderRadius: 2, border: '1px solid #DDD' }} />
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Live Feed */}
+                    <div style={{ background: '#fff', borderRadius: 7, border: '1px solid #E8E6DE', padding: 8 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#F97316" strokeWidth="2.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                          <span style={{ fontSize: 8, fontWeight: 700, color: '#111' }}>Live Feed</span>
+                        </div>
+                        <span style={{ display: 'inline-block', width: 6, height: 6, borderRadius: '50%', background: '#22C55E' }} />
+                      </div>
+                      {[
+                        { msg: 'Mia clocked in', sub: '10:02 AM · Front of House', bg: '#F0FDF4', border: '#22C55E', col: '#15803D' },
+                        { msg: 'Task updated', sub: '9:45 AM · James E.', bg: '#FFF7ED', border: '#F97316', col: '#C2410C' },
+                        { msg: 'New applicant', sub: '9:30 AM · Weekend Barista', bg: '#EFF6FF', border: '#3B82F6', col: '#1D4ED8' },
+                      ].map(f => (
+                        <div key={f.msg} style={{ background: f.bg, borderRadius: 5, padding: '4px 5px', borderLeft: `2px solid ${f.border}`, marginBottom: 3 }}>
+                          <div style={{ fontSize: 6, color: f.col, fontWeight: 700 }}>{f.msg}</div>
+                          <div style={{ fontSize: 5, color: '#999', marginTop: 1 }}>{f.sub}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Tasks */}
+                    <div style={{ background: '#fff', borderRadius: 7, border: '1px solid #E8E6DE', padding: 8 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 3, marginBottom: 5 }}>
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#F97316" strokeWidth="2.5"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+                        <span style={{ fontSize: 8, fontWeight: 700, color: '#111' }}>Tasks</span>
+                      </div>
+                      {[
+                        { title: 'Open Cash Register', who: 'James E. · 9:00 AM', badge: 'High', badgeBg: '#FEF3C7', badgeCol: '#92400E', bg: '#FFF7ED', border: '#FED7AA' },
+                        { title: 'Prep Station Setup', who: 'Mia C. · 10:00 AM', badge: 'Done', badgeBg: '#DCFCE7', badgeCol: '#166534', bg: '#F0FDF4', border: '#BBF7D0' },
+                        { title: 'Stock Check', who: 'Sarah M. · 2:00 PM', badge: 'Assigned', badgeBg: '#F1F5F9', badgeCol: '#475569', bg: '#F9F8F4', border: '#E8E6DE' },
+                      ].map(t => (
+                        <div key={t.title} style={{ background: t.bg, borderRadius: 5, padding: '4px 6px', border: `1px solid ${t.border}`, marginBottom: 3 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: 6, fontWeight: 700, color: '#111' }}>{t.title}</span>
+                            <span style={{ fontSize: 5, background: t.badgeBg, color: t.badgeCol, borderRadius: 3, padding: '1px 4px', fontWeight: 700 }}>{t.badge}</span>
+                          </div>
+                          <div style={{ fontSize: 5, color: '#999', marginTop: 1 }}>{t.who}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </section>

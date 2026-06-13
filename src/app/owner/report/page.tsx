@@ -141,6 +141,11 @@ export default function ReportPage() {
   const [aiLoading, setAiLoading] = useState(false)
   const [error, setError] = useState('')
 
+  // UC4 / UC5: Report tabs
+  const [reportTab, setReportTab] = useState<'overview' | 'workforce' | 'anomalies'>('overview')
+  // UC5: anomaly severity filter
+  const [anomalySeverity, setAnomalySeverity] = useState<'all' | 'high' | 'medium' | 'low'>('all')
+
   const fetchAll = useCallback(async (
     cid: string,
     from = dateFrom,
@@ -333,7 +338,39 @@ export default function ReportPage() {
           </div>
         </div>
 
-        <div style={{ padding: '0 28px 40px', display: 'flex', flexDirection: 'column', gap: 24 }}>
+        {/* ── UC4/UC5: Tab bar ──────────────────────────────────────────────────── */}
+        <div style={{ padding: '8px 28px 0', display: 'flex', gap: 2, flexShrink: 0, borderBottom: '1.5px solid #E2E8F0' }}>
+          {([
+            { key: 'overview',  label: 'Overview' },
+            { key: 'workforce', label: 'Workforce Analytics' },
+            { key: 'anomalies', label: 'Anomaly Detection' },
+          ] as const).map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => setReportTab(tab.key)}
+              style={{
+                padding: '9px 20px 10px',
+                border: 'none',
+                borderBottom: reportTab === tab.key ? '2.5px solid #F97316' : '2.5px solid transparent',
+                borderRadius: 0,
+                fontWeight: reportTab === tab.key ? 700 : 500,
+                fontSize: '0.875rem',
+                cursor: 'pointer',
+                background: 'transparent',
+                color: reportTab === tab.key ? '#0F172A' : '#94A3B8',
+                transition: 'color 0.15s, border-color 0.15s',
+                marginBottom: -1.5,
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ padding: '28px 28px 40px', display: 'flex', flexDirection: 'column', gap: 24 }}>
+
+          {/* ── Overview tab ────────────────────────────────────────────────── */}
+          {reportTab === 'overview' && <>
 
           {/* ── A · Filters row ─────────────────────────────────────────────── */}
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', flexShrink: 0 }}>
@@ -561,39 +598,24 @@ export default function ReportPage() {
               </div>
             </div>
 
-            {/* ── AI Anomalies sidebar ─────────────────────────────────────────── */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div className="report-panel" style={{ ...panelStyle, padding: 0, overflow: 'hidden' }}>
-                <div style={{ padding: '14px 20px 12px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ width: 28, height: 28, borderRadius: 8, background: '#F5F3FF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <AlertTriangle size={14} style={{ color: '#7C3AED' }} />
-                    </div>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: '#0F172A' }}>AI Anomalies</span>
-                  </div>
-                  <button
-                    onClick={detectAnomalies}
-                    disabled={aiLoading || !companyId}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 28, padding: '0 10px', borderRadius: 8, border: 'none', background: aiLoading || !companyId ? '#F3F4F6' : '#7C3AED', color: aiLoading || !companyId ? '#9CA3AF' : '#FFFFFF', fontSize: 11, fontWeight: 700, cursor: aiLoading || !companyId ? 'default' : 'pointer' }}
-                  >
-                    {aiLoading ? <Spinner size={11} /> : <Sparkles size={11} />} Detect
-                  </button>
+            {/* ── AI Anomalies — compact nudge in Overview tab ────────────────── */}
+            <div className="report-panel" style={{ ...panelStyle, padding: 0, overflow: 'hidden' }}>
+              <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 28, height: 28, borderRadius: 8, background: '#F5F3FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <AlertTriangle size={14} style={{ color: '#7C3AED' }} />
                 </div>
-                {anomalies.length === 0 ? (
-                  <div style={{ padding: '24px 20px', textAlign: 'center' }}>
-                    <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#F8FAFC', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px' }}>
-                      <Sparkles size={15} color="#CBD5E0" />
-                    </div>
-                    <p style={{ margin: 0, fontSize: '0.8125rem', color: '#9CA3AF' }}>Run detection to surface risks.</p>
-                  </div>
-                ) : anomalies.map(item => (
-                  <div key={item.id} style={{ padding: '14px 20px', borderBottom: '1px solid #F0F4F8' }}>
-                    <span style={{ display: 'inline-block', marginBottom: 6, borderRadius: 999, padding: '2px 8px', background: item.severity === 'high' ? '#FEF2F2' : '#FFF7ED', color: item.severity === 'high' ? '#B91C1C' : '#C2410C', fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{item.severity}</span>
-                    <strong style={{ display: 'block', color: '#111827', fontSize: '0.875rem', marginBottom: 4 }}>{item.title}</strong>
-                    <p style={{ margin: '0 0 5px', color: '#6B7280', fontSize: '0.78rem', lineHeight: 1.5 }}>{item.evidence[0] ?? item.recommended_action}</p>
-                    <p style={{ margin: 0, color: '#374151', fontSize: '0.78rem', fontWeight: 600 }}>{item.recommended_action}</p>
-                  </div>
-                ))}
+                <div style={{ flex: 1 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#0F172A', display: 'block' }}>AI Anomaly Detection</span>
+                  <span style={{ fontSize: 12, color: '#9CA3AF' }}>
+                    {anomalies.length > 0 ? `${anomalies.length} anomaly${anomalies.length > 1 ? 'ies' : ''} detected` : 'No anomalies detected yet'}
+                  </span>
+                </div>
+                <button
+                  onClick={() => setReportTab('anomalies')}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 28, padding: '0 12px', borderRadius: 8, border: '1px solid #E5E7EB', background: '#FFFFFF', color: '#374151', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                >
+                  View Anomalies
+                </button>
               </div>
             </div>
           </div>
@@ -661,6 +683,184 @@ export default function ReportPage() {
               </table>
             </div>
           </div>
+
+          </> /* end Overview tab */ }
+
+          {/* ── UC4: Workforce Analytics tab ────────────────────────────────── */}
+          {reportTab === 'workforce' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+              {/* Filters (reuse existing state) */}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <input type="date" value={dateFrom} max={YESTERDAY} onChange={e => setDateFrom(e.target.value)} style={filterInputStyle} />
+                <span style={{ color: '#9CA3AF', fontSize: '0.8rem' }}>to</span>
+                <input type="date" value={dateTo} max={YESTERDAY} onChange={e => setDateTo(e.target.value)} style={filterInputStyle} />
+                <div style={{ position: 'relative' }}>
+                  <select value={departmentId} onChange={e => setDepartmentId(e.target.value)} style={{ ...filterInputStyle, paddingRight: 28, appearance: 'none', cursor: 'pointer' }}>
+                    <option value="">All departments</option>
+                    {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                  </select>
+                  <ChevronDown size={13} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
+                </div>
+                <button onClick={() => fetchAll(companyId)} disabled={loading || !companyId} style={actionBtn('#374151', loading || !companyId)}>
+                  {loading ? <Spinner size={13} /> : <TrendingUp size={13} />} Apply
+                </button>
+              </div>
+
+              {/* 6 workforce metric cards */}
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                <StatCard label="Total Shifts"      value={summary?.shifts ?? 0}               sub="in selected period"           icon={<TrendingUp size={15} />}   accentBg="#FFF7ED" accentColor="#F97316" loading={loading} />
+                <StatCard label="Shift Hours"       value={loading ? 0 : (summary?.assignments ?? 0) * 8} sub="estimated (assignments × 8h)"  icon={<Clock size={15} />}        accentBg="#FFFBEB" accentColor="#F59E0B" loading={loading} />
+                <StatCard label="Task Completion"   value={loading ? 0 : (summary?.task_completion_rate ?? 0)} sub="% tasks completed"             icon={<CheckSquare size={15} />}  accentBg="#F5F3FF" accentColor="#7C3AED" loading={loading} />
+                <StatCard label="Attendance Rate"   value={loading ? 0 : (summary?.attendance_records ?? 0) > 0 ? Math.round(((summary?.approved_attendance ?? 0) / (summary?.attendance_records ?? 1)) * 100) : 0} sub="% approved attendance"         icon={<Users size={15} />}        accentBg="#ECFDF5" accentColor="#10B981" loading={loading} />
+                <StatCard label="Utilisation"       value={loading ? 0 : (summary?.assignments ?? 0) > 0 ? Math.round(((summary?.shifts ?? 0) / Math.max(summary?.assignments ?? 1, 1)) * 100) : 0} sub="shift fill rate %"             icon={<BarChart3 size={15} />}    accentBg="#EFF6FF" accentColor="#3B82F6" loading={loading} />
+                <StatCard label="Absence Risk"      value={summary?.absent_count ?? 0}          sub="assignments without clock-in"  icon={<UserX size={15} />}        accentBg="#FEF2F2" accentColor="#EF4444" loading={loading} />
+              </div>
+
+              {/* Hours by Department bar chart */}
+              <div className="report-panel" style={panelStyle}>
+                <SectionHeader icon={<BarChart3 size={15} style={{ color: '#F97316' }} />} title="Hours by Department (Estimated)" />
+                {loading ? (
+                  <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Spinner size={20} dark /></div>
+                ) : deptBarData.length === 0 ? (
+                  <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9CA3AF', fontSize: 13 }}>No department data for this range</div>
+                ) : (
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart data={deptBarData.map(d => ({ ...d, estimatedHours: d.tasks * 2 }))} layout="vertical" margin={{ left: 4, right: 16, top: 0, bottom: 0 }}>
+                      <XAxis type="number" tick={{ fontSize: 11, fill: '#9CA3AF' }} axisLine={false} tickLine={false} />
+                      <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#374151' }} axisLine={false} tickLine={false} width={80} />
+                      <Tooltip contentStyle={{ borderRadius: 10, border: '1px solid #E5E7EB', fontSize: 12 }} formatter={(v) => [`${v} est. hrs`, 'Hours']} />
+                      <Bar dataKey="estimatedHours" fill="#F97316" radius={[0, 4, 4, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+                <p style={{ margin: '8px 0 0', fontSize: 11, color: '#9CA3AF' }}>* Estimated from task count. Actual hours tracking coming in a future update.</p>
+              </div>
+
+              {/* Workforce Risk Indicators table */}
+              <div className="report-panel" style={{ ...panelStyle, padding: 0, overflow: 'hidden' }}>
+                <div style={{ padding: '14px 20px 12px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ width: 28, height: 28, borderRadius: 8, background: '#FEF2F2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <AlertTriangle size={14} style={{ color: '#DC2626' }} />
+                  </div>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#0F172A' }}>Workforce Risk Indicators</span>
+                </div>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ background: '#F8FAFC' }}>
+                        {['Department', 'Workers', 'Avg Hours (est.)', 'Utilisation', 'Absent', 'Risk Level'].map(col => (
+                          <th key={col} style={{ padding: '10px 14px', textAlign: col === 'Department' ? 'left' : 'center', fontSize: '0.68rem', fontWeight: 700, color: '#94A3B8', letterSpacing: '0.06em', textTransform: 'uppercase', borderBottom: '1px solid #EDF2F7', whiteSpace: 'nowrap' }}>{col}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {loading ? (
+                        <tr><td colSpan={6} style={{ padding: '28px 20px', color: '#9CA3AF', textAlign: 'center', fontSize: '0.875rem' }}>Loading…</td></tr>
+                      ) : (report?.departments.length ?? 0) === 0 ? (
+                        <tr><td colSpan={6} style={{ padding: '28px 20px', color: '#9CA3AF', textAlign: 'center', fontSize: '0.875rem' }}>No department data for this range.</td></tr>
+                      ) : report?.departments.map((row, i) => {
+                        const utilisationPct = row.assignments > 0 ? Math.round((row.shifts / Math.max(row.assignments, 1)) * 100) : 0
+                        const riskLevel = row.rejected_attendance > 2 || utilisationPct < 50 ? 'High' : row.rejected_attendance > 0 || utilisationPct < 75 ? 'Medium' : 'Low'
+                        const riskColor = riskLevel === 'High' ? { bg: '#FEF2F2', text: '#B91C1C' } : riskLevel === 'Medium' ? { bg: '#FFF7ED', text: '#C2410C' } : { bg: '#ECFDF5', text: '#047857' }
+                        return (
+                          <tr key={row.department_id ?? i} className="report-tr" style={{ background: i % 2 === 0 ? '#FFFFFF' : '#FAFBFC' }}>
+                            <td style={{ padding: '13px 14px', fontSize: '0.875rem', fontWeight: 600, color: '#111827', borderBottom: '1px solid #F0F4F8' }}>{row.department_name}</td>
+                            <td style={{ padding: '13px 14px', fontSize: '0.875rem', color: '#4A5568', textAlign: 'center', borderBottom: '1px solid #F0F4F8' }}>{row.assignments}</td>
+                            <td style={{ padding: '13px 14px', fontSize: '0.875rem', color: '#4A5568', textAlign: 'center', borderBottom: '1px solid #F0F4F8' }}>{row.assignments * 8}h</td>
+                            <td style={{ padding: '13px 14px', textAlign: 'center', borderBottom: '1px solid #F0F4F8' }}>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', height: 22, padding: '0 8px', borderRadius: 999, fontSize: 11, fontWeight: 700, background: utilisationPct >= 75 ? '#ECFDF5' : utilisationPct >= 50 ? '#FFFBEB' : '#FEF2F2', color: utilisationPct >= 75 ? '#059669' : utilisationPct >= 50 ? '#D97706' : '#DC2626' }}>{utilisationPct}%</span>
+                            </td>
+                            <td style={{ padding: '13px 14px', fontSize: '0.875rem', color: row.rejected_attendance > 0 ? '#DC2626' : '#4A5568', textAlign: 'center', borderBottom: '1px solid #F0F4F8', fontWeight: row.rejected_attendance > 0 ? 700 : 500 }}>{row.rejected_attendance}</td>
+                            <td style={{ padding: '13px 14px', textAlign: 'center', borderBottom: '1px solid #F0F4F8' }}>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', height: 22, padding: '0 8px', borderRadius: 999, fontSize: 11, fontWeight: 700, background: riskColor.bg, color: riskColor.text }}>{riskLevel}</span>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+            </div>
+          )}
+
+          {/* ── UC5: Anomaly Detection tab ───────────────────────────────────── */}
+          {reportTab === 'anomalies' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+              {/* Header + detect button + filters */}
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                <div style={{ flex: 1 }}>
+                  <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#0F172A' }}>Anomaly Detection</h2>
+                  <p style={{ margin: '3px 0 0', fontSize: '0.8125rem', color: '#6B7280' }}>Detect unusual scheduling, task, or attendance patterns across your workforce.</p>
+                </div>
+                <button
+                  onClick={detectAnomalies}
+                  disabled={aiLoading || !companyId}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 36, padding: '0 14px', borderRadius: 8, border: 'none', background: aiLoading || !companyId ? '#E5E7EB' : '#7C3AED', color: aiLoading || !companyId ? '#9CA3AF' : '#FFFFFF', fontSize: '0.8125rem', fontWeight: 700, cursor: aiLoading || !companyId ? 'default' : 'pointer' }}
+                >
+                  {aiLoading ? <Spinner size={13} /> : <Sparkles size={13} />} Detect Anomalies
+                </button>
+              </div>
+
+              {/* Category pills + severity filter */}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#6B7280' }}>Category:</span>
+                {(['Scheduling', 'Attendance', 'Task Patterns'] as const).map(cat => (
+                  <span key={cat} style={{ padding: '4px 12px', borderRadius: 999, background: '#F3F4F6', color: '#374151', fontSize: '0.8rem', fontWeight: 600, border: '1px solid #E5E7EB' }}>{cat}</span>
+                ))}
+                <div style={{ marginLeft: 'auto', position: 'relative' }}>
+                  <select
+                    value={anomalySeverity}
+                    onChange={e => setAnomalySeverity(e.target.value as typeof anomalySeverity)}
+                    style={{ ...filterInputStyle, paddingRight: 28, appearance: 'none', cursor: 'pointer' }}
+                  >
+                    <option value="all">All Severities</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                  </select>
+                  <ChevronDown size={13} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
+                </div>
+              </div>
+
+              {/* Anomaly cards */}
+              {anomalies.length === 0 ? (
+                <div className="report-panel" style={{ ...panelStyle, textAlign: 'center', padding: '48px 24px' }}>
+                  <div style={{ width: 48, height: 48, borderRadius: '50%', background: '#F8FAFC', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px' }}>
+                    <Sparkles size={20} color="#CBD5E0" />
+                  </div>
+                  <p style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 600, color: '#374151' }}>No anomalies detected yet</p>
+                  <p style={{ margin: '6px 0 0', fontSize: '0.8125rem', color: '#9CA3AF' }}>Click "Detect Anomalies" to analyse your workforce data for unusual patterns.</p>
+                </div>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 14 }}>
+                  {anomalies
+                    .filter(item => anomalySeverity === 'all' || item.severity === anomalySeverity)
+                    .map(item => (
+                      <div key={item.id} className="report-panel" style={{ ...panelStyle, padding: 0, overflow: 'hidden' }}>
+                        <div style={{ padding: '14px 18px 12px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                          <span style={{ borderRadius: 999, padding: '3px 10px', background: item.severity === 'high' ? '#FEF2F2' : item.severity === 'medium' ? '#FFF7ED' : '#FFFBEB', color: item.severity === 'high' ? '#B91C1C' : item.severity === 'medium' ? '#C2410C' : '#B45309', fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{item.severity}</span>
+                          <button disabled title="Action flow coming in a future update" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, height: 26, padding: '0 10px', borderRadius: 7, border: '1px solid #E5E7EB', background: '#F8FAFC', color: '#9CA3AF', fontSize: 11, fontWeight: 600, cursor: 'not-allowed' }}>
+                            Take Action
+                          </button>
+                        </div>
+                        <div style={{ padding: '14px 18px' }}>
+                          <strong style={{ display: 'block', color: '#111827', fontSize: '0.9rem', marginBottom: 6 }}>{item.title}</strong>
+                          <p style={{ margin: '0 0 8px', color: '#6B7280', fontSize: '0.8rem', lineHeight: 1.5 }}>{item.evidence[0] ?? item.recommended_action}</p>
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, padding: '8px 10px', background: '#FFFBEB', borderRadius: 7, border: '1px solid #FDE68A' }}>
+                            <AlertTriangle size={12} style={{ color: '#D97706', flexShrink: 0, marginTop: 1 }} />
+                            <p style={{ margin: 0, color: '#92400E', fontSize: '0.78rem', fontWeight: 600 }}>{item.recommended_action}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+          )}
 
         </div>
       </main>

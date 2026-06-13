@@ -218,6 +218,11 @@ export const recruitmentService = {
     return recruitmentRepository.getCasualWorkersByCompany(company_id)
   },
 
+  async getAcceptedCasualWorkersForEmployee(company_id: string, employee_id: string): Promise<CasualWorkerStatus[]> {
+    if (!company_id || !employee_id) throw new Error('company_id and employee_id are required')
+    return recruitmentRepository.getAcceptedCasualWorkersByAssignedEmployee(company_id, employee_id)
+  },
+
   async updateCasualWorkerStatus(input: {
     user_id: string
     worker_status: 'active' | 'inactive' | 'blocked'

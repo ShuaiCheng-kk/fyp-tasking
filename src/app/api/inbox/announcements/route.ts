@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { ownerAnnouncementService } from '@/services/owner/ownerAnnouncementService'
+import { supabase } from '@/lib/supabase'
 
 export async function GET(req: NextRequest) {
   try {
@@ -58,6 +59,17 @@ export async function POST(req: NextRequest) {
     const { from_user_id, company_id, department_id, title, content, user_role } = body
     if (!from_user_id || !company_id || !title || !content) {
       return NextResponse.json({ success: false, error: 'Missing required fields' }, { status: 400 })
+    }
+    const { data: poster, error: posterError } = await supabase
+      .from('users')
+      .select('role')
+      .eq('id', from_user_id)
+      .single()
+    if (posterError || !poster) {
+      return NextResponse.json({ success: false, error: 'User not found' }, { status: 404 })
+    }
+    if (poster.role === 'Employee' || user_role === 'Employee') {
+      return NextResponse.json({ success: false, error: 'Employees cannot post announcements' }, { status: 403 })
     }
     const announcement = await ownerAnnouncementService.postAnnouncement(
       from_user_id,

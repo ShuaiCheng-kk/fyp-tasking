@@ -19,7 +19,10 @@ export async function GET(req: NextRequest) {
     }
     if (resource === 'workers') {
       if (!company_id) return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
-      const workers = await recruitmentService.getCasualWorkers(company_id)
+      const assigned_employee_id = searchParams.get('assigned_employee_id')
+      const workers = assigned_employee_id
+        ? await recruitmentService.getAcceptedCasualWorkersForEmployee(company_id, assigned_employee_id)
+        : await recruitmentService.getCasualWorkers(company_id)
       return NextResponse.json({ success: true, workers })
     }
     if (resource === 'pending_approval') {
