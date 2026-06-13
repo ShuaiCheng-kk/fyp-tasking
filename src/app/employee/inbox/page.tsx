@@ -252,7 +252,7 @@ export default function EmployeeInboxPage() {
 
   return (
     <div style={{ display: 'flex', height: '100vh', background: '#F0FDF4', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
-      <EmployeeSidebar unreadMessages={unreadMessages} />
+      <EmployeeSidebar />
 
       <main style={{ marginLeft: '64px', flex: 1, height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <div style={{ padding: '18px 32px', background: GREEN, borderBottom: '1px solid #15803D', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>

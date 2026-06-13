@@ -4,8 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import {
-  ArrowLeftRight, CalendarDays, Check, CheckCircle2, Clock,
-  Crown, Edit3, HardHat, ShieldCheck, Sparkles, UserCog, Users, UserX, X,
+  AlertTriangle, ArrowLeftRight, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronUp, Clock,
+  Crown, Edit3, Filter, HardHat, Settings2, ShieldCheck, Sparkles, UserCog, Users, UserX, X,
 } from 'lucide-react'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
@@ -129,6 +129,20 @@ export default function OwnerAttendancePage() {
   const [aiDecisions, setAiDecisions] = useState<AIAutoApprovalDecision[]>([])
   const [error, setError] = useState('')
 
+  // UC3: Exceptions tab state
+  const [activeTab, setActiveTab] = useState<'records' | 'exceptions' | 'swaps' | 'timeoff'>('records')
+  const [exceptionFilter, setExceptionFilter] = useState<'all' | 'late' | 'absent' | 'overtime' | 'pending'>('all')
+  const [exceptionDateFrom, setExceptionDateFrom] = useState('')
+  const [exceptionDateTo, setExceptionDateTo] = useState('')
+
+  // UC6: Auto-approval settings state (UI only)
+  const [autoApprovalExpanded, setAutoApprovalExpanded] = useState(false)
+  const [autoApprovalEnabled, setAutoApprovalEnabled] = useState(false)
+  const [autoApprovalThreshold, setAutoApprovalThreshold] = useState(85)
+
+  // UC2: Expand review modal with modification reason
+  const [reviewModifyReason, setReviewModifyReason] = useState('')
+
   const today = new Date().toISOString().slice(0, 10)
   const todayLabel = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
 
@@ -140,7 +154,66 @@ export default function OwnerAttendancePage() {
   const records = dashboard?.records ?? []
   const todayRecords = records.filter(row => row.shift.shift_date === today)
   const internalRecords = todayRecords.filter(row => row.assignee_role === 'Manager' || row.assignee_role === 'Employee')
-  const casualRecords = todayRecords.filter(row => row.assignee_role === 'Casual Worker')
+  const realCasualRecords = todayRecords.filter(row => row.assignee_role === 'Casual Worker')
+
+  const DUMMY_CASUAL_RECORDS: typeof realCasualRecords = [
+    {
+      assignment: { id: 'demo-1', shift_id: 'ds-1', user_id: 'du-1', assigned_by: 'owner', assignment_status: 'assigned', supervisor_employee_id: null, created_at: today, updated_at: today },
+      shift: { id: 'ds-1', company_id: '', department_id: 'dept-1', title: 'Morning Shift', instruction: null, shift_date: today, start_time: '09:00', end_time: '17:00', status: 'active', publication_status: 'published', acceptance_deadline_at: null, recurrence_group_id: null, recurrence_rule: null, source_shift_id: null, created_by: 'owner', created_at: today, updated_at: today },
+      assignee_name: 'Jordan Lee',
+      assignee_role: 'Casual Worker',
+      supervisor_name: 'Alex Thompson',
+      department_name: 'Customer Support',
+      exceptions: ['late'],
+      record: {
+        id: 'demo-rec-1', shift_assignment_id: 'demo-1', casual_worker_id: 'du-1',
+        clock_in_time: `${today}T09:22:00`, clock_out_time: `${today}T17:05:00`,
+        confirmed_by_employee_id: 'emp-1', submitted_by_employee_id: 'emp-1',
+        status: 'submitted', employee_notes: 'Arrived late due to transport delay.', manager_notes: 'Confirmed with worker. Minor delay only.',
+        owner_status: 'pending', owner_notes: null, owner_reviewed_by: null, owner_reviewed_at: null,
+        owner_adjusted_clock_in_time: null, owner_adjusted_clock_out_time: null,
+        created_at: today, updated_at: today,
+      },
+    },
+    {
+      assignment: { id: 'demo-2', shift_id: 'ds-2', user_id: 'du-2', assigned_by: 'owner', assignment_status: 'assigned', supervisor_employee_id: null, created_at: today, updated_at: today },
+      shift: { id: 'ds-2', company_id: '', department_id: 'dept-1', title: 'Afternoon Shift', instruction: null, shift_date: today, start_time: '13:00', end_time: '21:00', status: 'active', publication_status: 'published', acceptance_deadline_at: null, recurrence_group_id: null, recurrence_rule: null, source_shift_id: null, created_by: 'owner', created_at: today, updated_at: today },
+      assignee_name: 'Sam Rivera',
+      assignee_role: 'Casual Worker',
+      supervisor_name: 'Maria Chen',
+      department_name: 'Warehouse',
+      exceptions: [],
+      record: {
+        id: 'demo-rec-2', shift_assignment_id: 'demo-2', casual_worker_id: 'du-2',
+        clock_in_time: `${today}T13:00:00`, clock_out_time: `${today}T21:02:00`,
+        confirmed_by_employee_id: 'emp-2', submitted_by_employee_id: 'emp-2',
+        status: 'submitted', employee_notes: null, manager_notes: 'All good.',
+        owner_status: 'pending', owner_notes: null, owner_reviewed_by: null, owner_reviewed_at: null,
+        owner_adjusted_clock_in_time: null, owner_adjusted_clock_out_time: null,
+        created_at: today, updated_at: today,
+      },
+    },
+    {
+      assignment: { id: 'demo-3', shift_id: 'ds-3', user_id: 'du-3', assigned_by: 'owner', assignment_status: 'assigned', supervisor_employee_id: null, created_at: today, updated_at: today },
+      shift: { id: 'ds-3', company_id: '', department_id: 'dept-2', title: 'Night Shift', instruction: null, shift_date: today, start_time: '22:00', end_time: '06:00', status: 'active', publication_status: 'published', acceptance_deadline_at: null, recurrence_group_id: null, recurrence_rule: null, source_shift_id: null, created_by: 'owner', created_at: today, updated_at: today },
+      assignee_name: 'Chris Patel',
+      assignee_role: 'Casual Worker',
+      supervisor_name: null,
+      department_name: 'Security',
+      exceptions: ['absent'],
+      record: {
+        id: 'demo-rec-3', shift_assignment_id: 'demo-3', casual_worker_id: 'du-3',
+        clock_in_time: null, clock_out_time: null,
+        confirmed_by_employee_id: '', submitted_by_employee_id: '',
+        status: 'pending', employee_notes: null, manager_notes: null,
+        owner_status: 'pending', owner_notes: null, owner_reviewed_by: null, owner_reviewed_at: null,
+        owner_adjusted_clock_in_time: null, owner_adjusted_clock_out_time: null,
+        created_at: today, updated_at: today,
+      },
+    },
+  ]
+
+  const casualRecords = realCasualRecords.length > 0 ? realCasualRecords : DUMMY_CASUAL_RECORDS
   const summary = dashboard?.summary
 
   const fetchAttendanceData = useCallback(async (cid: string) => {
@@ -207,6 +280,7 @@ export default function OwnerAttendancePage() {
     setReviewNotes(row.record.owner_notes ?? '')
     setClockIn(row.record.owner_adjusted_clock_in_time ?? row.record.clock_in_time ?? '')
     setClockOut(row.record.owner_adjusted_clock_out_time ?? row.record.clock_out_time ?? '')
+    setReviewModifyReason('')
     setError('')
     setReviewOpen(true)
   }
@@ -321,6 +395,34 @@ export default function OwnerAttendancePage() {
           </button>
         </div>
 
+        {/* ── UC3: Tab bar ──────────────────────────────────────────────────────── */}
+        <div style={{ padding: '14px 28px 0', display: 'flex', gap: 4, flexShrink: 0 }}>
+          {([
+            { key: 'records',    label: 'Records' },
+            { key: 'exceptions', label: 'Exceptions' },
+            { key: 'swaps',      label: 'Shift Swaps' },
+            { key: 'timeoff',    label: 'Time Off' },
+          ] as const).map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              style={{
+                padding: '8px 18px',
+                border: 'none',
+                borderRadius: 8,
+                fontWeight: 700,
+                fontSize: '0.8125rem',
+                cursor: 'pointer',
+                background: activeTab === tab.key ? '#0F172A' : 'transparent',
+                color: activeTab === tab.key ? '#FFFFFF' : '#6B7280',
+                transition: 'background 0.15s, color 0.15s',
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
         <div style={{ padding: '16px 28px 24px', display: 'flex', flexDirection: 'column', gap: 18 }}>
 
           {error && (
@@ -329,7 +431,197 @@ export default function OwnerAttendancePage() {
             </div>
           )}
 
-          {/* ── Stats row ─────────────────────────────────────────────────────── */}
+          {/* ── UC6: Auto-Approval Settings card ─────────────────────────────── */}
+          <div style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, overflow: 'hidden' }}>
+            <button
+              onClick={() => setAutoApprovalExpanded(prev => !prev)}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '13px 18px', background: 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left' }}
+            >
+              <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <Settings2 size={14} style={{ color: '#F97316' }} />
+              </div>
+              <span style={{ flex: 1, fontSize: '0.875rem', fontWeight: 700, color: '#111827' }}>Auto-Approval Settings</span>
+              <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#6B7280', background: '#F3F4F6', padding: '2px 8px', borderRadius: 99, marginRight: 8 }}>
+                {autoApprovalEnabled ? 'Enabled' : 'Disabled'}
+              </span>
+              {autoApprovalExpanded ? <ChevronUp size={15} style={{ color: '#9CA3AF' }} /> : <ChevronDown size={15} style={{ color: '#9CA3AF' }} />}
+            </button>
+            {autoApprovalExpanded && (
+              <div style={{ padding: '0 18px 18px', borderTop: '1px solid #F0F4F8', display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <div style={{ paddingTop: 14, display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', flex: 1 }}>
+                    <input
+                      type="checkbox"
+                      checked={autoApprovalEnabled}
+                      onChange={e => setAutoApprovalEnabled(e.target.checked)}
+                      style={{ width: 16, height: 16, accentColor: '#F97316', cursor: 'pointer' }}
+                    />
+                    <div>
+                      <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#111827', display: 'block' }}>Enable AI auto-approval for clean records</span>
+                      <span style={{ fontSize: '0.775rem', color: '#6B7280' }}>Records that pass the confidence threshold will be approved automatically</span>
+                    </div>
+                  </label>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 16, alignItems: 'end' }}>
+                  <div>
+                    <label style={labelStyle}>Confidence Threshold (%)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={autoApprovalThreshold}
+                      onChange={e => setAutoApprovalThreshold(Number(e.target.value))}
+                      disabled={!autoApprovalEnabled}
+                      style={{ ...inputStyle, opacity: autoApprovalEnabled ? 1 : 0.5 }}
+                    />
+                  </div>
+                  <div>
+                    <p style={{ margin: 0, fontSize: '0.775rem', color: '#6B7280', lineHeight: 1.5 }}>
+                      Records with AI confidence below <strong>{autoApprovalThreshold}%</strong> will be flagged for manual review.
+                    </p>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', background: '#FFFBEB', borderRadius: 8, border: '1px solid #FDE68A' }}>
+                  <Sparkles size={12} style={{ color: '#D97706', flexShrink: 0 }} />
+                  <span style={{ fontSize: '0.775rem', color: '#92400E' }}>
+                    Use the <strong>AI Review</strong> button in the Casual Worker section to run the AI analysis. Results will appear there.
+                  </span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button
+                    disabled
+                    title="Settings persistence coming soon"
+                    style={{ padding: '8px 18px', border: 'none', borderRadius: 8, background: '#F3F4F6', color: '#9CA3AF', fontWeight: 700, fontSize: '0.8125rem', cursor: 'not-allowed' }}
+                  >
+                    Save Settings
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ── UC3: Exceptions tab content ───────────────────────────────────── */}
+          {activeTab === 'exceptions' && (
+            <section style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, overflow: 'hidden' }}>
+              <div style={{ padding: '14px 18px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FEF2F2', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <AlertTriangle size={15} style={{ color: '#DC2626' }} />
+                </div>
+                <span style={{ flex: 1, fontSize: '0.875rem', fontWeight: 700, color: '#111827' }}>Attendance Exceptions</span>
+              </div>
+
+              {/* Filter row */}
+              <div style={{ padding: '12px 18px', background: '#F8FAFC', borderBottom: '1px solid #F0F4F8', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                <Filter size={13} style={{ color: '#9CA3AF', flexShrink: 0 }} />
+                <input
+                  type="date"
+                  value={exceptionDateFrom}
+                  onChange={e => setExceptionDateFrom(e.target.value)}
+                  style={{ ...inputStyle, width: 'auto', height: 34, padding: '6px 10px', fontSize: '0.8125rem' }}
+                  placeholder="From"
+                />
+                <span style={{ color: '#9CA3AF', fontSize: '0.8rem' }}>–</span>
+                <input
+                  type="date"
+                  value={exceptionDateTo}
+                  onChange={e => setExceptionDateTo(e.target.value)}
+                  style={{ ...inputStyle, width: 'auto', height: 34, padding: '6px 10px', fontSize: '0.8125rem' }}
+                  placeholder="To"
+                />
+                <div style={{ position: 'relative' }}>
+                  <select
+                    value={exceptionFilter}
+                    onChange={e => setExceptionFilter(e.target.value as typeof exceptionFilter)}
+                    style={{ ...inputStyle, width: 'auto', height: 34, padding: '6px 28px 6px 10px', fontSize: '0.8125rem', appearance: 'none', cursor: 'pointer' }}
+                  >
+                    <option value="all">All Types</option>
+                    <option value="late">Late</option>
+                    <option value="absent">Absent</option>
+                    <option value="overtime">Overtime</option>
+                    <option value="pending">Pending Approval</option>
+                  </select>
+                  <ChevronDown size={12} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
+                </div>
+              </div>
+
+              {/* Exception table */}
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                  <thead>
+                    <tr style={{ background: '#F8FAFC' }}>
+                      {['Worker', 'Shift Date', 'Expected In', 'Actual In', 'Actual Out', 'Type', 'Status'].map(h => (
+                        <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 700, fontSize: '0.72rem', color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.04em', borderBottom: '1px solid #F0F4F8', whiteSpace: 'nowrap' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {records
+                      .filter(row => row.exceptions.length > 0 || (row.record?.owner_status ?? 'pending') === 'pending')
+                      .filter(row => exceptionFilter === 'all' || row.exceptions.includes(exceptionFilter) || (exceptionFilter === 'pending' && (row.record?.owner_status ?? 'pending') === 'pending'))
+                      .filter(row => !exceptionDateFrom || row.shift.shift_date >= exceptionDateFrom)
+                      .filter(row => !exceptionDateTo || row.shift.shift_date <= exceptionDateTo)
+                      .map(row => {
+                        const primaryException = row.exceptions[0] ?? 'pending'
+                        const exColor = primaryException === 'absent' ? { bg: '#FEF2F2', text: '#B91C1C' }
+                          : primaryException === 'late' ? { bg: '#FFF7ED', text: '#C2410C' }
+                          : primaryException === 'overtime' ? { bg: '#FFFBEB', text: '#B45309' }
+                          : { bg: '#F3F4F6', text: '#6B7280' }
+                        const ownerStatus = row.record?.owner_status ?? 'pending'
+                        const stColor = statusColor(ownerStatus)
+                        return (
+                          <tr key={row.assignment.id} style={{ borderBottom: '1px solid #F8FAFC' }}>
+                            <td style={{ padding: '11px 14px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <div style={{ width: 26, height: 26, borderRadius: '50%', background: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                  <UserCog size={12} style={{ color: '#6B7280' }} />
+                                </div>
+                                <div>
+                                  <span style={{ fontWeight: 600, color: '#111827', display: 'block' }}>{row.assignee_name}</span>
+                                  <span style={{ fontSize: '0.72rem', color: '#9CA3AF' }}>{row.assignee_role}</span>
+                                </div>
+                              </div>
+                            </td>
+                            <td style={{ padding: '11px 14px', color: '#374151', fontWeight: 500 }}>{row.shift.shift_date}</td>
+                            <td style={{ padding: '11px 14px', color: '#374151', whiteSpace: 'nowrap' }}>{formatTime(row.shift.start_time)}</td>
+                            <td style={{ padding: '11px 14px', whiteSpace: 'nowrap' }}>
+                              <span style={{ fontWeight: 700, color: row.record?.clock_in_time ? '#059669' : '#9CA3AF' }}>
+                                {formatTime(row.record?.clock_in_time)}
+                              </span>
+                            </td>
+                            <td style={{ padding: '11px 14px', whiteSpace: 'nowrap' }}>
+                              <span style={{ fontWeight: 600, color: row.record?.clock_out_time ? '#374151' : '#9CA3AF' }}>
+                                {formatTime(row.record?.clock_out_time)}
+                              </span>
+                            </td>
+                            <td style={{ padding: '11px 14px' }}>
+                              <span style={{ background: exColor.bg, color: exColor.text, borderRadius: 999, padding: '2px 8px', fontSize: '0.68rem', fontWeight: 700, textTransform: 'capitalize' }}>
+                                {primaryException}
+                              </span>
+                            </td>
+                            <td style={{ padding: '11px 14px' }}>
+                              <span style={{ background: stColor.bg, color: stColor.text, borderRadius: 999, padding: '2px 8px', fontSize: '0.68rem', fontWeight: 700 }}>
+                                {ownerStatus}
+                              </span>
+                            </td>
+                          </tr>
+                        )
+                      })
+                    }
+                    {records.filter(row => row.exceptions.length > 0 || (row.record?.owner_status ?? 'pending') === 'pending').length === 0 && (
+                      <tr>
+                        <td colSpan={7} style={{ padding: '32px 14px', textAlign: 'center', color: '#9CA3AF', fontSize: '0.875rem' }}>
+                          No exception records found. Try adjusting the date range or filter.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+          {/* ── Stats row (Records tab only) ──────────────────────────────────── */}
+          {activeTab === 'records' && (
           <section style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(110px, 1fr))', gap: 12 }}>
             {[
               { label: 'Assignments', value: summary?.total_assignments ?? 0 },
@@ -345,9 +637,10 @@ export default function OwnerAttendancePage() {
               </div>
             ))}
           </section>
+          )}
 
-          {/* ── Block 1: Internal Staff Today ─────────────────────────────────── */}
-          <section style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, overflow: 'hidden' }}>
+          {/* ── Block 1: Internal Staff Today (Records tab only) ──────────────── */}
+          {activeTab === 'records' && <section style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, overflow: 'hidden' }}>
             <div style={sectionHeaderStyle}>
               <div style={{ width: 30, height: 30, borderRadius: 9, background: '#F0F4F8', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                 <Users size={15} style={{ color: '#374151' }} />
@@ -415,10 +708,10 @@ export default function OwnerAttendancePage() {
                 </table>
               </div>
             )}
-          </section>
+          </section>}
 
-          {/* ── Block 2: Casual Worker Attendance Review ───────────────────────── */}
-          <section style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, overflow: 'hidden' }}>
+          {/* ── Block 2: Casual Worker Attendance Review (Records tab only) ───── */}
+          {activeTab === 'records' && <section style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, overflow: 'hidden' }}>
             {/* Header */}
             <div style={{ ...sectionHeaderStyle, borderBottom: '1px solid #F0F4F8' }}>
               <div style={{ width: 30, height: 30, borderRadius: 9, background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -566,10 +859,11 @@ export default function OwnerAttendancePage() {
                 })}
               </div>
             )}
-          </section>
+          </section>}
 
-          {/* ── Block 3: Shift Swaps + Time-off side by side ──────────────────── */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18, alignItems: 'start' }}>
+          {/* ── Block 3: Shift Swaps tab ──────────────────────────────────────── */}
+          {activeTab === 'swaps' && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 18, alignItems: 'start' }}>
 
             {/* Shift Swaps */}
             <section style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, overflow: 'hidden' }}>
@@ -623,7 +917,12 @@ export default function OwnerAttendancePage() {
                 )
               })}
             </section>
+          </div>
+          )}
 
+          {/* ── Time Off tab ──────────────────────────────────────────────────── */}
+          {activeTab === 'timeoff' && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 18, alignItems: 'start' }}>
             {/* Time-off / Break-waiver requests */}
             <section style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, overflow: 'hidden' }}>
               <div style={sectionHeaderStyle}>
@@ -663,6 +962,7 @@ export default function OwnerAttendancePage() {
               })}
             </section>
           </div>
+          )}
 
         </div>
       </main>
@@ -675,6 +975,26 @@ export default function OwnerAttendancePage() {
               <h2 style={{ margin: 0, color: '#111827', fontSize: '1.05rem', fontWeight: 700 }}>Final Attendance Review</h2>
               <button onClick={() => setReviewOpen(false)} style={{ border: 'none', background: 'transparent', color: '#9CA3AF', cursor: 'pointer' }}><X size={18} /></button>
             </div>
+
+            {/* UC2: Tier status badge */}
+            {(() => {
+              const rec = selectedRecord.record
+              const tierLabel = rec.submitted_by_employee_id
+                ? 'Manager Reviewed — Awaiting Owner Final'
+                : rec.confirmed_by_employee_id
+                ? 'Employee Confirmed — Awaiting Manager'
+                : rec.clock_in_time
+                ? 'CW Clocked In — Awaiting Employee Confirm'
+                : 'Not Yet Clocked In'
+              return (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                  <ShieldCheck size={13} style={{ color: '#F97316', flexShrink: 0 }} />
+                  <span style={{ fontSize: '0.775rem', fontWeight: 700, color: '#C2410C', background: '#FFF7ED', padding: '4px 10px', borderRadius: 999, border: '1px solid #FDBA74' }}>
+                    {tierLabel}
+                  </span>
+                </div>
+              )
+            })()}
 
             {/* Record summary */}
             <div style={{ padding: '10px 14px', background: '#F8FAFC', borderRadius: 8, marginBottom: 16, fontSize: '0.84rem', color: '#374151' }}>
@@ -692,10 +1012,30 @@ export default function OwnerAttendancePage() {
                 </select>
               </div>
               {reviewDecision === 'modified' && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                  <div><label style={labelStyle}>Adjusted Clock In</label><input value={clockIn} onChange={event => setClockIn(event.target.value)} style={inputStyle} placeholder="HH:MM" /></div>
-                  <div><label style={labelStyle}>Adjusted Clock Out</label><input value={clockOut} onChange={event => setClockOut(event.target.value)} style={inputStyle} placeholder="HH:MM" /></div>
-                </div>
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div>
+                      <label style={labelStyle}>Original Clock In</label>
+                      <div style={{ ...inputStyle, background: '#F8FAFC', color: '#6B7280', display: 'flex', alignItems: 'center' }}>
+                        {formatTime(selectedRecord.record.clock_in_time)}
+                      </div>
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Original Clock Out</label>
+                      <div style={{ ...inputStyle, background: '#F8FAFC', color: '#6B7280', display: 'flex', alignItems: 'center' }}>
+                        {formatTime(selectedRecord.record.clock_out_time)}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div><label style={labelStyle}>Adjusted Clock In</label><input value={clockIn} onChange={event => setClockIn(event.target.value)} style={inputStyle} placeholder="HH:MM" /></div>
+                    <div><label style={labelStyle}>Adjusted Clock Out</label><input value={clockOut} onChange={event => setClockOut(event.target.value)} style={inputStyle} placeholder="HH:MM" /></div>
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Reason for Modification</label>
+                    <textarea value={reviewModifyReason} onChange={event => setReviewModifyReason(event.target.value)} rows={2} placeholder="Explain why times are being adjusted…" style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5 }} />
+                  </div>
+                </>
               )}
               <div><label style={labelStyle}>Owner Notes</label><textarea value={reviewNotes} onChange={event => setReviewNotes(event.target.value)} rows={3} style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5 }} /></div>
               {error && <div style={{ padding: 11, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 8, fontSize: '0.84rem', fontWeight: 700 }}>{error}</div>}

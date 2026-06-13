@@ -11,9 +11,13 @@ export const ownerAnnouncementRepository = {
     if (error) throw error
 
     const isOwnerOrPartner = role?.toLowerCase() === 'owner' || role?.toLowerCase() === 'partner'
+    const isEmployee = role?.toLowerCase() === 'employee'
 
     return (data ?? [])
       .filter((row: any) => {
+        if (isEmployee) {
+          return !!departmentId && row.department_id === departmentId && row.poster?.role === 'Manager'
+        }
         // Non-owners only see company-wide or their own department's announcements
         if (!isOwnerOrPartner && departmentId) {
           return row.department_id === null || row.department_id === departmentId
@@ -22,7 +26,7 @@ export const ownerAnnouncementRepository = {
       })
       .map((row: any) => {
         const { poster, ...rest } = row
-        return { ...rest, created_by_name: poster?.full_name ?? null }
+        return { ...rest, created_by_name: poster?.full_name ?? null, poster_role: poster?.role ?? null }
       })
   },
 

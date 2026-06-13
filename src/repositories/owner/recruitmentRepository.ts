@@ -303,6 +303,68 @@ export const recruitmentRepository = {
     }))
   },
 
+  async getAcceptedCasualWorkersByAssignedEmployee(company_id: string, employee_id: string): Promise<CasualWorkerStatus[]> {
+    const { data: postings, error: postingError } = await supabase
+      .from('job_postings')
+      .select('id, department_id')
+      .eq('company_id', company_id)
+      .eq('assigned_employee_id', employee_id)
+      .not('status', 'in', '("pending_approval","draft","rejected")')
+    if (postingError) throw new Error(postingError.message)
+
+    const jobDeptMap = new Map((postings ?? []).map((posting: { id: string; department_id: string | null }) => [posting.id, posting.department_id]))
+    const jobIds = [...jobDeptMap.keys()]
+    if (jobIds.length === 0) return []
+
+    const { data: applicants, error: applicantError } = await supabase
+      .from('job_applicants')
+      .select('job_id, user_id')
+      .in('job_id', jobIds)
+      .eq('status', 'accepted')
+      .not('user_id', 'is', null)
+    if (applicantError) throw new Error(applicantError.message)
+
+    const workerIds = [...new Set((applicants ?? []).map((applicant: { user_id: string | null }) => applicant.user_id).filter((id): id is string => Boolean(id)))]
+    if (workerIds.length === 0) return []
+
+    const workerDeptMap = new Map<string, string | null>()
+    for (const applicant of (applicants ?? []) as Array<{ job_id: string; user_id: string | null }>) {
+      if (applicant.user_id && !workerDeptMap.has(applicant.user_id)) {
+        workerDeptMap.set(applicant.user_id, jobDeptMap.get(applicant.job_id) ?? null)
+      }
+    }
+
+    const { data: workersData, error: workerError } = await supabase
+      .from('users')
+      .select('id, full_name, email_address, worker_status')
+      .in('id', workerIds)
+      .eq('company_id', company_id)
+      .eq('role', 'Casual Worker')
+      .order('full_name', { ascending: true })
+    if (workerError) throw new Error(workerError.message)
+
+    const deptIds = [...new Set([...workerDeptMap.values()].filter((id): id is string => Boolean(id)))]
+    const { data: departmentData, error: departmentError } = deptIds.length > 0
+      ? await supabase.from('departments').select('id, name').in('id', deptIds)
+      : { data: [], error: null }
+    if (departmentError) throw new Error(departmentError.message)
+
+    const deptMap = new Map(((departmentData ?? []) as Array<{ id: string; name: string }>).map(department => [department.id, department.name]))
+    const workers = (workersData ?? []) as Array<{ id: string; full_name: string; email_address: string; worker_status: string | null }>
+
+    return workers.map(worker => {
+      const deptId = workerDeptMap.get(worker.id) ?? null
+      return {
+        id: worker.id,
+        full_name: worker.full_name,
+        email_address: worker.email_address,
+        department_id: deptId,
+        department_name: deptId ? deptMap.get(deptId) ?? null : null,
+        worker_status: (worker.worker_status as CasualWorkerStatus['worker_status']) ?? 'active',
+      }
+    })
+  },
+
   async getClosedPostingsByDateRange(company_id: string, date_from: string, date_to: string): Promise<JobPosting[]> {
     const { data, error } = await supabase
       .from('job_postings')

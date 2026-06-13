@@ -1,98 +1,23 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { LayoutDashboard, ClipboardList, MessageCircle, LogOut } from 'lucide-react'
+import { LayoutDashboard, ClipboardList, LogOut } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 
 const NAV_ITEMS = [
-  { label: 'Dashboard',     Icon: LayoutDashboard, href: '/employee/dashboard',     dot: null as 'messages' | 'announcements' | null },
-  { label: 'Communication', Icon: MessageCircle,   href: '/employee/communication', dot: 'messages' as const },
-  { label: 'Attendance',    Icon: ClipboardList,   href: '/employee/attendance',    dot: null },
+  { label: 'Dashboard',  Icon: LayoutDashboard, href: '/employee/dashboard' },
+  { label: 'Attendance', Icon: ClipboardList,   href: '/employee/attendance' },
 ]
 
 const EMPLOYEE_GREEN = '#16A34A'
 const SIDEBAR_BG = '#14532D'
 const SIDEBAR_BORDER = '#0F3F24'
 
-export default function EmployeeSidebar({ unreadMessages, unreadAnnouncements }: { unreadMessages?: number; unreadAnnouncements?: number }) {
+export default function EmployeeSidebar() {
   const pathname = usePathname()
   const [expanded, setExpanded] = useState(false)
-  const [msgCount, setMsgCount] = useState(unreadMessages ?? 0)
-  const [annCount, setAnnCount] = useState(unreadAnnouncements ?? 0)
-
-  useEffect(() => {
-    const authUid = typeof localStorage !== 'undefined' ? localStorage.getItem('tasking_user_id') : null
-    if (!authUid) return
-
-    fetch(`/api/user/me?user_id=${authUid}`)
-      .then(r => r.json())
-      .then(d => {
-        if (!d.success) return
-        const internalId: string = d.user.id
-        const cid = localStorage.getItem('tasking_company_id') ?? localStorage.getItem(`tasking_company_id_${authUid}`)
-
-        fetch(`/api/inbox/unread-count?user_id=${internalId}`)
-          .then(r => r.json())
-          .then(data => { if (data.success) setMsgCount(data.unread_messages ?? 0) })
-          .catch(() => {})
-
-        // Unread announcements: compare fetched list against localStorage read set
-        const readKey = `ann_read_ids_${cid}_${internalId}`
-        let readIds: Set<string> = new Set()
-        try {
-          const raw = localStorage.getItem(readKey)
-          if (raw) readIds = new Set(JSON.parse(raw))
-        } catch {}
-
-        fetch(`/api/employee/announcements?user_id=${authUid}`)
-          .then(r => r.json())
-          .then(data => {
-            if (data.success) {
-              const unread = (data.announcements as { id: string }[]).filter(a => !readIds.has(a.id)).length
-              setAnnCount(unread)
-            }
-          })
-          .catch(() => {})
-
-        const supabase = createBrowserClient(
-          process.env.NEXT_PUBLIC_SUPABASE_URL!,
-          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-        )
-
-        const msgChannel = supabase
-          .channel('employee-sidebar-messages')
-          .on('postgres_changes', {
-            event: 'INSERT', schema: 'public', table: 'messages',
-            filter: `to_user_id=eq.${internalId}`,
-          }, () => { setMsgCount(c => c + 1) })
-          .subscribe()
-
-        const annChannel = supabase
-          .channel('employee-sidebar-announcements')
-          .on('postgres_changes', {
-            event: 'INSERT', schema: 'public', table: 'announcements',
-          }, () => { setAnnCount(c => c + 1) })
-          .subscribe()
-
-        return () => {
-          supabase.removeChannel(msgChannel)
-          supabase.removeChannel(annChannel)
-        }
-      })
-      .catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    if (pathname === '/employee/communication') {
-      setMsgCount(0)
-      setAnnCount(0)
-    }
-  }, [pathname])
-
-  useEffect(() => { if (unreadMessages !== undefined) setMsgCount(unreadMessages) }, [unreadMessages])
-  useEffect(() => { if (unreadAnnouncements !== undefined) setAnnCount(unreadAnnouncements) }, [unreadAnnouncements])
 
   const handleLogout = async () => {
     const supabase = createBrowserClient(
@@ -104,8 +29,6 @@ export default function EmployeeSidebar({ unreadMessages, unreadAnnouncements }:
     localStorage.removeItem('tasking_company_id')
     window.location.href = '/signout'
   }
-
-  const totalDot = msgCount + annCount
 
   return (
     <aside
@@ -161,9 +84,8 @@ export default function EmployeeSidebar({ unreadMessages, unreadAnnouncements }:
       </Link>
 
       <nav style={{ flex: 1, padding: '12px 8px', overflow: 'hidden' }}>
-        {NAV_ITEMS.map(({ label, Icon, href, dot }) => {
-          const active = pathname === href || (href === '/employee/communication' && (pathname === '/employee/announcements' || pathname === '/employee/inbox'))
-          const showDot = dot === 'messages' ? totalDot > 0 : false
+        {NAV_ITEMS.map(({ label, Icon, href }) => {
+          const active = pathname === href
           return (
             <a
               key={label}
@@ -183,28 +105,13 @@ export default function EmployeeSidebar({ unreadMessages, unreadAnnouncements }:
                 whiteSpace: 'nowrap',
                 marginBottom: '2px',
                 transition: 'background 0.12s, color 0.12s',
-                position: 'relative',
               }}
               onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = 'rgba(255,255,255,0.08)' }}
               onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = 'transparent' }}
             >
-              <span style={{ position: 'relative', flexShrink: 0 }}>
-                <Icon size={18} strokeWidth={2.1} style={{ display: 'block', color: 'currentColor' }} />
-                {showDot && (
-                  <span style={{
-                    position: 'absolute', top: -3, right: -3,
-                    width: 8, height: 8, borderRadius: '50%',
-                    background: '#EF4444', border: `1.5px solid ${SIDEBAR_BG}`,
-                  }} />
-                )}
-              </span>
-              <span style={{ opacity: expanded ? 1 : 0, transition: 'opacity 0.15s', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Icon size={18} strokeWidth={2.1} style={{ display: 'block', color: 'currentColor', flexShrink: 0 }} />
+              <span style={{ opacity: expanded ? 1 : 0, transition: 'opacity 0.15s' }}>
                 {label}
-                {showDot && totalDot > 0 && (
-                  <span style={{ minWidth: 18, height: 18, padding: '0 4px', borderRadius: 999, background: '#EF4444', color: '#fff', fontSize: 10, fontWeight: 800, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {totalDot}
-                  </span>
-                )}
               </span>
             </a>
           )

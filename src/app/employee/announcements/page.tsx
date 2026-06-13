@@ -97,7 +97,7 @@ export default function EmployeeAnnouncementsPage() {
 
   return (
     <div style={{ display: 'flex', height: '100vh', background: '#F0FDF4', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
-      <EmployeeSidebar unreadAnnouncements={unreadCount} />
+      <EmployeeSidebar />
 
       <main style={{ marginLeft: '64px', flex: 1, height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
         <div style={{
