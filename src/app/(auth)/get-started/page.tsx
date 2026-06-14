@@ -1860,7 +1860,7 @@ export default function GetStartedPage() {
         {/* Step 5A — Choose plan */}
         {path === 'owner' && step === 5 && (
           <Card maxWidth="900px">
-            <StepHeading headline={ownerStep5.headline} subheadline={ownerStep5.subheadline} onBack={() => setStep(4)} />
+            <StepHeading headline={ownerStep5.headline} subheadline={ownerStep5.subheadline} onBack={(showProMsg || showFreeMsg) ? undefined : () => setStep(4)} />
             <ProgressBar current={5} steps={['Account', 'Verify', 'Company', 'Departments', 'Plan']} />
 
             {(showProMsg || showFreeMsg) ? (
