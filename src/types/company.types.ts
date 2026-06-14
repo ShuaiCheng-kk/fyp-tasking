@@ -12,4 +12,8 @@ export interface Company {
   size: string | null
   logo_url: string | null
   website: string | null
+  stripe_customer_id: string | null
+  stripe_subscription_id: string | null
+  plan_started_at: string | null
+  plan_next_billing_at: string | null
 }
