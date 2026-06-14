@@ -34,9 +34,9 @@ export async function GET(req: NextRequest) {
   if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code)
     if (!error) {
-      return NextResponse.redirect(`${BASE}/get-started?verified=true`)
+      return NextResponse.redirect(`${BASE}/email-verified`)
     }
-    return NextResponse.redirect(`${BASE}/get-started?error=invalid_link`)
+    return NextResponse.redirect(`${BASE}/email-verified?error=1`)
   }
 
   // OTP flow: token_hash + type sent directly
@@ -46,9 +46,9 @@ export async function GET(req: NextRequest) {
       type: type as Parameters<typeof supabase.auth.verifyOtp>[0]['type'],
     })
     if (!error) {
-      return NextResponse.redirect(`${BASE}/get-started?verified=true`)
+      return NextResponse.redirect(`${BASE}/email-verified`)
     }
   }
 
-  return NextResponse.redirect(`${BASE}/get-started?error=invalid_link`)
+  return NextResponse.redirect(`${BASE}/email-verified?error=1`)
 }
