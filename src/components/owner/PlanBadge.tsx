@@ -227,7 +227,7 @@ export default function OwnerPlanBadge({ plan, currentCompanyId }: { plan: strin
                 <div style={{ borderRadius: 12, border: '1.5px solid #FCA5A5', padding: '14px', background: '#FFF5F5' }}>
                   <p style={{ fontSize: 13, color: '#7F1D1D', fontWeight: 600, margin: '0 0 4px' }}>Cancel your Pro plan?</p>
                   <p style={{ fontSize: 12, color: '#B91C1C', margin: '0 0 14px' }}>
-                    You'll lose AI features and analytics immediately. This cannot be undone.
+                    This cannot be undone.
                   </p>
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button
