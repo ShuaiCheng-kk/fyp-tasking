@@ -75,10 +75,16 @@ export default function OwnerSidebar({
 
   // ── Sidebar order ───────────────────────────────────────────────────────────
   const [navOrder, setNavOrder] = useState<string[]>(NAV_LABELS)
+  // Ref mirrors state so drag handlers always read the latest list (no stale closure)
+  const navOrderRef = useRef<string[]>(NAV_LABELS)
   useEffect(() => {
     try {
       const saved = localStorage.getItem(ORDER_KEY)
-      if (saved) setNavOrder(mergeOrder(JSON.parse(saved)))
+      if (saved) {
+        const merged = mergeOrder(JSON.parse(saved))
+        navOrderRef.current = merged
+        setNavOrder(merged)
+      }
     } catch {}
   }, [])
 
@@ -108,11 +114,10 @@ export default function OwnerSidebar({
           const next = el.getBoundingClientRect()
           const dy = prev.top - next.top
           if (Math.abs(dy) < 1) return
-          // Snap to old position instantly, then transition to new
+          // Snap to old position instantly, then spring to new position
           el.style.transition = 'none'
           el.style.transform = `translateY(${dy}px)`
-          // Force reflow
-          void el.offsetHeight
+          void el.offsetHeight // force reflow
           el.style.transition = 'transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1)'
           el.style.transform = 'translateY(0px)'
         })
@@ -121,11 +126,13 @@ export default function OwnerSidebar({
   }, [])
 
   const handleDragStart = (e: React.DragEvent, idx: number) => {
-    setDragIdx(idx)
+    // Store source index in dataTransfer — reliable across all drag events
+    e.dataTransfer.setData('text/plain', String(idx))
     e.dataTransfer.effectAllowed = 'move'
-    // Transparent ghost so only our CSS shows
+    setDragIdx(idx)
+    // Invisible ghost so only our opacity/transform CSS shows
     const ghost = document.createElement('div')
-    ghost.style.cssText = 'position:fixed;top:-1000px;left:-1000px;width:1px;height:1px'
+    ghost.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0'
     document.body.appendChild(ghost)
     e.dataTransfer.setDragImage(ghost, 0, 0)
     setTimeout(() => document.body.removeChild(ghost), 0)
@@ -137,15 +144,19 @@ export default function OwnerSidebar({
     if (idx !== dropIdx) setDropIdx(idx)
   }
 
-  const handleDrop = (e: React.DragEvent, idx: number) => {
+  const handleDrop = (e: React.DragEvent, toIdx: number) => {
     e.preventDefault()
-    if (dragIdx === null || dragIdx === idx) {
+    // Read source index from dataTransfer — never stale
+    const fromIdx = parseInt(e.dataTransfer.getData('text/plain'), 10)
+    if (isNaN(fromIdx) || fromIdx === toIdx) {
       setDragIdx(null); setDropIdx(null); return
     }
     captureRects()
-    const next = [...navOrder]
-    const [moved] = next.splice(dragIdx, 1)
-    next.splice(idx, 0, moved)
+    // Use ref so we always have the latest order (no stale-closure risk)
+    const next = [...navOrderRef.current]
+    const [moved] = next.splice(fromIdx, 1)
+    next.splice(toIdx, 0, moved)
+    navOrderRef.current = next
     setNavOrder(next)
     try { localStorage.setItem(ORDER_KEY, JSON.stringify(next)) } catch {}
     setDragIdx(null)
