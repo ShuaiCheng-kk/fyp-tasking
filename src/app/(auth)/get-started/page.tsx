@@ -1048,12 +1048,14 @@ export default function GetStartedPage() {
       return;
     }
 
-    // Return from Stripe success — pick up verify step
-    const verifyEmail = params.get('email');
-    if (params.get('verify') === '1' && verifyEmail) {
-      setConfirmationEmail(verifyEmail);
+    // Return from Stripe success — show completion screen
+    if (params.get('verify') === '1') {
+      ['owner_user_id', 'owner_email', 'owner_password', 'owner_company_id',
+        'company_name', 'company_description', 'company_location', 'company_address', 'company_postal',
+        'company_industry', 'company_size', 'departments'].forEach((k) => sessionStorage.removeItem(k));
       setPath('owner');
-      setStep(2);
+      setStep(5);
+      setShowProMsg(true);
       return;
     }
 
@@ -1871,7 +1873,7 @@ export default function GetStartedPage() {
                   {ownerStep5.proPlan.successMessage}
                 </p>
                 <button
-                  onClick={() => router.push('/owner/dashboard')}
+                  onClick={() => router.push('/sign-in')}
                   className="btn-press"
                   style={{
                     background: '#F97316',

@@ -100,25 +100,9 @@ export default function EmailVerifiedPage() {
             <h1 style={{ fontFamily: fH, fontWeight: 700, fontSize: '1.875rem', color: '#1C1917', marginBottom: '12px' }}>
               Email verified!
             </h1>
-            <p style={{ fontFamily: fB, fontSize: '1rem', color: '#78716C', lineHeight: 1.65, marginBottom: '36px' }}>
-              Your email address has been confirmed. Head back to the registration page and click <strong>&ldquo;I&apos;ve verified&rdquo;</strong> to continue setting up your account.
+            <p style={{ fontFamily: fB, fontSize: '1rem', color: '#78716C', lineHeight: 1.65 }}>
+              Your email address has been confirmed. You can close this tab.
             </p>
-            <Link
-              href="/get-started?verified=true"
-              style={{
-                display: 'inline-block',
-                background: '#F97316',
-                color: '#FFFFFF',
-                fontFamily: fB,
-                fontWeight: 700,
-                fontSize: '1rem',
-                padding: '14px 36px',
-                borderRadius: '10px',
-                textDecoration: 'none',
-              }}
-            >
-              Continue registration
-            </Link>
           </>
         )}
       </div>
