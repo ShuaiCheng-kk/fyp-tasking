@@ -11,6 +11,7 @@ export interface SubscriptionDetails {
   plan: string
   plan_started_at: string | null
   plan_next_billing_at: string | null
+  plan_cancel_at: string | null
   stripe_subscription_id: string | null
 }
 
@@ -58,6 +59,8 @@ export const stripeService = {
       plan_next_billing_at: new Date(getPeriodEnd(sub) * 1000).toISOString(),
       plan: 'Paid',
     })
+    // Clear any pending cancellation (e.g. user re-subscribed after cancelling)
+    await stripeRepository.resumeCompanySubscription(companyId)
   },
 
   async getSubscriptionDetails(companyId: string): Promise<SubscriptionDetails> {
@@ -65,12 +68,15 @@ export const stripeService = {
     if (!info) throw new Error('Company not found')
 
     if (info.plan === 'Paid') {
-      // If we have a stored subscription ID, refresh billing dates from Stripe
       if (info.stripe_subscription_id) {
         try {
           const sub = await stripe.subscriptions.retrieve(info.stripe_subscription_id, { expand: ['items'] })
           const startedAt = info.plan_started_at ?? new Date(sub.start_date * 1000).toISOString()
           const nextBillingAt = new Date(getPeriodEnd(sub) * 1000).toISOString()
+
+          // Sync cancel_at_period_end status from Stripe
+          const cancelAtPeriodEnd = (sub as unknown as { cancel_at_period_end?: boolean }).cancel_at_period_end ?? false
+          const cancelAt = cancelAtPeriodEnd ? new Date(getPeriodEnd(sub) * 1000).toISOString() : null
 
           await stripeRepository.updateCompanyStripeInfo(companyId, {
             stripe_customer_id: getCustomerId(sub),
@@ -79,14 +85,22 @@ export const stripeService = {
             plan_next_billing_at: nextBillingAt,
             plan: 'Paid',
           })
+          if (cancelAt !== info.plan_cancel_at) {
+            if (cancelAt) {
+              await stripeRepository.scheduleCompanyDowngrade(companyId, cancelAt)
+            } else {
+              await stripeRepository.resumeCompanySubscription(companyId)
+            }
+          }
+
           info.plan_started_at = startedAt
           info.plan_next_billing_at = nextBillingAt
+          info.plan_cancel_at = cancelAt
         } catch {
           // Stripe lookup failed — return stored values
         }
       } else {
-        // Existing Pro subscriber before new columns were added — backfill from Stripe
-        // by searching checkout sessions with companyId metadata
+        // Existing Pro subscriber before new columns — backfill from Stripe checkout sessions
         try {
           const sessions = await stripe.checkout.sessions.list({ limit: 100 })
           const match = sessions.data.find(s => s.metadata?.companyId === companyId && s.subscription)
@@ -96,6 +110,8 @@ export const stripeService = {
             const sub = await stripe.subscriptions.retrieve(subId, { expand: ['items'] })
             const startedAt = new Date(sub.start_date * 1000).toISOString()
             const nextBillingAt = new Date(getPeriodEnd(sub) * 1000).toISOString()
+            const cancelAtPeriodEnd = (sub as unknown as { cancel_at_period_end?: boolean }).cancel_at_period_end ?? false
+            const cancelAt = cancelAtPeriodEnd ? nextBillingAt : null
 
             await stripeRepository.updateCompanyStripeInfo(companyId, {
               stripe_customer_id: getCustomerId(sub),
@@ -104,9 +120,12 @@ export const stripeService = {
               plan_next_billing_at: nextBillingAt,
               plan: 'Paid',
             })
+            if (cancelAt) await stripeRepository.scheduleCompanyDowngrade(companyId, cancelAt)
+
             info.stripe_subscription_id = sub.id
             info.plan_started_at = startedAt
             info.plan_next_billing_at = nextBillingAt
+            info.plan_cancel_at = cancelAt
           }
         } catch {
           // Backfill failed — dates will show as null
@@ -118,16 +137,34 @@ export const stripeService = {
       plan: info.plan,
       plan_started_at: info.plan_started_at,
       plan_next_billing_at: info.plan_next_billing_at,
+      plan_cancel_at: info.plan_cancel_at,
       stripe_subscription_id: info.stripe_subscription_id,
     }
   },
 
+  // Schedule cancellation at end of billing period — user stays Pro until then
   async cancelSubscription(companyId: string): Promise<void> {
     const info = await stripeRepository.getCompanyStripeInfo(companyId)
     if (!info?.stripe_subscription_id) throw new Error('No active subscription found')
 
-    await stripe.subscriptions.cancel(info.stripe_subscription_id)
-    await stripeRepository.clearCompanySubscription(companyId)
+    const sub = await stripe.subscriptions.update(info.stripe_subscription_id, {
+      cancel_at_period_end: true,
+    } as Stripe.SubscriptionUpdateParams)
+
+    const cancelAt = new Date(getPeriodEnd(sub) * 1000).toISOString()
+    await stripeRepository.scheduleCompanyDowngrade(companyId, cancelAt)
+  },
+
+  // Un-cancel — resume subscription before period ends
+  async resumeSubscription(companyId: string): Promise<void> {
+    const info = await stripeRepository.getCompanyStripeInfo(companyId)
+    if (!info?.stripe_subscription_id) throw new Error('No active subscription found')
+
+    await stripe.subscriptions.update(info.stripe_subscription_id, {
+      cancel_at_period_end: false,
+    } as Stripe.SubscriptionUpdateParams)
+
+    await stripeRepository.resumeCompanySubscription(companyId)
   },
 
   async createUpgradeCheckoutSession(userId: string, companyId: string, email: string): Promise<string> {

@@ -16,4 +16,5 @@ export interface Company {
   stripe_subscription_id: string | null
   plan_started_at: string | null
   plan_next_billing_at: string | null
+  plan_cancel_at: string | null
 }
