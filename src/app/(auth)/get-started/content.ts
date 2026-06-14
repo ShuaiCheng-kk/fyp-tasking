@@ -49,6 +49,8 @@ export const ownerStep5 = {
       'Smart notifications',
     ],
     button: 'Start with Free',
+    successMessage: 'You\'re all set! Your account has been created. Sign in to start using Tasking.',
+    successButton: 'Sign in',
   },
   proPlan: {
     badge: 'Most Popular',

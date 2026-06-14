@@ -983,6 +983,8 @@ export default function GetStartedPage() {
   const [linkErrorFromUrl, setLinkErrorFromUrl] = useState(false);
   const [planLoading, setPlanLoading] = useState<'free' | 'pro' | null>(null);
   const [showProMsg, setShowProMsg] = useState(false);
+  const [showFreeMsg, setShowFreeMsg] = useState(false);
+  const [navigating, setNavigating] = useState(false);
   const [error, setError] = useState('');
   const [companyNameError, setCompanyNameError] = useState('');
   const [ownerPhoneError, setOwnerPhoneError] = useState('');
@@ -1276,11 +1278,10 @@ export default function GetStartedPage() {
         ['owner_user_id', 'owner_email', 'owner_password', 'owner_company_id',
           'company_name', 'company_description', 'company_location', 'company_address', 'company_postal',
           'company_industry', 'company_size', 'departments'].forEach(k => sessionStorage.removeItem(k));
-        router.replace('/owner/dashboard');
-        return;
+      } else {
+        await runCompanySetup('Free');
       }
-      await runCompanySetup('Free');
-      router.replace('/owner/dashboard');
+      setShowFreeMsg(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Setup failed');
     } finally {
@@ -1329,6 +1330,11 @@ export default function GetStartedPage() {
       setError(err instanceof Error ? err.message : 'Setup failed. Please try again.');
       setPlanLoading(null);
     }
+  };
+
+  const handleSignIn = () => {
+    setNavigating(true);
+    setTimeout(() => router.push('/signin'), 350);
   };
 
   const handleResendEmail = async () => {
@@ -1856,8 +1862,8 @@ export default function GetStartedPage() {
             <StepHeading headline={ownerStep5.headline} subheadline={ownerStep5.subheadline} onBack={() => setStep(4)} />
             <ProgressBar current={5} steps={['Account', 'Verify', 'Company', 'Departments', 'Plan']} />
 
-            {showProMsg ? (
-              /* Pro confirmation message */
+            {(showProMsg || showFreeMsg) ? (
+              /* Account registered confirmation */
               <div style={{
                 background: '#FFFBF5',
                 border: '1.5px solid #F97316',
@@ -1878,10 +1884,11 @@ export default function GetStartedPage() {
                   <Check size={26} color="#F97316" strokeWidth={2.5} />
                 </div>
                 <p style={{ fontFamily: fB, fontSize: '1.0625rem', color: '#374151', lineHeight: 1.75, marginBottom: '28px' }}>
-                  {ownerStep5.proPlan.successMessage}
+                  {showProMsg ? ownerStep5.proPlan.successMessage : ownerStep5.freePlan.successMessage}
                 </p>
                 <button
-                  onClick={() => router.push('/signin')}
+                  onClick={handleSignIn}
+                  disabled={navigating}
                   className="btn-press"
                   style={{
                     background: '#F97316',
@@ -1892,10 +1899,12 @@ export default function GetStartedPage() {
                     fontWeight: 700,
                     fontSize: '1rem',
                     border: 'none',
-                    cursor: 'pointer',
+                    cursor: navigating ? 'default' : 'pointer',
+                    opacity: navigating ? 0.8 : 1,
+                    transition: 'opacity 0.2s ease',
                   }}
                 >
-                  {ownerStep5.proPlan.successButton}
+                  {showProMsg ? ownerStep5.proPlan.successButton : ownerStep5.freePlan.successButton}
                 </button>
               </div>
             ) : (
@@ -2133,5 +2142,22 @@ export default function GetStartedPage() {
       </div>
       </div>
     </div>
+
+    {/* Page transition overlay */}
+    {navigating && typeof window !== 'undefined' && createPortal(
+      <div style={{
+        position: 'fixed', inset: 0, zIndex: 99999,
+        background: '#fff',
+        animation: 'gsPageFadeIn 0.35s ease forwards',
+      }} />,
+      document.body
+    )}
+
+    <style>{`
+      @keyframes gsPageFadeIn {
+        from { opacity: 0; }
+        to   { opacity: 1; }
+      }
+    `}</style>
   );
 }
