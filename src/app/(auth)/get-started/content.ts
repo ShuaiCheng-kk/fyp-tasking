@@ -15,27 +15,27 @@ export const step1 = {
 
 export const ownerStep2 = {
   headline: 'Create your account',
-  subheadline: "You'll use this to sign in to Tasking.",
+  subheadline: '',
   button: 'Create Account',
 }
 
 export const ownerStep3 = {
-  headline: 'Tell us about your company',
-  subheadline: 'This helps your team identify your organisation on Tasking.',
+  headline: 'Your company',
+  subheadline: '',
   button: 'Save & Continue',
 }
 
 export const ownerStep4 = {
-  headline: 'Create your first department',
-  subheadline: 'Departments help you organise your team. You can add more later.',
-  addAnotherLabel: '+ Add another department',
+  headline: 'Create department',
+  subheadline: '',
+  addAnotherLabel: '+ Add department',
   button: 'Save & Continue',
 }
 
 export const ownerStep5 = {
   headline: 'Choose your plan',
-  subheadline: 'Start free and upgrade anytime. No commitment required.',
-  footnote: 'You can change your plan at any time from your dashboard settings.',
+  subheadline: '',
+  footnote: '',
   freePlan: {
     badge: 'Free Forever',
     price: '$0',
@@ -52,8 +52,8 @@ export const ownerStep5 = {
   },
   proPlan: {
     badge: 'Most Popular',
-    price: '$6',
-    priceSub: '/ user / month',
+    price: '$20',
+    priceSub: '/ month',
     featuresIntro: 'Everything in Free, plus:',
     features: [
       'Split shift timeline',
@@ -61,7 +61,6 @@ export const ownerStep5 = {
       'Advanced scheduling controls',
       'Skills & availability management',
       'CW performance history',
-      'Compliance enforcement',
     ],
     button: 'Choose Pro',
     successMessage:
@@ -72,7 +71,7 @@ export const ownerStep5 = {
 
 export const invitedStep2 = {
   headline: 'Create your account',
-  subheadline: "You'll use this to sign in to Tasking.",
+  subheadline: '',
   button: 'Create Account',
 }
 

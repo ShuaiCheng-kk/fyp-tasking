@@ -343,6 +343,49 @@ a {
   width: 100%;
 }
 
+/* ── Get-started: card entrance ── */
+@keyframes gs-card-in {
+  from { opacity: 0; transform: translateY(28px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
+.gs-card-enter {
+  animation: gs-card-in 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* ── Get-started: staggered field rows ── */
+@keyframes gs-field-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.gs-field {
+  animation: gs-field-in 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.gs-field:nth-child(1)  { animation-delay: 0.10s; }
+.gs-field:nth-child(2)  { animation-delay: 0.16s; }
+.gs-field:nth-child(3)  { animation-delay: 0.22s; }
+.gs-field:nth-child(4)  { animation-delay: 0.28s; }
+.gs-field:nth-child(5)  { animation-delay: 0.34s; }
+.gs-field:nth-child(6)  { animation-delay: 0.40s; }
+.gs-field:nth-child(7)  { animation-delay: 0.46s; }
+.gs-field:nth-child(8)  { animation-delay: 0.52s; }
+
+/* ── Get-started: choice card pair ── */
+@keyframes gs-choice-in {
+  from { opacity: 0; transform: translateY(20px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
+.gs-choice:nth-child(1) { animation: gs-choice-in 0.40s 0.10s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.gs-choice:nth-child(2) { animation: gs-choice-in 0.40s 0.22s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+.gs-choice {
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+}
+.gs-choice:hover {
+  border-color: #F97316 !important;
+  box-shadow: 0 8px 28px rgba(249, 115, 22, 0.15) !important;
+  transform: translateY(-4px) scale(1.01) !important;
+}
+
 /* ── Industry alternating rows ── */
 .industry-row {
   display: flex;
