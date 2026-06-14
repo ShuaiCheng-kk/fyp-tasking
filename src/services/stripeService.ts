@@ -3,6 +3,7 @@
 
 import { stripe } from '@/lib/stripe'
 import { stripeRepository } from '@/repositories/stripeRepository'
+import type Stripe from 'stripe'
 
 const PRICE_ID = 'price_1TiEhu40ShbeCpWad1gCGxK6'
 
@@ -11,6 +12,17 @@ export interface SubscriptionDetails {
   plan_started_at: string | null
   plan_next_billing_at: string | null
   stripe_subscription_id: string | null
+}
+
+// current_period_end moved to SubscriptionItem in Stripe SDK v17+ (API 2025+)
+function getPeriodEnd(sub: Stripe.Subscription): number {
+  return (sub as unknown as { current_period_end?: number }).current_period_end
+    ?? sub.items?.data?.[0]?.current_period_end
+    ?? sub.created
+}
+
+function getCustomerId(sub: Stripe.Subscription): string {
+  return typeof sub.customer === 'string' ? sub.customer : (sub.customer as Stripe.Customer)?.id ?? ''
 }
 
 export const stripeService = {
@@ -33,21 +45,17 @@ export const stripeService = {
 
   async saveCheckoutSubscription(companyId: string, sessionId: string): Promise<void> {
     const session = await stripe.checkout.sessions.retrieve(sessionId, {
-      expand: ['subscription'],
+      expand: ['subscription', 'subscription.items'],
     })
 
-    const sub = session.subscription as import('stripe').Stripe.Subscription | null
+    const sub = session.subscription as Stripe.Subscription | null
     if (!sub) throw new Error('No subscription found in session')
 
-    const startedAt = new Date(sub.start_date * 1000).toISOString()
-    const nextBillingAt = new Date(sub.current_period_end * 1000).toISOString()
-    const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer?.id ?? ''
-
     await stripeRepository.updateCompanyStripeInfo(companyId, {
-      stripe_customer_id: customerId,
+      stripe_customer_id: getCustomerId(sub),
       stripe_subscription_id: sub.id,
-      plan_started_at: startedAt,
-      plan_next_billing_at: nextBillingAt,
+      plan_started_at: new Date(sub.start_date * 1000).toISOString(),
+      plan_next_billing_at: new Date(getPeriodEnd(sub) * 1000).toISOString(),
       plan: 'Paid',
     })
   },
@@ -60,13 +68,12 @@ export const stripeService = {
       // If we have a stored subscription ID, refresh billing dates from Stripe
       if (info.stripe_subscription_id) {
         try {
-          const sub = await stripe.subscriptions.retrieve(info.stripe_subscription_id)
+          const sub = await stripe.subscriptions.retrieve(info.stripe_subscription_id, { expand: ['items'] })
           const startedAt = info.plan_started_at ?? new Date(sub.start_date * 1000).toISOString()
-          const nextBillingAt = new Date(sub.current_period_end * 1000).toISOString()
-          const customerId = typeof sub.customer === 'string' ? sub.customer : (sub.customer as { id: string })?.id ?? ''
+          const nextBillingAt = new Date(getPeriodEnd(sub) * 1000).toISOString()
 
           await stripeRepository.updateCompanyStripeInfo(companyId, {
-            stripe_customer_id: customerId,
+            stripe_customer_id: getCustomerId(sub),
             stripe_subscription_id: info.stripe_subscription_id,
             plan_started_at: startedAt,
             plan_next_billing_at: nextBillingAt,
@@ -85,14 +92,13 @@ export const stripeService = {
           const match = sessions.data.find(s => s.metadata?.companyId === companyId && s.subscription)
 
           if (match?.subscription) {
-            const subId = typeof match.subscription === 'string' ? match.subscription : match.subscription.id
-            const sub = await stripe.subscriptions.retrieve(subId)
-            const customerId = typeof sub.customer === 'string' ? sub.customer : (sub.customer as { id: string })?.id ?? ''
+            const subId = typeof match.subscription === 'string' ? match.subscription : (match.subscription as Stripe.Subscription).id
+            const sub = await stripe.subscriptions.retrieve(subId, { expand: ['items'] })
             const startedAt = new Date(sub.start_date * 1000).toISOString()
-            const nextBillingAt = new Date(sub.current_period_end * 1000).toISOString()
+            const nextBillingAt = new Date(getPeriodEnd(sub) * 1000).toISOString()
 
             await stripeRepository.updateCompanyStripeInfo(companyId, {
-              stripe_customer_id: customerId,
+              stripe_customer_id: getCustomerId(sub),
               stripe_subscription_id: sub.id,
               plan_started_at: startedAt,
               plan_next_billing_at: nextBillingAt,

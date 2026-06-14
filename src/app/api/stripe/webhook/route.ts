@@ -35,13 +35,17 @@ export async function POST(req: NextRequest) {
       // Retrieve the subscription to get billing dates
       const subId = typeof session.subscription === 'string' ? session.subscription : session.subscription?.id
       if (subId) {
-        const sub = await stripe.subscriptions.retrieve(subId)
-        const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer?.id ?? ''
+        const sub = await stripe.subscriptions.retrieve(subId, { expand: ['items'] })
+        const customerId = typeof sub.customer === 'string' ? sub.customer : (sub.customer as Stripe.Customer)?.id ?? ''
+        // current_period_end moved to SubscriptionItem in Stripe SDK v17+ (API 2025+)
+        const periodEnd: number = (sub as unknown as { current_period_end?: number }).current_period_end
+          ?? sub.items?.data?.[0]?.current_period_end
+          ?? sub.created
         await stripeRepository.updateCompanyStripeInfo(companyId, {
           stripe_customer_id: customerId,
           stripe_subscription_id: sub.id,
           plan_started_at: new Date(sub.start_date * 1000).toISOString(),
-          plan_next_billing_at: new Date(sub.current_period_end * 1000).toISOString(),
+          plan_next_billing_at: new Date(periodEnd * 1000).toISOString(),
           plan: 'Paid',
         })
       } else {
