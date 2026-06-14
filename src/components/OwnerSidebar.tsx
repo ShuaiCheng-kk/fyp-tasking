@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
 import {
@@ -13,6 +13,7 @@ import {
   ClipboardList,
   CheckSquare,
   CalendarDays,
+  GripVertical,
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 
@@ -26,6 +27,15 @@ const NAV_ITEMS = [
   { label: 'Attendance',    Icon: ClipboardList,    href: '/owner/attendance',      dot: null },
   { label: 'Report',        Icon: BarChart2,        href: '/owner/report',          dot: null },
 ]
+
+const NAV_LABELS = NAV_ITEMS.map(i => i.label)
+const ORDER_KEY = 'owner_sidebar_nav_order'
+
+function mergeOrder(saved: string[]): string[] {
+  const valid = saved.filter(l => NAV_LABELS.includes(l))
+  const missing = NAV_LABELS.filter(l => !valid.includes(l))
+  return [...valid, ...missing]
+}
 
 type Theme = {
   sidebarBg: string
@@ -62,6 +72,59 @@ export default function OwnerSidebar({
   const [annCount, setAnnCount] = useState(unreadAnnouncements ?? 0)
   const [reviewCount, setReviewCount] = useState(0)
 
+  // ── Sidebar order ──────────────────────────────────────────────────────────
+  const [navOrder, setNavOrder] = useState<string[]>(NAV_LABELS)
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(ORDER_KEY)
+      if (saved) setNavOrder(mergeOrder(JSON.parse(saved)))
+    } catch {}
+  }, [])
+
+  // ── Drag state ─────────────────────────────────────────────────────────────
+  const [dragIdx, setDragIdx] = useState<number | null>(null)
+  const [dropIdx, setDropIdx] = useState<number | null>(null)
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+  const dragNodeRef = useRef<HTMLAnchorElement | null>(null)
+
+  const handleDragStart = (e: React.DragEvent, idx: number) => {
+    setDragIdx(idx)
+    e.dataTransfer.effectAllowed = 'move'
+    // Transparent drag image so we don't see the default ghost
+    const ghost = document.createElement('div')
+    ghost.style.position = 'fixed'
+    ghost.style.top = '-1000px'
+    document.body.appendChild(ghost)
+    e.dataTransfer.setDragImage(ghost, 0, 0)
+    setTimeout(() => document.body.removeChild(ghost), 0)
+  }
+
+  const handleDragOver = (e: React.DragEvent, idx: number) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    setDropIdx(idx)
+  }
+
+  const handleDrop = (e: React.DragEvent, idx: number) => {
+    e.preventDefault()
+    if (dragIdx === null || dragIdx === idx) {
+      setDragIdx(null); setDropIdx(null); return
+    }
+    const next = [...navOrder]
+    const [moved] = next.splice(dragIdx, 1)
+    next.splice(idx, 0, moved)
+    setNavOrder(next)
+    try { localStorage.setItem(ORDER_KEY, JSON.stringify(next)) } catch {}
+    setDragIdx(null)
+    setDropIdx(null)
+  }
+
+  const handleDragEnd = () => {
+    setDragIdx(null)
+    setDropIdx(null)
+  }
+
+  // ── Unread counts + realtime ────────────────────────────────────────────────
   useEffect(() => {
     const authUid = typeof localStorage !== 'undefined' ? localStorage.getItem('tasking_user_id') : null
     if (!authUid) return
@@ -75,20 +138,16 @@ export default function OwnerSidebar({
         const cid = localStorage.getItem('tasking_company_id') ?? localStorage.getItem(`tasking_company_id_${authUid}`)
         if (!cid) return
 
-        // Unread messages: from API (DB-backed, accurate)
         fetch(`/api/inbox/unread-count?user_id=${internalId}&company_id=${cid}`)
           .then(r => r.json())
           .then(data => { if (data.success) setMsgCount(data.unread_messages ?? 0) })
           .catch(() => {})
 
-        // Pending review jobs
         fetch(`/api/recruitment?company_id=${cid}&resource=pending_approval`)
           .then(r => r.json())
           .then(data => { if (data.success) setReviewCount((data.pendingPostings as unknown[]).length ?? 0) })
           .catch(() => {})
 
-        // Unread announcements: from localStorage per-ID read set (page writes this)
-        // We fetch the announcement list to know total count, then subtract read IDs
         const readKey = `ann_read_ids_${cid}_${internalId}`
         let readIds: Set<string> = new Set()
         try {
@@ -162,14 +221,12 @@ export default function OwnerSidebar({
       .catch(() => {})
   }, [])
 
-  // Clear review dot when user opens the Review tab (event from the page)
   useEffect(() => {
     const handler = () => setReviewCount(0)
     window.addEventListener('recruitment-review-opened', handler)
     return () => window.removeEventListener('recruitment-review-opened', handler)
   }, [])
 
-  // When user opens communication page, mark all announcements as read in localStorage
   useEffect(() => {
     if (pathname !== '/owner/communication') return
     setMsgCount(0)
@@ -193,16 +250,16 @@ export default function OwnerSidebar({
       }).catch(() => {})
   }, [pathname])
 
-  useEffect(() => {
-    if (unreadMessages !== undefined) setMsgCount(unreadMessages)
-  }, [unreadMessages])
-  useEffect(() => {
-    if (unreadAnnouncements !== undefined) setAnnCount(unreadAnnouncements)
-  }, [unreadAnnouncements])
+  useEffect(() => { if (unreadMessages !== undefined) setMsgCount(unreadMessages) }, [unreadMessages])
+  useEffect(() => { if (unreadAnnouncements !== undefined) setAnnCount(unreadAnnouncements) }, [unreadAnnouncements])
 
-  const visibleNavItems = userRole === 'Manager'
-    ? NAV_ITEMS.filter(item => item.label !== 'Report')
-    : NAV_ITEMS
+  const visibleLabels = userRole === 'Manager'
+    ? navOrder.filter(l => l !== 'Report')
+    : navOrder
+
+  const orderedItems = visibleLabels
+    .map(label => NAV_ITEMS.find(item => item.label === label))
+    .filter(Boolean) as typeof NAV_ITEMS
 
   const handleLogout = async () => {
     const supabase = createBrowserClient(
@@ -218,7 +275,7 @@ export default function OwnerSidebar({
   return (
     <aside
       onMouseEnter={() => setExpanded(true)}
-      onMouseLeave={() => setExpanded(false)}
+      onMouseLeave={() => { setExpanded(false); setHoveredIdx(null) }}
       style={{
         width: expanded ? '220px' : '64px',
         background: theme.sidebarBg,
@@ -271,13 +328,25 @@ export default function OwnerSidebar({
 
       {/* Nav */}
       <nav style={{ flex: 1, padding: '12px 8px', overflow: 'hidden' }}>
-        {visibleNavItems.map(({ label, Icon, href, dot }) => {
+        {orderedItems.map(({ label, Icon, href, dot }, idx) => {
           const active = pathname === href
           const showDot = dot === 'messages' ? msgCount > 0 : dot === 'announcements' ? annCount > 0 : dot === 'review' ? reviewCount > 0 : false
+          const isDragging = dragIdx === idx
+          const isDropTarget = dropIdx === idx && dragIdx !== null && dragIdx !== idx
+
           return (
             <a
               key={label}
+              ref={idx === 0 ? dragNodeRef : undefined}
               href={href}
+              draggable={expanded}
+              onDragStart={e => handleDragStart(e, idx)}
+              onDragOver={e => handleDragOver(e, idx)}
+              onDrop={e => handleDrop(e, idx)}
+              onDragEnd={handleDragEnd}
+              onMouseEnter={() => setHoveredIdx(idx)}
+              onMouseLeave={() => setHoveredIdx(null)}
+              onClick={e => { if (dragIdx !== null) e.preventDefault() }}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -288,16 +357,32 @@ export default function OwnerSidebar({
                 color: active ? theme.sidebarActiveText : theme.sidebarText,
                 fontWeight: active ? 600 : 500,
                 fontSize: '0.9rem',
-                cursor: 'pointer',
+                cursor: expanded ? 'grab' : 'pointer',
                 textDecoration: 'none',
                 whiteSpace: 'nowrap',
                 marginBottom: '2px',
-                transition: 'background 0.12s, color 0.12s',
+                transition: 'background 0.12s, color 0.12s, opacity 0.12s',
                 position: 'relative',
+                opacity: isDragging ? 0.35 : 1,
+                // Drop indicator: orange top border on the target slot
+                borderTop: isDropTarget ? '2px solid #F97316' : '2px solid transparent',
               }}
-              onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = theme.sidebarHoverBg } }}
-              onMouseLeave={(e) => { if (!active) { e.currentTarget.style.background = 'transparent' } }}
+              onMouseEnterCapture={(e) => { if (!active && !isDragging) { (e.currentTarget as HTMLAnchorElement).style.background = theme.sidebarHoverBg } }}
+              onMouseLeaveCapture={(e) => { if (!active) { (e.currentTarget as HTMLAnchorElement).style.background = active ? theme.sidebarActiveBg : 'transparent' } }}
             >
+              {/* Drag handle — visible only when expanded and hovering */}
+              <span style={{
+                position: 'absolute',
+                left: 2,
+                opacity: expanded && hoveredIdx === idx && !active ? 0.4 : 0,
+                transition: 'opacity 0.15s',
+                display: 'flex',
+                alignItems: 'center',
+                pointerEvents: 'none',
+              }}>
+                <GripVertical size={12} strokeWidth={2} />
+              </span>
+
               <span style={{ position: 'relative', flexShrink: 0 }}>
                 <Icon
                   size={18}
