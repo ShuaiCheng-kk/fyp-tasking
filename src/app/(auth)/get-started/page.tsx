@@ -1523,6 +1523,7 @@ export default function GetStartedPage() {
   // ─────────────────────────────────────────────────────────────────────────
 
   return (
+    <>
     <div style={{
       flex: 1,
       display: 'flex',
@@ -2159,5 +2160,6 @@ export default function GetStartedPage() {
         to   { opacity: 1; }
       }
     `}</style>
+    </>
   );
 }
