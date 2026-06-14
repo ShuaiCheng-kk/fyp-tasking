@@ -799,11 +799,26 @@ function AccountFields({ form, setForm, phoneError, clearPhoneError }: {
 
 // ─── Verify email step ────────────────────────────────────────────────────────
 
-function VerifyEmailStep({ email, onContinue }: { email: string; onContinue: () => void }) {
+function VerifyEmailStep({
+  email,
+  verified,
+  linkError,
+  onContinue,
+  onResend,
+}: {
+  email: string;
+  verified: boolean;
+  linkError: boolean;
+  onContinue: () => void;
+  onResend: () => Promise<void>;
+}) {
   const [checking, setChecking] = useState(false);
   const [notVerifiedYet, setNotVerifiedYet] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [resent, setResent] = useState(false);
 
   const handleContinue = async () => {
+    if (verified) { onContinue(); return; }
     setChecking(true);
     setNotVerifiedYet(false);
     try {
@@ -821,34 +836,116 @@ function VerifyEmailStep({ email, onContinue }: { email: string; onContinue: () 
     }
   };
 
+  const handleResend = async () => {
+    setResending(true);
+    try {
+      await onResend();
+      setResent(true);
+    } finally {
+      setResending(false);
+    }
+  };
+
   return (
     <div style={{ textAlign: 'center', paddingTop: '8px' }}>
+      {/* Green success banner */}
+      {verified && (
+        <div style={{
+          background: '#F0FDF4',
+          border: '1px solid #86EFAC',
+          borderRadius: '10px',
+          padding: '12px 16px',
+          marginBottom: '20px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '8px',
+        }}>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <circle cx="8" cy="8" r="8" fill="#22C55E" />
+            <path d="M4.5 8L7 10.5L11.5 5.5" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <span style={{ fontFamily: fB, fontSize: '0.9375rem', color: '#166534', fontWeight: 600 }}>
+            Email verified successfully! You can now continue.
+          </span>
+        </div>
+      )}
+
+      {/* Red error banner */}
+      {linkError && (
+        <div style={{
+          background: '#FEF2F2',
+          border: '1px solid #FECACA',
+          borderRadius: '10px',
+          padding: '12px 16px',
+          marginBottom: '20px',
+          fontFamily: fB,
+          fontSize: '0.9375rem',
+          color: '#DC2626',
+          lineHeight: 1.5,
+        }}>
+          This confirmation link is invalid or has expired. Please request a new one.
+        </div>
+      )}
+
       <div style={{
         width: 64, height: 64,
-        background: 'rgba(249,115,22,0.1)',
+        background: verified ? 'rgba(34,197,94,0.1)' : 'rgba(249,115,22,0.1)',
         borderRadius: '50%',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         margin: '0 auto 24px',
       }}>
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#F97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none"
+          stroke={verified ? '#22C55E' : '#F97316'}
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <rect x="2" y="4" width="20" height="16" rx="2" />
           <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
         </svg>
       </div>
+
       <p style={{ fontFamily: fB, fontSize: '1rem', color: '#374151', lineHeight: 1.65, marginBottom: '6px' }}>
         We&apos;ve sent a confirmation link to <strong>{email}</strong>.
       </p>
       <p style={{ fontFamily: fB, fontSize: '1rem', color: '#374151', lineHeight: 1.65, marginBottom: '32px' }}>
         Please click the link in the email to activate your account and get started.
       </p>
+
       {notVerifiedYet && (
         <p style={{ fontFamily: fB, fontSize: '0.875rem', color: '#DC2626', marginBottom: '16px' }}>
           Your email hasn&apos;t been verified yet. Please click the link in the email first.
         </p>
       )}
+
+      {resent && (
+        <p style={{ fontFamily: fB, fontSize: '0.875rem', color: '#22C55E', marginBottom: '16px' }}>
+          Confirmation email resent! Check your inbox.
+        </p>
+      )}
+
       <PrimaryButton loading={checking} onClick={handleContinue}>
-        I&apos;ve verified — Continue
+        I&apos;ve verified
       </PrimaryButton>
+
+      {(linkError || notVerifiedYet) && (
+        <button
+          onClick={handleResend}
+          disabled={resending || resent}
+          style={{
+            marginTop: '16px',
+            background: 'none',
+            border: 'none',
+            cursor: resending || resent ? 'default' : 'pointer',
+            fontFamily: fB,
+            fontSize: '0.9375rem',
+            color: resent ? '#9CA3AF' : '#F97316',
+            fontWeight: 600,
+            padding: 0,
+            opacity: resending ? 0.7 : 1,
+          }}
+        >
+          {resending ? 'Sending…' : resent ? 'Email sent' : 'Resend confirmation email'}
+        </button>
+      )}
     </div>
   );
 }
@@ -882,6 +979,8 @@ export default function GetStartedPage() {
   const [step, setStep] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [confirmationEmail, setConfirmationEmail] = useState<string | null>(null);
+  const [verifiedFromUrl, setVerifiedFromUrl] = useState(false);
+  const [linkErrorFromUrl, setLinkErrorFromUrl] = useState(false);
   const [planLoading, setPlanLoading] = useState<'free' | 'pro' | null>(null);
   const [showProMsg, setShowProMsg] = useState(false);
   const [error, setError] = useState('');
@@ -945,6 +1044,23 @@ export default function GetStartedPage() {
     const verifyEmail = params.get('email');
     if (params.get('verify') === '1' && verifyEmail) {
       setConfirmationEmail(verifyEmail);
+      setPath('owner');
+      setStep(2);
+      return;
+    }
+
+    // Return from Supabase email confirmation link
+    const storedEmail = sessionStorage.getItem('owner_email');
+    if (params.get('verified') === 'true' && storedEmail) {
+      setConfirmationEmail(storedEmail);
+      setVerifiedFromUrl(true);
+      setPath('owner');
+      setStep(2);
+      return;
+    }
+    if (params.get('error') === 'invalid_link' && storedEmail) {
+      setConfirmationEmail(storedEmail);
+      setLinkErrorFromUrl(true);
       setPath('owner');
       setStep(2);
     }
@@ -1176,6 +1292,15 @@ export default function GetStartedPage() {
     }
   };
 
+  const handleResendEmail = async () => {
+    if (!confirmationEmail) return;
+    await fetch('/api/auth/resend-confirmation', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: confirmationEmail }),
+    });
+  };
+
   const handleInvitedRegister = () => {
     setError('');
     setInvitedPhoneError('');
@@ -1386,7 +1511,10 @@ export default function GetStartedPage() {
             <ProgressBar current={2} steps={['Account', 'Verify', 'Company', 'Departments', 'Plan']} />
             <VerifyEmailStep
               email={confirmationEmail}
+              verified={verifiedFromUrl}
+              linkError={linkErrorFromUrl}
               onContinue={() => setStep(3)}
+              onResend={handleResendEmail}
             />
           </Card>
         )}
