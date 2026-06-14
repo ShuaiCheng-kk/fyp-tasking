@@ -1048,8 +1048,16 @@ export default function GetStartedPage() {
       return;
     }
 
-    // Return from Stripe success — show completion screen
+    // Return from Stripe success — mark plan as Paid then show completion screen
     if (params.get('verify') === '1') {
+      const companyId = sessionStorage.getItem('owner_company_id');
+      if (companyId) {
+        fetch('/api/company/update-plan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ company_id: companyId, plan: 'Paid' }),
+        }).catch(() => {});
+      }
       ['owner_user_id', 'owner_email', 'owner_password', 'owner_company_id',
         'company_name', 'company_description', 'company_location', 'company_address', 'company_postal',
         'company_industry', 'company_size', 'departments'].forEach((k) => sessionStorage.removeItem(k));
