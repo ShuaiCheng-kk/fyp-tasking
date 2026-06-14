@@ -608,6 +608,7 @@ export default function OwnerTasksPage() {
   const [kanban,        setKanban]        = useState<KanbanGroup | null>(null)
   const [kanbanLoading, setKanbanLoading] = useState(false)
   const [taskDate,      setTaskDate]      = useState(() => formatDateKey(new Date()))
+  const [lastUpdated,   setLastUpdated]   = useState<Date | null>(null)
 
   // Task detail/edit panel
   const [selectedTask,  setSelectedTask]  = useState<Task | null>(null)
@@ -778,7 +779,7 @@ export default function OwnerTasksPage() {
     try {
       const res = await fetch(`/api/task?company_id=${cid}&kanban=true`)
       const data = await res.json()
-      if (data.success) setKanban(data.groups)
+      if (data.success) { setKanban(data.groups); setLastUpdated(new Date()) }
     } catch {}
     finally { if (!silent) setKanbanLoading(false) }
   }, [])
@@ -786,6 +787,19 @@ export default function OwnerTasksPage() {
   useEffect(() => {
     if (!companyId) return
     void Promise.resolve().then(() => fetchKanban(companyId))
+  }, [companyId, fetchKanban])
+
+  // Real-time subscription — refresh kanban whenever any task in this company changes
+  useEffect(() => {
+    if (!companyId) return
+    const supabase = createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
+    const channel = supabase
+      .channel(`tasks-realtime-${companyId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks', filter: `company_id=eq.${companyId}` },
+        () => { void fetchKanban(companyId, true) }
+      )
+      .subscribe()
+    return () => { void supabase.removeChannel(channel) }
   }, [companyId, fetchKanban])
 
   // ── Open task panel ────────────────────────────────────────────────────────
@@ -1174,6 +1188,10 @@ export default function OwnerTasksPage() {
           40%      { transform: translateY(-3px); }
           70%      { transform: translateY(-1px); }
         }
+        @keyframes livePulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50%      { opacity: 0.5; transform: scale(0.85); }
+        }
 
         /* Kanban task cards */
         .task-card {
@@ -1264,10 +1282,19 @@ export default function OwnerTasksPage() {
 
         {/* Page header — matches Dashboard style */}
         <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
-          <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
               Tasks
             </h1>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 99, background: '#DCFCE7', border: '1px solid #BBF7D0' }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#16A34A', animation: 'livePulse 2s ease-in-out infinite', display: 'inline-block', flexShrink: 0 }} />
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#15803D', letterSpacing: '0.03em' }}>LIVE</span>
+            </div>
+            {lastUpdated && (
+              <span style={{ fontSize: 11, color: '#9CA3AF' }}>
+                Updated {lastUpdated.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              </span>
+            )}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {ownerName && (

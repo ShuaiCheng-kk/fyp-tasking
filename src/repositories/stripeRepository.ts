@@ -33,11 +33,12 @@ export const stripeRepository = {
     stripe_subscription_id: string | null
     plan_started_at: string | null
     plan_next_billing_at: string | null
+    plan_cancel_at: string | null
     plan: string
   } | null> {
     const { data, error } = await supabase
       .from('companies')
-      .select('stripe_customer_id, stripe_subscription_id, plan_started_at, plan_next_billing_at, plan')
+      .select('stripe_customer_id, stripe_subscription_id, plan_started_at, plan_next_billing_at, plan_cancel_at, plan')
       .eq('id', companyId)
       .single()
 
@@ -45,6 +46,27 @@ export const stripeRepository = {
     return data
   },
 
+  // Called when user schedules cancellation — keeps plan Paid until period ends
+  async scheduleCompanyDowngrade(companyId: string, cancelAt: string): Promise<void> {
+    const { error } = await supabase
+      .from('companies')
+      .update({ plan_cancel_at: cancelAt })
+      .eq('id', companyId)
+
+    if (error) throw new Error(error.message)
+  },
+
+  // Called when user resumes (un-cancels) their subscription
+  async resumeCompanySubscription(companyId: string): Promise<void> {
+    const { error } = await supabase
+      .from('companies')
+      .update({ plan_cancel_at: null })
+      .eq('id', companyId)
+
+    if (error) throw new Error(error.message)
+  },
+
+  // Called by webhook when subscription actually expires — downgrades to Free
   async clearCompanySubscription(companyId: string): Promise<void> {
     const { error } = await supabase
       .from('companies')
@@ -52,6 +74,7 @@ export const stripeRepository = {
         plan: 'Free',
         stripe_subscription_id: null,
         plan_next_billing_at: null,
+        plan_cancel_at: null,
       })
       .eq('id', companyId)
 

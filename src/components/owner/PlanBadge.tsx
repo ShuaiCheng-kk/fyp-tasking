@@ -22,6 +22,7 @@ interface SubDetails {
   plan: string
   plan_started_at: string | null
   plan_next_billing_at: string | null
+  plan_cancel_at: string | null
   stripe_subscription_id: string | null
 }
 
@@ -106,15 +107,38 @@ export default function OwnerPlanBadge({ plan, currentCompanyId }: { plan: strin
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
-      window.location.reload()
+      // Refresh details to show the "cancelling" state — no page reload needed
+      await fetchDetails()
+      setShowCancelConfirm(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to cancel subscription')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleResumePro = async () => {
+    setActionLoading(true)
+    setError('')
+    try {
+      const res = await fetch('/api/stripe/resume-subscription', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ companyId: currentCompanyId }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      await fetchDetails()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to resume subscription')
+    } finally {
       setActionLoading(false)
     }
   }
 
   const effectivePlan = subDetails?.plan ?? plan
   const effectiveIsPro = effectivePlan === 'Paid' || effectivePlan === 'Pro'
+  const isCancelling = effectiveIsPro && !!subDetails?.plan_cancel_at
 
   const modal = open && mounted ? createPortal(
     <div
@@ -185,16 +209,42 @@ export default function OwnerPlanBadge({ plan, currentCompanyId }: { plan: strin
                     {fmt(subDetails?.plan_started_at ?? null)}
                   </span>
                 </div>
-                <div style={{
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                  padding: '10px 14px', borderRadius: 10, background: '#F9FAFB',
-                }}>
-                  <span style={{ fontSize: 12, color: '#6B7280', fontWeight: 500 }}>Next billing date</span>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>
-                    {fmt(subDetails?.plan_next_billing_at ?? null)}
-                  </span>
-                </div>
+
+                {isCancelling ? (
+                  // Show expiry date instead of next billing when cancellation is scheduled
+                  <div style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '10px 14px', borderRadius: 10, background: '#FFF7ED',
+                    border: '1px solid #FED7AA',
+                  }}>
+                    <span style={{ fontSize: 12, color: '#C2410C', fontWeight: 500 }}>Pro access ends</span>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: '#C2410C' }}>
+                      {fmt(subDetails?.plan_cancel_at ?? null)}
+                    </span>
+                  </div>
+                ) : (
+                  <div style={{
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    padding: '10px 14px', borderRadius: 10, background: '#F9FAFB',
+                  }}>
+                    <span style={{ fontSize: 12, color: '#6B7280', fontWeight: 500 }}>Next billing date</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>
+                      {fmt(subDetails?.plan_next_billing_at ?? null)}
+                    </span>
+                  </div>
+                )}
               </div>
+
+              {/* Cancelling banner */}
+              {isCancelling && (
+                <div style={{
+                  marginBottom: 16, padding: '10px 14px', borderRadius: 10,
+                  background: '#FFF7ED', border: '1px solid #FED7AA',
+                  fontSize: 12, color: '#92400E', lineHeight: 1.5,
+                }}>
+                  Your Pro plan is cancelled. You still have full access until <strong>{fmt(subDetails?.plan_cancel_at ?? null)}</strong>.
+                </div>
+              )}
 
               {error && (
                 <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 8, background: '#FEF2F2', fontSize: 12, color: '#DC2626' }}>
@@ -202,7 +252,23 @@ export default function OwnerPlanBadge({ plan, currentCompanyId }: { plan: strin
                 </div>
               )}
 
-              {!showCancelConfirm ? (
+              {isCancelling ? (
+                // Resume button
+                <button
+                  type="button"
+                  onClick={handleResumePro}
+                  disabled={actionLoading}
+                  style={{
+                    width: '100%', height: 40, borderRadius: 10, border: 'none',
+                    background: 'linear-gradient(135deg, #10B981, #14B8A6)',
+                    fontSize: 13, fontWeight: 700, color: '#fff',
+                    cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                    boxShadow: '0 4px 14px rgba(16,185,129,0.25)',
+                  }}
+                >
+                  {actionLoading ? <Spinner size={14} /> : 'Resume Pro Plan'}
+                </button>
+              ) : !showCancelConfirm ? (
                 <button
                   type="button"
                   onClick={() => setShowCancelConfirm(true)}
@@ -227,7 +293,7 @@ export default function OwnerPlanBadge({ plan, currentCompanyId }: { plan: strin
                 <div style={{ borderRadius: 12, border: '1.5px solid #FCA5A5', padding: '14px', background: '#FFF5F5' }}>
                   <p style={{ fontSize: 13, color: '#7F1D1D', fontWeight: 600, margin: '0 0 4px' }}>Cancel your Pro plan?</p>
                   <p style={{ fontSize: 12, color: '#B91C1C', margin: '0 0 14px' }}>
-                    This cannot be undone.
+                    You'll keep Pro access until the end of your billing period.
                   </p>
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button
@@ -261,12 +327,13 @@ export default function OwnerPlanBadge({ plan, currentCompanyId }: { plan: strin
             <>
               {/* Free plan — upgrade CTA */}
               <div style={{ marginBottom: 20 }}>
-                <p style={{ fontSize: 13, color: '#374151', fontWeight: 600, margin: '0 0 8px' }}>What you get with Pro</p>
+                <p style={{ fontSize: 13, color: '#374151', fontWeight: 600, margin: '0 0 4px' }}>Everything in Free, plus:</p>
                 {[
-                  'AI Candidate Recommendations',
-                  'AI Job Description Generator',
-                  'AI Auto-approve Timesheets',
-                  'AI Anomaly Detection & Reports',
+                  'Split shift timeline',
+                  'Clopening detection',
+                  'Advanced scheduling controls',
+                  'Skills & availability management',
+                  'CW performance history',
                 ].map(f => (
                   <div key={f} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0' }}>
                     <span style={{ width: 16, height: 16, borderRadius: 999, background: 'linear-gradient(135deg, #10B981, #14B8A6)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
