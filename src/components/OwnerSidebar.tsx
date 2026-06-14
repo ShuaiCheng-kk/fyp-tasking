@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
 import {
@@ -30,6 +30,7 @@ const NAV_ITEMS = [
 
 const NAV_LABELS = NAV_ITEMS.map(i => i.label)
 const ORDER_KEY = 'owner_sidebar_nav_order'
+const ITEM_H = 42 // px — approximate height of each nav row
 
 function mergeOrder(saved: string[]): string[] {
   const valid = saved.filter(l => NAV_LABELS.includes(l))
@@ -72,7 +73,7 @@ export default function OwnerSidebar({
   const [annCount, setAnnCount] = useState(unreadAnnouncements ?? 0)
   const [reviewCount, setReviewCount] = useState(0)
 
-  // ── Sidebar order ──────────────────────────────────────────────────────────
+  // ── Sidebar order ───────────────────────────────────────────────────────────
   const [navOrder, setNavOrder] = useState<string[]>(NAV_LABELS)
   useEffect(() => {
     try {
@@ -81,19 +82,50 @@ export default function OwnerSidebar({
     } catch {}
   }, [])
 
-  // ── Drag state ─────────────────────────────────────────────────────────────
+  // ── Drag state ──────────────────────────────────────────────────────────────
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [dropIdx, setDropIdx] = useState<number | null>(null)
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
-  const dragNodeRef = useRef<HTMLAnchorElement | null>(null)
+
+  // FLIP: label → DOM node
+  const itemRefs = useRef<Map<string, HTMLAnchorElement>>(new Map())
+  const prevRects = useRef<Map<string, DOMRect>>(new Map())
+
+  const captureRects = useCallback(() => {
+    itemRefs.current.forEach((el, label) => {
+      if (el) prevRects.current.set(label, el.getBoundingClientRect())
+    })
+  }, [])
+
+  const playFlip = useCallback(() => {
+    // double-RAF so React has committed the new DOM order
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        itemRefs.current.forEach((el, label) => {
+          if (!el) return
+          const prev = prevRects.current.get(label)
+          if (!prev) return
+          const next = el.getBoundingClientRect()
+          const dy = prev.top - next.top
+          if (Math.abs(dy) < 1) return
+          // Snap to old position instantly, then transition to new
+          el.style.transition = 'none'
+          el.style.transform = `translateY(${dy}px)`
+          // Force reflow
+          void el.offsetHeight
+          el.style.transition = 'transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1)'
+          el.style.transform = 'translateY(0px)'
+        })
+      })
+    })
+  }, [])
 
   const handleDragStart = (e: React.DragEvent, idx: number) => {
     setDragIdx(idx)
     e.dataTransfer.effectAllowed = 'move'
-    // Transparent drag image so we don't see the default ghost
+    // Transparent ghost so only our CSS shows
     const ghost = document.createElement('div')
-    ghost.style.position = 'fixed'
-    ghost.style.top = '-1000px'
+    ghost.style.cssText = 'position:fixed;top:-1000px;left:-1000px;width:1px;height:1px'
     document.body.appendChild(ghost)
     e.dataTransfer.setDragImage(ghost, 0, 0)
     setTimeout(() => document.body.removeChild(ghost), 0)
@@ -102,7 +134,7 @@ export default function OwnerSidebar({
   const handleDragOver = (e: React.DragEvent, idx: number) => {
     e.preventDefault()
     e.dataTransfer.dropEffect = 'move'
-    setDropIdx(idx)
+    if (idx !== dropIdx) setDropIdx(idx)
   }
 
   const handleDrop = (e: React.DragEvent, idx: number) => {
@@ -110,6 +142,7 @@ export default function OwnerSidebar({
     if (dragIdx === null || dragIdx === idx) {
       setDragIdx(null); setDropIdx(null); return
     }
+    captureRects()
     const next = [...navOrder]
     const [moved] = next.splice(dragIdx, 1)
     next.splice(idx, 0, moved)
@@ -117,11 +150,25 @@ export default function OwnerSidebar({
     try { localStorage.setItem(ORDER_KEY, JSON.stringify(next)) } catch {}
     setDragIdx(null)
     setDropIdx(null)
+    playFlip()
   }
 
   const handleDragEnd = () => {
     setDragIdx(null)
     setDropIdx(null)
+  }
+
+  // Live shift: items between drag and drop positions slide to preview the result
+  const getLiveShift = (idx: number): number => {
+    if (dragIdx === null || dropIdx === null || dragIdx === dropIdx || idx === dragIdx) return 0
+    if (dragIdx < dropIdx) {
+      // dragging down — items between dragIdx+1..dropIdx slide up
+      if (idx > dragIdx && idx <= dropIdx) return -ITEM_H
+    } else {
+      // dragging up — items between dropIdx..dragIdx-1 slide down
+      if (idx >= dropIdx && idx < dragIdx) return ITEM_H
+    }
+    return 0
   }
 
   // ── Unread counts + realtime ────────────────────────────────────────────────
@@ -172,10 +219,8 @@ export default function OwnerSidebar({
 
         const msgChannel = supabase
           .channel('owner-sidebar-messages')
-          .on('postgres_changes', {
-            event: 'INSERT', schema: 'public', table: 'messages',
-            filter: `to_user_id=eq.${internalId}`,
-          }, () => { setMsgCount(c => c + 1) })
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `to_user_id=eq.${internalId}` },
+            () => { setMsgCount(c => c + 1) })
           .subscribe()
 
         const refreshReviewCount = () => {
@@ -187,10 +232,8 @@ export default function OwnerSidebar({
 
         const reviewChannel = supabase
           .channel('owner-sidebar-review')
-          .on('postgres_changes', {
-            event: 'UPDATE', schema: 'public', table: 'job_postings',
-            filter: `company_id=eq.${cid}`,
-          }, refreshReviewCount)
+          .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'job_postings', filter: `company_id=eq.${cid}` },
+            refreshReviewCount)
           .subscribe()
 
         const refreshAnnCount = () => {
@@ -206,10 +249,8 @@ export default function OwnerSidebar({
 
         const annChannel = supabase
           .channel('owner-sidebar-announcements')
-          .on('postgres_changes', {
-            event: 'INSERT', schema: 'public', table: 'announcements',
-            filter: `company_id=eq.${cid}`,
-          }, refreshAnnCount)
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'announcements', filter: `company_id=eq.${cid}` },
+            refreshAnnCount)
           .subscribe()
 
         return () => {
@@ -284,8 +325,7 @@ export default function OwnerSidebar({
         flexDirection: 'column',
         height: '100vh',
         position: 'fixed',
-        top: 0,
-        left: 0,
+        top: 0, left: 0,
         zIndex: 20,
         transition: 'width 0.2s',
         overflow: 'hidden',
@@ -296,13 +336,10 @@ export default function OwnerSidebar({
       <Link
         href="/"
         style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '10px',
+          display: 'flex', alignItems: 'center', gap: '10px',
           padding: '20px 18px 18px',
           borderBottom: `1px solid ${theme.logoBorder}`,
-          textDecoration: 'none',
-          flexShrink: 0,
+          textDecoration: 'none', flexShrink: 0,
         }}
       >
         <svg width="28" height="28" viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
@@ -314,13 +351,9 @@ export default function OwnerSidebar({
           <path d="M20.3 10.25L21.5 11.5L23.8 9" stroke="white" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
         <span style={{
-          fontWeight: 700,
-          fontSize: '1.0625rem',
-          color: theme.sidebarText,
-          letterSpacing: '-0.01em',
-          whiteSpace: 'nowrap',
-          opacity: expanded ? 1 : 0,
-          transition: 'opacity 0.15s',
+          fontWeight: 700, fontSize: '1.0625rem', color: theme.sidebarText,
+          letterSpacing: '-0.01em', whiteSpace: 'nowrap',
+          opacity: expanded ? 1 : 0, transition: 'opacity 0.15s',
         }}>
           Tasking
         </span>
@@ -332,12 +365,15 @@ export default function OwnerSidebar({
           const active = pathname === href
           const showDot = dot === 'messages' ? msgCount > 0 : dot === 'announcements' ? annCount > 0 : dot === 'review' ? reviewCount > 0 : false
           const isDragging = dragIdx === idx
-          const isDropTarget = dropIdx === idx && dragIdx !== null && dragIdx !== idx
+          const shift = getLiveShift(idx)
 
           return (
             <a
               key={label}
-              ref={idx === 0 ? dragNodeRef : undefined}
+              ref={el => {
+                if (el) itemRefs.current.set(label, el)
+                else itemRefs.current.delete(label)
+              }}
               href={href}
               draggable={expanded}
               onDragStart={e => handleDragStart(e, idx)}
@@ -353,7 +389,11 @@ export default function OwnerSidebar({
                 gap: '10px',
                 padding: '10px 12px',
                 borderRadius: '8px',
-                background: active ? theme.sidebarActiveBg : 'transparent',
+                background: active
+                  ? theme.sidebarActiveBg
+                  : hoveredIdx === idx && !isDragging
+                    ? theme.sidebarHoverBg
+                    : 'transparent',
                 color: active ? theme.sidebarActiveText : theme.sidebarText,
                 fontWeight: active ? 600 : 500,
                 fontSize: '0.9rem',
@@ -361,34 +401,29 @@ export default function OwnerSidebar({
                 textDecoration: 'none',
                 whiteSpace: 'nowrap',
                 marginBottom: '2px',
-                transition: 'background 0.12s, color 0.12s, opacity 0.12s',
                 position: 'relative',
-                opacity: isDragging ? 0.35 : 1,
-                // Drop indicator: orange top border on the target slot
-                borderTop: isDropTarget ? '2px solid #F97316' : '2px solid transparent',
+                // Live shift animation during drag — smooth push
+                transform: `translateY(${shift}px)`,
+                transition: isDragging
+                  ? 'opacity 0.15s'
+                  : 'transform 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94), background 0.12s, color 0.12s, opacity 0.12s',
+                opacity: isDragging ? 0.3 : 1,
+                zIndex: isDragging ? 0 : 1,
               }}
-              onMouseEnterCapture={(e) => { if (!active && !isDragging) { (e.currentTarget as HTMLAnchorElement).style.background = theme.sidebarHoverBg } }}
-              onMouseLeaveCapture={(e) => { if (!active) { (e.currentTarget as HTMLAnchorElement).style.background = active ? theme.sidebarActiveBg : 'transparent' } }}
             >
-              {/* Drag handle — visible only when expanded and hovering */}
+              {/* Grip handle */}
               <span style={{
-                position: 'absolute',
-                left: 2,
-                opacity: expanded && hoveredIdx === idx && !active ? 0.4 : 0,
+                position: 'absolute', left: 2,
+                opacity: expanded && hoveredIdx === idx && !active ? 0.45 : 0,
                 transition: 'opacity 0.15s',
-                display: 'flex',
-                alignItems: 'center',
+                display: 'flex', alignItems: 'center',
                 pointerEvents: 'none',
               }}>
                 <GripVertical size={12} strokeWidth={2} />
               </span>
 
               <span style={{ position: 'relative', flexShrink: 0 }}>
-                <Icon
-                  size={18}
-                  strokeWidth={2.1}
-                  style={{ display: 'block', color: 'currentColor' }}
-                />
+                <Icon size={18} strokeWidth={2.1} style={{ display: 'block', color: 'currentColor' }} />
                 {showDot && (
                   <span style={{
                     position: 'absolute', top: -3, right: -3,
@@ -411,34 +446,17 @@ export default function OwnerSidebar({
           <button
             onClick={handleLogout}
             style={{
-              width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '10px',
-              padding: '10px 12px',
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-              borderRadius: '8px',
-              color: '#EF4444',
-              fontWeight: 500,
-              fontSize: '0.9rem',
-              transition: 'color 0.12s, background 0.12s',
-              whiteSpace: 'nowrap',
+              width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
+              padding: '10px 12px', background: 'none', border: 'none',
+              cursor: 'pointer', borderRadius: '8px', color: '#EF4444',
+              fontWeight: 500, fontSize: '0.9rem',
+              transition: 'color 0.12s, background 0.12s', whiteSpace: 'nowrap',
             }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.color = '#DC2626'
-              e.currentTarget.style.background = '#FEF2F2'
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.color = '#EF4444'
-              e.currentTarget.style.background = 'none'
-            }}
+            onMouseEnter={e => { e.currentTarget.style.color = '#DC2626'; e.currentTarget.style.background = '#FEF2F2' }}
+            onMouseLeave={e => { e.currentTarget.style.color = '#EF4444'; e.currentTarget.style.background = 'none' }}
           >
             <LogOut size={18} strokeWidth={2} style={{ flexShrink: 0, color: 'inherit' }} />
-            <span style={{ opacity: expanded ? 1 : 0, transition: 'opacity 0.15s' }}>
-              Logout
-            </span>
+            <span style={{ opacity: expanded ? 1 : 0, transition: 'opacity 0.15s' }}>Logout</span>
           </button>
         </div>
       </div>
