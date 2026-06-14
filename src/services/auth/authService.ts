@@ -128,6 +128,96 @@ export const authService = {
     if (error) throw new Error(error.message)
   },
 
+  async registerOwner(data: {
+    full_name: string
+    email: string
+    password: string
+    phone: string
+  }): Promise<{ user_id: string }> {
+    const admin = getAdminClient()
+
+    const authUser = await authRepository.createAuthUser(data.email, data.password, false)
+    const authUserId = authUser.id
+
+    try {
+      await authRepository.createUser({
+        supabase_auth_id: authUserId,
+        full_name: data.full_name,
+        email_address: data.email,
+        phone_number: data.phone || null,
+        role: 'Owner',
+      })
+
+      const { data: linkData, error: linkError } = await admin.auth.admin.generateLink({
+        type: 'signup',
+        email: data.email,
+        password: data.password,
+        options: { redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback` },
+      })
+      const confirmLink = linkData?.properties?.action_link
+      if (!linkError && confirmLink) {
+        const { emailService } = await import('@/services/email/emailService')
+        await emailService.sendConfirmationRequestEmail({ to: data.email, fullName: data.full_name, confirmLink })
+      }
+
+      return { user_id: authUserId }
+    } catch (err) {
+      try { await authRepository.deleteBySupabaseAuthId(authUserId) } catch {}
+      try { await authRepository.deleteAuthUser(authUserId) } catch {}
+      throw err
+    }
+  },
+
+  async isEmailVerified(email: string): Promise<boolean> {
+    const admin = getAdminClient()
+    const { data, error } = await admin.auth.admin.listUsers()
+    if (error || !data) return false
+    const user = data.users.find(u => u.email === email)
+    return !!(user?.email_confirmed_at)
+  },
+
+  async completeCompanySetup(data: {
+    user_id: string
+    company_name: string
+    company_description: string
+    company_location: string | null
+    company_address: string | null
+    company_postal_code: string | null
+    company_industry: string | null
+    company_size: string | null
+    company_website: string | null
+    company_logo_url: string | null
+    departments: string[]
+    plan: string
+  }): Promise<{ company_id: string }> {
+    const user = await authRepository.findByAuthId(data.user_id)
+    if (!user) throw new Error('User not found')
+
+    const company = await companyRepository.createCompany({
+      name: data.company_name,
+      description: data.company_description || null,
+      owner_id: user.id,
+      plan: data.plan === 'Paid' ? 'Paid' : 'Free',
+      location: data.company_location,
+      address: data.company_address,
+      postal_code: data.company_postal_code,
+      industry: data.company_industry,
+      size: data.company_size,
+      logo_url: data.company_logo_url,
+      website: data.company_website,
+    })
+
+    await authRepository.updateCompanyId(user.id, company.id)
+
+    for (const deptName of data.departments) {
+      if (deptName && deptName.trim()) {
+        await departmentRepository.createDepartment({ name: deptName.trim(), company_id: company.id })
+      }
+    }
+
+    return { company_id: company.id }
+  },
+
   async completeOwnerSetup(data: {
     full_name: string
     email: string

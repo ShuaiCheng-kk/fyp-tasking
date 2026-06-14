@@ -104,9 +104,6 @@ export default function ForgotPasswordPage() {
           <h1 style={{ fontFamily: fH, fontWeight: 700, fontSize: '1.75rem', color: '#1C1917', marginBottom: '8px' }}>
             Reset your password
           </h1>
-          <p style={{ fontFamily: fB, fontSize: '0.9375rem', color: '#78716C' }}>
-            Enter your email and we&apos;ll send you a reset link.
-          </p>
         </div>
 
         {success ? (
