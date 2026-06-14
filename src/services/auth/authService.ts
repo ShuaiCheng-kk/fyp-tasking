@@ -152,7 +152,7 @@ export const authService = {
         type: 'signup',
         email: data.email,
         password: data.password,
-        options: { redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback` },
+        options: { redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/confirm` },
       })
       const confirmLink = linkData?.properties?.action_link
       if (!linkError && confirmLink) {
