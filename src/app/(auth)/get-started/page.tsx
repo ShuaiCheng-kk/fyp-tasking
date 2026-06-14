@@ -1873,7 +1873,7 @@ export default function GetStartedPage() {
                   {ownerStep5.proPlan.successMessage}
                 </p>
                 <button
-                  onClick={() => router.push('/sign-in')}
+                  onClick={() => router.push('/signin')}
                   className="btn-press"
                   style={{
                     background: '#F97316',
