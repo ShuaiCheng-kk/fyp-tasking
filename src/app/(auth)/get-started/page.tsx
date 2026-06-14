@@ -1041,7 +1041,8 @@ export default function GetStartedPage() {
     }
 
     // Return from Stripe cancel — restore plan step
-    if (params.get('step') === 'plan' && sessionStorage.getItem('owner_user_id')) {
+    if (params.get('step') === 'plan' &&
+        (sessionStorage.getItem('owner_user_id') || sessionStorage.getItem('owner_company_id'))) {
       setPath('owner');
       setStep(5);
       return;
@@ -1221,7 +1222,7 @@ export default function GetStartedPage() {
     setStep(5);
   };
 
-  const runCompanySetup = async (plan: 'Free' | 'Paid') => {
+  const runCompanySetup = async (plan: 'Free' | 'Paid', clearSession = true) => {
     const userId = sessionStorage.getItem('owner_user_id') || '';
     const ownerEmail = sessionStorage.getItem('owner_email') || '';
 
@@ -1246,10 +1247,12 @@ export default function GetStartedPage() {
     const data = await res.json();
     if (!data.success) throw new Error(data.message);
 
-    ['owner_user_id', 'owner_email', 'owner_password',
-      'company_name', 'company_description', 'company_location', 'company_address', 'company_postal',
-      'company_industry', 'company_size', 'departments'].forEach((k) =>
-      sessionStorage.removeItem(k));
+    if (clearSession) {
+      ['owner_user_id', 'owner_email', 'owner_password',
+        'company_name', 'company_description', 'company_location', 'company_address', 'company_postal',
+        'company_industry', 'company_size', 'departments'].forEach((k) =>
+        sessionStorage.removeItem(k));
+    }
 
     return { ownerEmail, company_id: data.company_id as string, user_id: userId };
   };
@@ -1258,6 +1261,14 @@ export default function GetStartedPage() {
     setPlanLoading('free');
     setError('');
     try {
+      // If company was already created (user came back from Stripe cancel), skip re-creation
+      if (sessionStorage.getItem('owner_company_id')) {
+        ['owner_user_id', 'owner_email', 'owner_password', 'owner_company_id',
+          'company_name', 'company_description', 'company_location', 'company_address', 'company_postal',
+          'company_industry', 'company_size', 'departments'].forEach(k => sessionStorage.removeItem(k));
+        router.replace('/owner/dashboard');
+        return;
+      }
       await runCompanySetup('Free');
       router.replace('/owner/dashboard');
     } catch (err) {
@@ -1271,7 +1282,18 @@ export default function GetStartedPage() {
     setPlanLoading('pro');
     setError('');
     try {
-      const { ownerEmail, company_id, user_id } = await runCompanySetup('Free');
+      let company_id = sessionStorage.getItem('owner_company_id') || '';
+      let user_id = sessionStorage.getItem('owner_user_id') || '';
+      let ownerEmail = sessionStorage.getItem('owner_email') || '';
+
+      if (!company_id) {
+        // Company not yet created — create it now, keep sessionStorage for cancel
+        const result = await runCompanySetup('Free', false);
+        company_id = result.company_id;
+        user_id = result.user_id;
+        ownerEmail = result.ownerEmail;
+        sessionStorage.setItem('owner_company_id', company_id);
+      }
 
       if (!company_id || !user_id) {
         throw new Error('Missing company or user ID from setup response');
