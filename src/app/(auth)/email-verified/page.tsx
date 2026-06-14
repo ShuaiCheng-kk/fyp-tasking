@@ -7,12 +7,25 @@ const fH = 'var(--font-heading)';
 const fB = 'var(--font-body, system-ui, sans-serif)';
 
 export default function EmailVerifiedPage() {
-  const [isError, setIsError] = useState(false);
+  const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    setIsError(params.get('error') === '1');
+    if (params.get('error') === '1') {
+      setStatus('error');
+    } else {
+      setStatus('success');
+    }
   }, []);
+
+  if (status === 'loading') {
+    return (
+      <div style={{
+        flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: '#FFFBF5',
+      }} />
+    );
+  }
 
   return (
     <div style={{
@@ -33,7 +46,7 @@ export default function EmailVerifiedPage() {
         boxShadow: '0 4px 40px rgba(0,0,0,0.07)',
         textAlign: 'center',
       }}>
-        {isError ? (
+        {status === 'error' ? (
           <>
             <div style={{
               width: 64, height: 64,

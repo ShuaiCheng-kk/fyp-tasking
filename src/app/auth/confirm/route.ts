@@ -1,54 +1,25 @@
 // LAYER: Controller
 // RULE: Parse request, validate, call service, return response. No business logic, no DB access.
+//
+// Supabase sends the session as a hash fragment (#access_token=...) directly to
+// this URL in implicit flow. The server never sees the hash — only the browser
+// does. So we cannot verify server-side. We redirect to /email-verified and let
+// the client-side Supabase SDK pick up the session from the hash automatically.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
 
 const BASE = 'https://fyp-tasking.vercel.app'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
-  const code = searchParams.get('code')
-  const token_hash = searchParams.get('token_hash')
-  const type = searchParams.get('type')
+  const error = searchParams.get('error')
 
-  const cookieStore = await cookies()
-
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() { return cookieStore.getAll() },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) =>
-            cookieStore.set(name, value, options)
-          )
-        },
-      },
-    }
-  )
-
-  // PKCE flow: Supabase verified the token and sent us a code
-  if (code) {
-    const { error } = await supabase.auth.exchangeCodeForSession(code)
-    if (!error) {
-      return NextResponse.redirect(`${BASE}/email-verified`)
-    }
+  // Supabase appends error params when the link is invalid/expired
+  if (error) {
     return NextResponse.redirect(`${BASE}/email-verified?error=1`)
   }
 
-  // OTP flow: token_hash + type sent directly
-  if (token_hash && type) {
-    const { error } = await supabase.auth.verifyOtp({
-      token_hash,
-      type: type as Parameters<typeof supabase.auth.verifyOtp>[0]['type'],
-    })
-    if (!error) {
-      return NextResponse.redirect(`${BASE}/email-verified`)
-    }
-  }
-
-  return NextResponse.redirect(`${BASE}/email-verified?error=1`)
+  // Success: redirect to email-verified; the browser hash (#access_token=...)
+  // will be preserved by the browser and Supabase client picks it up.
+  return NextResponse.redirect(`${BASE}/email-verified`)
 }
