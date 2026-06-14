@@ -168,8 +168,7 @@ export const stripeService = {
   },
 
   async createUpgradeCheckoutSession(userId: string, companyId: string, email: string): Promise<string> {
-    const successUrl = new URL(`${process.env.NEXT_PUBLIC_APP_URL}/owner/settings`)
-    successUrl.searchParams.set('upgraded', '1')
+    const successUrl = new URL(`${process.env.NEXT_PUBLIC_APP_URL}/owner/dashboard`)
 
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
@@ -177,7 +176,7 @@ export const stripeService = {
       metadata: { companyId, userId },
       customer_email: email,
       success_url: successUrl.toString(),
-      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/owner/settings`,
+      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/owner/dashboard`,
     })
 
     if (!session.url) throw new Error('Stripe did not return a checkout URL')
