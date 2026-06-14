@@ -1,0 +1,114 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
+
+const fH = 'var(--font-heading)';
+const fB = 'var(--font-body, system-ui, sans-serif)';
+
+export default function EmailVerifiedPage() {
+  const [isError, setIsError] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setIsError(params.get('error') === '1');
+  }, []);
+
+  return (
+    <div style={{
+      flex: 1,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      background: '#FFFBF5',
+      padding: '60px 24px',
+    }}>
+      <div style={{
+        background: '#FFFFFF',
+        border: '1px solid #F0E8D8',
+        borderRadius: '20px',
+        padding: '56px 52px',
+        width: '100%',
+        maxWidth: '520px',
+        boxShadow: '0 4px 40px rgba(0,0,0,0.07)',
+        textAlign: 'center',
+      }}>
+        {isError ? (
+          <>
+            <div style={{
+              width: 64, height: 64,
+              background: 'rgba(220,38,38,0.1)',
+              borderRadius: '50%',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              margin: '0 auto 28px',
+            }}>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#DC2626" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 8v4m0 4h.01" />
+              </svg>
+            </div>
+            <h1 style={{ fontFamily: fH, fontWeight: 700, fontSize: '1.875rem', color: '#1C1917', marginBottom: '12px' }}>
+              Link expired
+            </h1>
+            <p style={{ fontFamily: fB, fontSize: '1rem', color: '#78716C', lineHeight: 1.65, marginBottom: '36px' }}>
+              This confirmation link is invalid or has expired. Please go back and request a new one.
+            </p>
+            <Link
+              href="/get-started"
+              style={{
+                display: 'inline-block',
+                background: '#F97316',
+                color: '#FFFFFF',
+                fontFamily: fB,
+                fontWeight: 700,
+                fontSize: '1rem',
+                padding: '14px 36px',
+                borderRadius: '10px',
+                textDecoration: 'none',
+              }}
+            >
+              Back to registration
+            </Link>
+          </>
+        ) : (
+          <>
+            <div style={{
+              width: 64, height: 64,
+              background: 'rgba(34,197,94,0.1)',
+              borderRadius: '50%',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              margin: '0 auto 28px',
+            }}>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="12" r="10" fill="#22C55E" />
+                <path d="M7 12.5L10.5 16L17 9" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </div>
+            <h1 style={{ fontFamily: fH, fontWeight: 700, fontSize: '1.875rem', color: '#1C1917', marginBottom: '12px' }}>
+              Email verified!
+            </h1>
+            <p style={{ fontFamily: fB, fontSize: '1rem', color: '#78716C', lineHeight: 1.65, marginBottom: '36px' }}>
+              Your email address has been confirmed. Head back to the registration page and click <strong>&ldquo;I&apos;ve verified&rdquo;</strong> to continue setting up your account.
+            </p>
+            <Link
+              href="/get-started?verified=true"
+              style={{
+                display: 'inline-block',
+                background: '#F97316',
+                color: '#FFFFFF',
+                fontFamily: fB,
+                fontWeight: 700,
+                fontSize: '1rem',
+                padding: '14px 36px',
+                borderRadius: '10px',
+                textDecoration: 'none',
+              }}
+            >
+              Continue registration
+            </Link>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}

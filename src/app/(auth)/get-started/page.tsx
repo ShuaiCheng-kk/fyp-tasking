@@ -1040,7 +1040,14 @@ export default function GetStartedPage() {
       return;
     }
 
-    // Return from Stripe — pick up verify step
+    // Return from Stripe cancel — restore plan step
+    if (params.get('step') === 'plan' && sessionStorage.getItem('owner_user_id')) {
+      setPath('owner');
+      setStep(5);
+      return;
+    }
+
+    // Return from Stripe success — pick up verify step
     const verifyEmail = params.get('email');
     if (params.get('verify') === '1' && verifyEmail) {
       setConfirmationEmail(verifyEmail);
