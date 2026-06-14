@@ -64,8 +64,8 @@ export const ownerStep5 = {
     ],
     button: 'Choose Pro',
     successMessage:
-      'Great choice! Our team will reach out to you within 24 hours to complete your Pro subscription setup.',
-    successButton: 'Go to Dashboard',
+      'You\'re all set! Your Pro account has been activated. Sign in to start using Tasking.',
+    successButton: 'Sign in',
   },
 }
 
