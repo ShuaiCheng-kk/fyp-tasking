@@ -1002,7 +1002,7 @@ export default function GetStartedPage() {
   const [postalLoading, setPostalLoading] = useState(false);
   const [postalError, setPostalError] = useState('');
   const [companyIndustry, setCompanyIndustry] = useState('');
-  const [companyIndustryOther, setCompanyIndustryOther] = useState('');
+
   const [companySize, setCompanySize] = useState('');
   const [departments, setDepartments] = useState<string[]>(['']);
 
@@ -1060,7 +1060,7 @@ export default function GetStartedPage() {
           body: JSON.stringify({ company_id: companyId, plan: 'Paid' }),
         }).catch(() => {});
       }
-      ['owner_user_id', 'owner_email', 'owner_password', 'owner_company_id',
+      ['owner_user_id', 'owner_full_name', 'owner_email', 'owner_password', 'owner_phone', 'owner_company_id',
         'company_name', 'company_description', 'company_location', 'company_address', 'company_postal',
         'company_industry', 'company_size', 'departments'].forEach((k) => sessionStorage.removeItem(k));
       setPath('owner');
@@ -1196,8 +1196,10 @@ export default function GetStartedPage() {
       if (!data.success) { setError(data.message); return; }
 
       sessionStorage.setItem('owner_user_id', data.user_id);
-      sessionStorage.setItem('owner_email', ownerAccount.email);
+      sessionStorage.setItem('owner_full_name', ownerAccount.fullName.trim());
+      sessionStorage.setItem('owner_email', ownerAccount.email.trim());
       sessionStorage.setItem('owner_password', ownerAccount.password);
+      sessionStorage.setItem('owner_phone', ownerAccount.phone);
       setConfirmationEmail(ownerAccount.email);
       goNext();
     } catch {
@@ -1213,12 +1215,11 @@ export default function GetStartedPage() {
       return;
     }
     if (!companyLocation.trim()) { setError('Location is required.'); return; }
-    if (!companyIndustry) { setError('Industry is required.'); return; }
-    if (companyIndustry === 'Other' && !companyIndustryOther.trim()) { setError('Please specify your industry.'); return; }
-    if (!companySize) { setError('Please select a company size.'); return; }
+    if (!companyIndustry.trim()) { setError('Industry is required.'); return; }
+    if (!companySize.toString().trim()) { setError('Number of staff is required.'); return; }
     setCompanyNameError('');
     setError('');
-    const resolvedIndustry = companyIndustry === 'Other' ? companyIndustryOther.trim() : companyIndustry;
+    const resolvedIndustry = companyIndustry.trim();
     sessionStorage.setItem('company_name', companyName);
     sessionStorage.setItem('company_description', companyDesc);
     sessionStorage.setItem('company_location', companyLocation);
@@ -1243,6 +1244,9 @@ export default function GetStartedPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         user_id: userId,
+        full_name: sessionStorage.getItem('owner_full_name'),
+        email_address: ownerEmail,
+        phone_number: sessionStorage.getItem('owner_phone'),
         company_name: sessionStorage.getItem('company_name'),
         company_description: sessionStorage.getItem('company_description'),
         company_location: sessionStorage.getItem('company_location'),
@@ -1260,7 +1264,7 @@ export default function GetStartedPage() {
     if (!data.success) throw new Error(data.message);
 
     if (clearSession) {
-      ['owner_user_id', 'owner_email', 'owner_password',
+      ['owner_user_id', 'owner_full_name', 'owner_email', 'owner_password', 'owner_phone',
         'company_name', 'company_description', 'company_location', 'company_address', 'company_postal',
         'company_industry', 'company_size', 'departments'].forEach((k) =>
         sessionStorage.removeItem(k));
@@ -1275,7 +1279,7 @@ export default function GetStartedPage() {
     try {
       // If company was already created (user came back from Stripe cancel), skip re-creation
       if (sessionStorage.getItem('owner_company_id')) {
-        ['owner_user_id', 'owner_email', 'owner_password', 'owner_company_id',
+        ['owner_user_id', 'owner_full_name', 'owner_email', 'owner_password', 'owner_phone', 'owner_company_id',
           'company_name', 'company_description', 'company_location', 'company_address', 'company_postal',
           'company_industry', 'company_size', 'departments'].forEach(k => sessionStorage.removeItem(k));
       } else {
@@ -1513,7 +1517,8 @@ export default function GetStartedPage() {
       sessionStorage.removeItem('invite_code');
 
       setIsLoading(false);
-      router.replace('/signin?joined=true');
+      setNavigating(true);
+      setTimeout(() => router.replace('/signin?joined=true'), 350);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Invalid or expired invitation code');
       setIsLoading(false);
@@ -1636,11 +1641,21 @@ export default function GetStartedPage() {
             <div style={{ marginTop: '28px' }}>
               <InlineError message={error} />
               <TermsCheckbox checked={termsAccepted} onChange={setTermsAccepted} />
-              <div style={{ opacity: termsAccepted ? 1 : 0.45, pointerEvents: termsAccepted ? 'auto' : 'none', transition: 'opacity 0.15s' }}>
-                <PrimaryButton loading={isLoading} onClick={handleOwnerRegister}>
-                  {ownerStep2.button}
-                </PrimaryButton>
-              </div>
+              {(() => {
+                const ok = termsAccepted &&
+                  !!ownerAccount.fullName.trim() &&
+                  !!ownerAccount.email.trim() &&
+                  ownerAccount.password.length >= 6 &&
+                  !!ownerAccount.confirmPassword &&
+                  ownerAccount.phone.length === 8;
+                return (
+                  <div style={{ opacity: ok ? 1 : 0.45, pointerEvents: ok ? 'auto' : 'none', transition: 'opacity 0.15s' }}>
+                    <PrimaryButton loading={isLoading} onClick={handleOwnerRegister}>
+                      {ownerStep2.button}
+                    </PrimaryButton>
+                  </div>
+                );
+              })()}
             </div>
           </Card>
         )}
@@ -1718,12 +1733,12 @@ export default function GetStartedPage() {
                   )}
                 </div>
                 <div>
-                  <label style={labelStyle}>Address</label>
+                  <label style={labelStyle}>Number of Staff</label>
                   <input
                     type="text"
-                    placeholder="e.g. 123 Orchard Road"
-                    value={companyAddress}
-                    onChange={(e) => setCompanyAddress(e.target.value)}
+                    placeholder="e.g. 20-30"
+                    value={companySize}
+                    onChange={e => setCompanySize(e.target.value)}
                     style={inputStyle}
                   />
                 </div>
@@ -1739,47 +1754,30 @@ export default function GetStartedPage() {
                 />
               </div>
               <div className="gs-field">
-                <label style={labelStyle}>Industry</label>
-                <DropdownField
-                  value={companyIndustry}
-                  onChange={v => { setCompanyIndustry(v); if (v !== 'Other') setCompanyIndustryOther(''); }}
-                  placeholder="Select industry"
-                  options={[
-                    'Retail', 'F&B', 'Logistics', 'Event Management', 'Healthcare',
-                    'Education', 'Technology', 'Finance', 'Construction', 'Hospitality',
-                    'Manufacturing', 'Other',
-                  ].map(i => ({ value: i, label: i }))}
+                <label style={labelStyle}>Address</label>
+                <input
+                  type="text"
+                  placeholder="e.g. 123 Orchard Road"
+                  value={companyAddress}
+                  onChange={(e) => setCompanyAddress(e.target.value)}
+                  style={inputStyle}
                 />
-                {companyIndustry === 'Other' && (
-                  <input
-                    type="text"
-                    placeholder="Please specify your industry"
-                    value={companyIndustryOther}
-                    onChange={e => setCompanyIndustryOther(e.target.value)}
-                    style={{ ...inputStyle, marginTop: '10px' }}
-                    autoFocus
-                  />
-                )}
               </div>
               <div className="gs-field">
-                <label style={labelStyle}>Number of Staff</label>
-                <DropdownField
-                  value={companySize}
-                  onChange={setCompanySize}
-                  placeholder="Select size…"
-                  options={[
-                    { value: '1-10', label: '1–10' },
-                    { value: '11-50', label: '11–50' },
-                    { value: '51-200', label: '51–200' },
-                    { value: '200+', label: '200+' },
-                  ]}
+                <label style={labelStyle}>Industry</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Retail, Healthcare, Technology…"
+                  value={companyIndustry}
+                  onChange={e => setCompanyIndustry(e.target.value)}
+                  style={inputStyle}
                 />
               </div>
             </div>
             <div style={{ marginTop: '28px' }}>
               <InlineError message={error} />
               {(() => {
-                const complete = !!companyName.trim() && !!companyLocation.trim() && !!companyIndustry && !!companySize;
+                const complete = !!companyName.trim() && !!companyLocation.trim() && !!companyIndustry.trim() && !!companySize.toString().trim();
                 return (
                   <div style={{ opacity: complete ? 1 : 0.45, pointerEvents: complete ? 'auto' : 'none', transition: 'opacity 0.15s' }}>
                     <PrimaryButton loading={false} onClick={handleCompanySetup}>
@@ -2070,11 +2068,21 @@ export default function GetStartedPage() {
             <div style={{ marginTop: '28px' }}>
               <InlineError message={error} />
               <TermsCheckbox checked={termsAccepted} onChange={setTermsAccepted} />
-              <div style={{ opacity: termsAccepted ? 1 : 0.45, pointerEvents: termsAccepted ? 'auto' : 'none', transition: 'opacity 0.15s' }}>
-                <PrimaryButton loading={isLoading} onClick={handleGuestRegister}>
-                  Register
-                </PrimaryButton>
-              </div>
+              {(() => {
+                const ok = termsAccepted &&
+                  !!guestAccount.fullName.trim() &&
+                  !!guestAccount.email.trim() &&
+                  guestAccount.password.length >= 6 &&
+                  !!guestAccount.confirmPassword &&
+                  guestAccount.phone.length === 8;
+                return (
+                  <div style={{ opacity: ok ? 1 : 0.45, pointerEvents: ok ? 'auto' : 'none', transition: 'opacity 0.15s' }}>
+                    <PrimaryButton loading={isLoading} onClick={handleGuestRegister}>
+                      Register
+                    </PrimaryButton>
+                  </div>
+                );
+              })()}
             </div>
           </Card>
         )}
@@ -2090,11 +2098,21 @@ export default function GetStartedPage() {
             <div style={{ marginTop: '28px' }}>
               <InlineError message={error} />
               <TermsCheckbox checked={termsAccepted} onChange={setTermsAccepted} />
-              <div style={{ opacity: termsAccepted ? 1 : 0.45, pointerEvents: termsAccepted ? 'auto' : 'none', transition: 'opacity 0.15s' }}>
-                <PrimaryButton loading={isLoading} onClick={handleInvitedRegister}>
-                  {invitedStep2.button}
-                </PrimaryButton>
-              </div>
+              {(() => {
+                const ok = termsAccepted &&
+                  !!invitedAccount.fullName.trim() &&
+                  !!invitedAccount.email.trim() &&
+                  invitedAccount.password.length >= 6 &&
+                  !!invitedAccount.confirmPassword &&
+                  invitedAccount.phone.length === 8;
+                return (
+                  <div style={{ opacity: ok ? 1 : 0.45, pointerEvents: ok ? 'auto' : 'none', transition: 'opacity 0.15s' }}>
+                    <PrimaryButton loading={isLoading} onClick={handleInvitedRegister}>
+                      {invitedStep2.button}
+                    </PrimaryButton>
+                  </div>
+                );
+              })()}
             </div>
           </Card>
         )}

@@ -2,8 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { Plus, X, ChevronDown, Upload, Building2, Network, Crown, UserCog, UserRound, HardHat, Users } from 'lucide-react'
-import { deptColor } from '@/lib/deptColor'
+import { Plus, X, ChevronDown, Upload, Building2, Network, Crown, UserCog, UserRound, HardHat, Users, UserPlus, Send, Check, Trash2 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
@@ -48,21 +47,30 @@ function AnimatedNumber({ value, duration = 550 }: { value: number; duration?: n
 
 // ─── Modal primitives ─────────────────────────────────────────────────────────
 
-function ModalOverlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+const modalKeyframes = `
+  @keyframes overlayFadeIn { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes modalSlideIn  { from { opacity: 0; transform: scale(0.97) translateY(8px) } to { opacity: 1; transform: scale(1) translateY(0) } }
+  @keyframes tabFadeIn     { from { opacity: 0; transform: translateY(5px) } to { opacity: 1; transform: translateY(0) } }
+  @keyframes fadeIn        { from { opacity: 0 } to { opacity: 1 } }
+`
+
+function ModalOverlay({ children, onClose, maxWidth = '540px' }: { children: React.ReactNode; onClose: () => void; maxWidth?: string }) {
   return (
     <div
-      onClick={onClose}
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(15,23,42,0.42)',
-        display: 'grid',
-        placeItems: 'center',
-        padding: 18,
+        background: 'rgba(15,23,42,0.45)',
+        backdropFilter: 'blur(4px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
         zIndex: 100,
+        animation: 'overlayFadeIn 0.18s ease-out',
       }}
     >
-      <div onClick={(e) => e.stopPropagation()} style={{ width: 'min(520px, 100%)', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+      <style>{modalKeyframes}</style>
+      <div style={{ width: `min(${maxWidth}, calc(100% - 32px))` }}>
         {children}
       </div>
     </div>
@@ -73,26 +81,36 @@ function ModalBox({ children }: { children: React.ReactNode }) {
   return (
     <div style={{
       background: '#FFFFFF',
-      borderRadius: 16,
-      border: '1px solid #E2E8F0',
-      boxShadow: '0 24px 70px rgba(15,23,42,0.22)',
+      borderRadius: 20,
+      overflow: 'hidden',
+      boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)',
       maxHeight: '90vh',
       overflowY: 'auto',
       display: 'flex',
       flexDirection: 'column',
+      animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)',
     }}>
       {children}
     </div>
   )
 }
 
-function ModalHeader({ title, onClose }: { title: string; onClose: () => void }) {
+function ModalHeader({ title, icon, onClose }: { title: string; icon?: React.ReactNode; onClose: () => void }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '18px 20px', borderBottom: '1px solid #E2E8F0' }}>
-      <h2 style={{ fontWeight: 900, fontSize: '1.0625rem', color: '#0F172A', margin: 0, letterSpacing: '-0.2px' }}>{title}</h2>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', flexShrink: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        {icon && (
+          <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            {icon}
+          </div>
+        )}
+        <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>{title}</h2>
+      </div>
       <button
         onClick={onClose}
-        style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid #E2E8F0', background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: 'pointer', color: '#64748B', flexShrink: 0 }}
+        style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8, flexShrink: 0 }}
+        onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+        onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
       >
         <X size={16} />
       </button>
@@ -102,12 +120,13 @@ function ModalHeader({ title, onClose }: { title: string; onClose: () => void })
 
 const modalInputStyle: React.CSSProperties = {
   width: '100%',
-  minHeight: 40,
-  padding: '9px 11px',
-  border: '1px solid #E2E8F0',
+  padding: '10px 12px',
+  border: '1.5px solid #E5E7EB',
   borderRadius: 8,
-  fontSize: 13,
-  color: '#0F172A',
+  fontSize: '0.9375rem',
+  fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
+  fontWeight: 400,
+  color: '#111827',
   outline: 'none',
   boxSizing: 'border-box',
   background: '#FFFFFF',
@@ -116,9 +135,9 @@ const modalInputStyle: React.CSSProperties = {
 const modalLabelStyle: React.CSSProperties = {
   display: 'block',
   fontWeight: 600,
-  fontSize: 12,
-  color: '#334155',
-  marginBottom: 6,
+  fontSize: '0.875rem',
+  color: '#374151',
+  marginBottom: '8px',
 }
 
 // ─── Custom Dropdown ──────────────────────────────────────────────────────────
@@ -160,9 +179,9 @@ function DropdownField({ value, options, onChange, placeholder }: {
       <button ref={triggerRef} type="button" onClick={handleOpen}
         style={{
           width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '9px 11px', border: `1px solid ${open ? '#F97316' : '#E2E8F0'}`, borderRadius: 8,
-          background: '#FFFFFF', cursor: 'pointer', fontSize: 13,
-          color: selected ? '#0F172A' : '#94A3B8', fontWeight: selected ? 500 : 400,
+          padding: '10px 12px', border: `1.5px solid ${open ? '#F97316' : '#E5E7EB'}`, borderRadius: 8,
+          background: '#FFFFFF', cursor: 'pointer', fontSize: '0.9375rem',
+          color: selected ? '#111827' : '#9CA3AF', fontWeight: selected ? 500 : 400,
           outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s', minHeight: 40,
         }}>
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -231,6 +250,7 @@ function OrgMemberCard({ member, onClick }: { member: TeamMember; onClick: () =>
         boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
         transition: 'box-shadow 0.15s',
         minWidth: 180,
+        animation: 'memberFadeIn 0.35s ease-out',
       }}
       onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 3px 10px rgba(0,0,0,0.10)' }}
       onMouseLeave={e => { e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)' }}
@@ -393,7 +413,6 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick }: O
         {deptCols.length > 0 && (
           <div style={{ display: 'flex', gap: DEPT_GAP, alignItems: 'flex-start', justifyContent: 'center' }}>
             {deptCols.map(({ dept, managers, employees }, di) => {
-              const color    = deptColor(dept.id)
               const colW     = deptColWs[di]
               const innerW   = deptInnerWs[di]
               // Manager center Xs relative to left edge of colW (accounting for DEPT_PAD)
@@ -403,8 +422,7 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick }: O
               return (
                 <div key={dept.id} style={{
                   width: colW, flexShrink: 0,
-                  border: `1.5px solid ${color}30`,
-                  borderTop: `3px solid ${color}`,
+                  border: '1.5px solid #E5E7EB',
                   borderRadius: 14,
                   background: '#FFFFFF',
                   boxShadow: '0 1px 6px rgba(0,0,0,0.06)',
@@ -413,7 +431,7 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick }: O
                 }}>
 
                   {/* Dept header */}
-                  <div style={{ width: '100%', padding: '9px 12px', background: `${color}10`, borderBottom: `1px solid ${color}28`, textAlign: 'center' }}>
+                  <div style={{ width: '100%', padding: '9px 12px', background: '#F9FAFB', borderBottom: '1px solid #F3F4F6', textAlign: 'center' }}>
                     <span style={{ fontWeight: 700, fontSize: '0.8125rem', color: '#111827' }}>{dept.name}</span>
                   </div>
 
@@ -432,7 +450,7 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick }: O
 
                   {/* Managers — horizontal row */}
                   {managers.length > 0 && (
-                    <div style={{ display: 'flex', gap: MGR_GAP, flexShrink: 0 }}>
+                    <div style={{ display: 'flex', gap: MGR_GAP, flexShrink: 0, marginBottom: employees.length === 0 ? DEPT_PAD : 0 }}>
                       {managers.map(m => (
                         <div key={m.id} style={{ width: NODE_W }}>
                           <OrgNode member={m} onClick={() => onMemberClick(m)} />
@@ -461,7 +479,7 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick }: O
                   )}
 
                   {managers.length === 0 && employees.length === 0 && (
-                    <div style={{ padding: '12px', fontSize: '0.75rem', color: '#9CA3AF' }}>No members</div>
+                    <div style={{ height: 36 }} />
                   )}
                 </div>
               )
@@ -662,6 +680,27 @@ export default function TeamPage() {
     finally { setTeamLoading(false) }
   }, [])
 
+  // Realtime: auto-refresh team list when a new user joins the company
+  useEffect(() => {
+    if (!companyId) return
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    )
+    const channel = supabase
+      .channel(`team-members-${companyId}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'users',
+        filter: `company_id=eq.${companyId}`,
+      }, () => {
+        fetchTeamMembers(companyId)
+      })
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [companyId, fetchTeamMembers])
+
   const handleMemberImportFile = async (file: File | null) => {
     setMemberImportError('')
     setMemberImportResult('')
@@ -820,52 +859,17 @@ export default function TeamPage() {
     finally { setEditProfileLoading(false) }
   }
 
-  // When invite modal opens: fetch companies for owner (session); default to active company
+  // When invite modal opens: lock to the current company page
   useEffect(() => {
     if (!inviteOpen) return
-    let cancelled = false
-    const load = async () => {
-      let uid = localStorage.getItem('tasking_user_id')
-      if (!uid) {
-        const supabase = createBrowserClient(
-          process.env.NEXT_PUBLIC_SUPABASE_URL!,
-          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-        )
-        const { data: { session } } = await supabase.auth.getSession()
-        if (session?.user?.id) {
-          uid = session.user.id
-          localStorage.setItem('tasking_user_id', uid)
-        }
-      }
-      if (!uid || cancelled) return
-      setCompaniesLoading(true)
-      try {
-        const res = await fetch(`/api/company/my-companies?owner_id=${uid}`)
-        const data = await res.json()
-        if (cancelled || !data.success || !data.companies) return
-        setOwnedCompanies(
-          data.companies.map((c: { id: string; name: string }) => ({ id: c.id, name: c.name }))
-        )
-        const currentCid = localStorage.getItem(`tasking_company_id_${uid}`) || companyId
-        if (currentCid && data.companies.some((c: { id: string }) => c.id === currentCid)) {
-          setSelectedCompanyId(currentCid)
-        } else if (data.companies.length === 1) {
-          setSelectedCompanyId(data.companies[0].id)
-        }
-      } catch {}
-      finally {
-        if (!cancelled) setCompaniesLoading(false)
-      }
-    }
-    void load()
-    return () => { cancelled = true }
+    setSelectedCompanyId(companyId)
   }, [inviteOpen, companyId])
 
 
   const openInviteModal = () => {
+    setSelectedCompanyId(companyId)
     if (currentUserRole === 'Manager') {
       setInviteRole('Employee')
-      setSelectedCompanyId(companyId)
       setInviteDeptId(userDeptId)
       if (companyId && userDeptId) fetchManagers(companyId, userDeptId)
     }
@@ -913,9 +917,8 @@ export default function TeamPage() {
     setDepartments([])
     setManagers([])
     setInviteManagerId('')
-    // Preserve auto-selected company; fetch depts if the new role requires it
-    if (selectedCompanyId && (role === 'Manager' || role === 'Employee')) {
-      fetchDepts(selectedCompanyId)
+    if (companyId && (role === 'Manager' || role === 'Employee')) {
+      fetchDepts(companyId)
     }
   }
 
@@ -929,7 +932,7 @@ export default function TeamPage() {
   }
 
   const noManagersInDept = inviteRole === 'Employee' && !!inviteDeptId && !managersLoading && managers.length === 0
-  const showDept = (inviteRole === 'Manager' || inviteRole === 'Employee') && !!selectedCompanyId
+  const showDept = (inviteRole === 'Manager' || inviteRole === 'Employee') && !!companyId
   const showReportingManager = inviteRole === 'Employee' && !!inviteDeptId
 
   const handleSendInvite = async () => {
@@ -1170,7 +1173,9 @@ export default function TeamPage() {
     return false
   }
 
-  const sendDisabled = inviteLoading || !!noManagersInDept ||
+  const sendDisabled = inviteLoading ||
+    !inviteEmail.trim() ||
+    !inviteRole ||
     ((inviteRole === 'Manager' || inviteRole === 'Employee') && !inviteDeptId)
 
   const partnerCount      = teamMembers.filter(m => m.role === 'Partner').length
@@ -1190,6 +1195,10 @@ export default function TeamPage() {
   return (
     <div style={{ display: 'flex', height: '100vh', background: '#F1F5F9', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
       <style>{`
+        @keyframes memberFadeIn {
+          from { opacity: 0; transform: translateY(8px) scale(0.97); }
+          to   { opacity: 1; transform: translateY(0) scale(1); }
+        }
         @keyframes fadeSlideUp {
           from { opacity: 0; transform: translateY(16px); }
           to   { opacity: 1; transform: translateY(0); }
@@ -1443,19 +1452,17 @@ export default function TeamPage() {
                   <div style={{ width: 30, height: 30, borderRadius: 9, background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <HardHat size={15} style={{ color: '#2563EB' }} />
                   </div>
-                  <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', flex: 1 }}>Casual Workers</span>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: '#2563EB', background: '#EFF6FF', padding: '2px 10px', borderRadius: 99 }}>
-                    {teamLoading ? '—' : casualWorkers.length}
-                  </span>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Casual Workers</span>
                 </div>
 
                 {teamLoading ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#9CA3AF', fontSize: '0.9375rem' }}>
-                    <Spinner size={16} dark /> Loading…
+                  <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}>
+                    <Spinner size={16} dark />
                   </div>
                 ) : casualWorkers.length === 0 ? (
-                  <div style={{ padding: '20px 0', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>
-                    No casual workers have joined this company yet.
+                  <div style={{ padding: '32px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                    <HardHat size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
+                    <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No casual workers have joined yet</p>
                   </div>
                 ) : (
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
@@ -1481,6 +1488,7 @@ export default function TeamPage() {
                             cursor: 'pointer', textAlign: 'left',
                             boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
                             transition: 'box-shadow 0.15s',
+                            animation: 'memberFadeIn 0.35s ease-out',
                           }}
                           onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 3px 10px rgba(37,99,235,0.12)' }}
                           onMouseLeave={e => { e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)' }}
@@ -1777,21 +1785,22 @@ export default function TeamPage() {
           <ModalBox>
             <ModalHeader
               title="Remove Member"
+              icon={<UserRound size={15} color="#fff" strokeWidth={2.5} />}
               onClose={() => { if (!removeLoading) { setRemoveModal(null); setRemoveError('') } }}
             />
-            <p style={{ fontSize: '0.875rem', color: '#6B7280', margin: '0 0 16px', lineHeight: 1.55 }}>
-              Remove <strong>{removeModal.full_name}</strong> from <strong>{companyName}</strong>? They will lose access to this company.
-            </p>
+            <div style={{ padding: '20px 24px', fontSize: '0.9375rem', color: '#374151', lineHeight: 1.6 }}>
+              Are you sure you want to remove <strong style={{ color: '#111827' }}>{removeModal.full_name}</strong>?
+            </div>
             {removeError && (
-              <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626', marginBottom: '12px' }}>
+              <div style={{ margin: '0 24px 8px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>
                 {removeError}
               </div>
             )}
-            <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
+            <div style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
               <button
                 onClick={() => { setRemoveModal(null); setRemoveError('') }}
                 disabled={removeLoading}
-                style={{ flex: 1, padding: '10px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: '8px', fontWeight: 600, fontSize: '0.9375rem', color: '#6B7280', cursor: removeLoading ? 'not-allowed' : 'pointer' }}
+                style={{ padding: '7px 16px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', cursor: removeLoading ? 'not-allowed' : 'pointer' }}
               >
                 Cancel
               </button>
@@ -1799,14 +1808,14 @@ export default function TeamPage() {
                 onClick={handleRemoveMember}
                 disabled={removeLoading}
                 style={{
-                  flex: 1, padding: '10px', background: '#DC2626', border: 'none', borderRadius: '8px',
-                  fontWeight: 600, fontSize: '0.9375rem', color: '#FFFFFF',
+                  padding: '7px 18px', background: removeLoading ? '#EF4444' : 'linear-gradient(135deg, #EF4444, #DC2626)', border: 'none', borderRadius: 8,
+                  fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF',
                   cursor: removeLoading ? 'not-allowed' : 'pointer',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '7px',
+                  display: 'flex', alignItems: 'center', gap: 6,
                   opacity: removeLoading ? 0.65 : 1,
                 }}
               >
-                {removeLoading && <Spinner size={14} />}
+                {removeLoading ? <Spinner size={13} /> : <Trash2 size={13} />}
                 Remove
               </button>
             </div>
@@ -1857,18 +1866,18 @@ export default function TeamPage() {
 
       {/* ── Member Profile Modal ─────────────────────────────────────────── */}
       {profileMember && (
-        <ModalOverlay onClose={() => setProfileMember(null)}>
+        <ModalOverlay onClose={() => setProfileMember(null)} maxWidth="420px">
           <ModalBox>
-            <ModalHeader title="Member Profile" onClose={() => setProfileMember(null)} />
+            <ModalHeader title="Member Profile" icon={<UserRound size={15} color="#fff" strokeWidth={2.5} />} onClose={() => setProfileMember(null)} />
 
             {/* Avatar + name */}
-            <div style={{ padding: '24px 24px 20px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', gap: 16 }}>
-              <RoleAvatar role={profileMember.role} size={54} />
+            <div style={{ padding: '16px 24px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', gap: 14 }}>
+              <RoleAvatar role={profileMember.role} size={44} />
               <div>
-                <p style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#0F172A', margin: '0 0 5px' }}>{profileMember.full_name}</p>
+                <p style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A', margin: '0 0 5px' }}>{profileMember.full_name}</p>
                 <span style={{
                   display: 'inline-block',
-                  padding: '2px 10px',
+                  padding: '3px 10px',
                   borderRadius: 999,
                   fontSize: '0.6875rem',
                   fontWeight: 700,
@@ -1887,24 +1896,30 @@ export default function TeamPage() {
             </div>
 
             {/* Fields */}
-            <div style={{ padding: '20px 24px' }}>
-              <ProfileField label="Email" value={profileMember.email_address} />
-              <ProfileField label="Phone" value={profileMember.phone_number ?? '—'} />
-              {profileMember.department_id && (
-                <ProfileField
-                  label="Department"
-                  value={companyDepartments.find(d => d.id === profileMember.department_id)?.name ?? '—'}
-                />
-              )}
+            <div style={{ padding: '0 24px 20px', display: 'flex', flexDirection: 'column' }}>
+              {[
+                { label: 'Email Address', value: profileMember.email_address },
+                { label: 'Phone', value: profileMember.phone_number ?? '—' },
+                ...(profileMember.department_id ? [{
+                  label: 'Department',
+                  value: companyDepartments.find(d => d.id === profileMember.department_id)?.name ?? '—',
+                }] : []),
+              ].map((field, i, arr) => (
+                <div key={field.label} style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
+                  <label style={{ ...modalLabelStyle, marginBottom: 4 }}>{field.label}</label>
+                  <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, sans-serif" }}>{field.value}</p>
+                </div>
+              ))}
             </div>
 
-            {/* Actions */}
+            {/* Footer */}
             {canRemove(profileMember) && (
-              <div style={{ padding: '0 24px 20px', display: 'flex', gap: 8 }}>
+              <div style={{ padding: '0 24px 16px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
                 <button
                   onClick={() => { setProfileMember(null); setRemoveModal(profileMember); setRemoveError('') }}
-                  style={{ flex: 1, height: 40, borderRadius: 10, border: '1.5px solid #FECACA', background: '#FFFFFF', fontWeight: 600, fontSize: 13, color: '#DC2626', cursor: 'pointer' }}
+                  style={{ padding: '7px 18px', border: 'none', borderRadius: 8, background: 'linear-gradient(135deg, #EF4444, #DC2626)', fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
                 >
+                  <Trash2 size={13} />
                   Remove
                 </button>
               </div>
@@ -1917,219 +1932,195 @@ export default function TeamPage() {
       {inviteOpen && (
         <ModalOverlay onClose={closeModal}>
           <ModalBox>
-            <ModalHeader title="Invite Member" onClose={closeModal} />
+            <ModalHeader title="Invite Member" icon={<UserPlus size={15} color="#fff" strokeWidth={2.5} />} onClose={closeModal} />
 
-            <div style={{ padding: '20px 20px 0' }}>
-              {/* Tab switcher — only for non-Manager roles */}
+            {/* Body */}
+            <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14, minHeight: 240 }}>
+              {/* Tab switcher */}
               {currentUserRole !== 'Manager' && (
-                <div style={{ display: 'inline-flex', border: '1px solid #E2E8F0', borderRadius: 9, overflow: 'hidden', marginBottom: 18 }}>
-                  {(['manual', 'import'] as const).map(tab => (
-                    <button key={tab} type="button" onClick={() => setInviteTab(tab)} style={{ border: 0, height: 32, padding: '0 14px', background: inviteTab === tab ? '#0F172A' : '#FFFFFF', color: inviteTab === tab ? '#FFFFFF' : '#334155', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
-                      {tab === 'manual' ? 'Manual' : 'Import'}
-                    </button>
-                  ))}
+                <div style={{ alignSelf: 'flex-start', marginBottom: 8 }}>
+                  <div style={{ display: 'inline-flex', border: '1.5px solid #E5E7EB', borderRadius: 9, overflow: 'hidden' }}>
+                    {(['manual', 'import'] as const).map(tab => (
+                      <button key={tab} type="button" onClick={() => setInviteTab(tab)} style={{ border: 0, height: 34, padding: '0 20px', background: inviteTab === tab ? '#0F172A' : '#FFFFFF', color: inviteTab === tab ? '#FFFFFF' : '#374151', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>
+                        {tab === 'manual' ? 'Single' : 'Import'}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
 
+              <div key={inviteTab} style={{ display: 'flex', flexDirection: 'column', gap: 14, animation: 'tabFadeIn 0.2s ease-out' }}>
+              {inviteTab === 'import' && currentUserRole !== 'Manager' ? (
+                <>
+                  {/* Sample CSV preview */}
+                  <div>
+                    <p style={{ margin: '0 0 8px', fontSize: '0.8125rem', fontWeight: 600, color: '#374151' }}>Sample CSV format</p>
+                    <div style={{ border: '1.5px solid #E5E7EB', borderRadius: 8, overflow: 'hidden', fontSize: '0.8125rem' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr 1.2fr', background: '#F9FAFB', borderBottom: '1px solid #E5E7EB' }}>
+                        {['Email', 'Role', 'Department'].map((h, i) => (
+                          <div key={h} style={{ padding: '7px 12px', fontWeight: 700, color: '#6B7280', fontFamily: "'Inter', system-ui, sans-serif", borderRight: i < 2 ? '1px solid #E5E7EB' : 'none' }}>{h}</div>
+                        ))}
+                      </div>
+                      {[
+                        ['partner@company.com', 'Partner', ''],
+                        ['manager@company.com', 'Manager', 'Sales'],
+                        ['employee@company.com', 'Employee', 'Marketing'],
+                      ].map(([email, role, dept], i) => (
+                        <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr 1.2fr', borderBottom: '1px solid #F3F4F6' }}>
+                          <div style={{ padding: '6px 12px', color: '#374151', borderRight: '1px solid #E5E7EB' }}>{email}</div>
+                          <div style={{ padding: '6px 12px', color: '#374151', borderRight: '1px solid #E5E7EB' }}>{role}</div>
+                          <div style={{ padding: '6px 12px', color: '#374151' }}>{dept}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', border: '1.5px solid #E5E7EB', borderRadius: 8, cursor: 'pointer', background: '#FFFFFF' }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = '#F97316' }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
+                  >
+                    <input
+                      type="file"
+                      accept=".csv,text/csv,text/plain"
+                      onChange={event => void handleMemberImportFile(event.target.files?.[0] ?? null)}
+                      style={{ display: 'none' }}
+                    />
+                    <Upload size={15} style={{ color: '#9CA3AF', flexShrink: 0 }} />
+                    <span style={{ fontSize: '0.9375rem', color: memberImportRows.length > 0 ? '#111827' : '#9CA3AF', fontFamily: "'Inter', system-ui, sans-serif" }}>
+                      {memberImportRows.length > 0 ? `${memberImportRows.length} row(s) ready to send` : 'Choose a CSV file'}
+                    </span>
+                  </label>
+                  {memberImportRows.length > 0 && (
+                    <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, overflow: 'hidden', maxHeight: 220, overflowY: 'auto' }}>
+                      {memberImportRows.map((row, index) => (
+                        <div key={`${row.email}-${index}`} style={{ display: 'grid', gridTemplateColumns: '1.4fr 0.8fr 1fr', gap: 10, padding: '9px 12px', borderBottom: '1px solid #F1F5F9', fontSize: '0.8125rem', color: '#374151' }}>
+                          <span>{row.email}</span>
+                          <strong>{row.role}</strong>
+                          <span>{row.department_name || '-'}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {/* Email */}
+                  <div>
+                    <label style={modalLabelStyle}>Email Address</label>
+                    <input
+                      type="email"
+                      placeholder="colleague@company.com"
+                      value={inviteEmail}
+                      onChange={(e) => setInviteEmail(e.target.value)}
+                      style={{ ...modalInputStyle, background: '#FFFFFF' }}
+                    />
+                  </div>
+
+                  {/* Role */}
+                  {currentUserRole !== 'Manager' && (
+                    <div>
+                      <label style={modalLabelStyle}>Role</label>
+                      <DropdownField
+                        value={inviteRole}
+                        onChange={handleRoleChange}
+                        placeholder="Select a role"
+                        options={[
+                          { value: 'partner', label: 'Partner' },
+                          { value: 'Manager', label: 'Manager' },
+                          { value: 'Employee', label: 'Employee' },
+                        ]}
+                      />
+                    </div>
+                  )}
+
+
+                  {/* Department */}
+                  {currentUserRole === 'Manager' ? (
+                    <div>
+                      <label style={modalLabelStyle}>Department</label>
+                      <div style={{ ...modalInputStyle, color: '#6B7280', background: '#F9FAFB' }}>
+                        {companyDepartments.find(d => d.id === userDeptId)?.name || 'Your department'}
+                      </div>
+                    </div>
+                  ) : showDept && (
+                    <div>
+                      <label style={modalLabelStyle}>Department</label>
+                      <DropdownField
+                        value={inviteDeptId}
+                        onChange={handleDeptChange}
+                        placeholder="Select a department"
+                        options={departments.map(d => ({ value: d.id, label: d.name }))}
+                      />
+                    </div>
+                  )}
+
+
+                </>
+              )}
+              </div>
+            </div>
+
+            {/* Errors / success — between body and footer */}
             {inviteTab === 'import' && currentUserRole !== 'Manager' ? (
               <>
-                <p style={{ margin: '0 0 14px', color: '#64748B', fontSize: 13, lineHeight: 1.6 }}>
-                  Upload a CSV with columns: email, role, department_name. Importing members sends invitation emails.
-                </p>
-                <input
-                  type="file"
-                  accept=".csv,text/csv,text/plain"
-                  onChange={event => void handleMemberImportFile(event.target.files?.[0] ?? null)}
-                  style={modalInputStyle}
-                />
-                {memberImportRows.length > 0 && (
-                  <div style={{ marginTop: 16, border: '1px solid #E5E7EB', borderRadius: 10, overflow: 'hidden', maxHeight: 220, overflowY: 'auto' }}>
-                    {memberImportRows.map((row, index) => (
-                      <div key={`${row.email}-${index}`} style={{ display: 'grid', gridTemplateColumns: '1.4fr 0.8fr 1fr', gap: 10, padding: '9px 12px', borderBottom: '1px solid #F1F5F9', fontSize: '0.82rem', color: '#374151' }}>
-                        <span>{row.email}</span>
-                        <strong>{row.role}</strong>
-                        <span>{row.department_name || '-'}</span>
-                      </div>
-                    ))}
+                {memberImportError && (
+                  <div style={{ margin: '0 24px 8px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>
+                    {memberImportError}
                   </div>
                 )}
-                {memberImportError && <p style={{ margin: '10px 0 0', color: '#B91C1C', fontSize: 13, fontWeight: 700 }}>{memberImportError}</p>}
-                {memberImportResult && <p style={{ margin: '10px 0 0', color: '#166534', fontSize: 13, fontWeight: 700 }}>{memberImportResult}</p>}
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '18px 0 20px' }}>
-                  <button onClick={closeModal} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, height: 36, padding: '0 14px', borderRadius: 10, border: '1px solid #E2E8F0', background: '#FFFFFF', color: '#0F172A', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
-                    Cancel
-                  </button>
-                  <button
-                    onClick={confirmMemberImport}
-                    disabled={memberImportLoading || memberImportRows.length === 0}
-                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, height: 36, padding: '0 14px', borderRadius: 10, border: 0, background: '#F97316', color: '#FFFFFF', fontWeight: 700, fontSize: 13, cursor: memberImportLoading || memberImportRows.length === 0 ? 'default' : 'pointer', opacity: memberImportLoading || memberImportRows.length === 0 ? 0.55 : 1 }}
-                  >
-                    {memberImportLoading && <Spinner size={13} />}
-                    Send Invites
-                  </button>
-                </div>
+                {memberImportResult && (
+                  <div style={{ margin: '0 24px 8px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#166534' }}>
+                    {memberImportResult}
+                  </div>
+                )}
               </>
             ) : (
               <>
-                <p style={{ fontSize: 13, color: '#64748B', margin: '0 0 18px', lineHeight: 1.6 }}>
-                  Send an invitation email to your new team member.
-                </p>
-
-            {/* Email */}
-            <div style={{ marginBottom: '16px' }}>
-              <label style={modalLabelStyle}>Email Address</label>
-              <input
-                type="email"
-                placeholder="colleague@company.com"
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-                style={modalInputStyle}
-              />
-            </div>
-
-            {/* Role */}
-            {currentUserRole !== 'Manager' && (
-            <div style={{ marginBottom: '16px' }}>
-              <label style={modalLabelStyle}>Role</label>
-              <div style={{ position: 'relative' }}>
-                <select
-                  value={inviteRole}
-                  onChange={(e) => handleRoleChange(e.target.value)}
-                  style={{ ...modalInputStyle, paddingRight: '36px', appearance: 'none', cursor: 'pointer' }}
-                >
-                  <option value="">Select a role</option>
-                  <option value="partner">Partner</option>
-                  <option value="Manager">Manager</option>
-                  <option value="Employee">Employee</option>
-                </select>
-                <ChevronDown size={15} style={{ position: 'absolute', right: '11px', top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
-              </div>
-            </div>
-            )}
-
-            {/* Company (always shown once role is selected) */}
-            {inviteRole && currentUserRole !== 'Manager' && (
-              <div style={{ marginBottom: '16px' }}>
-                <label style={modalLabelStyle}>Company</label>
-                <div style={{ position: 'relative' }}>
-                  {companiesLoading ? (
-                    <div style={{ ...modalInputStyle, display: 'flex', alignItems: 'center', gap: '8px', color: '#9CA3AF' }}>
-                      <Spinner size={14} dark /> Loading companies…
-                    </div>
-                  ) : (
-                    <>
-                      <select
-                        value={selectedCompanyId}
-                        onChange={(e) => handleCompanyChange(e.target.value)}
-                        style={{ ...modalInputStyle, paddingRight: '36px', appearance: 'none', cursor: 'pointer' }}
-                      >
-                        <option value="">Select a company</option>
-                        {ownedCompanies.map((c) => (
-                          <option key={c.id} value={c.id}>{c.name}</option>
-                        ))}
-                      </select>
-                      <ChevronDown size={15} style={{ position: 'absolute', right: '11px', top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
-                    </>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Department */}
-            {currentUserRole === 'Manager' ? (
-              <div style={{ marginBottom: '16px' }}>
-                <label style={modalLabelStyle}>Department</label>
-                <div style={{ ...modalInputStyle, color: '#6B7280', background: '#F9FAFB' }}>
-                  {companyDepartments.find(d => d.id === userDeptId)?.name || 'Your department'}
-                </div>
-              </div>
-            ) : showDept && (
-              <div style={{ marginBottom: '16px' }}>
-                <label style={modalLabelStyle}>Department</label>
-                <div style={{ position: 'relative' }}>
-                  <select
-                    value={inviteDeptId}
-                    onChange={(e) => handleDeptChange(e.target.value)}
-                    style={{ ...modalInputStyle, paddingRight: '36px', appearance: 'none', cursor: 'pointer' }}
-                  >
-                    <option value="">Select a department</option>
-                    {departments.map((d) => (
-                      <option key={d.id} value={d.id}>{d.name}</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={15} style={{ position: 'absolute', right: '11px', top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
-                </div>
-              </div>
-            )}
-
-            {/* Reporting Manager (Employee + department selected) */}
-            {showReportingManager && (
-              <div style={{ marginBottom: '0' }}>
-                <label style={modalLabelStyle}>Reporting Manager</label>
-                <div style={{ position: 'relative' }}>
-                  <select
-                    value={inviteManagerId}
-                    onChange={(e) => setInviteManagerId(e.target.value)}
-                    disabled={managersLoading || noManagersInDept}
-                    style={{ ...modalInputStyle, paddingRight: '36px', appearance: 'none', cursor: managersLoading || noManagersInDept ? 'not-allowed' : 'pointer', opacity: managersLoading ? 0.6 : 1 }}
-                  >
-                    {managersLoading ? (
-                      <option value="">Loading managers…</option>
-                    ) : noManagersInDept ? (
-                      <option value="">No managers in this department yet</option>
-                    ) : (
-                      <>
-                        <option value="">Select a manager</option>
-                        {managers.map((m) => (
-                          <option key={m.id} value={m.id}>{m.full_name}</option>
-                        ))}
-                      </>
-                    )}
-                  </select>
-                  <ChevronDown size={15} style={{ position: 'absolute', right: '11px', top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
-                </div>
-              </div>
-            )}
-
-            {/* Partner warning */}
-            {inviteRole === 'partner' && (
-              <p style={{ fontSize: '0.8125rem', color: '#F97316', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: '8px', padding: '10px 12px', margin: '4px 0 0' }}>
-                This person will have full Partner access to your company.
-              </p>
-            )}
-
-            {/* Error / success */}
-            {inviteError && (
-              <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 12px', fontSize: 13, color: '#B91C1C', marginTop: 10 }}>
-                {inviteError}
-              </div>
-            )}
-            {inviteSuccess && (
-              <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, padding: '10px 12px', fontSize: 13, color: '#166534', marginTop: 10 }}>
-                {inviteSuccess}
-              </div>
+                {inviteError && (
+                  <div style={{ margin: '0 24px 8px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>
+                    {inviteError}
+                  </div>
+                )}
+                {inviteSuccess && (
+                  <div style={{ margin: '0 24px 8px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#166534' }}>
+                    {inviteSuccess}
+                  </div>
+                )}
+              </>
             )}
 
             {/* Footer */}
-            <div
-              title={noManagersInDept ? 'Add a manager to this department first' : undefined}
-              style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '18px 0 20px' }}
-            >
-              <button onClick={closeModal} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', height: 36, padding: '0 14px', borderRadius: 10, border: '1px solid #E2E8F0', background: '#FFFFFF', color: '#0F172A', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
-                Cancel
-              </button>
-              <button
-                onClick={handleSendInvite}
-                disabled={sendDisabled}
-                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, height: 36, padding: '0 16px', borderRadius: 10, border: 0, background: '#F97316', color: '#FFFFFF', fontWeight: 700, fontSize: 13, cursor: sendDisabled ? 'not-allowed' : 'pointer', opacity: sendDisabled ? 0.5 : 1 }}
+            {inviteTab === 'import' && currentUserRole !== 'Manager' ? (
+              <div style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button onClick={closeModal} style={{ padding: '7px 16px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', cursor: 'pointer' }}>
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmMemberImport}
+                  disabled={memberImportLoading || memberImportRows.length === 0}
+                  style={{ padding: '7px 18px', background: memberImportLoading || memberImportRows.length === 0 ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: memberImportLoading || memberImportRows.length === 0 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: memberImportLoading || memberImportRows.length === 0 ? 0.65 : 1 }}
+                >
+                  {memberImportLoading ? <Spinner size={13} /> : <Send size={13} />}
+                  Send Invites
+                </button>
+              </div>
+            ) : (
+              <div
+                title={noManagersInDept ? 'Add a manager to this department first' : undefined}
+                style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}
               >
-                {inviteLoading && <Spinner size={13} />}
-                Send Invite
-              </button>
-            </div>
-              </>
+                <button onClick={closeModal} style={{ padding: '7px 16px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', cursor: 'pointer' }}>
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSendInvite}
+                  disabled={sendDisabled}
+                  style={{ padding: '7px 18px', background: sendDisabled ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: sendDisabled ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: sendDisabled ? 0.65 : 1 }}
+                >
+                  {inviteLoading ? <Spinner size={13} /> : <Send size={13} />}
+                  Send Invite
+                </button>
+              </div>
             )}
-            </div>
           </ModalBox>
         </ModalOverlay>
       )}
@@ -2181,77 +2172,62 @@ export default function TeamPage() {
       {editProfileOpen && (
         <ModalOverlay onClose={() => setEditProfileOpen(false)}>
           <ModalBox>
-            <ModalHeader title="Edit Company Profile" onClose={() => setEditProfileOpen(false)} />
-            <div style={{ padding: '20px 20px 0', display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <ModalHeader title="Edit Company Profile" icon={<Building2 size={15} color="#fff" strokeWidth={2} />} onClose={() => setEditProfileOpen(false)} />
+
+            {/* Body */}
+            <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
               <div>
-                <label style={modalLabelStyle}>Company Name *</label>
-                <input value={editProfileName} onChange={e => setEditProfileName(e.target.value)} style={modalInputStyle} />
+                <label style={modalLabelStyle}>Company Name</label>
+                <input value={editProfileName} onChange={e => setEditProfileName(e.target.value)} placeholder="e.g. Acme Pte Ltd" style={modalInputStyle} />
               </div>
               <div>
-                <label style={modalLabelStyle}>Description</label>
-                <textarea value={editProfileDesc} onChange={e => setEditProfileDesc(e.target.value)} rows={2} style={{ ...modalInputStyle, resize: 'vertical' }} />
+                <label style={modalLabelStyle}>Company Description</label>
+                <textarea value={editProfileDesc} onChange={e => setEditProfileDesc(e.target.value)} rows={2} placeholder="Brief description of your company..." style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }} />
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div>
-                  <label style={modalLabelStyle}>Location</label>
-                  <input value={editProfileLoc} onChange={e => setEditProfileLoc(e.target.value)} placeholder="e.g. Singapore" style={modalInputStyle} />
-                </div>
-                <div>
-                  <label style={modalLabelStyle}>Size</label>
-                  <DropdownField
-                    value={editProfileSize}
-                    onChange={setEditProfileSize}
-                    placeholder="Select size"
-                    options={SIZES.map(s => ({ value: s, label: s }))}
-                  />
-                </div>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div>
-                  <label style={modalLabelStyle}>Address</label>
-                  <input value={editProfileAddress} onChange={e => setEditProfileAddress(e.target.value)} placeholder="e.g. 123 Orchard Road" style={modalInputStyle} />
-                </div>
                 <div>
                   <label style={modalLabelStyle}>Postal Code</label>
                   <input value={editProfilePostal} onChange={e => setEditProfilePostal(e.target.value)} placeholder="e.g. 238858" style={modalInputStyle} />
                 </div>
+                <div>
+                  <label style={modalLabelStyle}>Number of Staff</label>
+                  <input value={editProfileSize} onChange={e => setEditProfileSize(e.target.value)} placeholder="e.g. 20-30" style={modalInputStyle} />
+                </div>
+              </div>
+              <div>
+                <label style={modalLabelStyle}>Location</label>
+                <input value={editProfileLoc} onChange={e => setEditProfileLoc(e.target.value)} placeholder="e.g. Singapore, Orchard Road" style={modalInputStyle} />
+              </div>
+              <div>
+                <label style={modalLabelStyle}>Address</label>
+                <input value={editProfileAddress} onChange={e => setEditProfileAddress(e.target.value)} placeholder="e.g. 123 Orchard Road" style={modalInputStyle} />
               </div>
               <div>
                 <label style={modalLabelStyle}>Industry</label>
-                <DropdownField
-                  value={editProfileIndustry}
-                  onChange={v => { setEditProfileIndustry(v); if (v !== 'Other') setEditProfileIndustryOther('') }}
-                  placeholder="Select industry"
-                  options={INDUSTRIES.map(i => ({ value: i, label: i }))}
-                />
-                {editProfileIndustry === 'Other' && (
-                  <input
-                    value={editProfileIndustryOther}
-                    onChange={e => setEditProfileIndustryOther(e.target.value)}
-                    placeholder="Please specify your industry"
-                    style={{ ...modalInputStyle, marginTop: 8 }}
-                    autoFocus
-                  />
-                )}
+                <input value={editProfileIndustry} onChange={e => setEditProfileIndustry(e.target.value)} placeholder="e.g. Retail, Healthcare, Technology..." style={modalInputStyle} />
               </div>
-              {editProfileError && (
-                <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 12px', fontSize: 13, color: '#B91C1C' }}>
-                  {editProfileError}
-                </div>
-              )}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '4px 0 20px' }}>
-                <button
-                  onClick={() => setEditProfileOpen(false)}
-                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', height: 36, padding: '0 14px', borderRadius: 10, border: '1px solid #E2E8F0', background: '#FFFFFF', color: '#0F172A', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}
-                >Cancel</button>
-                <button
-                  onClick={handleEditProfile}
-                  disabled={editProfileLoading}
-                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, height: 36, padding: '0 16px', borderRadius: 10, border: 0, background: '#F97316', color: '#FFFFFF', fontWeight: 700, fontSize: 13, cursor: editProfileLoading ? 'default' : 'pointer', opacity: editProfileLoading ? 0.65 : 1 }}
-                >
-                  {editProfileLoading && <Spinner size={13} />} Save Changes
-                </button>
+            </div>
+
+            {/* Error — between body and footer */}
+            {editProfileError && (
+              <div style={{ margin: '0 24px 8px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>
+                {editProfileError}
               </div>
+            )}
+
+            {/* Footer */}
+            <div style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                onClick={() => setEditProfileOpen(false)}
+                style={{ padding: '7px 16px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', cursor: 'pointer' }}
+              >Cancel</button>
+              <button
+                onClick={handleEditProfile}
+                disabled={editProfileLoading}
+                style={{ padding: '7px 18px', background: editProfileLoading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: editProfileLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: editProfileLoading ? 0.65 : 1 }}
+              >
+                {editProfileLoading ? <Spinner size={13} /> : <Check size={13} />} Save Changes
+              </button>
             </div>
           </ModalBox>
         </ModalOverlay>
