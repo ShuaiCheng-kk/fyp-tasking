@@ -7,7 +7,9 @@ import {
   Plus, X, ChevronDown, Calendar, AlertCircle,
   CheckCircle, Clock, Eye, Layers, Users, MoreHorizontal,
   Copy, Crown, UserCog, UserRound, Pencil, Trash2, CalendarDays, ChevronLeft, ChevronRight,
+  Sparkles,
 } from 'lucide-react'
+import { TaskSuggestion, TaskAssignmentRecommendation } from '@/types/AI'
 import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
@@ -124,7 +126,14 @@ function TaskDatePicker({ value, onChange, taskDates, minDate, accentColor }: {
 // ─── Local page types ─────────────────────────────────────────────────────────
 
 type Department = { id: string; name: string }
-type Member = { id: string; full_name: string; role: string; department_id: string | null }
+type Member = {
+  id: string
+  full_name: string
+  role: string
+  department_id: string | null
+  skills?: string[] | string | null
+  worker_status?: string | null
+}
 type ManagerInfo = { id: string; full_name: string; department_id: string | null }
 type ShiftOption = TimelineShiftBlock & {
   assignee_name: string
@@ -194,6 +203,21 @@ function formatShiftOptionLabel(shift: ShiftOption): string {
   const date = new Date(`${shift.shift_date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
   const time = `${shift.start_time.slice(0, 5)}-${shift.end_time.slice(0, 5)}`
   return `${date} · ${time} · ${shift.assignee_name}`
+}
+
+function normaliseMemberSkills(member: Member, departmentName: string | null): string[] {
+  const raw = member.skills
+  const explicit = Array.isArray(raw)
+    ? raw
+    : typeof raw === 'string'
+      ? raw.split(/[,;\n]/)
+      : []
+  return [...new Set([
+    ...explicit.map(skill => skill.trim()).filter(Boolean),
+    member.role,
+    departmentName,
+    member.worker_status,
+  ].filter((value): value is string => Boolean(value)))]
 }
 
 import { deptColor } from '@/lib/deptColor'
@@ -645,6 +669,23 @@ export default function OwnerTasksPage() {
   const [newLoading,      setNewLoading]      = useState(false)
   const [newError,        setNewError]        = useState('')
 
+  // AI Task Breakdown state
+  const [aiModal,          setAiModal]          = useState(false)
+  const [aiContext,        setAiContext]        = useState('')
+  const [aiDeptId,         setAiDeptId]         = useState('')
+  const [aiShiftId,        setAiShiftId]        = useState('')
+  const [aiLoading,        setAiLoading]        = useState(false)
+  const [aiError,          setAiError]          = useState('')
+  const [aiSuggestions,    setAiSuggestions]    = useState<TaskSuggestion[]>([])
+  const [aiSelected,       setAiSelected]       = useState<Set<number>>(new Set())
+  const [aiCreateLoading,  setAiCreateLoading]  = useState(false)
+
+  // AI Task Assignment state
+  const [aiAssignLoading,  setAiAssignLoading]  = useState(false)
+  const [aiAssignError,    setAiAssignError]    = useState('')
+  const [aiAssignRecs,     setAiAssignRecs]     = useState<TaskAssignmentRecommendation[]>([])
+  const [showAiAssignRecs, setShowAiAssignRecs] = useState(false)
+
   const panelRef = useRef<HTMLDivElement>(null)
 
   const canManageDepartments = userRole === 'Owner' || userRole === 'Partner'
@@ -963,6 +1004,65 @@ export default function OwnerTasksPage() {
     finally { setSubTaskLoading(false) }
   }
 
+  const handleAiSuggestAssignee = async () => {
+    if (!newTitle.trim()) { setAiAssignError('Enter a task title first'); return }
+    const deptMembers = newDeptId
+      ? members.filter(m => m.department_id === newDeptId && m.role === 'Manager')
+      : members.filter(m => m.role === 'Manager')
+    if (deptMembers.length === 0) { setAiAssignError('No members in this department'); return }
+    setAiAssignLoading(true); setAiAssignError(''); setAiAssignRecs([]); setShowAiAssignRecs(false)
+    try {
+      const allDateTasks = COLUMNS.flatMap(col => (kanban?.[col] ?? []))
+      const activeTasks = allDateTasks.filter(task => task.status !== 'Complete')
+      const taskCountByUser = allDateTasks.reduce<Record<string, number>>((acc, t) => {
+        if (t.assigned_user_id) acc[t.assigned_user_id] = (acc[t.assigned_user_id] ?? 0) + 1
+        return acc
+      }, {})
+      const activeTaskCountByUser = activeTasks.reduce<Record<string, number>>((acc, t) => {
+        if (t.assigned_user_id) acc[t.assigned_user_id] = (acc[t.assigned_user_id] ?? 0) + 1
+        return acc
+      }, {})
+      const completedTaskCountByUser = allDateTasks.reduce<Record<string, number>>((acc, t) => {
+        if (t.assigned_user_id && t.status === 'Complete') acc[t.assigned_user_id] = (acc[t.assigned_user_id] ?? 0) + 1
+        return acc
+      }, {})
+      const deptName = departments.find(d => d.id === newDeptId)?.name ?? null
+      const candidates = deptMembers.map(m => ({
+        id: m.id,
+        name: m.full_name,
+        role: m.role,
+        department_name: deptName,
+        skills: normaliseMemberSkills(m, deptName),
+        recent_task_titles: allDateTasks
+          .filter(task => task.assigned_user_id === m.id)
+          .slice(0, 6)
+          .map(task => task.title),
+        active_task_count: activeTaskCountByUser[m.id] ?? 0,
+        current_task_count: taskCountByUser[m.id] ?? 0,
+        completed_task_count: completedTaskCountByUser[m.id] ?? 0,
+      }))
+      const res = await fetch('/api/ai/task-assignment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          task_title: newTitle.trim(),
+          task_description: newDescription || null,
+          task_priority: newPriority || null,
+          department_name: deptName,
+          candidates,
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      setAiAssignRecs(data.draft.recommendations as TaskAssignmentRecommendation[])
+      setShowAiAssignRecs(true)
+    } catch (err) {
+      setAiAssignError(err instanceof Error ? err.message : 'AI suggestion failed')
+    } finally {
+      setAiAssignLoading(false)
+    }
+  }
+
   const handleCreateTask = async () => {
     if (!newTitle.trim() || !newDeptId) { setNewError('Title and department are required'); return }
     if (newAssigneeId && !newShiftId) { setNewError('Please select a shift for the assignee'); return }
@@ -1001,6 +1101,7 @@ export default function OwnerTasksPage() {
     setNewAssigneeId(memberId)
     setNewShiftId('')
     setNewTitle(''); setNewDescription(''); setNewPriority(''); setNewDeadlineTime(''); setNewError('')
+    setAiAssignRecs([]); setShowAiAssignRecs(false); setAiAssignError('')
     setNewTaskModal(true)
   }
 
@@ -1103,6 +1204,14 @@ export default function OwnerTasksPage() {
       })
       .sort((a, b) => (PRIORITY_ORDER[a.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.priority ?? ''] ?? 4))
   }
+
+  // ── Workload: task count per user (all dates) ────────────────────────────
+  const taskCountByUser = COLUMNS
+    .flatMap(col => (kanban?.[col] ?? []))
+    .reduce<Record<string, number>>((acc, t) => {
+      if (t.assigned_user_id) acc[t.assigned_user_id] = (acc[t.assigned_user_id] ?? 0) + 1
+      return acc
+    }, {})
 
   const assignableMembers = members.filter(m => m.role === 'Manager')
   const newTaskDeptMembers = newDeptId ? assignableMembers.filter(m => m.department_id === newDeptId) : assignableMembers
@@ -1360,9 +1469,15 @@ export default function OwnerTasksPage() {
                   onClick={() => setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), 1)))}
                   style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${TASK_BORDER}`, background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: 'pointer', color: TASK_TEXT }}
                 ><ChevronRight size={16} /></button>
+                <button
+                  onClick={() => { setAiModal(true); setAiContext(''); setAiDeptId(''); setAiShiftId(''); setAiSuggestions([]); setAiSelected(new Set()); setAiError('') }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#fff', cursor: 'pointer', height: 38, flexShrink: 0 }}
+                >
+                  <Sparkles size={13} strokeWidth={2.5} /> AI Generate
+                </button>
                 {!selectedDeptId && (
                   <button
-                    onClick={() => { setNewTaskModal(true); setNewError('') }}
+                    onClick={() => { setNewTaskModal(true); setNewError(''); setNewTitle(''); setNewDescription(''); setNewDeptId(''); setNewAssigneeId(''); setNewShiftId(''); setNewPriority(''); setNewDeadlineTime(''); setAiAssignRecs([]); setShowAiAssignRecs(false); setAiAssignError('') }}
                     className="new-task-btn"
                     style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: '#F97316', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#fff', cursor: 'pointer', height: 38 }}
                   >
@@ -1391,29 +1506,67 @@ export default function OwnerTasksPage() {
                   const freeMembers = deptMembers.filter(m => !busyIds.has(m.id))
                   const busyMembers = deptMembers.filter(m => busyIds.has(m.id))
 
-                  const renderMember = (m: Member) => (
-                    <div key={m.id} className="member-card" style={{ display: 'flex', alignItems: 'center', gap: 8, border: '1px solid #F1F5F9', borderRadius: 12, padding: '9px 10px', background: '#FFFFFF', justifyContent: 'space-between' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0 }}>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: m.role === 'Manager' ? '#FFF7ED' : '#F3F4F6', color: m.role === 'Manager' ? '#EA580C' : '#4B5563', flexShrink: 0 }}>
-                          {m.role === 'Manager' ? <UserCog size={13} /> : <UserRound size={13} />}
-                        </span>
-                        <div style={{ minWidth: 0 }}>
-                          <p style={{ margin: 0, color: '#111827', fontSize: 12, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.full_name}</p>
+                  // Workload imbalance detection
+                  const counts = deptMembers.map(m => taskCountByUser[m.id] ?? 0)
+                  const avg = counts.length ? counts.reduce((a, b) => a + b, 0) / counts.length : 0
+                  const maxCount = counts.length ? Math.max(...counts) : 0
+                  const overloadedMember = maxCount > avg * 2 && maxCount >= 3
+                    ? deptMembers.find(m => (taskCountByUser[m.id] ?? 0) === maxCount)
+                    : null
+
+                  const workloadColor = (count: number) => {
+                    if (count === 0) return { bg: '#F3F4F6', text: '#6B7280' }
+                    if (count <= 2)  return { bg: '#DCFCE7', text: '#16A34A' }
+                    if (count <= 4)  return { bg: '#FEF3C7', text: '#D97706' }
+                    return { bg: '#FEE2E2', text: '#DC2626' }
+                  }
+
+                  const renderMember = (m: Member) => {
+                    const count = taskCountByUser[m.id] ?? 0
+                    const wc = workloadColor(count)
+                    return (
+                      <div key={m.id} className="member-card" style={{ display: 'flex', alignItems: 'center', gap: 8, border: `1px solid ${m.id === overloadedMember?.id ? '#FECACA' : '#F1F5F9'}`, borderRadius: 12, padding: '9px 10px', background: m.id === overloadedMember?.id ? '#FFF5F5' : '#FFFFFF', justifyContent: 'space-between' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0, flex: 1 }}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: m.role === 'Manager' ? '#FFF7ED' : '#F3F4F6', color: m.role === 'Manager' ? '#EA580C' : '#4B5563', flexShrink: 0 }}>
+                            {m.role === 'Manager' ? <UserCog size={13} /> : <UserRound size={13} />}
+                          </span>
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <p style={{ margin: 0, color: '#111827', fontSize: 12, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.full_name}</p>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                              <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 99, background: wc.bg, color: wc.text }}>
+                                {count} task{count !== 1 ? 's' : ''}
+                              </span>
+                              {m.id === overloadedMember?.id && (
+                                <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 99, background: '#FEE2E2', color: '#DC2626', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                  Overloaded
+                                </span>
+                              )}
+                            </div>
+                          </div>
                         </div>
+                        <button
+                          onClick={() => openNewTaskFor(m.id, dept.id)}
+                          className="assign-task-btn"
+                          style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, background: '#FFF7ED', border: '1px solid #FDBA74', borderRadius: 7, color: '#EA580C', cursor: 'pointer' }}
+                          title="Assign Task"
+                        >
+                          <Plus size={13} strokeWidth={2.5} />
+                        </button>
                       </div>
-                      <button
-                        onClick={() => openNewTaskFor(m.id, dept.id)}
-                        className="assign-task-btn"
-                        style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, background: '#FFF7ED', border: '1px solid #FDBA74', borderRadius: 7, color: '#EA580C', cursor: 'pointer' }}
-                        title="Assign Task"
-                      >
-                        <Plus size={13} strokeWidth={2.5} />
-                      </button>
-                    </div>
-                  )
+                    )
+                  }
 
                   return (
                     <div style={{ width: 220, flexShrink: 0, borderRight: '1px solid #F3F4F6', display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
+                      {/* Workload imbalance warning */}
+                      {overloadedMember && (
+                        <div style={{ margin: '10px 10px 0', padding: '8px 10px', background: '#FFF7ED', border: '1px solid #FDBA74', borderRadius: 9, display: 'flex', alignItems: 'flex-start', gap: 7 }}>
+                          <AlertCircle size={13} style={{ color: '#F97316', flexShrink: 0, marginTop: 1 }} />
+                          <p style={{ margin: 0, fontSize: 11, color: '#92400E', lineHeight: 1.45, fontWeight: 600 }}>
+                            <strong>{overloadedMember.full_name}</strong> is overloaded ({taskCountByUser[overloadedMember.id]} tasks). Consider redistributing.
+                          </p>
+                        </div>
+                      )}
                       <div style={{ padding: '12px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
                         {/* Free members first */}
                         {freeMembers.length > 0 && (
@@ -1819,7 +1972,7 @@ export default function OwnerTasksPage() {
                   <DropdownField
                     value={newDeptId}
                     options={deptDropdownOptions}
-                    onChange={v => { setNewDeptId(v); setNewAssigneeId(''); setNewShiftId(''); setNewDeadlineTime('') }}
+                    onChange={v => { setNewDeptId(v); setNewAssigneeId(''); setNewShiftId(''); setNewDeadlineTime(''); setAiAssignRecs([]); setShowAiAssignRecs(false) }}
                     placeholder="Select department"
                   />
                 </div>
@@ -1828,12 +1981,66 @@ export default function OwnerTasksPage() {
                   <DropdownField
                     value={newAssigneeId}
                     options={assigneeDropdownOptions}
-                    onChange={v => setNewAssigneeId(v)}
+                    onChange={v => { setNewAssigneeId(v); setShowAiAssignRecs(false) }}
                     placeholder="Unassigned"
                     disabled={!newDeptId}
                   />
                 </div>
               </div>
+
+              {/* AI Suggest Assignee */}
+              {newDeptId && (
+                <div>
+                  <button
+                    type="button"
+                    onClick={handleAiSuggestAssignee}
+                    disabled={!newTitle.trim() || aiAssignLoading}
+                    style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '5px 12px', background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 7, fontWeight: 600, fontSize: '0.75rem', color: '#fff', cursor: !newTitle.trim() || aiAssignLoading ? 'default' : 'pointer', opacity: !newTitle.trim() || aiAssignLoading ? 0.6 : 1 }}
+                  >
+                    <Sparkles size={11} strokeWidth={2.5} />
+                    {aiAssignLoading ? 'Finding best match...' : 'AI Suggest Assignee'}
+                  </button>
+                  {aiAssignError && <p style={{ margin: '4px 0 0', fontSize: '0.75rem', color: '#EF4444' }}>{aiAssignError}</p>}
+                  {showAiAssignRecs && aiAssignRecs.length > 0 && (
+                    <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <p style={{ margin: '0 0 2px', fontSize: '0.7rem', fontWeight: 700, color: '#7C3AED', textTransform: 'uppercase', letterSpacing: '0.05em' }}>AI Recommendations</p>
+                      {aiAssignRecs.slice(0, 3).map(rec => (
+                        <div
+                          key={rec.candidate_id}
+                          onClick={() => { setNewAssigneeId(rec.candidate_id); setShowAiAssignRecs(false) }}
+                          style={{ display: 'flex', alignItems: 'flex-start', gap: 9, padding: '9px 11px', background: newAssigneeId === rec.candidate_id ? '#F5F3FF' : '#FAFAFA', border: `1.5px solid ${newAssigneeId === rec.candidate_id ? '#7C3AED' : '#E5E7EB'}`, borderRadius: 9, cursor: 'pointer', transition: 'border-color 0.13s' }}
+                        >
+                          <div style={{ flexShrink: 0, width: 36, height: 36, borderRadius: 8, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: rec.fit === 'strong' ? '#DCFCE7' : rec.fit === 'good' ? '#FEF3C7' : '#F3F4F6', color: rec.fit === 'strong' ? '#16A34A' : rec.fit === 'good' ? '#D97706' : '#6B7280' }}>
+                            <span style={{ fontSize: 13, fontWeight: 800, lineHeight: 1 }}>{rec.score}</span>
+                            <span style={{ fontSize: 9, fontWeight: 600, textTransform: 'uppercase' }}>pts</span>
+                          </div>
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 2, flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>{rec.candidate_name}</span>
+                              <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', padding: '1px 5px', borderRadius: 99, background: rec.fit === 'strong' ? '#DCFCE7' : rec.fit === 'good' ? '#FEF3C7' : '#F3F4F6', color: rec.fit === 'strong' ? '#16A34A' : rec.fit === 'good' ? '#D97706' : '#6B7280' }}>
+                                {rec.fit}
+                              </span>
+                              <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', padding: '1px 5px', borderRadius: 99, background: rec.skill_match === 'strong' ? '#DBEAFE' : rec.skill_match === 'partial' ? '#E0F2FE' : '#F3F4F6', color: rec.skill_match === 'strong' ? '#1D4ED8' : rec.skill_match === 'partial' ? '#0369A1' : '#6B7280' }}>
+                                {rec.skill_match} skill
+                              </span>
+                              <span style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', padding: '1px 5px', borderRadius: 99, background: rec.workload_level === 'light' ? '#DCFCE7' : rec.workload_level === 'balanced' ? '#FEF3C7' : '#FEE2E2', color: rec.workload_level === 'light' ? '#16A34A' : rec.workload_level === 'balanced' ? '#D97706' : '#DC2626' }}>
+                                {rec.workload_level} load
+                              </span>
+                            </div>
+                            <p style={{ margin: 0, fontSize: 11, color: '#6B7280', lineHeight: 1.45 }}>{rec.reason}</p>
+                            {rec.skill_evidence.length > 0 && (
+                              <p style={{ margin: '4px 0 0', fontSize: 10, color: '#64748B', lineHeight: 1.4 }}>
+                                Skills: {rec.skill_evidence.slice(0, 3).join(', ')}
+                              </p>
+                            )}
+                            <p style={{ margin: '3px 0 0', fontSize: 10, color: '#94A3B8', lineHeight: 1.4 }}>{rec.workload_reason}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Divider */}
               <div style={{ borderTop: '1px dashed #E5E7EB' }} />
@@ -1995,6 +2202,214 @@ export default function OwnerTasksPage() {
           </div>
         </div>
       )}
+
+      {/* ═══════════════ AI TASK BREAKDOWN MODAL ═══════════════ */}
+      {aiModal && (() => {
+        const aiShiftOpts = aiDeptId
+          ? shiftOptions.filter(s => s.department_id === aiDeptId)
+          : shiftOptions
+        const selectedAiShift = aiShiftOpts.find(s => s.id === aiShiftId) ?? null
+
+        const handleGenerate = async () => {
+          if (!aiContext.trim()) { setAiError('Please describe the work context'); return }
+          if (!aiDeptId) { setAiError('Please select a department'); return }
+          setAiLoading(true); setAiError(''); setAiSuggestions([]); setAiSelected(new Set())
+          try {
+            const res = await fetch('/api/ai/task-breakdown', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                context: aiContext,
+                shift_title: selectedAiShift?.title || null,
+                department_name: departments.find(d => d.id === aiDeptId)?.name || null,
+                shift_date: selectedAiShift?.shift_date || null,
+                start_time: selectedAiShift?.start_time || null,
+                end_time: selectedAiShift?.end_time || null,
+              }),
+            })
+            const data = await res.json()
+            if (!data.success) throw new Error(data.message)
+            setAiSuggestions(data.draft.tasks)
+            setAiSelected(new Set(data.draft.tasks.map((_: TaskSuggestion, i: number) => i)))
+          } catch (err) {
+            setAiError(err instanceof Error ? err.message : 'Failed to generate tasks')
+          } finally {
+            setAiLoading(false)
+          }
+        }
+
+        const handleCreateSelected = async () => {
+          if (aiSelected.size === 0) return
+          setAiCreateLoading(true); setAiError('')
+          try {
+            const selected = aiSuggestions.filter((_, i) => aiSelected.has(i))
+            await Promise.all(selected.map(t =>
+              fetch('/api/task', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  company_id: companyId,
+                  department_id: aiDeptId,
+                  title: t.title,
+                  description: t.description,
+                  priority: t.priority,
+                  shift_id: aiShiftId || null,
+                  assigned_by: internalUserId || null,
+                  status: 'Assigned',
+                  percentage_complete: 0,
+                }),
+              })
+            ))
+            setAiModal(false)
+            fetchKanban(companyId)
+          } catch (err) {
+            setAiError(err instanceof Error ? err.message : 'Failed to create tasks')
+          } finally {
+            setAiCreateLoading(false)
+          }
+        }
+
+        const PRIORITY_BADGE: Record<string, { bg: string; color: string }> = {
+          Low:    { bg: '#F1F5F9', color: '#475569' },
+          Medium: { bg: '#DBEAFE', color: '#1D4ED8' },
+          High:   { bg: '#FFEDD5', color: '#C2410C' },
+          Urgent: { bg: '#FEE2E2', color: '#B91C1C' },
+        }
+
+        return (
+          <div onClick={() => setAiModal(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.5)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}>
+            <div onClick={e => e.stopPropagation()} style={{ width: 560, maxHeight: '90vh', background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.18)', display: 'flex', flexDirection: 'column' }}>
+
+              {/* Header */}
+              <div style={{ padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Sparkles size={15} color="#fff" strokeWidth={2} />
+                  </div>
+                  <div>
+                    <p style={{ margin: 0, fontWeight: 700, fontSize: '1rem', color: '#111827' }}>AI Generate Tasks</p>
+                    <p style={{ margin: 0, fontSize: 11, color: '#9CA3AF' }}>Powered by OpenAI mini</p>
+                  </div>
+                </div>
+                <button onClick={() => setAiModal(false)} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}>
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+                {/* Context */}
+                <div>
+                  <label style={modalLabelStyle}>Work Context <span style={{ color: '#F97316' }}>*</span></label>
+                  <textarea
+                    value={aiContext}
+                    onChange={e => setAiContext(e.target.value)}
+                    rows={3}
+                    placeholder="e.g. Kitchen opening prep for Saturday morning shift, need to set up stations and check inventory..."
+                    style={{ ...modalInputStyle, resize: 'vertical', background: '#FAFAFA', lineHeight: 1.55 }}
+                  />
+                </div>
+
+                {/* Department */}
+                <div>
+                  <label style={modalLabelStyle}>Department <span style={{ color: '#F97316' }}>*</span></label>
+                  <DropdownField
+                    value={aiDeptId}
+                    options={departments.map(d => ({ value: d.id, label: d.name }))}
+                    onChange={v => { setAiDeptId(v); setAiShiftId('') }}
+                    placeholder="Select department"
+                  />
+                </div>
+
+                {/* Shift (optional) */}
+                <div>
+                  <label style={modalLabelStyle}>Link to Shift <span style={{ color: '#9CA3AF', fontWeight: 400 }}>(optional)</span></label>
+                  <DropdownField
+                    value={aiShiftId}
+                    options={aiShiftOpts.map(s => ({
+                      value: s.id,
+                      label: `${new Date(`${s.shift_date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} · ${s.start_time.slice(0, 5)} – ${s.end_time.slice(0, 5)}`,
+                    }))}
+                    onChange={setAiShiftId}
+                    placeholder="No shift selected"
+                    disabled={!aiDeptId}
+                  />
+                </div>
+
+                {/* Generate button */}
+                {aiSuggestions.length === 0 && (
+                  <button
+                    onClick={handleGenerate}
+                    disabled={aiLoading}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '11px', background: aiLoading ? '#EDE9FE' : 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: '0.9375rem', color: '#fff', cursor: aiLoading ? 'default' : 'pointer' }}
+                  >
+                    {aiLoading ? <><Spinner size={16} /> Generating...</> : <><Sparkles size={15} /> Generate Tasks</>}
+                  </button>
+                )}
+
+                <InlineError message={aiError} />
+
+                {/* Suggestions */}
+                {aiSuggestions.length > 0 && (
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                      <label style={{ ...modalLabelStyle, margin: 0 }}>Suggested Tasks ({aiSelected.size} selected)</label>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button onClick={() => setAiSelected(new Set(aiSuggestions.map((_, i) => i)))} style={{ fontSize: 12, color: '#7C3AED', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>Select all</button>
+                        <span style={{ color: '#E5E7EB' }}>·</span>
+                        <button onClick={() => setAiSelected(new Set())} style={{ fontSize: 12, color: '#9CA3AF', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>Clear</button>
+                        <span style={{ color: '#E5E7EB' }}>·</span>
+                        <button onClick={handleGenerate} disabled={aiLoading} style={{ fontSize: 12, color: '#7C3AED', fontWeight: 600, background: 'none', border: 'none', cursor: aiLoading ? 'default' : 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <Sparkles size={11} /> Regenerate
+                        </button>
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {aiSuggestions.map((task, i) => {
+                        const badge = PRIORITY_BADGE[task.priority] ?? PRIORITY_BADGE.Medium
+                        const checked = aiSelected.has(i)
+                        return (
+                          <div
+                            key={i}
+                            onClick={() => setAiSelected(prev => { const next = new Set(prev); checked ? next.delete(i) : next.add(i); return next })}
+                            style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', border: `1.5px solid ${checked ? '#7C3AED' : '#E5E7EB'}`, borderRadius: 10, background: checked ? '#FAF5FF' : '#FAFAFA', cursor: 'pointer' }}
+                          >
+                            <div style={{ width: 18, height: 18, borderRadius: 5, border: `2px solid ${checked ? '#7C3AED' : '#D1D5DB'}`, background: checked ? '#7C3AED' : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1 }}>
+                              {checked && <CheckCircle size={12} color="#fff" strokeWidth={3} />}
+                            </div>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 3 }}>
+                                <p style={{ margin: 0, fontWeight: 600, fontSize: '0.875rem', color: '#111827' }}>{task.title}</p>
+                                <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 7px', borderRadius: 99, background: badge.bg, color: badge.color, flexShrink: 0 }}>{task.priority}</span>
+                              </div>
+                              <p style={{ margin: 0, fontSize: '0.8rem', color: '#6B7280', lineHeight: 1.5 }}>{task.description}</p>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              {aiSuggestions.length > 0 && (
+                <div style={{ padding: '14px 24px', borderTop: '1px solid #F3F4F6', display: 'flex', gap: 10, flexShrink: 0 }}>
+                  <button style={ghostBtn} onClick={() => setAiModal(false)}>Cancel</button>
+                  <button
+                    onClick={handleCreateSelected}
+                    disabled={aiCreateLoading || aiSelected.size === 0}
+                    style={{ ...primaryBtn(aiCreateLoading), background: aiSelected.size === 0 ? '#E5E7EB' : 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: aiSelected.size === 0 ? '#9CA3AF' : '#fff' }}
+                  >
+                    {aiCreateLoading ? <><Spinner size={14} /> Creating...</> : `Create ${aiSelected.size} Task${aiSelected.size !== 1 ? 's' : ''}`}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }

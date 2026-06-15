@@ -90,6 +90,15 @@ function formatDateKey(date: Date): string {
 
 import { deptColor } from '@/lib/deptColor'
 
+const PANEL_ORDER_KEY = 'owner_dashboard_panel_order'
+const ALL_PANELS = ['focus', 'team', 'activity', 'tasks'] as const
+type PanelId = typeof ALL_PANELS[number]
+function mergePanelOrder(saved: string[]): PanelId[] {
+  const valid = saved.filter((id): id is PanelId => (ALL_PANELS as readonly string[]).includes(id))
+  const missing = ALL_PANELS.filter(id => !valid.includes(id))
+  return [...valid, ...missing]
+}
+
 function Spinner({ size = 16, dark = false }: { size?: number; dark?: boolean }) {
   return (
     <svg className="animate-spin" width={size} height={size} viewBox="0 0 18 18" style={{ display: 'inline-block', flexShrink: 0 }}>
@@ -289,6 +298,16 @@ export default function OwnerDashboard() {
   // Department drill-down: null = card grid, string = selected deptId
   const [selectedDeptId, setSelectedDeptId] = useState<string | null>(null)
 
+  // ── Dashboard panel order (horizontal drag) ───────────────────────────────
+  const [panelOrder, setPanelOrder] = useState<PanelId[]>([...ALL_PANELS])
+  const panelOrderRef = useRef<PanelId[]>([...ALL_PANELS])
+  const [panelDrag, setPanelDrag] = useState<{
+    fromIdx: number; panelId: PanelId; ghostX: number; insertAt: number
+  } | null>(null)
+  const panelDragRef = useRef<typeof panelDrag>(null)
+  const panelEls = useRef<Map<PanelId, HTMLDivElement>>(new Map())
+  const panelPrevRects = useRef<Map<PanelId, DOMRect>>(new Map())
+
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) setDropdownOpen(false)
@@ -430,6 +449,18 @@ export default function OwnerDashboard() {
     return () => clearTimeout(t)
   }, [])
 
+  // ── Load panel order from localStorage ────────────────────────────────────
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(PANEL_ORDER_KEY)
+      if (saved) {
+        const merged = mergePanelOrder(JSON.parse(saved) as string[])
+        panelOrderRef.current = merged
+        setPanelOrder(merged)
+      }
+    } catch {}
+  }, [])
+
 
   // ── Supabase realtime: push updates on task / shift changes ──────────────
   useEffect(() => {
@@ -507,6 +538,93 @@ export default function OwnerDashboard() {
   }
   for (const group of Object.values(teamByDept)) {
     group.rows = sortRowsByRole(group.rows)
+  }
+
+  // ── Panel drag handlers ───────────────────────────────────────────────────
+  const capturePanelRects = useCallback(() => {
+    panelEls.current.forEach((el, id) => {
+      if (el) panelPrevRects.current.set(id, el.getBoundingClientRect())
+    })
+  }, [])
+
+  const playPanelFlip = useCallback(() => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        panelEls.current.forEach((el, id) => {
+          if (!el) return
+          const prev = panelPrevRects.current.get(id)
+          if (!prev) return
+          const curr = el.getBoundingClientRect()
+          const dx = prev.left - curr.left
+          if (Math.abs(dx) < 1) return
+          el.style.transition = 'none'
+          el.style.transform = `translateX(${dx}px)`
+          void el.offsetHeight
+          el.style.transition = 'transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1)'
+          el.style.transform = 'translateX(0px)'
+        })
+      })
+    })
+  }, [])
+
+  const calcPanelInsertAt = useCallback((mouseX: number): number => {
+    const ids = panelOrderRef.current
+    for (let i = 0; i < ids.length; i++) {
+      const el = panelEls.current.get(ids[i])
+      if (!el) continue
+      const rect = el.getBoundingClientRect()
+      if (mouseX < rect.left + rect.width / 2) return i
+    }
+    return ids.length - 1
+  }, [])
+
+  const startPanelDrag = useCallback((e: React.MouseEvent, fromIdx: number, panelId: PanelId) => {
+    e.preventDefault()
+    const initial = { fromIdx, panelId, ghostX: e.clientX, insertAt: fromIdx }
+    panelDragRef.current = initial
+    setPanelDrag(initial)
+    document.body.style.userSelect = 'none'
+    document.body.style.cursor = 'grabbing'
+
+    const onMove = (ev: MouseEvent) => {
+      const insertAt = calcPanelInsertAt(ev.clientX)
+      const next = { ...panelDragRef.current!, ghostX: ev.clientX, insertAt }
+      panelDragRef.current = next
+      setPanelDrag(next)
+    }
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+      const d = panelDragRef.current
+      if (d && d.fromIdx !== d.insertAt) {
+        capturePanelRects()
+        const next = [...panelOrderRef.current]
+        const [moved] = next.splice(d.fromIdx, 1)
+        next.splice(d.insertAt, 0, moved)
+        panelOrderRef.current = next as PanelId[]
+        setPanelOrder(next as PanelId[])
+        try { localStorage.setItem(PANEL_ORDER_KEY, JSON.stringify(next)) } catch {}
+        playPanelFlip()
+      }
+      panelDragRef.current = null
+      setPanelDrag(null)
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }, [calcPanelInsertAt, capturePanelRects, playPanelFlip])
+
+  const getPanelShift = (idx: number, fromIdx: number, insertAt: number): number => {
+    if (fromIdx === insertAt || idx === fromIdx) return 0
+    const el = panelEls.current.get(panelOrder[fromIdx])
+    const w = el ? el.getBoundingClientRect().width + 16 : 0
+    if (fromIdx < insertAt) {
+      if (idx > fromIdx && idx <= insertAt) return -w
+    } else {
+      if (idx >= insertAt && idx < fromIdx) return w
+    }
+    return 0
   }
 
   // Timeline rendering helpers
@@ -1122,22 +1240,66 @@ export default function OwnerDashboard() {
 
               </div>
 
-              {/* ── ROW 3: Focus | Team | Live Feed | Tasks (4 equal cols) ─── */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 16, alignItems: 'start' }}>
-
-                {/* ── COL 1: Focus ── */}
-                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column' }}>
-
-                    {/* Card header */}
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18, flexShrink: 0 }}>
+              {/* ── ROW 3: 4 draggable panels ─── */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 16, alignItems: 'start', position: 'relative' }}>
+                {panelOrder.map((panelId, idx) => {
+                  const isDragging = panelDrag?.panelId === panelId
+                  const shift = panelDrag ? getPanelShift(idx, panelDrag.fromIdx, panelDrag.insertAt) : 0
+                  const PANEL_META: Record<PanelId, { label: string; icon: React.ReactNode }> = {
+                    focus:    { label: 'Focus',     icon: <Target size={15} style={{ color: '#EA580C' }} /> },
+                    team:     { label: 'Team',      icon: <Users size={15} style={{ color: '#F97316' }} /> },
+                    activity: { label: 'Live Feed', icon: <Activity size={15} style={{ color: '#F97316' }} /> },
+                    tasks:    { label: 'Tasks',     icon: <ClipboardList size={15} style={{ color: '#F97316' }} /> },
+                  }
+                  const meta = PANEL_META[panelId]
+                  return (
+                  <div
+                    key={panelId}
+                    ref={el => { if (el) panelEls.current.set(panelId, el as HTMLDivElement); else panelEls.current.delete(panelId) }}
+                    className="panel-card"
+                    style={{
+                      background: '#fff', borderRadius: 20, padding: 20,
+                      boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)',
+                      display: 'flex', flexDirection: 'column',
+                      transform: isDragging ? 'scale(0.97)' : `translateX(${shift}px)`,
+                      transition: isDragging
+                        ? 'opacity 0.12s, transform 0.12s'
+                        : 'transform 0.18s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
+                      opacity: isDragging ? 0.25 : 1,
+                      cursor: panelDrag ? 'grabbing' : 'default',
+                    }}
+                  >
+                    {/* Panel header — icon is drag handle */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: panelId === 'focus' ? 18 : 16, flexShrink: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          <Target size={15} style={{ color: '#EA580C' }} />
+                        <div
+                          onMouseDown={e => startPanelDrag(e, idx, panelId)}
+                          title="Drag to reorder"
+                          style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'grab', flexShrink: 0 }}
+                        >
+                          {meta.icon}
                         </div>
-                        <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Focus</span>
+                        <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>{meta.label}</span>
+                        {panelId === 'activity' && (
+                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10B981', flexShrink: 0, display: 'inline-block', animation: 'dotPulse 1.4s ease-out infinite' }} />
+                        )}
                       </div>
+                      {panelId === 'activity' && activityFeed.length > 0 && (
+                        <button
+                          type="button"
+                          className="mark-btn"
+                          onClick={() => setMarkedFeedItems(new Set(activityFeed.map(event => feedKey(event))))}
+                          style={{ cursor: 'pointer', borderRadius: 999, border: '1px solid #E2E8F0', background: '#fff', padding: '5px 14px', fontSize: 11, fontWeight: 600, color: '#64748B', transition: 'all 0.15s' }}
+                          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#F8FAFC' }}
+                          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '#fff' }}
+                        >
+                          Mark all read
+                        </button>
+                      )}
                     </div>
 
+                    {/* ── Focus content ── */}
+                    {panelId === 'focus' && (
                     <div style={{ }}>
                     {taskStatsLoading ? (
                       <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}><Spinner size={20} dark /></div>
@@ -1261,19 +1423,11 @@ export default function OwnerDashboard() {
                       </div>
                     )}
                     </div>
-                  </div>
+                    )} {/* end focus */}
 
-                {/* ── COL 2: Team ── */}
-                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexShrink: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <Users size={15} style={{ color: '#F97316' }} />
-                      </div>
-                      <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Team</span>
-                    </div>
-                  </div>
-                  <div style={{ }}>
+                    {/* ── Team content ── */}
+                    {panelId === 'team' && (
+                    <div style={{ }}>
                   {timelineLoading ? (
                     <div style={{ display: 'flex', justifyContent: 'center', padding: '24px 0' }}><Spinner size={16} dark /></div>
                   ) : todayShiftCount === 0 ? (
@@ -1319,32 +1473,10 @@ export default function OwnerDashboard() {
                     </div>
                   )}
                   </div>
-                </div>
+                    )} {/* end team */}
 
-                {/* ── COL 3: Live Feed ── */}
-                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column' }} data-testid="live-feed">
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexShrink: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          <Activity size={15} style={{ color: '#F97316' }} />
-                        </div>
-                        <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Live Feed</span>
-                        <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10B981', flexShrink: 0, display: 'inline-block', animation: 'dotPulse 1.4s ease-out infinite' }} />
-                      </div>
-                      {activityFeed.length > 0 && (
-                        <button
-                          type="button"
-                          className="mark-btn"
-                          onClick={() => setMarkedFeedItems(new Set(activityFeed.map(event => feedKey(event))))}
-                          style={{ cursor: 'pointer', borderRadius: 999, border: '1px solid #E2E8F0', background: '#fff', padding: '5px 14px', fontSize: 11, fontWeight: 600, color: '#64748B', transition: 'all 0.15s' }}
-                          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#F8FAFC' }}
-                          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '#fff' }}
-                        >
-                          Mark all read
-                        </button>
-                      )}
-                    </div>
-
+                    {/* ── Activity content ── */}
+                    {panelId === 'activity' && (
                     <div style={{ }}>
                     {activityFeedLoading ? (
                       <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}><Spinner size={16} dark /></div>
@@ -1391,19 +1523,10 @@ export default function OwnerDashboard() {
                       </div>
                     )}
                     </div>
-                  </div>
+                    )} {/* end activity */}
 
-                {/* ── COL 4: Tasks ── */}
-                <div className="panel-card" style={{ background: '#fff', borderRadius: 20, padding: 20, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', display: 'flex', flexDirection: 'column' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, flexShrink: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          <ClipboardList size={15} style={{ color: '#F97316' }} />
-                        </div>
-                        <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Tasks</span>
-                      </div>
-                    </div>
-
+                    {/* ── Tasks content ── */}
+                    {panelId === 'tasks' && (
                     <div style={{ }}>
                     {taskStatsLoading ? (
                       <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}><Spinner size={16} dark /></div>
@@ -1486,7 +1609,36 @@ export default function OwnerDashboard() {
                         )
                       })()}
                     </div>
+                    )} {/* end tasks */}
+
                   </div>
+                  )
+                })}
+
+                {/* Floating ghost that follows cursor during panel drag */}
+                {panelDrag && (() => {
+                  const labels: Record<PanelId, string> = { focus: 'Focus', team: 'Team', activity: 'Live Feed', tasks: 'Tasks' }
+                  return (
+                    <div style={{
+                      position: 'fixed',
+                      left: panelDrag.ghostX - 60,
+                      top: 80,
+                      background: '#F97316',
+                      color: '#fff',
+                      padding: '8px 18px',
+                      borderRadius: 10,
+                      fontSize: 13,
+                      fontWeight: 700,
+                      pointerEvents: 'none',
+                      zIndex: 9999,
+                      boxShadow: '0 6px 20px rgba(0,0,0,0.25)',
+                      opacity: 0.92,
+                      whiteSpace: 'nowrap',
+                    }}>
+                      {labels[panelDrag.panelId]}
+                    </div>
+                  )
+                })()}
 
               </div>
             </div>

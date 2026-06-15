@@ -8,8 +8,8 @@
  *   4. 插入 public.users、companies、departments 及所有关联数据
  *
  * 测试账号结构：
- *   1 Owner, 2 Partner, 8 Manager, 8 Employee, 8 Casual Worker
- *   1 Company, 4 Department, 2 Manager/dept, 2 Employee/dept, 2 CW/dept
+ *   1 Owner, 2 Partner, 8 Manager, 8 Employee
+ *   1 Company, 4 Department, 2 Manager/dept, 2 Employee/dept
  *
  * 使用方法：
  *   node scripts/seed.js
@@ -59,15 +59,18 @@ const accounts = [
   { email: 'employee6@test.com', full_name: 'Test Employee 6', role: 'Employee' },
   { email: 'employee7@test.com', full_name: 'Test Employee 7', role: 'Employee' },
   { email: 'employee8@test.com', full_name: 'Test Employee 8', role: 'Employee' },
-  // Casual Workers (8, 2 per department)
-  { email: 'cw1@test.com',       full_name: 'Test CW 1', role: 'Casual Worker' },
-  { email: 'cw2@test.com',       full_name: 'Test CW 2', role: 'Casual Worker' },
-  { email: 'cw3@test.com',       full_name: 'Test CW 3', role: 'Casual Worker' },
-  { email: 'cw4@test.com',       full_name: 'Test CW 4', role: 'Casual Worker' },
-  { email: 'cw5@test.com',       full_name: 'Test CW 5', role: 'Casual Worker' },
-  { email: 'cw6@test.com',       full_name: 'Test CW 6', role: 'Casual Worker' },
-  { email: 'cw7@test.com',       full_name: 'Test CW 7', role: 'Casual Worker' },
-  { email: 'cw8@test.com',       full_name: 'Test CW 8', role: 'Casual Worker' },
+]
+
+const legacyTestEmailsToDelete = [
+  ...accounts.map(a => a.email),
+  'cw1@test.com',
+  'cw2@test.com',
+  'cw3@test.com',
+  'cw4@test.com',
+  'cw5@test.com',
+  'cw6@test.com',
+  'cw7@test.com',
+  'cw8@test.com',
 ]
 
 // ─── 主流程 ────────────────────────────────────────────────────────────────────
@@ -119,7 +122,7 @@ async function main() {
   // ── Step 2: 删除旧 auth 账号 ──────────────────────────────────────────────
   console.log('\nStep 2: 删除旧 auth 账号...')
   const { data: existingUsers } = await supabase.auth.admin.listUsers({ perPage: 1000 })
-  const testEmails = new Set(accounts.map(a => a.email))
+  const testEmails = new Set(legacyTestEmailsToDelete)
   for (const u of (existingUsers?.users ?? [])) {
     if (testEmails.has(u.email)) {
       await supabase.auth.admin.deleteUser(u.id)
@@ -270,12 +273,11 @@ async function main() {
   console.log('  Partner:  partner1@test.com / partner2@test.com')
   console.log('  Manager:  manager1~8@test.com')
   console.log('  Employee: employee1~8@test.com')
-  console.log('  CW:       cw1~8@test.com')
   console.log('\n部门分配：')
-  console.log('  Operations:       manager1,2 / employee1,2 / cw1,2')
-  console.log('  Marketing:        manager3,4 / employee3,4 / cw3,4')
-  console.log('  Engineering:      manager5,6 / employee5,6 / cw5,6')
-  console.log('  Customer Support: manager7,8 / employee7,8 / cw7,8')
+  console.log('  Operations:       manager1,2 / employee1,2')
+  console.log('  Marketing:        manager3,4 / employee3,4')
+  console.log('  Engineering:      manager5,6 / employee5,6')
+  console.log('  Customer Support: manager7,8 / employee7,8')
 }
 
 main().catch(err => {

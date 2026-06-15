@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
 import {
@@ -13,6 +13,7 @@ import {
   ClipboardList,
   CheckSquare,
   CalendarDays,
+  GripVertical,
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 
@@ -27,17 +28,16 @@ const NAV_ITEMS = [
   { label: 'Report',        Icon: BarChart2,        href: '/owner/report',          dot: null },
 ]
 
-type Theme = {
-  sidebarBg: string
-  sidebarText: string
-  sidebarActiveBg: string
-  sidebarActiveText: string
-  sidebarHoverBg: string
-  sidebarBorder: string
-  logoBorder: string
+const NAV_LABELS = NAV_ITEMS.map(i => i.label)
+const ORDER_KEY = 'owner_sidebar_nav_order'
+
+function mergeOrder(saved: string[]): string[] {
+  const valid = saved.filter(l => NAV_LABELS.includes(l))
+  const missing = NAV_LABELS.filter(l => !valid.includes(l))
+  return [...valid, ...missing]
 }
 
-const OWNER_THEME: Theme = {
+const THEME = {
   sidebarBg: '#1C1C1E',
   sidebarText: '#FFFFFF',
   sidebarActiveBg: '#F97316',
@@ -45,6 +45,13 @@ const OWNER_THEME: Theme = {
   sidebarHoverBg: 'rgba(255,255,255,0.1)',
   sidebarBorder: 'rgba(255,255,255,0.08)',
   logoBorder: 'rgba(255,255,255,0.08)',
+}
+
+interface DragState {
+  fromIdx: number
+  label: string
+  ghostY: number
+  insertAt: number
 }
 
 export default function OwnerSidebar({
@@ -57,11 +64,127 @@ export default function OwnerSidebar({
   const pathname = usePathname()
   const [expanded, setExpanded] = useState(false)
   const [userRole, setUserRole] = useState('')
-  const theme = OWNER_THEME
   const [msgCount, setMsgCount] = useState(unreadMessages ?? 0)
   const [annCount, setAnnCount] = useState(unreadAnnouncements ?? 0)
   const [reviewCount, setReviewCount] = useState(0)
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
 
+  // ── Nav order ───────────────────────────────────────────────────────────────
+  const [navOrder, setNavOrder] = useState<string[]>(NAV_LABELS)
+  const navOrderRef = useRef<string[]>(NAV_LABELS)
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(ORDER_KEY)
+      if (saved) {
+        const merged = mergeOrder(JSON.parse(saved))
+        navOrderRef.current = merged
+        setNavOrder(merged)
+      }
+    } catch {}
+  }, [])
+
+  // ── Pointer-drag state ──────────────────────────────────────────────────────
+  const [drag, setDrag] = useState<DragState | null>(null)
+  const dragRef = useRef<DragState | null>(null)
+
+  // item label → DOM node (for FLIP + midpoint calc)
+  const itemRefs = useRef<Map<string, HTMLAnchorElement>>(new Map())
+  const prevRects = useRef<Map<string, DOMRect>>(new Map())
+
+  const captureRects = useCallback(() => {
+    itemRefs.current.forEach((el, label) => {
+      if (el) prevRects.current.set(label, el.getBoundingClientRect())
+    })
+  }, [])
+
+  const playFlip = useCallback(() => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        itemRefs.current.forEach((el, label) => {
+          if (!el) return
+          const prev = prevRects.current.get(label)
+          if (!prev) return
+          const next = el.getBoundingClientRect()
+          const dy = prev.top - next.top
+          if (Math.abs(dy) < 1) return
+          el.style.transition = 'none'
+          el.style.transform = `translateY(${dy}px)`
+          void el.offsetHeight
+          el.style.transition = 'transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1)'
+          el.style.transform = 'translateY(0px)'
+        })
+      })
+    })
+  }, [])
+
+  // Compute which slot the cursor is nearest to
+  const calcInsertAt = useCallback((mouseY: number, labels: string[]): number => {
+    for (let i = 0; i < labels.length; i++) {
+      const el = itemRefs.current.get(labels[i])
+      if (!el) continue
+      const rect = el.getBoundingClientRect()
+      if (mouseY < rect.top + rect.height / 2) return i
+    }
+    return labels.length - 1
+  }, [])
+
+  const startPointerDrag = useCallback((e: React.MouseEvent, fromIdx: number, label: string, visibleLabels: string[]) => {
+    e.preventDefault()
+    e.stopPropagation()
+
+    const initial: DragState = { fromIdx, label, ghostY: e.clientY, insertAt: fromIdx }
+    dragRef.current = initial
+    setDrag(initial)
+
+    document.body.style.userSelect = 'none'
+    document.body.style.cursor = 'grabbing'
+
+    const onMove = (ev: MouseEvent) => {
+      const insertAt = calcInsertAt(ev.clientY, visibleLabels)
+      const next: DragState = { ...dragRef.current!, ghostY: ev.clientY, insertAt }
+      dragRef.current = next
+      setDrag(next)
+    }
+
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      document.body.style.userSelect = ''
+      document.body.style.cursor = ''
+
+      const d = dragRef.current
+      if (d && d.fromIdx !== d.insertAt) {
+        captureRects()
+        const next = [...navOrderRef.current]
+        const [moved] = next.splice(d.fromIdx, 1)
+        next.splice(d.insertAt, 0, moved)
+        navOrderRef.current = next
+        setNavOrder(next)
+        try { localStorage.setItem(ORDER_KEY, JSON.stringify(next)) } catch {}
+        playFlip()
+      }
+
+      dragRef.current = null
+      setDrag(null)
+    }
+
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+  }, [calcInsertAt, captureRects, playFlip])
+
+  // Live shift: items slide to show where the dragged item will land
+  const getLiveShift = (idx: number, fromIdx: number, insertAt: number): number => {
+    if (fromIdx === insertAt || idx === fromIdx) return 0
+    const ITEM_H = 42
+    if (fromIdx < insertAt) {
+      if (idx > fromIdx && idx <= insertAt) return -ITEM_H
+    } else {
+      if (idx >= insertAt && idx < fromIdx) return ITEM_H
+    }
+    return 0
+  }
+
+  // ── Unread counts + realtime ────────────────────────────────────────────────
   useEffect(() => {
     const authUid = typeof localStorage !== 'undefined' ? localStorage.getItem('tasking_user_id') : null
     if (!authUid) return
@@ -75,20 +198,16 @@ export default function OwnerSidebar({
         const cid = localStorage.getItem('tasking_company_id') ?? localStorage.getItem(`tasking_company_id_${authUid}`)
         if (!cid) return
 
-        // Unread messages: from API (DB-backed, accurate)
         fetch(`/api/inbox/unread-count?user_id=${internalId}&company_id=${cid}`)
           .then(r => r.json())
           .then(data => { if (data.success) setMsgCount(data.unread_messages ?? 0) })
           .catch(() => {})
 
-        // Pending review jobs
         fetch(`/api/recruitment?company_id=${cid}&resource=pending_approval`)
           .then(r => r.json())
           .then(data => { if (data.success) setReviewCount((data.pendingPostings as unknown[]).length ?? 0) })
           .catch(() => {})
 
-        // Unread announcements: from localStorage per-ID read set (page writes this)
-        // We fetch the announcement list to know total count, then subtract read IDs
         const readKey = `ann_read_ids_${cid}_${internalId}`
         let readIds: Set<string> = new Set()
         try {
@@ -113,10 +232,8 @@ export default function OwnerSidebar({
 
         const msgChannel = supabase
           .channel('owner-sidebar-messages')
-          .on('postgres_changes', {
-            event: 'INSERT', schema: 'public', table: 'messages',
-            filter: `to_user_id=eq.${internalId}`,
-          }, () => { setMsgCount(c => c + 1) })
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `to_user_id=eq.${internalId}` },
+            () => { setMsgCount(c => c + 1) })
           .subscribe()
 
         const refreshReviewCount = () => {
@@ -128,10 +245,8 @@ export default function OwnerSidebar({
 
         const reviewChannel = supabase
           .channel('owner-sidebar-review')
-          .on('postgres_changes', {
-            event: 'UPDATE', schema: 'public', table: 'job_postings',
-            filter: `company_id=eq.${cid}`,
-          }, refreshReviewCount)
+          .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'job_postings', filter: `company_id=eq.${cid}` },
+            refreshReviewCount)
           .subscribe()
 
         const refreshAnnCount = () => {
@@ -147,10 +262,8 @@ export default function OwnerSidebar({
 
         const annChannel = supabase
           .channel('owner-sidebar-announcements')
-          .on('postgres_changes', {
-            event: 'INSERT', schema: 'public', table: 'announcements',
-            filter: `company_id=eq.${cid}`,
-          }, refreshAnnCount)
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'announcements', filter: `company_id=eq.${cid}` },
+            refreshAnnCount)
           .subscribe()
 
         return () => {
@@ -162,14 +275,12 @@ export default function OwnerSidebar({
       .catch(() => {})
   }, [])
 
-  // Clear review dot when user opens the Review tab (event from the page)
   useEffect(() => {
     const handler = () => setReviewCount(0)
     window.addEventListener('recruitment-review-opened', handler)
     return () => window.removeEventListener('recruitment-review-opened', handler)
   }, [])
 
-  // When user opens communication page, mark all announcements as read in localStorage
   useEffect(() => {
     if (pathname !== '/owner/communication') return
     setMsgCount(0)
@@ -193,16 +304,16 @@ export default function OwnerSidebar({
       }).catch(() => {})
   }, [pathname])
 
-  useEffect(() => {
-    if (unreadMessages !== undefined) setMsgCount(unreadMessages)
-  }, [unreadMessages])
-  useEffect(() => {
-    if (unreadAnnouncements !== undefined) setAnnCount(unreadAnnouncements)
-  }, [unreadAnnouncements])
+  useEffect(() => { if (unreadMessages !== undefined) setMsgCount(unreadMessages) }, [unreadMessages])
+  useEffect(() => { if (unreadAnnouncements !== undefined) setAnnCount(unreadAnnouncements) }, [unreadAnnouncements])
 
-  const visibleNavItems = userRole === 'Manager'
-    ? NAV_ITEMS.filter(item => item.label !== 'Report')
-    : NAV_ITEMS
+  const visibleLabels = userRole === 'Manager'
+    ? navOrder.filter(l => l !== 'Report')
+    : navOrder
+
+  const orderedItems = visibleLabels
+    .map(label => NAV_ITEMS.find(item => item.label === label))
+    .filter(Boolean) as typeof NAV_ITEMS
 
   const handleLogout = async () => {
     const supabase = createBrowserClient(
@@ -218,17 +329,16 @@ export default function OwnerSidebar({
   return (
     <aside
       onMouseEnter={() => setExpanded(true)}
-      onMouseLeave={() => setExpanded(false)}
+      onMouseLeave={() => { if (!drag) setExpanded(false); setHoveredIdx(null) }}
       style={{
         width: expanded ? '220px' : '64px',
-        background: theme.sidebarBg,
-        borderRight: `1px solid ${theme.sidebarBorder}`,
+        background: THEME.sidebarBg,
+        borderRight: `1px solid ${THEME.sidebarBorder}`,
         display: 'flex',
         flexDirection: 'column',
         height: '100vh',
         position: 'fixed',
-        top: 0,
-        left: 0,
+        top: 0, left: 0,
         zIndex: 20,
         transition: 'width 0.2s',
         overflow: 'hidden',
@@ -239,13 +349,10 @@ export default function OwnerSidebar({
       <Link
         href="/"
         style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '10px',
+          display: 'flex', alignItems: 'center', gap: '10px',
           padding: '20px 18px 18px',
-          borderBottom: `1px solid ${theme.logoBorder}`,
-          textDecoration: 'none',
-          flexShrink: 0,
+          borderBottom: `1px solid ${THEME.logoBorder}`,
+          textDecoration: 'none', flexShrink: 0,
         }}
       >
         <svg width="28" height="28" viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
@@ -257,53 +364,77 @@ export default function OwnerSidebar({
           <path d="M20.3 10.25L21.5 11.5L23.8 9" stroke="white" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
         <span style={{
-          fontWeight: 700,
-          fontSize: '1.0625rem',
-          color: theme.sidebarText,
-          letterSpacing: '-0.01em',
-          whiteSpace: 'nowrap',
-          opacity: expanded ? 1 : 0,
-          transition: 'opacity 0.15s',
+          fontWeight: 700, fontSize: '1.0625rem', color: THEME.sidebarText,
+          letterSpacing: '-0.01em', whiteSpace: 'nowrap',
+          opacity: expanded ? 1 : 0, transition: 'opacity 0.15s',
         }}>
           Tasking
         </span>
       </Link>
 
       {/* Nav */}
-      <nav style={{ flex: 1, padding: '12px 8px', overflow: 'hidden' }}>
-        {visibleNavItems.map(({ label, Icon, href, dot }) => {
+      <nav style={{ flex: 1, padding: '12px 8px', overflow: 'hidden', position: 'relative' }}>
+        {orderedItems.map(({ label, Icon, href, dot }, idx) => {
           const active = pathname === href
           const showDot = dot === 'messages' ? msgCount > 0 : dot === 'announcements' ? annCount > 0 : dot === 'review' ? reviewCount > 0 : false
+          const isDragging = drag?.label === label
+          const shift = drag ? getLiveShift(idx, drag.fromIdx, drag.insertAt) : 0
+
           return (
             <a
               key={label}
+              ref={el => {
+                if (el) itemRefs.current.set(label, el)
+                else itemRefs.current.delete(label)
+              }}
               href={href}
+              onMouseEnter={() => setHoveredIdx(idx)}
+              onMouseLeave={() => setHoveredIdx(null)}
+              onClick={e => { if (drag) e.preventDefault() }}
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: '10px',
-                padding: '10px 12px',
+                padding: expanded ? '10px 12px 10px 30px' : '10px 12px',
                 borderRadius: '8px',
-                background: active ? theme.sidebarActiveBg : 'transparent',
-                color: active ? theme.sidebarActiveText : theme.sidebarText,
+                background: active
+                  ? THEME.sidebarActiveBg
+                  : hoveredIdx === idx && !drag
+                    ? THEME.sidebarHoverBg
+                    : 'transparent',
+                color: active ? THEME.sidebarActiveText : THEME.sidebarText,
                 fontWeight: active ? 600 : 500,
                 fontSize: '0.9rem',
-                cursor: 'pointer',
+                cursor: drag ? 'grabbing' : 'pointer',
                 textDecoration: 'none',
                 whiteSpace: 'nowrap',
                 marginBottom: '2px',
-                transition: 'background 0.12s, color 0.12s',
                 position: 'relative',
+                transform: isDragging ? 'scale(0.97)' : `translateY(${shift}px)`,
+                transition: isDragging
+                  ? 'opacity 0.12s, transform 0.12s'
+                  : 'transform 0.18s cubic-bezier(0.25, 0.46, 0.45, 0.94), background 0.12s, opacity 0.12s',
+                opacity: isDragging ? 0.25 : 1,
               }}
-              onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = theme.sidebarHoverBg } }}
-              onMouseLeave={(e) => { if (!active) { e.currentTarget.style.background = 'transparent' } }}
             >
+              {/* Grip handle — only visible when expanded and hovered */}
+              <span
+                onMouseDown={e => expanded && startPointerDrag(e, idx, label, visibleLabels)}
+                style={{
+                  position: 'absolute', left: 0,
+                  top: 0, bottom: 0,
+                  width: '28px',
+                  opacity: expanded && hoveredIdx === idx && !active ? 0.5 : 0,
+                  transition: 'opacity 0.15s',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  cursor: 'grab',
+                }}
+              >
+                <GripVertical size={13} strokeWidth={2} />
+              </span>
+
               <span style={{ position: 'relative', flexShrink: 0 }}>
-                <Icon
-                  size={18}
-                  strokeWidth={2.1}
-                  style={{ display: 'block', color: 'currentColor' }}
-                />
+                <Icon size={18} strokeWidth={2.1} style={{ display: 'block', color: 'currentColor' }} />
                 {showDot && (
                   <span style={{
                     position: 'absolute', top: -3, right: -3,
@@ -318,42 +449,62 @@ export default function OwnerSidebar({
             </a>
           )
         })}
-      </nav>
 
-      {/* Logout */}
-      <div style={{ padding: '12px 8px', borderTop: `1px solid ${theme.logoBorder}`, flexShrink: 0 }}>
-        <div style={{ borderTop: `1px solid ${theme.sidebarBorder}`, paddingTop: '8px', marginTop: '2px' }}>
-          <button
-            onClick={handleLogout}
+        {/* Floating ghost that follows the cursor during drag */}
+        {drag && expanded && (
+          <div
             style={{
-              width: '100%',
+              position: 'fixed',
+              top: drag.ghostY - 19,
+              left: 8,
+              width: '204px',
+              background: '#F97316',
+              color: '#fff',
+              padding: '10px 12px',
+              borderRadius: '8px',
+              fontSize: '0.9rem',
+              fontWeight: 600,
+              pointerEvents: 'none',
+              zIndex: 9999,
               display: 'flex',
               alignItems: 'center',
               gap: '10px',
-              padding: '10px 12px',
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-              borderRadius: '8px',
-              color: '#EF4444',
-              fontWeight: 500,
-              fontSize: '0.9rem',
-              transition: 'color 0.12s, background 0.12s',
-              whiteSpace: 'nowrap',
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.color = '#DC2626'
-              e.currentTarget.style.background = '#FEF2F2'
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.color = '#EF4444'
-              e.currentTarget.style.background = 'none'
+              boxShadow: '0 6px 20px rgba(0,0,0,0.35)',
+              opacity: 0.95,
             }}
           >
+            {(() => {
+              const item = NAV_ITEMS.find(i => i.label === drag.label)
+              if (!item) return null
+              const { Icon } = item
+              return (
+                <>
+                  <Icon size={18} strokeWidth={2.1} style={{ flexShrink: 0 }} />
+                  <span>{drag.label}</span>
+                </>
+              )
+            })()}
+          </div>
+        )}
+      </nav>
+
+      {/* Logout */}
+      <div style={{ padding: '12px 8px', borderTop: `1px solid ${THEME.logoBorder}`, flexShrink: 0 }}>
+        <div style={{ borderTop: `1px solid ${THEME.sidebarBorder}`, paddingTop: '8px', marginTop: '2px' }}>
+          <button
+            onClick={handleLogout}
+            style={{
+              width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
+              padding: '10px 12px', background: 'none', border: 'none',
+              cursor: 'pointer', borderRadius: '8px', color: '#EF4444',
+              fontWeight: 500, fontSize: '0.9rem',
+              transition: 'color 0.12s, background 0.12s', whiteSpace: 'nowrap',
+            }}
+            onMouseEnter={e => { e.currentTarget.style.color = '#DC2626'; e.currentTarget.style.background = '#FEF2F2' }}
+            onMouseLeave={e => { e.currentTarget.style.color = '#EF4444'; e.currentTarget.style.background = 'none' }}
+          >
             <LogOut size={18} strokeWidth={2} style={{ flexShrink: 0, color: 'inherit' }} />
-            <span style={{ opacity: expanded ? 1 : 0, transition: 'opacity 0.15s' }}>
-              Logout
-            </span>
+            <span style={{ opacity: expanded ? 1 : 0, transition: 'opacity 0.15s' }}>Logout</span>
           </button>
         </div>
       </div>

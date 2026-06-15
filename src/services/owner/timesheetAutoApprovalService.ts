@@ -29,6 +29,7 @@ export const timesheetAutoApprovalService = {
 
     const result = await openAIService.generateStructuredJson<{ decisions: AIAutoApprovalDecision[] }>({
       schemaName: 'timesheet_auto_approval',
+      maxOutputTokens: 1000,
       instructions: [
         'You review attendance timesheets for a Smart Task Allocation app.',
         'Auto-approve only clean records with no late, absent, overtime, missing clock time, or concerning notes.',

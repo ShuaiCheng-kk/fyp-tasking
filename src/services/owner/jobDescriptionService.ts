@@ -18,6 +18,7 @@ export const jobDescriptionService = {
 
     return openAIService.generateStructuredJson<JobDescriptionDraft>({
       schemaName: 'job_description_draft',
+      maxOutputTokens: 700,
       instructions: [
         'You write practical job postings for SME casual worker recruitment.',
         'Do more than generate text: create a usable draft with responsibilities, requirements, and screening questions.',
