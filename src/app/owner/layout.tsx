@@ -37,7 +37,10 @@ export default function OwnerLayout({
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
       if (event === 'SIGNED_OUT') {
-        localStorage.clear()
+        localStorage.removeItem('tasking_user_id')
+        localStorage.removeItem('tasking_company_id')
+        localStorage.removeItem('tasking_active_session')
+        localStorage.removeItem('tasking_user_role')
         router.replace('/signin')
       }
     })

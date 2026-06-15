@@ -15,6 +15,7 @@ export const candidateRecommendationService = {
 
     const result = await openAIService.generateStructuredJson<{ recommendations: CandidateRecommendation[] }>({
       schemaName: 'candidate_recommendations',
+      maxOutputTokens: 1000,
       instructions: [
         'You rank applicants for a Smart Task Allocation recruitment workflow.',
         'Use job requirements, cover letters, and application context.',

@@ -26,6 +26,7 @@ export const anomalyDetectionService = {
 
     const result = await openAIService.generateStructuredJson<{ anomalies: AIAnomaly[] }>({
       schemaName: 'allocation_anomalies',
+      maxOutputTokens: 900,
       instructions: [
         'You are an operations analyst for a Smart Task Allocation app.',
         'Find meaningful workforce allocation anomalies, not generic comments.',

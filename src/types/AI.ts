@@ -31,3 +31,29 @@ export interface JobDescriptionDraft {
   responsibilities: string[]
   screening_questions: string[]
 }
+
+export interface TaskSuggestion {
+  title: string
+  description: string
+  priority: 'Low' | 'Medium' | 'High' | 'Urgent'
+}
+
+export interface TaskBreakdownDraft {
+  tasks: TaskSuggestion[]
+}
+
+export interface TaskAssignmentRecommendation {
+  candidate_id: string
+  candidate_name: string
+  score: number
+  fit: 'strong' | 'good' | 'fair'
+  workload_level: 'light' | 'balanced' | 'heavy'
+  skill_match: 'strong' | 'partial' | 'weak'
+  skill_evidence: string[]
+  reason: string
+  workload_reason: string
+}
+
+export interface TaskAssignmentDraft {
+  recommendations: TaskAssignmentRecommendation[]
+}
