@@ -23,4 +23,5 @@ export interface TimelineRow {
   department_id: string
   department_name: string
   shifts: TimelineShiftBlock[]
+  profile_photo_url: string | null
 }
