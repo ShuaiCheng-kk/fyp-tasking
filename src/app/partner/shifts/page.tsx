@@ -833,6 +833,7 @@ export default function OwnerShiftsPage() {
           role: member.role,
           department_id: selectedDepartment?.id ?? member.department_id ?? apiRow?.department_id ?? '',
           department_name: selectedDepartment?.name ?? department?.name ?? apiRow?.department_name ?? 'Unassigned',
+          profile_photo_url: (member as any).profile_photo_url ?? null,
           shifts,
         }
       })

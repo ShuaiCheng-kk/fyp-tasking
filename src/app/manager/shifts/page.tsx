@@ -82,7 +82,7 @@ const TIME_OPTS = (() => {
 })()
 
 type Department = { id: string; name: string }
-type TeamMember = { id: string; full_name: string; role: string; department_id: string | null }
+type TeamMember = { id: string; full_name: string; role: string; department_id: string | null; profile_photo_url?: string | null }
 type BatchCell = { user_id: string; shift_date: string; start_time: string; end_time: string; enabled: boolean }
 type BulkFailure = { user_id: string; shift_date: string; start_time: string; end_time: string; message: string }
 
@@ -1088,8 +1088,10 @@ export default function ManagerShiftsPage() {
       <div key={row.user_id ?? `${row.department_id}_open`} className="tl-row" style={{ display: 'flex', height: 58, borderTop, background: rowSelected ? BLUE_LIGHT : '#FFFFFF' }}>
         <div style={{ width: 220, flexShrink: 0, display: 'flex', alignItems: 'center', padding: '0 10px 0 12px', overflow: 'hidden' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: row.role === 'Manager' ? BLUE_LIGHT : '#F3F4F6', color: row.role === 'Manager' ? BLUE : '#4B5563', borderRadius: 999 }}>
-              {row.role === 'Manager' ? <UserCog size={13} /> : <UserRound size={13} />}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: row.profile_photo_url ? 'transparent' : (row.role === 'Manager' ? BLUE_LIGHT : '#F3F4F6'), color: row.role === 'Manager' ? BLUE : '#4B5563', borderRadius: 999, overflow: 'hidden' }}>
+              {row.profile_photo_url
+                ? <img src={row.profile_photo_url} alt={row.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                : row.role === 'Manager' ? <UserCog size={13} /> : <UserRound size={13} />}
             </div>
             <span className="tl-name" style={{ minWidth: 0, fontSize: 13, fontWeight: 600, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', transition: 'color 0.14s ease' }}>
               {row.full_name}
@@ -1191,6 +1193,7 @@ export default function ManagerShiftsPage() {
           role: member.role,
           department_id: selectedDeptId || member.department_id || row?.department_id || '',
           department_name: currentDepartment?.name ?? row?.department_name ?? '',
+          profile_photo_url: (member as any).profile_photo_url ?? null,
           shifts: (row?.shifts ?? []).filter(shift => !selectedDeptId || shift.department_id === selectedDeptId),
         }
       })
@@ -1248,8 +1251,10 @@ export default function ManagerShiftsPage() {
                     {/* Name cell */}
                     <div style={{ display: 'flex', alignItems: 'center', borderRight: `1px solid ${BORDER}`, overflow: 'hidden', height: 58 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px 0 12px', minWidth: 0, flex: 1 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: isManager ? BLUE_LIGHT : '#F3F4F6', color: isManager ? BLUE : '#4B5563', borderRadius: 999 }}>
-                          {isManager ? <UserCog size={13} /> : <UserRound size={13} />}
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: row.profile_photo_url ? 'transparent' : (isManager ? BLUE_LIGHT : '#F3F4F6'), color: isManager ? BLUE : '#4B5563', borderRadius: 999, overflow: 'hidden' }}>
+                          {row.profile_photo_url
+                            ? <img src={row.profile_photo_url} alt={row.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            : isManager ? <UserCog size={13} /> : <UserRound size={13} />}
                         </div>
                         <span style={{ fontSize: 13, fontWeight: 600, color: TEXT, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.full_name}</span>
                       </div>
