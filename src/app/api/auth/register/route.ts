@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { email_address, password, full_name, phone_number, role, is_invitation_path } =
+  const { email_address, password, full_name, phone_number, date_of_birth, profile_photo_url, role, is_invitation_path } =
     body as Record<string, unknown>
 
   if (!email_address || typeof email_address !== 'string') {
@@ -59,6 +59,8 @@ export async function POST(req: NextRequest) {
       password,
       full_name,
       phone_number: typeof phone_number === 'string' ? phone_number : null,
+      date_of_birth: typeof date_of_birth === 'string' ? date_of_birth : null,
+      profile_photo_url: typeof profile_photo_url === 'string' ? profile_photo_url : null,
       role: role as User['role'],
     })
     return NextResponse.json(

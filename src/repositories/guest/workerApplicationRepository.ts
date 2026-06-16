@@ -77,6 +77,11 @@ export const workerApplicationRepository = {
           job_date,
           shift_start_time,
           shift_end_time
+        ),
+        job_invitations (
+          id,
+          status,
+          message
         )
       `)
       .eq('user_id', userId)
@@ -85,5 +90,38 @@ export const workerApplicationRepository = {
     if (error) throw new Error(error.message)
 
     return data
+  },
+
+  async respondToInvitation(invitationId: string, response: 'accepted' | 'declined'): Promise<void> {
+    const { error } = await supabase
+      .from('job_invitations')
+      .update({ status: response })
+      .eq('id', invitationId)
+    if (error) throw new Error(error.message)
+  },
+
+  async getUserIdFromInvitation(invitationId: string): Promise<string | null> {
+    const { data, error } = await supabase
+      .from('job_invitations')
+      .select('applicant_id')
+      .eq('id', invitationId)
+      .single()
+    if (error || !data) return null
+    const { data: applicant, error: appErr } = await supabase
+      .from('job_applicants')
+      .select('user_id')
+      .eq('id', data.applicant_id)
+      .single()
+    if (appErr || !applicant) return null
+    return applicant.user_id
+  },
+
+  async promoteGuestToWorker(userId: string): Promise<void> {
+    const { error } = await supabase
+      .from('users')
+      .update({ role: 'Casual Worker', worker_status: 'active' })
+      .eq('id', userId)
+      .eq('role', 'Guest User')
+    if (error) throw new Error(error.message)
   },
 }

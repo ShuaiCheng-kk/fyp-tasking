@@ -74,4 +74,14 @@ export const workerApplicationService = {
 
     return await workerApplicationRepository.getApplicationsByUser(userId)
   },
+
+  async respondToInvitation(invitationId: string, response: 'accepted' | 'declined'): Promise<void> {
+    if (!invitationId) throw new Error('Invitation ID is required')
+    if (response !== 'accepted' && response !== 'declined') throw new Error('Invalid response')
+    await workerApplicationRepository.respondToInvitation(invitationId, response)
+    if (response === 'accepted') {
+      const userId = await workerApplicationRepository.getUserIdFromInvitation(invitationId)
+      if (userId) await workerApplicationRepository.promoteGuestToWorker(userId)
+    }
+  },
 }

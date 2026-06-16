@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { Plus, X, ChevronDown, Building2, Network, Crown, UserCog, UserRound, HardHat, Users } from 'lucide-react'
+import { Plus, X, ChevronDown, Check, Building2, Network, Crown, UserCog, UserRound, HardHat, Users } from 'lucide-react'
 import { deptColor } from '@/lib/deptColor'
 import { createBrowserClient } from '@supabase/ssr'
 import ManagerSidebar from '@/components/ManagerSidebar'
@@ -52,18 +52,33 @@ function AnimatedNumber({ value, duration = 550 }: { value: number; duration?: n
   return <>{display.toLocaleString()}</>
 }
 
+// ─── Modal keyframes ─────────────────────────────────────────────────────────
+
+const pageKeyframes = `
+  @keyframes overlayFadeIn { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes modalSlideIn  { from { opacity: 0; transform: scale(0.97) translateY(8px) } to { opacity: 1; transform: scale(1) translateY(0) } }
+  @keyframes blockSlideUp  { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
+  @keyframes cardStagger   { from { opacity: 0; transform: translateY(14px) scale(0.96) } to { opacity: 1; transform: translateY(0) scale(1) } }
+  @keyframes fadeSlideUpToast { from { opacity: 0; transform: translateX(-50%) translateY(10px) } to { opacity: 1; transform: translateX(-50%) translateY(0) } }
+`
+
 // ─── Modal primitives ─────────────────────────────────────────────────────────
 
-function ModalOverlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+function ModalOverlay({ children, onClose, maxWidth = '540px' }: { children: React.ReactNode; onClose: () => void; maxWidth?: string }) {
   return (
     <div
       onClick={onClose}
       style={{
-        position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.42)',
-        display: 'grid', placeItems: 'center', padding: 18, zIndex: 100,
+        position: 'fixed', inset: 0,
+        background: 'rgba(15,23,42,0.45)',
+        backdropFilter: 'blur(4px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 16, zIndex: 100,
+        animation: 'overlayFadeIn 0.18s ease-out',
       }}
     >
-      <div onClick={(e) => e.stopPropagation()} style={{ width: 'min(520px, 100%)', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+      <style>{pageKeyframes}</style>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: `min(${maxWidth}, calc(100% - 32px))`, maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
         {children}
       </div>
     </div>
@@ -73,22 +88,33 @@ function ModalOverlay({ children, onClose }: { children: React.ReactNode; onClos
 function ModalBox({ children }: { children: React.ReactNode }) {
   return (
     <div style={{
-      background: '#FFFFFF', borderRadius: 16, border: '1px solid #E2E8F0',
-      boxShadow: '0 24px 70px rgba(15,23,42,0.22)', maxHeight: '90vh',
-      overflowY: 'auto', display: 'flex', flexDirection: 'column',
+      background: '#FFFFFF',
+      borderRadius: 20,
+      overflow: 'hidden',
+      boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)',
+      maxHeight: '90vh',
+      overflowY: 'auto',
+      display: 'flex',
+      flexDirection: 'column',
+      animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)',
     }}>
       {children}
     </div>
   )
 }
 
-function ModalHeader({ title, onClose }: { title: string; onClose: () => void }) {
+function ModalHeader({ title, icon, iconBg, onClose }: { title: string; icon?: React.ReactNode; iconBg?: string; onClose: () => void }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '18px 20px', borderBottom: '1px solid #E2E8F0' }}>
-      <h2 style={{ fontWeight: 900, fontSize: '1.0625rem', color: '#0F172A', margin: 0, letterSpacing: '-0.2px' }}>{title}</h2>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', flexShrink: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        {icon && <div style={{ width: 32, height: 32, borderRadius: 9, background: iconBg ?? 'linear-gradient(135deg, #2563EB, #1D4ED8)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{icon}</div>}
+        <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0 }}>{title}</h2>
+      </div>
       <button
         onClick={onClose}
-        style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid #E2E8F0', background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: 'pointer', color: '#64748B', flexShrink: 0 }}
+        style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: 6, borderRadius: 8, flexShrink: 0 }}
+        onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+        onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
       >
         <X size={16} />
       </button>
@@ -97,9 +123,9 @@ function ModalHeader({ title, onClose }: { title: string; onClose: () => void })
 }
 
 const modalInputStyle: React.CSSProperties = {
-  width: '100%', minHeight: 40, padding: '9px 11px',
-  border: '1px solid #E2E8F0', borderRadius: 8, fontSize: 13,
-  color: '#0F172A', outline: 'none', boxSizing: 'border-box', background: '#FFFFFF',
+  width: '100%', minHeight: 40, padding: '10px 12px',
+  border: '1.5px solid #E5E7EB', borderRadius: 8, fontSize: '0.9375rem',
+  color: '#111827', outline: 'none', boxSizing: 'border-box', background: '#FFFFFF',
 }
 
 const modalLabelStyle: React.CSSProperties = {
@@ -108,7 +134,14 @@ const modalLabelStyle: React.CSSProperties = {
 
 // ─── Role avatar ──────────────────────────────────────────────────────────────
 
-function RoleAvatar({ role, size = 36 }: { role: string; size?: number }) {
+function RoleAvatar({ role, size = 36, photoUrl }: { role: string; size?: number; photoUrl?: string | null }) {
+  if (photoUrl) {
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: size, height: size, borderRadius: 999, flexShrink: 0, overflow: 'hidden' }}>
+        <img src={photoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+      </span>
+    )
+  }
   const cfg: Record<string, { bg: string; color: string; icon: React.ReactNode }> = {
     Owner:   { bg: '#0F172A', color: '#FFFFFF',  icon: <Crown    size={size * 0.42} /> },
     Partner: { bg: '#0F172A', color: '#FFFFFF',  icon: <Crown    size={size * 0.42} /> },
@@ -152,7 +185,7 @@ function OrgNode({ member, onClick }: { member: TeamMember; onClick: () => void 
         boxShadow: '0 1px 4px rgba(0,0,0,0.07)',
       }}
     >
-      <RoleAvatar role={member.role} size={36} />
+      <RoleAvatar role={member.role} size={36} photoUrl={member.profile_photo_url} />
       <p style={{ fontWeight: 700, fontSize: '0.8125rem', color: dark ? '#FFFFFF' : '#111827', margin: 0, lineHeight: 1.3, textAlign: 'center' }}>{member.full_name}</p>
     </button>
   )
@@ -343,6 +376,7 @@ type TeamMember = {
   phone_number: string | null
   role: string
   department_id: string | null
+  profile_photo_url?: string | null
   worker_status?: string | null
 }
 
@@ -371,6 +405,14 @@ export default function ManagerTeamPage() {
   const [inviteLoading, setInviteLoading] = useState(false)
   const [inviteError,   setInviteError]   = useState('')
   const [inviteSuccess, setInviteSuccess] = useState('')
+  const [toast, setToast] = useState('')
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const showToast = useCallback((msg: string) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+    setToast(msg)
+    toastTimerRef.current = setTimeout(() => setToast(''), 3000)
+  }, [])
 
   // Profile modal
   const [profileMember, setProfileMember] = useState<TeamMember | null>(null)
@@ -496,7 +538,8 @@ export default function ManagerTeamPage() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
-      setInviteSuccess(`Invitation sent to ${inviteEmail}`)
+      showToast('Invitation sent successfully.')
+      closeModal()
     } catch (err) {
       setInviteError(err instanceof Error ? err.message : 'Something went wrong')
     } finally {
@@ -720,7 +763,7 @@ export default function ManagerTeamPage() {
           <ModalBox>
             <ModalHeader title="Member Profile" onClose={() => setProfileMember(null)} />
             <div style={{ padding: '24px 24px 20px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', gap: 16 }}>
-              <RoleAvatar role={profileMember.role} size={54} />
+              <RoleAvatar role={profileMember.role} size={54} photoUrl={profileMember.profile_photo_url} />
               <div>
                 <p style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#0F172A', margin: '0 0 5px' }}>{profileMember.full_name}</p>
                 <span style={{
@@ -855,28 +898,37 @@ export default function ManagerTeamPage() {
                   {inviteError}
                 </div>
               )}
-              {inviteSuccess && (
-                <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, padding: '10px 12px', fontSize: 13, color: '#166534', marginTop: 10 }}>
-                  {inviteSuccess}
-                </div>
-              )}
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '18px 0 20px' }}>
-                <button onClick={closeModal} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', height: 36, padding: '0 14px', borderRadius: 10, border: '1px solid #E2E8F0', background: '#FFFFFF', color: '#0F172A', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '20px 24px', borderTop: '1px solid #F3F4F6', marginTop: 16 }}>
+                <button onClick={closeModal} style={{ padding: '7px 18px', background: '#FFFFFF', border: '1.5px solid #E5E7EB', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', cursor: 'pointer' }}>
                   Cancel
                 </button>
                 <button
                   onClick={handleSendInvite}
                   disabled={sendDisabled}
-                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, height: 36, padding: '0 16px', borderRadius: 10, border: 0, background: ACCENT, color: '#FFFFFF', fontWeight: 700, fontSize: 13, cursor: sendDisabled ? 'not-allowed' : 'pointer', opacity: sendDisabled ? 0.5 : 1 }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 18px', border: 'none', borderRadius: 8, background: sendDisabled ? '#93C5FD' : ACCENT, color: '#FFFFFF', fontWeight: 600, fontSize: '0.8125rem', cursor: sendDisabled ? 'not-allowed' : 'pointer' }}
                 >
-                  {inviteLoading && <Spinner size={13} light />}
+                  {inviteLoading ? <Spinner size={13} light /> : <Check size={13} />}
                   Send Invite
                 </button>
               </div>
             </div>
           </ModalBox>
         </ModalOverlay>
+      )}
+
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
+          background: '#0F172A', color: '#FFFFFF', borderRadius: 999, padding: '10px 18px',
+          display: 'flex', alignItems: 'center', gap: 8,
+          fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', zIndex: 9999,
+          animation: 'fadeSlideUpToast 0.22s ease',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.25)',
+        }}>
+          <Check size={15} style={{ color: '#10B981', flexShrink: 0 }} />
+          {toast}
+        </div>
       )}
     </div>
   )

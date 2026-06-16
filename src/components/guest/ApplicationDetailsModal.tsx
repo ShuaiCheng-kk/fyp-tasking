@@ -115,6 +115,10 @@ export default function ApplicationDetailsModal({ application, onClose, onWithdr
 
   return (
     <div style={overlayStyle}>
+      <style>{`
+        @keyframes overlayFadeIn { from { opacity: 0 } to { opacity: 1 } }
+        @keyframes modalSlideIn  { from { opacity: 0; transform: scale(0.97) translateY(8px) } to { opacity: 1; transform: scale(1) translateY(0) } }
+      `}</style>
       <div style={modalStyle}>
         <div style={headerStyle}>
           <div>
@@ -238,13 +242,14 @@ function statusStyle(status: ApplicationStatus): React.CSSProperties {
 const overlayStyle: React.CSSProperties = {
   position: 'fixed',
   inset: 0,
-  background: 'rgba(17, 24, 39, 0.48)',
+  background: 'rgba(15, 23, 42, 0.45)',
   backdropFilter: 'blur(4px)',
   display: 'flex',
   justifyContent: 'center',
   alignItems: 'center',
   zIndex: 120,
   padding: 24,
+  animation: 'overlayFadeIn 0.18s ease-out',
 }
 
 const modalStyle: React.CSSProperties = {
@@ -255,7 +260,8 @@ const modalStyle: React.CSSProperties = {
   background: '#FFFFFF',
   borderRadius: 20,
   padding: 32,
-  boxShadow: '0 24px 80px rgba(0,0,0,0.28)',
+  boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)',
+  animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)',
 }
 
 const headerStyle: React.CSSProperties = {
@@ -420,23 +426,23 @@ const footerStyle: React.CSSProperties = {
 }
 
 const withdrawButtonStyle: React.CSSProperties = {
-  border: '1px solid #FECACA',
+  border: '1.5px solid #FECACA',
   background: '#FEF2F2',
   color: '#DC2626',
-  padding: '13px 18px',
-  borderRadius: 10,
-  fontSize: '0.9rem',
-  fontWeight: 700,
+  padding: '7px 18px',
+  borderRadius: 8,
+  fontSize: '0.8125rem',
+  fontWeight: 600,
   cursor: 'pointer',
 }
 
 const secondaryButtonStyle: React.CSSProperties = {
-  border: '1px solid #D1D5DB',
+  border: '1.5px solid #E5E7EB',
   background: '#FFFFFF',
-  color: '#374151',
-  padding: '13px 18px',
-  borderRadius: 10,
-  fontSize: '0.9rem',
-  fontWeight: 700,
+  color: '#6B7280',
+  padding: '7px 18px',
+  borderRadius: 8,
+  fontSize: '0.8125rem',
+  fontWeight: 600,
   cursor: 'pointer',
 }

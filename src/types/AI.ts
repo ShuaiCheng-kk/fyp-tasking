@@ -42,6 +42,18 @@ export interface TaskBreakdownDraft {
   tasks: TaskSuggestion[]
 }
 
+export interface ShiftSuggestion {
+  shift_date: string
+  start_time: string
+  end_time: string
+  title: string
+  reason: string
+}
+
+export interface ShiftSchedulingDraft {
+  shifts: ShiftSuggestion[]
+}
+
 export interface TaskAssignmentRecommendation {
   candidate_id: string
   candidate_name: string

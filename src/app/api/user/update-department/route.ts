@@ -31,6 +31,12 @@ export async function PATCH(req: NextRequest) {
       .upsert({ manager_id: user_id, department_id, company_id: resolvedCompanyId }, { onConflict: 'manager_id,department_id' })
 
     if (error) throw new Error(error.message)
+
+    await supabase
+      .from('users')
+      .update({ department_id })
+      .eq('id', user_id)
+
     return NextResponse.json({ success: true })
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Something went wrong'

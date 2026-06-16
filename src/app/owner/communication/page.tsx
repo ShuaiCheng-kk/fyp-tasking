@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
+import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import { createClient } from '@/lib/supabase'
 import {
   Plus, X, Trash2, Pencil, Megaphone,
@@ -27,7 +28,7 @@ type Announcement = {
   created_by_name?: string | null
 }
 
-type CompanyMember = { id: string; full_name: string; role: string }
+type CompanyMember = { id: string; full_name: string; role: string; profile_photo_url?: string | null }
 
 type Conversation = {
   partnerId: string
@@ -115,7 +116,17 @@ function hashColor(name: string): string {
   return palette[Math.abs(h) % palette.length]
 }
 
-function Avatar({ name, size = 36, role }: { name: string; size?: number; role?: string }) {
+function Avatar({ name, size = 36, role, photoUrl }: { name: string; size?: number; role?: string; photoUrl?: string | null }) {
+  if (photoUrl) {
+    return (
+      <div style={{
+        width: size, height: size, borderRadius: '50%', overflow: 'hidden',
+        flexShrink: 0,
+      }}>
+        <img src={photoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+      </div>
+    )
+  }
   const color = role ? (ROLE_COLOR[role] ?? hashColor(name)) : hashColor(name)
   const bg = role ? (ROLE_BG[role] ?? `${color}18`) : `${color}18`
   const iconSize = Math.round(size * 0.46)
@@ -904,14 +915,7 @@ export default function OwnerCommunicationPage() {
             </h1>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
-            {ownerName && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: '#fff', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
-                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: '#0F172A', color: '#FFFFFF', flexShrink: 0 }}>
-                  <Crown size={13} />
-                </span>
-                <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{ownerName}</span>
-              </div>
-            )}
+            {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId ?? ''} />}
             {companyId && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
           </div>
         </div>
@@ -1028,7 +1032,7 @@ export default function OwnerCommunicationPage() {
                             animationDelay: `${i * 0.04}s`,
                           }}
                         >
-                          <Avatar name={conv.partnerName} size={40} role={conv.partnerRole} />
+                          <Avatar name={conv.partnerName} size={40} role={conv.partnerRole} photoUrl={companyMembers.find(m => m.id === conv.partnerId)?.profile_photo_url ?? null} />
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
@@ -1131,7 +1135,7 @@ export default function OwnerCommunicationPage() {
                             style={{ padding: '10px 14px 0', background: '#FFFFFF', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, cursor: openPanelIds.length > 1 ? 'grab' : 'default', userSelect: 'none' }}
                             title={openPanelIds.length > 1 ? 'Drag to swap panels' : undefined}
                           >
-                            <Avatar name={conv.partnerName} size={30} role={conv.partnerRole} />
+                            <Avatar name={conv.partnerName} size={30} role={conv.partnerRole} photoUrl={companyMembers.find(m => m.id === conv.partnerId)?.profile_photo_url ?? null} />
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                                 <span style={{ fontWeight: 800, fontSize: 13, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{conv.partnerName}</span>
@@ -1175,7 +1179,7 @@ export default function OwnerCommunicationPage() {
                               const fileUrl = fileMatch?.[2] ?? null
                               return (
                                 <div key={msg.id} className="comm-msg-bubble" style={{ display: 'flex', justifyContent: isMine ? 'flex-end' : 'flex-start', alignItems: 'flex-end', gap: 6 }}>
-                                  {!isMine && <Avatar name={conv.partnerName} size={22} role={conv.partnerRole} />}
+                                  {!isMine && <Avatar name={conv.partnerName} size={22} role={conv.partnerRole} photoUrl={companyMembers.find(m => m.id === conv.partnerId)?.profile_photo_url ?? null} />}
                                   {isImage && imgUrl ? (
                                     <div style={{ maxWidth: '65%', display: 'flex', flexDirection: 'column', alignItems: isMine ? 'flex-end' : 'flex-start', gap: 3 }}>
                                       <a href={imgUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'block', borderRadius: isMine ? '12px 12px 3px 12px' : '12px 12px 12px 3px', overflow: 'hidden', border: '1px solid #E2E8F0' }}>
@@ -1603,7 +1607,7 @@ export default function OwnerCommunicationPage() {
                 <p style={labelStyle}>To</p>
                 {selectedRecipient ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 13px', background: '#FFF7ED', border: '1.5px solid rgba(249,115,22,0.3)', borderRadius: 11 }}>
-                    <Avatar name={selectedRecipient.full_name} size={34} role={selectedRecipient.role} />
+                    <Avatar name={selectedRecipient.full_name} size={34} role={selectedRecipient.role} photoUrl={selectedRecipient.profile_photo_url ?? null} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <p style={{ fontWeight: 700, fontSize: 13.5, color: '#0F172A', margin: 0 }}>{selectedRecipient.full_name}</p>
                     </div>
@@ -1624,7 +1628,7 @@ export default function OwnerCommunicationPage() {
                           onMouseEnter={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.borderColor = '#E2E8F0' }}
                           onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.borderColor = 'transparent' }}
                         >
-                          <Avatar name={m.full_name} size={34} role={m.role} />
+                          <Avatar name={m.full_name} size={34} role={m.role} photoUrl={m.profile_photo_url ?? null} />
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <p style={{ fontWeight: 700, fontSize: 13, color: '#0F172A', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.full_name}</p>
                           </div>

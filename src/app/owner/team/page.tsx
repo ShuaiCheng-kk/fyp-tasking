@@ -1,12 +1,12 @@
-'use client'
+﻿'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Plus, X, ChevronDown, Upload, Building2, Network, Crown, UserCog, UserRound, HardHat, Users } from 'lucide-react'
-import { deptColor } from '@/lib/deptColor'
+import { Plus, X, ChevronDown, Upload, Building2, Network, Crown, UserCog, UserRound, HardHat, Users, UserPlus, Send, Check, Trash2, FileText, BriefcaseBusiness, UsersRound, MapPinned, Pencil, MessageCircle } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
+import DatePickerField from '@/components/DatePickerField'
 
 // ─── Spinner ──────────────────────────────────────────────────────────────────
 
@@ -48,51 +48,72 @@ function AnimatedNumber({ value, duration = 550 }: { value: number; duration?: n
 
 // ─── Modal primitives ─────────────────────────────────────────────────────────
 
-function ModalOverlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+const modalKeyframes = `
+  @keyframes overlayFadeIn { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes modalSlideIn  { from { opacity: 0; transform: scale(0.97) translateY(8px) } to { opacity: 1; transform: scale(1) translateY(0) } }
+  @keyframes modalSlideOut { from { opacity: 1; transform: scale(1) translateY(0) } to { opacity: 0; transform: scale(0.97) translateY(8px) } }
+  @keyframes tabFadeIn     { from { opacity: 0; transform: translateY(5px) } to { opacity: 1; transform: translateY(0) } }
+  @keyframes fadeIn        { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes profileFieldsIn { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: translateY(0) } }
+`
+
+function ModalOverlay({ children, onClose, maxWidth = '540px' }: { children: React.ReactNode; onClose: () => void; maxWidth?: string }) {
   return (
     <div
-      onClick={onClose}
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(15,23,42,0.42)',
-        display: 'grid',
-        placeItems: 'center',
-        padding: 18,
+        background: 'rgba(15,23,42,0.45)',
+        backdropFilter: 'blur(4px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
         zIndex: 100,
+        animation: 'overlayFadeIn 0.18s ease-out',
       }}
     >
-      <div onClick={(e) => e.stopPropagation()} style={{ width: 'min(520px, 100%)', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+      <style>{modalKeyframes}</style>
+      <div style={{ width: `min(${maxWidth}, calc(100% - 32px))` }}>
         {children}
       </div>
     </div>
   )
 }
 
-function ModalBox({ children }: { children: React.ReactNode }) {
+function ModalBox({ children, closing = false }: { children: React.ReactNode; closing?: boolean }) {
   return (
     <div style={{
       background: '#FFFFFF',
-      borderRadius: 16,
-      border: '1px solid #E2E8F0',
-      boxShadow: '0 24px 70px rgba(15,23,42,0.22)',
+      borderRadius: 20,
+      overflow: 'hidden',
+      boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)',
       maxHeight: '90vh',
       overflowY: 'auto',
       display: 'flex',
       flexDirection: 'column',
+      animation: `${closing ? 'modalSlideOut' : 'modalSlideIn'} 0.22s cubic-bezier(0.16,1,0.3,1)`,
     }}>
       {children}
     </div>
   )
 }
 
-function ModalHeader({ title, onClose }: { title: string; onClose: () => void }) {
+function ModalHeader({ title, icon, iconBg, onClose }: { title: string; icon?: React.ReactNode; iconBg?: string; onClose: () => void }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '18px 20px', borderBottom: '1px solid #E2E8F0' }}>
-      <h2 style={{ fontWeight: 900, fontSize: '1.0625rem', color: '#0F172A', margin: 0, letterSpacing: '-0.2px' }}>{title}</h2>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', flexShrink: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        {icon && (
+          <div style={{ width: 32, height: 32, borderRadius: 9, background: iconBg ?? 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            {icon}
+          </div>
+        )}
+        <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>{title}</h2>
+      </div>
       <button
         onClick={onClose}
-        style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid #E2E8F0', background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: 'pointer', color: '#64748B', flexShrink: 0 }}
+        style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8, flexShrink: 0 }}
+        onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+        onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
       >
         <X size={16} />
       </button>
@@ -102,12 +123,13 @@ function ModalHeader({ title, onClose }: { title: string; onClose: () => void })
 
 const modalInputStyle: React.CSSProperties = {
   width: '100%',
-  minHeight: 40,
-  padding: '9px 11px',
-  border: '1px solid #E2E8F0',
+  padding: '10px 12px',
+  border: '1.5px solid #E5E7EB',
   borderRadius: 8,
-  fontSize: 13,
-  color: '#0F172A',
+  fontSize: '0.9375rem',
+  fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
+  fontWeight: 400,
+  color: '#111827',
   outline: 'none',
   boxSizing: 'border-box',
   background: '#FFFFFF',
@@ -116,18 +138,59 @@ const modalInputStyle: React.CSSProperties = {
 const modalLabelStyle: React.CSSProperties = {
   display: 'block',
   fontWeight: 600,
-  fontSize: 12,
-  color: '#334155',
-  marginBottom: 6,
+  fontSize: '0.875rem',
+  color: '#374151',
+  marginBottom: '8px',
 }
+
+const teamTabKeyframes = `
+  @keyframes teamTabContentIn {
+    from { opacity: 0; transform: translateY(8px) scale(0.99); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes blockSlideUp {
+    from { opacity: 0; transform: translateY(22px) scale(0.98); }
+    to   { opacity: 1; transform: translateY(0)   scale(1); }
+  }
+  @keyframes blockPopIn {
+    0%   { opacity: 0; transform: scale(0.93) translateY(10px); }
+    65%  { opacity: 1; transform: scale(1.025) translateY(-2px); }
+    100% { transform: scale(1) translateY(0); }
+  }
+  @keyframes cardStagger {
+    from { opacity: 0; transform: translateY(14px) scale(0.96); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  @keyframes deptCardIn {
+    from { opacity: 0; transform: translateX(-10px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes logRowIn {
+    from { opacity: 0; transform: translateX(-8px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+  .all-block-company  { animation: blockPopIn  0.42s cubic-bezier(0.34,1.56,0.64,1) both 0.05s; }
+  .all-block-activity { animation: blockSlideUp 0.38s ease both 0.13s; }
+  .all-block-dept     { animation: blockSlideUp 0.38s ease both 0.21s; }
+  .all-block-cw       { animation: blockSlideUp 0.40s ease both 0.10s; }
+  .all-block-internal { animation: blockSlideUp 0.40s ease both 0.18s; }
+  .cw-preview-card    { animation: cardStagger 0.32s ease both; }
+  .internal-member-card { animation: cardStagger 0.32s ease both; }
+  .dept-card-item     { animation: deptCardIn 0.28s ease both; }
+  .log-row-item       { animation: logRowIn 0.26s ease both; }
+  .org-chart-wrap     { animation: blockSlideUp 0.38s ease both 0.04s; }
+  .org-node-btn       { animation: cardStagger 0.32s cubic-bezier(0.34,1.56,0.64,1) both; }
+  .org-dept-col       { animation: blockSlideUp 0.36s ease both; }
+`
 
 // ─── Custom Dropdown ──────────────────────────────────────────────────────────
 
-function DropdownField({ value, options, onChange, placeholder }: {
+function DropdownField({ value, options, onChange, placeholder, disabled = false }: {
   value: string
   options: { value: string; label: string }[]
   onChange: (v: string) => void
   placeholder?: string
+  disabled?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState({ top: 0, left: 0, width: 0 })
@@ -160,9 +223,9 @@ function DropdownField({ value, options, onChange, placeholder }: {
       <button ref={triggerRef} type="button" onClick={handleOpen}
         style={{
           width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '9px 11px', border: `1px solid ${open ? '#F97316' : '#E2E8F0'}`, borderRadius: 8,
-          background: '#FFFFFF', cursor: 'pointer', fontSize: 13,
-          color: selected ? '#0F172A' : '#94A3B8', fontWeight: selected ? 500 : 400,
+          padding: '10px 12px', border: `1.5px solid ${open ? '#F97316' : '#E5E7EB'}`, borderRadius: 8,
+          background: '#FFFFFF', cursor: 'pointer', fontSize: '0.9375rem',
+          color: selected ? '#111827' : '#9CA3AF', fontWeight: selected ? 500 : 400,
           outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s', minHeight: 40,
         }}>
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -201,7 +264,14 @@ function DropdownField({ value, options, onChange, placeholder }: {
 
 // ─── Role avatar config ───────────────────────────────────────────────────────
 
-function RoleAvatar({ role, size = 36 }: { role: string; size?: number }) {
+function RoleAvatar({ role, size = 36, photoUrl }: { role: string; size?: number; photoUrl?: string | null }) {
+  if (photoUrl) {
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: size, height: size, borderRadius: 999, flexShrink: 0, overflow: 'hidden' }}>
+        <img src={photoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+      </span>
+    )
+  }
   const cfg: Record<string, { bg: string; color: string; icon: React.ReactNode }> = {
     Owner:   { bg: '#0F172A', color: '#FFFFFF',  icon: <Crown    size={size * 0.42} /> },
     Partner: { bg: '#0F172A', color: '#FFFFFF',  icon: <Crown    size={size * 0.42} /> },
@@ -231,11 +301,12 @@ function OrgMemberCard({ member, onClick }: { member: TeamMember; onClick: () =>
         boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
         transition: 'box-shadow 0.15s',
         minWidth: 180,
+        animation: 'memberFadeIn 0.35s ease-out',
       }}
       onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 3px 10px rgba(0,0,0,0.10)' }}
       onMouseLeave={e => { e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)' }}
     >
-      <RoleAvatar role={member.role} size={34} />
+      <RoleAvatar role={member.role} size={34} photoUrl={member.profile_photo_url} />
       <div>
         <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: 0 }}>{member.full_name}</p>
         <p style={{ fontSize: '0.75rem', color: '#9CA3AF', margin: 0 }}>{member.role}</p>
@@ -253,7 +324,7 @@ function OrgMemberRow({ member, onClick, onEdit, onRemove }: { member: TeamMembe
         onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
         onMouseLeave={e => { e.currentTarget.style.background = '#FAFAFA' }}
       >
-        <RoleAvatar role={member.role} size={28} />
+        <RoleAvatar role={member.role} size={28} photoUrl={member.profile_photo_url} />
         <span style={{ fontWeight: 500, fontSize: '0.8125rem', color: '#111827' }}>{member.full_name}</span>
       </button>
       <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
@@ -268,9 +339,356 @@ function OrgMemberRow({ member, onClick, onEdit, onRemove }: { member: TeamMembe
   )
 }
 
+function HorizontalMemberCard({
+  member,
+  subtitle,
+  badgeLabel,
+  badgeBg,
+  badgeColor,
+  onClick,
+}: {
+  member: TeamMember
+  subtitle: string
+  badgeLabel?: string
+  badgeBg: string
+  badgeColor: string
+  onClick: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        width: 168,
+        minWidth: 168,
+        padding: '12px 14px',
+        borderRadius: 14,
+        border: '1px solid #E5E7EB',
+        background: '#FFFFFF',
+        cursor: 'pointer',
+        textAlign: 'left',
+        boxShadow: '0 1px 3px rgba(15,23,42,0.06)',
+        transition: 'box-shadow 0.15s ease, border-color 0.15s ease',
+        animation: 'memberFadeIn 0.35s ease-out',
+        flexShrink: 0,
+      }}
+      onMouseEnter={e => {
+        e.currentTarget.style.boxShadow = '0 8px 18px rgba(15,23,42,0.08)'
+        e.currentTarget.style.borderColor = '#D1D5DB'
+      }}
+      onMouseLeave={e => {
+        e.currentTarget.style.boxShadow = '0 1px 3px rgba(15,23,42,0.06)'
+        e.currentTarget.style.borderColor = '#E5E7EB'
+      }}
+    >
+      <RoleAvatar role={member.role} size={40} photoUrl={member.profile_photo_url} />
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <p style={{ fontWeight: 700, fontSize: '0.875rem', color: '#0F172A', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{member.full_name}</p>
+      </div>
+      {badgeLabel && (
+        <span style={{ background: badgeBg, color: badgeColor, borderRadius: 999, padding: '3px 8px', fontSize: '0.65rem', fontWeight: 800, textTransform: 'uppercase', flexShrink: 0, whiteSpace: 'nowrap' }}>
+          {badgeLabel}
+        </span>
+      )}
+    </button>
+  )
+}
+
+function SectionBlock({
+  icon,
+  title,
+  subtitle,
+  children,
+}: {
+  icon: React.ReactNode
+  title: string
+  subtitle?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 18, padding: 22, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: subtitle ? 12 : 18 }}>
+        <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          {icon}
+        </div>
+        <div style={{ minWidth: 0 }}>
+          <p style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', margin: 0, letterSpacing: '-0.2px' }}>{title}</p>
+          {subtitle && <p style={{ fontSize: 12, fontWeight: 500, color: '#64748B', margin: '3px 0 0' }}>{subtitle}</p>}
+        </div>
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function TeamShowcaseCard({
+  icon,
+  title,
+  rightContent,
+  fillHeight,
+  className,
+  children,
+}: {
+  icon: React.ReactNode
+  title: string
+  rightContent?: React.ReactNode
+  fillHeight?: boolean
+  className?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className={className} style={{ flex: fillHeight ? 1 : undefined, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+      <div style={{ minHeight: 78, padding: '20px 24px 18px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+          <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            {icon}
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <p style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', margin: 0, letterSpacing: '-0.2px', lineHeight: 1.2 }}>{title}</p>
+          </div>
+        </div>
+        {rightContent}
+        </div>
+      </div>
+      <div style={{ borderTop: '1px solid #E5E7EB', flexShrink: 0 }} />
+      <div style={{ flex: 1, minHeight: 0, padding: '18px 24px 20px', overflowY: fillHeight ? 'auto' : undefined }}>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+function CWStatusBar({
+  activeCount,
+  inactiveCount,
+  totalCount,
+}: {
+  activeCount: number
+  inactiveCount: number
+  totalCount: number
+}) {
+  const [hovered, setHovered] = useState(false)
+  const activePct = totalCount > 0 ? (activeCount / totalCount) * 100 : 0
+  const inactivePct = totalCount > 0 ? (inactiveCount / totalCount) * 100 : 0
+  return (
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        justifyContent: 'flex-end',
+        position: 'relative',
+      }}
+    >
+      <div
+        style={{
+          width: 140,
+          height: 12,
+          borderRadius: 999,
+          overflow: 'hidden',
+          background: '#E5E7EB',
+          display: 'flex',
+          boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.55)',
+          flexShrink: 0,
+          cursor: 'default',
+        }}
+      >
+        <div style={{ width: `${activePct}%`, background: '#86EFAC' }} />
+        <div style={{ width: `${inactivePct}%`, background: '#FCA5A5' }} />
+      </div>
+      {hovered && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 10px)',
+            right: 0,
+            zIndex: 20,
+            minWidth: 224,
+            background: '#FFFFFF',
+            border: '1px solid #E5E7EB',
+            borderRadius: 12,
+            boxShadow: '0 10px 24px rgba(15, 23, 42, 0.12)',
+            padding: '12px 14px 14px',
+          }}
+          >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, marginBottom: 10 }}>
+            <span style={{ fontSize: 14, fontWeight: 600, color: '#374151', letterSpacing: '-0.1px' }}>Status</span>
+            <span style={{ fontSize: 14, fontWeight: 600, color: '#374151' }}>Total {totalCount}</span>
+          </div>
+          <div style={{ height: 1, background: '#E5E7EB', marginBottom: 12 }} />
+          <div style={{ display: 'grid', gap: 8 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ width: 8, height: 8, borderRadius: 999, background: '#86EFAC', flexShrink: 0 }} />
+                <span style={{ fontSize: 14, color: '#374151', fontWeight: 600 }}>Active</span>
+              </div>
+              <span style={{ fontSize: 14, color: '#374151', fontWeight: 600, justifySelf: 'center', minWidth: 24, textAlign: 'center' }}>{activeCount}</span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ width: 8, height: 8, borderRadius: 999, background: '#FCA5A5', flexShrink: 0 }} />
+                <span style={{ fontSize: 14, color: '#374151', fontWeight: 600 }}>Inactive</span>
+              </div>
+              <span style={{ fontSize: 14, color: '#374151', fontWeight: 600, justifySelf: 'center', minWidth: 24, textAlign: 'center' }}>{inactiveCount}</span>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function InternalMembersBar({
+  partnerCount,
+  managerCount,
+  employeeCount,
+}: {
+  partnerCount: number
+  managerCount: number
+  employeeCount: number
+}) {
+  const [hovered, setHovered] = useState(false)
+  const total = partnerCount + managerCount + employeeCount
+  const partnerPct  = total > 0 ? (partnerCount  / total) * 100 : 0
+  const managerPct  = total > 0 ? (managerCount  / total) * 100 : 0
+  const employeePct = total > 0 ? (employeeCount / total) * 100 : 0
+  return (
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{ display: 'flex', alignItems: 'center', gap: 12, justifyContent: 'flex-end', position: 'relative' }}
+    >
+      <div style={{ width: 140, height: 12, borderRadius: 999, overflow: 'hidden', background: '#E5E7EB', display: 'flex', boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.55)', flexShrink: 0, cursor: 'default' }}>
+        <div style={{ width: `${partnerPct}%`,  background: '#C4B5FD' }} />
+        <div style={{ width: `${managerPct}%`,  background: '#93C5FD' }} />
+        <div style={{ width: `${employeePct}%`, background: '#6EE7B7' }} />
+      </div>
+      {hovered && (
+        <div style={{ position: 'absolute', top: 'calc(100% + 10px)', right: 0, zIndex: 20, minWidth: 224, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, boxShadow: '0 10px 24px rgba(15,23,42,0.12)', padding: '12px 14px 14px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, marginBottom: 10 }}>
+            <span style={{ fontSize: 14, fontWeight: 600, color: '#374151', letterSpacing: '-0.1px' }}>Roles</span>
+            <span style={{ fontSize: 14, fontWeight: 600, color: '#374151' }}>Total {total}</span>
+          </div>
+          <div style={{ height: 1, background: '#E5E7EB', marginBottom: 12 }} />
+          <div style={{ display: 'grid', gap: 8 }}>
+            {[
+              { label: 'Partner',  count: partnerCount,  color: '#C4B5FD' },
+              { label: 'Manager',  count: managerCount,  color: '#93C5FD' },
+              { label: 'Employee', count: employeeCount, color: '#6EE7B7' },
+            ].map(row => (
+              <div key={row.label} style={{ display: 'grid', gridTemplateColumns: '1fr auto', alignItems: 'center', gap: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: 999, background: row.color, flexShrink: 0 }} />
+                  <span style={{ fontSize: 14, color: '#374151', fontWeight: 600 }}>{row.label}</span>
+                </div>
+                <span style={{ fontSize: 14, color: '#374151', fontWeight: 600, justifySelf: 'center', minWidth: 24, textAlign: 'center' }}>{row.count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CasualWorkerPreviewCard({
+  name,
+  lastShift,
+  totalVisits,
+  status,
+  photoUrl,
+  onClick,
+}: {
+  name: string
+  lastShift: string
+  totalVisits: number
+  status: 'Active' | 'Inactive'
+  photoUrl?: string | null
+  onClick?: () => void
+}) {
+  const isActive = status === 'Active'
+  const borderColor = isActive ? '#86EFAC' : '#FCA5A5'
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="cw-preview-card"
+      style={{
+        flex: '0 0 110px',
+        width: 110,
+        minWidth: 110,
+        maxWidth: 110,
+        height: 128,
+        padding: '0 1px',
+        borderRadius: 8,
+        border: `1.5px solid ${borderColor}`,
+        background: '#FFFFFF',
+        boxShadow: '0 1px 3px rgba(15,23,42,0.06)',
+        flexShrink: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'space-evenly',
+        alignItems: 'center',
+        cursor: onClick ? 'pointer' : 'default',
+        textAlign: 'center',
+        transition: 'box-shadow 0.22s ease, border-color 0.22s ease, transform 0.22s ease',
+      }}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, width: '100%' }}>
+        <RoleAvatar role="Casual Worker" size={80} photoUrl={photoUrl ?? null} />
+        <p style={{ fontWeight: 700, fontSize: '0.875rem', color: '#0F172A', margin: 0, lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: '-0.2px', maxWidth: '100%' }}>
+          {name}
+        </p>
+      </div>
+    </button>
+  )
+}
+
+function RoleGroupCard({
+  icon,
+  label,
+  count,
+  emptyText,
+  children,
+}: {
+  icon: React.ReactNode
+  label: string
+  count: number
+  emptyText: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="role-group-card" style={{ border: '1px solid #EEF2F7', borderRadius: 14, overflow: 'hidden', background: '#FFFFFF' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 16px 12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          <div style={{ width: 28, height: 28, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            {icon}
+          </div>
+          <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.1px' }}>{label}</span>
+        </div>
+      </div>
+      <div style={{ borderTop: '1px solid #F1F5F9' }} />
+      <div style={{ padding: '14px 16px 16px' }}>
+        {count === 0 ? (
+          <div style={{ padding: '28px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+            <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>{emptyText}</p>
+          </div>
+        ) : (
+          children
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Org Chart Node ──────────────────────────────────────────────────────────
 
-function OrgNode({ member, onClick }: { member: TeamMember; onClick: () => void }) {
+function OrgNode({ member, onClick, animationDelay }: { member: TeamMember; onClick: () => void; animationDelay?: string }) {
   const dark = member.role === 'Owner' || member.role === 'Partner'
   return (
     <button
@@ -283,9 +701,10 @@ function OrgNode({ member, onClick }: { member: TeamMember; onClick: () => void 
         background: dark ? '#0F172A' : '#FFFFFF',
         cursor: 'pointer', width: '100%',
         boxShadow: '0 1px 4px rgba(0,0,0,0.07)',
+        animationDelay: animationDelay ?? '0s',
       }}
     >
-      <RoleAvatar role={member.role} size={36} />
+      <RoleAvatar role={member.role} size={36} photoUrl={member.profile_photo_url} />
       <p style={{ fontWeight: 700, fontSize: '0.8125rem', color: dark ? '#FFFFFF' : '#111827', margin: 0, lineHeight: 1.3, textAlign: 'center' }}>{member.full_name}</p>
     </button>
   )
@@ -298,6 +717,7 @@ type OrgChartTreeProps = {
   departments: { id: string; name: string }[]
   teamMembers: TeamMember[]
   onMemberClick: (m: TeamMember) => void
+  onDepartmentClick: (department: { id: string; name: string }) => void
 }
 
 const LINE_COLOR = '#CBD5E1'
@@ -312,7 +732,7 @@ const OUTER_H   = 48    // SVG height: leadership → dept cols
 const INNER_H   = 30    // SVG height: dept header → managers
 const M2E_H     = 16    // connector height: managers → employees
 
-function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick }: OrgChartTreeProps) {
+function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick, onDepartmentClick }: OrgChartTreeProps) {
   // Sort departments A→Z (left to right)
   const sortedDepts = [...departments].sort((a, b) => a.name.localeCompare(b.name))
 
@@ -371,7 +791,7 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick }: O
               top: 0,
               width: LEADER_W,
             }}>
-              <OrgNode member={m} onClick={() => onMemberClick(m)} />
+              <OrgNode member={m} onClick={() => onMemberClick(m)} animationDelay={`${0.08 + i * 0.08}s`} />
             </div>
           ))}
         </div>
@@ -393,7 +813,6 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick }: O
         {deptCols.length > 0 && (
           <div style={{ display: 'flex', gap: DEPT_GAP, alignItems: 'flex-start', justifyContent: 'center' }}>
             {deptCols.map(({ dept, managers, employees }, di) => {
-              const color    = deptColor(dept.id)
               const colW     = deptColWs[di]
               const innerW   = deptInnerWs[di]
               // Manager center Xs relative to left edge of colW (accounting for DEPT_PAD)
@@ -401,20 +820,45 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick }: O
               const mgrCXs   = managers.map((_, mi) => offsetX + mi * (NODE_W + MGR_GAP) + NODE_W / 2)
 
               return (
-                <div key={dept.id} style={{
+                <div key={dept.id} className="org-dept-col" style={{
                   width: colW, flexShrink: 0,
-                  border: `1.5px solid ${color}30`,
-                  borderTop: `3px solid ${color}`,
+                  border: '1.5px solid #E5E7EB',
                   borderRadius: 14,
                   background: '#FFFFFF',
                   boxShadow: '0 1px 6px rgba(0,0,0,0.06)',
                   display: 'flex', flexDirection: 'column', alignItems: 'center',
                   overflow: 'hidden',
+                  animationDelay: `${0.18 + di * 0.07}s`,
                 }}>
 
                   {/* Dept header */}
-                  <div style={{ width: '100%', padding: '9px 12px', background: `${color}10`, borderBottom: `1px solid ${color}28`, textAlign: 'center' }}>
-                    <span style={{ fontWeight: 700, fontSize: '0.8125rem', color: '#111827' }}>{dept.name}</span>
+                  <div style={{ width: '100%', padding: '10px 12px', background: '#F9FAFB', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <button
+                      type="button"
+                      aria-label={`Open ${dept.name} actions`}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        onDepartmentClick(dept)
+                      }}
+                      style={{
+                        border: 'none',
+                        background: 'transparent',
+                        color: '#111827',
+                        cursor: 'pointer',
+                        fontWeight: 800,
+                        fontSize: '0.9375rem',
+                        lineHeight: 1.2,
+                        padding: 0,
+                        margin: 0,
+                        textAlign: 'center',
+                        width: '100%',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {dept.name}
+                    </button>
                   </div>
 
                   {/* SVG: dept header → managers (fan-out) */}
@@ -432,10 +876,10 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick }: O
 
                   {/* Managers — horizontal row */}
                   {managers.length > 0 && (
-                    <div style={{ display: 'flex', gap: MGR_GAP, flexShrink: 0 }}>
-                      {managers.map(m => (
+                    <div style={{ display: 'flex', gap: MGR_GAP, flexShrink: 0, marginBottom: employees.length === 0 ? DEPT_PAD : 0 }}>
+                      {managers.map((m, mi) => (
                         <div key={m.id} style={{ width: NODE_W }}>
-                          <OrgNode member={m} onClick={() => onMemberClick(m)} />
+                          <OrgNode member={m} onClick={() => onMemberClick(m)} animationDelay={`${0.26 + di * 0.07 + mi * 0.05}s`} />
                         </div>
                       ))}
                     </div>
@@ -454,14 +898,14 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick }: O
                       width: `calc(100% - ${DEPT_PAD * 2}px)`,
                       boxSizing: 'border-box',
                     }}>
-                      {employees.map(m => (
-                        <OrgNode key={m.id} member={m} onClick={() => onMemberClick(m)} />
+                      {employees.map((m, ei) => (
+                        <OrgNode key={m.id} member={m} onClick={() => onMemberClick(m)} animationDelay={`${0.32 + di * 0.07 + ei * 0.04}s`} />
                       ))}
                     </div>
                   )}
 
                   {managers.length === 0 && employees.length === 0 && (
-                    <div style={{ padding: '12px', fontSize: '0.75rem', color: '#9CA3AF' }}>No members</div>
+                    <div style={{ height: 36 }} />
                   )}
                 </div>
               )
@@ -482,19 +926,59 @@ function ProfileField({ label, value }: { label: string; value: string }) {
   )
 }
 
+function formatDateDisplay(value: string | null | undefined, empty = '—') {
+  if (!value) return empty
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return empty
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(date)
+}
+
+function formatLongDateTime(value: string | null | undefined, empty = '—') {
+  if (!value) return empty
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return empty
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date)
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type OwnedCompany = { id: string; name: string }
 type Department = { id: string; name: string }
 type Manager = { id: string; full_name: string }
+type CWPreviewCard = {
+  id: string
+  name: string
+  lastShift: string
+  totalVisits: number
+  status: 'Active' | 'Inactive'
+  inactiveReason?: string | null
+  email?: string | null
+  dateOfBirth?: string | null
+  phoneNumber?: string | null
+  photoUrl?: string | null
+}
 type TeamMember = {
   id: string
   full_name: string
   email_address: string
   phone_number: string | null
+  date_of_birth: string | null
+  profile_photo_url?: string | null
   role: string
   department_id: string | null
   worker_status?: string | null
+  inactivate_reason?: string | null
+  created_at: string
 }
 type ChangeDeptModal = { member: TeamMember } | null
 type ManageDeptModal = { member: TeamMember } | null
@@ -532,6 +1016,16 @@ export default function TeamPage() {
   const [ownerName,          setOwnerName]          = useState('')
   const [currentPlan,        setCurrentPlan]        = useState('Free')
   const [companyProfile,     setCompanyProfile]     = useState<{ description: string | null; location: string | null; address: string | null; postal_code: string | null; industry: string | null; size: string | null } | null>(null)
+  // ── Owner self-profile modal ───────────────────────────────────────────────
+  const [ownerProfileModal, setOwnerProfileModal] = useState(false)
+  const [ownerProfile, setOwnerProfile] = useState<{ full_name: string; email_address: string; phone_number: string | null; date_of_birth: string | null; role: string; created_at: string; profile_photo_url?: string | null } | null>(null)
+  const [ownerProfileEditing, setOwnerProfileEditing] = useState(false)
+  const [ownerProfileName, setOwnerProfileName] = useState('')
+  const [ownerProfilePhone, setOwnerProfilePhone] = useState('')
+  const [ownerProfileDob, setOwnerProfileDob] = useState('')
+  const [ownerProfileLoading, setOwnerProfileLoading] = useState(false)
+  const [ownerProfileError, setOwnerProfileError] = useState('')
+  // ──────────────────────────────────────────────────────────────────────────
   const [editProfileOpen,    setEditProfileOpen]    = useState(false)
   const [editProfileName,    setEditProfileName]    = useState('')
   const [editProfileDesc,    setEditProfileDesc]    = useState('')
@@ -543,9 +1037,75 @@ export default function TeamPage() {
   const [editProfileSize,         setEditProfileSize]          = useState('')
   const [editProfileLoading, setEditProfileLoading] = useState(false)
   const [editProfileError,   setEditProfileError]   = useState('')
+  const [editPostalLoading, setEditPostalLoading] = useState(false)
+  const [editProfileSuccess, setEditProfileSuccess] = useState('')
+  const editProfileSuccessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [editProfileClosing, setEditProfileClosing] = useState(false)
+  const editProfileCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const INDUSTRIES = ['Retail', 'F&B', 'Logistics', 'Event Management', 'Healthcare', 'Education', 'Technology', 'Finance', 'Construction', 'Hospitality', 'Manufacturing', 'Other']
   const SIZES = ['1-10', '11-50', '51-200', '200+']
+
+  useEffect(() => {
+    const postal = editProfilePostal.trim()
+    if (postal.length < 6) {
+      setEditProfileLoc('')
+      setEditProfileAddress('')
+      setEditPostalLoading(false)
+      return
+    }
+
+    if (!/^\d{6}$/.test(postal)) {
+      setEditProfileError('Postal code must contain only numbers.')
+      setEditPostalLoading(false)
+      return
+    }
+
+    let cancelled = false
+
+    const lookupPostal = async () => {
+      setEditPostalLoading(true)
+      setEditProfileError('')
+      try {
+        const res = await fetch(
+          `https://www.onemap.gov.sg/api/common/elastic/search?searchVal=${postal}&returnGeom=Y&getAddrDetails=Y`
+        )
+        const data = await res.json()
+        if (cancelled) return
+        if (!data.results || data.results.length === 0) {
+          setEditProfileError('Postal code not found.')
+          return
+        }
+
+        const result = data.results[0]
+        setEditProfileAddress(result.ADDRESS ?? '')
+        setEditProfileLoc(
+          result.BUILDING && result.BUILDING !== 'NIL'
+            ? result.BUILDING
+            : `${result.ROAD_NAME ?? ''}, Singapore`
+        )
+      } catch {
+        if (!cancelled) setEditProfileError('Postal code not found.')
+      } finally {
+        if (!cancelled) setEditPostalLoading(false)
+      }
+    }
+
+    void lookupPostal()
+
+    return () => {
+      cancelled = true
+    }
+  }, [editProfilePostal])
+
+  useEffect(() => {
+    return () => {
+      if (editProfileSuccessTimerRef.current) clearTimeout(editProfileSuccessTimerRef.current)
+      if (editProfileCloseTimerRef.current) clearTimeout(editProfileCloseTimerRef.current)
+      if (inviteSuccessTimerRef.current) clearTimeout(inviteSuccessTimerRef.current)
+      if (cwDetailSuccessTimerRef.current) clearTimeout(cwDetailSuccessTimerRef.current)
+    }
+  }, [])
 
   // Team members
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([])
@@ -573,12 +1133,31 @@ export default function TeamPage() {
   const [inviteLoading, setInviteLoading] = useState(false)
   const [inviteError, setInviteError] = useState('')
   const [inviteSuccess, setInviteSuccess] = useState('')
+  const [inviteSuccessToast, setInviteSuccessToast] = useState('')
+  const inviteSuccessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const cwScrollRef = useRef<HTMLDivElement | null>(null)
+  const roleScrollRefs = useRef<(HTMLDivElement | null)[]>([])
   const [memberImportOpen, setMemberImportOpen] = useState(false)
   const [memberImportRows, setMemberImportRows] = useState<MemberImportPreview[]>([])
   const [memberImportLoading, setMemberImportLoading] = useState(false)
   const [memberImportError, setMemberImportError] = useState('')
   const [memberImportResult, setMemberImportResult] = useState('')
   const [inviteTab, setInviteTab] = useState<'manual' | 'import'>('manual')
+  const [teamViewTab, setTeamViewTab] = useState<'all' | 'org'>('all')
+  const tabBarRef = useRef<HTMLDivElement>(null)
+  const tabButtonRefs = useRef<Record<'all' | 'org', HTMLButtonElement | null>>({ all: null, org: null })
+  const [tabIndicator, setTabIndicator] = useState({ left: 0, width: 0, opacity: 0 })
+  const [departmentModal, setDepartmentModal] = useState<'edit' | null>(null)
+  const [activeDepartment, setActiveDepartment] = useState<Department | null>(null)
+  const [departmentNameInput, setDepartmentNameInput] = useState('')
+  const [departmentActionLoading, setDepartmentActionLoading] = useState(false)
+  const [departmentActionError, setDepartmentActionError] = useState('')
+  const [departmentManagerLoading, setDepartmentManagerLoading] = useState(false)
+  const [departmentManagerAssignments, setDepartmentManagerAssignments] = useState<{ department_id: string; manager_id: string; manager_name: string }[]>([])
+  const [departmentManagerSelectedId, setDepartmentManagerSelectedId] = useState('')
+  const [departmentManagerActionLoading, setDepartmentManagerActionLoading] = useState(false)
+  const [departmentManagerRemoveLoading, setDepartmentManagerRemoveLoading] = useState('')
+  const [departmentManagerActionError, setDepartmentManagerActionError] = useState('')
 
 
   // Current user's role (to gate Edit buttons)
@@ -612,7 +1191,47 @@ export default function TeamPage() {
 
   // Profile modal
   const [profileMember, setProfileMember] = useState<TeamMember | null>(null)
+  const [highlightDeptId, setHighlightDeptId] = useState<string | null>(null)
+  const [selectedCWPreview, setSelectedCWPreview] = useState<CWPreviewCard | null>(null)
+  const [cwDetailSuccess, setCWDetailSuccess] = useState('')
+  const cwDetailSuccessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null)
+  const [activityLogs, setActivityLogs] = useState<{ id: string; actor_id: string | null; action: string; target_name: string | null; detail: string | null; is_read: boolean; created_at: string }[]>([])
+
+  const fetchActivityLogs = useCallback(async (cid: string) => {
+    try {
+      const res = await fetch(`/api/activity-log?company_id=${cid}`)
+      const data = await res.json()
+      if (data.success) setActivityLogs(data.logs)
+    } catch {}
+  }, [])
+
+  const companyIdRef = useRef(companyId)
+  const userIdRef = useRef(internalUserId)
+  useEffect(() => { companyIdRef.current = companyId }, [companyId])
+  useEffect(() => { userIdRef.current = internalUserId }, [internalUserId])
+
+  const logActivity = useCallback(async (action: string, target_name?: string, detail?: string) => {
+    const cid = companyIdRef.current
+    const uid = userIdRef.current
+    if (!cid || !uid) return
+    try {
+      const res = await fetch('/api/activity-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company_id: cid, actor_id: uid, action, target_name, detail }),
+      })
+      const json = await res.json()
+      console.log('[logActivity] POST result:', json, { cid, uid, action, target_name, detail })
+      fetchActivityLogs(cid)
+    } catch (e) { console.error('[logActivity] failed:', e) }
+  }, [fetchActivityLogs])
+  const [cwInactiveReasonModal, setCWInactiveReasonModal] = useState<CWPreviewCard | null>(null)
+  const [cwInactiveReason, setCWInactiveReason] = useState('')
+
+  // CW application data (resume + cover letter)
+  const [cwApplication, setCWApplication] = useState<{ resume_url: string | null; cover_letter: string | null } | null>(null)
+  const [cwApplicationLoading, setCWApplicationLoading] = useState(false)
 
   // Edit Manager modal (combined home dept + dept access)
   const [editManagerModal, setEditManagerModal] = useState<EditManagerModal>(null)
@@ -634,10 +1253,17 @@ export default function TeamPage() {
     setManagers([])
     setInviteError('')
     setInviteSuccess('')
+    setInviteSuccessToast('')
     setMemberImportRows([])
     setMemberImportError('')
     setMemberImportResult('')
     setInviteTab('manual')
+  }, [])
+
+  const showCWDetailSuccess = useCallback((message: string) => {
+    if (cwDetailSuccessTimerRef.current) clearTimeout(cwDetailSuccessTimerRef.current)
+    setCWDetailSuccess(message)
+    cwDetailSuccessTimerRef.current = setTimeout(() => setCWDetailSuccess(''), 3000)
   }, [])
 
   const closeModal = useCallback(() => {
@@ -645,11 +1271,50 @@ export default function TeamPage() {
     resetModal()
   }, [resetModal])
 
+  const handleHorizWheel = useCallback((e: React.WheelEvent<HTMLDivElement>, el: HTMLDivElement | null) => {
+    if (!el) return
+    const primaryDelta = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX
+    if (!primaryDelta) return
+    e.preventDefault()
+    el.scrollBy({ left: primaryDelta, behavior: 'auto' })
+  }, [])
+
+  const handleCwWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    handleHorizWheel(e, cwScrollRef.current)
+  }, [handleHorizWheel])
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeModal() }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [closeModal])
+
+  const openOwnerProfile = useCallback(async () => {
+    if (!internalUserId) return
+    setOwnerProfileModal(true)
+    setOwnerProfileEditing(false)
+    setOwnerProfileError('')
+    if (ownerProfile) return
+    try {
+      const res = await fetch(`/api/team/members?company_id=${companyId}`)
+      const data = await res.json()
+      if (data.success) {
+        const me = (data.members as TeamMember[]).find(m => m.id === internalUserId)
+        if (me) {
+          setOwnerProfile({ full_name: me.full_name, email_address: me.email_address, phone_number: me.phone_number, date_of_birth: me.date_of_birth, role: me.role, created_at: me.created_at, profile_photo_url: me.profile_photo_url ?? null })
+        }
+      }
+    } catch {}
+  }, [internalUserId, companyId, ownerProfile])
+
+  // Auto-populate ownerProfile from teamMembers once both are available
+  useEffect(() => {
+    if (!internalUserId || ownerProfile || teamMembers.length === 0) return
+    const me = teamMembers.find(m => m.id === internalUserId)
+    if (me) {
+      setOwnerProfile({ full_name: me.full_name, email_address: me.email_address, phone_number: me.phone_number, date_of_birth: me.date_of_birth, role: me.role, created_at: me.created_at, profile_photo_url: me.profile_photo_url ?? null })
+    }
+  }, [internalUserId, teamMembers, ownerProfile])
 
   const fetchTeamMembers = useCallback(async (cid: string) => {
     if (!cid) return
@@ -661,6 +1326,27 @@ export default function TeamPage() {
     } catch {}
     finally { setTeamLoading(false) }
   }, [])
+
+  // Realtime: auto-refresh team list when a new user joins the company
+  useEffect(() => {
+    if (!companyId) return
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    )
+    const channel = supabase
+      .channel(`team-members-${companyId}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'users',
+        filter: `company_id=eq.${companyId}`,
+      }, () => {
+        fetchTeamMembers(companyId)
+      })
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [companyId, fetchTeamMembers])
 
   const handleMemberImportFile = async (file: File | null) => {
     setMemberImportError('')
@@ -761,6 +1447,7 @@ export default function TeamPage() {
       if (storedCid) {
         setCompanyId(storedCid)
         fetchTeamMembers(storedCid)
+        fetchActivityLogs(storedCid)
         try {
           const params = new URLSearchParams({ user_id: uid, company_id: storedCid })
           const [companyRes, deptRes] = await Promise.all([
@@ -791,7 +1478,24 @@ export default function TeamPage() {
   }, [fetchTeamMembers, router])
 
   const handleEditProfile = async () => {
-    if (!editProfileName.trim()) return
+    const name = editProfileName.trim()
+    const desc = editProfileDesc.trim()
+    const postal = editProfilePostal.trim()
+    const location = editProfileLoc.trim()
+    const address = editProfileAddress.trim()
+    const industry = editProfileIndustry.trim()
+    const size = editProfileSize.trim()
+
+    if (!name) { setEditProfileError('Company name is required.'); return }
+    if (!desc) { setEditProfileError('Company description is required.'); return }
+    if (!postal) { setEditProfileError('Postal code is required.'); return }
+    if (!/^\d{6}$/.test(postal)) { setEditProfileError('Postal code must be exactly 6 digits.'); return }
+    if (!location) { setEditProfileError('Location is required.'); return }
+    if (!address) { setEditProfileError('Address is required.'); return }
+    if (!industry) { setEditProfileError('Industry is required.'); return }
+    if (size === '0') { setEditProfileError('Number of staff cannot be 0.'); return }
+    if (!size) { setEditProfileError('Number of staff is required.'); return }
+
     setEditProfileLoading(true); setEditProfileError('')
     try {
       const res = await fetch('/api/company/update-profile', {
@@ -799,13 +1503,13 @@ export default function TeamPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           company_id: companyId,
-          name: editProfileName.trim(),
-          description: editProfileDesc || null,
-          location: editProfileLoc || null,
-          address: editProfileAddress || null,
-          postal_code: editProfilePostal || null,
-          industry: editProfileIndustry === 'Other' ? (editProfileIndustryOther.trim() || null) : (editProfileIndustry || null),
-          size: editProfileSize || null,
+          name,
+          description: desc,
+          location,
+          address,
+          postal_code: postal,
+          industry: editProfileIndustry === 'Other' ? (editProfileIndustryOther.trim() || null) : (industry || null),
+          size,
           website: null,
           logo_url: null,
         }),
@@ -813,59 +1517,32 @@ export default function TeamPage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
       const savedIndustry = editProfileIndustry === 'Other' ? (editProfileIndustryOther.trim() || null) : (editProfileIndustry || null)
-      setCompanyName(editProfileName.trim())
-      setCompanyProfile({ description: editProfileDesc || null, location: editProfileLoc || null, address: editProfileAddress || null, postal_code: editProfilePostal || null, industry: savedIndustry, size: editProfileSize || null })
-      setEditProfileOpen(false)
+      setCompanyName(name)
+      setCompanyProfile({ description: desc || null, location: location || null, address: address || null, postal_code: postal || null, industry: savedIndustry, size: size || null })
+      setEditProfileClosing(true)
+      if (editProfileCloseTimerRef.current) clearTimeout(editProfileCloseTimerRef.current)
+      editProfileCloseTimerRef.current = setTimeout(() => {
+        setEditProfileOpen(false)
+        setEditProfileClosing(false)
+      }, 220)
+      if (editProfileSuccessTimerRef.current) clearTimeout(editProfileSuccessTimerRef.current)
+      setEditProfileSuccess('Company profile updated successfully.')
+      editProfileSuccessTimerRef.current = setTimeout(() => setEditProfileSuccess(''), 3000)
     } catch (err) { setEditProfileError(err instanceof Error ? err.message : 'Failed to update') }
     finally { setEditProfileLoading(false) }
   }
 
-  // When invite modal opens: fetch companies for owner (session); default to active company
+  // When invite modal opens: lock to the current company page
   useEffect(() => {
     if (!inviteOpen) return
-    let cancelled = false
-    const load = async () => {
-      let uid = localStorage.getItem('tasking_user_id')
-      if (!uid) {
-        const supabase = createBrowserClient(
-          process.env.NEXT_PUBLIC_SUPABASE_URL!,
-          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-        )
-        const { data: { session } } = await supabase.auth.getSession()
-        if (session?.user?.id) {
-          uid = session.user.id
-          localStorage.setItem('tasking_user_id', uid)
-        }
-      }
-      if (!uid || cancelled) return
-      setCompaniesLoading(true)
-      try {
-        const res = await fetch(`/api/company/my-companies?owner_id=${uid}`)
-        const data = await res.json()
-        if (cancelled || !data.success || !data.companies) return
-        setOwnedCompanies(
-          data.companies.map((c: { id: string; name: string }) => ({ id: c.id, name: c.name }))
-        )
-        const currentCid = localStorage.getItem(`tasking_company_id_${uid}`) || companyId
-        if (currentCid && data.companies.some((c: { id: string }) => c.id === currentCid)) {
-          setSelectedCompanyId(currentCid)
-        } else if (data.companies.length === 1) {
-          setSelectedCompanyId(data.companies[0].id)
-        }
-      } catch {}
-      finally {
-        if (!cancelled) setCompaniesLoading(false)
-      }
-    }
-    void load()
-    return () => { cancelled = true }
+    setSelectedCompanyId(companyId)
   }, [inviteOpen, companyId])
 
 
   const openInviteModal = () => {
+    setSelectedCompanyId(companyId)
     if (currentUserRole === 'Manager') {
       setInviteRole('Employee')
-      setSelectedCompanyId(companyId)
       setInviteDeptId(userDeptId)
       if (companyId && userDeptId) fetchManagers(companyId, userDeptId)
     }
@@ -913,9 +1590,8 @@ export default function TeamPage() {
     setDepartments([])
     setManagers([])
     setInviteManagerId('')
-    // Preserve auto-selected company; fetch depts if the new role requires it
-    if (selectedCompanyId && (role === 'Manager' || role === 'Employee')) {
-      fetchDepts(selectedCompanyId)
+    if (companyId && (role === 'Manager' || role === 'Employee')) {
+      fetchDepts(companyId)
     }
   }
 
@@ -929,15 +1605,21 @@ export default function TeamPage() {
   }
 
   const noManagersInDept = inviteRole === 'Employee' && !!inviteDeptId && !managersLoading && managers.length === 0
-  const showDept = (inviteRole === 'Manager' || inviteRole === 'Employee') && !!selectedCompanyId
+  const showDept = (inviteRole === 'Manager' || inviteRole === 'Employee') && !!companyId
   const showReportingManager = inviteRole === 'Employee' && !!inviteDeptId
 
   const handleSendInvite = async () => {
-    if (!inviteEmail || !inviteRole) {
+    const email = inviteEmail.trim()
+
+    if (!email || !inviteRole) {
       setInviteError('Email and role are required.')
       return
     }
-    if (ownerEmail && inviteEmail.toLowerCase() === ownerEmail.toLowerCase()) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setInviteError('Please enter a valid email address (e.g. you@company.com).')
+      return
+    }
+    if (ownerEmail && email.toLowerCase() === ownerEmail.toLowerCase()) {
       setInviteError('You cannot send an invitation to yourself.')
       return
     }
@@ -956,7 +1638,7 @@ export default function TeamPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: inviteEmail,
+          email,
           role: inviteRole,
           company_id: selectedCompanyId,
           department_id: inviteRole === 'partner' ? null : (inviteDeptId || null),
@@ -966,7 +1648,11 @@ export default function TeamPage() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
-      setInviteSuccess(`Invitation sent to ${inviteEmail}`)
+      if (inviteSuccessTimerRef.current) clearTimeout(inviteSuccessTimerRef.current)
+      setInviteSuccess(`Invitation sent to ${email}`)
+      setInviteSuccessToast('Invitation sent successfully.')
+      inviteSuccessTimerRef.current = setTimeout(() => setInviteSuccessToast(''), 3000)
+      logActivity('invite_member', email, inviteRole)
     } catch (err) {
       setInviteError(err instanceof Error ? err.message : 'Something went wrong')
     } finally {
@@ -1012,8 +1698,12 @@ export default function TeamPage() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
+      const removedName = removeModal.full_name
+      const removedRole = removeModal.role
       setRemoveModal(null)
       fetchTeamMembers(companyId)
+      showCWDetailSuccess(`${removedName} has been removed from the team.`)
+      logActivity('remove_member', removedName, removedRole)
     } catch (err) {
       setRemoveError(err instanceof Error ? err.message : 'Failed to remove member')
     } finally {
@@ -1159,6 +1849,177 @@ export default function TeamPage() {
     }
   }
 
+  const openEditDepartment = (department: Department) => {
+    setDepartmentModal('edit')
+    setActiveDepartment(department)
+    setDepartmentNameInput(department.name)
+    setDepartmentActionError('')
+    setDepartmentManagerActionError('')
+    setDepartmentManagerSelectedId('')
+    setDepartmentManagerLoading(true)
+    void (async () => {
+      if (!companyId) {
+        setDepartmentManagerLoading(false)
+        return
+      }
+      try {
+        const res = await fetch(`/api/team/department-manager?company_id=${companyId}`)
+        const data = await res.json()
+        if (data.success) {
+          const assignments = data.assignments ?? []
+          setDepartmentManagerAssignments(assignments)
+          setDepartmentManagerSelectedId(assignments.find((a: { department_id: string; manager_id: string }) => a.department_id === department.id)?.manager_id ?? '')
+        }
+      } catch {}
+      finally {
+        setDepartmentManagerLoading(false)
+      }
+    })()
+  }
+
+  const handleSaveDepartment = async () => {
+    if (!companyId || !activeDepartment) return
+    const name = departmentNameInput.trim()
+    if (!name) {
+      setDepartmentActionError('Department name is required.')
+      return
+    }
+    setDepartmentActionLoading(true)
+    setDepartmentActionError('')
+    setDepartmentManagerActionError('')
+    try {
+      const res = await fetch('/api/company/update-department', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ department_id: activeDepartment.id, name }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to save department')
+
+      const currentManagerId = departmentManagerAssignments.find(a => a.department_id === activeDepartment.id)?.manager_id ?? ''
+      if (departmentManagerSelectedId !== currentManagerId) {
+        if (departmentManagerSelectedId) {
+          const assignRes = await fetch('/api/team/department-manager', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              company_id: companyId,
+              department_id: activeDepartment.id,
+              manager_id: departmentManagerSelectedId,
+              assigned_by: internalUserId,
+            }),
+          })
+          const assignData = await assignRes.json()
+          if (!assignData.success) throw new Error(assignData.message || 'Failed to assign manager')
+        }
+      }
+
+      setDepartmentModal(null)
+      setActiveDepartment(null)
+      await Promise.all([fetchTeamMembers(companyId), (async () => {
+        const deptRes = await fetch(`/api/company/departments?company_id=${companyId}`)
+        const deptData = await deptRes.json()
+        if (deptData.success) setCompanyDepartments(deptData.departments)
+      })()])
+    } catch (err) {
+      setDepartmentActionError(err instanceof Error ? err.message : 'Failed to save department')
+    } finally {
+      setDepartmentActionLoading(false)
+    }
+  }
+
+  const handleDeleteDepartment = async () => {
+    if (!companyId || !activeDepartment) return
+    setDepartmentActionLoading(true)
+    setDepartmentActionError('')
+    try {
+      const res = await fetch('/api/company/delete-department', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ department_id: activeDepartment.id }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to delete department')
+      setDepartmentModal(null)
+      setActiveDepartment(null)
+      await Promise.all([
+        fetchTeamMembers(companyId),
+        (async () => {
+          const deptRes = await fetch(`/api/company/departments?company_id=${companyId}`)
+          const deptData = await deptRes.json()
+          if (deptData.success) setCompanyDepartments(deptData.departments)
+        })(),
+      ])
+    } catch (err) {
+      setDepartmentActionError(err instanceof Error ? err.message : 'Failed to delete department')
+    } finally {
+      setDepartmentActionLoading(false)
+    }
+  }
+
+  const handleAssignDepartmentManager = async () => {
+    if (!companyId || !internalUserId || !activeDepartment || !departmentManagerSelectedId) return
+    setDepartmentManagerActionLoading(true)
+    setDepartmentManagerActionError('')
+    try {
+      const res = await fetch('/api/team/department-manager', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          company_id: companyId,
+          department_id: activeDepartment.id,
+          manager_id: departmentManagerSelectedId,
+          assigned_by: internalUserId,
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to assign manager')
+      setDepartmentManagerSelectedId('')
+      await Promise.all([
+        fetchTeamMembers(companyId),
+        (async () => {
+          const res2 = await fetch(`/api/team/department-manager?company_id=${companyId}`)
+          const data2 = await res2.json()
+          if (data2.success) setDepartmentManagerAssignments(data2.assignments ?? [])
+        })(),
+      ])
+    } catch (err) {
+      setDepartmentManagerActionError(err instanceof Error ? err.message : 'Failed to assign manager')
+    } finally {
+      setDepartmentManagerActionLoading(false)
+    }
+  }
+
+  const handleRemoveDepartmentManager = async (managerId: string) => {
+    if (!activeDepartment) return
+    setDepartmentManagerRemoveLoading(managerId)
+    setDepartmentManagerActionError('')
+    try {
+      const res = await fetch('/api/team/department-manager', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          manager_id: managerId,
+          department_id: activeDepartment.id,
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to remove manager')
+      await Promise.all([
+        fetchTeamMembers(companyId),
+        (async () => {
+          const res2 = await fetch(`/api/team/department-manager?company_id=${companyId}`)
+          const data2 = await res2.json()
+          if (data2.success) setDepartmentManagerAssignments(data2.assignments ?? [])
+        })(),
+      ])
+    } catch (err) {
+      setDepartmentManagerActionError(err instanceof Error ? err.message : 'Failed to remove manager')
+    } finally {
+      setDepartmentManagerRemoveLoading('')
+    }
+  }
+
   const isCreator = !!internalUserId && !!companyOwnerId && internalUserId === companyOwnerId
 
   const canRemove = (member: TeamMember): boolean => {
@@ -1170,7 +2031,10 @@ export default function TeamPage() {
     return false
   }
 
-  const sendDisabled = inviteLoading || !!noManagersInDept ||
+  const sendDisabled = inviteLoading ||
+    !inviteEmail.trim() ||
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(inviteEmail.trim()) ||
+    !inviteRole ||
     ((inviteRole === 'Manager' || inviteRole === 'Employee') && !inviteDeptId)
 
   const partnerCount      = teamMembers.filter(m => m.role === 'Partner').length
@@ -1178,6 +2042,39 @@ export default function TeamPage() {
   const employeeCount     = teamMembers.filter(m => m.role === 'Employee').length
   const casualWorkerCount = teamMembers.filter(m => m.role === 'Casual Worker').length
   const totalInternal     = managerCount + employeeCount
+
+  useLayoutEffect(() => {
+    const container = tabBarRef.current
+    const activeButton = tabButtonRefs.current[teamViewTab]
+    if (!container || !activeButton) return
+
+    const containerRect = container.getBoundingClientRect()
+    const activeRect = activeButton.getBoundingClientRect()
+    setTabIndicator({
+      left: activeRect.left - containerRect.left,
+      width: activeRect.width,
+      opacity: 1,
+    })
+  }, [teamViewTab])
+
+  useEffect(() => {
+    const updateIndicator = () => {
+      const container = tabBarRef.current
+      const activeButton = tabButtonRefs.current[teamViewTab]
+      if (!container || !activeButton) return
+
+      const containerRect = container.getBoundingClientRect()
+      const activeRect = activeButton.getBoundingClientRect()
+      setTabIndicator({
+        left: activeRect.left - containerRect.left,
+        width: activeRect.width,
+        opacity: 1,
+      })
+    }
+
+    window.addEventListener('resize', updateIndicator)
+    return () => window.removeEventListener('resize', updateIndicator)
+  }, [teamViewTab])
 
   function timeAgo(ts: string): string {
     const diff = Math.floor((Date.now() - new Date(ts).getTime()) / 1000)
@@ -1190,6 +2087,11 @@ export default function TeamPage() {
   return (
     <div style={{ display: 'flex', height: '100vh', background: '#F1F5F9', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
       <style>{`
+        ${teamTabKeyframes}
+        @keyframes memberFadeIn {
+          from { opacity: 0; transform: translateY(8px) scale(0.97); }
+          to   { opacity: 1; transform: translateY(0) scale(1); }
+        }
         @keyframes fadeSlideUp {
           from { opacity: 0; transform: translateY(16px); }
           to   { opacity: 1; transform: translateY(0); }
@@ -1251,6 +2153,53 @@ export default function TeamPage() {
           transform: translateY(-2px) scale(1.02) !important;
           z-index: 10;
         }
+        .cw-preview-card {
+          flex: 0 0 110px !important;
+          width: 110px !important;
+          min-width: 110px !important;
+          max-width: 110px !important;
+          animation: cardStagger 0.32s ease both;
+        }
+        .cw-preview-card:nth-child(1)  { animation-delay: 0.12s; }
+        .cw-preview-card:nth-child(2)  { animation-delay: 0.18s; }
+        .cw-preview-card:nth-child(3)  { animation-delay: 0.24s; }
+        .cw-preview-card:nth-child(4)  { animation-delay: 0.30s; }
+        .cw-preview-card:nth-child(5)  { animation-delay: 0.36s; }
+        .cw-preview-card:nth-child(6)  { animation-delay: 0.42s; }
+        .cw-preview-card:nth-child(n+7){ animation-delay: 0.48s; }
+        .cw-preview-card:hover {
+          box-shadow: 0 8px 18px rgba(15,23,42,0.08) !important;
+          transform: translateY(-2px) scale(1.01) !important;
+          z-index: 2;
+          position: relative;
+        }
+        .role-group-card {
+          transition: box-shadow 0.22s ease, border-color 0.22s ease, transform 0.22s ease;
+        }
+        .role-group-card:hover {
+          box-shadow: 0 8px 18px rgba(15,23,42,0.08) !important;
+          transform: translateY(-2px) !important;
+        }
+        .internal-member-card {
+          flex: 0 0 110px !important;
+          width: 110px !important;
+          min-width: 110px !important;
+          max-width: 110px !important;
+          animation: cardStagger 0.32s ease both;
+        }
+        .internal-member-card:nth-child(1)  { animation-delay: 0.20s; }
+        .internal-member-card:nth-child(2)  { animation-delay: 0.26s; }
+        .internal-member-card:nth-child(3)  { animation-delay: 0.32s; }
+        .internal-member-card:nth-child(4)  { animation-delay: 0.38s; }
+        .internal-member-card:nth-child(5)  { animation-delay: 0.44s; }
+        .internal-member-card:nth-child(6)  { animation-delay: 0.50s; }
+        .internal-member-card:nth-child(n+7){ animation-delay: 0.56s; }
+        .internal-member-card:hover {
+          box-shadow: 0 8px 18px rgba(15,23,42,0.08) !important;
+          transform: translateY(-2px) scale(1.01) !important;
+          z-index: 2;
+          position: relative;
+        }
       `}</style>
       <OwnerSidebar />
 
@@ -1265,247 +2214,606 @@ export default function TeamPage() {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {ownerName && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: '#fff', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
-                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: '#0F172A', color: '#FFFFFF', flexShrink: 0 }}>
-                  <Crown size={13} />
-                </span>
+              <button
+                onClick={openOwnerProfile}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: '#fff', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', cursor: 'pointer', transition: 'border-color 0.15s, box-shadow 0.15s' }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = '#F97316'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(249,115,22,0.15)' }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.boxShadow = '0 1px 4px rgba(0,0,0,0.06)' }}
+              >
+                {ownerProfile?.profile_photo_url ? (
+                  <img src={ownerProfile.profile_photo_url} alt={ownerName} style={{ width: 26, height: 26, borderRadius: 999, objectFit: 'cover', flexShrink: 0 }} />
+                ) : (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: '#0F172A', color: '#FFFFFF', flexShrink: 0 }}>
+                    <Crown size={13} />
+                  </span>
+                )}
                 <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{ownerName}</span>
-              </div>
+              </button>
             )}
             {companyId && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
           </div>
         </div>
 
-        <div style={{ padding: '16px 28px 28px', flex: 1, display: 'flex', flexDirection: 'column', gap: 0 }}>
+        <div style={{ padding: '16px 28px 28px', display: 'flex', flexDirection: 'column', gap: 0 }}>
 
-          {/* ── Stat cards ─────────────────────────────────────────────────── */}
-          {companyId && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 14, marginBottom: 24 }}>
-              {[
-                {
-                  label: 'Total Staff',
-                  value: teamLoading ? null : totalInternal,
-                  icon: <Users size={16} style={{ color: '#F97316' }} />,
-                  accentBg: '#FFF7ED',
-                },
-                {
-                  label: 'Departments',
-                  value: teamLoading ? null : companyDepartments.length,
-                  icon: <Building2 size={16} style={{ color: '#3B82F6' }} />,
-                  accentBg: '#EFF6FF',
-                },
-                {
-                  label: 'Managers',
-                  value: teamLoading ? null : managerCount,
-                  icon: <UserCog size={16} style={{ color: '#EA580C' }} />,
-                  accentBg: '#FFF7ED',
-                },
-                {
-                  label: 'Employees',
-                  value: teamLoading ? null : employeeCount,
-                  icon: <UserRound size={16} style={{ color: '#6B7280' }} />,
-                  accentBg: '#F3F4F6',
-                },
-                {
-                  label: 'Casual Workers',
-                  value: teamLoading ? null : casualWorkerCount,
-                  icon: <HardHat size={16} style={{ color: '#2563EB' }} />,
-                  accentBg: '#EFF6FF',
-                },
-              ].map(card => (
-                <article key={card.label} className="team-stat-card" style={{
-                  background: '#fff',
-                  borderRadius: 16,
-                  padding: '16px 18px',
-                  boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 10,
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <p style={{ fontSize: 11, fontWeight: 600, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.07em', margin: 0 }}>{card.label}</p>
-                    <div className="stat-icon" style={{ width: 32, height: 32, borderRadius: 10, background: card.accentBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                      {card.icon}
-                    </div>
-                  </div>
-                  <p style={{ fontSize: 28, fontWeight: 800, color: '#0F172A', lineHeight: 1, margin: 0, letterSpacing: '-0.5px' }}>
-                    {card.value === null ? <Spinner size={14} dark /> : <AnimatedNumber value={card.value} />}
-                  </p>
-                </article>
-              ))}
-            </div>
-          )}
-
-          {/* Partners badge row (if any) */}
-          {partnerCount > 0 && (
-            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 20, padding: '10px 16px', background: '#0F172A', borderRadius: 12, boxShadow: '0 1px 4px rgba(0,0,0,0.12)', animation: 'fadeSlideUp 0.4s ease both 0.28s', width: 'fit-content' }}>
-              <Crown size={14} style={{ color: '#F97316', flexShrink: 0 }} />
-              <span style={{ fontSize: 13, fontWeight: 700, color: '#FFFFFF' }}>
-                {partnerCount} Partner{partnerCount !== 1 ? 's' : ''} in this company
-              </span>
-            </div>
-          )}
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-
-          {/* ── COMPANY PROFILE CARD ──────────────────────────────────────────── */}
-          <div className="team-panel-card" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '20px 24px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
-            {/* Title row */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-              <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <Building2 size={15} style={{ color: '#F97316' }} />
-              </div>
-              <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>My Company</span>
-            </div>
-            {/* Loading skeleton or real content */}
-            {!companyName ? (
-              <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-                <div className="skeleton-line" style={{ height: 18, width: '40%' }} />
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <div className="skeleton-line" style={{ height: 32, width: 60, borderRadius: 8 }} />
-                  <div className="skeleton-line" style={{ height: 32, width: 72, borderRadius: 8 }} />
-                </div>
-              </div>
-            ) : (
-              <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-                <span style={{ fontSize: '0.9375rem', fontWeight: 600, color: '#111827' }}>{companyName}</span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                  {isCreator && (
-                    <button
-                      onClick={() => {
-                        setEditProfileName(companyName)
-                        setEditProfileDesc(companyProfile?.description ?? '')
-                        setEditProfileLoc(companyProfile?.location ?? '')
-                        setEditProfileAddress(companyProfile?.address ?? '')
-                        setEditProfilePostal(companyProfile?.postal_code ?? '')
-                        const savedIndustry = companyProfile?.industry ?? ''
-                        const knownIndustries = ['Retail', 'F&B', 'Logistics', 'Event Management', 'Healthcare', 'Education', 'Technology', 'Finance', 'Construction', 'Hospitality', 'Manufacturing', 'Other']
-                        if (savedIndustry && !knownIndustries.includes(savedIndustry)) {
-                          setEditProfileIndustry('Other')
-                          setEditProfileIndustryOther(savedIndustry)
-                        } else {
-                          setEditProfileIndustry(savedIndustry)
-                          setEditProfileIndustryOther('')
-                        }
-                        setEditProfileSize(companyProfile?.size ?? '')
-                        setEditProfileError('')
-                        setEditProfileOpen(true)
-                      }}
-                      style={{ padding: '7px 14px', border: '1.5px solid #E5E7EB', borderRadius: '8px', background: 'none', fontWeight: 600, fontSize: '0.875rem', color: '#374151', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                      onMouseEnter={e => { e.currentTarget.style.borderColor = '#9CA3AF' }}
-                      onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
-                    >
-                      Edit
-                    </button>
-                  )}
-                  <button
-                    onClick={() => { setInviteTab('manual'); openInviteModal() }}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '7px 13px', border: 'none', borderRadius: '8px', background: '#F97316', fontWeight: 700, fontSize: '0.875rem', color: '#FFFFFF', cursor: 'pointer', whiteSpace: 'nowrap' }}
-                    onMouseEnter={e => { e.currentTarget.style.background = '#EA6C0A' }}
-                    onMouseLeave={e => { e.currentTarget.style.background = '#F97316' }}
-                  >
-                    <Plus size={14} strokeWidth={2.5} /> Invite
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* ── ORG CHART ─────────────────────────────────────────────────────── */}
-          <div className="team-panel-card" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 28 }}>
-              <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <Network size={15} style={{ color: '#F97316' }} />
-              </div>
-              <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>Organisation Chart</span>
-            </div>
-
-            {teamLoading ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#9CA3AF', fontSize: '0.9375rem' }}>
-                <Spinner size={16} dark /> Loading…
-              </div>
-            ) : (
-              <OrgChartTree
-                topMembers={teamMembers.filter(m => m.role === 'Owner' || m.role === 'Partner')}
-                departments={companyDepartments}
-                teamMembers={teamMembers}
-                onMemberClick={(m) => setProfileMember(m)}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', marginBottom: 20 }}>
+            <div
+              ref={tabBarRef}
+              style={{
+                position: 'relative',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: 4,
+                background: '#FFFFFF',
+                border: '1px solid #E5E7EB',
+                borderRadius: 999,
+                boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
+                overflow: 'hidden',
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  position: 'absolute',
+                  top: 4,
+                  left: tabIndicator.left,
+                  width: tabIndicator.width,
+                  height: 'calc(100% - 8px)',
+                  borderRadius: 999,
+                  background: 'linear-gradient(180deg, #0F172A 0%, #111827 100%)',
+                  boxShadow: '0 6px 18px rgba(15,23,42,0.18)',
+                  opacity: tabIndicator.opacity,
+                  transform: tabIndicator.opacity ? 'translateY(0)' : 'translateY(4px)',
+                  transition: 'left 0.24s cubic-bezier(0.22, 1, 0.36, 1), width 0.24s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.16s ease, transform 0.24s cubic-bezier(0.22, 1, 0.36, 1)',
+                  pointerEvents: 'none',
+                }}
               />
-            )}
+              {([ 
+                { id: 'all' as const, label: 'All Members' },
+                { id: 'org' as const, label: 'Organization Chart' },
+              ]).map(tab => {
+                const active = teamViewTab === tab.id
+                return (
+                  <button
+                    key={tab.id}
+                    ref={el => { tabButtonRefs.current[tab.id] = el }}
+                    type="button"
+                    onClick={() => setTeamViewTab(tab.id)}
+                    style={{
+                      position: 'relative',
+                      zIndex: 1,
+                      height: 36,
+                      padding: '0 18px',
+                      borderRadius: 999,
+                      border: 'none',
+                      background: 'transparent',
+                      color: active ? '#FFFFFF' : '#64748B',
+                      fontSize: 13,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      boxShadow: 'none',
+                      transition: 'color 0.18s ease, transform 0.18s ease',
+                      transform: active ? 'translateY(-0.5px)' : 'translateY(0)',
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                )
+              })}
+            </div>
           </div>
 
-          {/* ── CASUAL WORKERS ────────────────────────────────────────────────── */}
-          {(() => {
-            const casualWorkers = teamMembers.filter(m => m.role === 'Casual Worker')
-            return (
-              <div className="team-panel-card" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
-                  <div style={{ width: 30, height: 30, borderRadius: 9, background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <HardHat size={15} style={{ color: '#2563EB' }} />
-                  </div>
-                  <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', flex: 1 }}>Casual Workers</span>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: '#2563EB', background: '#EFF6FF', padding: '2px 10px', borderRadius: 99 }}>
-                    {teamLoading ? '—' : casualWorkers.length}
-                  </span>
-                </div>
+          <div key={teamViewTab} style={{ animation: 'teamTabContentIn 0.24s ease-out both' }}>
+          {teamViewTab === 'all' && (() => {
+            const casualWorkers = teamMembers
+              .filter(m => m.role === 'Casual Worker')
+              .sort((a, b) => {
+                const aActive = (a.worker_status ?? 'active') === 'active' ? 0 : 1
+                const bActive = (b.worker_status ?? 'active') === 'active' ? 0 : 1
+                return aActive - bActive
+              })
+            const partnerMembers = teamMembers.filter(m => m.role === 'Partner')
+            const managerMembers = teamMembers.filter(m => m.role === 'Manager')
+            const employeeMembers = teamMembers.filter(m => m.role === 'Employee')
+            const sharedIconColor = '#F97316'
+            const roleGroups = [
+              {
+                label: 'Partner',
+                icon: <Crown size={15} style={{ color: sharedIconColor }} />,
+                members: partnerMembers,
+                emptyText: 'No partners have joined yet',
+              },
+              {
+                label: 'Manager',
+                icon: <UserCog size={15} style={{ color: sharedIconColor }} />,
+                members: managerMembers,
+                emptyText: 'No managers have joined yet',
+              },
+              {
+                label: 'Employee',
+                icon: <UserRound size={15} style={{ color: sharedIconColor }} />,
+                members: employeeMembers,
+                emptyText: 'No employees have joined yet',
+              },
+            ] as const
+            const cwActiveCount = casualWorkers.filter(w => (w.worker_status ?? 'active') === 'active').length
+            const cwInactiveCount = casualWorkers.length - cwActiveCount
 
-                {teamLoading ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#9CA3AF', fontSize: '0.9375rem' }}>
-                    <Spinner size={16} dark /> Loading…
-                  </div>
-                ) : casualWorkers.length === 0 ? (
-                  <div style={{ padding: '20px 0', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>
-                    No casual workers have joined this company yet.
-                  </div>
-                ) : (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
-                    {casualWorkers.map(worker => {
-                      const deptName = worker.department_id
-                        ? companyDepartments.find(d => d.id === worker.department_id)?.name ?? null
-                        : null
-                      const status = worker.worker_status ?? 'active'
-                      const statusColors: Record<string, { bg: string; text: string }> = {
-                        active:   { bg: '#ECFDF5', text: '#047857' },
-                        inactive: { bg: '#F3F4F6', text: '#4B5563' },
-                        blocked:  { bg: '#FEF2F2', text: '#B91C1C' },
-                      }
-                      const sc = statusColors[status] ?? statusColors.active
-                      return (
+            return (
+              <div style={{ display: 'flex', gap: 18, alignItems: 'stretch' }}>
+                <div style={{ flex: '0 0 500px', width: 500, display: 'flex', flexDirection: 'column', gap: 18 }}>
+                    <div className="team-panel-card all-block-company" style={{ minHeight: 0, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '20px 24px 14px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', maxWidth: 500, display: 'flex', flexDirection: 'column' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 18 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                        <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                          <Building2 size={15} style={{ color: '#F97316' }} />
+                        </div>
+                        <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', display: 'block' }}>
+                          {companyName || 'Company Name'}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                        {isCreator && (
+                          <button
+                            onClick={() => {
+                              setEditProfileName(companyName)
+                              setEditProfileDesc(companyProfile?.description ?? '')
+                              setEditProfileLoc(companyProfile?.location ?? '')
+                              setEditProfileAddress(companyProfile?.address ?? '')
+                              setEditProfilePostal(companyProfile?.postal_code ?? '')
+                              setEditProfileIndustry(companyProfile?.industry ?? '')
+                              setEditProfileIndustryOther('')
+                              setEditProfileSize(companyProfile?.size ?? '')
+                              setEditProfileError('')
+                              setEditProfileOpen(true)
+                            }}
+                            style={{ padding: '7px 14px', border: '1.5px solid #E5E7EB', borderRadius: '8px', background: 'none', fontWeight: 600, fontSize: '0.875rem', color: '#374151', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                            onMouseEnter={e => { e.currentTarget.style.borderColor = '#9CA3AF' }}
+                            onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
+                          >
+                            Edit
+                          </button>
+                        )}
                         <button
-                          key={worker.id}
-                          onClick={() => setProfileMember(worker)}
-                          style={{
-                            display: 'flex', alignItems: 'center', gap: 12,
-                            padding: '12px 14px', borderRadius: 12,
-                            border: '1.5px solid #DBEAFE', background: '#F8FBFF',
-                            cursor: 'pointer', textAlign: 'left',
-                            boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-                            transition: 'box-shadow 0.15s',
-                          }}
-                          onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 3px 10px rgba(37,99,235,0.12)' }}
-                          onMouseLeave={e => { e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)' }}
+                          onClick={() => { setInviteTab('manual'); openInviteModal() }}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '7px 13px', border: 'none', borderRadius: '8px', background: '#F97316', fontWeight: 700, fontSize: '0.875rem', color: '#FFFFFF', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                          onMouseEnter={e => { e.currentTarget.style.background = '#EA6C0A' }}
+                          onMouseLeave={e => { e.currentTarget.style.background = '#F97316' }}
                         >
-                          <RoleAvatar role="Casual Worker" size={36} />
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{worker.full_name}</p>
-                            <p style={{ fontSize: '0.75rem', color: '#6B7280', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {deptName ?? worker.email_address}
+                          <Plus size={14} strokeWidth={2.5} /> Invite
+                        </button>
+                      </div>
+                    </div>
+
+                    {!companyName ? (
+                      <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                        <div className="skeleton-line" style={{ height: 18, width: '40%' }} />
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <div className="skeleton-line" style={{ height: 32, width: 60, borderRadius: 8 }} />
+                          <div className="skeleton-line" style={{ height: 32, width: 72, borderRadius: 8 }} />
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                        <div style={{ borderTop: '1px solid #E5E7EB', marginTop: 2 }} />
+
+                        {[
+                          { label: 'Industry', value: companyProfile?.industry?.trim() || '—', icon: <BriefcaseBusiness size={13} strokeWidth={2.2} /> },
+                          { label: 'Number of Staff', value: companyProfile?.size?.trim() || '—', icon: <UsersRound size={13} strokeWidth={2.2} /> },
+                          { label: 'Address', value: companyProfile?.address?.trim() || '—', icon: <MapPinned size={13} strokeWidth={2.2} /> },
+                          { label: 'Description', value: companyProfile?.description?.trim() || '—', icon: <FileText size={13} strokeWidth={2.2} /> },
+                        ].map((field) => (
+                          <div key={field.label} style={{ padding: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '0 0 6px' }}>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: 6, background: 'transparent', color: '#374151', flexShrink: 0 }}>
+                                {field.icon}
+                              </span>
+                              <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#374151', margin: 0 }}>
+                                {field.label}
+                              </p>
+                            </div>
+                            <p style={{ fontWeight: 500, fontSize: '0.9375rem', color: '#111827', margin: 0, lineHeight: 1.45 }}>
+                              {field.value}
                             </p>
                           </div>
-                          <span style={{ background: sc.bg, color: sc.text, borderRadius: 999, padding: '2px 8px', fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', flexShrink: 0 }}>
-                            {status}
-                          </span>
-                        </button>
-                      )
-                    })}
+                        ))}
+                        <div style={{ height: 0 }} />
+                      </div>
+                    )}
                   </div>
-                )}
+
+                  {/* Activity Log block */}
+                  {(() => {
+                    const unreadCount = activityLogs.filter(l => !l.is_read).length
+                    const handleMarkAllRead = async () => {
+                      if (!companyId) return
+                      await fetch('/api/activity-log/mark-read', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ company_id: companyId }),
+                      })
+                      setActivityLogs(prev => prev.map(l => ({ ...l, is_read: true })))
+                    }
+                    return (
+                  <div className="all-block-activity" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, padding: '18px 24px 20px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                          <FileText size={15} style={{ color: '#F97316' }} />
+                        </div>
+                        <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Activity Log</span>
+                      </div>
+                      {unreadCount > 0 && (
+                        <button
+                          onClick={handleMarkAllRead}
+                          style={{ fontSize: '0.875rem', fontWeight: 700, color: '#F97316', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                        >
+                          Mark all read
+                        </button>
+                      )}
+                    </div>
+                    <div style={{ borderTop: '1px solid #E5E7EB', marginBottom: 14 }} />
+                    {activityLogs.length === 0 ? (
+                      <p style={{ fontSize: 13, color: '#94A3B8', margin: 0, textAlign: 'center', padding: '16px 0' }}>No activity yet</p>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', maxHeight: 224, overflowY: 'auto' }}>
+                        {activityLogs.map((log, i) => {
+                          const actionVerb: Record<string, string> = {
+                            invite_member: 'invited',
+                            remove_member: 'removed',
+                            set_active:    'activated',
+                            set_inactive:  'inactivated',
+                          }
+                          const actionIcon: Record<string, React.ReactNode> = {
+                            invite_member: <div style={{ width: 26, height: 26, borderRadius: 7, background: '#DCFCE7', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><UserPlus size={13} style={{ color: '#16A34A' }} /></div>,
+                            remove_member: <div style={{ width: 26, height: 26, borderRadius: 7, background: '#FEE2E2', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Trash2 size={13} style={{ color: '#DC2626' }} /></div>,
+                            set_active:    <div style={{ width: 26, height: 26, borderRadius: 7, background: '#DCFCE7', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Check size={13} style={{ color: '#16A34A' }} /></div>,
+                            set_inactive:  <div style={{ width: 26, height: 26, borderRadius: 7, background: '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><X size={13} style={{ color: '#64748B' }} /></div>,
+                          }
+                          const verb = actionVerb[log.action] ?? log.action
+                          const icon = actionIcon[log.action] ?? <div style={{ width: 26, height: 26, borderRadius: 7, background: '#F1F5F9', flexShrink: 0 }} />
+                          const actor = teamMembers.find(m => m.id === log.actor_id)?.full_name ?? 'Unknown'
+                          const date = new Date(log.created_at)
+                          const timeStr = date.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })
+                          return (
+                            <div key={log.id} className="log-row-item" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: i < activityLogs.length - 1 ? '1px solid #F3F4F6' : 'none', animationDelay: `${0.22 + i * 0.06}s` }}>
+                              <div style={{ position: 'relative', flexShrink: 0 }}>
+                                {icon}
+                                {!log.is_read && (
+                                  <span style={{ position: 'absolute', top: -2, right: -2, width: 7, height: 7, borderRadius: 999, background: '#F97316', border: '1.5px solid #fff' }} />
+                                )}
+                              </div>
+                              <div>
+                                <p style={{ fontSize: 13, color: '#0F172A', margin: 0, lineHeight: 1.5 }}>
+                                  <span style={{ fontWeight: 600 }}>{actor}</span>
+                                  {' '}{verb}{' '}
+                                  <span style={{ fontWeight: 600 }}>{log.target_name ?? '—'}</span>
+                                </p>
+                                <p style={{ fontSize: 11, color: '#94A3B8', margin: '2px 0 0', fontWeight: 500 }}>{timeStr}</p>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                    )
+                  })()}
+
+                  {/* Departments block */}
+                  <div className="all-block-dept" style={{ flex: 1, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, padding: '18px 24px 20px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                      <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <Network size={15} style={{ color: '#F97316' }} />
+                      </div>
+                      <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Departments</span>
+                    </div>
+                    <div style={{ borderTop: '1px solid #E5E7EB', marginBottom: 14 }} />
+                    {companyDepartments.length === 0 ? (
+                      <p style={{ fontSize: 13, color: '#94A3B8', margin: 0, textAlign: 'center', padding: '16px 0' }}>No departments yet</p>
+                    ) : (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                        {companyDepartments.map(dept => {
+                          const mgrCount = teamMembers.filter(m => m.role === 'Manager' && m.department_id === dept.id).length
+                          const empCount = teamMembers.filter(m => m.role === 'Employee' && m.department_id === dept.id).length
+                          return (
+                          <div
+                            key={dept.id}
+                            onClick={() => setHighlightDeptId(prev => prev === dept.id ? null : dept.id)}
+                            className="dept-card-item"
+                            style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '10px 12px', background: highlightDeptId === dept.id ? '#FFF7ED' : '#F9FAFB', border: `1px solid ${highlightDeptId === dept.id ? '#F97316' : '#E5E7EB'}`, borderRadius: 10, cursor: 'pointer', transition: 'border-color 0.15s, background 0.15s', animationDelay: `${0.28 + companyDepartments.indexOf(dept) * 0.07}s` }}
+                          >
+                            <div>
+                              <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>{dept.name}</span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 22, height: 22, borderRadius: 999, background: '#FFF7ED', color: '#EA580C', flexShrink: 0 }}>
+                                    <UserCog size={11} />
+                                  </span>
+                                  <span style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>{mgrCount}</span>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 22, height: 22, borderRadius: 999, background: '#F3F4F6', color: '#4B5563', flexShrink: 0 }}>
+                                    <UserRound size={11} />
+                                  </span>
+                                  <span style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>{empCount}</span>
+                                </div>
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => openEditDepartment(dept)}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', alignItems: 'center', color: '#9CA3AF', borderRadius: 6, flexShrink: 0, marginTop: 1 }}
+                              onMouseEnter={e => { e.currentTarget.style.background = '#E5E7EB'; (e.currentTarget as HTMLButtonElement).style.color = '#F97316' }}
+                              onMouseLeave={e => { e.currentTarget.style.background = 'none'; (e.currentTarget as HTMLButtonElement).style.color = '#9CA3AF' }}
+                            >
+                              <Pencil size={13} />
+                            </button>
+                          </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 18 }}>
+                    <TeamShowcaseCard
+                      className="all-block-cw"
+                      icon={<HardHat size={15} style={{ color: sharedIconColor }} />}
+                      title="Casual Workers"
+                      rightContent={<CWStatusBar activeCount={cwActiveCount} inactiveCount={cwInactiveCount} totalCount={casualWorkers.length} />}
+                    >
+                      {(() => {
+                        if (teamLoading) {
+                          return (
+                            <div style={{ display: 'flex', justifyContent: 'center', padding: '30px 0' }}>
+                              <Spinner size={16} dark />
+                            </div>
+                          )
+                        }
+
+                        if (casualWorkers.length === 0) {
+                          return (
+                            <div style={{ padding: '28px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                              <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No casual workers have joined yet</p>
+                            </div>
+                          )
+                        }
+
+                        return (
+                          <div
+                            ref={cwScrollRef}
+                            onWheel={handleCwWheel}
+                            className="cw-preview-scroll"
+                            style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 16, paddingTop: 6, marginTop: -6, paddingRight: 4, scrollBehavior: 'auto' }}
+                          >
+                            {casualWorkers.map(worker => {
+                              const rawStatus = (worker.worker_status ?? 'active').toLowerCase()
+                              const displayStatus = rawStatus === 'active' ? 'Active' : 'Inactive'
+                              return (
+                                <CasualWorkerPreviewCard
+                                  key={worker.id}
+                                  name={worker.full_name}
+                                  lastShift="—"
+                                  totalVisits={0}
+                                  status={displayStatus}
+                                  photoUrl={worker.profile_photo_url ?? null}
+                                  onClick={() => {
+                                    setSelectedCWPreview({
+                                      id: worker.id,
+                                      name: worker.full_name,
+                                      lastShift: '—',
+                                      totalVisits: 0,
+                                      status: displayStatus,
+                                      inactiveReason: worker.inactivate_reason || null,
+                                      email: worker.email_address || null,
+                                      dateOfBirth: worker.date_of_birth || null,
+                                      phoneNumber: worker.phone_number || null,
+                                      photoUrl: worker.profile_photo_url || null,
+                                    })
+                                    setCWApplication(null)
+                                    setCWApplicationLoading(true)
+                                    fetch(`/api/team/cw-application?user_id=${worker.id}`)
+                                      .then(r => r.json())
+                                      .then(d => { if (d.success) setCWApplication(d.application) })
+                                      .catch(() => {})
+                                      .finally(() => setCWApplicationLoading(false))
+                                  }}
+                                />
+                              )
+                            })}
+                          </div>
+                        )
+                      })()}
+                    </TeamShowcaseCard>
+
+                  <TeamShowcaseCard
+                    className="all-block-internal"
+                    icon={<Users size={15} style={{ color: sharedIconColor }} />}
+                    title="Internal Members"
+                    rightContent={<InternalMembersBar partnerCount={partnerMembers.length} managerCount={managerMembers.length} employeeCount={employeeMembers.length} />}
+                  >
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    {roleGroups.map((group, gi) => (
+                      <RoleGroupCard
+                        key={group.label}
+                        icon={group.icon}
+                        label={group.label}
+                        count={group.members.length}
+                        emptyText={group.emptyText}
+                      >
+                        <div
+                          ref={el => { roleScrollRefs.current[gi] = el }}
+                          onWheel={e => handleHorizWheel(e, roleScrollRefs.current[gi])}
+                          style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 8, paddingTop: 6, marginTop: -6, paddingRight: 4, scrollBehavior: 'auto' }}
+                        >
+                          {group.members.map(member => {
+                            const isHighlighted = highlightDeptId !== null && member.department_id === highlightDeptId
+                            const isDimmed = highlightDeptId !== null && !isHighlighted
+                            return (
+                              <button
+                                key={member.id}
+                                type="button"
+                                onClick={() => setProfileMember(member)}
+                                className="internal-member-card"
+                                style={{
+                                  flex: '0 0 110px',
+                                  width: 110,
+                                  minWidth: 110,
+                                  maxWidth: 110,
+                                  height: 128,
+                                  padding: '10px 1px',
+                                  borderRadius: 8,
+                                  border: isHighlighted ? '2px solid #F97316' : '1.5px solid #0F172A',
+                                  background: isHighlighted ? '#FFF7ED' : '#FFFFFF',
+                                  boxShadow: isHighlighted ? '0 0 0 3px rgba(249,115,22,0.18), 0 4px 12px rgba(249,115,22,0.15)' : '0 1px 3px rgba(15,23,42,0.06)',
+                                  flexShrink: 0,
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  justifyContent: 'center',
+                                  alignItems: 'center',
+                                  cursor: 'pointer',
+                                  textAlign: 'center',
+                                  opacity: isDimmed ? 0.35 : 1,
+                                  transition: 'box-shadow 0.22s ease, border-color 0.22s ease, transform 0.22s ease, opacity 0.22s ease, background 0.22s ease',
+                                }}
+                              >
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, width: '100%' }}>
+                                  <RoleAvatar role={member.role} size={80} photoUrl={member.profile_photo_url ?? null} />
+                                  <p style={{ fontWeight: 700, fontSize: '0.875rem', color: '#0F172A', margin: 0, lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: '-0.2px', maxWidth: '100%' }}>
+                                    {member.full_name}
+                                  </p>
+                                </div>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </RoleGroupCard>
+                    ))}
+                  </div>
+                </TeamShowcaseCard>
+                  </div>
               </div>
             )
           })()}
-        </div>
+
+          {teamViewTab === 'org' && (
+            <TeamShowcaseCard
+              className="org-chart-wrap"
+              icon={<Network size={15} style={{ color: '#F97316' }} />}
+              title="Organisation Chart"
+              fillHeight
+            >
+              {teamLoading ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#9CA3AF', fontSize: '0.9375rem' }}>
+                  <Spinner size={16} dark /> Loading…
+                </div>
+              ) : (
+                <OrgChartTree
+                  topMembers={teamMembers.filter(m => m.role === 'Owner' || m.role === 'Partner')}
+                  departments={companyDepartments}
+                  teamMembers={teamMembers}
+                  onMemberClick={(m) => setProfileMember(m)}
+                  onDepartmentClick={(department) => openEditDepartment(department)}
+                />
+              )}
+            </TeamShowcaseCard>
+          )}
+          </div>
         </div>
       </main>
+
+      {/* ── Department Modal ───────────────────────────────────────────── */}
+      {departmentModal && activeDepartment && (
+        <ModalOverlay maxWidth="480px" onClose={() => { if (!departmentActionLoading) { setDepartmentModal(null); setActiveDepartment(null); setDepartmentActionError('') } }}>
+          <ModalBox>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <Building2 size={15} color="#fff" strokeWidth={2} />
+                  </div>
+                  <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>Edit Department</h2>
+                </div>
+                <button
+                  onClick={() => { if (!departmentActionLoading) { setDepartmentModal(null); setActiveDepartment(null); setDepartmentActionError('') } }}
+                  style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8, flexShrink: 0 }}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  void handleSaveDepartment()
+                }}
+              >
+                <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+                  <div>
+                    <label style={modalLabelStyle}>Department Name</label>
+                    <input
+                      autoFocus
+                      value={departmentNameInput}
+                      onChange={(e) => setDepartmentNameInput(e.target.value)}
+                      style={modalInputStyle}
+                      placeholder="Finance"
+                    />
+                  </div>
+
+                  <div>
+                    <label style={modalLabelStyle}>Department Manager</label>
+                    {departmentManagerLoading ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#9CA3AF', fontSize: 14, padding: '8px 0' }}>
+                        <Spinner size={14} dark /> Loading…
+                      </div>
+                    ) : (
+                      <DropdownField
+                        value={departmentManagerSelectedId}
+                        options={teamMembers
+                          .filter(member => member.role === 'Manager')
+                          .map(member => ({ value: member.id, label: member.full_name }))}
+                        onChange={setDepartmentManagerSelectedId}
+                        placeholder="Select manager"
+                        disabled={departmentManagerLoading}
+                      />
+                    )}
+                  </div>
+                </div>
+
+                {departmentActionError && (
+                  <div style={{ margin: '0 24px 8px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>
+                    {departmentActionError}
+                  </div>
+                )}
+                {departmentManagerActionError && (
+                  <div style={{ margin: '0 24px 8px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>
+                    {departmentManagerActionError}
+                  </div>
+                )}
+
+                <div style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={handleDeleteDepartment}
+                    disabled={departmentActionLoading}
+                    style={{ padding: '7px 16px', background: departmentActionLoading ? '#EF4444' : 'linear-gradient(135deg, #EF4444, #DC2626)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: departmentActionLoading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: departmentActionLoading ? 0.65 : 1, marginRight: 'auto' }}
+                  >
+                    {departmentActionLoading ? <Spinner size={13} /> : <Trash2 size={13} />} Delete
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={departmentActionLoading}
+                    style={{ padding: '7px 18px', background: departmentActionLoading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: departmentActionLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: departmentActionLoading ? 0.65 : 1 }}
+                  >
+                    {departmentActionLoading ? <Spinner size={13} /> : <Check size={13} />} Save Changes
+                  </button>
+                </div>
+              </form>
+            </div>
+          </ModalBox>
+        </ModalOverlay>
+      )}
 
       {/* ── Edit Manager Modal ──────────────────────────────────────────── */}
       {editManagerModal && (
@@ -1777,21 +3085,22 @@ export default function TeamPage() {
           <ModalBox>
             <ModalHeader
               title="Remove Member"
+              icon={<UserRound size={15} color="#fff" strokeWidth={2.5} />}
               onClose={() => { if (!removeLoading) { setRemoveModal(null); setRemoveError('') } }}
             />
-            <p style={{ fontSize: '0.875rem', color: '#6B7280', margin: '0 0 16px', lineHeight: 1.55 }}>
-              Remove <strong>{removeModal.full_name}</strong> from <strong>{companyName}</strong>? They will lose access to this company.
-            </p>
+            <div style={{ padding: '20px 24px', fontSize: '0.9375rem', color: '#374151', lineHeight: 1.6 }}>
+              Are you sure you want to remove <strong style={{ color: '#111827' }}>{removeModal.full_name}</strong>?
+            </div>
             {removeError && (
-              <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626', marginBottom: '12px' }}>
+              <div style={{ margin: '0 24px 8px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>
                 {removeError}
               </div>
             )}
-            <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
+            <div style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
               <button
                 onClick={() => { setRemoveModal(null); setRemoveError('') }}
                 disabled={removeLoading}
-                style={{ flex: 1, padding: '10px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: '8px', fontWeight: 600, fontSize: '0.9375rem', color: '#6B7280', cursor: removeLoading ? 'not-allowed' : 'pointer' }}
+                style={{ padding: '7px 16px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', cursor: removeLoading ? 'not-allowed' : 'pointer' }}
               >
                 Cancel
               </button>
@@ -1799,14 +3108,14 @@ export default function TeamPage() {
                 onClick={handleRemoveMember}
                 disabled={removeLoading}
                 style={{
-                  flex: 1, padding: '10px', background: '#DC2626', border: 'none', borderRadius: '8px',
-                  fontWeight: 600, fontSize: '0.9375rem', color: '#FFFFFF',
+                  padding: '7px 18px', background: removeLoading ? '#EF4444' : 'linear-gradient(135deg, #EF4444, #DC2626)', border: 'none', borderRadius: 8,
+                  fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF',
                   cursor: removeLoading ? 'not-allowed' : 'pointer',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '7px',
+                  display: 'flex', alignItems: 'center', gap: 6,
                   opacity: removeLoading ? 0.65 : 1,
                 }}
               >
-                {removeLoading && <Spinner size={14} />}
+                {removeLoading ? <Spinner size={13} /> : <Trash2 size={13} />}
                 Remove
               </button>
             </div>
@@ -1855,20 +3164,115 @@ export default function TeamPage() {
         </div>
       )}
 
-      {/* ── Member Profile Modal ─────────────────────────────────────────── */}
-      {profileMember && (
-        <ModalOverlay onClose={() => setProfileMember(null)}>
+      {/* ── Owner Self-Profile Modal ─────────────────────────────────────── */}
+      {ownerProfileModal && (
+        <ModalOverlay onClose={() => { setOwnerProfileModal(false); setOwnerProfileEditing(false); setOwnerProfileError('') }} maxWidth="420px">
           <ModalBox>
-            <ModalHeader title="Member Profile" onClose={() => setProfileMember(null)} />
+            <ModalHeader
+              title="My Profile"
+              onClose={() => { setOwnerProfileModal(false); setOwnerProfileEditing(false); setOwnerProfileError('') }}
+            />
 
             {/* Avatar + name */}
-            <div style={{ padding: '24px 24px 20px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', gap: 16 }}>
-              <RoleAvatar role={profileMember.role} size={54} />
+            <div style={{ padding: '16px 24px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', gap: 14 }}>
+              <RoleAvatar role="Owner" size={44} photoUrl={ownerProfile?.profile_photo_url ?? null} />
               <div>
-                <p style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#0F172A', margin: '0 0 5px' }}>{profileMember.full_name}</p>
+                <p style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A', margin: '0 0 5px' }}>{ownerProfile?.full_name ?? ownerName}</p>
+                <span style={{ display: 'inline-block', padding: '3px 10px', borderRadius: 999, fontSize: '0.6875rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', background: '#0F172A', color: '#FFFFFF' }}>
+                  Owner
+                </span>
+              </div>
+            </div>
+
+            {/* Fields — same layout, field toggles between text and input */}
+            <form onSubmit={async (e) => {
+              e.preventDefault()
+              if (!ownerProfileEditing) return
+              if (!ownerProfileName.trim()) { setOwnerProfileError('Full name is required'); return }
+              setOwnerProfileLoading(true)
+              setOwnerProfileError('')
+              try {
+                const res = await fetch('/api/user/update-profile', {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ user_id: internalUserId, full_name: ownerProfileName, phone_number: ownerProfilePhone, date_of_birth: ownerProfileDob }),
+                })
+                const data = await res.json()
+                if (!data.success) { setOwnerProfileError(data.message ?? 'Update failed'); return }
+                setOwnerProfile(prev => prev ? { ...prev, full_name: data.user.full_name, phone_number: data.user.phone_number, date_of_birth: data.user.date_of_birth } : prev)
+                setOwnerName(data.user.full_name)
+                setOwnerProfileEditing(false)
+              } catch { setOwnerProfileError('Something went wrong') }
+              finally { setOwnerProfileLoading(false) }
+            }}>
+              <div key={String(ownerProfileEditing)} style={{ padding: '0 24px 4px', display: 'flex', flexDirection: 'column', animation: 'profileFieldsIn 0.22s ease both' }}>
+                {/* Email — always read-only */}
+                <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
+                  <label style={{ ...modalLabelStyle, marginBottom: 4 }}>Email Address</label>
+                  <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{ownerProfile?.email_address ?? '—'}</p>
+                </div>
+                {/* Full Name */}
+                <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
+                  <label style={{ ...modalLabelStyle, marginBottom: 4 }}>Full Name</label>
+                  {ownerProfileEditing
+                    ? <input value={ownerProfileName} onChange={e => setOwnerProfileName(e.target.value)} style={modalInputStyle} autoFocus />
+                    : <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{ownerProfile?.full_name ?? '—'}</p>}
+                </div>
+                {/* Date of Birth */}
+                <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
+                  <label style={{ ...modalLabelStyle, marginBottom: 4 }}>Date of Birth</label>
+                  {ownerProfileEditing
+                    ? <DatePickerField value={ownerProfileDob} onChange={setOwnerProfileDob} placeholder="Select date" />
+                    : <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{formatDateDisplay(ownerProfile?.date_of_birth ?? null)}</p>}
+                </div>
+                {/* Phone Number */}
+                <div style={{ padding: '14px 0', borderBottom: ownerProfileEditing && ownerProfileError ? '1px solid #F3F4F6' : 'none' }}>
+                  <label style={{ ...modalLabelStyle, marginBottom: 4 }}>Phone Number</label>
+                  {ownerProfileEditing
+                    ? <input value={ownerProfilePhone} onChange={e => setOwnerProfilePhone(e.target.value)} style={modalInputStyle} placeholder="+65 9xxx xxxx" />
+                    : <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{ownerProfile?.phone_number ?? '—'}</p>}
+                </div>
+                {ownerProfileEditing && ownerProfileError && (
+                  <div style={{ padding: '12px 0 4px' }}>
+                    <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>{ownerProfileError}</div>
+                  </div>
+                )}
+              </div>
+              <div style={{ padding: '16px 24px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                {ownerProfileEditing ? (
+                  <>
+                    <button type="button" onClick={() => { setOwnerProfileEditing(false); setOwnerProfileError('') }} style={{ padding: '7px 16px', border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', fontWeight: 600, fontSize: '0.8125rem', color: '#374151', cursor: 'pointer' }}>
+                      Cancel
+                    </button>
+                    <button type="submit" disabled={ownerProfileLoading} style={{ padding: '7px 18px', border: 'none', borderRadius: 8, background: ownerProfileLoading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: ownerProfileLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: ownerProfileLoading ? 0.65 : 1 }}>
+                      {ownerProfileLoading ? <Spinner size={13} /> : <Check size={13} />} Save Changes
+                    </button>
+                  </>
+                ) : (
+                  <button type="button" onClick={() => { setOwnerProfileName(ownerProfile?.full_name ?? ''); setOwnerProfilePhone(ownerProfile?.phone_number ?? ''); setOwnerProfileDob(ownerProfile?.date_of_birth ?? ''); setOwnerProfileError(''); setOwnerProfileEditing(true) }} style={{ padding: '7px 16px', border: 'none', borderRadius: 8, background: 'linear-gradient(135deg, #F97316, #EA580C)', fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Pencil size={13} /> Edit Profile
+                  </button>
+                )}
+              </div>
+            </form>
+          </ModalBox>
+        </ModalOverlay>
+      )}
+
+      {/* ── Member Profile Modal ─────────────────────────────────────────── */}
+      {profileMember && (
+        <ModalOverlay onClose={() => setProfileMember(null)} maxWidth="420px">
+          <ModalBox>
+            <ModalHeader title="Member Profile" icon={<UserRound size={15} color="#fff" strokeWidth={2.5} />} onClose={() => setProfileMember(null)} />
+
+            {/* Avatar + name */}
+            <div style={{ padding: '16px 24px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', gap: 14 }}>
+              <RoleAvatar role={profileMember.role} size={44} photoUrl={profileMember.profile_photo_url} />
+              <div>
+                <p style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A', margin: '0 0 5px' }}>{profileMember.full_name}</p>
                 <span style={{
                   display: 'inline-block',
-                  padding: '2px 10px',
+                  padding: '3px 10px',
                   borderRadius: 999,
                   fontSize: '0.6875rem',
                   fontWeight: 700,
@@ -1887,28 +3291,211 @@ export default function TeamPage() {
             </div>
 
             {/* Fields */}
-            <div style={{ padding: '20px 24px' }}>
-              <ProfileField label="Email" value={profileMember.email_address} />
-              <ProfileField label="Phone" value={profileMember.phone_number ?? '—'} />
-              {profileMember.department_id && (
-                <ProfileField
-                  label="Department"
-                  value={companyDepartments.find(d => d.id === profileMember.department_id)?.name ?? '—'}
-                />
-              )}
+            <div style={{ padding: '0 24px 20px', display: 'flex', flexDirection: 'column' }}>
+              {[
+                { label: 'Email Address', value: profileMember.email_address },
+                { label: 'Date of Birth', value: formatDateDisplay(profileMember.date_of_birth) },
+                { label: 'Phone Number', value: profileMember.phone_number ?? '—' },
+                { label: 'Joined On', value: formatDateDisplay(profileMember.created_at) },
+                ...(profileMember.department_id ? [{
+                  label: 'Department',
+                  value: companyDepartments.find(d => d.id === profileMember.department_id)?.name ?? '—',
+                }] : []),
+              ].map((field, i, arr) => (
+                <div key={field.label} style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
+                  <label style={{ ...modalLabelStyle, marginBottom: 4 }}>{field.label}</label>
+                  <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, sans-serif" }}>{field.value}</p>
+                </div>
+              ))}
             </div>
 
-            {/* Actions */}
-            {canRemove(profileMember) && (
-              <div style={{ padding: '0 24px 20px', display: 'flex', gap: 8 }}>
+            {/* Footer */}
+            <div style={{ padding: '0 24px 16px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              {profileMember.id !== internalUserId && (
+              <button
+                onClick={() => { setProfileMember(null); router.push(`/owner/communication?tab=messages&partner_id=${profileMember.id}`) }}
+                style={{ padding: '7px 16px', border: '1px solid #E2E8F0', borderRadius: 8, background: '#FFFFFF', fontWeight: 600, fontSize: '0.8125rem', color: '#374151', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#F8FAFC' }}
+                onMouseLeave={e => { e.currentTarget.style.background = '#FFFFFF' }}
+              >
+                <MessageCircle size={13} />
+                Send Message
+              </button>
+              )}
+              {canRemove(profileMember) && (
                 <button
                   onClick={() => { setProfileMember(null); setRemoveModal(profileMember); setRemoveError('') }}
-                  style={{ flex: 1, height: 40, borderRadius: 10, border: '1.5px solid #FECACA', background: '#FFFFFF', fontWeight: 600, fontSize: 13, color: '#DC2626', cursor: 'pointer' }}
+                  style={{ padding: '7px 18px', border: 'none', borderRadius: 8, background: 'linear-gradient(135deg, #EF4444, #DC2626)', fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
                 >
+                  <Trash2 size={13} />
                   Remove
                 </button>
+              )}
+            </div>
+          </ModalBox>
+        </ModalOverlay>
+      )}
+
+      {/* ── Casual Worker Detail Modal ───────────────────────────────────── */}
+      {selectedCWPreview && (
+        <ModalOverlay onClose={() => setSelectedCWPreview(null)} maxWidth="420px">
+          <ModalBox>
+            <ModalHeader title="Casual Worker Detail" icon={<HardHat size={15} color="#fff" strokeWidth={2.5} />} onClose={() => setSelectedCWPreview(null)} />
+
+            <div style={{ padding: '16px 24px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', gap: 14 }}>
+              <RoleAvatar role="Casual Worker" size={44} photoUrl={selectedCWPreview.photoUrl ?? null} />
+              <div>
+                <p style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A', margin: 0 }}>{selectedCWPreview.name}</p>
               </div>
-            )}
+            </div>
+
+            <div style={{ padding: '0 24px 20px', display: 'flex', flexDirection: 'column' }}>
+              {[
+                { label: 'Email Address', value: selectedCWPreview.email || '—' },
+                { label: 'Date of Birth', value: formatDateDisplay(selectedCWPreview.dateOfBirth) },
+                { label: 'Phone Number', value: selectedCWPreview.phoneNumber || '—' },
+                { label: 'Resume File', value: cwApplicationLoading ? 'Loading…' : (cwApplication?.resume_url || '—') },
+                { label: 'Cover Letter File', value: cwApplicationLoading ? 'Loading…' : (cwApplication?.cover_letter || '—') },
+                ...(selectedCWPreview.status === 'Inactive' && selectedCWPreview.inactiveReason ? [
+                  { label: 'Reason', value: selectedCWPreview.inactiveReason },
+                ] : []),
+              ].map((field) => (
+                <div key={field.label} style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
+                  <label style={{ ...modalLabelStyle, marginBottom: 4 }}>{field.label}</label>
+                  <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, sans-serif" }}>{field.value}</p>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ borderTop: '1px solid #F3F4F6', padding: '16px 24px', display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={async () => {
+                  const current = selectedCWPreview
+                  if (!current) return
+                  if (current.status === 'Active') {
+                    // Open reason modal when inactivating
+                    setCWInactiveReasonModal(current)
+                    setCWInactiveReason('')
+                  } else {
+                    // Activate directly - call API
+                    try {
+                      const res = await fetch('/api/team/casual-worker-status', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          user_id: current.id,
+                          worker_status: 'active',
+                          inactivate_reason: null,
+                        }),
+                      })
+                      const data = await res.json()
+                      if (data.success) {
+                        setTeamMembers(prev => prev.map(m => m.id === current.id ? { ...m, worker_status: 'active', inactivate_reason: null } : m))
+                        setSelectedCWPreview(null)
+                        showCWDetailSuccess(`${current.name} has been set to Active.`)
+                        logActivity('set_active', current.name)
+                      }
+                    } catch (err) {
+                      console.error('Failed to update CW status:', err)
+                    }
+                  }
+                }}
+                style={{
+                  padding: '7px 18px',
+                  border: 'none',
+                  borderRadius: 8,
+                  background: selectedCWPreview.status === 'Active' ? 'linear-gradient(135deg, #EF4444, #DC2626)' : 'linear-gradient(135deg, #10B981, #059669)',
+                  color: '#FFFFFF',
+                  fontSize: '0.8125rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                }}
+              >
+                {selectedCWPreview.status === 'Active' ? (
+                  <>
+                    <X size={13} strokeWidth={2.5} />
+                    Inactive
+                  </>
+                ) : (
+                  <>
+                    <Check size={13} strokeWidth={2.5} />
+                    Active
+                  </>
+                )}
+              </button>
+            </div>
+          </ModalBox>
+        </ModalOverlay>
+      )}
+
+      {/* ── CW Inactive Reason Modal ──────────────────────────────────────── */}
+      {cwInactiveReasonModal && (
+        <ModalOverlay onClose={() => setCWInactiveReasonModal(null)} maxWidth="480px">
+          <ModalBox>
+            <ModalHeader title={`Inactive ${cwInactiveReasonModal.name}`} icon={<HardHat size={15} color="#fff" strokeWidth={2.5} />} onClose={() => setCWInactiveReasonModal(null)} />
+
+            <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div>
+                <label style={modalLabelStyle}>Reason</label>
+                <textarea
+                  value={cwInactiveReason}
+                  onChange={(e) => setCWInactiveReason(e.target.value)}
+                  placeholder="Enter reason for inactivation..."
+                  style={{
+                    ...modalInputStyle,
+                    minHeight: 100,
+                    resize: 'vertical',
+                  } as React.CSSProperties}
+                />
+              </div>
+            </div>
+
+            <div style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                onClick={() => setCWInactiveReasonModal(null)}
+                style={{ padding: '7px 16px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  if (!cwInactiveReasonModal) return
+                  try {
+                    const res = await fetch('/api/team/casual-worker-status', {
+                      method: 'PATCH',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        user_id: cwInactiveReasonModal.id,
+                        worker_status: 'inactive',
+                        inactivate_reason: cwInactiveReason || null,
+                      }),
+                    })
+                    const data = await res.json()
+                    if (data.success) {
+                      const name = cwInactiveReasonModal.name
+                      setTeamMembers(prev => prev.map(m => m.id === cwInactiveReasonModal.id ? { ...m, worker_status: 'inactive', inactivate_reason: cwInactiveReason || null } : m))
+                      setCWInactiveReasonModal(null)
+                      setCWInactiveReason('')
+                      setSelectedCWPreview(null)
+                      showCWDetailSuccess(`${name} has been set to Inactive.`)
+                      logActivity('set_inactive', name, cwInactiveReason || undefined)
+                    }
+                  } catch (err) {
+                    console.error('Failed to inactivate CW:', err)
+                  }
+                }}
+                style={{ padding: '7px 18px', background: 'linear-gradient(135deg, #EF4444, #DC2626)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                <X size={13} strokeWidth={2.5} />
+                Inactivate
+              </button>
+            </div>
           </ModalBox>
         </ModalOverlay>
       )}
@@ -1917,219 +3504,194 @@ export default function TeamPage() {
       {inviteOpen && (
         <ModalOverlay onClose={closeModal}>
           <ModalBox>
-            <ModalHeader title="Invite Member" onClose={closeModal} />
+            <ModalHeader title="Invite Member" icon={<UserPlus size={15} color="#fff" strokeWidth={2.5} />} onClose={closeModal} />
 
-            <div style={{ padding: '20px 20px 0' }}>
-              {/* Tab switcher — only for non-Manager roles */}
+            {/* Body */}
+            <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14, minHeight: 240 }}>
+              {/* Tab switcher */}
               {currentUserRole !== 'Manager' && (
-                <div style={{ display: 'inline-flex', border: '1px solid #E2E8F0', borderRadius: 9, overflow: 'hidden', marginBottom: 18 }}>
-                  {(['manual', 'import'] as const).map(tab => (
-                    <button key={tab} type="button" onClick={() => setInviteTab(tab)} style={{ border: 0, height: 32, padding: '0 14px', background: inviteTab === tab ? '#0F172A' : '#FFFFFF', color: inviteTab === tab ? '#FFFFFF' : '#334155', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
-                      {tab === 'manual' ? 'Manual' : 'Import'}
-                    </button>
-                  ))}
+                <div style={{ alignSelf: 'flex-start', marginBottom: 8 }}>
+                  <div style={{ display: 'inline-flex', border: '1.5px solid #E5E7EB', borderRadius: 9, overflow: 'hidden' }}>
+                    {(['manual', 'import'] as const).map(tab => (
+                      <button key={tab} type="button" onClick={() => setInviteTab(tab)} style={{ border: 0, height: 34, padding: '0 20px', background: inviteTab === tab ? '#0F172A' : '#FFFFFF', color: inviteTab === tab ? '#FFFFFF' : '#374151', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>
+                        {tab === 'manual' ? 'Single' : 'Import'}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
 
+              <div key={inviteTab} style={{ display: 'flex', flexDirection: 'column', gap: 14, animation: 'tabFadeIn 0.2s ease-out' }}>
+              {inviteTab === 'import' && currentUserRole !== 'Manager' ? (
+                <>
+                  {/* Sample CSV preview */}
+                  <div>
+                    <p style={{ margin: '0 0 8px', fontSize: '0.8125rem', fontWeight: 600, color: '#374151' }}>Sample CSV format</p>
+                    <div style={{ border: '1.5px solid #E5E7EB', borderRadius: 8, overflow: 'hidden', fontSize: '0.8125rem' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr 1.2fr', background: '#F9FAFB', borderBottom: '1px solid #E5E7EB' }}>
+                        {['Email', 'Role', 'Department'].map((h, i) => (
+                          <div key={h} style={{ padding: '7px 12px', fontWeight: 700, color: '#6B7280', fontFamily: "'Inter', system-ui, sans-serif", borderRight: i < 2 ? '1px solid #E5E7EB' : 'none' }}>{h}</div>
+                        ))}
+                      </div>
+                      {[
+                        ['partner@company.com', 'Partner', ''],
+                        ['manager@company.com', 'Manager', 'Sales'],
+                        ['employee@company.com', 'Employee', 'Marketing'],
+                      ].map(([email, role, dept], i) => (
+                        <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr 1.2fr', borderBottom: '1px solid #F3F4F6' }}>
+                          <div style={{ padding: '6px 12px', color: '#374151', borderRight: '1px solid #E5E7EB' }}>{email}</div>
+                          <div style={{ padding: '6px 12px', color: '#374151', borderRight: '1px solid #E5E7EB' }}>{role}</div>
+                          <div style={{ padding: '6px 12px', color: '#374151' }}>{dept}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', border: '1.5px solid #E5E7EB', borderRadius: 8, cursor: 'pointer', background: '#FFFFFF' }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = '#F97316' }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
+                  >
+                    <input
+                      type="file"
+                      accept=".csv,text/csv,text/plain"
+                      onChange={event => void handleMemberImportFile(event.target.files?.[0] ?? null)}
+                      style={{ display: 'none' }}
+                    />
+                    <Upload size={15} style={{ color: '#9CA3AF', flexShrink: 0 }} />
+                    <span style={{ fontSize: '0.9375rem', color: memberImportRows.length > 0 ? '#111827' : '#9CA3AF', fontFamily: "'Inter', system-ui, sans-serif" }}>
+                      {memberImportRows.length > 0 ? `${memberImportRows.length} row(s) ready to send` : 'Choose a CSV file'}
+                    </span>
+                  </label>
+                  {memberImportRows.length > 0 && (
+                    <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, overflow: 'hidden', maxHeight: 220, overflowY: 'auto' }}>
+                      {memberImportRows.map((row, index) => (
+                        <div key={`${row.email}-${index}`} style={{ display: 'grid', gridTemplateColumns: '1.4fr 0.8fr 1fr', gap: 10, padding: '9px 12px', borderBottom: '1px solid #F1F5F9', fontSize: '0.8125rem', color: '#374151' }}>
+                          <span>{row.email}</span>
+                          <strong>{row.role}</strong>
+                          <span>{row.department_name || '-'}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {/* Email */}
+                  <div>
+                    <label style={modalLabelStyle}>Email Address</label>
+                    <input
+                      type="email"
+                      placeholder="colleague@company.com"
+                      value={inviteEmail}
+                      onChange={(e) => {
+                        setInviteEmail(e.target.value)
+                        setInviteError('')
+                        setInviteSuccess('')
+                      }}
+                      style={{ ...modalInputStyle, background: '#FFFFFF' }}
+                    />
+                  </div>
+
+                  {/* Role */}
+                  {currentUserRole !== 'Manager' && (
+                    <div>
+                      <label style={modalLabelStyle}>Role</label>
+                      <DropdownField
+                        value={inviteRole}
+                        onChange={handleRoleChange}
+                        placeholder="Select a role"
+                        options={[
+                          { value: 'partner', label: 'Partner' },
+                          { value: 'Manager', label: 'Manager' },
+                          { value: 'Employee', label: 'Employee' },
+                        ]}
+                      />
+                    </div>
+                  )}
+
+
+                  {/* Department */}
+                  {currentUserRole === 'Manager' ? (
+                    <div>
+                      <label style={modalLabelStyle}>Department</label>
+                      <div style={{ ...modalInputStyle, color: '#6B7280', background: '#F9FAFB' }}>
+                        {companyDepartments.find(d => d.id === userDeptId)?.name || 'Your department'}
+                      </div>
+                    </div>
+                  ) : showDept && (
+                    <div>
+                      <label style={modalLabelStyle}>Department</label>
+                      <DropdownField
+                        value={inviteDeptId}
+                        onChange={handleDeptChange}
+                        placeholder="Select a department"
+                        options={departments.map(d => ({ value: d.id, label: d.name }))}
+                      />
+                    </div>
+                  )}
+
+
+                </>
+              )}
+              </div>
+            </div>
+
+            {/* Errors / success — between body and footer */}
             {inviteTab === 'import' && currentUserRole !== 'Manager' ? (
               <>
-                <p style={{ margin: '0 0 14px', color: '#64748B', fontSize: 13, lineHeight: 1.6 }}>
-                  Upload a CSV with columns: email, role, department_name. Importing members sends invitation emails.
-                </p>
-                <input
-                  type="file"
-                  accept=".csv,text/csv,text/plain"
-                  onChange={event => void handleMemberImportFile(event.target.files?.[0] ?? null)}
-                  style={modalInputStyle}
-                />
-                {memberImportRows.length > 0 && (
-                  <div style={{ marginTop: 16, border: '1px solid #E5E7EB', borderRadius: 10, overflow: 'hidden', maxHeight: 220, overflowY: 'auto' }}>
-                    {memberImportRows.map((row, index) => (
-                      <div key={`${row.email}-${index}`} style={{ display: 'grid', gridTemplateColumns: '1.4fr 0.8fr 1fr', gap: 10, padding: '9px 12px', borderBottom: '1px solid #F1F5F9', fontSize: '0.82rem', color: '#374151' }}>
-                        <span>{row.email}</span>
-                        <strong>{row.role}</strong>
-                        <span>{row.department_name || '-'}</span>
-                      </div>
-                    ))}
+                {memberImportError && (
+                  <div style={{ margin: '0 24px 8px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>
+                    {memberImportError}
                   </div>
                 )}
-                {memberImportError && <p style={{ margin: '10px 0 0', color: '#B91C1C', fontSize: 13, fontWeight: 700 }}>{memberImportError}</p>}
-                {memberImportResult && <p style={{ margin: '10px 0 0', color: '#166534', fontSize: 13, fontWeight: 700 }}>{memberImportResult}</p>}
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '18px 0 20px' }}>
-                  <button onClick={closeModal} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, height: 36, padding: '0 14px', borderRadius: 10, border: '1px solid #E2E8F0', background: '#FFFFFF', color: '#0F172A', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
-                    Cancel
-                  </button>
-                  <button
-                    onClick={confirmMemberImport}
-                    disabled={memberImportLoading || memberImportRows.length === 0}
-                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, height: 36, padding: '0 14px', borderRadius: 10, border: 0, background: '#F97316', color: '#FFFFFF', fontWeight: 700, fontSize: 13, cursor: memberImportLoading || memberImportRows.length === 0 ? 'default' : 'pointer', opacity: memberImportLoading || memberImportRows.length === 0 ? 0.55 : 1 }}
-                  >
-                    {memberImportLoading && <Spinner size={13} />}
-                    Send Invites
-                  </button>
-                </div>
+                {memberImportResult && (
+                  <div style={{ margin: '0 24px 8px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#166534' }}>
+                    {memberImportResult}
+                  </div>
+                )}
               </>
             ) : (
               <>
-                <p style={{ fontSize: 13, color: '#64748B', margin: '0 0 18px', lineHeight: 1.6 }}>
-                  Send an invitation email to your new team member.
-                </p>
-
-            {/* Email */}
-            <div style={{ marginBottom: '16px' }}>
-              <label style={modalLabelStyle}>Email Address</label>
-              <input
-                type="email"
-                placeholder="colleague@company.com"
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-                style={modalInputStyle}
-              />
-            </div>
-
-            {/* Role */}
-            {currentUserRole !== 'Manager' && (
-            <div style={{ marginBottom: '16px' }}>
-              <label style={modalLabelStyle}>Role</label>
-              <div style={{ position: 'relative' }}>
-                <select
-                  value={inviteRole}
-                  onChange={(e) => handleRoleChange(e.target.value)}
-                  style={{ ...modalInputStyle, paddingRight: '36px', appearance: 'none', cursor: 'pointer' }}
-                >
-                  <option value="">Select a role</option>
-                  <option value="partner">Partner</option>
-                  <option value="Manager">Manager</option>
-                  <option value="Employee">Employee</option>
-                </select>
-                <ChevronDown size={15} style={{ position: 'absolute', right: '11px', top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
-              </div>
-            </div>
-            )}
-
-            {/* Company (always shown once role is selected) */}
-            {inviteRole && currentUserRole !== 'Manager' && (
-              <div style={{ marginBottom: '16px' }}>
-                <label style={modalLabelStyle}>Company</label>
-                <div style={{ position: 'relative' }}>
-                  {companiesLoading ? (
-                    <div style={{ ...modalInputStyle, display: 'flex', alignItems: 'center', gap: '8px', color: '#9CA3AF' }}>
-                      <Spinner size={14} dark /> Loading companies…
-                    </div>
-                  ) : (
-                    <>
-                      <select
-                        value={selectedCompanyId}
-                        onChange={(e) => handleCompanyChange(e.target.value)}
-                        style={{ ...modalInputStyle, paddingRight: '36px', appearance: 'none', cursor: 'pointer' }}
-                      >
-                        <option value="">Select a company</option>
-                        {ownedCompanies.map((c) => (
-                          <option key={c.id} value={c.id}>{c.name}</option>
-                        ))}
-                      </select>
-                      <ChevronDown size={15} style={{ position: 'absolute', right: '11px', top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
-                    </>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Department */}
-            {currentUserRole === 'Manager' ? (
-              <div style={{ marginBottom: '16px' }}>
-                <label style={modalLabelStyle}>Department</label>
-                <div style={{ ...modalInputStyle, color: '#6B7280', background: '#F9FAFB' }}>
-                  {companyDepartments.find(d => d.id === userDeptId)?.name || 'Your department'}
-                </div>
-              </div>
-            ) : showDept && (
-              <div style={{ marginBottom: '16px' }}>
-                <label style={modalLabelStyle}>Department</label>
-                <div style={{ position: 'relative' }}>
-                  <select
-                    value={inviteDeptId}
-                    onChange={(e) => handleDeptChange(e.target.value)}
-                    style={{ ...modalInputStyle, paddingRight: '36px', appearance: 'none', cursor: 'pointer' }}
-                  >
-                    <option value="">Select a department</option>
-                    {departments.map((d) => (
-                      <option key={d.id} value={d.id}>{d.name}</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={15} style={{ position: 'absolute', right: '11px', top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
-                </div>
-              </div>
-            )}
-
-            {/* Reporting Manager (Employee + department selected) */}
-            {showReportingManager && (
-              <div style={{ marginBottom: '0' }}>
-                <label style={modalLabelStyle}>Reporting Manager</label>
-                <div style={{ position: 'relative' }}>
-                  <select
-                    value={inviteManagerId}
-                    onChange={(e) => setInviteManagerId(e.target.value)}
-                    disabled={managersLoading || noManagersInDept}
-                    style={{ ...modalInputStyle, paddingRight: '36px', appearance: 'none', cursor: managersLoading || noManagersInDept ? 'not-allowed' : 'pointer', opacity: managersLoading ? 0.6 : 1 }}
-                  >
-                    {managersLoading ? (
-                      <option value="">Loading managers…</option>
-                    ) : noManagersInDept ? (
-                      <option value="">No managers in this department yet</option>
-                    ) : (
-                      <>
-                        <option value="">Select a manager</option>
-                        {managers.map((m) => (
-                          <option key={m.id} value={m.id}>{m.full_name}</option>
-                        ))}
-                      </>
-                    )}
-                  </select>
-                  <ChevronDown size={15} style={{ position: 'absolute', right: '11px', top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
-                </div>
-              </div>
-            )}
-
-            {/* Partner warning */}
-            {inviteRole === 'partner' && (
-              <p style={{ fontSize: '0.8125rem', color: '#F97316', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: '8px', padding: '10px 12px', margin: '4px 0 0' }}>
-                This person will have full Partner access to your company.
-              </p>
-            )}
-
-            {/* Error / success */}
-            {inviteError && (
-              <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 12px', fontSize: 13, color: '#B91C1C', marginTop: 10 }}>
-                {inviteError}
-              </div>
-            )}
-            {inviteSuccess && (
-              <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, padding: '10px 12px', fontSize: 13, color: '#166534', marginTop: 10 }}>
-                {inviteSuccess}
-              </div>
+                {inviteError && (
+                  <div style={{ margin: '0 24px 8px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>
+                    {inviteError}
+                  </div>
+                )}
+              </>
             )}
 
             {/* Footer */}
-            <div
-              title={noManagersInDept ? 'Add a manager to this department first' : undefined}
-              style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '18px 0 20px' }}
-            >
-              <button onClick={closeModal} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', height: 36, padding: '0 14px', borderRadius: 10, border: '1px solid #E2E8F0', background: '#FFFFFF', color: '#0F172A', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}>
-                Cancel
-              </button>
-              <button
-                onClick={handleSendInvite}
-                disabled={sendDisabled}
-                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, height: 36, padding: '0 16px', borderRadius: 10, border: 0, background: '#F97316', color: '#FFFFFF', fontWeight: 700, fontSize: 13, cursor: sendDisabled ? 'not-allowed' : 'pointer', opacity: sendDisabled ? 0.5 : 1 }}
+            {inviteTab === 'import' && currentUserRole !== 'Manager' ? (
+              <div style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button onClick={closeModal} style={{ padding: '7px 16px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', cursor: 'pointer' }}>
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmMemberImport}
+                  disabled={memberImportLoading || memberImportRows.length === 0}
+                  style={{ padding: '7px 18px', background: memberImportLoading || memberImportRows.length === 0 ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: memberImportLoading || memberImportRows.length === 0 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: memberImportLoading || memberImportRows.length === 0 ? 0.65 : 1 }}
+                >
+                  {memberImportLoading ? <Spinner size={13} /> : <Send size={13} />}
+                  Send Invites
+                </button>
+              </div>
+            ) : (
+              <div
+                title={noManagersInDept ? 'Add a manager to this department first' : undefined}
+                style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}
               >
-                {inviteLoading && <Spinner size={13} />}
-                Send Invite
-              </button>
-            </div>
-              </>
+                <button onClick={closeModal} style={{ padding: '7px 16px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', cursor: 'pointer' }}>
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSendInvite}
+                  disabled={sendDisabled}
+                  style={{ padding: '7px 18px', background: sendDisabled ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: sendDisabled ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: sendDisabled ? 0.65 : 1 }}
+                >
+                  {inviteLoading ? <Spinner size={13} /> : <Send size={13} />}
+                  Send Invite
+                </button>
+              </div>
             )}
-            </div>
           </ModalBox>
         </ModalOverlay>
       )}
@@ -2180,82 +3742,180 @@ export default function TeamPage() {
 
       {editProfileOpen && (
         <ModalOverlay onClose={() => setEditProfileOpen(false)}>
-          <ModalBox>
-            <ModalHeader title="Edit Company Profile" onClose={() => setEditProfileOpen(false)} />
-            <div style={{ padding: '20px 20px 0', display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div>
-                <label style={modalLabelStyle}>Company Name *</label>
-                <input value={editProfileName} onChange={e => setEditProfileName(e.target.value)} style={modalInputStyle} />
-              </div>
-              <div>
-                <label style={modalLabelStyle}>Description</label>
-                <textarea value={editProfileDesc} onChange={e => setEditProfileDesc(e.target.value)} rows={2} style={{ ...modalInputStyle, resize: 'vertical' }} />
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <ModalBox closing={editProfileClosing}>
+            <ModalHeader title="Edit Company Profile" icon={<Building2 size={15} color="#fff" strokeWidth={2} />} onClose={() => setEditProfileOpen(false)} />
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                void handleEditProfile()
+              }}
+            >
+              {/* Body */}
+              <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+                <div>
+                  <label style={modalLabelStyle}>Company Name</label>
+                  <input value={editProfileName} onChange={e => setEditProfileName(e.target.value)} placeholder="e.g. Acme Pte Ltd" style={modalInputStyle} />
+                </div>
+                <div>
+                  <label style={modalLabelStyle}>Company Description</label>
+                  <textarea value={editProfileDesc} onChange={e => setEditProfileDesc(e.target.value)} rows={2} placeholder="Brief description of your company..." style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }} />
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <label style={modalLabelStyle}>Postal Code</label>
+                    <div style={{ position: 'relative' }}>
+                      <input
+                        value={editProfilePostal}
+                        onChange={e => {
+                          const digits = e.target.value.replace(/\D/g, '').slice(0, 6)
+                          setEditProfileError('')
+                          setEditProfilePostal(digits)
+                          if (digits.length < 6) {
+                            setEditProfileLoc('')
+                            setEditProfileAddress('')
+                          }
+                        }}
+                        placeholder="e.g. 238858"
+                        maxLength={6}
+                        style={{ ...modalInputStyle, paddingRight: editPostalLoading ? 40 : undefined }}
+                      />
+                      {editPostalLoading && (
+                        <div style={{ position: 'absolute', right: 14, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>
+                          <Spinner size={14} dark />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <label style={modalLabelStyle}>Number of Staff</label>
+                    <input value={editProfileSize} onChange={e => setEditProfileSize(e.target.value)} placeholder="e.g. 20-30" style={modalInputStyle} />
+                  </div>
+                </div>
                 <div>
                   <label style={modalLabelStyle}>Location</label>
-                  <input value={editProfileLoc} onChange={e => setEditProfileLoc(e.target.value)} placeholder="e.g. Singapore" style={modalInputStyle} />
+                  <input value={editProfileLoc} onChange={e => setEditProfileLoc(e.target.value)} placeholder="e.g. Singapore, Orchard Road" style={modalInputStyle} />
                 </div>
-                <div>
-                  <label style={modalLabelStyle}>Size</label>
-                  <DropdownField
-                    value={editProfileSize}
-                    onChange={setEditProfileSize}
-                    placeholder="Select size"
-                    options={SIZES.map(s => ({ value: s, label: s }))}
-                  />
-                </div>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                 <div>
                   <label style={modalLabelStyle}>Address</label>
                   <input value={editProfileAddress} onChange={e => setEditProfileAddress(e.target.value)} placeholder="e.g. 123 Orchard Road" style={modalInputStyle} />
                 </div>
                 <div>
-                  <label style={modalLabelStyle}>Postal Code</label>
-                  <input value={editProfilePostal} onChange={e => setEditProfilePostal(e.target.value)} placeholder="e.g. 238858" style={modalInputStyle} />
+                  <label style={modalLabelStyle}>Industry</label>
+                  <input value={editProfileIndustry} onChange={e => setEditProfileIndustry(e.target.value)} placeholder="e.g. Retail, Healthcare, Technology..." style={modalInputStyle} />
                 </div>
               </div>
-              <div>
-                <label style={modalLabelStyle}>Industry</label>
-                <DropdownField
-                  value={editProfileIndustry}
-                  onChange={v => { setEditProfileIndustry(v); if (v !== 'Other') setEditProfileIndustryOther('') }}
-                  placeholder="Select industry"
-                  options={INDUSTRIES.map(i => ({ value: i, label: i }))}
-                />
-                {editProfileIndustry === 'Other' && (
-                  <input
-                    value={editProfileIndustryOther}
-                    onChange={e => setEditProfileIndustryOther(e.target.value)}
-                    placeholder="Please specify your industry"
-                    style={{ ...modalInputStyle, marginTop: 8 }}
-                    autoFocus
-                  />
-                )}
-              </div>
+
+              {/* Error — between body and footer */}
               {editProfileError && (
-                <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 12px', fontSize: 13, color: '#B91C1C' }}>
+                <div style={{ margin: '0 24px 8px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>
                   {editProfileError}
                 </div>
               )}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '4px 0 20px' }}>
+
+              {/* Footer */}
+              <div style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
                 <button
+                  type="button"
                   onClick={() => setEditProfileOpen(false)}
-                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', height: 36, padding: '0 14px', borderRadius: 10, border: '1px solid #E2E8F0', background: '#FFFFFF', color: '#0F172A', fontWeight: 700, fontSize: 13, cursor: 'pointer' }}
+                  style={{ padding: '7px 16px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', cursor: 'pointer' }}
                 >Cancel</button>
                 <button
-                  onClick={handleEditProfile}
+                  type="submit"
                   disabled={editProfileLoading}
-                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, height: 36, padding: '0 16px', borderRadius: 10, border: 0, background: '#F97316', color: '#FFFFFF', fontWeight: 700, fontSize: 13, cursor: editProfileLoading ? 'default' : 'pointer', opacity: editProfileLoading ? 0.65 : 1 }}
+                  style={{ padding: '7px 18px', background: editProfileLoading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: editProfileLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: editProfileLoading ? 0.65 : 1 }}
                 >
-                  {editProfileLoading && <Spinner size={13} />} Save Changes
+                  {editProfileLoading ? <Spinner size={13} /> : <Check size={13} />} Save Changes
                 </button>
               </div>
-            </div>
+            </form>
           </ModalBox>
         </ModalOverlay>
       )}
+
+      {editProfileSuccess && (
+        <div style={{
+          position: 'fixed',
+          bottom: 28,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 9999,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          background: '#0F172A',
+          color: '#FFFFFF',
+          borderRadius: 12,
+          padding: '12px 20px',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
+          fontSize: 13,
+          fontWeight: 600,
+          whiteSpace: 'nowrap',
+          animation: 'fadeSlideUpToast 0.22s ease',
+        }}>
+          <Check size={15} style={{ color: '#10B981', flexShrink: 0 }} />
+          {editProfileSuccess}
+        </div>
+      )}
+      {inviteSuccessToast && (
+        <div style={{
+          position: 'fixed',
+          bottom: 28,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 9999,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          background: '#0F172A',
+          color: '#FFFFFF',
+          borderRadius: 12,
+          padding: '12px 20px',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
+          fontSize: 13,
+          fontWeight: 600,
+          whiteSpace: 'nowrap',
+          animation: 'fadeSlideUpToast 0.22s ease',
+        }}>
+          <Check size={15} style={{ color: '#10B981', flexShrink: 0 }} />
+          {inviteSuccessToast}
+        </div>
+      )}
+      {cwDetailSuccess && (
+        <div style={{
+          position: 'fixed',
+          bottom: 28,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 9999,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          background: '#0F172A',
+          color: '#FFFFFF',
+          borderRadius: 12,
+          padding: '12px 20px',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
+          fontSize: 13,
+          fontWeight: 600,
+          whiteSpace: 'nowrap',
+          animation: 'fadeSlideUpToast 0.22s ease',
+          pointerEvents: 'none',
+        }}>
+          <Check size={15} style={{ color: '#10B981', flexShrink: 0 }} />
+          {cwDetailSuccess}
+        </div>
+      )}
+      <style>{`
+        @keyframes fadeSlideUpToast {
+          from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+          to { opacity: 1; transform: translateX(-50%) translateY(0); }
+        }
+        .cw-preview-scroll::-webkit-scrollbar { height: 10px; }
+        .cw-preview-scroll::-webkit-scrollbar-track { background: #E5E7EB; border-radius: 999px; }
+        .cw-preview-scroll::-webkit-scrollbar-thumb { background: #A3A3A3; border-radius: 999px; }
+      `}</style>
     </div>
   )
 }
+

@@ -1,12 +1,21 @@
 'use client'
 
-import { Suspense, useEffect, useState } from 'react'
+import { Suspense, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
+import { Check } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import ApplicationDetailsModal from '@/components/guest/ApplicationDetailsModal'
 import ApplyJobModal from '@/components/guest/ApplyJobModal'
 import GuestProfileMenu from '@/components/guest/GuestProfileMenu'
+
+const pageKeyframes = `
+  @keyframes overlayFadeIn { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes modalSlideIn  { from { opacity: 0; transform: scale(0.97) translateY(8px) } to { opacity: 1; transform: scale(1) translateY(0) } }
+  @keyframes blockSlideUp  { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
+  @keyframes fadeSlideUpToast { from { opacity: 0; transform: translateX(-50%) translateY(10px) } to { opacity: 1; transform: translateX(-50%) translateY(0) } }
+  @keyframes cardStagger   { from { opacity: 0; transform: translateY(14px) scale(0.96) } to { opacity: 1; transform: translateY(0) scale(1) } }
+`
 
 type ApplicationStatus = 'pending' | 'accepted' | 'rejected' | 'withdrawn'
 
@@ -17,6 +26,8 @@ type Profile = {
   phone_number: string
   role: string
 }
+
+type InvitationStatus = 'sent' | 'accepted' | 'declined'
 
 type Application = {
   id: string
@@ -37,6 +48,9 @@ type Application = {
   job_date?: string
   shift_start_time?: string
   shift_end_time?: string
+  invitation_id?: string
+  invitation_status?: InvitationStatus
+  invitation_message?: string
 }
 
 type RawApplication = {
@@ -46,6 +60,7 @@ type RawApplication = {
   resume_url?: string
   cover_letter?: string
   job_postings?: (Partial<Application> & { title?: string }) | null
+  job_invitations?: { id: string; status: InvitationStatus; message: string | null }[] | null
 }
 
 function ApplicationsContent() {
@@ -59,6 +74,15 @@ function ApplicationsContent() {
   const [error, setError] = useState('')
   const [withdrawTargetId, setWithdrawTargetId] = useState<string | null>(null)
   const [withdrawing, setWithdrawing] = useState(false)
+  const [respondingId, setRespondingId] = useState<string | null>(null)
+  const [toast, setToast] = useState('')
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const showToast = (msg: string) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+    setToast(msg)
+    toastTimerRef.current = setTimeout(() => setToast(''), 3000)
+  }
 
   const loadApplications = async (userId: string) => {
     const res = await fetch(`/api/guest/applications?user_id=${userId}`)
@@ -69,19 +93,25 @@ function ApplicationsContent() {
     }
 
     setApplications(
-      data.applications.map((app: RawApplication) => ({
-        id: app.id,
-        job_title:
-          app.job_postings?.job_title ||
-          app.job_postings?.title ||
-          'Job Opening',
-        company_name: app.job_postings?.company_name || 'Company',
-        status: app.status,
-        applied_at: formatDate(app.applied_at),
-        resume_url: app.resume_url,
-        cover_letter: app.cover_letter,
-        ...app.job_postings,
-      }))
+      data.applications.map((app: RawApplication) => {
+        const invite = Array.isArray(app.job_invitations) ? app.job_invitations[0] : null
+        return {
+          id: app.id,
+          job_title:
+            app.job_postings?.job_title ||
+            app.job_postings?.title ||
+            'Job Opening',
+          company_name: app.job_postings?.company_name || 'Company',
+          status: app.status,
+          applied_at: formatDate(app.applied_at),
+          resume_url: app.resume_url,
+          cover_letter: app.cover_letter,
+          ...app.job_postings,
+          invitation_id: invite?.id,
+          invitation_status: invite?.status,
+          invitation_message: invite?.message ?? undefined,
+        }
+      })
     )
   }
 
@@ -151,6 +181,26 @@ function ApplicationsContent() {
     }
   }
 
+  const respondToInvitation = async (appId: string, invitationId: string, response: 'accepted' | 'declined') => {
+    setRespondingId(appId)
+    try {
+      const res = await fetch(`/api/guest/applications/${appId}/respond`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invitation_id: invitationId, response }),
+      })
+      const data = await res.json()
+      if (!data.success) {
+        showToast(data.message || 'Failed to respond to invitation.')
+        return
+      }
+      if (profile?.id) await loadApplications(profile.id)
+      showToast(response === 'accepted' ? 'Invitation accepted! You are now a Casual Worker.' : 'Invitation declined.')
+    } finally {
+      setRespondingId(null)
+    }
+  }
+
   const handleLogout = async () => {
     const supabase = createBrowserClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -170,6 +220,7 @@ function ApplicationsContent() {
 
   return (
     <>
+      <style>{pageKeyframes}</style>
       <header style={topBarStyle}>
         <div style={topBarInnerStyle}>
           <Link href="/" style={brandWrapStyle}>
@@ -198,7 +249,7 @@ function ApplicationsContent() {
       </header>
 
       <main style={pageStyle}>
-        <section style={sectionStyle}>
+        <section style={{ ...sectionStyle, animation: 'blockSlideUp 0.38s ease both 0.06s' }}>
           <div style={sectionHeaderStyle}>
             <p style={sectionLabelStyle}>MY APPLICATIONS</p>
           </div>
@@ -242,6 +293,23 @@ function ApplicationsContent() {
                     </div>
                   </div>
 
+                  {app.invitation_id && app.invitation_status === 'sent' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, padding: '8px 12px', background: '#EFF6FF', borderRadius: 8, border: '1px solid #BFDBFE' }}>
+                      <span style={{ fontSize: '0.8125rem', color: '#1D4ED8', fontWeight: 600, flex: 1 }}>
+                        You&apos;ve been invited — accept or decline this offer
+                      </span>
+                    </div>
+                  )}
+                  {app.invitation_id && app.invitation_status === 'accepted' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, padding: '8px 12px', background: '#F0FDF4', borderRadius: 8, border: '1px solid #BBF7D0' }}>
+                      <span style={{ fontSize: '0.8125rem', color: '#15803D', fontWeight: 600 }}>You accepted this invitation</span>
+                    </div>
+                  )}
+                  {app.invitation_id && app.invitation_status === 'declined' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, padding: '8px 12px', background: '#FEF2F2', borderRadius: 8, border: '1px solid #FECACA' }}>
+                      <span style={{ fontSize: '0.8125rem', color: '#B91C1C', fontWeight: 600 }}>You declined this invitation</span>
+                    </div>
+                  )}
                   <div style={cardActionsStyle}>
                     <button
                       style={primaryActionButtonStyle}
@@ -250,7 +318,26 @@ function ApplicationsContent() {
                       View Details
                     </button>
 
-                    {app.status === 'pending' && (
+                    {app.invitation_id && app.invitation_status === 'sent' && (
+                      <>
+                        <button
+                          style={{ ...primaryActionButtonStyle, background: '#059669' }}
+                          disabled={respondingId === app.id}
+                          onClick={() => respondToInvitation(app.id, app.invitation_id!, 'accepted')}
+                        >
+                          {respondingId === app.id ? 'Responding...' : 'Accept Offer'}
+                        </button>
+                        <button
+                          style={dangerActionButtonStyle}
+                          disabled={respondingId === app.id}
+                          onClick={() => respondToInvitation(app.id, app.invitation_id!, 'declined')}
+                        >
+                          Decline
+                        </button>
+                      </>
+                    )}
+
+                    {app.status === 'pending' && !app.invitation_id && (
                       <button
                         style={dangerActionButtonStyle}
                         onClick={() => setWithdrawTargetId(app.id)}
@@ -284,31 +371,48 @@ function ApplicationsContent() {
         />
       )}
 
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
+          background: '#0F172A', color: '#FFFFFF', borderRadius: 999, padding: '10px 18px',
+          display: 'flex', alignItems: 'center', gap: 8,
+          fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', zIndex: 9999,
+          animation: 'fadeSlideUpToast 0.22s ease',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.25)',
+        }}>
+          <Check size={15} style={{ color: '#10B981', flexShrink: 0 }} />
+          {toast}
+        </div>
+      )}
+
       {withdrawTargetId && (
         <div style={confirmOverlayStyle}>
           <div style={confirmModalStyle}>
-            <h2 style={confirmTitleStyle}>Withdraw Application</h2>
+            <div style={{ padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6' }}>
+              <h2 style={confirmTitleStyle}>Withdraw Application</h2>
+            </div>
+            <div style={{ padding: '18px 24px 20px' }}>
+              <p style={confirmTextStyle}>
+                Are you sure you want to withdraw this application? This action cannot be undone.
+              </p>
 
-            <p style={confirmTextStyle}>
-              Are you sure you want to withdraw this application?
-            </p>
+              <div style={confirmActionsStyle}>
+                <button
+                  onClick={() => setWithdrawTargetId(null)}
+                  disabled={withdrawing}
+                  style={confirmCancelButtonStyle}
+                >
+                  Cancel
+                </button>
 
-            <div style={confirmActionsStyle}>
-              <button
-                onClick={() => setWithdrawTargetId(null)}
-                disabled={withdrawing}
-                style={confirmCancelButtonStyle}
-              >
-                Cancel
-              </button>
-
-              <button
-                onClick={confirmWithdrawApplication}
-                disabled={withdrawing}
-                style={confirmWithdrawButtonStyle}
-              >
-                {withdrawing ? 'Withdrawing...' : 'Withdraw'}
-              </button>
+                <button
+                  onClick={confirmWithdrawApplication}
+                  disabled={withdrawing}
+                  style={confirmWithdrawButtonStyle}
+                >
+                  {withdrawing ? 'Withdrawing...' : 'Withdraw'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -552,59 +656,64 @@ const emptyTextStyle: React.CSSProperties = {
 const confirmOverlayStyle: React.CSSProperties = {
   position: 'fixed',
   inset: 0,
-  background: 'rgba(17,24,39,0.45)',
+  background: 'rgba(15,23,42,0.45)',
+  backdropFilter: 'blur(4px)',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
   zIndex: 9999,
   padding: 24,
+  animation: 'overlayFadeIn 0.18s ease-out',
 }
 
 const confirmModalStyle: React.CSSProperties = {
   width: '100%',
-  maxWidth: 520,
+  maxWidth: 480,
   background: '#FFFFFF',
-  borderRadius: 22,
-  padding: 32,
-  boxShadow: '0 24px 80px rgba(0,0,0,0.28)',
+  borderRadius: 20,
+  overflow: 'hidden',
+  boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)',
+  animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)',
 }
 
 const confirmTitleStyle: React.CSSProperties = {
   margin: 0,
-  fontFamily: 'var(--font-heading)',
-  fontSize: '1.5rem',
+  fontSize: '1rem',
   fontWeight: 700,
   color: '#111827',
 }
 
 const confirmTextStyle: React.CSSProperties = {
-  margin: '22px 0 32px',
+  margin: '0 0 20px',
   color: '#6B7280',
-  fontSize: '1rem',
+  fontSize: '0.9375rem',
+  lineHeight: 1.6,
 }
 
 const confirmActionsStyle: React.CSSProperties = {
   display: 'flex',
   justifyContent: 'flex-end',
-  gap: 14,
+  gap: 10,
 }
 
 const confirmCancelButtonStyle: React.CSSProperties = {
-  padding: '12px 20px',
-  borderRadius: 10,
-  border: '1px solid #D1D5DB',
+  padding: '7px 18px',
+  borderRadius: 8,
+  border: '1.5px solid #E5E7EB',
   background: '#FFFFFF',
-  color: '#374151',
-  fontWeight: 700,
+  color: '#6B7280',
+  fontWeight: 600,
+  fontSize: '0.8125rem',
   cursor: 'pointer',
 }
 
 const confirmWithdrawButtonStyle: React.CSSProperties = {
-  border: '1px solid #FECACA',
+  border: '1.5px solid #FECACA',
   background: '#FEF2F2',
   color: '#DC2626',
-  padding: '12px 20px',
-  borderRadius: 10,
-  fontWeight: 700,
+  padding: '7px 18px',
+  borderRadius: 8,
+  fontWeight: 600,
+  fontSize: '0.8125rem',
   cursor: 'pointer',
 }

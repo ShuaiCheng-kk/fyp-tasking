@@ -101,6 +101,10 @@ export const userService = {
     return (memberCount ?? 0) + 1
   },
 
+  async updateProfile(id: string, patch: { full_name?: string; phone_number?: string | null; date_of_birth?: string | null }): Promise<User> {
+    return authRepository.updateProfile(id, patch)
+  },
+
   async leaveCompany(user_id: string, company_id: string): Promise<{ accountDeleted: boolean }> {
     const user = await authRepository.findById(user_id)
     if (!user) throw new Error('User not found')

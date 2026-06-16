@@ -1,14 +1,21 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { createBrowserClient } from '@supabase/ssr'
+import { X, Star, Check, Trash2 } from 'lucide-react'
 
-function Spinner({ size = 16, dark = false }: { size?: number; dark?: boolean }) {
+const planKeyframes = `
+  @keyframes planOverlayIn { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes planModalIn   { from { opacity: 0; transform: scale(0.97) translateY(8px) } to { opacity: 1; transform: scale(1) translateY(0) } }
+  @keyframes fadeSlideUpToast { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+`
+
+function Spinner({ size = 14, dark = false }: { size?: number; dark?: boolean }) {
   return (
     <svg className="animate-spin" width={size} height={size} viewBox="0 0 18 18" style={{ display: 'inline-block', flexShrink: 0 }}>
-      <circle cx="9" cy="9" r="7" stroke={dark ? 'rgba(15,23,42,0.18)' : 'rgba(255,255,255,0.35)'} strokeWidth="2.5" fill="none" />
-      <path d="M9 2a7 7 0 0 1 7 7" stroke={dark ? '#0F172A' : 'white'} strokeWidth="2.5" strokeLinecap="round" fill="none" />
+      <circle cx="9" cy="9" r="7" stroke={dark ? 'rgba(17,24,39,0.18)' : 'rgba(255,255,255,0.35)'} strokeWidth="2.5" fill="none" />
+      <path d="M9 2a7 7 0 0 1 7 7" stroke={dark ? '#111827' : 'white'} strokeWidth="2.5" strokeLinecap="round" fill="none" />
     </svg>
   )
 }
@@ -26,6 +33,30 @@ interface SubDetails {
   stripe_subscription_id: string | null
 }
 
+// ── Style tokens — exact match to Member Profile modal in team/page.tsx ──────
+
+const labelSt: React.CSSProperties = {
+  display: 'block', fontWeight: 600, fontSize: '0.875rem',
+  color: '#374151', marginBottom: 4,
+}
+
+const valueSt: React.CSSProperties = {
+  fontSize: '0.9375rem', color: '#111827', margin: 0,
+  fontFamily: "'Inter', system-ui, sans-serif",
+}
+
+const inputSt: React.CSSProperties = {
+  width: '100%', padding: '10px 12px', border: '1.5px solid #E5E7EB',
+  borderRadius: 8, fontSize: '0.9375rem', fontFamily: "'Inter', system-ui, sans-serif",
+  fontWeight: 400, color: '#111827', outline: 'none',
+  boxSizing: 'border-box', background: '#FFFFFF',
+}
+
+const GREEN_GRADIENT = 'linear-gradient(135deg, #10B981, #14B8A6)'
+const ORANGE_GRADIENT = 'linear-gradient(135deg, #F97316, #EA580C)'
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function OwnerPlanBadge({ plan, currentCompanyId }: { plan: string; currentCompanyId: string }) {
   const isPro = plan === 'Paid' || plan === 'Pro'
 
@@ -34,58 +65,35 @@ export default function OwnerPlanBadge({ plan, currentCompanyId }: { plan: strin
   const [loadingDetails, setLoadingDetails] = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
   const [error, setError] = useState('')
-  const [showCancelConfirm, setShowCancelConfirm] = useState(false)
+  const [toast, setToast] = useState('')
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [mounted, setMounted] = useState(false)
 
   useEffect(() => { setMounted(true) }, [])
 
   const fetchDetails = useCallback(async () => {
     if (!currentCompanyId) return
-    setLoadingDetails(true)
-    setError('')
+    setLoadingDetails(true); setError('')
     try {
       const res = await fetch(`/api/stripe/subscription?companyId=${currentCompanyId}`)
       const data = await res.json()
       if (data.success) setSubDetails(data.data)
-    } catch {
-      // Silently fall back to prop-based plan display
-    } finally {
-      setLoadingDetails(false)
-    }
+    } catch {}
+    finally { setLoadingDetails(false) }
   }, [currentCompanyId])
 
-  const handleOpen = () => {
-    setOpen(true)
-    setShowCancelConfirm(false)
-    setError('')
-    fetchDetails()
-  }
-
-  const handleClose = () => {
-    setOpen(false)
-    setShowCancelConfirm(false)
-    setError('')
-  }
+  const handleOpen = () => { setOpen(true); setError(''); fetchDetails() }
+  const handleClose = () => { setOpen(false); setError('') }
 
   const handleUpgradeToPro = async () => {
-    setActionLoading(true)
-    setError('')
+    setActionLoading(true); setError('')
     try {
-      const supabase = createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      )
+      const supabase = createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
       const { data: { session } } = await supabase.auth.getSession()
       if (!session?.user) throw new Error('Not authenticated')
-
       const res = await fetch('/api/stripe/upgrade-checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          companyId: currentCompanyId,
-          userId: session.user.id,
-          email: session.user.email,
-        }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ companyId: currentCompanyId, userId: session.user.id, email: session.user.email }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
@@ -97,280 +105,178 @@ export default function OwnerPlanBadge({ plan, currentCompanyId }: { plan: strin
   }
 
   const handleCancelPro = async () => {
-    setActionLoading(true)
-    setError('')
+    setActionLoading(true); setError('')
     try {
       const res = await fetch('/api/stripe/cancel-subscription', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ companyId: currentCompanyId }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
-      // Refresh details to show the "cancelling" state — no page reload needed
       await fetchDetails()
-      setShowCancelConfirm(false)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to cancel subscription')
-    } finally {
-      setActionLoading(false)
-    }
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+      setToast('Plan cancelled. You still have access until end of billing period.')
+      toastTimerRef.current = setTimeout(() => setToast(''), 4000)
+    } catch (err) { setError(err instanceof Error ? err.message : 'Failed to cancel subscription') }
+    finally { setActionLoading(false) }
   }
 
   const handleResumePro = async () => {
-    setActionLoading(true)
-    setError('')
+    setActionLoading(true); setError('')
     try {
       const res = await fetch('/api/stripe/resume-subscription', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ companyId: currentCompanyId }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
       await fetchDetails()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to resume subscription')
-    } finally {
-      setActionLoading(false)
-    }
+    } catch (err) { setError(err instanceof Error ? err.message : 'Failed to resume subscription') }
+    finally { setActionLoading(false) }
   }
 
   const effectivePlan = subDetails?.plan ?? plan
   const effectiveIsPro = effectivePlan === 'Paid' || effectivePlan === 'Pro'
   const isCancelling = effectiveIsPro && !!subDetails?.plan_cancel_at
 
+  const toastPortal = toast && mounted ? createPortal(
+    <div style={{
+      position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
+      zIndex: 10001, background: '#FFFFFF', border: '1px solid #E5E7EB',
+      borderRadius: 10, boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
+      padding: '10px 18px', display: 'flex', alignItems: 'center', gap: 8,
+      fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap',
+      animation: 'fadeSlideUpToast 0.22s ease',
+    }}>
+      <style>{planKeyframes}</style>
+      <Check size={15} style={{ color: '#10B981', flexShrink: 0 }} />
+      {toast}
+    </div>,
+    document.body
+  ) : null
+
   const modal = open && mounted ? createPortal(
     <div
-      onClick={handleClose}
       style={{
         position: 'fixed', inset: 0, zIndex: 9999,
-        background: 'rgba(0,0,0,0.45)',
+        background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
+        animation: 'planOverlayIn 0.18s ease-out',
       }}
     >
-      <div
-        onClick={e => e.stopPropagation()}
-        style={{
-          width: 380, borderRadius: 20, overflow: 'hidden',
-          boxShadow: '0 24px 64px rgba(0,0,0,0.18)',
-          background: '#fff', fontFamily: 'inherit',
-        }}
-      >
-        {/* Header */}
+      <style>{planKeyframes}</style>
+      <div style={{ width: 'min(360px, calc(100% - 32px))' }}>
+        {/* ModalBox — exact same as team/page.tsx */}
         <div style={{
-          padding: '24px 24px 20px',
-          background: effectiveIsPro
-            ? 'linear-gradient(135deg, #10B981 0%, #14B8A6 100%)'
-            : 'linear-gradient(135deg, #F3F4F6 0%, #E5E7EB 100%)',
+          background: '#FFFFFF', borderRadius: 20, overflow: 'hidden',
+          boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)',
+          maxHeight: '90vh', overflowY: 'auto', display: 'flex', flexDirection: 'column',
+          animation: 'planModalIn 0.22s cubic-bezier(0.16,1,0.3,1)',
         }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-            <div>
-              <p style={{
-                fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase',
-                color: effectiveIsPro ? 'rgba(255,255,255,0.7)' : '#9CA3AF', margin: '0 0 6px',
-              }}>
-                Current Plan
-              </p>
-              <p style={{ fontSize: 28, fontWeight: 800, color: effectiveIsPro ? '#fff' : '#1F2937', margin: 0, lineHeight: 1 }}>
-                {effectiveIsPro ? 'Pro' : 'Free'}
-              </p>
+
+          {/* ── Header ── */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', flexShrink: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {effectiveIsPro && (
+                <span style={{ display: 'inline-block', padding: '3px 12px', borderRadius: 999, fontSize: '0.75rem', fontWeight: 800, letterSpacing: '0.08em', textTransform: 'uppercase', background: '#059669', color: '#FFFFFF' }}>
+                  Pro
+                </span>
+              )}
+              <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, sans-serif" }}>
+                Subscription Plan
+              </h2>
             </div>
             <button
               onClick={handleClose}
-              style={{
-                width: 28, height: 28, borderRadius: 999, border: 'none', cursor: 'pointer',
-                background: effectiveIsPro ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.08)',
-                color: effectiveIsPro ? '#fff' : '#6B7280',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0,
-              }}
+              style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8, flexShrink: 0 }}
+              onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+              onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
             >
-              ×
+              <X size={16} />
             </button>
           </div>
-        </div>
 
-        {/* Body */}
-        <div style={{ padding: '20px 24px 24px' }}>
+          {/* ── Body ── */}
           {loadingDetails ? (
-            <div style={{ display: 'flex', justifyContent: 'center', padding: '20px 0' }}>
+            <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}>
               <Spinner size={20} dark />
             </div>
-          ) : effectiveIsPro ? (
-            <>
-              {/* Subscription info rows */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 20 }}>
-                <div style={{
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                  padding: '10px 14px', borderRadius: 10, background: '#F9FAFB',
-                }}>
-                  <span style={{ fontSize: 12, color: '#6B7280', fontWeight: 500 }}>Subscribed since</span>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>
-                    {fmt(subDetails?.plan_started_at ?? null)}
-                  </span>
-                </div>
+          ) : (
+            <div style={{ padding: '0 24px 4px', display: 'flex', flexDirection: 'column' }}>
 
-                {isCancelling ? (
-                  // Show expiry date instead of next billing when cancellation is scheduled
-                  <div style={{
-                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                    padding: '10px 14px', borderRadius: 10, background: '#FFF7ED',
-                    border: '1px solid #FED7AA',
-                  }}>
-                    <span style={{ fontSize: 12, color: '#C2410C', fontWeight: 500 }}>Pro access ends</span>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: '#C2410C' }}>
-                      {fmt(subDetails?.plan_cancel_at ?? null)}
-                    </span>
-                  </div>
-                ) : (
-                  <div style={{
-                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                    padding: '10px 14px', borderRadius: 10, background: '#F9FAFB',
-                  }}>
-                    <span style={{ fontSize: 12, color: '#6B7280', fontWeight: 500 }}>Next billing date</span>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>
-                      {fmt(subDetails?.plan_next_billing_at ?? null)}
-                    </span>
-                  </div>
-                )}
+              {/* Billing amount */}
+              <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
+                <label style={labelSt}>Billing amount</label>
+                <p style={valueSt}>{effectiveIsPro ? '$20 / month' : '—'}</p>
               </div>
 
-              {/* Cancelling banner */}
-              {isCancelling && (
-                <div style={{
-                  marginBottom: 16, padding: '10px 14px', borderRadius: 10,
-                  background: '#FFF7ED', border: '1px solid #FED7AA',
-                  fontSize: 12, color: '#92400E', lineHeight: 1.5,
-                }}>
-                  Your Pro plan is cancelled. You still have full access until <strong>{fmt(subDetails?.plan_cancel_at ?? null)}</strong>.
-                </div>
-              )}
+              {effectiveIsPro && (
+                <>
+                  {/* Member since */}
+                  <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
+                    <label style={labelSt}>Member since</label>
+                    <p style={valueSt}>{fmt(subDetails?.plan_started_at ?? null)}</p>
+                  </div>
 
-              {error && (
-                <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 8, background: '#FEF2F2', fontSize: 12, color: '#DC2626' }}>
-                  {error}
-                </div>
-              )}
+                  {/* Next payment / expiry */}
+                  <div style={{ padding: '14px 0' }}>
+                    <label style={labelSt}>
+                      {isCancelling ? 'Pro access ends' : 'Next payment'}
+                    </label>
+                    <p style={valueSt}>
+                      {fmt(isCancelling ? subDetails?.plan_cancel_at ?? null : subDetails?.plan_next_billing_at ?? null)}
+                    </p>
+                  </div>
 
-              {isCancelling ? (
-                // Resume button
+                </>
+              )}
+            </div>
+          )}
+
+          {/* ── Error ── */}
+          {error && (
+            <div style={{ margin: '0 24px 8px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>
+              {error}
+            </div>
+          )}
+
+          {/* ── Footer — exact same pattern as Edit Company Profile footer ── */}
+          {!loadingDetails && (
+            <div style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              {!effectiveIsPro ? (
+                <button
+                  type="button"
+                  onClick={handleUpgradeToPro}
+                  disabled={actionLoading}
+                  style={{ padding: '7px 18px', background: actionLoading ? '#FDA060' : ORANGE_GRADIENT, border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: actionLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: actionLoading ? 0.65 : 1 }}
+                >
+                  {actionLoading ? <Spinner size={13} /> : <Star size={13} fill="#fff" />}
+                  Subscribe to Pro
+                </button>
+              ) : isCancelling ? (
                 <button
                   type="button"
                   onClick={handleResumePro}
                   disabled={actionLoading}
-                  style={{
-                    width: '100%', height: 40, borderRadius: 10, border: 'none',
-                    background: 'linear-gradient(135deg, #10B981, #14B8A6)',
-                    fontSize: 13, fontWeight: 700, color: '#fff',
-                    cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                    boxShadow: '0 4px 14px rgba(16,185,129,0.25)',
-                  }}
+                  style={{ padding: '7px 18px', background: actionLoading ? '#FDA060' : ORANGE_GRADIENT, border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: actionLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: actionLoading ? 0.65 : 1 }}
                 >
-                  {actionLoading ? <Spinner size={14} /> : 'Resume Pro Plan'}
-                </button>
-              ) : !showCancelConfirm ? (
-                <button
-                  type="button"
-                  onClick={() => setShowCancelConfirm(true)}
-                  disabled={actionLoading}
-                  style={{
-                    width: '100%', height: 38, borderRadius: 10, border: '1.5px solid #E5E7EB',
-                    background: '#fff', fontSize: 13, fontWeight: 500, color: '#6B7280',
-                    cursor: 'pointer', transition: 'all 0.15s',
-                  }}
-                  onMouseEnter={e => {
-                    (e.currentTarget as HTMLButtonElement).style.borderColor = '#EF4444'
-                    ;(e.currentTarget as HTMLButtonElement).style.color = '#EF4444'
-                  }}
-                  onMouseLeave={e => {
-                    (e.currentTarget as HTMLButtonElement).style.borderColor = '#E5E7EB'
-                    ;(e.currentTarget as HTMLButtonElement).style.color = '#6B7280'
-                  }}
-                >
-                  Cancel Pro Plan
+                  {actionLoading ? <Spinner size={13} /> : <Check size={13} />}
+                  Resume Pro Plan
                 </button>
               ) : (
-                <div style={{ borderRadius: 12, border: '1.5px solid #FCA5A5', padding: '14px', background: '#FFF5F5' }}>
-                  <p style={{ fontSize: 13, color: '#7F1D1D', fontWeight: 600, margin: '0 0 4px' }}>Cancel your Pro plan?</p>
-                  <p style={{ fontSize: 12, color: '#B91C1C', margin: '0 0 14px' }}>
-                    You'll keep Pro access until the end of your billing period.
-                  </p>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <button
-                      type="button"
-                      onClick={() => setShowCancelConfirm(false)}
-                      disabled={actionLoading}
-                      style={{
-                        flex: 1, height: 34, borderRadius: 8, border: 'none',
-                        background: '#F3F4F6', fontSize: 12, fontWeight: 500, color: '#6B7280', cursor: 'pointer',
-                      }}
-                    >
-                      Keep Pro
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleCancelPro}
-                      disabled={actionLoading}
-                      style={{
-                        flex: 1, height: 34, borderRadius: 8, border: 'none',
-                        background: '#EF4444', fontSize: 12, fontWeight: 600, color: '#fff',
-                        cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                      }}
-                    >
-                      {actionLoading ? <Spinner size={13} /> : 'Yes, Cancel'}
-                    </button>
-                  </div>
-                </div>
+                <button
+                  type="button"
+                  onClick={handleCancelPro}
+                  disabled={actionLoading}
+                  style={{ padding: '7px 18px', background: actionLoading ? '#F87171' : 'linear-gradient(135deg, #EF4444, #DC2626)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: actionLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: actionLoading ? 0.65 : 1 }}
+                >
+                  {actionLoading ? <Spinner size={13} /> : <Trash2 size={13} />}
+                  Cancel Plan
+                </button>
               )}
-            </>
-          ) : (
-            <>
-              {/* Free plan — upgrade CTA */}
-              <div style={{ marginBottom: 20 }}>
-                <p style={{ fontSize: 13, color: '#374151', fontWeight: 600, margin: '0 0 4px' }}>Everything in Free, plus:</p>
-                {[
-                  'Split shift timeline',
-                  'Clopening detection',
-                  'Advanced scheduling controls',
-                  'Skills & availability management',
-                  'CW performance history',
-                ].map(f => (
-                  <div key={f} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0' }}>
-                    <span style={{ width: 16, height: 16, borderRadius: 999, background: 'linear-gradient(135deg, #10B981, #14B8A6)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                      <svg width="9" height="7" viewBox="0 0 9 7" fill="none"><path d="M1 3.5L3.5 6L8 1" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                    </span>
-                    <span style={{ fontSize: 12, color: '#374151' }}>{f}</span>
-                  </div>
-                ))}
-              </div>
-
-              {error && (
-                <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 8, background: '#FEF2F2', fontSize: 12, color: '#DC2626' }}>
-                  {error}
-                </div>
-              )}
-
-              <button
-                type="button"
-                onClick={handleUpgradeToPro}
-                disabled={actionLoading}
-                style={{
-                  width: '100%', height: 40, borderRadius: 10, border: 'none',
-                  background: 'linear-gradient(135deg, #10B981, #14B8A6)',
-                  fontSize: 13, fontWeight: 700, color: '#fff',
-                  cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                  boxShadow: '0 4px 14px rgba(16,185,129,0.35)',
-                }}
-              >
-                {actionLoading ? <Spinner size={14} /> : (
-                  <>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
-                    Subscribe to Pro
-                  </>
-                )}
-              </button>
-            </>
+            </div>
           )}
+
         </div>
       </div>
     </div>,
@@ -379,6 +285,7 @@ export default function OwnerPlanBadge({ plan, currentCompanyId }: { plan: strin
 
   return (
     <>
+      {toastPortal}
       <button
         type="button"
         aria-label={`${isPro ? 'Pro' : 'Free'} plan — Manage my plan`}
@@ -386,9 +293,9 @@ export default function OwnerPlanBadge({ plan, currentCompanyId }: { plan: strin
         style={{
           display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, whiteSpace: 'nowrap',
           borderRadius: 999, padding: '0 16px', height: 36, fontSize: 13, fontWeight: 600, cursor: 'pointer',
-          background: isPro ? 'linear-gradient(135deg, #10B981, #14B8A6)' : '#F3F4F6',
+          background: isPro ? GREEN_GRADIENT : '#FFFFFF',
           color: isPro ? '#fff' : '#4B5563',
-          border: 'none',
+          border: isPro ? 'none' : '1.5px solid #E5E7EB',
           boxShadow: isPro ? '0 1px 4px rgba(16,185,129,0.3)' : 'none',
           transition: 'box-shadow 0.16s ease, transform 0.16s ease',
         }}

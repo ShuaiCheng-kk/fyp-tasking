@@ -37,8 +37,30 @@ export async function POST(req: NextRequest) {
 
     await supabase
       .from('users')
-      .update({ company_id: invite.company_id, role: normalizedRole })
+      .update({
+        company_id: invite.company_id,
+        role: normalizedRole,
+        department_id: invite.department_id ?? null,
+      })
       .eq('id', user_id)
+
+    if (invite.department_id && normalizedRole === 'Manager') {
+      await supabase
+        .from('manager_departments')
+        .upsert(
+          { manager_id: user_id, company_id: invite.company_id, department_id: invite.department_id },
+          { onConflict: 'manager_id,department_id' },
+        )
+    }
+
+    if (invite.department_id && normalizedRole === 'Employee') {
+      await supabase
+        .from('employee_departments')
+        .upsert(
+          { employee_id: user_id, department_id: invite.department_id },
+          { onConflict: 'employee_id,department_id' },
+        )
+    }
 
     await ownerInboxService.updateInboxStatus(inbox_id, 'accepted')
 

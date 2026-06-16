@@ -32,6 +32,8 @@ export const authService = {
     full_name: string
     email_address: string
     phone_number: string | null
+    date_of_birth?: string | null
+    profile_photo_url?: string | null
     role: User['role']
     company_id?: string | null
   }): Promise<void> {
@@ -40,6 +42,8 @@ export const authService = {
       full_name: data.full_name,
       email_address: data.email_address,
       phone_number: data.phone_number,
+      date_of_birth: data.date_of_birth ?? null,
+      profile_photo_url: data.profile_photo_url ?? null,
       role: data.role,
       company_id: data.company_id ?? null,
     })
@@ -50,6 +54,8 @@ export const authService = {
     email_address: string
     password: string
     phone_number: string | null
+    date_of_birth?: string | null
+    profile_photo_url?: string | null
     role: User['role']
   }): Promise<User> {
     const admin = getAdminClient()
@@ -71,6 +77,8 @@ export const authService = {
         full_name: data.full_name,
         email_address: data.email_address,
         phone_number: data.phone_number,
+        date_of_birth: data.date_of_birth ?? null,
+        profile_photo_url: data.profile_photo_url ?? null,
         role: data.role,
       })
       return user
@@ -140,19 +148,12 @@ export const authService = {
     const authUserId = authUser.id
 
     try {
-      await authRepository.createUser({
-        supabase_auth_id: authUserId,
-        full_name: data.full_name,
-        email_address: data.email,
-        phone_number: data.phone || null,
-        role: 'Owner',
-      })
-
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://fyp-tasking.vercel.app'
       const { data: linkData, error: linkError } = await admin.auth.admin.generateLink({
         type: 'signup',
         email: data.email,
         password: data.password,
-        options: { redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/confirm` },
+        options: { redirectTo: `${appUrl}/auth/confirm` },
       })
       const confirmLink = linkData?.properties?.action_link
       if (!linkError && confirmLink) {
@@ -162,7 +163,6 @@ export const authService = {
 
       return { user_id: authUserId }
     } catch (err) {
-      try { await authRepository.deleteBySupabaseAuthId(authUserId) } catch {}
       try { await authRepository.deleteAuthUser(authUserId) } catch {}
       throw err
     }
@@ -178,6 +178,11 @@ export const authService = {
 
   async completeCompanySetup(data: {
     user_id: string
+    full_name: string
+    email_address: string
+    phone_number: string | null
+    date_of_birth?: string | null
+    profile_photo_url?: string | null
     company_name: string
     company_description: string
     company_location: string | null
@@ -190,8 +195,20 @@ export const authService = {
     departments: string[]
     plan: string
   }): Promise<{ company_id: string }> {
-    const user = await authRepository.findByAuthId(data.user_id)
-    if (!user) throw new Error('User not found')
+    let user = await authRepository.findByAuthId(data.user_id)
+    if (!user) {
+      user = await authRepository.createUser({
+        supabase_auth_id: data.user_id,
+        full_name: data.full_name,
+        email_address: data.email_address,
+        phone_number: data.phone_number,
+        date_of_birth: data.date_of_birth ?? null,
+        profile_photo_url: data.profile_photo_url ?? null,
+        role: 'Owner',
+      })
+    }
+
+    if (user.company_id) return { company_id: user.company_id }
 
     const company = await companyRepository.createCompany({
       name: data.company_name,
