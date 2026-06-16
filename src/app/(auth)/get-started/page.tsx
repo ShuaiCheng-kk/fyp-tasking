@@ -1469,16 +1469,33 @@ export default function GetStartedPage() {
     }
 
     // Return from Supabase email confirmation link
-    const storedEmail = sessionStorage.getItem('owner_email');
-    if (params.get('verified') === 'true' && storedEmail) {
-      setConfirmationEmail(storedEmail);
+    const storedOwnerEmail = sessionStorage.getItem('owner_email');
+    const storedGuestEmail = sessionStorage.getItem('guest_email');
+
+    if (params.get('verified') === 'true' && storedGuestEmail) {
+      setConfirmationEmail(storedGuestEmail);
+      setVerifiedFromUrl(true);
+      setPath('guest');
+      setStep(2);
+      return;
+    }
+    if (params.get('error') === 'invalid_link' && storedGuestEmail) {
+      setConfirmationEmail(storedGuestEmail);
+      setLinkErrorFromUrl(true);
+      setPath('guest');
+      setStep(2);
+      return;
+    }
+
+    if (params.get('verified') === 'true' && storedOwnerEmail) {
+      setConfirmationEmail(storedOwnerEmail);
       setVerifiedFromUrl(true);
       setPath('owner');
       setStep(2);
       return;
     }
-    if (params.get('error') === 'invalid_link' && storedEmail) {
-      setConfirmationEmail(storedEmail);
+    if (params.get('error') === 'invalid_link' && storedOwnerEmail) {
+      setConfirmationEmail(storedOwnerEmail);
       setLinkErrorFromUrl(true);
       setPath('owner');
       setStep(2);
@@ -1815,82 +1832,75 @@ export default function GetStartedPage() {
   setIsLoading(true);
 
   try {
-    const [emailRes, phoneRes] = await Promise.all([
-      fetch('/api/auth/check-email', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: guestAccount.email.trim() }),
-      }),
-      fetch('/api/auth/check-phone', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: guestAccount.phone }),
-      }),
-    ]);
-
-    const emailData = await readJsonSafe(emailRes);
-    if (emailData.exists) {
-      setError('An account with this email already exists. Please sign in instead.');
-      return;
-    }
-
-    const phoneData = await readJsonSafe(phoneRes);
-    if (phoneData.exists) {
-      setError('This phone number is already registered to another account. Please use a different number.');
-      return;
-    }
-
-    const registerRes = await fetch('/api/auth/register', {
+    const registerRes = await fetch('/api/auth/register-guest', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         full_name: guestAccount.fullName.trim(),
-        email_address: guestAccount.email.trim(),
+        email: guestAccount.email.trim(),
         password: guestAccount.password,
-        phone_number: guestAccount.phone,
-        date_of_birth: guestAccount.dateOfBirth || null,
-        role: 'Guest User',
+        phone: guestAccount.phone,
       }),
     });
 
     const registerData = await readJsonSafe(registerRes);
-    if (!registerData.success) throw new Error(registerData.message);
+    if (!registerData.success) { setError(registerData.message); return; }
 
-    const signinRes = await fetch('/api/auth/signin', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email_address: guestAccount.email.trim(),
-        password: guestAccount.password,
-      }),
-    });
+    sessionStorage.setItem('guest_user_id', registerData.user_id);
+    sessionStorage.setItem('guest_email', guestAccount.email.trim());
+    sessionStorage.setItem('guest_password', guestAccount.password);
+    sessionStorage.setItem('guest_full_name', guestAccount.fullName.trim());
+    sessionStorage.setItem('guest_phone', guestAccount.phone);
+    sessionStorage.setItem('guest_dob', guestAccount.dateOfBirth || '');
+    if (profilePhotoUrl) sessionStorage.setItem('guest_photo', profilePhotoUrl);
 
-    const signinData = await readJsonSafe(signinRes);
-    if (!signinData.success) throw new Error(signinData.message);
-
-    const authUid = signinData.user.auth_id;
-
-    localStorage.setItem('tasking_user_id', authUid);
-    localStorage.setItem('tasking_user_role', signinData.user.role);
-    localStorage.removeItem('tasking_company_id');
-
-    const params = new URLSearchParams(window.location.search)
-    const urlJobId = params.get('job_id')
-    const storedJobId = sessionStorage.getItem('apply_job_id')
-    const jobId = urlJobId || storedJobId
-
-    if (jobId) {
-      sessionStorage.setItem('apply_job_id', jobId)
-      window.location.href = `/guest/applications?apply=true&job_id=${jobId}`
-    } else {
-      window.location.href = '/guest/applications'
+    if (registerData.email_confirmed) {
+      // "Confirm email" is OFF in Supabase — skip verify step
+      await handleGuestVerifyComplete();
+      return;
     }
+
+    // "Confirm email" is ON — show verify step
+    setConfirmationEmail(guestAccount.email.trim());
+    goNext();
   } catch (err) {
     setError(err instanceof Error ? err.message : 'Registration failed');
   } finally {
     setIsLoading(false);
   }
 };
+
+  const handleGuestVerifyComplete = async () => {
+    const user_id = sessionStorage.getItem('guest_user_id') || '';
+    const email_address = sessionStorage.getItem('guest_email') || '';
+    const password = sessionStorage.getItem('guest_password') || '';
+    const full_name = sessionStorage.getItem('guest_full_name') || '';
+    const phone_number = sessionStorage.getItem('guest_phone') || '';
+    const date_of_birth = sessionStorage.getItem('guest_dob') || null;
+    const profile_photo_url = sessionStorage.getItem('guest_photo') || null;
+
+    const res = await fetch('/api/auth/complete-guest-registration', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id, full_name, email_address, password, phone_number, date_of_birth, profile_photo_url }),
+    });
+    const data = await readJsonSafe(res);
+    if (!data.success) throw new Error(data.message);
+
+    localStorage.setItem('tasking_user_id', data.user.auth_id);
+    localStorage.setItem('tasking_user_role', data.user.role);
+    localStorage.removeItem('tasking_company_id');
+
+    ['guest_user_id', 'guest_email', 'guest_password', 'guest_full_name', 'guest_phone', 'guest_dob', 'guest_photo']
+      .forEach(k => sessionStorage.removeItem(k));
+
+    const storedJobId = sessionStorage.getItem('apply_job_id');
+    if (storedJobId) {
+      window.location.href = `/guest/applications?apply=true&job_id=${storedJobId}`;
+    } else {
+      window.location.href = '/guest/applications';
+    }
+  };
 
   const handleRedeemCode = async () => {
     setIsLoading(true);
@@ -2473,6 +2483,22 @@ export default function GetStartedPage() {
         )}
 
         {/* ──────── GUEST USER PATH ──────── */}
+
+        {path === 'guest' && step === 2 && confirmationEmail && (
+          <Card>
+            <StepHeading headline="Check your email" subheadline="" onBack={() => {
+              setStep(1);
+              setConfirmationEmail(null);
+            }} />
+            <VerifyEmailStep
+              email={confirmationEmail}
+              verified={verifiedFromUrl}
+              linkError={linkErrorFromUrl}
+              onContinue={handleGuestVerifyComplete}
+              onResend={handleResendEmail}
+            />
+          </Card>
+        )}
 
         {path === 'guest' && step === 1 && (
           <Card>

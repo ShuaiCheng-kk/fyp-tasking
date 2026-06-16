@@ -168,6 +168,42 @@ export const authService = {
     }
   },
 
+  async registerGuest(data: {
+    email: string
+    password: string
+  }): Promise<{ user_id: string; email_confirmed: boolean }> {
+    const { data: authData, error } = await supabase.auth.signUp({
+      email: data.email,
+      password: data.password,
+    })
+    if (error) throw new Error(error.message)
+    if (!authData.user) throw new Error('Registration failed')
+    return {
+      user_id: authData.user.id,
+      email_confirmed: !!authData.user.email_confirmed_at,
+    }
+  },
+
+  async completeGuestRegistration(data: {
+    user_id: string
+    full_name: string
+    email_address: string
+    phone_number: string | null
+    date_of_birth: string | null
+    profile_photo_url: string | null
+  }): Promise<User> {
+    const user = await authRepository.createUser({
+      supabase_auth_id: data.user_id,
+      full_name: data.full_name,
+      email_address: data.email_address,
+      phone_number: data.phone_number,
+      date_of_birth: data.date_of_birth,
+      profile_photo_url: data.profile_photo_url,
+      role: 'Guest User',
+    })
+    return user
+  },
+
   async isEmailVerified(email: string): Promise<boolean> {
     const admin = getAdminClient()
     const { data, error } = await admin.auth.admin.listUsers()

@@ -66,6 +66,8 @@ export async function PATCH(req: Request) {
     const profile = await workerProfileService.updateProfile(user_id, {
       full_name: body.full_name,
       phone_number: body.phone_number,
+      date_of_birth: body.date_of_birth ?? null,
+      profile_photo_url: body.profile_photo_url ?? null,
     })
 
     return NextResponse.json({
