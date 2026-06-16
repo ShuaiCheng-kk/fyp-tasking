@@ -9,6 +9,8 @@ export const workerProfileService = {
   async updateProfile(authId: string, values: {
     full_name: string
     phone_number: string | null
+    date_of_birth: string | null
+    profile_photo_url: string | null
   }) {
     if (!authId) throw new Error('Missing user id')
     if (!values.full_name.trim()) throw new Error('Full name is required')
@@ -16,6 +18,8 @@ export const workerProfileService = {
     return workerProfileRepository.updateByAuthId(authId, {
       full_name: values.full_name.trim(),
       phone_number: values.phone_number?.trim() || null,
+      date_of_birth: values.date_of_birth || null,
+      profile_photo_url: values.profile_photo_url || null,
     })
   },
 }

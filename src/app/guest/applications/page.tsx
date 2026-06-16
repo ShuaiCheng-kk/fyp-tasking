@@ -23,7 +23,9 @@ type Profile = {
   id: string
   full_name: string
   email_address: string
-  phone_number: string
+  phone_number: string | null
+  date_of_birth: string | null
+  profile_photo_url: string | null
   role: string
 }
 

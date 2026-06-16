@@ -1,13 +1,16 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { LogOut, User } from 'lucide-react'
+import { createBrowserClient } from '@supabase/ssr'
 
 type Profile = {
   id: string
   full_name: string
   email_address: string
-  phone_number: string
+  phone_number: string | null
+  date_of_birth: string | null
+  profile_photo_url: string | null
   role: string
 }
 
@@ -23,14 +26,44 @@ export default function GuestProfileMenu({
   const [currentProfile, setCurrentProfile] = useState<Profile | null>(profile)
   const [fullName, setFullName] = useState('')
   const [phoneNumber, setPhoneNumber] = useState('')
+  const [dateOfBirth, setDateOfBirth] = useState('')
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null)
+  const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     setCurrentProfile(profile)
     setFullName(profile?.full_name || '')
     setPhoneNumber(profile?.phone_number || '')
+    setDateOfBirth(profile?.date_of_birth || '')
+    setPhotoUrl(profile?.profile_photo_url || null)
   }, [profile])
+
+  const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploadingPhoto(true)
+    try {
+      const supabase = createBrowserClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      )
+      const ext = file.name.split('.').pop() ?? 'jpg'
+      const filename = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
+      const { data, error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(filename, file, { contentType: file.type })
+      if (uploadError || !data) throw new Error('Photo upload failed')
+      const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(data.path)
+      setPhotoUrl(publicUrl)
+    } catch {
+      setError('Failed to upload photo. Please try again.')
+    } finally {
+      setUploadingPhoto(false)
+    }
+  }
 
   const handleSave = async () => {
     try {
@@ -45,15 +78,14 @@ export default function GuestProfileMenu({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           full_name: fullName,
-          phone_number: phoneNumber,
+          phone_number: phoneNumber || null,
+          date_of_birth: dateOfBirth || null,
+          profile_photo_url: photoUrl || null,
         }),
       })
 
       const data = await res.json()
-
-      if (!data.success) {
-        throw new Error(data.message || 'Failed to update profile')
-      }
+      if (!data.success) throw new Error(data.message || 'Failed to update profile')
 
       setCurrentProfile(data.profile)
       setEditing(false)
@@ -64,26 +96,40 @@ export default function GuestProfileMenu({
     }
   }
 
+  const handleCancelEdit = () => {
+    setEditing(false)
+    setFullName(currentProfile?.full_name || '')
+    setPhoneNumber(currentProfile?.phone_number || '')
+    setDateOfBirth(currentProfile?.date_of_birth || '')
+    setPhotoUrl(currentProfile?.profile_photo_url || null)
+    setError('')
+  }
+
+  const avatarSrc = editing ? photoUrl : currentProfile?.profile_photo_url
+
   return (
     <>
       <button type="button" onClick={() => setOpen(true)} style={profileTriggerStyle}>
-        <User size={16} strokeWidth={2.2} />
+        {currentProfile?.profile_photo_url ? (
+          <img
+            src={currentProfile.profile_photo_url}
+            alt="avatar"
+            style={{ width: 22, height: 22, borderRadius: '50%', objectFit: 'cover' }}
+          />
+        ) : (
+          <User size={16} strokeWidth={2.2} />
+        )}
         <span style={userNameStyle}>{profile?.full_name || 'Guest'}</span>
       </button>
 
       {open && (
-        <div style={overlayStyle}>
+        <div style={overlayStyle} onClick={(e) => { if (e.target === e.currentTarget) { setOpen(false); setEditing(false); setError('') } }}>
           <aside style={panelStyle}>
             <div style={panelHeaderStyle}>
               <h2 style={titleStyle}>My Profile</h2>
-
               <button
                 type="button"
-                onClick={() => {
-                  setOpen(false)
-                  setEditing(false)
-                  setError('')
-                }}
+                onClick={() => { setOpen(false); setEditing(false); setError('') }}
                 style={closeButtonStyle}
               >
                 Close
@@ -92,8 +138,37 @@ export default function GuestProfileMenu({
 
             <div style={cardStyle}>
               <div style={profileTopStyle}>
-                <div style={avatarStyle}>
-                  {(currentProfile?.full_name || 'G').charAt(0).toUpperCase()}
+                {/* Avatar */}
+                <div style={{ position: 'relative', flexShrink: 0 }}>
+                  {avatarSrc ? (
+                    <img
+                      src={avatarSrc}
+                      alt="avatar"
+                      style={{ width: 64, height: 64, borderRadius: '50%', objectFit: 'cover', border: '2px solid #4B5563' }}
+                    />
+                  ) : (
+                    <div style={avatarStyle}>
+                      {(currentProfile?.full_name || 'G').charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                  {editing && (
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploadingPhoto}
+                      style={photoEditBtnStyle}
+                      title="Change photo"
+                    >
+                      {uploadingPhoto ? '…' : '✎'}
+                    </button>
+                  )}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    onChange={handlePhotoChange}
+                  />
                 </div>
 
                 <div>
@@ -107,45 +182,18 @@ export default function GuestProfileMenu({
 
               {editing ? (
                 <>
-                  <FormField
-                    label="Full Name"
-                    value={fullName}
-                    onChange={setFullName}
-                  />
-
-                   <ProfileField
-                    label="Email"
-                    value={currentProfile?.email_address || 'Not added'}
-                  />
-
-                  <FormField
-                    label="Phone Number"
-                    value={phoneNumber}
-                    onChange={setPhoneNumber}
-                  />
+                  <FormField label="Full Name" value={fullName} onChange={setFullName} />
+                  <ProfileField label="Email" value={currentProfile?.email_address || '-'} />
+                  <FormField label="Phone Number" value={phoneNumber} onChange={setPhoneNumber} />
+                  <DateField label="Date of Birth" value={dateOfBirth} onChange={setDateOfBirth} />
 
                   {error && <p style={errorStyle}>{error}</p>}
 
                   <div style={buttonRowStyle}>
-                    <button
-                      type="button"
-                      onClick={handleSave}
-                      style={saveButtonStyle}
-                      disabled={saving}
-                    >
-                      {saving ? 'Saving...' : 'Save'}
+                    <button type="button" onClick={handleSave} style={saveButtonStyle} disabled={saving}>
+                      {saving ? 'Saving…' : 'Save'}
                     </button>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditing(false)
-                        setFullName(currentProfile?.full_name || '')
-                        setPhoneNumber(currentProfile?.phone_number || '')
-                        setError('')
-                      }}
-                      style={cancelButtonStyle}
-                    >
+                    <button type="button" onClick={handleCancelEdit} style={cancelButtonStyle}>
                       Cancel
                     </button>
                   </div>
@@ -155,6 +203,12 @@ export default function GuestProfileMenu({
                   <ProfileField label="Full Name" value={currentProfile?.full_name || 'Not added'} />
                   <ProfileField label="Email" value={currentProfile?.email_address || 'Not added'} />
                   <ProfileField label="Phone Number" value={currentProfile?.phone_number || 'Not added'} />
+                  <ProfileField
+                    label="Date of Birth"
+                    value={currentProfile?.date_of_birth
+                      ? new Date(currentProfile.date_of_birth).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+                      : 'Not added'}
+                  />
 
                   <button type="button" onClick={() => setEditing(true)} style={editButtonStyle}>
                     Edit Profile
@@ -183,23 +237,20 @@ function ProfileField({ label, value }: { label: string; value: string }) {
   )
 }
 
-function FormField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string
-  value: string
-  onChange: (value: string) => void
-}) {
+function FormField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
   return (
     <div style={{ marginBottom: 20 }}>
       <label style={fieldLabelStyle}>{label}</label>
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        style={inputStyle}
-      />
+      <input value={value} onChange={(e) => onChange(e.target.value)} style={inputStyle} />
+    </div>
+  )
+}
+
+function DateField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <label style={fieldLabelStyle}>{label}</label>
+      <input type="date" value={value} onChange={(e) => onChange(e.target.value)} style={{ ...inputStyle, colorScheme: 'dark' }} />
     </div>
   )
 }
@@ -298,6 +349,23 @@ const avatarStyle: React.CSSProperties = {
   border: '1px solid #4B5563',
 }
 
+const photoEditBtnStyle: React.CSSProperties = {
+  position: 'absolute',
+  bottom: 0,
+  right: 0,
+  width: 22,
+  height: 22,
+  borderRadius: '50%',
+  background: '#F97316',
+  border: 'none',
+  color: '#fff',
+  fontSize: '0.7rem',
+  cursor: 'pointer',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+}
+
 const roleBadgeStyle: React.CSSProperties = {
   display: 'inline-block',
   padding: '6px 12px',
@@ -357,6 +425,7 @@ const inputStyle: React.CSSProperties = {
   fontSize: '0.875rem',
   fontWeight: 700,
   outline: 'none',
+  boxSizing: 'border-box',
 }
 
 const editButtonStyle: React.CSSProperties = {
