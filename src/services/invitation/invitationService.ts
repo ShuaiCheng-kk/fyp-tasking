@@ -130,6 +130,8 @@ export const invitationService = {
     email_address: string
     password: string
     phone_number: string | null
+    date_of_birth?: string | null
+    profile_photo_url?: string | null
   }): Promise<{ user: User; company_id: string }> {
     const invitation = await invitationRepository.findByCode(data.code)
     if (!invitation) throw new Error('Invalid or expired invitation code')
@@ -189,21 +191,25 @@ export const invitationService = {
         full_name: data.full_name,
         email_address: data.email_address,
         phone_number: data.phone_number,
+        date_of_birth: data.date_of_birth ?? null,
+        profile_photo_url: data.profile_photo_url ?? null,
         role: normalizedRole,
         company_id: invitation.company_id,
       })
 
-      console.log('REDEEM DEBUG - role:', normalizedRole)
-      console.log('REDEEM DEBUG - department_id:', invitation.department_id)
       if (normalizedRole === 'Manager' && invitation.department_id) {
-        console.log('REDEEM DEBUG - inserting manager department')
-        await invitationRepository.insertManagerDepartment(user.id, invitation.department_id)
-        console.log('REDEEM DEBUG - insert complete')
+        await invitationRepository.insertManagerDepartment(user.id, invitation.department_id, invitation.company_id)
       }
       if (normalizedRole === 'Employee' && invitation.department_id) {
-        console.log('REDEEM DEBUG - inserting employee department')
         await invitationRepository.insertEmployeeDepartment(user.id, invitation.department_id)
-        console.log('REDEEM DEBUG - insert complete')
+      }
+
+      if (invitation.department_id && (normalizedRole === 'Manager' || normalizedRole === 'Employee')) {
+        const { supabase } = await import('@/lib/supabase')
+        await supabase
+          .from('users')
+          .update({ department_id: invitation.department_id })
+          .eq('id', user.id)
       }
 
       await invitationRepository.markAsUsed(data.code, user.id)

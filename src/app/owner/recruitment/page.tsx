@@ -45,6 +45,13 @@ const labelStyle: React.CSSProperties = {
 
 const cardShadow = '0 1px 3px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04)'
 
+const pageKeyframes = `
+  @keyframes overlayFadeIn { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes modalSlideIn  { from { opacity: 0; transform: scale(0.97) translateY(8px) } to { opacity: 1; transform: scale(1) translateY(0) } }
+  @keyframes blockSlideUp  { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
+  @keyframes fadeSlideUpToast { from { opacity: 0; transform: translateX(-50%) translateY(10px) } to { opacity: 1; transform: translateX(-50%) translateY(0) } }
+`
+
 function Spinner({ size = 16, dark = false }: { size?: number; dark?: boolean }) {
   return (
     <svg className="animate-spin" width={size} height={size} viewBox="0 0 18 18" style={{ display: 'inline-block', flexShrink: 0 }}>
@@ -723,6 +730,28 @@ export default function OwnerRecruitmentPage() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to update posting')
+
+      // notify Manager who submitted the posting
+      const posting = pendingPostings.find(p => p.id === jobId)
+      if (posting?.created_by) {
+        try {
+          const jobTitle = posting.title ?? 'your job posting'
+          const content = decision === 'approve_posting'
+            ? `Your job posting "${jobTitle}" has been approved and is now live.`
+            : `Your job posting "${jobTitle}" has been rejected${rejection_reason ? `: ${rejection_reason}` : '.'}`
+          await fetch('/api/inbox/messages', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              from_user_id: internalUserId,
+              to_user_id: posting.created_by,
+              company_id: companyId,
+              content,
+            }),
+          })
+        } catch { /* notification failure is non-fatal */ }
+      }
+
       setSelectedPendingId('')
       setRejectModalOpen(false); setRejectReason(''); setPendingRejectId('')
       await fetchAll(companyId, internalUserId)
@@ -954,6 +983,7 @@ export default function OwnerRecruitmentPage() {
 
   return (
     <div style={{ display: 'flex', height: '100vh', background: '#F7F8FA', fontFamily: "'Inter', system-ui, sans-serif" }}>
+      <style>{pageKeyframes}</style>
       <OwnerSidebar />
       <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', scrollbarGutter: 'stable' }}>
 
@@ -971,7 +1001,7 @@ export default function OwnerRecruitmentPage() {
         </div>
 
         {/* ── Card wrapper (tab bar + content) ── */}
-        <div style={{ padding: '0 28px 28px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <div style={{ padding: '0 28px 28px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, animation: 'blockSlideUp 0.38s ease both 0.06s' }}>
         <div style={{ background: '#FFFFFF', borderRadius: 16, border: '1px solid #E5E7EB', boxShadow: '0 1px 6px rgba(0,0,0,0.06)', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
 
         {/* ── Tab bar ── */}
@@ -2257,8 +2287,8 @@ export default function OwnerRecruitmentPage() {
 
       {/* ══ Reject reason modal ════════════════════════════════════════════════ */}
       {rejectModalOpen && createPortal(
-        <div onClick={() => { setRejectModalOpen(false); setRejectReason(''); setPendingRejectId('') }} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.42)', zIndex: 10000, display: 'grid', placeItems: 'center', padding: 20 }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: 420, background: '#FFFFFF', borderRadius: 16, padding: '24px', boxShadow: '0 24px 70px rgba(15,23,42,0.28)' }}>
+        <div onClick={() => { setRejectModalOpen(false); setRejectReason(''); setPendingRejectId('') }} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.42)', zIndex: 10000, display: 'grid', placeItems: 'center', padding: 20, backdropFilter: 'blur(4px)', animation: 'overlayFadeIn 0.18s ease-out' }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: 420, background: '#FFFFFF', borderRadius: 20, padding: '24px', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
               <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#111827' }}>Reject Job Posting</h2>
               <button onClick={() => { setRejectModalOpen(false); setRejectReason(''); setPendingRejectId('') }} style={{ border: 'none', background: '#F9FAFB', color: '#6B7280', cursor: 'pointer', padding: '5px', borderRadius: 7, display: 'flex' }}><X size={15} /></button>
@@ -2352,8 +2382,8 @@ export default function OwnerRecruitmentPage() {
         const divider: React.CSSProperties = { borderTop: '1px dashed #E5E7EB', margin: '0' }
 
         return (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-            <div onClick={e => e.stopPropagation()} style={{ width: 540, background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', maxHeight: '90vh' }}>
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>
+            <div onClick={e => e.stopPropagation()} style={{ width: 540, background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', maxHeight: '90vh', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
 
               {/* Header */}
               <div style={{ padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -2756,8 +2786,8 @@ export default function OwnerRecruitmentPage() {
 
       {/* ══ Delete confirm modal (draft + live) ══════════════════════════════ */}
       {deleteConfirm && (
-        <div onClick={() => setDeleteConfirm(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.42)', zIndex: 110, display: 'grid', placeItems: 'center', padding: 20 }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: 420, background: '#FFFFFF', borderRadius: 16, padding: '24px', boxShadow: '0 24px 70px rgba(15,23,42,0.28)' }}>
+        <div onClick={() => setDeleteConfirm(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.42)', zIndex: 110, display: 'grid', placeItems: 'center', padding: 20, backdropFilter: 'blur(4px)', animation: 'overlayFadeIn 0.18s ease-out' }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: 420, background: '#FFFFFF', borderRadius: 20, padding: '24px', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
               <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#111827' }}>{deleteConfirm.isDraft === false ? 'Delete Job Posting' : 'Delete Draft'}</h2>
               <button onClick={() => setDeleteConfirm(null)} style={{ border: 'none', background: '#F9FAFB', color: '#6B7280', cursor: 'pointer', padding: '5px', borderRadius: 7, display: 'flex' }}><X size={15} /></button>

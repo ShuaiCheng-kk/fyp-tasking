@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { Plus, X, ChevronDown, Upload, Building2, Network, Crown, UserCog, UserRound, HardHat, Users } from 'lucide-react'
+import { Plus, X, ChevronDown, Check, Upload, Building2, Network, Crown, UserCog, UserRound, HardHat, Users } from 'lucide-react'
 import { deptColor } from '@/lib/deptColor'
 import { createBrowserClient } from '@supabase/ssr'
 import PartnerSidebar from '@/components/PartnerSidebar'
@@ -45,23 +45,33 @@ function AnimatedNumber({ value, duration = 550 }: { value: number; duration?: n
   return <>{display.toLocaleString()}</>
 }
 
+// ─── Modal keyframes ─────────────────────────────────────────────────────────
+
+const pageKeyframes = `
+  @keyframes overlayFadeIn { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes modalSlideIn  { from { opacity: 0; transform: scale(0.97) translateY(8px) } to { opacity: 1; transform: scale(1) translateY(0) } }
+  @keyframes blockSlideUp  { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
+  @keyframes cardStagger   { from { opacity: 0; transform: translateY(14px) scale(0.96) } to { opacity: 1; transform: translateY(0) scale(1) } }
+  @keyframes fadeSlideUpToast { from { opacity: 0; transform: translateX(-50%) translateY(10px) } to { opacity: 1; transform: translateX(-50%) translateY(0) } }
+`
+
 // ─── Modal primitives ─────────────────────────────────────────────────────────
 
-function ModalOverlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+function ModalOverlay({ children, onClose, maxWidth = '540px' }: { children: React.ReactNode; onClose: () => void; maxWidth?: string }) {
   return (
     <div
       onClick={onClose}
       style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(15,23,42,0.42)',
-        display: 'grid',
-        placeItems: 'center',
-        padding: 18,
-        zIndex: 100,
+        position: 'fixed', inset: 0,
+        background: 'rgba(15,23,42,0.45)',
+        backdropFilter: 'blur(4px)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 16, zIndex: 100,
+        animation: 'overlayFadeIn 0.18s ease-out',
       }}
     >
-      <div onClick={(e) => e.stopPropagation()} style={{ width: 'min(520px, 100%)', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+      <style>{pageKeyframes}</style>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: `min(${maxWidth}, calc(100% - 32px))`, maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
         {children}
       </div>
     </div>
@@ -72,26 +82,32 @@ function ModalBox({ children }: { children: React.ReactNode }) {
   return (
     <div style={{
       background: '#FFFFFF',
-      borderRadius: 16,
-      border: '1px solid #E2E8F0',
-      boxShadow: '0 24px 70px rgba(15,23,42,0.22)',
+      borderRadius: 20,
+      overflow: 'hidden',
+      boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)',
       maxHeight: '90vh',
       overflowY: 'auto',
       display: 'flex',
       flexDirection: 'column',
+      animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)',
     }}>
       {children}
     </div>
   )
 }
 
-function ModalHeader({ title, onClose }: { title: string; onClose: () => void }) {
+function ModalHeader({ title, icon, iconBg, onClose }: { title: string; icon?: React.ReactNode; iconBg?: string; onClose: () => void }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '18px 20px', borderBottom: '1px solid #E2E8F0' }}>
-      <h2 style={{ fontWeight: 900, fontSize: '1.0625rem', color: '#0F172A', margin: 0, letterSpacing: '-0.2px' }}>{title}</h2>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', flexShrink: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        {icon && <div style={{ width: 32, height: 32, borderRadius: 9, background: iconBg ?? 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{icon}</div>}
+        <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0 }}>{title}</h2>
+      </div>
       <button
         onClick={onClose}
-        style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid #E2E8F0', background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: 'pointer', color: '#64748B', flexShrink: 0 }}
+        style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: 6, borderRadius: 8, flexShrink: 0 }}
+        onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+        onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
       >
         <X size={16} />
       </button>
@@ -200,7 +216,14 @@ function DropdownField({ value, options, onChange, placeholder }: {
 
 // ─── Role avatar config ───────────────────────────────────────────────────────
 
-function RoleAvatar({ role, size = 36 }: { role: string; size?: number }) {
+function RoleAvatar({ role, size = 36, photoUrl }: { role: string; size?: number; photoUrl?: string | null }) {
+  if (photoUrl) {
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: size, height: size, borderRadius: 999, flexShrink: 0, overflow: 'hidden' }}>
+        <img src={photoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+      </span>
+    )
+  }
   const cfg: Record<string, { bg: string; color: string; icon: React.ReactNode }> = {
     Owner:   { bg: '#0F172A', color: '#FFFFFF',  icon: <Crown    size={size * 0.42} /> },
     Partner: { bg: '#0F172A', color: '#FFFFFF',  icon: <Crown    size={size * 0.42} /> },
@@ -234,7 +257,7 @@ function OrgMemberCard({ member, onClick }: { member: TeamMember; onClick: () =>
       onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 3px 10px rgba(0,0,0,0.10)' }}
       onMouseLeave={e => { e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)' }}
     >
-      <RoleAvatar role={member.role} size={34} />
+      <RoleAvatar role={member.role} size={34} photoUrl={member.profile_photo_url} />
       <div>
         <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: 0 }}>{member.full_name}</p>
         <p style={{ fontSize: '0.75rem', color: '#9CA3AF', margin: 0 }}>{member.role}</p>
@@ -252,7 +275,7 @@ function OrgMemberRow({ member, onClick, onEdit, onRemove }: { member: TeamMembe
         onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
         onMouseLeave={e => { e.currentTarget.style.background = '#FAFAFA' }}
       >
-        <RoleAvatar role={member.role} size={28} />
+        <RoleAvatar role={member.role} size={28} photoUrl={member.profile_photo_url} />
         <span style={{ fontWeight: 500, fontSize: '0.8125rem', color: '#111827' }}>{member.full_name}</span>
       </button>
       <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
@@ -284,7 +307,7 @@ function OrgNode({ member, onClick }: { member: TeamMember; onClick: () => void 
         boxShadow: '0 1px 4px rgba(0,0,0,0.07)',
       }}
     >
-      <RoleAvatar role={member.role} size={36} />
+      <RoleAvatar role={member.role} size={36} photoUrl={member.profile_photo_url} />
       <p style={{ fontWeight: 700, fontSize: '0.8125rem', color: dark ? '#FFFFFF' : '#111827', margin: 0, lineHeight: 1.3, textAlign: 'center' }}>{member.full_name}</p>
     </button>
   )
@@ -493,6 +516,7 @@ type TeamMember = {
   phone_number: string | null
   role: string
   department_id: string | null
+  profile_photo_url?: string | null
   worker_status?: string | null
 }
 type ChangeDeptModal = { member: TeamMember } | null
@@ -608,6 +632,14 @@ export default function TeamPage() {
   const [manageDeptLoading, setManageDeptLoading] = useState(false)
   const [manageDeptSaving, setManageDeptSaving] = useState(false)
   const [manageDeptToast, setManageDeptToast] = useState('')
+  const [toast, setToast] = useState('')
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const showToast = (msg: string) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+    setToast(msg)
+    toastTimerRef.current = setTimeout(() => setToast(''), 3000)
+  }
 
   // Profile modal
   const [profileMember, setProfileMember] = useState<TeamMember | null>(null)
@@ -1016,11 +1048,9 @@ export default function TeamPage() {
           })
         ),
       ])
-      setManageDeptToast('Departments updated')
-      setTimeout(() => {
-        setManageDeptModal(null)
-        setManageDeptToast('')
-      }, 1200)
+      setManageDeptModal(null)
+      setManageDeptToast('')
+      showToast('Departments updated successfully.')
     } catch {}
     finally { setManageDeptSaving(false) }
   }
@@ -1581,7 +1611,7 @@ export default function TeamPage() {
       {manageDeptModal && (
         <div
           onClick={() => { if (!manageDeptSaving) { setManageDeptModal(null); setManageDeptToast('') } }}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}
         >
           <div onClick={(e) => e.stopPropagation()} style={{ width: '560px' }}>
             <ModalBox>
@@ -1646,11 +1676,7 @@ export default function TeamPage() {
                 </>
               )}
 
-              {manageDeptToast && (
-                <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem', color: '#15803D', marginBottom: '12px' }}>
-                  {manageDeptToast}
-                </div>
-              )}
+
 
               <div style={{ display: 'flex', gap: '10px' }}>
                 <button
@@ -1772,7 +1798,7 @@ export default function TeamPage() {
 
             {/* Avatar + name */}
             <div style={{ padding: '24px 24px 20px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', gap: 16 }}>
-              <RoleAvatar role={profileMember.role} size={54} />
+              <RoleAvatar role={profileMember.role} size={54} photoUrl={profileMember.profile_photo_url} />
               <div>
                 <p style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#0F172A', margin: '0 0 5px' }}>{profileMember.full_name}</p>
                 <span style={{
@@ -2190,6 +2216,20 @@ export default function TeamPage() {
             </div>
           </ModalBox>
         </ModalOverlay>
+      )}
+
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
+          background: '#0F172A', color: '#FFFFFF', borderRadius: 999, padding: '10px 18px',
+          display: 'flex', alignItems: 'center', gap: 8,
+          fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', zIndex: 9999,
+          animation: 'fadeSlideUpToast 0.22s ease',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.25)',
+        }}>
+          <Check size={15} style={{ color: '#10B981', flexShrink: 0 }} />
+          {toast}
+        </div>
       )}
     </div>
   )

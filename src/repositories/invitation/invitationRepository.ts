@@ -64,10 +64,10 @@ export const invitationRepository = {
     if (error) throw new Error(error.message)
   },
 
-  async insertManagerDepartment(manager_id: string, department_id: string): Promise<void> {
+  async insertManagerDepartment(manager_id: string, department_id: string, company_id: string): Promise<void> {
     const { error } = await supabase
       .from('manager_departments')
-      .insert({ manager_id, department_id })
+      .insert({ manager_id, department_id, company_id })
     if (error) throw new Error(error.message)
   },
 

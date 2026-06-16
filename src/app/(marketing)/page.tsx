@@ -265,6 +265,18 @@ export default function HomePage() {
   const [h3, setH3] = useState(false);
 
   useEffect(() => {
+    const hash = window.location.hash;
+    if (hash.includes('access_token=') && hash.includes('type=signup')) {
+      window.location.replace('/email-verified');
+      return;
+    }
+    if (hash.includes('error=') && hash.includes('error_description=')) {
+      window.location.replace('/email-verified?error=1');
+      return;
+    }
+  }, []);
+
+  useEffect(() => {
     const t0 = setTimeout(() => setH0(true), 80);
     const t1 = setTimeout(() => setH1(true), 260);
     const t2 = setTimeout(() => setH2(true), 440);

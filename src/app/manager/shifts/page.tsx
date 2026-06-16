@@ -590,6 +590,14 @@ function DropdownField({ value, options, onChange, placeholder, disabled = false
   )
 }
 
+const pageKeyframes = `
+  @keyframes overlayFadeIn { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes modalSlideIn  { from { opacity: 0; transform: scale(0.97) translateY(8px) } to { opacity: 1; transform: scale(1) translateY(0) } }
+  @keyframes blockSlideUp  { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
+  @keyframes fadeSlideUpToast { from { opacity: 0; transform: translateX(-50%) translateY(10px) } to { opacity: 1; transform: translateX(-50%) translateY(0) } }
+  @keyframes fadeSlideUp   { from { opacity: 0; transform: scale(0.97) translateY(8px) } to { opacity: 1; transform: scale(1) translateY(0) } }
+`
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ManagerShiftsPage() {
@@ -1369,14 +1377,14 @@ export default function ManagerShiftsPage() {
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: APP_BG, fontFamily: 'inherit' }}>
+      <style>{pageKeyframes}</style>
       <style>{`
-        @keyframes fadeSlideUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
         .tl-row:hover { background: ${BLUE_LIGHT} !important; }
         .off-bar:hover { background: #CBD5E1 !important; }
         .shift-bar:hover { filter: brightness(1.08); }
       `}</style>
       <ManagerSidebar />
-      <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', scrollbarGutter: 'stable' }}>
+      <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', scrollbarGutter: 'stable', animation: 'blockSlideUp 0.38s ease both 0.04s' }}>
 
         {/* Page header */}
         <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
@@ -1548,8 +1556,8 @@ export default function ManagerShiftsPage() {
 
       {/* ── Edit Shift Modal (OP-style) ── */}
       {assignOpen && editShift && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ width: 520, maxWidth: '94vw', maxHeight: '90vh', background: PANEL, borderRadius: 18, boxShadow: '0 24px 70px rgba(0,0,0,0.18)', display: 'flex', flexDirection: 'column', overflow: 'hidden', animation: 'fadeSlideUp 0.22s ease both' }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', animation: 'overlayFadeIn 0.18s ease-out' }}>
+          <div style={{ width: 520, maxWidth: '94vw', maxHeight: '90vh', background: PANEL, borderRadius: 20, boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', overflow: 'hidden', animation: 'fadeSlideUp 0.22s ease both' }}>
             {/* Header */}
             <div style={{ padding: '18px 22px 14px', borderBottom: `1px solid #F0F4F8`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <h3 style={{ fontWeight: 800, fontSize: '0.9375rem', color: TEXT, margin: 0 }}>Edit Shift</h3>
@@ -1642,8 +1650,8 @@ export default function ManagerShiftsPage() {
         }
         const selectedMembers = employees.filter(m => batchSelectedMemberIds.includes(m.id))
         return (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div style={{ width: 600, maxWidth: '96vw', maxHeight: '92vh', background: PANEL, borderRadius: 18, boxShadow: '0 24px 70px rgba(0,0,0,0.18)', display: 'flex', flexDirection: 'column', overflow: 'hidden', animation: 'fadeSlideUp 0.22s ease both' }}>
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', animation: 'overlayFadeIn 0.18s ease-out' }}>
+            <div style={{ width: 600, maxWidth: '96vw', maxHeight: '92vh', background: PANEL, borderRadius: 20, boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', overflow: 'hidden', animation: 'fadeSlideUp 0.22s ease both' }}>
               {/* Header */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, padding: 18, borderBottom: `1px solid ${PANEL_BORDER}` }}>
                 <h2 style={{ margin: 0, color: TEXT, fontSize: '1.1rem', fontWeight: 900 }}>
@@ -1842,8 +1850,8 @@ export default function ManagerShiftsPage() {
 
       {/* ── Delete Confirm ── */}
       {deleteId && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: PANEL, borderRadius: 16, padding: 28, width: 400, maxWidth: '90vw', boxShadow: '0 20px 60px rgba(0,0,0,0.18)', animation: 'fadeSlideUp 0.2s ease both' }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', animation: 'overlayFadeIn 0.18s ease-out' }}>
+          <div style={{ background: PANEL, borderRadius: 20, padding: 28, width: 400, maxWidth: '90vw', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'fadeSlideUp 0.22s ease both' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
               <div style={{ width: 38, height: 38, borderRadius: 10, background: '#FEF2F2', color: '#DC2626', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                 <Trash2 size={17} />

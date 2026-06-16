@@ -160,14 +160,14 @@ export const shiftRepository = {
 
   async getUsersByIds(
     ids: string[],
-  ): Promise<{ id: string; full_name: string; role: string }[]> {
+  ): Promise<{ id: string; full_name: string; role: string; profile_photo_url: string | null }[]> {
     if (ids.length === 0) return []
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, role')
+      .select('id, full_name, role, profile_photo_url')
       .in('id', ids)
     if (error) throw new Error(error.message)
-    return (data ?? []) as { id: string; full_name: string; role: string }[]
+    return (data ?? []) as { id: string; full_name: string; role: string; profile_photo_url: string | null }[]
   },
 
   async getAssignmentsByShiftIds(ids: string[]): Promise<ShiftAssignment[]> {

@@ -13,7 +13,8 @@ export async function POST(req: NextRequest) {
   }
 
   const {
-    user_id, company_name, company_description,
+    user_id, full_name, email_address, phone_number, date_of_birth, profile_photo_url,
+    company_name, company_description,
     company_location, company_address, company_postal_code,
     company_industry, company_size, company_website, company_logo_url,
     departments, plan,
@@ -29,6 +30,11 @@ export async function POST(req: NextRequest) {
   try {
     const result = await authService.completeCompanySetup({
       user_id,
+      full_name: typeof full_name === 'string' ? full_name : '',
+      email_address: typeof email_address === 'string' ? email_address : '',
+      phone_number: typeof phone_number === 'string' ? phone_number : null,
+      date_of_birth: typeof date_of_birth === 'string' ? date_of_birth : null,
+      profile_photo_url: typeof profile_photo_url === 'string' ? profile_photo_url : null,
       company_name,
       company_description: typeof company_description === 'string' ? company_description : '',
       company_location: typeof company_location === 'string' ? company_location : null,

@@ -25,7 +25,7 @@ type Announcement = {
   created_by_name?: string | null
 }
 
-type CompanyMember = { id: string; full_name: string; role: string }
+type CompanyMember = { id: string; full_name: string; role: string; profile_photo_url?: string | null }
 
 type Conversation = {
   partnerId: string
@@ -57,6 +57,15 @@ type InboxInvite = {
 }
 
 type InviteFlash = { id: string; message: string }
+
+// ─── Animation keyframes ─────────────────────────────────────────────────────
+
+const pageKeyframes = `
+  @keyframes overlayFadeIn { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes modalSlideIn  { from { opacity: 0; transform: scale(0.97) translateY(8px) } to { opacity: 1; transform: scale(1) translateY(0) } }
+  @keyframes blockSlideUp  { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
+  @keyframes fadeSlideUpToast { from { opacity: 0; transform: translateX(-50%) translateY(10px) } to { opacity: 1; transform: translateX(-50%) translateY(0) } }
+`
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -101,7 +110,17 @@ function hashColor(name: string): string {
   return palette[Math.abs(h) % palette.length]
 }
 
-function Avatar({ name, size = 36, role }: { name: string; size?: number; role?: string }) {
+function Avatar({ name, size = 36, role, photoUrl }: { name: string; size?: number; role?: string; photoUrl?: string | null }) {
+  if (photoUrl) {
+    return (
+      <div style={{
+        width: size, height: size, borderRadius: '50%', overflow: 'hidden',
+        flexShrink: 0,
+      }}>
+        <img src={photoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+      </div>
+    )
+  }
   const color = role ? (ROLE_COLOR[role] ?? hashColor(name)) : hashColor(name)
   const bg = role ? (ROLE_BG[role] ?? `${color}18`) : `${color}18`
   const iconSize = Math.round(size * 0.46)
@@ -202,7 +221,16 @@ export default function ManagerCommunicationPage() {
   const [pendingPartnerId, setPendingPartnerId] = useState<string | null>(null)
   const [pendingPrefill, setPendingPrefill] = useState('')
 
+  const [toast, setToast] = useState('')
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   const supabase = createClient()
+
+  const showToast = (msg: string) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+    setToast(msg)
+    toastTimerRef.current = setTimeout(() => setToast(''), 3000)
+  }
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -479,6 +507,7 @@ export default function ManagerCommunicationPage() {
         setAnnTitle('')
         setAnnContent('')
         setAnnDeptId('company-wide')
+        showToast('Announcement posted successfully.')
       }
     } finally { setPosting(false) }
   }
@@ -785,6 +814,7 @@ export default function ManagerCommunicationPage() {
 
   return (
     <div style={{ display: 'flex', height: '100vh', background: '#F7F8FA', color: '#0F172A', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+      <style>{pageKeyframes}</style>
       <style>{`
         @keyframes fadeSlideUp {
           from { opacity: 0; transform: translateY(12px); }
@@ -844,7 +874,7 @@ export default function ManagerCommunicationPage() {
 
       <ManagerSidebar unreadMessages={unreadMessages} unreadAnnouncements={unreadAnnCount} />
 
-      <main style={{ marginLeft: '64px', flex: 1, minWidth: 0, height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <main style={{ marginLeft: '64px', flex: 1, minWidth: 0, height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', animation: 'blockSlideUp 0.38s ease both 0.06s' }}>
 
         {/* Page header */}
         <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
@@ -974,7 +1004,7 @@ export default function ManagerCommunicationPage() {
                               animationDelay: `${i * 0.04}s`,
                             }}
                           >
-                            <Avatar name={conv.partnerName} size={40} role={conv.partnerRole} />
+                          <Avatar name={conv.partnerName} size={40} role={conv.partnerRole} photoUrl={companyMembers.find(m => m.id === conv.partnerId)?.profile_photo_url ?? null} />
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
@@ -1074,7 +1104,7 @@ export default function ManagerCommunicationPage() {
                                 style={{ padding: '10px 14px 0', background: '#FFFFFF', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, cursor: openPanelIds.length > 1 ? 'grab' : 'default', userSelect: 'none' }}
                                 title={openPanelIds.length > 1 ? 'Drag to swap panels' : undefined}
                               >
-                                <Avatar name={conv.partnerName} size={30} role={conv.partnerRole} />
+                                <Avatar name={conv.partnerName} size={30} role={conv.partnerRole} photoUrl={companyMembers.find(m => m.id === conv.partnerId)?.profile_photo_url ?? null} />
                                 <div style={{ flex: 1, minWidth: 0 }}>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                                     <span style={{ fontWeight: 800, fontSize: 13, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{conv.partnerName}</span>
@@ -1118,7 +1148,7 @@ export default function ManagerCommunicationPage() {
                                   const fileUrl = fileMatch?.[2] ?? null
                                   return (
                                     <div key={msg.id} className="mgr-msg-bubble" style={{ display: 'flex', justifyContent: isMine ? 'flex-end' : 'flex-start', alignItems: 'flex-end', gap: 6 }}>
-                                      {!isMine && <Avatar name={conv.partnerName} size={22} role={conv.partnerRole} />}
+                                      {!isMine && <Avatar name={conv.partnerName} size={22} role={conv.partnerRole} photoUrl={companyMembers.find(m => m.id === conv.partnerId)?.profile_photo_url ?? null} />}
                                       {isImage && imgUrl ? (
                                         <div style={{ maxWidth: '65%', display: 'flex', flexDirection: 'column', alignItems: isMine ? 'flex-end' : 'flex-start', gap: 3 }}>
                                           <a href={imgUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'block', borderRadius: isMine ? '12px 12px 3px 12px' : '12px 12px 12px 3px', overflow: 'hidden', border: '1px solid #E2E8F0' }}>
@@ -1404,8 +1434,8 @@ export default function ManagerCommunicationPage() {
 
       {/* Delete Confirmation Modal */}
       {deleteConfirmId && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: '#fff', borderRadius: 16, padding: 28, width: 400, maxWidth: '90vw', boxShadow: '0 20px 60px rgba(0,0,0,0.18)', animation: 'fadeSlideUp 0.2s ease both' }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', animation: 'overlayFadeIn 0.18s ease-out' }}>
+          <div style={{ background: '#fff', borderRadius: 20, padding: 28, width: 400, maxWidth: '90vw', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
               <div style={{ width: 38, height: 38, borderRadius: 10, background: '#FEF2F2', color: '#DC2626', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                 <Trash2 size={17} />
@@ -1417,11 +1447,11 @@ export default function ManagerCommunicationPage() {
             </p>
             <div style={{ display: 'flex', gap: 10 }}>
               <button onClick={() => setDeleteConfirmId(null)} disabled={deleting}
-                style={{ flex: 1, height: 38, background: 'none', border: '1.5px solid #E2E8F0', borderRadius: 9, fontWeight: 700, fontSize: 13, color: '#64748B', cursor: 'pointer' }}>
+                style={{ flex: 1, height: 38, padding: '7px 18px', border: '1.5px solid #E5E7EB', background: '#FFFFFF', color: '#6B7280', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', cursor: 'pointer' }}>
                 Cancel
               </button>
               <button onClick={() => handleDeleteAnnouncement(deleteConfirmId)} disabled={deleting}
-                style={{ flex: 1, height: 38, background: '#DC2626', border: 'none', borderRadius: 9, fontWeight: 700, fontSize: 13, color: '#fff', cursor: deleting ? 'not-allowed' : 'pointer', opacity: deleting ? 0.65 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
+                style={{ flex: 1, height: 38, background: '#DC2626', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#fff', cursor: deleting ? 'not-allowed' : 'pointer', opacity: deleting ? 0.65 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, padding: '7px 18px' }}>
                 {deleting ? <><Spinner size={12} light /> Deleting…</> : 'Delete'}
               </button>
             </div>
@@ -1431,16 +1461,16 @@ export default function ManagerCommunicationPage() {
 
       {/* Edit Announcement Modal */}
       {showEditModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: '#fff', borderRadius: 18, width: 500, maxWidth: '92vw', boxShadow: '0 24px 70px rgba(0,0,0,0.18)', overflow: 'hidden', animation: 'fadeSlideUp 0.22s ease both' }}>
-            <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid #F0F4F8', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', animation: 'overlayFadeIn 0.18s ease-out' }}>
+          <div style={{ background: '#fff', borderRadius: 20, width: 500, maxWidth: '92vw', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', overflow: 'hidden', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
+            <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <div style={{ width: 34, height: 34, borderRadius: 9, background: ACCENT_LIGHT, color: ACCENT, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <Pencil size={15} />
                 </div>
                 <h3 style={{ fontWeight: 800, fontSize: '1rem', color: '#0F172A', margin: 0 }}>Edit Announcement</h3>
               </div>
-              <button onClick={() => setShowEditModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', display: 'flex', padding: 4, borderRadius: 6 }}><X size={18} /></button>
+              <button onClick={() => setShowEditModal(false)} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: 6, borderRadius: 8 }}><X size={18} /></button>
             </div>
             <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div>
@@ -1460,8 +1490,8 @@ export default function ManagerCommunicationPage() {
               {editError && <div style={{ fontSize: 12.5, color: '#DC2626', background: '#FEF2F2', padding: '9px 12px', borderRadius: 8, fontWeight: 600 }}>{editError}</div>}
             </div>
             <div style={{ padding: '0 24px 20px', display: 'flex', gap: 10 }}>
-              <button onClick={() => setShowEditModal(false)} disabled={saving} style={cancelBtnStyle}>Cancel</button>
-              <button onClick={handleSaveEdit} disabled={saving || !editTitle.trim() || !editContent.trim()} style={{ ...primaryBtnStyle, opacity: saving || !editTitle.trim() || !editContent.trim() ? 0.55 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              <button onClick={() => setShowEditModal(false)} disabled={saving} style={{ padding: '7px 18px', border: '1.5px solid #E5E7EB', background: '#FFFFFF', color: '#6B7280', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', cursor: 'pointer', flex: 1, height: 40 }}>Cancel</button>
+              <button onClick={handleSaveEdit} disabled={saving || !editTitle.trim() || !editContent.trim()} style={{ ...primaryBtnStyle, borderRadius: 8, padding: '7px 18px', fontWeight: 600, fontSize: '0.8125rem', opacity: saving || !editTitle.trim() || !editContent.trim() ? 0.55 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                 {saving ? <><Spinner size={13} light /> Saving…</> : 'Save Changes'}
               </button>
             </div>
@@ -1471,16 +1501,16 @@ export default function ManagerCommunicationPage() {
 
       {/* New Announcement Modal */}
       {showNewAnnModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: '#fff', borderRadius: 18, width: 500, maxWidth: '92vw', boxShadow: '0 24px 70px rgba(0,0,0,0.18)', overflow: 'hidden', animation: 'fadeSlideUp 0.22s ease both' }}>
-            <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid #F0F4F8', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', animation: 'overlayFadeIn 0.18s ease-out' }}>
+          <div style={{ background: '#fff', borderRadius: 20, width: 500, maxWidth: '92vw', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', overflow: 'hidden', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
+            <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <div style={{ width: 34, height: 34, borderRadius: 9, background: ACCENT_LIGHT, color: ACCENT, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <Megaphone size={16} />
                 </div>
                 <h3 style={{ fontWeight: 800, fontSize: '1rem', color: '#0F172A', margin: 0 }}>New Announcement</h3>
               </div>
-              <button onClick={() => setShowNewAnnModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', display: 'flex', padding: 4, borderRadius: 6 }}><X size={18} /></button>
+              <button onClick={() => setShowNewAnnModal(false)} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: 6, borderRadius: 8 }}><X size={18} /></button>
             </div>
             <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div>
@@ -1500,7 +1530,7 @@ export default function ManagerCommunicationPage() {
             </div>
             <div style={{ padding: '0 24px 20px' }}>
               <button onClick={handlePostAnnouncement} disabled={!communicationReady || posting || !annTitle.trim() || !annContent.trim()}
-                style={{ ...primaryBtnStyle, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, opacity: !communicationReady || posting || !annTitle.trim() || !annContent.trim() ? 0.55 : 1 }}>
+                style={{ ...primaryBtnStyle, borderRadius: 8, padding: '7px 18px', fontWeight: 600, fontSize: '0.8125rem', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, opacity: !communicationReady || posting || !annTitle.trim() || !annContent.trim() ? 0.55 : 1 }}>
                 {posting ? <><Spinner size={14} light /> Posting…</> : <><Megaphone size={14} /> Post Announcement</>}
               </button>
             </div>
@@ -1510,16 +1540,16 @@ export default function ManagerCommunicationPage() {
 
       {/* Compose Message Modal */}
       {composeOpen && (
-        <div onClick={() => { if (!composeSending) setComposeOpen(false) }} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: 480, background: '#fff', borderRadius: 18, boxShadow: '0 24px 70px rgba(0,0,0,0.18)', display: 'flex', flexDirection: 'column', maxHeight: '88vh', overflow: 'hidden', animation: 'fadeSlideUp 0.22s ease both' }}>
-            <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div onClick={() => { if (!composeSending) setComposeOpen(false) }} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: 480, background: '#fff', borderRadius: 20, boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', maxHeight: '88vh', overflow: 'hidden', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
+            <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <div style={{ width: 34, height: 34, borderRadius: 9, background: ACCENT_LIGHT, color: ACCENT, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <SquarePen size={15} />
                 </div>
                 <h2 style={{ fontWeight: 800, fontSize: '1rem', color: '#0F172A', margin: 0 }}>New Message</h2>
               </div>
-              <button onClick={() => setComposeOpen(false)} disabled={composeSending} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', display: 'flex', padding: 4, borderRadius: 6 }}><X size={18} /></button>
+              <button onClick={() => setComposeOpen(false)} disabled={composeSending} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: 6, borderRadius: 8 }}><X size={18} /></button>
             </div>
 
             <div style={{ padding: '18px 24px', display: 'flex', flexDirection: 'column', gap: 16, overflowY: 'auto', flex: 1 }}>
@@ -1527,7 +1557,7 @@ export default function ManagerCommunicationPage() {
                 <p style={labelStyle}>To</p>
                 {selectedRecipient ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 13px', background: ACCENT_LIGHT, border: `1.5px solid rgba(37,99,235,0.3)`, borderRadius: 11 }}>
-                    <Avatar name={selectedRecipient.full_name} size={34} role={selectedRecipient.role} />
+                    <Avatar name={selectedRecipient.full_name} size={34} role={selectedRecipient.role} photoUrl={selectedRecipient.profile_photo_url ?? null} />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <p style={{ fontWeight: 700, fontSize: 13.5, color: '#0F172A', margin: 0 }}>{selectedRecipient.full_name}</p>
                     </div>
@@ -1548,7 +1578,7 @@ export default function ManagerCommunicationPage() {
                           onMouseEnter={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.borderColor = '#E2E8F0' }}
                           onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.borderColor = 'transparent' }}
                         >
-                          <Avatar name={m.full_name} size={34} role={m.role} />
+                          <Avatar name={m.full_name} size={34} role={m.role} photoUrl={m.profile_photo_url ?? null} />
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <p style={{ fontWeight: 700, fontSize: 13, color: '#0F172A', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.full_name}</p>
                           </div>
@@ -1578,15 +1608,29 @@ export default function ManagerCommunicationPage() {
               )}
             </div>
 
-            <div style={{ display: 'flex', gap: 10, padding: '14px 24px', borderTop: '1px solid #F0F4F8' }}>
-              <button onClick={() => setComposeOpen(false)} disabled={composeSending} style={cancelBtnStyle}>Cancel</button>
+            <div style={{ display: 'flex', gap: 10, padding: '14px 24px', borderTop: '1px solid #F3F4F6' }}>
+              <button onClick={() => setComposeOpen(false)} disabled={composeSending} style={{ padding: '7px 18px', border: '1.5px solid #E5E7EB', background: '#FFFFFF', color: '#6B7280', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', cursor: 'pointer', flex: 1, height: 40 }}>Cancel</button>
               <button onClick={handleComposeSend} disabled={composeSending || !selectedRecipient || !composeText.trim()}
-                style={{ ...primaryBtnStyle, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, opacity: (composeSending || !selectedRecipient || !composeText.trim()) ? 0.5 : 1 }}
+                style={{ ...primaryBtnStyle, borderRadius: 8, padding: '7px 18px', fontWeight: 600, fontSize: '0.8125rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, opacity: (composeSending || !selectedRecipient || !composeText.trim()) ? 0.5 : 1 }}
               >
                 {composeSending ? <><Spinner size={13} light /> Sending…</> : <><Send size={13} /> Send</>}
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
+          background: '#0F172A', color: '#FFFFFF', borderRadius: 999, padding: '10px 18px',
+          display: 'flex', alignItems: 'center', gap: 8,
+          fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', zIndex: 9999,
+          animation: 'fadeSlideUpToast 0.22s ease',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.25)',
+        }}>
+          <Check size={15} style={{ color: '#10B981', flexShrink: 0 }} />
+          {toast}
         </div>
       )}
     </div>

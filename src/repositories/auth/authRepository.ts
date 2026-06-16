@@ -29,14 +29,27 @@ export const authRepository = {
     full_name: string
     email_address: string
     phone_number: string | null
+    date_of_birth?: string | null
+    profile_photo_url?: string | null
     role: User['role']
     company_id?: string | null
   }): Promise<User> {
-    const { data: user, error } = await supabase
-      .from('users')
-      .insert(data)
-      .select()
-      .single()
+    const tryInsert = async (payload: typeof data) => {
+      const { data: user, error } = await supabase
+        .from('users')
+        .insert(payload)
+        .select()
+        .single()
+      return { user, error }
+    }
+
+    let insertResult = await tryInsert(data)
+    if (insertResult.error && /profile_photo_url/i.test(insertResult.error.message)) {
+      const { profile_photo_url: _ignored, ...fallbackData } = data
+      insertResult = await tryInsert(fallbackData)
+    }
+
+    const { user, error } = insertResult
     if (error) throw new Error(`Failed to create user record: ${error.message}`)
 
     const { data: verify, error: verifyError } = await supabase
@@ -79,6 +92,17 @@ export const authRepository = {
       .delete()
       .eq('id', user_id)
     if (error) throw new Error(error.message)
+  },
+
+  async updateProfile(id: string, patch: { full_name?: string; phone_number?: string | null; date_of_birth?: string | null }): Promise<User> {
+    const { data, error } = await supabase
+      .from('users')
+      .update(patch)
+      .eq('id', id)
+      .select()
+      .single()
+    if (error) throw new Error(`Failed to update profile: ${error.message}`)
+    return data
   },
 
   async createAuthUser(email: string, password: string, emailConfirm = false) {

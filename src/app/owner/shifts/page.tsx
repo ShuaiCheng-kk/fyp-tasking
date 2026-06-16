@@ -246,6 +246,14 @@ const PANEL_BORDER = '#E2E8F0'
 const TEXT_DARK = '#0F172A'
 const MUTED = '#64748B'
 
+const pageKeyframes = `
+  @keyframes overlayFadeIn { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes modalSlideIn  { from { opacity: 0; transform: scale(0.97) translateY(8px) } to { opacity: 1; transform: scale(1) translateY(0) } }
+  @keyframes blockSlideUp  { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
+  @keyframes fadeSlideUpToast { from { opacity: 0; transform: translateX(-50%) translateY(10px) } to { opacity: 1; transform: translateX(-50%) translateY(0) } }
+  @keyframes fadeSlideUp   { from { opacity: 0; transform: scale(0.97) translateY(8px) } to { opacity: 1; transform: scale(1) translateY(0) } }
+`
+
 function formatDateKey(date: Date): string {
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')
@@ -1868,8 +1876,9 @@ export default function OwnerShiftsPage() {
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: APP_BG }}>
+      <style>{pageKeyframes}</style>
       <OwnerSidebar />
-      <main style={{ marginLeft: 64, height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, gap: 0 }}>
+      <main style={{ marginLeft: 64, height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, gap: 0, animation: 'blockSlideUp 0.38s ease both 0.04s' }}>
         <div style={{ padding: '20px 28px 16px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24, flexShrink: 0 }}>
           <div>
             <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
@@ -2262,8 +2271,8 @@ export default function OwnerShiftsPage() {
 
       {/* ═══════════════ AI SHIFT SCHEDULING MODAL ═══════════════ */}
       {aiShiftModal && (
-        <div onClick={() => setAiShiftModal(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: 560, maxHeight: '90vh', background: '#FFFFFF', borderRadius: 18, boxShadow: '0 20px 60px rgba(0,0,0,0.18)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div onClick={() => setAiShiftModal(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, animation: 'overlayFadeIn 0.18s ease-out' }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: 560, maxHeight: '90vh', background: '#FFFFFF', borderRadius: 20, boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', overflow: 'hidden', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
 
             {/* Header */}
             <div style={{ padding: '20px 24px 18px', background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
@@ -2927,13 +2936,6 @@ export default function OwnerShiftsPage() {
           {successToast}
         </div>
       )}
-      <style>{`
-        @keyframes fadeSlideUpToast {
-          from { opacity: 0; transform: translateX(-50%) translateY(10px); }
-          to   { opacity: 1; transform: translateX(-50%) translateY(0); }
-        }
-      `}</style>
-
       {/* Department card menu — rendered at fixed position to escape overflow:hidden cards */}
       {openDepartmentMenuId && (() => {
         const department = departments.find(d => d.id === openDepartmentMenuId)
@@ -3134,6 +3136,8 @@ const modalOverlayStyle: React.CSSProperties = {
   placeItems: 'center',
   padding: 18,
   zIndex: 80,
+  backdropFilter: 'blur(4px)',
+  animation: 'overlayFadeIn 0.18s ease-out',
 }
 
 const modalStyle: React.CSSProperties = {
@@ -3141,10 +3145,11 @@ const modalStyle: React.CSSProperties = {
   maxHeight: '88vh',
   overflowY: 'auto',
   background: '#FFFFFF',
-  borderRadius: 16,
+  borderRadius: 20,
   border: `1px solid ${PANEL_BORDER}`,
-  boxShadow: '0 24px 70px rgba(15,23,42,0.32)',
+  boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)',
   padding: 16,
+  animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)',
 }
 
 const drawerOverlayStyle: React.CSSProperties = {
@@ -3155,17 +3160,20 @@ const drawerOverlayStyle: React.CSSProperties = {
   display: 'grid',
   placeItems: 'center',
   padding: 18,
+  backdropFilter: 'blur(4px)',
+  animation: 'overlayFadeIn 0.18s ease-out',
 }
 
 const drawerStyle: React.CSSProperties = {
   width: 'min(660px, 100%)',
   maxHeight: '90vh',
   background: '#FFFFFF',
-  borderRadius: 16,
+  borderRadius: 20,
   border: `1px solid ${PANEL_BORDER}`,
-  boxShadow: '0 24px 70px rgba(15,23,42,0.32)',
+  boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)',
   display: 'flex',
   flexDirection: 'column',
+  animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)',
 }
 
 const drawerSectionTitleStyle: React.CSSProperties = {

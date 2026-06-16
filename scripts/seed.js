@@ -1,4 +1,4 @@
-﻿/**
+/**
  * scripts/seed.js — Tasking 测试数据完整重建脚本
  *
  * 功能：
@@ -6,9 +6,10 @@
  *   2. 删除 auth.users 里的旧测试账号
  *   3. 在 Supabase Auth 创建真实账号（密码统一 111111）
  *   4. 插入 public.users、companies、departments 及所有关联数据
+ *   5. 插入 Casual Workers（含 date_of_birth, phone_number, worker_status 等）
  *
  * 测试账号结构：
- *   1 Owner, 2 Partner, 8 Manager, 8 Employee
+ *   1 Owner, 2 Partner, 8 Manager, 8 Employee, 10 Casual Worker
  *   1 Company, 4 Department, 2 Manager/dept, 2 Employee/dept
  *
  * 使用方法：
@@ -35,42 +36,71 @@ const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
 
 // ─── 账号定义 ──────────────────────────────────────────────────────────────────
 
+const DEMO_PHOTO_URL = 'https://api.dicebear.com/7.x/avataaars/svg?seed=tasking'
+const DEMO_RESUME_URL = 'https://www.w3.org/WAI/WCAG21/Techniques/pdf/PDF17.pdf'
+const DEMO_COVER_LETTER_URL = 'https://www.w3.org/WAI/WCAG21/Techniques/pdf/PDF17.pdf'
+
 const accounts = [
   // Owner
-  { email: 'owner@test.com',     full_name: 'Test Owner',     role: 'Owner' },
+  {
+    email: 'owner@test.com',
+    full_name: 'Sarah Mitchell',
+    role: 'Owner',
+    phone_number: '+65 9123 4567',
+    date_of_birth: '1980-03-15',
+  },
   // Partners
-  { email: 'partner1@test.com',  full_name: 'Test Partner 1', role: 'Partner' },
-  { email: 'partner2@test.com',  full_name: 'Test Partner 2', role: 'Partner' },
+  {
+    email: 'partner1@test.com',
+    full_name: 'James Tan',
+    role: 'Partner',
+    phone_number: '+65 9234 5678',
+    date_of_birth: '1982-07-22',
+  },
+  {
+    email: 'partner2@test.com',
+    full_name: 'Priya Nair',
+    role: 'Partner',
+    phone_number: '+65 9345 6789',
+    date_of_birth: '1985-11-08',
+  },
   // Managers (8, 2 per department)
-  { email: 'manager1@test.com',  full_name: 'Test Manager 1', role: 'Manager' },
-  { email: 'manager2@test.com',  full_name: 'Test Manager 2', role: 'Manager' },
-  { email: 'manager3@test.com',  full_name: 'Test Manager 3', role: 'Manager' },
-  { email: 'manager4@test.com',  full_name: 'Test Manager 4', role: 'Manager' },
-  { email: 'manager5@test.com',  full_name: 'Test Manager 5', role: 'Manager' },
-  { email: 'manager6@test.com',  full_name: 'Test Manager 6', role: 'Manager' },
-  { email: 'manager7@test.com',  full_name: 'Test Manager 7', role: 'Manager' },
-  { email: 'manager8@test.com',  full_name: 'Test Manager 8', role: 'Manager' },
+  { email: 'manager1@test.com', full_name: 'David Lim',      role: 'Manager', phone_number: '+65 9456 7890', date_of_birth: '1988-04-12' },
+  { email: 'manager2@test.com', full_name: 'Rachel Koh',     role: 'Manager', phone_number: '+65 9567 8901', date_of_birth: '1990-09-28' },
+  { email: 'manager3@test.com', full_name: 'Aaron Wong',     role: 'Manager', phone_number: '+65 9678 9012', date_of_birth: '1987-01-17' },
+  { email: 'manager4@test.com', full_name: 'Fiona Chen',     role: 'Manager', phone_number: '+65 9789 0123', date_of_birth: '1991-06-03' },
+  { email: 'manager5@test.com', full_name: 'Ethan Goh',      role: 'Manager', phone_number: '+65 9890 1234', date_of_birth: '1986-12-25' },
+  { email: 'manager6@test.com', full_name: 'Jasmine Lee',    role: 'Manager', phone_number: '+65 9901 2345', date_of_birth: '1992-03-09' },
+  { email: 'manager7@test.com', full_name: 'Marcus Ong',     role: 'Manager', phone_number: '+65 9012 3456', date_of_birth: '1989-08-14' },
+  { email: 'manager8@test.com', full_name: 'Vivian Ho',      role: 'Manager', phone_number: '+65 9123 4560', date_of_birth: '1993-05-21' },
   // Employees (8, 2 per department)
-  { email: 'employee1@test.com', full_name: 'Test Employee 1', role: 'Employee' },
-  { email: 'employee2@test.com', full_name: 'Test Employee 2', role: 'Employee' },
-  { email: 'employee3@test.com', full_name: 'Test Employee 3', role: 'Employee' },
-  { email: 'employee4@test.com', full_name: 'Test Employee 4', role: 'Employee' },
-  { email: 'employee5@test.com', full_name: 'Test Employee 5', role: 'Employee' },
-  { email: 'employee6@test.com', full_name: 'Test Employee 6', role: 'Employee' },
-  { email: 'employee7@test.com', full_name: 'Test Employee 7', role: 'Employee' },
-  { email: 'employee8@test.com', full_name: 'Test Employee 8', role: 'Employee' },
+  { email: 'employee1@test.com', full_name: 'Ben Seah',       role: 'Employee', phone_number: '+65 8123 4567', date_of_birth: '1995-02-18' },
+  { email: 'employee2@test.com', full_name: 'Chloe Yeo',      role: 'Employee', phone_number: '+65 8234 5678', date_of_birth: '1997-10-05' },
+  { email: 'employee3@test.com', full_name: 'Daniel Tay',     role: 'Employee', phone_number: '+65 8345 6789', date_of_birth: '1994-07-30' },
+  { email: 'employee4@test.com', full_name: 'Elaine Chua',    role: 'Employee', phone_number: '+65 8456 7890', date_of_birth: '1996-04-11' },
+  { email: 'employee5@test.com', full_name: 'Felix Ng',       role: 'Employee', phone_number: '+65 8567 8901', date_of_birth: '1998-01-24' },
+  { email: 'employee6@test.com', full_name: 'Grace Lau',      role: 'Employee', phone_number: '+65 8678 9012', date_of_birth: '1995-09-16' },
+  { email: 'employee7@test.com', full_name: 'Henry Sim',      role: 'Employee', phone_number: '+65 8789 0123', date_of_birth: '1997-06-07' },
+  { email: 'employee8@test.com', full_name: 'Irene Tan',      role: 'Employee', phone_number: '+65 8890 1234', date_of_birth: '1999-03-29' },
+]
+
+// Casual Workers — these get worker_status, date_of_birth, resume/cover letter URLs
+const casualWorkers = [
+  { email: 'cw1@test.com',  full_name: 'Alicia Tan',     phone_number: '+65 8100 1001', date_of_birth: '1998-05-12', worker_status: 'active',   inactivate_reason: null },
+  { email: 'cw2@test.com',  full_name: 'Nadia Wong',     phone_number: '+65 8100 1002', date_of_birth: '2000-08-22', worker_status: 'active',   inactivate_reason: null },
+  { email: 'cw3@test.com',  full_name: 'Hui Min Lee',    phone_number: '+65 8100 1003', date_of_birth: '1999-03-17', worker_status: 'active',   inactivate_reason: null },
+  { email: 'cw4@test.com',  full_name: 'Farah Hassan',   phone_number: '+65 8100 1004', date_of_birth: '2001-11-05', worker_status: 'active',   inactivate_reason: null },
+  { email: 'cw5@test.com',  full_name: 'Ethan Ong',      phone_number: '+65 8100 1005', date_of_birth: '1997-07-30', worker_status: 'active',   inactivate_reason: null },
+  { email: 'cw6@test.com',  full_name: 'Daniel Goh',     phone_number: '+65 8100 1006', date_of_birth: '2002-02-14', worker_status: 'active',   inactivate_reason: null },
+  { email: 'cw7@test.com',  full_name: 'Siti Nur',       phone_number: '+65 8100 1007', date_of_birth: '1996-09-09', worker_status: 'active',   inactivate_reason: null },
+  { email: 'cw8@test.com',  full_name: 'Marcus Lim',     phone_number: '+65 8100 1008', date_of_birth: '2000-04-25', worker_status: 'inactive', inactivate_reason: 'Repeated no-shows without prior notice.' },
+  { email: 'cw9@test.com',  full_name: 'Jasper Koh',     phone_number: '+65 8100 1009', date_of_birth: '1999-12-01', worker_status: 'inactive', inactivate_reason: 'Violated workplace conduct policy.' },
+  { email: 'cw10@test.com', full_name: 'Mei Xin Teo',    phone_number: '+65 8100 1010', date_of_birth: '1998-06-18', worker_status: 'inactive', inactivate_reason: 'Unable to meet shift requirements.' },
 ]
 
 const legacyTestEmailsToDelete = [
   ...accounts.map(a => a.email),
-  'cw1@test.com',
-  'cw2@test.com',
-  'cw3@test.com',
-  'cw4@test.com',
-  'cw5@test.com',
-  'cw6@test.com',
-  'cw7@test.com',
-  'cw8@test.com',
+  ...casualWorkers.map(cw => cw.email),
 ]
 
 // ─── 主流程 ────────────────────────────────────────────────────────────────────
@@ -82,7 +112,6 @@ async function main() {
 
   // ── Step 1: 清空业务数据表 ─────────────────────────────────────────────────
   console.log('Step 1: 清空所有业务数据表...')
-  // 顺序重要：先删子表再删父表，users 要在 companies 之前
   const tablesToClear = [
     'attendance_records',
     'shift_assignments',
@@ -104,11 +133,9 @@ async function main() {
     if (error) console.warn(`  ⚠ 清空 ${table} 失败: ${error.message}`)
     else console.log(`  ✓ 清空 ${table}`)
   }
-  // invitation_code 主键不叫 id，用 code 字段清空
   const { error: icErr } = await supabase.from('invitation_code').delete().neq('code', '')
   if (icErr) console.warn(`  ⚠ 清空 invitation_code 失败: ${icErr.message}`)
   else console.log('  ✓ 清空 invitation_code')
-  // users 先删（有 company_id FK），再删 departments、companies
   const { error: uErr } = await supabase.from('users').delete().neq('id', '00000000-0000-0000-0000-000000000000')
   if (uErr) console.warn(`  ⚠ 清空 users 失败: ${uErr.message}`)
   else console.log('  ✓ 清空 users')
@@ -130,11 +157,12 @@ async function main() {
     }
   }
 
-  // ── Step 3: 创建 auth 账号 + public.users ──────────────────────────────────
+  // ── Step 3: 创建 auth 账号（internal + CW）──────────────────────────────
   console.log('\nStep 3: 创建 auth 账号...')
   const userIdMap = {} // email → { authId, internalId }
 
-  for (const account of accounts) {
+  const allAuthAccounts = [...accounts, ...casualWorkers]
+  for (const account of allAuthAccounts) {
     const { data, error } = await supabase.auth.admin.createUser({
       email: account.email,
       password: PASSWORD,
@@ -148,18 +176,20 @@ async function main() {
     console.log(`  ✓ auth 创建: ${account.email} → ${data.user.id}`)
   }
 
-  // ── Step 4: 创建 Company ───────────────────────────────────────────────────
+  // ── Step 4: 创建 Owner public.users + Company ──────────────────────────
   console.log('\nStep 4: 创建 Company...')
+  const ownerAccount = accounts.find(a => a.email === 'owner@test.com')
   const ownerAuthId = userIdMap['owner@test.com'].authId
 
-  // 先插入 owner 的 public.users（company_id 暂时为 null，后面更新）
   const { data: ownerUser, error: ownerErr } = await supabase
     .from('users')
     .insert({
       supabase_auth_id: ownerAuthId,
-      full_name: 'Test Owner',
-      email_address: 'owner@test.com',
-      phone_number: null,
+      full_name: ownerAccount.full_name,
+      email_address: ownerAccount.email,
+      phone_number: ownerAccount.phone_number,
+      date_of_birth: ownerAccount.date_of_birth,
+      profile_photo_url: DEMO_PHOTO_URL,
       role: 'Owner',
       company_id: null,
     })
@@ -170,34 +200,43 @@ async function main() {
 
   const { data: company, error: compErr } = await supabase
     .from('companies')
-    .insert({ name: 'Test Company', owner_id: ownerUser.id })
+    .insert({
+      name: 'Sunrise Hospitality Group',
+      owner_id: ownerUser.id,
+      description: 'A leading hospitality and events management company serving corporate and retail clients across Singapore.',
+      location: 'Raffles Place',
+      address: '1 Raffles Place, Singapore 048616',
+      postal_code: '048616',
+      industry: 'Hospitality',
+      size: '51-200',
+      plan: 'Free',
+    })
     .select()
     .single()
   if (compErr) { console.error('  ✗ 创建 company 失败:', compErr.message); process.exit(1) }
   console.log(`  ✓ Company: ${company.name} (${company.id})`)
 
-  // 更新 owner 的 company_id
   await supabase.from('users').update({ company_id: company.id }).eq('id', ownerUser.id)
 
-  // ── Step 5: 创建 Departments ───────────────────────────────────────────────
+  // ── Step 5: 创建 Departments ───────────────────────────────────────────
   console.log('\nStep 5: 创建 Departments...')
   const deptNames = ['Operations', 'Marketing', 'Engineering', 'Customer Support']
   const depts = []
   for (const name of deptNames) {
-    const { data: dept, error: dErr } = await supabase
+    const { data: dept, error: deptErr } = await supabase
       .from('departments')
       .insert({ name, company_id: company.id })
       .select()
       .single()
-    if (dErr) { console.error(`  ✗ 创建 dept ${name} 失败:`, dErr.message); process.exit(1) }
+    if (deptErr) { console.error(`  ✗ 创建 dept ${name} 失败:`, deptErr.message); process.exit(1) }
     depts.push(dept)
     console.log(`  ✓ Department: ${dept.name} (${dept.id})`)
   }
 
-  // ── Step 6: 插入所有其他 public.users ─────────────────────────────────────
-  console.log('\nStep 6: 插入 public.users...')
+  // ── Step 6: 插入 internal public.users（非 Owner）────────────────────
+  console.log('\nStep 6: 插入 public.users (internal)...')
   for (const account of accounts) {
-    if (account.email === 'owner@test.com') continue // 已插入
+    if (account.email === 'owner@test.com') continue
     const authId = userIdMap[account.email].authId
     const { data: u, error: uErr } = await supabase
       .from('users')
@@ -205,7 +244,9 @@ async function main() {
         supabase_auth_id: authId,
         full_name: account.full_name,
         email_address: account.email,
-        phone_number: null,
+        phone_number: account.phone_number,
+        date_of_birth: account.date_of_birth,
+        profile_photo_url: DEMO_PHOTO_URL,
         role: account.role,
         company_id: company.id,
       })
@@ -216,8 +257,33 @@ async function main() {
     console.log(`  ✓ users: ${account.full_name} (${u.id})`)
   }
 
-  // ── Step 7: manager_departments — 每个 dept 分配 2 个 manager ─────────────
-  console.log('\nStep 7: 分配 manager_departments...')
+  // ── Step 7: 插入 Casual Workers ────────────────────────────────────────
+  console.log('\nStep 7: 插入 public.users (Casual Workers)...')
+  for (const cw of casualWorkers) {
+    const authId = userIdMap[cw.email].authId
+    const { data: u, error: uErr } = await supabase
+      .from('users')
+      .insert({
+        supabase_auth_id: authId,
+        full_name: cw.full_name,
+        email_address: cw.email,
+        phone_number: cw.phone_number,
+        date_of_birth: cw.date_of_birth,
+        profile_photo_url: DEMO_PHOTO_URL,
+        role: 'Casual Worker',
+        company_id: company.id,
+        worker_status: cw.worker_status,
+        inactivate_reason: cw.inactivate_reason,
+      })
+      .select()
+      .single()
+    if (uErr) { console.error(`  ✗ 插入 CW users 失败 ${cw.email}:`, uErr.message); process.exit(1) }
+    userIdMap[cw.email].internalId = u.id
+    console.log(`  ✓ CW: ${cw.full_name} (${cw.worker_status}) → ${u.id}`)
+  }
+
+  // ── Step 8: manager_departments ────────────────────────────────────────
+  console.log('\nStep 8: 分配 manager_departments...')
   // dept[0]=Operations: manager1,2  dept[1]=Marketing: manager3,4
   // dept[2]=Engineering: manager5,6  dept[3]=Customer Support: manager7,8
   const managerEmails = [
@@ -240,8 +306,8 @@ async function main() {
     else console.log(`  ✓ ${managerEmails[i]} → ${dept.name}`)
   }
 
-  // ── Step 8: employee_departments — 每个 dept 分配 2 个 employee ───────────
-  console.log('\nStep 8: 分配 employee_departments...')
+  // ── Step 9: employee_departments ───────────────────────────────────────
+  console.log('\nStep 9: 分配 employee_departments...')
   const employeeEmails = [
     'employee1@test.com', 'employee2@test.com',
     'employee3@test.com', 'employee4@test.com',
@@ -255,16 +321,13 @@ async function main() {
     const { error: edErr } = await supabase.from('employee_departments').insert({
       employee_id: employeeId,
       department_id: dept.id,
+      company_id: company.id,
     })
     if (edErr) console.warn(`  ⚠ employee_departments 失败: ${edErr.message}`)
     else console.log(`  ✓ ${employeeEmails[i]} → ${dept.name}`)
   }
 
-  // ── Step 9: Partner 的 company_id 已在 Step 6 设置完毕 ───────────────────
-  console.log('\nStep 9: Partner company 确认...')
-  console.log('  ✓ partner1@test.com, partner2@test.com → Test Company (已在 Step 6 完成)')
-
-  // ── 完成 ───────────────────────────────────────────────────────────────────
+  // ── 完成 ───────────────────────────────────────────────────────────────
   console.log('\n═══════════════════════════════════════════')
   console.log('  ✅ Seed 完成！')
   console.log('═══════════════════════════════════════════')
@@ -273,11 +336,19 @@ async function main() {
   console.log('  Partner:  partner1@test.com / partner2@test.com')
   console.log('  Manager:  manager1~8@test.com')
   console.log('  Employee: employee1~8@test.com')
+  console.log('  CW:       cw1~10@test.com')
+  console.log('\n公司：Sunrise Hospitality Group')
   console.log('\n部门分配：')
   console.log('  Operations:       manager1,2 / employee1,2')
   console.log('  Marketing:        manager3,4 / employee3,4')
   console.log('  Engineering:      manager5,6 / employee5,6')
   console.log('  Customer Support: manager7,8 / employee7,8')
+  console.log('\nCasual Workers：')
+  console.log('  Active (7):   cw1~7@test.com')
+  console.log('  Inactive (3): cw8~10@test.com（含 inactivate_reason）')
+  console.log('\n注意：job_applicants 中的 resume_url / cover_letter 字段')
+  console.log('  resume_url: ' + DEMO_RESUME_URL)
+  console.log('  cover_letter: (text field, not URL)')
 }
 
 main().catch(err => {

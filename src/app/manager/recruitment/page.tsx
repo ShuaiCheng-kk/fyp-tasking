@@ -43,6 +43,13 @@ const labelStyle: React.CSSProperties = {
 
 const cardShadow = '0 1px 3px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04)'
 
+const pageKeyframes = `
+  @keyframes overlayFadeIn { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes modalSlideIn  { from { opacity: 0; transform: scale(0.97) translateY(8px) } to { opacity: 1; transform: scale(1) translateY(0) } }
+  @keyframes blockSlideUp  { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
+  @keyframes fadeSlideUpToast { from { opacity: 0; transform: translateX(-50%) translateY(10px) } to { opacity: 1; transform: translateX(-50%) translateY(0) } }
+`
+
 function Spinner({ size = 16, dark = false }: { size?: number; dark?: boolean }) {
   return (
     <svg className="animate-spin" width={size} height={size} viewBox="0 0 18 18" style={{ display: 'inline-block', flexShrink: 0 }}>
@@ -320,6 +327,9 @@ export default function ManagerRecruitmentPage() {
   const [aiPrompt, setAiPrompt] = useState('')
   const [aiPreview, setAiPreview] = useState<null | { title: string; description: string; requirements: string }>(null)
   const [formError, setFormError] = useState('')
+
+  // job templates
+  const [showTemplates, setShowTemplates] = useState(false)
 
   // detail / delete confirm
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; title: string; isDraft?: boolean } | null>(null)
@@ -647,6 +657,27 @@ export default function ManagerRecruitmentPage() {
       }
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to save job')
+
+      // notify Owner when submitting for review
+      if (status === 'pending_approval') {
+        try {
+          const ownerRes = await fetch(`/api/company/owner?company_id=${companyId}`)
+          const ownerData = await ownerRes.json()
+          if (ownerData.success && ownerData.owner_id) {
+            await fetch('/api/inbox/messages', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                from_user_id: internalUserId,
+                to_user_id: ownerData.owner_id,
+                company_id: companyId,
+                content: `New job posting "${formTitle.trim()}" has been submitted for your review.`,
+              }),
+            })
+          }
+        } catch { /* notification failure is non-fatal */ }
+      }
+
       setFormOpen(false); resetForm()
       await fetchAll(companyId, internalUserId)
       if (status === 'pending_approval') { setActiveTab('jobs'); showToast(editingId ? 'Job updated and sent for review' : 'Sent for review') }
@@ -1004,6 +1035,7 @@ export default function ManagerRecruitmentPage() {
 
   return (
     <div style={{ display: 'flex', height: '100vh', background: '#F7F8FA', fontFamily: "'Inter', system-ui, sans-serif" }}>
+      <style>{pageKeyframes}</style>
       <ManagerSidebar />
       <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', scrollbarGutter: 'stable' }}>
 
@@ -1027,7 +1059,7 @@ export default function ManagerRecruitmentPage() {
         </div>
 
         {/* ── Card wrapper (tab bar + content) ── */}
-        <div style={{ padding: '0 28px 28px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <div style={{ padding: '0 28px 28px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, animation: 'blockSlideUp 0.38s ease both 0.06s' }}>
         <div style={{ background: '#FFFFFF', borderRadius: 16, border: '1px solid #E5E7EB', boxShadow: '0 1px 6px rgba(0,0,0,0.06)', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
 
         {/* ── Tab bar ── */}
@@ -2144,8 +2176,8 @@ export default function ManagerRecruitmentPage() {
         const divider: React.CSSProperties = { borderTop: '1px dashed #E5E7EB', margin: '0' }
 
         return (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-            <div onClick={e => e.stopPropagation()} style={{ width: 540, background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', maxHeight: '90vh' }}>
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>
+            <div onClick={e => e.stopPropagation()} style={{ width: 540, background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', maxHeight: '90vh', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
 
               {/* Header */}
               <div style={{ padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -2194,6 +2226,60 @@ export default function ManagerRecruitmentPage() {
                 {/* ── Step 1: Job Type ── */}
                 {wizardStep === 'type' && (
                   <>
+                    {/* Job Templates */}
+                    <div style={{ border: '1.5px solid #E5E7EB', borderRadius: 12, overflow: 'hidden' }}>
+                      <button onClick={() => setShowTemplates(v => !v)}
+                        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: '#F9FAFB', border: 'none', cursor: 'pointer', textAlign: 'left' }}
+                        onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+                        onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <ClipboardList size={15} color="#6B7280" />
+                          <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#374151' }}>Quick Templates</span>
+                          <span style={{ fontSize: '0.75rem', color: '#9CA3AF', fontWeight: 400 }}>Start from a pre-filled template</span>
+                        </div>
+                        <ChevronRight size={14} color="#9CA3AF" style={{ transform: showTemplates ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }} />
+                      </button>
+                      {showTemplates && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 0, borderTop: '1px solid #E5E7EB' }}>
+                          {([
+                            { label: 'Shift Worker', type: 'shift', empType: 'part-time', title: 'Shift Worker', description: 'We are looking for reliable shift workers to join our team. You will be responsible for completing assigned duties during your scheduled shift, following workplace procedures, and maintaining a high standard of work throughout your time on site.', requirements: 'Available for flexible shift hours\nPhysically fit and able to stand for extended periods\nReliable and punctual\nAbility to work as part of a team\nPrior experience in a similar role preferred but not essential' },
+                            { label: 'Event Staff', type: 'oneoff', empType: 'casual', title: 'Event Staff', description: 'We are seeking enthusiastic event staff to assist with the setup, operations, and pack-down of our upcoming event. You will help ensure a smooth and welcoming experience for all attendees by managing registration, directing guests, and maintaining the event area.', requirements: 'Strong communication and interpersonal skills\nAble to remain calm and professional in a busy environment\nComfortable being on your feet for extended periods\nPrevious event or hospitality experience is a plus\nMust be available for the full event duration' },
+                            { label: 'Customer Service', type: 'oneoff', empType: 'casual', title: 'Customer Service Representative', description: 'We are looking for a friendly and professional customer service representative to interact with our customers. You will handle inquiries, resolve issues, and provide a positive experience to every customer you interact with in person, by phone, or via email.', requirements: 'Excellent verbal and written communication skills\nPatient and empathetic approach to customer concerns\nAbility to multitask and work in a fast-paced environment\nBasic computer literacy\nExperience in retail, hospitality, or customer-facing roles is desirable' },
+                            { label: 'Kitchen Helper', type: 'shift', empType: 'part-time', title: 'Kitchen Helper', description: 'We are looking for a dependable kitchen helper to support our kitchen team during busy service periods. Duties include food preparation, cleaning, dishwashing, and ensuring that the kitchen remains safe and hygienic at all times.', requirements: 'Basic food handling knowledge or willingness to learn\nAble to work in a fast-paced, hot kitchen environment\nStrong attention to hygiene and cleanliness\nPhysically fit and able to lift moderate loads\nFood handler certificate or equivalent (preferred)' },
+                            { label: 'Warehouse Assistant', type: 'shift', empType: 'part-time', title: 'Warehouse Assistant', description: 'We are seeking a hardworking warehouse assistant to help with receiving, storing, and dispatching goods. You will operate within a team to ensure accurate stock management, timely order fulfilment, and a safe working environment.', requirements: 'Experience in a warehouse or logistics environment preferred\nForklift licence advantageous but not required\nPhysically fit and capable of heavy lifting\nGood attention to detail for stock accuracy\nWillingness to work early morning or late shifts' },
+                          ] as { label: string; type: 'shift' | 'oneoff'; empType: string; title: string; description: string; requirements: string }[]).map((tpl, i) => (
+                            <button key={tpl.label}
+                              onClick={() => {
+                                setFormJobType(tpl.type)
+                                setFormEmpType(tpl.empType)
+                                setFormSalaryType(tpl.type === 'shift' ? 'per hour' : 'flat rate')
+                                setFormTitle(tpl.title)
+                                setFormDescription(tpl.description)
+                                setFormRequirements(tpl.requirements)
+                                setShowTemplates(false)
+                                setWizardStep('form')
+                              }}
+                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', background: '#FFFFFF', border: 'none', borderTop: i === 0 ? 'none' : '1px solid #F3F4F6', cursor: 'pointer', textAlign: 'left' }}
+                              onMouseEnter={e => { e.currentTarget.style.background = '#F8FAFC' }}
+                              onMouseLeave={e => { e.currentTarget.style.background = '#FFFFFF' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#111827' }}>{tpl.label}</span>
+                                <span style={{ fontSize: '0.75rem', color: '#9CA3AF', background: '#F3F4F6', borderRadius: 6, padding: '2px 7px' }}>{tpl.type === 'shift' ? 'Shift' : 'One-off'}</span>
+                              </div>
+                              <ChevronRight size={13} color="#D1D5DB" />
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Divider */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{ flex: 1, height: 1, background: '#E5E7EB' }} />
+                      <span style={{ fontSize: '0.75rem', color: '#9CA3AF', fontWeight: 500 }}>or start from scratch</span>
+                      <div style={{ flex: 1, height: 1, background: '#E5E7EB' }} />
+                    </div>
+
                     <button onClick={() => { setFormJobType('shift'); setFormEmpType('part-time'); setFormSalaryType('per hour'); setWizardStep('ai') }}
                       style={{ padding: '14px 16px', border: '1.5px solid #E5E7EB', borderRadius: 12, background: '#FFFFFF', cursor: 'pointer', textAlign: 'left' }}
                       onMouseEnter={e => { e.currentTarget.style.borderColor = '#2563EB'; e.currentTarget.style.background = '#F8FAFC' }}
@@ -2518,8 +2604,8 @@ export default function ManagerRecruitmentPage() {
 
       {/* ══ Delete confirm modal (draft + live) ══════════════════════════════ */}
       {deleteConfirm && (
-        <div onClick={() => setDeleteConfirm(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.42)', zIndex: 110, display: 'grid', placeItems: 'center', padding: 20 }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: 420, background: '#FFFFFF', borderRadius: 16, padding: '24px', boxShadow: '0 24px 70px rgba(15,23,42,0.28)' }}>
+        <div onClick={() => setDeleteConfirm(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.42)', zIndex: 110, display: 'grid', placeItems: 'center', padding: 20, backdropFilter: 'blur(4px)', animation: 'overlayFadeIn 0.18s ease-out' }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: 420, background: '#FFFFFF', borderRadius: 20, padding: '24px', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
               <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#111827' }}>{deleteConfirm.isDraft === false ? 'Delete Job Posting' : 'Delete Draft'}</h2>
               <button onClick={() => setDeleteConfirm(null)} style={{ border: 'none', background: '#F9FAFB', color: '#6B7280', cursor: 'pointer', padding: '5px', borderRadius: 7, display: 'flex' }}><X size={15} /></button>

@@ -354,6 +354,7 @@ export const shiftService = {
         role: member.role,
         department_id: departmentId,
         department_name: departmentId === 'unassigned' ? 'Unassigned' : deptMap.get(departmentId) ?? 'Unknown department',
+        profile_photo_url: (member as any).profile_photo_url ?? null,
         shifts: [],
       })
     }
@@ -375,6 +376,7 @@ export const shiftService = {
           role: user.role,
           department_id: departmentId,
           department_name: deptMap.get(departmentId) ?? 'Unknown department',
+          profile_photo_url: (user as any).profile_photo_url ?? null,
           shifts: [],
         })
       }
@@ -399,6 +401,7 @@ export const shiftService = {
           role: 'Unassigned',
           department_id: shift.department_id,
           department_name: deptMap.get(shift.department_id) ?? 'Unknown department',
+          profile_photo_url: null,
           shifts: [],
         })
       }
