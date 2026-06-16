@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
+import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import { CandidateRecommendation } from '@/types/AI'
 import { JobApplicant, JobPostingPendingApproval, JobPostingSummary } from '@/types/Recruitment'
 
@@ -964,14 +965,7 @@ export default function OwnerRecruitmentPage() {
             </h1>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
-            {ownerName && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: '#fff', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
-                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: '#0F172A', color: '#FFFFFF', flexShrink: 0 }}>
-                  <Crown size={13} />
-                </span>
-                <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{ownerName}</span>
-              </div>
-            )}
+            {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId} />}
             {companyId && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
           </div>
         </div>

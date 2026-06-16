@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
   try {
     const user = await userService.getUserById(user_id)
     return NextResponse.json(
-      { success: true, user: { id: user.id, full_name: user.full_name, role: user.role, email_address: user.email_address, company_id: user.company_id, department_id: user.department_id ?? null } },
+      { success: true, user: { id: user.id, full_name: user.full_name, role: user.role, email_address: user.email_address, company_id: user.company_id, department_id: user.department_id ?? null, phone_number: user.phone_number ?? null, date_of_birth: user.date_of_birth ?? null, profile_photo_url: user.profile_photo_url ?? null } },
       { status: 200 },
     )
   } catch (err) {

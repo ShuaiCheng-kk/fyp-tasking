@@ -14,6 +14,7 @@ import {
   MoreHorizontal,
   Pencil,
   Plus,
+  Sparkles,
   Trash2,
   Upload,
   Users,
@@ -22,9 +23,11 @@ import {
   X,
   Crown,
 } from 'lucide-react'
+import { ShiftSuggestion } from '@/types/AI'
 import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
+import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import { deptColor } from '@/lib/deptColor'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 import {
@@ -45,6 +48,7 @@ type TeamMember = {
   full_name: string
   role: string
   department_id: string | null
+  profile_photo_url?: string | null
 }
 
 type Company = {
@@ -607,6 +611,20 @@ export default function OwnerShiftsPage() {
   const [managerActionLoading, setManagerActionLoading] = useState(false)
   const [managerRemoveLoading, setManagerRemoveLoading] = useState<string | null>(null)
 
+  // AI Shift Scheduling state
+  const [aiShiftModal,         setAiShiftModal]         = useState(false)
+  const [aiShiftContext,       setAiShiftContext]       = useState('')
+  const [aiShiftDeptId,        setAiShiftDeptId]        = useState('')
+  const [aiShiftDateFrom,      setAiShiftDateFrom]      = useState('')
+  const [aiShiftDateTo,        setAiShiftDateTo]        = useState('')
+  const [aiShiftPreferredHours,setAiShiftPreferredHours]= useState('')
+  const [aiShiftLoading,       setAiShiftLoading]       = useState(false)
+  const [aiShiftError,         setAiShiftError]         = useState('')
+  const [aiShiftSuggestions,   setAiShiftSuggestions]   = useState<ShiftSuggestion[]>([])
+  const [aiShiftSelected,      setAiShiftSelected]      = useState<Set<number>>(new Set())
+  const [aiShiftCreateLoading, setAiShiftCreateLoading] = useState(false)
+  const [aiShiftCreateError,   setAiShiftCreateError]   = useState('')
+
   const [batchDepartment, setBatchDepartment] = useState<Department | null>(null)
   const [batchSingleMember, setBatchSingleMember] = useState<TeamMember | null>(null)
   const [batchFromSelection, setBatchFromSelection] = useState(false)
@@ -850,6 +868,7 @@ export default function OwnerShiftsPage() {
           role: member.role,
           department_id: selectedDepartment?.id ?? member.department_id ?? apiRow?.department_id ?? '',
           department_name: selectedDepartment?.name ?? department?.name ?? apiRow?.department_name ?? 'Unassigned',
+          profile_photo_url: member.profile_photo_url ?? null,
           shifts,
         }
       })
@@ -1099,6 +1118,82 @@ export default function OwnerShiftsPage() {
       }
       return next
     })
+  }
+
+  const openAiShiftModal = (dept?: Department) => {
+    const todayStr = new Date().toISOString().slice(0, 10)
+    const nextWeek = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+    setAiShiftContext('')
+    setAiShiftDeptId(dept?.id ?? (departments[0]?.id ?? ''))
+    setAiShiftDateFrom(todayStr)
+    setAiShiftDateTo(nextWeek)
+    setAiShiftPreferredHours('')
+    setAiShiftLoading(false)
+    setAiShiftError('')
+    setAiShiftSuggestions([])
+    setAiShiftSelected(new Set())
+    setAiShiftCreateError('')
+    setAiShiftModal(true)
+  }
+
+  const handleAiGenerateShifts = async () => {
+    if (!aiShiftContext.trim()) { setAiShiftError('Describe your coverage needs first'); return }
+    if (!aiShiftDeptId) { setAiShiftError('Select a department'); return }
+    if (!aiShiftDateFrom || !aiShiftDateTo) { setAiShiftError('Select a date range'); return }
+    setAiShiftLoading(true); setAiShiftError(''); setAiShiftSuggestions([]); setAiShiftSelected(new Set())
+    try {
+      const deptName = departments.find(d => d.id === aiShiftDeptId)?.name ?? null
+      const res = await fetch('/api/ai/shift-scheduling', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          context: aiShiftContext.trim(),
+          department_name: deptName,
+          date_from: aiShiftDateFrom,
+          date_to: aiShiftDateTo,
+          preferred_hours: aiShiftPreferredHours.trim() || null,
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      const suggestions: ShiftSuggestion[] = data.draft.shifts ?? []
+      setAiShiftSuggestions(suggestions)
+      setAiShiftSelected(new Set(suggestions.map((_, i) => i)))
+    } catch (err) {
+      setAiShiftError(err instanceof Error ? err.message : 'AI generation failed')
+    } finally {
+      setAiShiftLoading(false)
+    }
+  }
+
+  const handleAiCreateShifts = async () => {
+    if (aiShiftSelected.size === 0) return
+    if (!companyId || !internalUserId) return
+    setAiShiftCreateLoading(true); setAiShiftCreateError('')
+    try {
+      for (const idx of aiShiftSelected) {
+        const s = aiShiftSuggestions[idx]
+        await fetch('/api/shift', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            company_id: companyId,
+            department_id: aiShiftDeptId,
+            title: s.title,
+            shift_date: s.shift_date,
+            start_time: s.start_time,
+            end_time: s.end_time,
+            created_by: internalUserId,
+          }),
+        })
+      }
+      setAiShiftModal(false)
+      void refreshShiftData()
+    } catch (err) {
+      setAiShiftCreateError(err instanceof Error ? err.message : 'Failed to create shifts')
+    } finally {
+      setAiShiftCreateLoading(false)
+    }
   }
 
   const openBatchDrawer = (department: Department, initialMemberId?: string, initialDate?: string) => {
@@ -1484,8 +1579,10 @@ export default function OwnerShiftsPage() {
         <div style={{ width: 8, flexShrink: 0, background: barColor, opacity: 0.85 }} />
         <div style={{ width: 220, flexShrink: 0, display: 'flex', alignItems: 'center', padding: '0 10px 0 12px', overflow: 'hidden' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: row.role === 'Manager' ? '#FFF7ED' : '#F3F4F6', color: row.role === 'Manager' ? '#EA580C' : '#4B5563', borderRadius: 999 }}>
-              {row.role === 'Manager' ? <UserCog size={13} /> : <UserRound size={13} />}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: row.profile_photo_url ? 'transparent' : (row.role === 'Manager' ? '#FFF7ED' : '#F3F4F6'), color: row.role === 'Manager' ? '#EA580C' : '#4B5563', borderRadius: 999, overflow: 'hidden' }}>
+              {row.profile_photo_url
+                ? <img src={row.profile_photo_url} alt={row.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                : row.role === 'Manager' ? <UserCog size={13} /> : <UserRound size={13} />}
             </div>
             <span className="tl-name" style={{ minWidth: 0, fontSize: 13, fontWeight: 600, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', transition: 'color 0.14s ease' }}>
               {row.full_name}
@@ -1781,14 +1878,7 @@ export default function OwnerShiftsPage() {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
-            {ownerName && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: '#fff', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
-                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: '#0F172A', color: '#FFFFFF', flexShrink: 0 }}>
-                  <Crown size={13} />
-                </span>
-                <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{ownerName}</span>
-              </div>
-            )}
+            {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId} />}
             {companyId && <OwnerPlanBadge plan={company?.plan ?? 'Free'} currentCompanyId={companyId} />}
           </div>
         </div>
@@ -1845,8 +1935,10 @@ export default function OwnerShiftsPage() {
                   ) : getDepartmentPeople(selectedDepartment).map(member => (
                     <div key={member.id} className="member-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, border: `1px solid ${PANEL_BORDER}`, borderRadius: 12, padding: '13px 12px', background: '#FFFFFF' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 999, background: member.role === 'Manager' ? '#FFF7ED' : '#F3F4F6', color: member.role === 'Manager' ? '#EA580C' : '#4B5563', flexShrink: 0 }}>
-                          {member.role === 'Manager' ? <UserCog size={14} /> : <UserRound size={14} />}
+                        <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 999, background: member.profile_photo_url ? 'transparent' : (member.role === 'Manager' ? '#FFF7ED' : '#F3F4F6'), color: member.role === 'Manager' ? '#EA580C' : '#4B5563', flexShrink: 0, overflow: 'hidden' }}>
+                          {member.profile_photo_url
+                            ? <img src={member.profile_photo_url} alt={member.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            : member.role === 'Manager' ? <UserCog size={14} /> : <UserRound size={14} />}
                         </span>
                         <div style={{ minWidth: 0 }}>
                           <p style={{ margin: 0, color: TEXT_DARK, fontSize: 13, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{member.full_name}</p>
@@ -1865,15 +1957,24 @@ export default function OwnerShiftsPage() {
                     </div>
                   ))}
                 </div>
-                <button
-                  type="button"
-                  className="schedule-btn"
-                  onClick={() => openBatchDrawer(selectedDepartment)}
-                  disabled={getDepartmentPeople(selectedDepartment).length === 0}
-                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: getDepartmentPeople(selectedDepartment).length === 0 ? '#E2E8F0' : 'linear-gradient(135deg, #F97316, #EA580C)', color: getDepartmentPeople(selectedDepartment).length === 0 ? '#94A3B8' : '#FFFFFF', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 800, cursor: getDepartmentPeople(selectedDepartment).length === 0 ? 'not-allowed' : 'pointer' }}
-                >
-                  <CalendarDays size={14} /> Schedule shifts
-                </button>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={() => openAiShiftModal(selectedDepartment)}
+                    style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 800, cursor: 'pointer' }}
+                  >
+                    <Sparkles size={14} /> AI Schedule
+                  </button>
+                  <button
+                    type="button"
+                    className="schedule-btn"
+                    onClick={() => openBatchDrawer(selectedDepartment)}
+                    disabled={getDepartmentPeople(selectedDepartment).length === 0}
+                    style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: getDepartmentPeople(selectedDepartment).length === 0 ? '#E2E8F0' : 'linear-gradient(135deg, #F97316, #EA580C)', color: getDepartmentPeople(selectedDepartment).length === 0 ? '#94A3B8' : '#FFFFFF', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 800, cursor: getDepartmentPeople(selectedDepartment).length === 0 ? 'not-allowed' : 'pointer' }}
+                  >
+                    <CalendarDays size={14} /> Schedule shifts
+                  </button>
+                </div>
               </div>
             ) : departments.length === 0 ? (
               <div style={{ minHeight: 150, display: 'grid', placeItems: 'center', color: MUTED, fontWeight: 700 }}>No departments yet.</div>
@@ -2158,6 +2259,185 @@ export default function OwnerShiftsPage() {
           )}
         </div>
       </main>
+
+      {/* ═══════════════ AI SHIFT SCHEDULING MODAL ═══════════════ */}
+      {aiShiftModal && (
+        <div onClick={() => setAiShiftModal(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(3px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200 }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: 560, maxHeight: '90vh', background: '#FFFFFF', borderRadius: 18, boxShadow: '0 20px 60px rgba(0,0,0,0.18)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+
+            {/* Header */}
+            <div style={{ padding: '20px 24px 18px', background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
+                <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, borderRadius: 10, background: 'rgba(255,255,255,0.18)' }}>
+                  <Sparkles size={18} color="#FFFFFF" strokeWidth={2} />
+                </div>
+                <div>
+                  <h2 style={{ margin: 0, fontSize: '1.0625rem', fontWeight: 800, color: '#FFFFFF', letterSpacing: '-0.2px' }}>AI Shift Scheduling</h2>
+                  <p style={{ margin: 0, fontSize: 12, color: 'rgba(255,255,255,0.7)', marginTop: 1 }}>Describe your needs — AI suggests practical shift slots</p>
+                </div>
+              </div>
+              <button onClick={() => setAiShiftModal(false)} style={{ background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: 8, cursor: 'pointer', color: '#FFFFFF', display: 'flex', padding: 6 }}><X size={16} /></button>
+            </div>
+
+            {/* Body */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+              {/* Context */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 700, color: '#374151', marginBottom: 6 }}>
+                  Coverage needs <span style={{ color: '#F97316' }}>*</span>
+                </label>
+                <textarea
+                  autoFocus
+                  value={aiShiftContext}
+                  onChange={e => setAiShiftContext(e.target.value)}
+                  rows={3}
+                  placeholder="e.g. Weekend restaurant service needs coverage from 9am to 10pm across two days, with morning and evening shifts..."
+                  style={{ width: '100%', border: '1.5px solid #E5E7EB', borderRadius: 8, padding: '10px 12px', fontSize: '0.9375rem', color: '#111827', background: '#FAFAFA', resize: 'vertical', lineHeight: 1.55, boxSizing: 'border-box', outline: 'none', fontFamily: 'inherit' }}
+                />
+              </div>
+
+              {/* Department + Preferred hours */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 700, color: '#374151', marginBottom: 6 }}>
+                    Department <span style={{ color: '#F97316' }}>*</span>
+                  </label>
+                  <select
+                    value={aiShiftDeptId}
+                    onChange={e => setAiShiftDeptId(e.target.value)}
+                    style={{ width: '100%', border: '1.5px solid #E5E7EB', borderRadius: 8, padding: '10px 12px', fontSize: '0.9375rem', color: '#111827', background: '#FFFFFF', cursor: 'pointer', outline: 'none', fontFamily: 'inherit' }}
+                  >
+                    <option value="">Select department</option>
+                    {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 700, color: '#374151', marginBottom: 6 }}>
+                    Preferred shift length <span style={{ color: '#D1D5DB', fontWeight: 400 }}>(optional)</span>
+                  </label>
+                  <input
+                    value={aiShiftPreferredHours}
+                    onChange={e => setAiShiftPreferredHours(e.target.value)}
+                    placeholder="e.g. 8-hour shifts"
+                    style={{ width: '100%', border: '1.5px solid #E5E7EB', borderRadius: 8, padding: '10px 12px', fontSize: '0.9375rem', color: '#111827', background: '#FAFAFA', outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit' }}
+                  />
+                </div>
+              </div>
+
+              {/* Date range */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 700, color: '#374151', marginBottom: 6 }}>From <span style={{ color: '#F97316' }}>*</span></label>
+                  <input
+                    type="date"
+                    value={aiShiftDateFrom}
+                    onChange={e => setAiShiftDateFrom(e.target.value)}
+                    style={{ width: '100%', border: '1.5px solid #E5E7EB', borderRadius: 8, padding: '10px 12px', fontSize: '0.9375rem', color: '#111827', background: '#FFFFFF', outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 700, color: '#374151', marginBottom: 6 }}>To <span style={{ color: '#F97316' }}>*</span></label>
+                  <input
+                    type="date"
+                    value={aiShiftDateTo}
+                    onChange={e => setAiShiftDateTo(e.target.value)}
+                    style={{ width: '100%', border: '1.5px solid #E5E7EB', borderRadius: 8, padding: '10px 12px', fontSize: '0.9375rem', color: '#111827', background: '#FFFFFF', outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit' }}
+                  />
+                </div>
+              </div>
+
+              {/* Generate button */}
+              <button
+                type="button"
+                onClick={handleAiGenerateShifts}
+                disabled={!aiShiftContext.trim() || aiShiftLoading}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '10px', background: !aiShiftContext.trim() || aiShiftLoading ? '#E5E7EB' : 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 9, fontWeight: 700, fontSize: '0.9375rem', color: !aiShiftContext.trim() || aiShiftLoading ? '#9CA3AF' : '#FFFFFF', cursor: !aiShiftContext.trim() || aiShiftLoading ? 'default' : 'pointer' }}
+              >
+                <Sparkles size={15} strokeWidth={2.2} />
+                {aiShiftLoading ? 'Generating shifts...' : 'Generate Shift Suggestions'}
+              </button>
+
+              {aiShiftError && (
+                <div style={{ padding: '10px 14px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 9, fontSize: '0.875rem', color: '#DC2626', fontWeight: 600 }}>
+                  {aiShiftError}
+                </div>
+              )}
+
+              {/* Suggestions */}
+              {aiShiftSuggestions.length > 0 && (
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                    <p style={{ margin: 0, fontSize: '0.7rem', fontWeight: 700, color: '#7C3AED', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                      {aiShiftSuggestions.length} shift{aiShiftSuggestions.length !== 1 ? 's' : ''} suggested
+                    </p>
+                    <div style={{ display: 'flex', gap: 10 }}>
+                      <button type="button" onClick={() => setAiShiftSelected(new Set(aiShiftSuggestions.map((_, i) => i)))} style={{ fontSize: '0.75rem', fontWeight: 700, color: '#7C3AED', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>Select all</button>
+                      <button type="button" onClick={() => setAiShiftSelected(new Set())} style={{ fontSize: '0.75rem', fontWeight: 700, color: '#9CA3AF', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>Clear</button>
+                      <button type="button" onClick={handleAiGenerateShifts} disabled={aiShiftLoading} style={{ fontSize: '0.75rem', fontWeight: 700, color: '#F97316', background: 'none', border: 'none', cursor: aiShiftLoading ? 'default' : 'pointer', padding: 0, opacity: aiShiftLoading ? 0.5 : 1 }}>Regenerate</button>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {aiShiftSuggestions.map((s, idx) => {
+                      const checked = aiShiftSelected.has(idx)
+                      const dateObj = new Date(`${s.shift_date}T00:00:00`)
+                      const dateLabel = dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                      const [sh, sm] = s.start_time.split(':').map(Number)
+                      const [eh, em] = s.end_time.split(':').map(Number)
+                      const fmt = (h: number, m: number) => { const ap = h < 12 ? 'am' : 'pm'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return m === 0 ? `${h12}${ap}` : `${h12}:${String(m).padStart(2,'0')}${ap}` }
+                      const timeLabel = `${fmt(sh, sm)} – ${fmt(eh, em)}`
+                      return (
+                        <div
+                          key={idx}
+                          onClick={() => setAiShiftSelected(prev => { const n = new Set(prev); if (n.has(idx)) n.delete(idx); else n.add(idx); return n })}
+                          style={{ display: 'flex', alignItems: 'flex-start', gap: 11, padding: '11px 14px', border: `1.5px solid ${checked ? '#7C3AED' : '#E5E7EB'}`, borderRadius: 10, background: checked ? '#F5F3FF' : '#FAFAFA', cursor: 'pointer', transition: 'border-color 0.12s, background 0.12s' }}
+                        >
+                          <div style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 5, border: `2px solid ${checked ? '#7C3AED' : '#D1D5DB'}`, background: checked ? '#7C3AED' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 1 }}>
+                            {checked && <Check size={11} color="#FFFFFF" strokeWidth={3} />}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 3 }}>
+                              <span style={{ fontSize: 13, fontWeight: 800, color: '#111827' }}>{s.title}</span>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: '#6B7280', background: '#F3F4F6', padding: '1px 7px', borderRadius: 99 }}>{dateLabel}</span>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: '#7C3AED', background: '#EDE9FE', padding: '1px 7px', borderRadius: 99 }}>{timeLabel}</span>
+                            </div>
+                            <p style={{ margin: 0, fontSize: 12, color: '#6B7280', lineHeight: 1.5 }}>{s.reason}</p>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {aiShiftCreateError && (
+                <div style={{ padding: '10px 14px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 9, fontSize: '0.875rem', color: '#DC2626', fontWeight: 600 }}>
+                  {aiShiftCreateError}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div style={{ padding: '14px 24px 20px', borderTop: '1px solid #F3F4F6', display: 'flex', gap: 10, flexShrink: 0 }}>
+              <button
+                type="button"
+                onClick={() => setAiShiftModal(false)}
+                style={{ flex: 1, padding: '10px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: 8, fontWeight: 600, fontSize: '0.9375rem', color: '#6B7280', cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleAiCreateShifts}
+                disabled={aiShiftSelected.size === 0 || aiShiftCreateLoading}
+                style={{ flex: 1, padding: '10px', background: aiShiftSelected.size === 0 || aiShiftCreateLoading ? '#E5E7EB' : 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: '0.9375rem', color: aiShiftSelected.size === 0 || aiShiftCreateLoading ? '#9CA3AF' : '#FFFFFF', cursor: aiShiftSelected.size === 0 || aiShiftCreateLoading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7 }}
+              >
+                {aiShiftCreateLoading ? 'Creating...' : `Create ${aiShiftSelected.size} Shift${aiShiftSelected.size !== 1 ? 's' : ''}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {batchDepartment && (
         <div style={drawerOverlayStyle}>
