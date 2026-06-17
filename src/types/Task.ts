@@ -12,6 +12,7 @@ export interface Task {
   percentage_complete: number
   priority: string | null
   due_at: string | null
+  task_date: string | null
   created_at: string
   updated_at?: string
   shift_date?: string | null
@@ -30,6 +31,7 @@ export interface TaskInput {
   percentage_complete?: number
   priority?: string | null
   due_at?: string | null
+  task_date?: string | null
 }
 
 export interface TaskStatItem {

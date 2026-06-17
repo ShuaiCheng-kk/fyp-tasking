@@ -1,12 +1,12 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from 'react'
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, Fragment } from 'react'
 import { useRouter } from 'next/navigation'
 import { createPortal } from 'react-dom'
 import {
   Plus, X, ChevronDown, Calendar, AlertCircle,
-  CheckCircle, Clock, Eye, Layers, Users, MoreHorizontal,
-  Copy, Crown, UserCog, UserRound, Pencil, Trash2, CalendarDays, ChevronLeft, ChevronRight,
+  CheckCircle, Clock, Eye, Layers, Users,
+  Crown, UserCog, UserRound, Pencil, Trash2, CalendarDays, ChevronLeft, ChevronRight,
   Sparkles, Check,
 } from 'lucide-react'
 import { TaskSuggestion } from '@/types/AI'
@@ -219,6 +219,12 @@ function formatDateKey(date: Date): string {
   return `${year}-${month}-${day}`
 }
 
+function kanbanDateKey(task: Task): string {
+  if (task.task_date) return task.task_date
+  if (task.shift_date) return task.shift_date
+  return formatDateKey(new Date(task.created_at))
+}
+
 function addDays(date: Date, days: number): Date {
   const next = new Date(date)
   next.setDate(next.getDate() + days)
@@ -316,7 +322,7 @@ function DropdownField({ value, options, onChange, placeholder, disabled = false
         style={{
           width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           padding: '10px 12px', border: `1.5px solid ${open ? '#F97316' : '#E5E7EB'}`, borderRadius: 8,
-          background: disabled ? '#F9FAFB' : '#FAFAFA', cursor: canOpen ? 'pointer' : 'default',
+          background: disabled ? '#F9FAFB' : '#FFFFFF', cursor: canOpen ? 'pointer' : 'default',
           fontSize: '0.9375rem', color: selected ? '#111827' : '#9CA3AF',
           fontWeight: selected ? 500 : 400, outline: 'none', boxSizing: 'border-box',
           transition: 'border-color 0.15s',
@@ -495,7 +501,7 @@ function DeadlineDateTimePicker({ dateValue, timeValue, onChange, minDate }: {
         style={{
           width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           padding: '10px 12px', border: `1.5px solid ${open ? '#F97316' : '#E5E7EB'}`, borderRadius: 8,
-          background: '#FAFAFA', cursor: 'pointer', fontSize: '0.9375rem',
+          background: '#FFFFFF', cursor: 'pointer', fontSize: '0.9375rem',
           color: dateValue ? '#111827' : '#9CA3AF', fontWeight: dateValue ? 500 : 400,
           outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s',
         }}>
@@ -513,41 +519,21 @@ function DeadlineDateTimePicker({ dateValue, timeValue, onChange, minDate }: {
 // ─── Task Card ────────────────────────────────────────────────────────────────
 
 function TaskCard({
-  task, members, shiftOptions, onClick, onEdit, onDelete, onDuplicate,
+  task, members, shiftOptions, departments, showDept, onClick, onEdit,
 }: {
   task: Task
   members: Member[]
   shiftOptions: ShiftOption[]
+  departments: Department[]
+  showDept: boolean
   onClick: () => void
   onEdit: () => void
-  onDelete: () => void
-  onDuplicate: () => void
 }) {
-  const [menuOpen, setMenuOpen] = useState(false)
-  const [menuPos, setMenuPos] = useState({ top: 0, left: 0 })
-  const menuRef = useRef<HTMLDivElement>(null)
-  const menuBtnRef = useRef<HTMLButtonElement>(null)
-  const menuPortalRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!menuOpen) return
-    const h = (e: MouseEvent) => {
-      const t = e.target as Node
-      if (!menuRef.current?.contains(t) && !menuPortalRef.current?.contains(t)) setMenuOpen(false)
-    }
-    document.addEventListener('mousedown', h)
-    return () => document.removeEventListener('mousedown', h)
-  }, [menuOpen])
-
   const assignee = members.find(m => m.id === task.assigned_user_id)
   const shift = task.shift_id ? shiftOptions.find(s => s.id === task.shift_id) : null
   const priority = task.priority ? PRIORITY_COLORS[task.priority] : null
   const overdue = task.due_at && task.status !== 'Complete' && isDueOverdue(task.due_at)
-
-  const MENU_ITEMS = [
-    { label: 'Edit',      icon: <Pencil size={13} style={{ color: '#F97316' }} />,  action: onEdit,      color: '#374151' },
-    { label: 'Duplicate', icon: <Copy size={13} style={{ color: '#F97316' }} />,    action: onDuplicate, color: '#374151' },
-  ]
+  const dept = showDept ? departments.find(d => d.id === task.department_id) : null
 
   return (
     <div
@@ -561,66 +547,32 @@ function TaskCard({
         padding: '12px 14px',
         cursor: 'pointer',
         position: 'relative',
-        zIndex: menuOpen ? 100 : undefined,
-        marginBottom: 8,
+        marginBottom: 14,
       }}
     >
-      {/* Top row: priority badge + ... menu */}
+      {/* Top row: priority badge + edit pencil */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 7 }}>
-        <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           {priority && task.priority && (
-            <span style={{ fontSize: '0.75rem', fontWeight: 800, padding: '3px 9px', borderRadius: '99px', background: priority.bg, color: priority.text, letterSpacing: '0.01em' }}>
+            <span style={{ fontSize: '0.65rem', fontWeight: 800, padding: '2px 7px', borderRadius: '99px', background: priority.bg, color: priority.text, letterSpacing: '0.01em' }}>
               {task.priority}
             </span>
           )}
-        </div>
-        {/* ... menu */}
-        <div ref={menuRef} style={{ position: 'relative', flexShrink: 0 }}>
-          <button
-            ref={menuBtnRef}
-            onClick={e => {
-              e.stopPropagation()
-              if (!menuOpen && menuBtnRef.current) {
-                const r = menuBtnRef.current.getBoundingClientRect()
-                const menuW = 152
-                const left = Math.max(8, Math.min(r.right - menuW, window.innerWidth - menuW - 8))
-                setMenuPos({ top: r.bottom + 4, left })
-              }
-              setMenuOpen(o => !o)
-            }}
-            style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '2px 4px', borderRadius: 5, color: '#9CA3AF', display: 'flex', alignItems: 'center', lineHeight: 1 }}
-            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(0,0,0,0.07)'; e.currentTarget.style.color = '#374151' }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#9CA3AF' }}
-          >
-            <MoreHorizontal size={14} />
-          </button>
-          {menuOpen && typeof document !== 'undefined' && createPortal(
-            <div ref={menuPortalRef} style={{ position: 'fixed', top: menuPos.top, left: menuPos.left, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, boxShadow: '0 8px 32px rgba(0,0,0,0.14)', zIndex: 9999, width: 152, padding: '6px 4px' }}>
-              <p style={{ margin: '0 6px 3px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9CA3AF' }}>Task</p>
-              {MENU_ITEMS.map(item => (
-                <button key={item.label} type="button"
-                  onClick={e => { e.stopPropagation(); setMenuOpen(false); item.action() }}
-                  style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '5px 10px', textAlign: 'left', border: 'none', background: 'transparent', color: item.color, fontWeight: 500, fontSize: 12, cursor: 'pointer', borderRadius: 10 }}
-                  onMouseEnter={e => { e.currentTarget.style.background = '#F9FAFB' }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
-                >
-                  {item.icon}
-                  {item.label}
-                </button>
-              ))}
-              <div style={{ height: 1, background: '#F1F5F9', margin: '3px 6px' }} />
-              <button type="button"
-                onClick={e => { e.stopPropagation(); setMenuOpen(false); onDelete() }}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '5px 10px', textAlign: 'left', border: 'none', background: 'transparent', color: '#DC2626', fontWeight: 500, fontSize: 12, cursor: 'pointer', borderRadius: 10 }}
-                onMouseEnter={e => { e.currentTarget.style.background = '#FEF2F2' }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
-              >
-                <Trash2 size={13} /> Delete
-              </button>
-            </div>,
-            document.body
+          {dept && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.65rem', fontWeight: 700, padding: '2px 7px', borderRadius: '99px', background: deptCardBg(dept.id), color: deptColor(dept.id) }}>
+              <span style={{ width: 5, height: 5, borderRadius: '50%', background: deptColor(dept.id), flexShrink: 0 }} />
+              {dept.name}
+            </span>
           )}
         </div>
+        <button
+          onClick={e => { e.stopPropagation(); onEdit() }}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', alignItems: 'center', color: '#9CA3AF', borderRadius: 6, flexShrink: 0 }}
+          onMouseEnter={e => { e.currentTarget.style.background = '#E5E7EB'; (e.currentTarget as HTMLButtonElement).style.color = '#F97316' }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'none'; (e.currentTarget as HTMLButtonElement).style.color = '#9CA3AF' }}
+        >
+          <Pencil size={13} />
+        </button>
       </div>
 
       {/* Title */}
@@ -632,12 +584,12 @@ function TaskCard({
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
         {assignee ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div className="task-card-icon" style={{ width: 22, height: 22, borderRadius: '50%', background: assignee.profile_photo_url ? 'transparent' : '#FFF3E8', border: '1.5px solid #F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
+            <div className="task-card-icon" style={{ width: 18, height: 18, borderRadius: '50%', background: assignee.profile_photo_url ? 'transparent' : '#FFF3E8', border: '1.5px solid #F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
               {assignee.profile_photo_url
                 ? <img src={assignee.profile_photo_url} alt={assignee.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                : <UserCog size={12} color="#F97316" strokeWidth={2} />}
+                : <UserCog size={10} color="#F97316" strokeWidth={2} />}
             </div>
-            <span style={{ fontSize: '0.75rem', color: '#374151', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ fontSize: '0.7rem', color: '#374151', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {assignee.full_name}
             </span>
           </div>
@@ -704,7 +656,6 @@ export default function OwnerTasksPage() {
   const [selectedTask,  setSelectedTask]  = useState<Task | null>(null)
   const [editLoading,   setEditLoading]   = useState(false)
   const [deleteLoading, setDeleteLoading] = useState(false)
-  const [duplicateLoading, setDuplicateLoading] = useState(false)
   const [panelError,    setPanelError]    = useState('')
   const [editTitle,       setEditTitle]       = useState('')
   const [editDescription, setEditDescription] = useState('')
@@ -723,6 +674,27 @@ export default function OwnerTasksPage() {
   const [subTaskTitle,    setSubTaskTitle]    = useState('')
   const [subTaskLoading,  setSubTaskLoading]  = useState(false)
   const [taskViewMode,    setTaskViewMode]    = useState(false)
+
+  // Board view mode (Kanban / Calendar) + animated tab indicator
+  const [boardViewMode, setBoardViewMode] = useState<'kanban' | 'calendar'>('kanban')
+  const boardTabBarRef = useRef<HTMLDivElement>(null)
+  const boardTabButtonRefs = useRef<Record<'kanban' | 'calendar', HTMLButtonElement | null>>({ kanban: null, calendar: null })
+  const [boardTabIndicator, setBoardTabIndicator] = useState({ left: 0, width: 0, opacity: 0 })
+
+  useLayoutEffect(() => {
+    const container = boardTabBarRef.current
+    const activeButton = boardTabButtonRefs.current[boardViewMode]
+    if (!container || !activeButton) return
+    const containerRect = container.getBoundingClientRect()
+    const activeRect = activeButton.getBoundingClientRect()
+    setBoardTabIndicator({ left: activeRect.left - containerRect.left, width: activeRect.width, opacity: 1 })
+  }, [boardViewMode])
+
+  // Department card order (drag-to-reorder, local-only like the Shifts page)
+  const [departmentOrder, setDepartmentOrder] = useState<string[]>([])
+  const [draggingDepartmentId, setDraggingDepartmentId] = useState<string | null>(null)
+  const [dragOverDepartmentId, setDragOverDepartmentId] = useState<string | null>(null)
+  const departmentOrderRef = useRef<string[]>([])
 
   // New task modal
   const [newTaskModal,    setNewTaskModal]    = useState(false)
@@ -762,6 +734,39 @@ export default function OwnerTasksPage() {
   const canManageDepartments = userRole === 'Owner' || userRole === 'Partner'
 
   // ── Header theme ──────────────────────────────────────────────────────────
+
+  // ── Department card order: load saved order, persist on change ────────────
+
+  const deptOrderKey = companyId ? `owner_task_department_order_${companyId}` : null
+
+  useEffect(() => {
+    if (!companyId || departments.length === 0) return
+    const fallbackOrder = departments.map(d => d.id)
+    let nextOrder = fallbackOrder
+    if (deptOrderKey) {
+      try {
+        const raw = localStorage.getItem(deptOrderKey)
+        if (raw) {
+          const parsed = JSON.parse(raw)
+          if (Array.isArray(parsed)) {
+            const saved = parsed.filter((id): id is string => fallbackOrder.includes(id))
+            const remaining = fallbackOrder.filter(id => !saved.includes(id))
+            nextOrder = [...saved, ...remaining]
+          }
+        }
+      } catch {}
+    }
+    setDepartmentOrder(nextOrder)
+  }, [companyId, departments, deptOrderKey])
+
+  useEffect(() => {
+    if (!deptOrderKey || departmentOrder.length === 0) return
+    try { localStorage.setItem(deptOrderKey, JSON.stringify(departmentOrder)) } catch {}
+  }, [deptOrderKey, departmentOrder])
+
+  useEffect(() => {
+    departmentOrderRef.current = departmentOrder
+  }, [departmentOrder])
 
   // ── Mount: resolve session ────────────────────────────────────────────────
 
@@ -970,7 +975,7 @@ export default function OwnerTasksPage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
       await fetchKanban(companyId)
-      setTaskDate(editDueAt)
+      setTaskDate(selectedTask.task_date ?? taskDate)
       closePanel()
       showTaskToast('Task updated successfully.')
     } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to save') }
@@ -1020,36 +1025,6 @@ export default function OwnerTasksPage() {
     finally { setDeleteTaskLoading(false) }
   }
 
-  const handleDuplicateTask = async () => {
-    if (!selectedTask) return
-    setDuplicateLoading(true); setPanelError('')
-    try {
-      const res = await fetch('/api/task', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'duplicate', id: selectedTask.id, assigned_by: internalUserId || undefined }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message)
-      closePanel()
-      fetchKanban(companyId, true)
-      showTaskToast('Task duplicated successfully.')
-    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to duplicate task') }
-    finally { setDuplicateLoading(false) }
-  }
-
-  const handleQuickDuplicate = async (task: Task) => {
-    try {
-      const res = await fetch('/api/task', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'duplicate', id: task.id, assigned_by: internalUserId || undefined }),
-      })
-      const data = await res.json()
-      if (data.success) { fetchKanban(companyId, true); showTaskToast('Task duplicated successfully.') }
-    } catch {}
-  }
-
   // ── Create task ────────────────────────────────────────────────────────────
 
   const handleCreateSubTask = async () => {
@@ -1066,6 +1041,7 @@ export default function OwnerTasksPage() {
         assigned_by: internalUserId || null,
         status: 'Assigned',
         percentage_complete: 0,
+        task_date: selectedTask.task_date ?? taskDate,
       }
       const res = await fetch('/api/task', {
         method: 'POST',
@@ -1095,6 +1071,7 @@ export default function OwnerTasksPage() {
         shift_id: newShiftId || null,
         priority: newPriority || null,
         due_at: newDeadlineDate && newDeadlineTime ? new Date(`${newDeadlineDate}T${newDeadlineTime}:00`).toISOString() : null,
+        task_date: taskDate,
         status: 'Assigned',
         percentage_complete: 0,
       }
@@ -1105,10 +1082,9 @@ export default function OwnerTasksPage() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
-      const jumpToDate = newDeadlineDate
       setNewTaskModal(false)
       setNewTitle(''); setNewDescription(''); setNewDeptId(''); setNewAssigneeId(''); setNewShiftId(''); setNewPriority(''); setNewDeadlineDate(''); setNewDeadlineTime('')
-      if (jumpToDate) setTaskDate(jumpToDate)
+      setTaskDate(taskDate)
       fetchKanban(companyId)
       showTaskToast('Task created successfully.')
     } catch (err) { setNewError(err instanceof Error ? err.message : 'Failed to create task') }
@@ -1190,15 +1166,10 @@ export default function OwnerTasksPage() {
     const allTasks = [...kanban.Assigned, ...kanban['In Progress'], ...kanban.Review, ...kanban.Complete]
     const dates = new Set<string>()
     for (const t of allTasks) {
-      if (t.due_at) {
-        dates.add(formatDateKey(new Date(t.due_at)))
-      } else if (t.shift_id) {
-        const date = t.shift_date ?? shiftOptions.find(s => s.id === t.shift_id)?.shift_date ?? null
-        if (date) dates.add(date)
-      }
+      dates.add(kanbanDateKey(t))
     }
     return dates
-  }, [kanban, shiftOptions])
+  }, [kanban])
 
   const minTaskDate = useMemo(() => {
     const d = addDays(new Date(), -7)
@@ -1212,25 +1183,169 @@ export default function OwnerTasksPage() {
     if (!kanban) return []
     return (kanban[col] ?? [])
       .filter(t => !selectedDeptId || t.department_id === selectedDeptId)
-      .filter(t => {
-        if (t.due_at) return formatDateKey(new Date(t.due_at)) === taskDate
-        if (t.shift_id) {
-          // prefer shift_date embedded in task; fall back to shiftOptions lookup
-          const date = t.shift_date ?? shiftOptions.find(s => s.id === t.shift_id)?.shift_date ?? null
-          return date === taskDate
-        }
-        return false
-      })
+      .filter(t => kanbanDateKey(t) === taskDate)
       .sort((a, b) => (PRIORITY_ORDER[a.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.priority ?? ''] ?? 4))
   }
 
-  // ── Workload: task count per user (all dates) ────────────────────────────
-  const taskCountByUser = COLUMNS
-    .flatMap(col => (kanban?.[col] ?? []))
-    .reduce<Record<string, number>>((acc, t) => {
-      if (t.assigned_user_id) acc[t.assigned_user_id] = (acc[t.assigned_user_id] ?? 0) + 1
+  const allVisibleTasks = useMemo(() => {
+    if (!kanban) return []
+    return COLUMNS
+      .flatMap(col => kanban[col] ?? [])
+      .filter(t => !selectedDeptId || t.department_id === selectedDeptId)
+      .sort((a, b) => {
+        const aTime = a.due_at ? new Date(a.due_at).getTime() : 0
+        const bTime = b.due_at ? new Date(b.due_at).getTime() : 0
+        return aTime - bTime || (PRIORITY_ORDER[a.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.priority ?? ''] ?? 4)
+      })
+  }, [kanban, selectedDeptId])
+
+  const calendarWeekDates = useMemo(() => {
+    const anchor = new Date(`${taskDate}T00:00:00`)
+    const dow = (anchor.getDay() + 6) % 7
+    const monday = addDays(anchor, -dow)
+    return Array.from({ length: 7 }, (_, i) => formatDateKey(addDays(monday, i)))
+  }, [taskDate])
+
+  const calendarWeekLabel = useMemo(() => {
+    const first = new Date(`${calendarWeekDates[0]}T00:00:00`)
+    const last = new Date(`${calendarWeekDates[6]}T00:00:00`)
+    return `${first.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${last.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+  }, [calendarWeekDates])
+
+  const taskCalendarItems = useMemo(() => {
+    const weekStart = new Date(`${calendarWeekDates[0]}T00:00:00`).getTime()
+    const weekEnd = new Date(`${calendarWeekDates[6]}T23:59:59`).getTime()
+    return allVisibleTasks.flatMap(task => {
+      const shift = task.shift_id ? shiftOptions.find(s => s.id === task.shift_id) : null
+      const due = task.due_at ? new Date(task.due_at) : null
+      const shiftDate = task.shift_date ?? shift?.shift_date ?? (due ? formatDateKey(due) : null)
+      if (!shiftDate && !due) return []
+
+      const start = shift
+        ? new Date(`${shift.shift_date}T${shift.start_time.slice(0, 5)}:00`)
+        : due
+          ? new Date(due.getTime() - 60 * 60 * 1000)
+          : null
+      const end = due
+        ? due
+        : shift
+          ? new Date(`${shift.shift_date}T${shift.end_time.slice(0, 5)}:00`)
+          : null
+      if (!start || !end) return []
+      if (end.getTime() < weekStart || start.getTime() > weekEnd) return []
+
+      return [{ task, shift, start, end: end.getTime() > start.getTime() ? end : new Date(start.getTime() + 30 * 60 * 1000) }]
+    })
+  }, [allVisibleTasks, calendarWeekDates, shiftOptions])
+
+  const renderTaskCalendarView = () => {
+    const startHour = 6
+    const endHour = 24
+    const hourHeight = 44
+    const totalMinutes = (endHour - startHour) * 60
+    const bodyHeight = (endHour - startHour) * hourHeight
+    const todayStr = formatDateKey(new Date())
+    const hours = Array.from({ length: endHour - startHour + 1 }, (_, i) => startHour + i)
+    const itemsByDate = calendarWeekDates.reduce<Record<string, typeof taskCalendarItems>>((acc, date) => {
+      acc[date] = taskCalendarItems.filter(item => {
+        const startDate = formatDateKey(item.start)
+        const endDate = formatDateKey(item.end)
+        return date >= startDate && date <= endDate
+      })
       return acc
     }, {})
+
+    const timeLabel = (date: Date) => date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+    const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
+
+    return (
+      <div className="task-tab-content" style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '14px 16px 18px' }}>
+        <div style={{ minWidth: 900, border: `1px solid ${TASK_BORDER}`, borderRadius: 12, overflow: 'hidden', background: '#FFFFFF' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '72px repeat(7, minmax(112px, 1fr))', background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', minHeight: 56 }}>
+            <div style={{ borderRight: '1px solid rgba(255,255,255,0.08)' }} />
+            {calendarWeekDates.map(date => {
+              const day = new Date(`${date}T00:00:00`)
+              const isToday = date === todayStr
+              return (
+                <div key={date} style={{ padding: '10px 8px', borderRight: '1px solid rgba(255,255,255,0.08)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+                  <span style={{ fontSize: 14, fontWeight: 800, color: isToday ? TASK_ORANGE : 'rgba(255,255,255,0.88)' }}>{day.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                  <span style={{ marginTop: 3, fontSize: 12, fontWeight: 600, color: isToday ? TASK_ORANGE : 'rgba(255,255,255,0.52)' }}>{day.toLocaleDateString('en-US', { weekday: 'short' })}</span>
+                </div>
+              )
+            })}
+          </div>
+
+          {taskCalendarItems.length === 0 ? (
+            <div style={{ minHeight: 320, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, color: '#94A3B8' }}>
+              <CalendarDays size={24} strokeWidth={1.6} />
+              <p style={{ margin: 0, fontWeight: 700, fontSize: 14 }}>{selectedDept ? `No tasks for ${selectedDept.name} this week` : 'No tasks this week'}</p>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: '72px repeat(7, minmax(112px, 1fr))', height: bodyHeight, position: 'relative' }}>
+              <div style={{ position: 'relative', borderRight: `1px solid ${TASK_BORDER}`, background: '#F8FAFC' }}>
+                {hours.slice(0, -1).map(hour => (
+                  <div key={hour} style={{ position: 'absolute', top: (hour - startHour) * hourHeight + hourHeight / 2 - 8, right: 10, fontSize: 11, fontWeight: 700, color: '#94A3B8' }}>
+                    {`${hour > 12 ? hour - 12 : hour} ${hour >= 12 ? 'PM' : 'AM'}`}
+                  </div>
+                ))}
+              </div>
+              {calendarWeekDates.map(date => (
+                <div key={date} style={{ position: 'relative', borderRight: `1px solid ${TASK_BORDER}`, background: date === todayStr ? '#FFF7ED' : '#FFFFFF' }}>
+                  {hours.slice(0, -1).map(hour => (
+                    <div key={hour} style={{ position: 'absolute', left: 0, right: 0, top: (hour - startHour) * hourHeight, borderTop: `1px solid ${hour === startHour ? '#E2E8F0' : '#F1F5F9'}` }} />
+                  ))}
+                  {(itemsByDate[date] ?? []).map((item, idx) => {
+                    const startDate = formatDateKey(item.start)
+                    const endDate = formatDateKey(item.end)
+                    const dayStart = startDate < date ? startHour * 60 : item.start.getHours() * 60 + item.start.getMinutes()
+                    const dayEnd = endDate > date ? endHour * 60 : item.end.getHours() * 60 + item.end.getMinutes()
+                    const top = clamp(((dayStart - startHour * 60) / totalMinutes) * bodyHeight, 4, bodyHeight - 30)
+                    const bottom = clamp(((dayEnd - startHour * 60) / totalMinutes) * bodyHeight, top + 28, bodyHeight - 4)
+                    const status = STATUS_CONFIG[item.task.status]
+                    const dept = departments.find(d => d.id === item.task.department_id)
+                    const color = dept ? deptColor(dept.id) : status.color
+                    return (
+                      <button
+                        key={`${item.task.id}-${date}`}
+                        className="task-calendar-bar"
+                        type="button"
+                        onClick={() => openTask(item.task, true)}
+                        title={`${item.task.title} • ${timeLabel(item.start)} - ${timeLabel(item.end)}`}
+                        style={{
+                          position: 'absolute',
+                          left: 8 + (idx % 2) * 6,
+                          right: 8,
+                          top,
+                          height: Math.max(28, bottom - top),
+                          border: 0,
+                          borderLeft: `4px solid ${color}`,
+                          borderRadius: 9,
+                          background: '#F8FAFC',
+                          color: TASK_TEXT,
+                          boxShadow: '0 6px 16px rgba(15,23,42,0.08)',
+                          padding: '5px 8px',
+                          cursor: 'pointer',
+                          textAlign: 'left',
+                          overflow: 'hidden',
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.background = '#FFFFFF'; e.currentTarget.style.boxShadow = '0 10px 24px rgba(15,23,42,0.14)' }}
+                        onMouseLeave={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.boxShadow = '0 6px 16px rgba(15,23,42,0.08)' }}
+                      >
+                        <span style={{ display: 'block', fontSize: 11, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.task.title}</span>
+                        <span style={{ display: 'block', marginTop: 2, fontSize: 10, fontWeight: 700, color: '#64748B', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {timeLabel(item.start)} - {timeLabel(item.end)}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   const assignableMembers = members.filter(m => m.role === 'Manager')
   const newTaskDeptMembers = newDeptId ? assignableMembers.filter(m => m.department_id === newDeptId) : assignableMembers
@@ -1249,6 +1364,38 @@ export default function OwnerTasksPage() {
   const visibleDepts = departments.filter(d =>
     selectedDeptId === '' ? true : d.id === selectedDeptId
   )
+  const selectedDept = selectedDeptId ? visibleDepts[0] : null
+
+  const orderedDepartments = useMemo(() => {
+    if (departments.length === 0) return []
+    const byId = new Map(departments.map(d => [d.id, d] as const))
+    const saved = departmentOrder.filter(id => byId.has(id))
+    const remaining = departments.map(d => d.id).filter(id => !saved.includes(id))
+    const orderedIds = saved.length > 0 ? [...saved, ...remaining] : departments.map(d => d.id)
+    return orderedIds.map(id => byId.get(id)!).filter(Boolean)
+  }, [departments, departmentOrder])
+
+  const moveDepartment = useCallback((sourceId: string, targetId: string) => {
+    if (!sourceId || !targetId || sourceId === targetId) return
+    const ids = departmentOrderRef.current.length > 0 ? departmentOrderRef.current : departments.map(d => d.id)
+    const sourceIdx = ids.indexOf(sourceId)
+    const targetIdx = ids.indexOf(targetId)
+    if (sourceIdx < 0 || targetIdx < 0 || sourceIdx === targetIdx) return
+    const next = [...ids]
+    next.splice(sourceIdx, 1)
+    next.splice(targetIdx, 0, sourceId)
+    departmentOrderRef.current = next
+    setDepartmentOrder(next)
+  }, [departments])
+
+  const handleDepartmentDragStart = useCallback((departmentId: string) => {
+    setDraggingDepartmentId(departmentId)
+  }, [])
+
+  const handleDepartmentDragEnd = useCallback(() => {
+    setDraggingDepartmentId(null)
+    setDragOverDepartmentId(null)
+  }, [])
 
   // ── Button helpers ────────────────────────────────────────────────────────
 
@@ -1280,8 +1427,8 @@ export default function OwnerTasksPage() {
           to   { opacity: 1; transform: translateY(0); }
         }
         @keyframes fadeSlideUp {
-          from { opacity: 0; transform: translateY(14px); }
-          to   { opacity: 1; transform: translateY(0); }
+          from { opacity: 0; transform: scale(0.97) translateY(8px); }
+          to   { opacity: 1; transform: scale(1) translateY(0); }
         }
         @keyframes slideInLeft {
           from { opacity: 0; transform: translateX(-12px); }
@@ -1290,6 +1437,47 @@ export default function OwnerTasksPage() {
         @keyframes scaleIn {
           from { opacity: 0; transform: scale(0.95); }
           to   { opacity: 1; transform: scale(1); }
+        }
+        @keyframes blockSlideUp {
+          from { opacity: 0; transform: translateY(20px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes blockPopIn {
+          0% { opacity: 0; transform: scale(0.93) translateY(10px); }
+          65% { opacity: 1; transform: scale(1.025) translateY(-2px); }
+          100% { transform: scale(1) translateY(0); }
+        }
+        @keyframes drawerSlideIn {
+          from { opacity: 0; transform: translateX(24px); }
+          to { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes fadeSlideUpToast {
+          from { opacity: 0; transform: translateX(-50%) translateY(10px); }
+          to { opacity: 1; transform: translateX(-50%) translateY(0); }
+        }
+        @keyframes cardStagger {
+          from { opacity: 0; transform: translateY(14px) scale(0.96); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes deptCardIn {
+          from { opacity: 0; transform: translateX(-10px); }
+          to { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes rowSlideIn {
+          from { opacity: 0; transform: translateX(-8px); }
+          to { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes tabContentIn {
+          from { opacity: 0; transform: translateY(8px) scale(0.99); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes shimmer {
+          0% { background-position: -400px 0; }
+          100% { background-position: 400px 0; }
+        }
+        @keyframes calendarTaskIn {
+          from { opacity: 0; transform: translateY(8px) scale(0.96); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
         }
         @keyframes iconBounce {
           0%, 100% { transform: translateY(0); }
@@ -1319,22 +1507,34 @@ export default function OwnerTasksPage() {
           box-shadow: 0 4px 18px rgba(0,0,0,0.06);
         }
 
-        /* Department filter pills */
-        .dept-pill {
-          transition: all 0.13s ease;
+        .task-dept-panel {
+          animation: blockPopIn 0.42s cubic-bezier(0.34,1.56,0.64,1) both 0.05s;
         }
-        .dept-pill:hover {
+        .task-board-panel {
+          animation: blockSlideUp 0.38s ease both 0.12s;
+        }
+        .task-dept-card:hover {
+          box-shadow: 0 4px 14px rgba(0,0,0,0.09) !important;
+          transform: translateY(-1px) !important;
+        }
+        .task-tab-content {
+          animation: tabContentIn 0.22s ease-out both;
+        }
+        .task-calendar-bar {
+          animation: calendarTaskIn 0.24s ease both;
+          transition: background 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+        }
+        .task-calendar-bar:hover {
           transform: translateY(-1px);
-          box-shadow: 0 2px 8px rgba(0,0,0,0.08);
         }
 
         /* Member sidebar cards */
         .member-card {
-          transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
+          animation: cardStagger 0.30s ease both;
+          transition: box-shadow 0.18s ease, border-color 0.18s ease;
         }
         .member-card:hover {
-          box-shadow: 0 4px 14px rgba(0,0,0,0.07);
-          transform: translateX(2px);
+          box-shadow: 0 3px 10px rgba(0,0,0,0.08);
           border-color: #FDBA74 !important;
         }
 
@@ -1367,14 +1567,14 @@ export default function OwnerTasksPage() {
         .task-card:nth-child(5) { animation: fadeSlideUp 0.26s ease both; animation-delay: 0.20s; }
 
         /* Staggered entry — member sidebar */
-        .member-card:nth-child(1) { animation: slideInLeft 0.24s ease both; animation-delay: 0.05s; }
-        .member-card:nth-child(2) { animation: slideInLeft 0.24s ease both; animation-delay: 0.10s; }
-        .member-card:nth-child(3) { animation: slideInLeft 0.24s ease both; animation-delay: 0.15s; }
-        .member-card:nth-child(4) { animation: slideInLeft 0.24s ease both; animation-delay: 0.20s; }
-        .member-card:nth-child(5) { animation: slideInLeft 0.24s ease both; animation-delay: 0.25s; }
+        .member-card:nth-child(1) { animation-delay: 0.05s; }
+        .member-card:nth-child(2) { animation-delay: 0.10s; }
+        .member-card:nth-child(3) { animation-delay: 0.15s; }
+        .member-card:nth-child(4) { animation-delay: 0.20s; }
+        .member-card:nth-child(5) { animation-delay: 0.25s; }
       `}</style>
 
-      <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+      <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', animation: 'blockSlideUp 0.38s ease both 0.04s' }}>
 
         {/* Page header — matches Dashboard style */}
         <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
@@ -1389,151 +1589,285 @@ export default function OwnerTasksPage() {
           </div>
         </div>
 
+        {/* Board view tab switcher: Kanban / Calendar */}
+        <div style={{ padding: '0 28px 16px', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start' }}>
+            <div
+              ref={boardTabBarRef}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: 4,
+                background: '#FFFFFF',
+                border: '1px solid #E5E7EB',
+                borderRadius: 999,
+                boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
+                overflow: 'hidden',
+                position: 'relative',
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  position: 'absolute',
+                  top: 4,
+                  left: boardTabIndicator.left,
+                  width: boardTabIndicator.width,
+                  height: 'calc(100% - 8px)',
+                  borderRadius: 999,
+                  background: 'linear-gradient(180deg, #0F172A 0%, #111827 100%)',
+                  boxShadow: '0 6px 18px rgba(15,23,42,0.18)',
+                  opacity: boardTabIndicator.opacity,
+                  transform: boardTabIndicator.opacity ? 'translateY(0)' : 'translateY(4px)',
+                  transition: 'left 0.24s cubic-bezier(0.22, 1, 0.36, 1), width 0.24s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.16s ease, transform 0.24s cubic-bezier(0.22, 1, 0.36, 1)',
+                  pointerEvents: 'none',
+                }}
+              />
+              {([
+                { id: 'kanban' as const, label: 'Kanban' },
+                { id: 'calendar' as const, label: 'Calendar' },
+              ]).map(tab => {
+                const active = boardViewMode === tab.id
+                return (
+                  <button
+                    key={tab.id}
+                    ref={el => { boardTabButtonRefs.current[tab.id] = el }}
+                    type="button"
+                    onClick={() => setBoardViewMode(tab.id)}
+                    style={{
+                      position: 'relative',
+                      zIndex: 1,
+                      height: 36,
+                      padding: '0 18px',
+                      borderRadius: 999,
+                      border: 'none',
+                      background: active ? '#0F172A' : 'transparent',
+                      color: active ? '#FFFFFF' : '#64748B',
+                      fontSize: 13,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      boxShadow: 'none',
+                      transition: 'color 0.18s ease, transform 0.18s ease',
+                      transform: active ? 'translateY(-0.5px)' : 'translateY(0)',
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+
         {/* Content — single card like Shifts/Communication */}
         <div style={{ padding: '0 28px 28px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <div style={{ background: '#FFFFFF', borderRadius: 16, border: '1px solid #E5E7EB', boxShadow: '0 1px 6px rgba(0,0,0,0.06)', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
-
-            {/* ── CARD TOP BAR: dept filter + title + New Task ───────────── */}
-            <div style={{ padding: '14px 20px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, gap: 12, flexWrap: 'wrap' }}>
-              {/* Dept pills */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                  <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <Users size={15} style={{ color: '#F97316' }} />
-                  </div>
-                  <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Department:</span>
-                </div>
-                <button
-                  onClick={() => setSelectedDeptId('')}
-                  className="dept-pill"
-                  style={{ padding: '5px 13px', borderRadius: '99px', border: selectedDeptId === '' ? '2px solid #111827' : '1.5px solid #E5E7EB', background: selectedDeptId === '' ? '#111827' : 'transparent', color: selectedDeptId === '' ? '#FFFFFF' : '#374151', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer', flexShrink: 0 }}
-                >
-                  All
-                </button>
-                {[...departments].sort((a, b) => a.name.localeCompare(b.name)).map(d => (
-                  <button
-                    key={d.id}
-                    onClick={() => setSelectedDeptId(selectedDeptId === d.id ? '' : d.id)}
-                    className="dept-pill"
-                    style={{ padding: '5px 13px', borderRadius: '99px', border: selectedDeptId === d.id ? `2px solid ${deptColor(d.id)}` : '1.5px solid #E5E7EB', background: selectedDeptId === d.id ? deptColor(d.id) : 'transparent', color: selectedDeptId === d.id ? '#FFFFFF' : '#374151', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5 }}
-                  >
-                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: selectedDeptId === d.id ? 'rgba(255,255,255,0.7)' : deptColor(d.id), flexShrink: 0 }} />
-                    {d.name}
-                  </button>
-                ))}
-              </div>
-              {/* Date nav + New Task */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                <button
-                  type="button"
-                  onClick={() => setTaskDate(formatDateKey(new Date()))}
-                  className="today-btn"
-                  style={{ height: 38, padding: '0 14px', border: `1px solid ${TASK_BORDER}`, borderRadius: 8, background: taskDate === formatDateKey(new Date()) ? '#F97316' : '#FFFFFF', color: taskDate === formatDateKey(new Date()) ? '#FFFFFF' : TASK_TEXT, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-                >Today</button>
-                <button
-                  type="button"
-                  onClick={() => setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), -1)))}
-                  disabled={taskDate <= minTaskDate}
-                  style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${TASK_BORDER}`, background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: taskDate <= minTaskDate ? 'default' : 'pointer', color: TASK_TEXT, opacity: taskDate <= minTaskDate ? 0.3 : 1 }}
-                ><ChevronLeft size={16} /></button>
-                <TaskDatePicker value={taskDate} onChange={setTaskDate} taskDates={datesWithTasks} minDate={minTaskDate} accentColor={TASK_ORANGE} />
-                <button
-                  type="button"
-                  onClick={() => setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), 1)))}
-                  style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${TASK_BORDER}`, background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: 'pointer', color: TASK_TEXT }}
-                ><ChevronRight size={16} /></button>
-                <button
-                  onClick={() => { setAiModal(true); setAiContext(''); setAiDeptId(''); setAiShiftId(''); setAiSuggestions([]); setAiSelected(new Set()); setAiError('') }}
-                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#fff', cursor: 'pointer', height: 38, flexShrink: 0 }}
-                >
-                  <Sparkles size={13} strokeWidth={2.5} /> AI Generate
-                </button>
-              </div>
+          {!initialReady || kanbanLoading ? (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flex: 1 }}>
+              <Spinner size={24} dark />
             </div>
+          ) : (
+            <div style={{ display: 'flex', gap: 16, alignItems: 'stretch', flex: 1, minHeight: 0 }}>
 
-            {/* ── BODY: sidebar + kanban ───────────────────────────────────── */}
-            {!initialReady || kanbanLoading ? (
-              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flex: 1 }}>
-                <Spinner size={24} dark />
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+              {/* ── DEPARTMENT PANEL ───────────────────────────────────────── */}
+              <section className="task-dept-panel" style={{ width: 326, flexShrink: 0, alignSelf: 'flex-start', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'visible' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 18px', borderBottom: '1px solid #F3F4F6' }}>
+                  {selectedDept ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedDeptId('')}
+                        aria-label="Back to all departments"
+                        title="Back to all departments"
+                        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, borderRadius: 8, border: '1px solid #E5E7EB', background: '#FFFFFF', color: '#64748B', cursor: 'pointer', flexShrink: 0 }}
+                        onMouseEnter={e => { e.currentTarget.style.borderColor = '#FDBA74'; e.currentTarget.style.color = '#F97316'; e.currentTarget.style.background = '#FFF7ED' }}
+                        onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.color = '#64748B'; e.currentTarget.style.background = '#FFFFFF' }}
+                      >
+                        <ChevronLeft size={14} />
+                      </button>
+                      <span style={{ width: 9, height: 9, borderRadius: '50%', background: deptColor(selectedDept.id), flexShrink: 0 }} />
+                      <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{selectedDept.name}</span>
+                    </>
+                  ) : (
+                    <>
+                      <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <Users size={15} style={{ color: '#F97316' }} />
+                      </div>
+                      <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A' }}>Departments</span>
+                    </>
+                  )}
+                </div>
 
-                {/* ── LEFT SIDEBAR (only when dept selected) ───────────────── */}
-                {selectedDeptId && (() => {
-                  const dept = visibleDepts[0]
-                  if (!dept) return null
-                  const deptMembers = members.filter(m => m.department_id === dept.id && m.role === 'Manager')
-                  // collect user IDs that have tasks on the selected date
-                  const allDateTasks = COLUMNS.flatMap(col => filteredTasks(col))
-                  const busyIds = new Set(allDateTasks.map(t => t.assigned_user_id).filter(Boolean) as string[])
-                  const freeMembers = deptMembers.filter(m => !busyIds.has(m.id))
-                  const busyMembers = deptMembers.filter(m => busyIds.has(m.id))
+                <div key={`dept-panel-body-${boardViewMode}-${selectedDeptId}`} style={{ padding: 14 }}>
+                  {(() => {
+                    const dept = selectedDept
+                    if (selectedDeptId && !dept) return null
 
-                  // Workload imbalance detection
-                  const counts = deptMembers.map(m => taskCountByUser[m.id] ?? 0)
-                  const avg = counts.length ? counts.reduce((a, b) => a + b, 0) / counts.length : 0
-                  const maxCount = counts.length ? Math.max(...counts) : 0
-                  const overloadedMember = maxCount > avg * 2 && maxCount >= 3
-                    ? deptMembers.find(m => (taskCountByUser[m.id] ?? 0) === maxCount)
-                    : null
+                    if (!dept) {
+                      // ── Department cards grid (draggable to reorder) ──
+                      const dayTasks = COLUMNS.flatMap(col => (kanban?.[col] ?? [])).filter(t => kanbanDateKey(t) === taskDate)
+                      return (
+                        <>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 12 }}>
+                            {orderedDepartments.map((d, deptIdx) => {
+                              const managerCount = members.filter(m => m.department_id === d.id && m.role === 'Manager').length
+                              const taskCount = dayTasks.filter(t => t.department_id === d.id).length
+                              const isDragging = draggingDepartmentId === d.id
+                              const isDragOver = dragOverDepartmentId === d.id
+                              return (
+                                <article
+                                  key={d.id}
+                                  className="task-dept-card"
+                                  draggable
+                                  onDragStart={(event) => {
+                                    const target = event.target as HTMLElement | null
+                                    if (target?.closest('button, input, textarea, select, a, [role="button"]')) {
+                                      event.preventDefault()
+                                      return
+                                    }
+                                    event.dataTransfer.effectAllowed = 'move'
+                                    event.dataTransfer.setData('text/plain', d.id)
+                                    handleDepartmentDragStart(d.id)
+                                  }}
+                                  onDragEnd={handleDepartmentDragEnd}
+                                  onDragOver={(event) => {
+                                    event.preventDefault()
+                                    if (draggingDepartmentId && draggingDepartmentId !== d.id) setDragOverDepartmentId(d.id)
+                                  }}
+                                  onDragLeave={(event) => {
+                                    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+                                    setDragOverDepartmentId(current => current === d.id ? null : current)
+                                  }}
+                                  onDrop={(event) => {
+                                    event.preventDefault()
+                                    const sourceId = event.dataTransfer.getData('text/plain')
+                                    if (sourceId) moveDepartment(sourceId, d.id)
+                                    handleDepartmentDragEnd()
+                                  }}
+                                  onClick={() => setSelectedDeptId(d.id)}
+                                  style={{
+                                    border: '1px solid #F1F5F9', borderRadius: 12, padding: '14px 16px', background: '#F9FAFB',
+                                    cursor: isDragging ? 'grabbing' : 'grab',
+                                    transition: 'box-shadow 0.18s ease, transform 0.18s ease, border-color 0.18s ease, opacity 0.18s ease',
+                                    opacity: isDragging ? 0.88 : 1,
+                                    outline: isDragOver ? '2px dashed #F97316' : 'none',
+                                    outlineOffset: 3,
+                                    boxShadow: isDragOver ? '0 14px 34px rgba(249,115,22,0.12)' : undefined,
+                                    transform: isDragging ? 'scale(0.985)' : undefined,
+                                    animation: `deptCardIn 0.28s ease both ${deptIdx * 55}ms`,
+                                  }}
+                                  onMouseEnter={e => { if (draggingDepartmentId) return; e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.boxShadow = '0 10px 28px rgba(15,23,42,0.11)'; e.currentTarget.style.borderColor = deptColor(d.id) }}
+                                  onMouseLeave={e => { if (draggingDepartmentId) return; e.currentTarget.style.transform = isDragging ? 'scale(0.985)' : 'none'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.borderColor = '#F1F5F9' }}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: deptColor(d.id), flexShrink: 0 }} />
+                                      <h3 style={{ margin: 0, fontWeight: 700, fontSize: '0.9375rem', color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.name}</h3>
+                                    </div>
+                                    <span
+                                      aria-hidden="true"
+                                      title="Drag to reorder"
+                                      style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 8, color: '#9CA3AF', flexShrink: 0, cursor: 'grab', background: 'transparent', transition: 'color 0.15s ease, background 0.15s ease, transform 0.15s ease' }}
+                                      onMouseEnter={event => {
+                                        event.currentTarget.style.color = '#F97316'
+                                        event.currentTarget.style.background = '#FFF7ED'
+                                        event.currentTarget.style.transform = 'scale(1.04)'
+                                      }}
+                                      onMouseLeave={event => {
+                                        event.currentTarget.style.color = '#9CA3AF'
+                                        event.currentTarget.style.background = 'transparent'
+                                        event.currentTarget.style.transform = 'none'
+                                      }}
+                                    >
+                                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></svg>
+                                    </span>
+                                  </div>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                      <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: '#FFF7ED', color: '#EA580C', flexShrink: 0 }}>
+                                        <UserCog size={13} />
+                                      </span>
+                                      <span style={{ color: '#111827', fontSize: 14, fontWeight: 600 }}>{managerCount}</span>
+                                    </div>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                      <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: '#F3F4F6', color: '#4B5563', flexShrink: 0 }}>
+                                        <Layers size={13} />
+                                      </span>
+                                      <span style={{ color: '#111827', fontSize: 14, fontWeight: 600 }}>{taskCount} Task{taskCount !== 1 ? 's' : ''}</span>
+                                    </div>
+                                  </div>
+                                </article>
+                              )
+                            })}
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'center' }}>
+                            <button
+                              type="button"
+                              onClick={() => { setAiModal(true); setAiContext(''); setAiDeptId(''); setAiShiftId(''); setAiSuggestions([]); setAiSelected(new Set()); setAiError('') }}
+                              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 36, padding: '0 24px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+                            >
+                              <Sparkles size={14} /> AI Assign
+                            </button>
+                          </div>
+                        </>
+                      )
+                    }
 
-                  const workloadColor = (count: number) => {
-                    if (count === 0) return { bg: '#F3F4F6', text: '#6B7280' }
-                    if (count <= 2)  return { bg: '#DCFCE7', text: '#16A34A' }
-                    if (count <= 4)  return { bg: '#FEF3C7', text: '#D97706' }
-                    return { bg: '#FEE2E2', text: '#DC2626' }
-                  }
+                    // ── Department selected: manager list ──
+                    const deptMembers = members.filter(m => m.department_id === dept.id && m.role === 'Manager')
+                    // Count tasks due on the selected date only, so the panel matches what's visible in the Kanban
+                    const dateTaskCountByUser = COLUMNS
+                      .flatMap(col => filteredTasks(col))
+                      .reduce<Record<string, number>>((acc, t) => {
+                        if (t.assigned_user_id) acc[t.assigned_user_id] = (acc[t.assigned_user_id] ?? 0) + 1
+                        return acc
+                      }, {})
+                    const freeMembers = deptMembers.filter(m => (dateTaskCountByUser[m.id] ?? 0) === 0)
+                    const busyMembers = deptMembers.filter(m => (dateTaskCountByUser[m.id] ?? 0) > 0)
 
-                  const renderMember = (m: Member) => {
-                    const count = taskCountByUser[m.id] ?? 0
-                    const wc = workloadColor(count)
-                    return (
-                      <div key={m.id} className="member-card" style={{ display: 'flex', alignItems: 'center', gap: 10, border: `1px solid ${m.id === overloadedMember?.id ? '#FECACA' : '#F1F5F9'}`, borderRadius: 12, padding: '12px 14px', background: m.id === overloadedMember?.id ? '#FFF5F5' : '#FFFFFF', justifyContent: 'space-between' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
-                          <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 38, height: 38, borderRadius: 999, background: m.profile_photo_url ? 'transparent' : (m.role === 'Manager' ? '#FFF7ED' : '#F3F4F6'), color: m.role === 'Manager' ? '#EA580C' : '#4B5563', flexShrink: 0, overflow: 'hidden' }}>
-                            {m.profile_photo_url
-                              ? <img src={m.profile_photo_url} alt={m.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                              : m.role === 'Manager' ? <UserCog size={18} /> : <UserRound size={18} />}
-                          </span>
-                          <div style={{ minWidth: 0, flex: 1 }}>
-                            <p style={{ margin: 0, color: '#0F172A', fontSize: '0.875rem', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.full_name}</p>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 3 }}>
-                              <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 7px', borderRadius: 99, background: wc.bg, color: wc.text }}>
-                                {count} Task{count !== 1 ? 's' : ''}
-                              </span>
-                              {m.id === overloadedMember?.id && (
-                                <span style={{ fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 99, background: '#FEE2E2', color: '#DC2626', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                                  Overloaded
-                                </span>
+                    const workloadColor = (count: number) => {
+                      if (count === 0) return { bg: '#F3F4F6', text: '#6B7280' }
+                      if (count <= 2)  return { bg: '#DCFCE7', text: '#16A34A' }
+                      if (count <= 4)  return { bg: '#FEF3C7', text: '#D97706' }
+                      return { bg: '#FEE2E2', text: '#DC2626' }
+                    }
+
+                    const renderMember = (m: Member) => {
+                      const count = dateTaskCountByUser[m.id] ?? 0
+                      const wc = workloadColor(count)
+                      return (
+                        <div key={m.id} className="member-card" style={{ display: 'flex', alignItems: 'center', gap: 10, border: '1px solid #F1F5F9', borderRadius: 12, padding: '12px 14px', background: '#FFFFFF', justifyContent: 'space-between' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 38, height: 38, borderRadius: 999, background: m.profile_photo_url ? 'transparent' : (m.role === 'Manager' ? '#FFF7ED' : '#F3F4F6'), color: m.role === 'Manager' ? '#EA580C' : '#4B5563', flexShrink: 0, overflow: 'hidden' }}>
+                              {m.profile_photo_url
+                                ? <img src={m.profile_photo_url} alt={m.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                : m.role === 'Manager' ? <UserCog size={18} /> : <UserRound size={18} />}
+                            </span>
+                            <div style={{ minWidth: 0, flex: 1 }}>
+                              <p style={{ margin: 0, color: '#0F172A', fontSize: '0.875rem', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.full_name}</p>
+                              {count > 0 && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 3 }}>
+                                  <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 7px', borderRadius: 99, background: wc.bg, color: wc.text }}>
+                                    {count} Task{count !== 1 ? 's' : ''}
+                                  </span>
+                                </div>
                               )}
                             </div>
                           </div>
+                          <button
+                            onClick={() => openNewTaskFor(m.id, dept.id)}
+                            className="assign-task-btn"
+                            style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, background: '#FFF7ED', border: '1px solid #FDBA74', borderRadius: 8, color: '#EA580C', cursor: 'pointer' }}
+                            title="Assign Task"
+                          >
+                            <Plus size={15} strokeWidth={2.5} />
+                          </button>
                         </div>
-                        <button
-                          onClick={() => openNewTaskFor(m.id, dept.id)}
-                          className="assign-task-btn"
-                          style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, background: '#FFF7ED', border: '1px solid #FDBA74', borderRadius: 8, color: '#EA580C', cursor: 'pointer' }}
-                          title="Assign Task"
-                        >
-                          <Plus size={15} strokeWidth={2.5} />
-                        </button>
-                      </div>
-                    )
-                  }
+                      )
+                    }
 
-                  return (
-                    <div style={{ width: 300, flexShrink: 0, borderRight: '1px solid #F3F4F6', display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
-                      {/* Workload imbalance warning */}
-                      {overloadedMember && (
-                        <div style={{ margin: '10px 10px 0', padding: '8px 10px', background: '#FFF7ED', border: '1px solid #FDBA74', borderRadius: 9, display: 'flex', alignItems: 'flex-start', gap: 7 }}>
-                          <AlertCircle size={13} style={{ color: '#F97316', flexShrink: 0, marginTop: 1 }} />
-                          <p style={{ margin: 0, fontSize: 11, color: '#92400E', lineHeight: 1.45, fontWeight: 600 }}>
-                            <strong>{overloadedMember.full_name}</strong> is overloaded ({taskCountByUser[overloadedMember.id]} tasks). Consider redistributing.
-                          </p>
-                        </div>
-                      )}
-                      <div style={{ padding: '14px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                         {/* Free members first */}
                         {freeMembers.length > 0 && (
                           <>
@@ -1549,64 +1883,119 @@ export default function OwnerTasksPage() {
                           </>
                         )}
                       </div>
-                    </div>
-                  )
-                })()}
-
-                {/* ── KANBAN COLUMNS ───────────────────────────────────────── */}
-                <div key={`${taskDate}-${selectedDeptId}`} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'row', alignItems: 'stretch', padding: '16px 16px 20px', gap: 0 }}>
-                  {COLUMNS.map((col, colIdx) => {
-                    const cfg = STATUS_CONFIG[col]
-                    const tasks = filteredTasks(col)
-                    return (
-                      <Fragment key={col}>
-                      {colIdx > 0 && (
-                        <div style={{ flexShrink: 0, width: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          <svg width="24" height="18" viewBox="0 0 24 18" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <line x1="0" y1="9" x2="17" y2="9" stroke="#94A3B8" strokeWidth="2"/>
-                            <polyline points="11,3 19,9 11,15" fill="none" stroke="#94A3B8" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round"/>
-                          </svg>
-                        </div>
-                      )}
-                      <div className="kanban-col" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: '#F7F8FA', borderRadius: '12px', overflow: 'hidden', minHeight: 0, border: '1px solid #F0F1F3', animationDelay: `${0.06 + colIdx * 0.05}s` }}>
-                        {/* Column header */}
-                        <div style={{ padding: '11px 14px 10px', display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0, borderBottom: '1px solid #ECEEF1' }}>
-                          <div style={{ color: cfg.color, display: 'flex', alignItems: 'center' }}>{cfg.icon}</div>
-                          <span style={{ fontWeight: 700, fontSize: '0.8125rem', color: cfg.color, flex: 1 }}>{cfg.label}</span>
-                          <span style={{ fontSize: '0.72rem', fontWeight: 700, background: cfg.bg, color: cfg.color, padding: '2px 8px', borderRadius: '99px' }}>{tasks.length}</span>
-                        </div>
-                        {/* Scrollable card area */}
-                        <div style={{ flex: 1, overflowY: 'auto', padding: '10px 10px 12px' }}>
-                          {tasks.length === 0 ? (
-                            <div style={{ margin: '8px 0', padding: '32px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14, animation: 'fadeSlideUp 0.3s ease both', animationDelay: `${0.1 + colIdx * 0.05}s` }}>
-                              {{ Assigned: <Layers size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />, 'In Progress': <Clock size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />, Review: <Eye size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />, Complete: <CheckCircle size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} /> }[col]}
-                              <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No {cfg.label.toLowerCase()} tasks</p>
-                            </div>
-                          ) : (
-                            tasks.map(task => (
-                              <TaskCard
-                                key={task.id}
-                                task={task}
-                                members={members}
-                                shiftOptions={shiftOptions}
-                                onClick={() => openTask(task, true)}
-                                onEdit={() => openTask(task, false)}
-                                onDelete={() => { setDeleteTaskModal(task); setDeleteTaskError('') }}
-                                onDuplicate={() => handleQuickDuplicate(task)}
-                              />
-                            ))
-                          )}
-                        </div>
-                      </div>
-                      </Fragment>
                     )
-                  })}
+                  })()}
+                </div>
+              </section>
+
+              {/* ── BOARD PANEL ────────────────────────────────────────────── */}
+              <section className="task-board-panel" style={{ flex: 1, minWidth: 0, minHeight: 0, alignSelf: 'stretch', display: 'flex', flexDirection: 'column', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'hidden' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 18px', borderBottom: '1px solid #F3F4F6', flexWrap: 'wrap', flexShrink: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      {boardViewMode === 'calendar'
+                        ? <CalendarDays size={15} style={{ color: '#F97316' }} />
+                        : <Layers size={15} style={{ color: '#F97316' }} />}
+                    </div>
+                    <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A' }}>{boardViewMode === 'calendar' ? 'Calendar' : 'Kanban'}</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    {boardViewMode === 'calendar' ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), -7)))}
+                          disabled={taskDate <= minTaskDate}
+                          style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${TASK_BORDER}`, background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: taskDate <= minTaskDate ? 'default' : 'pointer', color: TASK_TEXT, opacity: taskDate <= minTaskDate ? 0.3 : 1 }}
+                        ><ChevronLeft size={16} /></button>
+                        <span style={{ height: 38, minWidth: 188, padding: '0 12px', border: `1px solid ${TASK_BORDER}`, borderRadius: 9, background: '#FFFFFF', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: TASK_TEXT, fontSize: 13, fontWeight: 500, fontFamily: 'var(--font-body), system-ui, sans-serif' }}>
+                          <CalendarDays size={14} color="#64748B" />{calendarWeekLabel}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), 7)))}
+                          style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${TASK_BORDER}`, background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: 'pointer', color: TASK_TEXT }}
+                        ><ChevronRight size={16} /></button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setTaskDate(formatDateKey(new Date()))}
+                          className="today-btn"
+                          style={{ height: 38, padding: '0 14px', border: `1px solid ${TASK_BORDER}`, borderRadius: 8, background: taskDate === formatDateKey(new Date()) ? '#F97316' : '#FFFFFF', color: taskDate === formatDateKey(new Date()) ? '#FFFFFF' : TASK_TEXT, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                        >Today</button>
+                        <button
+                          type="button"
+                          onClick={() => setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), -1)))}
+                          disabled={taskDate <= minTaskDate}
+                          style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${TASK_BORDER}`, background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: taskDate <= minTaskDate ? 'default' : 'pointer', color: TASK_TEXT, opacity: taskDate <= minTaskDate ? 0.3 : 1 }}
+                        ><ChevronLeft size={16} /></button>
+                        <TaskDatePicker value={taskDate} onChange={setTaskDate} taskDates={datesWithTasks} minDate={minTaskDate} accentColor={TASK_ORANGE} />
+                        <button
+                          type="button"
+                          onClick={() => setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), 1)))}
+                          style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${TASK_BORDER}`, background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: 'pointer', color: TASK_TEXT }}
+                        ><ChevronRight size={16} /></button>
+                      </>
+                    )}
+                  </div>
                 </div>
 
-              </div>
-            )}
+                {boardViewMode === 'calendar' ? renderTaskCalendarView() : (
+                  <div key={`kanban-${taskDate}-${selectedDeptId}-${boardViewMode}`} className="task-tab-content" style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'row', alignItems: 'stretch', padding: '16px 16px 20px', gap: 0 }}>
+                    {COLUMNS.map((col, colIdx) => {
+                      const cfg = STATUS_CONFIG[col]
+                      const tasks = filteredTasks(col)
+                      return (
+                        <Fragment key={col}>
+                        {colIdx > 0 && (
+                          <div style={{ flexShrink: 0, width: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <svg width="24" height="18" viewBox="0 0 24 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+                              <line x1="0" y1="9" x2="17" y2="9" stroke="#94A3B8" strokeWidth="2"/>
+                              <polyline points="11,3 19,9 11,15" fill="none" stroke="#94A3B8" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round"/>
+                            </svg>
+                          </div>
+                        )}
+                        <div className="kanban-col" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: '#F7F8FA', borderRadius: '12px', overflow: 'hidden', minHeight: 0, height: '100%', border: '1px solid #F0F1F3', animationDelay: `${0.06 + colIdx * 0.05}s` }}>
+                          {/* Column header */}
+                          <div style={{ padding: '11px 14px 10px', display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0, borderBottom: '1px solid #ECEEF1' }}>
+                            <div style={{ color: cfg.color, display: 'flex', alignItems: 'center' }}>{cfg.icon}</div>
+                            <span style={{ fontWeight: 700, fontSize: '0.8125rem', color: cfg.color, flex: 1 }}>{cfg.label}</span>
+                            <span style={{ fontSize: '0.72rem', fontWeight: 700, background: cfg.bg, color: cfg.color, padding: '2px 8px', borderRadius: '99px' }}>{tasks.length}</span>
+                          </div>
+                          {/* Scrollable card area */}
+                          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '10px 18px 12px', display: 'flex', flexDirection: 'column' }}>
+                            {tasks.length === 0 ? (
+                              <div style={{ flex: 1, minHeight: 164, margin: '8px 0', padding: '32px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', animation: 'fadeSlideUp 0.3s ease both', animationDelay: `${0.1 + colIdx * 0.05}s` }}>
+                                {{ Assigned: <Layers size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />, 'In Progress': <Clock size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />, Review: <Eye size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />, Complete: <CheckCircle size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} /> }[col]}
+                                <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No {cfg.label.toLowerCase()} tasks</p>
+                              </div>
+                            ) : (
+                              tasks.map(task => (
+                                <TaskCard
+                                  key={task.id}
+                                  task={task}
+                                  members={members}
+                                  shiftOptions={shiftOptions}
+                                  departments={departments}
+                                  showDept={selectedDeptId === ''}
+                                  onClick={() => openTask(task, true)}
+                                  onEdit={() => openTask(task, false)}
+                                />
+                              ))
+                            )}
+                          </div>
+                        </div>
+                        </Fragment>
+                      )
+                    })}
+                  </div>
+                )}
+              </section>
 
-          </div>
+            </div>
+          )}
         </div>
       </main>
 
@@ -1615,7 +2004,6 @@ export default function OwnerTasksPage() {
         const viewAssigneeName = selectedTask.assigned_user_id
           ? (members.find(m => m.id === selectedTask.assigned_user_id)?.full_name ?? 'Unknown')
           : null
-        const viewShift = selectedTask.shift_id ? shiftOptions.find(s => s.id === selectedTask.shift_id) : null
         const viewDept = departments.find(d => d.id === selectedTask.department_id)
         const viewPriorityStyle = selectedTask.priority ? PRIORITY_COLORS[selectedTask.priority as keyof typeof PRIORITY_COLORS] : null
         const viewDeadline = selectedTask.due_at
@@ -1628,12 +2016,13 @@ export default function OwnerTasksPage() {
           padding: '10px 12px',
           border: '1.5px solid #E5E7EB',
           borderRadius: 8,
-          background: '#F9FAFB',
+          background: '#FFFFFF',
           fontSize: '0.9375rem',
           color: '#111827',
           minHeight: 40,
           display: 'flex',
           alignItems: 'center',
+          boxSizing: 'border-box',
         }
         const viewEmpty: React.CSSProperties = { ...viewFieldValue, color: '#9CA3AF', fontStyle: 'italic' }
         return (
@@ -1641,15 +2030,15 @@ export default function OwnerTasksPage() {
             <div
               ref={panelRef}
               onClick={e => e.stopPropagation()}
-              style={{ width: 540, background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}
+              style={{ width: 440, background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}
             >
               {/* Header */}
-              <div style={{ padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ padding: '18px 20px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div style={{ width: 32, height: 32, borderRadius: 9, background: '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Eye size={15} color="#64748B" strokeWidth={2.5} />
+                  <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Eye size={15} color="#fff" strokeWidth={2.5} />
                   </div>
-                  <span style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827' }}>Task Details</span>
+                  <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>Task Details</h2>
                 </div>
                 <button onClick={closePanel} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
                   onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
@@ -1660,7 +2049,7 @@ export default function OwnerTasksPage() {
               </div>
 
               {/* Body */}
-              <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16, maxHeight: 'calc(90vh - 130px)', overflowY: 'auto' }}>
+              <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 'calc(90vh - 130px)', overflowY: 'auto' }}>
 
                 {/* Title */}
                 <div>
@@ -1677,19 +2066,17 @@ export default function OwnerTasksPage() {
                   }
                 </div>
 
-                {/* Department + Priority */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                {/* Department + Assign To */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                   <div>
                     <label style={modalLabelStyle}>Department</label>
                     <div style={viewDept ? viewFieldValue : viewEmpty}>{viewDept?.name ?? 'Unknown'}</div>
                   </div>
                   <div>
-                    <label style={modalLabelStyle}>Priority</label>
-                    {viewPriorityStyle
-                      ? <div style={{ ...viewFieldValue, background: viewPriorityStyle.bg }}>
-                          <span style={{ color: viewPriorityStyle.text, fontWeight: 700, fontSize: '0.85rem' }}>{selectedTask.priority}</span>
-                        </div>
-                      : <div style={viewEmpty}>None</div>
+                    <label style={modalLabelStyle}>Assigned To</label>
+                    {viewAssigneeName
+                      ? <div style={viewFieldValue}>{viewAssigneeName}</div>
+                      : <div style={viewEmpty}>Unassigned</div>
                     }
                   </div>
                 </div>
@@ -1697,49 +2084,26 @@ export default function OwnerTasksPage() {
                 {/* Divider */}
                 <div style={{ borderTop: '1px dashed #E5E7EB' }} />
 
-                {/* Assign To */}
-                <div>
-                  <label style={modalLabelStyle}>Assigned To</label>
-                  {viewAssigneeName
-                    ? <div style={viewFieldValue}>{viewAssigneeName}</div>
-                    : <div style={viewEmpty}>Unassigned</div>
-                  }
+                {/* Priority + Deadline */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div>
+                    <label style={modalLabelStyle}>Priority</label>
+                    {viewPriorityStyle
+                      ? <div style={{ ...viewFieldValue, background: viewPriorityStyle.bg, justifyContent: 'center' }}>
+                          <span style={{ color: '#111827', fontWeight: 700, fontSize: '0.85rem' }}>{selectedTask.priority}</span>
+                        </div>
+                      : <div style={viewEmpty}>None</div>
+                    }
+                  </div>
+                  <div>
+                    <label style={modalLabelStyle}>Deadline</label>
+                    {viewDeadline
+                      ? <div style={viewFieldValue}>{viewDeadline}</div>
+                      : <div style={viewEmpty}>No deadline set</div>
+                    }
+                  </div>
                 </div>
 
-                {/* Shift */}
-                <div>
-                  <label style={modalLabelStyle}>Shift</label>
-                  {viewShift
-                    ? <div style={viewFieldValue}>
-                        {viewShift.title
-                          ? `${viewShift.title} — `
-                          : ''
-                        }
-                        {new Date(`${viewShift.shift_date}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}{' '}
-                        {viewShift.start_time.slice(0, 5)} – {viewShift.end_time.slice(0, 5)}
-                      </div>
-                    : <div style={viewEmpty}>No shift assigned</div>
-                  }
-                </div>
-
-                {/* Deadline */}
-                <div>
-                  <label style={modalLabelStyle}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                      <Clock size={12} color="#F97316" />
-                      Deadline
-                    </span>
-                  </label>
-                  {viewDeadline
-                    ? <div style={viewFieldValue}>{viewDeadline}</div>
-                    : <div style={viewEmpty}>No deadline set</div>
-                  }
-                </div>
-
-              </div>
-
-              {/* Footer */}
-              <div style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end' }}>
               </div>
             </div>
           </div>
@@ -1776,13 +2140,13 @@ export default function OwnerTasksPage() {
               {/* Title */}
               <div>
                 <label style={modalLabelStyle}>Title</label>
-                <input autoFocus value={editTitle} onChange={e => setEditTitle(e.target.value)} style={{ ...modalInputStyle, background: '#FAFAFA' }} onKeyDown={e => { if (e.key === 'Enter') handleSaveTask() }} />
+                <input autoFocus value={editTitle} onChange={e => setEditTitle(e.target.value)} style={modalInputStyle} onKeyDown={e => { if (e.key === 'Enter') handleSaveTask() }} />
               </div>
 
               {/* Description */}
               <div>
                 <label style={modalLabelStyle}>Description</label>
-                <textarea value={editDescription} onChange={e => setEditDescription(e.target.value)} rows={2} style={{ ...modalInputStyle, resize: 'vertical', background: '#FAFAFA', lineHeight: 1.55 }} />
+                <textarea value={editDescription} onChange={e => setEditDescription(e.target.value)} rows={2} style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }} />
               </div>
 
               {/* Department + Assign To */}
@@ -1903,13 +2267,13 @@ export default function OwnerTasksPage() {
               {/* Title */}
               <div>
                 <label style={modalLabelStyle}>Title</label>
-                <input autoFocus value={newTitle} onChange={e => setNewTitle(e.target.value)} placeholder="Task title..." style={{ ...modalInputStyle, background: '#FAFAFA' }} onKeyDown={e => { if (e.key === 'Enter') handleCreateTask() }} />
+                <input autoFocus value={newTitle} onChange={e => setNewTitle(e.target.value)} placeholder="Task title..." style={modalInputStyle} onKeyDown={e => { if (e.key === 'Enter') handleCreateTask() }} />
               </div>
 
               {/* Description */}
               <div>
                 <label style={modalLabelStyle}>Description</label>
-                <textarea value={newDescription} onChange={e => setNewDescription(e.target.value)} rows={2} placeholder="Add more context..." style={{ ...modalInputStyle, resize: 'vertical', background: '#FAFAFA', lineHeight: 1.55 }} />
+                <textarea value={newDescription} onChange={e => setNewDescription(e.target.value)} rows={2} placeholder="Add more context..." style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }} />
               </div>
 
               {/* Department + Assign To */}
@@ -2111,6 +2475,7 @@ export default function OwnerTasksPage() {
                   assigned_by: internalUserId || null,
                   status: 'Assigned',
                   percentage_complete: 0,
+                  task_date: taskDate,
                 }),
               })
             ))

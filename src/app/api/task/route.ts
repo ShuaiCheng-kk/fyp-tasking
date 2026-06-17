@@ -90,6 +90,7 @@ export async function POST(req: NextRequest) {
     percentage_complete: typeof b.percentage_complete === 'number' ? b.percentage_complete : 0,
     priority: (b.priority as string) ?? null,
     due_at: (b.due_at as string) ?? null,
+    task_date: (b.task_date as string) ?? null,
   }
 
   try {
