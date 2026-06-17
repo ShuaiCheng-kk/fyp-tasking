@@ -3468,7 +3468,7 @@ export default function OwnerShiftsPage() {
                     value={shiftEditForm.assigned_user_id}
                     options={members
                       .filter(member => member.department_id === shiftEditForm.department_id)
-                      .map(member => ({ value: member.id, label: `${member.full_name} · ${member.role}` }))}
+                      .map(member => ({ value: member.id, label: `${member.full_name} Â· ${member.role}` }))}
                     onChange={v => setShiftEditForm(prev => ({ ...prev, assigned_user_id: v }))}
                     placeholder="Select person"
                   />
