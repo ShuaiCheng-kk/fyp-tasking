@@ -171,6 +171,7 @@ export const authService = {
   async registerGuest(data: {
     email: string
     password: string
+    job_id?: string | null
   }): Promise<{ user_id: string; email_confirmed: boolean }> {
     const { data: authData, error } = await supabase.auth.signUp({
       email: data.email,

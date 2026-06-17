@@ -36,12 +36,18 @@ type Application = {
   benefits?: string
   urgency?: string
   openings?: number
-  shift_start_time?: string
-  shift_end_time?: string
-  shift_days?: string[]
   job_date?: string
   job_end_date?: string
+  shift_date?: string
+  shift_days?: string[]
+  shift_start_time?: string
+  shift_end_time?: string
+  break_start_time?: string
+  break_end_time?: string
   estimated_hours?: string
+  is_recurring?: boolean
+  recurrence_interval?: number
+  recurrence_unit?: string
 }
 
 type Props = {
@@ -113,6 +119,28 @@ export default function ApplicationDetailsModal({ application, onClose, onWithdr
       ? `$${application.salary_amount}${application.salary_type ? ` / ${application.salary_type}` : ''}`
       : null
 
+  const shiftTime =
+    application.shift_start_time && application.shift_end_time
+      ? `${application.shift_start_time} – ${application.shift_end_time}`
+      : application.shift_start_time || application.shift_end_time || null
+
+  const breakTime =
+    application.break_start_time && application.break_end_time
+      ? `${application.break_start_time} – ${application.break_end_time}`
+      : application.break_start_time || application.break_end_time || null
+
+  const schedule =
+    application.is_recurring && application.recurrence_interval && application.recurrence_unit
+      ? `Every ${application.recurrence_interval} ${application.recurrence_unit}`
+      : application.is_recurring
+      ? 'Recurring'
+      : null
+
+  const dateRange =
+    application.job_date && application.job_end_date
+      ? `${application.job_date} – ${application.job_end_date}`
+      : application.job_date || application.job_end_date || null
+
   return (
     <div style={overlayStyle}>
       <style>{`
@@ -135,23 +163,23 @@ export default function ApplicationDetailsModal({ application, onClose, onWithdr
           <h3 style={sectionTitleStyle}>Job Details</h3>
 
           <div style={detailsGridStyle}>
-            <DetailItem icon={<Briefcase size={18} />} label="Title" value={application.job_title || application.title} />
-            <DetailItem icon={<Building2 size={18} />} label="Company Name" value={application.company_name} />
+            <DetailItem icon={<Building2 size={18} />} label="Company" value={application.company_name} />
             <DetailItem icon={<Building2 size={18} />} label="Industry" value={application.industry} />
             <DetailItem icon={<MapPin size={18} />} label="Location" value={application.location} />
-            <DetailItem icon={<Clock size={18} />} label="Employment Type" value={application.employment_type} />
-            <DetailItem icon={<DollarSign size={18} />} label="Salary" value={salary} />
-            <DetailItem icon={<AlertCircle size={18} />} label="Urgency" value={application.urgency} />
+            <DetailItem icon={<Briefcase size={18} />} label="Employment Type" value={application.employment_type} />
+            <DetailItem icon={<CalendarDays size={18} />} label="Date" value={dateRange} />
+            <DetailItem icon={<CalendarDays size={18} />} label="Shift Date" value={application.shift_date} />
+            <DetailItem icon={<CalendarDays size={18} />} label="Shift Days" value={application.shift_days?.join(', ')} />
+            <DetailItem icon={<Clock size={18} />} label="Shift Time" value={shiftTime} />
+            <DetailItem icon={<Clock size={18} />} label="Break Time" value={breakTime} />
+            <DetailItem icon={<Clock size={18} />} label="Estimated Hours" value={application.estimated_hours} />
+            <DetailItem icon={<CalendarDays size={18} />} label="Schedule" value={schedule} />
             <DetailItem icon={<Users size={18} />} label="Openings" value={application.openings} />
+            <DetailItem icon={<AlertCircle size={18} />} label="Urgency" value={application.urgency} />
+            <DetailItem icon={<DollarSign size={18} />} label="Salary" value={salary} />
             <DetailItem icon={<Gift size={18} />} label="Benefits" value={application.benefits} />
             <DetailItem icon={<ListChecks size={18} />} label="Requirements" value={application.requirements} />
             <DetailItem icon={<FileText size={18} />} label="Description" value={application.description} />
-            <DetailItem icon={<Clock size={18} />} label="Shift Start Time" value={application.shift_start_time} />
-            <DetailItem icon={<Clock size={18} />} label="Shift End Time" value={application.shift_end_time} />
-            <DetailItem icon={<CalendarDays size={18} />} label="Shift Days" value={application.shift_days?.join(', ')} />
-            <DetailItem icon={<CalendarDays size={18} />} label="Job Date" value={application.job_date} />
-            <DetailItem icon={<CalendarDays size={18} />} label="Job End Date" value={application.job_end_date} />
-            <DetailItem icon={<Clock size={18} />} label="Estimated Hours" value={application.estimated_hours} />
           </div>
         </section>
 

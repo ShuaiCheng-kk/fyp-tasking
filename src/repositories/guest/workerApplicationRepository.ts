@@ -66,6 +66,7 @@ export const workerApplicationRepository = {
         job_postings (
           title,
           company_name,
+          industry,
           location,
           employment_type,
           salary_amount,
@@ -73,10 +74,20 @@ export const workerApplicationRepository = {
           description,
           requirements,
           benefits,
+          urgency,
           openings,
           job_date,
+          job_end_date,
+          shift_date,
+          shift_days,
           shift_start_time,
-          shift_end_time
+          shift_end_time,
+          break_start_time,
+          break_end_time,
+          estimated_hours,
+          is_recurring,
+          recurrence_interval,
+          recurrence_unit
         ),
         job_invitations (
           id,
