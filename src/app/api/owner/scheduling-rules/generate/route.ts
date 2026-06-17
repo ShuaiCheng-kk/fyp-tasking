@@ -98,6 +98,7 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     console.error('[POST /api/owner/scheduling-rules/generate]', err)
     const message = err instanceof Error ? err.message : 'Failed to generate schedule'
-    return NextResponse.json({ success: false, message }, { status: message.includes('Only Owner') ? 403 : 500 })
+    const status = message.includes('Only Owner') ? 403 : message.includes('Too many shifts') ? 400 : 500
+    return NextResponse.json({ success: false, message }, { status })
   }
 }

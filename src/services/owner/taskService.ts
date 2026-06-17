@@ -71,6 +71,7 @@ export const taskService = {
       percentage_complete: 0,
       priority: original.priority,
       due_at: original.due_at,
+      task_date: original.task_date,
       assigned_by: assigned_by ?? original.assigned_by,
     })
 
@@ -89,6 +90,7 @@ export const taskService = {
         percentage_complete: 0,
         priority: subTask.priority,
         due_at: subTask.due_at,
+        task_date: subTask.task_date,
       })
     }
 

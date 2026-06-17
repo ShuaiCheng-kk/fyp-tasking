@@ -296,6 +296,13 @@ export const schedulingRuleService = {
       staff: eligibleStaff.filter(s => s.department_id === deptId),
     }))
 
+    const dateCount = enumerateDateRange(input.date_from, input.date_to).length
+    const slotCount = input.department_ids.length * dateCount * input.shiftTypes.length
+    const MAX_SLOTS = 150
+    if (slotCount > MAX_SLOTS) {
+      throw new Error(`Too many shifts to generate at once (${slotCount}). Narrow the date range, departments, or shift types and try again.`)
+    }
+
     const prompt = buildAiSchedulePrompt({
       date_from: input.date_from,
       date_to: input.date_to,
@@ -307,7 +314,10 @@ export const schedulingRuleService = {
     })
 
     const model = process.env.OPENAI_MODEL ?? 'gpt-4o-mini'
-    const maxTokens = Number(process.env.OPENAI_MAX_OUTPUT_TOKENS ?? 4000)
+    // Observed output runs well above a naive per-slot estimate (model verbosity, JSON overhead).
+    // Always size to the slot count with generous headroom rather than capping at a fixed .env default.
+    const estimatedTokens = 1000 + slotCount * 220
+    const maxTokens = Math.min(16000, estimatedTokens)
 
     const completion = await openai.chat.completions.create({
       model,
@@ -324,17 +334,30 @@ export const schedulingRuleService = {
     })
 
     const raw = completion.choices[0]?.message?.content ?? '{}'
+    const finishReason = completion.choices[0]?.finish_reason
+    console.log('[AI Schedule] finish_reason:', finishReason, 'raw length:', raw.length, 'maxTokens:', maxTokens, 'slotCount:', slotCount)
     let parsed: { schedule?: AiScheduleBlock[]; notice?: string }
     try {
       parsed = JSON.parse(raw)
     } catch (parseErr) {
-      console.error('[AI Schedule] JSON parse failed. Raw response:', raw, parseErr)
+      console.error('[AI Schedule] JSON parse failed. finish_reason:', finishReason, 'Raw response:', raw, parseErr)
       throw new Error('AI returned an invalid response. Please try again.')
     }
 
     if (!Array.isArray(parsed.schedule)) {
       console.error('[AI Schedule] schedule array missing. Parsed:', JSON.stringify(parsed).slice(0, 500))
       throw new Error('AI response did not contain a schedule array. Please try again.')
+    }
+
+    const expectedBlockCount = input.department_ids.length * dateCount
+    const returnedDeptIds = new Set(parsed.schedule.map(block => block.department_id))
+    if (parsed.schedule.length < expectedBlockCount || returnedDeptIds.size < input.department_ids.length) {
+      console.error(
+        '[AI Schedule] incomplete response. expectedBlocks:', expectedBlockCount,
+        'returnedBlocks:', parsed.schedule.length,
+        'expectedDepts:', input.department_ids.length, 'returnedDepts:', returnedDeptIds.size,
+      )
+      throw new Error('AI only generated a partial schedule. Please try again, or narrow the date range / departments.')
     }
 
     const suggestions = (parsed.schedule as AiScheduleBlock[]).map(block => ({
@@ -686,6 +709,13 @@ function buildAiSchedulePrompt(input: {
     return `- ${label}: ${shift.start_time}-${shift.end_time}`
   }).join('\n')
 
+  const departmentCount = input.department_staff.length
+  const dateCount = dates.length
+  const shiftTypeCount = input.shiftTypes.length
+  const expectedBlockCount = departmentCount * dateCount
+  const expectedSlotCount = expectedBlockCount * shiftTypeCount
+  const departmentIdList = input.department_staff.map(d => d.department_id).join(', ')
+
   return `You are a workforce scheduling assistant. Generate an optimal staff schedule for the period ${input.date_from} to ${input.date_to}.
 
 SCHEDULING RULES (Hard Rules are mandatory; Soft Rules are best-effort):
@@ -699,8 +729,15 @@ DATES TO SCHEDULE: ${datesText}
 SHIFT TYPES TO SCHEDULE:
 ${shiftTypesText}
 
+REQUIRED OUTPUT SIZE (do not stop early, do not skip any department):
+- There are exactly ${departmentCount} departments: ${departmentIdList}
+- There are exactly ${dateCount} dates to schedule.
+- The "schedule" array MUST contain exactly ${expectedBlockCount} blocks (one block per department per date — every department listed above must appear for every date).
+- Each block's "slots" array MUST contain exactly ${shiftTypeCount} slot(s), for a total of ${expectedSlotCount} slots across the whole response.
+- Do NOT stop after finishing one department — continue until ALL ${departmentCount} departments have a block for EVERY date.
+
 INSTRUCTIONS:
-1. For each department x date, produce one schedule block.
+1. For each department x date, produce one schedule block. You must cover all departments listed above, not just the first one.
 2. Inside each block, create one slot for every shift type listed above. Do not invent morning/evening/break shifts.
 3. For each department x date x shift type, assign one eligible staff member.
 4. Obey ALL Hard Rules: never schedule anyone on their fixed off day, approved leave, or when they exceed weekly hours.

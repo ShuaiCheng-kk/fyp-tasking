@@ -24,6 +24,7 @@ export const taskRepository = {
         percentage_complete: input.percentage_complete ?? 0,
         priority: input.priority ?? null,
         due_at: input.due_at ?? null,
+        task_date: input.task_date ?? null,
       })
       .select()
       .single()
@@ -34,7 +35,7 @@ export const taskRepository = {
   async getTasksByCompany(company_id: string): Promise<Task[]> {
     const { data, error } = await supabase
       .from('tasks')
-      .select('id, shift_id, company_id, department_id, parent_task_id, title, description, assigned_user_id, assigned_by, status, percentage_complete, priority, due_at, created_at, updated_at, shifts(shift_date)')
+      .select('id, shift_id, company_id, department_id, parent_task_id, title, description, assigned_user_id, assigned_by, status, percentage_complete, priority, due_at, task_date, created_at, updated_at, shifts(shift_date)')
       .eq('company_id', company_id)
       .order('created_at', { ascending: false })
     if (error) throw new Error(error.message)
