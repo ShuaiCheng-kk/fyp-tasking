@@ -35,6 +35,7 @@ type Application = {
   id: string
   job_title: string
   company_name: string
+  industry?: string
   status: ApplicationStatus
   applied_at: string
   resume_url?: string
@@ -46,10 +47,20 @@ type Application = {
   description?: string
   requirements?: string
   benefits?: string
+  urgency?: string
   openings?: number
   job_date?: string
+  job_end_date?: string
+  shift_date?: string
+  shift_days?: string[]
   shift_start_time?: string
   shift_end_time?: string
+  break_start_time?: string
+  break_end_time?: string
+  estimated_hours?: string
+  is_recurring?: boolean
+  recurrence_interval?: number
+  recurrence_unit?: string
   invitation_id?: string
   invitation_status?: InvitationStatus
   invitation_message?: string
@@ -148,10 +159,9 @@ function ApplicationsContent() {
   }, [])
 
   useEffect(() => {
-    const apply = searchParams.get('apply')
-    const selectedJobId = searchParams.get('job_id')
+    const selectedJobId = searchParams.get('job_id') || localStorage.getItem('apply_job_id')
 
-    if (apply === 'true' && selectedJobId) {
+    if (selectedJobId) {
       setJobId(selectedJobId)
       setShowApplyModal(true)
     }
@@ -272,14 +282,17 @@ function ApplicationsContent() {
               {applications.map((app) => (
                 <article key={app.id} style={applicationCardStyle}>
                   <div style={cardTopRowStyle}>
-                    <p style={companyLabelStyle}>{app.company_name}</p>
+                    <div style={{ minWidth: 0 }}>
+                      <h3 style={cardTitleStyle}>{app.job_title}</h3>
+                      {app.company_name && (
+                        <p style={companyLabelStyle}>{app.company_name}</p>
+                      )}
+                    </div>
 
-                    <span style={{ ...statusBadgeBaseStyle, ...statusStyle(app.status) }}>
+                    <span style={{ ...statusBadgeBaseStyle, ...statusStyle(app.status), flexShrink: 0 }}>
                       {formatStatus(app.status)}
                     </span>
                   </div>
-
-                  <h3 style={cardTitleStyle}>{app.job_title}</h3>
 
                   <div style={cardInfoStyle}>
                     <div>
@@ -545,13 +558,13 @@ const applicationCardStyle: React.CSSProperties = {
 
 const cardTopRowStyle: React.CSSProperties = {
   display: 'flex',
-  alignItems: 'center',
+  alignItems: 'flex-start',
   justifyContent: 'space-between',
   gap: 12,
 }
 
 const companyLabelStyle: React.CSSProperties = {
-  margin: 0,
+  margin: '4px 0 0',
   fontSize: '0.78rem',
   fontWeight: 700,
   letterSpacing: '0.08em',

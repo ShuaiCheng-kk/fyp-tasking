@@ -1418,15 +1418,15 @@ export default function GetStartedPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const role = params.get('role');
-    const jobId = sessionStorage.getItem('apply_job_id');
+    const jobIdFromParam = params.get('job_id');
+    const jobId = jobIdFromParam || localStorage.getItem('apply_job_id');
     const code = params.get('code');
 
     if (jobId) {
-      sessionStorage.setItem('apply_job_id', jobId);
+      localStorage.setItem('apply_job_id', jobId);
     }
 
     if (role === 'guest') {
-      if (jobId) sessionStorage.setItem('apply_job_id', jobId)
       setPath('guest')
       setStep(1)
       return
@@ -1470,9 +1470,12 @@ export default function GetStartedPage() {
 
     // Return from Supabase email confirmation link
     const storedOwnerEmail = sessionStorage.getItem('owner_email');
-    const storedGuestEmail = sessionStorage.getItem('guest_email');
+    const storedGuestEmail = localStorage.getItem('guest_email') || params.get('guest_email');
 
     if (params.get('verified') === 'true' && storedGuestEmail) {
+      const jobIdFromUrl = params.get('job_id');
+      if (jobIdFromUrl) localStorage.setItem('apply_job_id', jobIdFromUrl);
+      if (storedGuestEmail) localStorage.setItem('guest_email', storedGuestEmail);
       setConfirmationEmail(storedGuestEmail);
       setVerifiedFromUrl(true);
       setPath('guest');
@@ -1840,19 +1843,20 @@ export default function GetStartedPage() {
         email: guestAccount.email.trim(),
         password: guestAccount.password,
         phone: guestAccount.phone,
+        job_id: localStorage.getItem('apply_job_id') || null,
       }),
     });
 
     const registerData = await readJsonSafe(registerRes);
     if (!registerData.success) { setError(registerData.message); return; }
 
-    sessionStorage.setItem('guest_user_id', registerData.user_id);
-    sessionStorage.setItem('guest_email', guestAccount.email.trim());
-    sessionStorage.setItem('guest_password', guestAccount.password);
-    sessionStorage.setItem('guest_full_name', guestAccount.fullName.trim());
-    sessionStorage.setItem('guest_phone', guestAccount.phone);
-    sessionStorage.setItem('guest_dob', guestAccount.dateOfBirth || '');
-    if (profilePhotoUrl) sessionStorage.setItem('guest_photo', profilePhotoUrl);
+    localStorage.setItem('guest_user_id', registerData.user_id);
+    localStorage.setItem('guest_email', guestAccount.email.trim());
+    localStorage.setItem('guest_password', guestAccount.password);
+    localStorage.setItem('guest_full_name', guestAccount.fullName.trim());
+    localStorage.setItem('guest_phone', guestAccount.phone);
+    localStorage.setItem('guest_dob', guestAccount.dateOfBirth || '');
+    if (profilePhotoUrl) localStorage.setItem('guest_photo', profilePhotoUrl);
 
     if (registerData.email_confirmed) {
       // "Confirm email" is OFF in Supabase — skip verify step
@@ -1871,13 +1875,13 @@ export default function GetStartedPage() {
 };
 
   const handleGuestVerifyComplete = async () => {
-    const user_id = sessionStorage.getItem('guest_user_id') || '';
-    const email_address = sessionStorage.getItem('guest_email') || '';
-    const password = sessionStorage.getItem('guest_password') || '';
-    const full_name = sessionStorage.getItem('guest_full_name') || '';
-    const phone_number = sessionStorage.getItem('guest_phone') || '';
-    const date_of_birth = sessionStorage.getItem('guest_dob') || null;
-    const profile_photo_url = sessionStorage.getItem('guest_photo') || null;
+    const user_id = localStorage.getItem('guest_user_id') || '';
+    const email_address = localStorage.getItem('guest_email') || '';
+    const password = localStorage.getItem('guest_password') || '';
+    const full_name = localStorage.getItem('guest_full_name') || '';
+    const phone_number = localStorage.getItem('guest_phone') || '';
+    const date_of_birth = localStorage.getItem('guest_dob') || null;
+    const profile_photo_url = localStorage.getItem('guest_photo') || null;
 
     const res = await fetch('/api/auth/complete-guest-registration', {
       method: 'POST',
@@ -1892,9 +1896,9 @@ export default function GetStartedPage() {
     localStorage.removeItem('tasking_company_id');
 
     ['guest_user_id', 'guest_email', 'guest_password', 'guest_full_name', 'guest_phone', 'guest_dob', 'guest_photo']
-      .forEach(k => sessionStorage.removeItem(k));
+      .forEach(k => localStorage.removeItem(k));
 
-    const storedJobId = sessionStorage.getItem('apply_job_id');
+    const storedJobId = localStorage.getItem('apply_job_id');
     if (storedJobId) {
       window.location.href = `/guest/applications?apply=true&job_id=${storedJobId}`;
     } else {
