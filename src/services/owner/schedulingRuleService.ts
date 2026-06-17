@@ -297,7 +297,8 @@ export const schedulingRuleService = {
     }))
 
     const dateCount = enumerateDateRange(input.date_from, input.date_to).length
-    const slotCount = input.department_ids.length * dateCount * input.shiftTypes.length
+    const minSlotsPerShiftType = Math.max(1, MIN_MANAGERS_PER_DAY + MIN_EMPLOYEES_PER_DAY)
+    const slotCount = input.department_ids.length * dateCount * input.shiftTypes.length * minSlotsPerShiftType
     const MAX_SLOTS = 150
     if (slotCount > MAX_SLOTS) {
       throw new Error(`Too many shifts to generate at once (${slotCount}). Narrow the date range, departments, or shift types and try again.`)
@@ -360,10 +361,14 @@ export const schedulingRuleService = {
       throw new Error('AI only generated a partial schedule. Please try again, or narrow the date range / departments.')
     }
 
-    const suggestions = (parsed.schedule as AiScheduleBlock[]).map(block => ({
-      ...block,
-      slots: block.slots.map(slot => ({ ...slot, reason: resolveReasonText(slot.reason) })),
-    }))
+    const suggestions = normalizeAiScheduleBlocks({
+      blocks: parsed.schedule as AiScheduleBlock[],
+      departmentIds: input.department_ids,
+      dateFrom: input.date_from,
+      dateTo: input.date_to,
+      shiftTypes: input.shiftTypes,
+      staff: eligibleStaff,
+    })
 
     const contextSummary: AiContextSummaryData = {
       ruleCount: activeRules.length,
@@ -379,6 +384,173 @@ export const schedulingRuleService = {
       `AI checked ${hardRules.length} hard rule${hardRules.length === 1 ? '' : 's'} and generated the best available draft for Owner review.`
 
     return { suggestions, notice, context_summary: contextSummary }
+  },
+
+  async generateScheduleWithAIStream(
+    input: {
+      company_id: string
+      user_id: string
+      date_from: string
+      date_to: string
+      department_ids: string[]
+      shiftTypes: ShiftTypeInput[]
+    },
+    onBlock: (block: AiScheduleBlock, meta: { expectedBlockCount: number; contextSummary: AiContextSummaryData }) => void,
+  ): Promise<{ notice: string; blockCount: number }> {
+    const context = await this.getScheduleContext({
+      company_id: input.company_id,
+      user_id: input.user_id,
+      date_from: input.date_from,
+      date_to: input.date_to,
+    })
+
+    const activeRules = context.rules.filter(rule => rule.active)
+    const hardRules = activeRules.filter(rule => rule.rule_type === 'Hard Rule')
+    const eligibleStaff = context.staff.filter(
+      staff => staff.active && ['Manager', 'Employee'].includes(staff.role),
+    )
+
+    const deptStaff = input.department_ids.map(deptId => ({
+      department_id: deptId,
+      staff: eligibleStaff.filter(s => s.department_id === deptId),
+    }))
+
+    const dateCount = enumerateDateRange(input.date_from, input.date_to).length
+    const minSlotsPerShiftType = Math.max(1, MIN_MANAGERS_PER_DAY + MIN_EMPLOYEES_PER_DAY)
+    const slotCount = input.department_ids.length * dateCount * input.shiftTypes.length * minSlotsPerShiftType
+    const MAX_SLOTS = 150
+    if (slotCount > MAX_SLOTS) {
+      throw new Error(`Too many shifts to generate at once (${slotCount}). Narrow the date range, departments, or shift types and try again.`)
+    }
+
+    const expectedBlockCount = input.department_ids.length * dateCount
+    const contextSummary: AiContextSummaryData = {
+      ruleCount: activeRules.length,
+      hardRuleCount: hardRules.length,
+      staffCount: eligibleStaff.length,
+      fixedOffCount: context.fixed_off_days.length,
+      leaveCount: context.leave_requests.filter(r => r.status === 'approved' || r.status === 'pending').length,
+      previousPeriod: `${context.previous_schedule_period.date_from} to ${context.previous_schedule_period.date_to}`,
+    }
+
+    const prompt = buildAiSchedulePromptNdjson({
+      date_from: input.date_from,
+      date_to: input.date_to,
+      rules: activeRules,
+      department_staff: deptStaff,
+      leave_requests: context.leave_requests,
+      fixed_off_days: context.fixed_off_days,
+      shiftTypes: input.shiftTypes,
+    })
+
+    const model = process.env.OPENAI_MODEL ?? 'gpt-4o-mini'
+    const estimatedTokens = 1000 + slotCount * 220
+    const maxTokens = Math.min(16000, estimatedTokens)
+
+    const stream = await openai.chat.completions.create({
+      model,
+      max_tokens: maxTokens,
+      stream: true,
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You are a scheduling assistant. Stream the schedule as newline-delimited JSON (NDJSON): one complete JSON object per line, nothing else.',
+        },
+        { role: 'user', content: prompt },
+      ],
+    })
+
+    let buffer = ''
+    let blockCount = 0
+    let notice = ''
+    const seenLines = new Set<string>()
+    const seenBlockKeys = new Set<string>()
+    const normalizer = createScheduleBlockNormalizer({
+      shiftTypes: input.shiftTypes,
+      staff: eligibleStaff,
+    })
+
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta?.content ?? ''
+      if (!delta) continue
+      buffer += delta
+      let newlineIdx: number
+      while ((newlineIdx = buffer.indexOf('\n')) !== -1) {
+        const line = buffer.slice(0, newlineIdx).trim()
+        buffer = buffer.slice(newlineIdx + 1)
+        if (!line || seenLines.has(line)) continue
+        seenLines.add(line)
+        let obj: Record<string, unknown>
+        try {
+          obj = JSON.parse(line)
+        } catch {
+          continue
+        }
+        if (typeof obj.notice === 'string') {
+          notice = obj.notice
+          continue
+        }
+        if (obj.department_id && obj.shift_date && Array.isArray(obj.slots)) {
+          const block = obj as unknown as AiScheduleBlock
+          const key = `${block.department_id}_${block.shift_date}`
+          if (seenBlockKeys.has(key)) continue
+          const normalizedBlock = normalizer(block)
+          seenBlockKeys.add(key)
+          blockCount += 1
+          onBlock(normalizedBlock, { expectedBlockCount, contextSummary })
+        }
+      }
+    }
+
+    const tail = buffer.trim()
+    if (tail && !seenLines.has(tail)) {
+      try {
+        const obj = JSON.parse(tail) as Record<string, unknown>
+        if (typeof obj.notice === 'string') {
+          notice = obj.notice
+        } else if (obj.department_id && obj.shift_date && Array.isArray(obj.slots)) {
+          const block = obj as unknown as AiScheduleBlock
+          const key = `${block.department_id}_${block.shift_date}`
+          if (!seenBlockKeys.has(key)) {
+            const normalizedBlock = normalizer(block)
+            seenBlockKeys.add(key)
+            blockCount += 1
+            onBlock(normalizedBlock, { expectedBlockCount, contextSummary })
+          }
+        }
+      } catch {
+        // ignore unparseable trailing fragment (mid-stream truncation)
+      }
+    }
+
+    for (const departmentId of input.department_ids) {
+      for (const shiftDate of enumerateDateRange(input.date_from, input.date_to)) {
+        const key = `${departmentId}_${shiftDate}`
+        if (seenBlockKeys.has(key)) continue
+        const normalizedBlock = normalizer({
+          department_id: departmentId,
+          shift_date: shiftDate,
+          slots: [],
+          warning: null,
+        })
+        seenBlockKeys.add(key)
+        blockCount += 1
+        onBlock(normalizedBlock, { expectedBlockCount, contextSummary })
+      }
+    }
+
+    if (blockCount === 0) {
+      throw new Error('AI returned an invalid response. Please try again.')
+    }
+    if (blockCount < expectedBlockCount) {
+      throw new Error('AI only generated a partial schedule. Please try again, or narrow the date range / departments.')
+    }
+
+    return {
+      notice: notice || `AI checked ${hardRules.length} hard rule${hardRules.length === 1 ? '' : 's'} and generated the best available draft for Owner review.`,
+      blockCount,
+    }
   },
 }
 
@@ -662,6 +834,232 @@ type AiContextSummaryData = {
   previousPeriod: string
 }
 
+type AiStaffContext = {
+  id: string
+  full_name: string
+  role: string
+  department_id: string | null
+  fixed_off_days: number[]
+  remaining_weekly_hours: number
+  scheduled_hours_in_period: number
+  scheduled_days_in_period: number
+  weekend_duties_in_period: number
+  previous_working_days: number
+  previous_weekend_duties: number
+  leave_requests: Array<{ date: string | null; leave_type: string; status: string }>
+}
+
+type NormalizerState = {
+  assignedHours: Map<string, number>
+  assignedDates: Map<string, Set<string>>
+  weekendDuties: Map<string, number>
+}
+
+function normalizeAiScheduleBlocks(input: {
+  blocks: AiScheduleBlock[]
+  departmentIds: string[]
+  dateFrom: string
+  dateTo: string
+  shiftTypes: ShiftTypeInput[]
+  staff: AiStaffContext[]
+}): AiScheduleBlock[] {
+  const byKey = new Map(input.blocks.map(block => [`${block.department_id}_${block.shift_date}`, block]))
+  const normalizer = createScheduleBlockNormalizer({
+    shiftTypes: input.shiftTypes,
+    staff: input.staff,
+  })
+
+  const normalized: AiScheduleBlock[] = []
+  for (const departmentId of input.departmentIds) {
+    for (const shiftDate of enumerateDateRange(input.dateFrom, input.dateTo)) {
+      const block = byKey.get(`${departmentId}_${shiftDate}`) ?? {
+        department_id: departmentId,
+        shift_date: shiftDate,
+        slots: [],
+        warning: null,
+      }
+      normalized.push(normalizer(block))
+    }
+  }
+  return normalized
+}
+
+function createScheduleBlockNormalizer(input: {
+  shiftTypes: ShiftTypeInput[]
+  staff: AiStaffContext[]
+}): (block: AiScheduleBlock) => AiScheduleBlock {
+  const state: NormalizerState = {
+    assignedHours: new Map(input.staff.map(staff => [staff.id, 0])),
+    assignedDates: new Map(input.staff.map(staff => [staff.id, new Set<string>()])),
+    weekendDuties: new Map(input.staff.map(staff => [staff.id, staff.weekend_duties_in_period ?? 0])),
+  }
+  for (const staff of input.staff) {
+    const dateSet = state.assignedDates.get(staff.id)!
+    for (let i = 0; i < (staff.scheduled_days_in_period ?? 0); i++) dateSet.add(`existing-${i}`)
+  }
+
+  return (block: AiScheduleBlock) => normalizeAiScheduleBlock({
+    block,
+    shiftTypes: input.shiftTypes,
+    staff: input.staff,
+    state,
+  })
+}
+
+function normalizeAiScheduleBlock(input: {
+  block: AiScheduleBlock
+  shiftTypes: ShiftTypeInput[]
+  staff: AiStaffContext[]
+  state: NormalizerState
+}): AiScheduleBlock {
+  const slots: AiShiftSlot[] = []
+  const warnings: string[] = []
+  for (const shiftType of input.shiftTypes) {
+    const usedInWindow = new Set<string>()
+    const label = shiftType.label?.trim() || `${shiftType.start_time}-${shiftType.end_time}`
+    const manager = pickStaffForSlot({
+      staff: input.staff,
+      state: input.state,
+      departmentId: input.block.department_id,
+      shiftDate: input.block.shift_date,
+      shiftType,
+      role: 'Manager',
+      usedInWindow,
+    })
+    slots.push(buildSlot(label, shiftType, manager, manager ? 'manager_requirement' : 'no_eligible_staff'))
+    if (manager) commitStaffAssignment(input.state, manager.id, input.block.shift_date, shiftType)
+    else warnings.push(`No eligible manager for ${label}.`)
+
+    const employee = pickStaffForSlot({
+      staff: input.staff,
+      state: input.state,
+      departmentId: input.block.department_id,
+      shiftDate: input.block.shift_date,
+      shiftType,
+      role: 'Employee',
+      usedInWindow,
+    })
+    slots.push(buildSlot(label, shiftType, employee, employee ? 'employee_requirement' : 'no_eligible_staff'))
+    if (employee) commitStaffAssignment(input.state, employee.id, input.block.shift_date, shiftType)
+    else warnings.push(`No eligible employee for ${label}.`)
+  }
+
+  return {
+    ...input.block,
+    slots: slots.map(slot => ({ ...slot, reason: resolveReasonText(slot.reason) })),
+    warning: warnings.length > 0 ? warnings.join(' ') : null,
+  }
+}
+
+function pickStaffForSlot(input: {
+  staff: AiStaffContext[]
+  state: NormalizerState
+  departmentId: string
+  shiftDate: string
+  shiftType: ShiftTypeInput
+  role: 'Manager' | 'Employee'
+  usedInWindow: Set<string>
+}): AiStaffContext | null {
+  const weekday = new Date(`${input.shiftDate}T00:00:00`).getDay()
+  const shiftLength = shiftHours({
+    department_id: input.departmentId,
+    shift_date: input.shiftDate,
+    start_time: input.shiftType.start_time,
+    end_time: input.shiftType.end_time,
+  })
+
+  const candidates = input.staff
+    .filter(staff => staff.department_id === input.departmentId)
+    .filter(staff => staff.role === input.role)
+    .filter(staff => !input.usedInWindow.has(staff.id))
+    .filter(staff => !staff.fixed_off_days.includes(weekday))
+    .filter(staff => !staff.leave_requests.some(request => (
+      request.date === input.shiftDate &&
+      request.leave_type === 'time_off' &&
+      request.status === 'approved'
+    )))
+    .filter(staff => (staff.remaining_weekly_hours - (input.state.assignedHours.get(staff.id) ?? 0)) >= shiftLength)
+
+  if (candidates.length === 0) return null
+
+  const weekend = weekday === 0 || weekday === 6
+  const scored = candidates.map(staff => {
+    const assignedDates = input.state.assignedDates.get(staff.id)?.size ?? 0
+    const assignedHours = (staff.scheduled_hours_in_period ?? 0) + (input.state.assignedHours.get(staff.id) ?? 0)
+    const weekendDuties = input.state.weekendDuties.get(staff.id) ?? 0
+    const softStreakPenalty = wouldExceedConsecutiveDays(input.state.assignedDates.get(staff.id), input.shiftDate) ? 1000 : 0
+    const pendingLeavePenalty = staff.leave_requests.some(request => (
+      request.date === input.shiftDate &&
+      request.leave_type === 'time_off' &&
+      request.status === 'pending'
+    )) ? 300 : 0
+    return {
+      staff,
+      score:
+        softStreakPenalty +
+        pendingLeavePenalty +
+        (weekend ? (weekendDuties + staff.previous_weekend_duties) * 100 : 0) +
+        assignedDates * 25 +
+        assignedHours * 2 +
+        staff.previous_working_days,
+    }
+  })
+
+  scored.sort((a, b) => a.score - b.score || a.staff.full_name.localeCompare(b.staff.full_name))
+  const selected = scored[0].staff
+  input.usedInWindow.add(selected.id)
+  return selected
+}
+
+function buildSlot(
+  label: string,
+  shiftType: ShiftTypeInput,
+  staff: AiStaffContext | null,
+  reason: string,
+): AiShiftSlot {
+  return {
+    shift_label: label,
+    start_time: shiftType.start_time,
+    end_time: shiftType.end_time,
+    assigned_user_id: staff?.id ?? null,
+    assigned_user_name: staff?.full_name ?? null,
+    reason,
+  }
+}
+
+function commitStaffAssignment(
+  state: NormalizerState,
+  userId: string,
+  shiftDate: string,
+  shiftType: ShiftTypeInput,
+) {
+  const hours = shiftHours({
+    department_id: '',
+    shift_date: shiftDate,
+    start_time: shiftType.start_time,
+    end_time: shiftType.end_time,
+    user_id: userId,
+  })
+  state.assignedHours.set(userId, (state.assignedHours.get(userId) ?? 0) + hours)
+  if (!state.assignedDates.has(userId)) state.assignedDates.set(userId, new Set())
+  state.assignedDates.get(userId)!.add(shiftDate)
+  const day = new Date(`${shiftDate}T00:00:00`).getDay()
+  if (day === 0 || day === 6) state.weekendDuties.set(userId, (state.weekendDuties.get(userId) ?? 0) + 1)
+}
+
+function wouldExceedConsecutiveDays(existingDates: Set<string> | undefined, shiftDate: string): boolean {
+  if (!existingDates) return false
+  const realDates = [...existingDates].filter(date => /^\d{4}-\d{2}-\d{2}$/.test(date))
+  const dates = new Set([...realDates, shiftDate])
+  const sorted = [...dates].sort()
+  let streak = 1
+  for (let i = 1; i < sorted.length; i++) {
+    streak = daysBetween(sorted[i - 1], sorted[i]) === 1 ? streak + 1 : 1
+    if (streak > MAX_CONSECUTIVE_DAYS) return true
+  }
+  return false
+}
+
 function buildAiSchedulePrompt(input: {
   date_from: string
   date_to: string
@@ -713,7 +1111,8 @@ function buildAiSchedulePrompt(input: {
   const dateCount = dates.length
   const shiftTypeCount = input.shiftTypes.length
   const expectedBlockCount = departmentCount * dateCount
-  const expectedSlotCount = expectedBlockCount * shiftTypeCount
+  const minSlotsPerShiftType = Math.max(1, MIN_MANAGERS_PER_DAY + MIN_EMPLOYEES_PER_DAY)
+  const minSlotCount = expectedBlockCount * shiftTypeCount * minSlotsPerShiftType
   const departmentIdList = input.department_staff.map(d => d.department_id).join(', ')
 
   return `You are a workforce scheduling assistant. Generate an optimal staff schedule for the period ${input.date_from} to ${input.date_to}.
@@ -733,21 +1132,23 @@ REQUIRED OUTPUT SIZE (do not stop early, do not skip any department):
 - There are exactly ${departmentCount} departments: ${departmentIdList}
 - There are exactly ${dateCount} dates to schedule.
 - The "schedule" array MUST contain exactly ${expectedBlockCount} blocks (one block per department per date — every department listed above must appear for every date).
-- Each block's "slots" array MUST contain exactly ${shiftTypeCount} slot(s), for a total of ${expectedSlotCount} slots across the whole response.
+- Each shift type covers ONE time window, but MULTIPLE people can be on duty during that same time window. Each person on duty during a shift type is a SEPARATE slot object with the SAME shift_label/start_time/end_time.
+- Each block's "slots" array MUST contain AT LEAST ${minSlotsPerShiftType} slot(s) per shift type (so the manager + employee minimums below can be met), giving a minimum of ${minSlotCount} slots across the whole response. Add more slots per shift type if needed to satisfy the staffing minimums.
 - Do NOT stop after finishing one department — continue until ALL ${departmentCount} departments have a block for EVERY date.
 
 INSTRUCTIONS:
 1. For each department x date, produce one schedule block. You must cover all departments listed above, not just the first one.
-2. Inside each block, create one slot for every shift type listed above. Do not invent morning/evening/break shifts.
-3. For each department x date x shift type, assign one eligible staff member.
+2. Inside each block, for every shift type, create one slot PER PERSON who is on duty during that shift type's time window. Do not invent morning/evening/break shifts beyond what was listed.
+3. Assign each slot to one eligible staff member.
 4. Obey ALL Hard Rules: never schedule anyone on their fixed off day, approved leave, or when they exceed weekly hours.
-5. Each department must have at least ${MIN_MANAGERS_PER_DAY} manager and ${MIN_EMPLOYEES_PER_DAY} employee per day where possible.
+5. MANDATORY (Hard Rule, not optional): for every department, for every date, for every shift type's time window, there MUST be at least ${MIN_MANAGERS_PER_DAY} manager AND at least ${MIN_EMPLOYEES_PER_DAY} employee on duty AT THE SAME TIME — this means at least ${minSlotsPerShiftType} separate slots (one per person) for that shift type, not one slot total. Only set "warning" on the block if truly no eligible staff exist to fill this.
 6. Max consecutive working days is ${MAX_CONSECUTIVE_DAYS}.
 7. Weekend rotation has higher priority than workload fairness.
 8. Rotate weekend duties fairly using previous_weekend_duties.
 9. Distribute workload fairly using previous_work_days and remaining_weekly_hours after weekend rotation.
-10. If no eligible person exists for a slot, set assigned_user_id to null.
-11. For "reason", output ONLY one short code from this list (no sentences, no punctuation):
+10. FAIR ROTATION WITHIN THE PERIOD (Soft Rule, but apply it actively): when a department has multiple eligible people for the same role (e.g. 2 managers, 2 employees), spread shifts across ALL of them over the date range instead of repeatedly picking the same 1-2 people every day. Do not let one person work every day while another eligible person of the same role gets zero shifts for the whole period, unless their fixed off days / leave / remaining hours leave no other choice. Cycle through eligible staff of the same role in rotation.
+11. If no eligible person exists for a required slot, still create the slot with assigned_user_id set to null and reason "no_eligible_staff", and set the block's "warning" field.
+12. For "reason", output ONLY one short code from this list (no sentences, no punctuation):
    fair_rotation | least_hours | only_eligible | weekend_rotation | manager_requirement | employee_requirement | no_eligible_staff
 
 RESPOND ONLY WITH VALID JSON in this exact shape (no markdown, no extra text):
@@ -761,8 +1162,16 @@ RESPOND ONLY WITH VALID JSON in this exact shape (no markdown, no extra text):
           "shift_label": "<shift type label>",
           "start_time": "<HH:MM>",
           "end_time": "<HH:MM>",
-          "assigned_user_id": "<user id or null>",
-          "assigned_user_name": "<full name or null>",
+          "assigned_user_id": "<a manager's user id, or null>",
+          "assigned_user_name": "<that manager's full name, or null>",
+          "reason": "<reason code>"
+        },
+        {
+          "shift_label": "<SAME shift type label as above>",
+          "start_time": "<SAME start time as above>",
+          "end_time": "<SAME end time as above>",
+          "assigned_user_id": "<an employee's user id, or null>",
+          "assigned_user_name": "<that employee's full name, or null>",
           "reason": "<reason code>"
         }
       ],
@@ -771,6 +1180,17 @@ RESPOND ONLY WITH VALID JSON in this exact shape (no markdown, no extra text):
   ],
   "notice": "<one sentence summary of the generated schedule>"
 }`
+}
+
+function buildAiSchedulePromptNdjson(input: Parameters<typeof buildAiSchedulePrompt>[0]): string {
+  const base = buildAiSchedulePrompt(input)
+  const cutIdx = base.indexOf('RESPOND ONLY WITH VALID JSON')
+  const head = base.slice(0, cutIdx)
+  return `${head}RESPOND AS NEWLINE-DELIMITED JSON (NDJSON) — one complete, compact JSON object per line, no markdown, no arrays wrapping it, no commas between lines:
+- Emit exactly one line per schedule block, in this shape:
+{"department_id": "<string>", "shift_date": "<YYYY-MM-DD>", "slots": [{"shift_label": "<label>", "start_time": "<HH:MM>", "end_time": "<HH:MM>", "assigned_user_id": "<id or null>", "assigned_user_name": "<name or null>", "reason": "<reason code>"}], "warning": "<string or null>"}
+- After all schedule block lines, emit exactly one final line: {"notice": "<one sentence summary>"}
+- Each line must be valid standalone JSON. Do not wrap lines in an array. Do not add trailing commas.`
 }
 
 const REASON_CODE_TEXT: Record<string, string> = {
