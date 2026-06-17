@@ -2,11 +2,137 @@
 
 import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Plus, X, ChevronDown, Upload, Building2, Network, Crown, UserCog, UserRound, HardHat, Users, UserPlus, Send, Check, Trash2, FileText, BriefcaseBusiness, UsersRound, MapPinned, Pencil, MessageCircle } from 'lucide-react'
+import { Plus, X, ChevronDown, Upload, Building2, Network, Crown, UserCog, UserRound, HardHat, Users, UserPlus, Send, Check, Trash2, FileText, BriefcaseBusiness, UsersRound, MapPinned, Pencil, MessageCircle, Search } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import DatePickerField from '@/components/DatePickerField'
+import { DEPT_COLORS, deptColor, setDeptColorOverrides } from '@/lib/deptColor'
+
+// ─── Department color picker ────────────────────────────────────────────────
+
+function DepartmentColorPicker({ value, onChange }: { value: string | null; onChange: (color: string | null) => void }) {
+  const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const popoverRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const h = (e: MouseEvent) => {
+      if (!triggerRef.current?.contains(e.target as Node) && !popoverRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [open])
+
+  return (
+    <div>
+      <label style={modalLabelStyle}>Department color</label>
+      <div style={{ position: 'relative' }}>
+        <button
+          ref={triggerRef}
+          type="button"
+          onClick={() => setOpen(o => !o)}
+          aria-label={value ? 'Custom color selected' : 'Auto color not chosen'}
+          style={{
+            width: '100%',
+            height: 40,
+            borderRadius: 8,
+            border: value ? `1.5px solid ${value}` : `1.5px solid ${open ? '#F97316' : '#E5E7EB'}`,
+            background: value ?? '#FFFFFF',
+            cursor: 'pointer',
+            padding: '0 12px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            boxSizing: 'border-box',
+          }}
+        >
+          {value ? (
+            <span aria-hidden="true" />
+          ) : (
+            <span style={{ fontSize: '0.9375rem', fontWeight: 400, fontFamily: "'Inter', system-ui, -apple-system, sans-serif", color: '#9CA3AF' }}>
+              Auto (no color chosen)
+            </span>
+          )}
+          <ChevronDown size={14} style={{ color: value ? 'rgba(255,255,255,0.85)' : '#94A3B8', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+        </button>
+        {open && (
+          <div
+            ref={popoverRef}
+            style={{
+              position: 'absolute',
+              top: 'calc(100% + 6px)',
+              left: 0,
+              right: 0,
+              zIndex: 20,
+              background: '#FFFFFF',
+              border: '1px solid #E2E8F0',
+              borderRadius: 10,
+              boxShadow: '0 8px 24px rgba(15,23,42,0.12)',
+              padding: 12,
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                aria-label="Use auto color"
+                onClick={() => { onChange(null); setOpen(false) }}
+                style={{
+                  width: 26,
+                  height: 26,
+                  borderRadius: 999,
+                  border: value === null ? '2px solid #0F172A' : '1px solid #E5E7EB',
+                  background: value === null ? '#F1F5F9' : '#FFFFFF',
+                  color: '#374151',
+                  cursor: 'pointer',
+                  padding: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: value === null ? '0 0 0 2px rgba(15,23,42,0.12)' : 'none',
+                  flexShrink: 0,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
+                }}
+              >
+                A
+              </button>
+              {DEPT_COLORS.map(color => {
+                const active = value === color
+                return (
+                  <button
+                    key={color}
+                    type="button"
+                    aria-label={`Use color ${color}`}
+                    onClick={() => { onChange(color); setOpen(false) }}
+                    style={{
+                      width: 26,
+                      height: 26,
+                      borderRadius: 999,
+                      border: active ? '2px solid #0F172A' : '1px solid #E5E7EB',
+                      background: color,
+                      cursor: 'pointer',
+                      padding: 0,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      boxShadow: active ? '0 0 0 2px rgba(15,23,42,0.12)' : 'none',
+                      flexShrink: 0,
+                    }}
+                  >
+                    {active && <Check size={13} color="#FFFFFF" strokeWidth={3} />}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
 
 // ─── Spinner ──────────────────────────────────────────────────────────────────
 
@@ -141,6 +267,134 @@ const modalLabelStyle: React.CSSProperties = {
   fontSize: '0.875rem',
   color: '#374151',
   marginBottom: '8px',
+}
+
+const OWNER_ORANGE = '#F97316'
+const TEXT_DARK = '#0F172A'
+const MUTED = '#64748B'
+const PANEL_BORDER = '#E2E8F0'
+
+const inputStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '10px 12px',
+  border: `1.5px solid ${PANEL_BORDER}`,
+  borderRadius: 8,
+  fontSize: '0.9375rem',
+  fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
+  fontWeight: 400,
+  color: TEXT_DARK,
+  outline: 'none',
+  boxSizing: 'border-box',
+  background: '#FFFFFF',
+}
+
+const labelStyle: React.CSSProperties = {
+  display: 'block',
+  fontWeight: 700,
+  fontSize: '0.8125rem',
+  color: TEXT_DARK,
+  marginBottom: '6px',
+  textTransform: 'uppercase',
+  letterSpacing: '0.4px',
+}
+
+const primaryButtonStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 7,
+  border: 0,
+  borderRadius: 10,
+  background: OWNER_ORANGE,
+  color: '#FFFFFF',
+  height: 36,
+  padding: '0 14px',
+  fontSize: 13,
+  fontWeight: 700,
+  cursor: 'pointer',
+}
+
+const secondaryButtonStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  gap: 7,
+  border: `1px solid ${PANEL_BORDER}`,
+  borderRadius: 10,
+  background: '#FFFFFF',
+  color: TEXT_DARK,
+  height: 36,
+  padding: '0 14px',
+  fontSize: 13,
+  fontWeight: 700,
+  cursor: 'pointer',
+}
+
+const modalOverlayStyle: React.CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  background: 'rgba(15,23,42,0.45)',
+  backdropFilter: 'blur(4px)',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  zIndex: 100,
+}
+
+const modalStyle: React.CSSProperties = {
+  background: '#FFFFFF',
+  borderRadius: 18,
+  boxShadow: '0 20px 56px rgba(0,0,0,0.16)',
+  padding: '24px',
+  maxWidth: 540,
+  width: '100%',
+  maxHeight: '90vh',
+  overflowY: 'auto',
+}
+
+const modalFooterStyle: React.CSSProperties = {
+  display: 'flex',
+  gap: 10,
+  justifyContent: 'flex-end',
+  marginTop: 20,
+}
+
+const errorBoxStyle: React.CSSProperties = {
+  background: '#FEF2F2',
+  border: '1px solid #FECACA',
+  borderRadius: 10,
+  padding: '12px 14px',
+  fontSize: 13,
+  color: '#B91C1C',
+}
+
+const successBoxStyle: React.CSSProperties = {
+  background: '#F0FDF4',
+  border: '1px solid #BBF7D0',
+  borderRadius: 10,
+  padding: '12px 14px',
+  fontSize: 13,
+  color: '#15803D',
+}
+
+function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
+  return (
+    <div style={modalOverlayStyle}>
+      <style>{`
+        @keyframes overlayFadeIn { from { opacity: 0 } to { opacity: 1 } }
+        @keyframes modalSlideIn  { from { opacity: 0; transform: scale(0.97) translateY(8px) } to { opacity: 1; transform: scale(1) translateY(0) } }
+      `}</style>
+      <div style={{ width: 'min(540px, calc(100% - 32px))', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
+        <div style={modalStyle}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 16 }}>
+            <h2 style={{ margin: 0, color: TEXT_DARK, fontSize: 16, fontWeight: 700 }}>{title}</h2>
+            <button type="button" onClick={onClose} style={{ border: 'none', background: 'transparent', cursor: 'pointer', padding: 4, display: 'flex', alignItems: 'center', color: '#9CA3AF', borderRadius: 6 }}><X size={16} /></button>
+          </div>
+          {children}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 const teamTabKeyframes = `
@@ -427,6 +681,9 @@ function TeamShowcaseCard({
   icon,
   title,
   rightContent,
+  searchValue,
+  onSearchChange,
+  searchPlaceholder,
   fillHeight,
   className,
   children,
@@ -434,23 +691,39 @@ function TeamShowcaseCard({
   icon: React.ReactNode
   title: string
   rightContent?: React.ReactNode
+  searchValue?: string
+  onSearchChange?: (value: string) => void
+  searchPlaceholder?: string
   fillHeight?: boolean
   className?: string
   children: React.ReactNode
 }) {
   return (
     <div className={className} style={{ flex: fillHeight ? 1 : undefined, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
-      <div style={{ minHeight: 78, padding: '20px 24px 18px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+      <div style={{ minHeight: 78, padding: '20px 24px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 18, minWidth: 0, flex: 1 }}>
           <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             {icon}
           </div>
-          <div style={{ minWidth: 0 }}>
+          <div style={{ minWidth: 0, flexShrink: 0 }}>
             <p style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', margin: 0, letterSpacing: '-0.2px', lineHeight: 1.2 }}>{title}</p>
           </div>
+          {rightContent}
         </div>
-        {rightContent}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexShrink: 0 }}>
+          {onSearchChange && (
+            <div style={{ position: 'relative', flexShrink: 0 }}>
+              <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
+              <input
+                value={searchValue ?? ''}
+                onChange={e => onSearchChange(e.target.value)}
+                placeholder={searchPlaceholder}
+                style={{ width: 180, height: 34, borderRadius: 999, border: '1px solid #E5E7EB', background: '#F9FAFB', padding: '0 12px 0 32px', fontSize: 13, color: '#111827', outline: 'none', boxSizing: 'border-box' }}
+                onFocus={e => { e.currentTarget.style.borderColor = '#F97316'; e.currentTarget.style.background = '#FFFFFF' }}
+                onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.background = '#F9FAFB' }}
+              />
+            </div>
+          )}
         </div>
       </div>
       <div style={{ borderTop: '1px solid #E5E7EB', flexShrink: 0 }} />
@@ -603,6 +876,8 @@ function CasualWorkerPreviewCard({
   status,
   photoUrl,
   onClick,
+  highlighted = false,
+  dimmed = false,
 }: {
   name: string
   lastShift: string
@@ -610,6 +885,8 @@ function CasualWorkerPreviewCard({
   status: 'Active' | 'Inactive'
   photoUrl?: string | null
   onClick?: () => void
+  highlighted?: boolean
+  dimmed?: boolean
 }) {
   const isActive = status === 'Active'
   const borderColor = isActive ? '#86EFAC' : '#FCA5A5'
@@ -626,9 +903,9 @@ function CasualWorkerPreviewCard({
         height: 128,
         padding: '0 1px',
         borderRadius: 8,
-        border: `1.5px solid ${borderColor}`,
-        background: '#FFFFFF',
-        boxShadow: '0 1px 3px rgba(15,23,42,0.06)',
+        border: highlighted ? '2px solid #F97316' : `1.5px solid ${borderColor}`,
+        background: highlighted ? '#FFF7ED' : '#FFFFFF',
+        boxShadow: highlighted ? '0 0 0 3px rgba(249,115,22,0.18), 0 4px 12px rgba(249,115,22,0.15)' : '0 1px 3px rgba(15,23,42,0.06)',
         flexShrink: 0,
         display: 'flex',
         flexDirection: 'column',
@@ -636,7 +913,8 @@ function CasualWorkerPreviewCard({
         alignItems: 'center',
         cursor: onClick ? 'pointer' : 'default',
         textAlign: 'center',
-        transition: 'box-shadow 0.22s ease, border-color 0.22s ease, transform 0.22s ease',
+        opacity: dimmed ? 0.35 : 1,
+        transition: 'box-shadow 0.22s ease, border-color 0.22s ease, transform 0.22s ease, opacity 0.22s ease, background 0.22s ease',
       }}
     >
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, width: '100%' }}>
@@ -665,11 +943,11 @@ function RoleGroupCard({
   return (
     <div className="role-group-card" style={{ border: '1px solid #EEF2F7', borderRadius: 14, overflow: 'hidden', background: '#FFFFFF' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 16px 12px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-          <div style={{ width: 28, height: 28, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: 6, background: 'transparent', color: '#374151', flexShrink: 0 }}>
             {icon}
-          </div>
-          <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.1px' }}>{label}</span>
+          </span>
+          <span style={{ fontWeight: 600, fontSize: '0.875rem', color: '#374151' }}>{label}</span>
         </div>
       </div>
       <div style={{ borderTop: '1px solid #F1F5F9' }} />
@@ -686,10 +964,34 @@ function RoleGroupCard({
   )
 }
 
+type AllBlockId = 'company' | 'activity' | 'departments' | 'casual' | 'internal'
+
+const ALL_BLOCK_ORDER_KEY = 'owner_team_all_block_order_v1'
+const DEFAULT_ALL_BLOCK_ORDER: AllBlockId[] = ['company', 'activity', 'departments', 'casual', 'internal']
+
+function normalizeAllBlockOrder(saved: string[]): AllBlockId[] {
+  const valid = saved.filter((id): id is AllBlockId => (DEFAULT_ALL_BLOCK_ORDER as readonly string[]).includes(id))
+  const missing = DEFAULT_ALL_BLOCK_ORDER.filter(id => !valid.includes(id))
+  return [...valid, ...missing]
+}
+
 // ─── Org Chart Node ──────────────────────────────────────────────────────────
 
-function OrgNode({ member, onClick, animationDelay }: { member: TeamMember; onClick: () => void; animationDelay?: string }) {
+function OrgNode({
+  member,
+  onClick,
+  animationDelay,
+  searchHighlighted = false,
+  searchDimmed = false,
+}: {
+  member: TeamMember
+  onClick: () => void
+  animationDelay?: string
+  searchHighlighted?: boolean
+  searchDimmed?: boolean
+}) {
   const dark = member.role === 'Owner' || member.role === 'Partner'
+  const isManager = member.role === 'Manager'
   return (
     <button
       onClick={onClick}
@@ -697,15 +999,19 @@ function OrgNode({ member, onClick, animationDelay }: { member: TeamMember; onCl
       style={{
         display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
         padding: '12px 16px', borderRadius: 12,
-        border: `1.5px solid ${dark ? '#0F172A' : '#E5E7EB'}`,
-        background: dark ? '#0F172A' : '#FFFFFF',
+        border: searchHighlighted
+          ? '2px solid #F97316'
+          : `1.5px solid ${dark ? '#0F172A' : isManager ? '#FDBA74' : '#E5E7EB'}`,
+        background: searchHighlighted ? '#FFF7ED' : dark ? '#0F172A' : '#FFFFFF',
         cursor: 'pointer', width: '100%',
-        boxShadow: '0 1px 4px rgba(0,0,0,0.07)',
+        boxShadow: searchHighlighted ? '0 0 0 3px rgba(249,115,22,0.18), 0 4px 12px rgba(249,115,22,0.15)' : '0 1px 4px rgba(0,0,0,0.07)',
         animationDelay: animationDelay ?? '0s',
+        opacity: searchDimmed ? 0.35 : 1,
+        transition: 'box-shadow 0.22s ease, border-color 0.22s ease, transform 0.22s ease, opacity 0.22s ease, background 0.22s ease',
       }}
     >
       <RoleAvatar role={member.role} size={36} photoUrl={member.profile_photo_url} />
-      <p style={{ fontWeight: 700, fontSize: '0.8125rem', color: dark ? '#FFFFFF' : '#111827', margin: 0, lineHeight: 1.3, textAlign: 'center' }}>{member.full_name}</p>
+      <p style={{ fontWeight: 700, fontSize: '0.8125rem', color: searchHighlighted ? '#111827' : dark ? '#FFFFFF' : '#111827', margin: 0, lineHeight: 1.3, textAlign: 'center' }}>{member.full_name}</p>
     </button>
   )
 }
@@ -718,6 +1024,7 @@ type OrgChartTreeProps = {
   teamMembers: TeamMember[]
   onMemberClick: (m: TeamMember) => void
   onDepartmentClick: (department: { id: string; name: string }) => void
+  searchQuery?: string
 }
 
 const LINE_COLOR = '#CBD5E1'
@@ -732,7 +1039,9 @@ const OUTER_H   = 48    // SVG height: leadership → dept cols
 const INNER_H   = 30    // SVG height: dept header → managers
 const M2E_H     = 16    // connector height: managers → employees
 
-function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick, onDepartmentClick }: OrgChartTreeProps) {
+function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick, onDepartmentClick, searchQuery = '' }: OrgChartTreeProps) {
+  const normalizedSearch = searchQuery.trim().toLowerCase()
+  const searchActive = normalizedSearch.length > 0
   // Sort departments A→Z (left to right)
   const sortedDepts = [...departments].sort((a, b) => a.name.localeCompare(b.name))
 
@@ -778,6 +1087,17 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick, onD
   const ownerIdxInOrdered = orderedLeaders.findIndex(m => m.role === 'Owner')
   const leaderRowStartX2 = totalW / 2 - (ownerIdxInOrdered >= 0 ? ownerIdxInOrdered : 0) * (LEADER_W + LEADER_GAP) - LEADER_W / 2
 
+  const memberMatchesSearch = (member: TeamMember) =>
+    member.full_name.toLowerCase().includes(normalizedSearch) ||
+    member.role.toLowerCase().includes(normalizedSearch)
+
+  const deptMatchesSearch = (dept: { id: string; name: string }) =>
+    dept.name.toLowerCase().includes(normalizedSearch) ||
+    teamMembers.some(member =>
+      member.department_id === dept.id &&
+      member.full_name.toLowerCase().includes(normalizedSearch)
+    )
+
   return (
     <div style={{ overflowX: 'auto', paddingBottom: 8, paddingTop: 8 }}>
       <div style={{ width: totalW, margin: '0 auto' }}>
@@ -791,7 +1111,13 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick, onD
               top: 0,
               width: LEADER_W,
             }}>
-              <OrgNode member={m} onClick={() => onMemberClick(m)} animationDelay={`${0.08 + i * 0.08}s`} />
+              <OrgNode
+                member={m}
+                onClick={() => onMemberClick(m)}
+                animationDelay={`${0.08 + i * 0.08}s`}
+                searchHighlighted={searchActive && memberMatchesSearch(m)}
+                searchDimmed={searchActive && !memberMatchesSearch(m)}
+              />
             </div>
           ))}
         </div>
@@ -818,6 +1144,8 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick, onD
               // Manager center Xs relative to left edge of colW (accounting for DEPT_PAD)
               const offsetX  = (colW - innerW) / 2
               const mgrCXs   = managers.map((_, mi) => offsetX + mi * (NODE_W + MGR_GAP) + NODE_W / 2)
+              const deptHighlighted = searchActive && deptMatchesSearch(dept)
+              const deptDimmed = searchActive && !deptHighlighted
 
               return (
                 <div key={dept.id} className="org-dept-col" style={{
@@ -832,7 +1160,17 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick, onD
                 }}>
 
                   {/* Dept header */}
-                  <div style={{ width: '100%', padding: '10px 12px', background: '#F9FAFB', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <div style={{
+                    width: '100%',
+                    padding: '10px 12px',
+                    background: deptHighlighted ? '#FFF7ED' : '#F9FAFB',
+                    borderBottom: '1px solid #F3F4F6',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    opacity: deptDimmed ? 0.35 : 1,
+                    transition: 'opacity 0.22s ease, background 0.22s ease',
+                  }}>
                     <button
                       type="button"
                       aria-label={`Open ${dept.name} actions`}
@@ -850,14 +1188,15 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick, onD
                         lineHeight: 1.2,
                         padding: 0,
                         margin: 0,
-                        textAlign: 'center',
                         width: '100%',
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 6,
                       }}
                     >
-                      {dept.name}
+                      <span style={{ width: 8, height: 8, borderRadius: 999, background: deptColor(dept.id), flexShrink: 0 }} />
+                      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{dept.name}</span>
                     </button>
                   </div>
 
@@ -879,7 +1218,13 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick, onD
                     <div style={{ display: 'flex', gap: MGR_GAP, flexShrink: 0, marginBottom: employees.length === 0 ? DEPT_PAD : 0 }}>
                       {managers.map((m, mi) => (
                         <div key={m.id} style={{ width: NODE_W }}>
-                          <OrgNode member={m} onClick={() => onMemberClick(m)} animationDelay={`${0.26 + di * 0.07 + mi * 0.05}s`} />
+                          <OrgNode
+                            member={m}
+                            onClick={() => onMemberClick(m)}
+                            animationDelay={`${0.26 + di * 0.07 + mi * 0.05}s`}
+                            searchHighlighted={searchActive && memberMatchesSearch(m)}
+                            searchDimmed={searchActive && !memberMatchesSearch(m)}
+                          />
                         </div>
                       ))}
                     </div>
@@ -899,7 +1244,14 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick, onD
                       boxSizing: 'border-box',
                     }}>
                       {employees.map((m, ei) => (
-                        <OrgNode key={m.id} member={m} onClick={() => onMemberClick(m)} animationDelay={`${0.32 + di * 0.07 + ei * 0.04}s`} />
+                        <OrgNode
+                          key={m.id}
+                          member={m}
+                          onClick={() => onMemberClick(m)}
+                          animationDelay={`${0.32 + di * 0.07 + ei * 0.04}s`}
+                          searchHighlighted={searchActive && memberMatchesSearch(m)}
+                          searchDimmed={searchActive && !memberMatchesSearch(m)}
+                        />
                       ))}
                     </div>
                   )}
@@ -953,7 +1305,7 @@ function formatLongDateTime(value: string | null | undefined, empty = '—') {
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type OwnedCompany = { id: string; name: string }
-type Department = { id: string; name: string }
+type Department = { id: string; name: string; color?: string | null }
 type Manager = { id: string; full_name: string }
 type CWPreviewCard = {
   id: string
@@ -1104,6 +1456,7 @@ export default function TeamPage() {
       if (editProfileCloseTimerRef.current) clearTimeout(editProfileCloseTimerRef.current)
       if (inviteSuccessTimerRef.current) clearTimeout(inviteSuccessTimerRef.current)
       if (cwDetailSuccessTimerRef.current) clearTimeout(cwDetailSuccessTimerRef.current)
+      if (departmentSuccessTimerRef.current) clearTimeout(departmentSuccessTimerRef.current)
     }
   }, [])
 
@@ -1144,20 +1497,34 @@ export default function TeamPage() {
   const [memberImportResult, setMemberImportResult] = useState('')
   const [inviteTab, setInviteTab] = useState<'manual' | 'import'>('manual')
   const [teamViewTab, setTeamViewTab] = useState<'all' | 'org'>('all')
+  const [allBlockOrder, setAllBlockOrder] = useState<AllBlockId[]>(DEFAULT_ALL_BLOCK_ORDER)
+  const [draggingAllBlockId, setDraggingAllBlockId] = useState<AllBlockId | null>(null)
+  const [dragOverAllBlockId, setDragOverAllBlockId] = useState<AllBlockId | null>(null)
+  const allBlockEls = useRef<Map<AllBlockId, HTMLDivElement>>(new Map())
+  const allBlockPrevRects = useRef<Map<AllBlockId, DOMRect>>(new Map())
+  const [cwSearchQuery, setCwSearchQuery] = useState('')
+  const [internalSearchQuery, setInternalSearchQuery] = useState('')
+  const [orgSearchQuery, setOrgSearchQuery] = useState('')
   const tabBarRef = useRef<HTMLDivElement>(null)
   const tabButtonRefs = useRef<Record<'all' | 'org', HTMLButtonElement | null>>({ all: null, org: null })
   const [tabIndicator, setTabIndicator] = useState({ left: 0, width: 0, opacity: 0 })
-  const [departmentModal, setDepartmentModal] = useState<'edit' | null>(null)
+  const [departmentModal, setDepartmentModal] = useState<'add' | 'edit' | null>(null)
+  const [departmentModalTab, setDepartmentModalTab] = useState<'manual' | 'import'>('manual')
   const [activeDepartment, setActiveDepartment] = useState<Department | null>(null)
   const [departmentNameInput, setDepartmentNameInput] = useState('')
+  const [departmentColorInput, setDepartmentColorInput] = useState<string | null>(null)
+  const [departmentImportRows, setDepartmentImportRows] = useState<string[]>([])
   const [departmentActionLoading, setDepartmentActionLoading] = useState(false)
   const [departmentActionError, setDepartmentActionError] = useState('')
+  const [departmentActionResult, setDepartmentActionResult] = useState('')
   const [departmentManagerLoading, setDepartmentManagerLoading] = useState(false)
   const [departmentManagerAssignments, setDepartmentManagerAssignments] = useState<{ department_id: string; manager_id: string; manager_name: string }[]>([])
   const [departmentManagerSelectedId, setDepartmentManagerSelectedId] = useState('')
   const [departmentManagerActionLoading, setDepartmentManagerActionLoading] = useState(false)
   const [departmentManagerRemoveLoading, setDepartmentManagerRemoveLoading] = useState('')
   const [departmentManagerActionError, setDepartmentManagerActionError] = useState('')
+  const [departmentSuccessToast, setDepartmentSuccessToast] = useState('')
+  const departmentSuccessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
 
   // Current user's role (to gate Edit buttons)
@@ -1197,6 +1564,95 @@ export default function TeamPage() {
   const cwDetailSuccessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null)
   const [activityLogs, setActivityLogs] = useState<{ id: string; actor_id: string | null; action: string; target_name: string | null; detail: string | null; is_read: boolean; created_at: string }[]>([])
+  const normalizedCwSearch = cwSearchQuery.trim().toLowerCase()
+  const normalizedInternalSearch = internalSearchQuery.trim().toLowerCase()
+  const normalizedOrgSearch = orgSearchQuery.trim().toLowerCase()
+
+  useEffect(() => {
+    if (teamViewTab === 'all') {
+      setOrgSearchQuery('')
+      return
+    }
+    setCwSearchQuery('')
+    setInternalSearchQuery('')
+  }, [teamViewTab])
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(ALL_BLOCK_ORDER_KEY)
+      if (saved) {
+        setAllBlockOrder(normalizeAllBlockOrder(JSON.parse(saved) as string[]))
+      }
+    } catch {}
+  }, [])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(ALL_BLOCK_ORDER_KEY, JSON.stringify(allBlockOrder))
+    } catch {}
+  }, [allBlockOrder])
+
+  const captureAllBlockRects = useCallback(() => {
+    allBlockEls.current.forEach((el, id) => {
+      if (el) allBlockPrevRects.current.set(id, el.getBoundingClientRect())
+    })
+  }, [])
+
+  const playAllBlockFlip = useCallback(() => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        allBlockEls.current.forEach((el, id) => {
+          if (!el) return
+          const prev = allBlockPrevRects.current.get(id)
+          if (!prev) return
+          const next = el.getBoundingClientRect()
+          const dx = prev.left - next.left
+          const dy = prev.top - next.top
+          const sx = next.width ? prev.width / next.width : 1
+          const sy = next.height ? prev.height / next.height : 1
+          if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return
+          el.style.willChange = 'transform'
+          el.style.transition = 'none'
+          el.style.transformOrigin = 'top left'
+          el.style.transform = `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`
+          void el.offsetHeight
+          el.style.transition = 'transform 380ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 220ms ease, opacity 220ms ease'
+          el.style.transform = 'translate(0px, 0px) scale(1, 1)'
+          window.setTimeout(() => {
+            el.style.willChange = ''
+          }, 420)
+        })
+      })
+    })
+  }, [])
+
+  useLayoutEffect(() => {
+    if (allBlockPrevRects.current.size === 0) return
+    playAllBlockFlip()
+  }, [allBlockOrder, playAllBlockFlip])
+
+  const handleAllBlockDragStart = useCallback((blockId: AllBlockId) => {
+    setDraggingAllBlockId(blockId)
+  }, [])
+
+  const handleAllBlockDragEnd = useCallback(() => {
+    setDraggingAllBlockId(null)
+    setDragOverAllBlockId(null)
+  }, [])
+
+  const swapAllBlocks = useCallback((sourceId: AllBlockId, targetId: AllBlockId) => {
+    if (sourceId === targetId) return
+    captureAllBlockRects()
+    setAllBlockOrder(prev => {
+      const sourceIdx = prev.indexOf(sourceId)
+      const targetIdx = prev.indexOf(targetId)
+      if (sourceIdx < 0 || targetIdx < 0 || sourceIdx === targetIdx) return prev
+      const next = [...prev]
+      next[sourceIdx] = targetId
+      next[targetIdx] = sourceId
+      return next
+    })
+  }, [captureAllBlockRects])
 
   const fetchActivityLogs = useCallback(async (cid: string) => {
     try {
@@ -1469,7 +1925,10 @@ export default function TeamPage() {
               size: companyData.company.size ?? null,
             })
           }
-          if (!cancelled && deptData.success) setCompanyDepartments(deptData.departments)
+          if (!cancelled && deptData.success) {
+            setCompanyDepartments(deptData.departments)
+            setDeptColorOverrides(deptData.departments)
+          }
         } catch {}
       }
     }
@@ -1849,11 +2308,39 @@ export default function TeamPage() {
     }
   }
 
+  const parseDepartmentImportCsv = (text: string): string[] => {
+    const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+    const withoutHeader = lines[0]?.toLowerCase().includes('department') ? lines.slice(1) : lines
+    return [...new Set(withoutHeader.map(line => line.split(',')[0]?.trim()).filter(Boolean))]
+  }
+
+  const handleDepartmentImportFile = async (file: File | null) => {
+    setDepartmentActionError('')
+    setDepartmentActionResult('')
+    if (!file) return
+    const rows = parseDepartmentImportCsv(await file.text())
+    setDepartmentImportRows(rows)
+    if (rows.length === 0) setDepartmentActionError('No valid departments found.')
+  }
+
+  const openAddDepartment = () => {
+    setDepartmentModal('add')
+    setDepartmentModalTab('manual')
+    setActiveDepartment(null)
+    setDepartmentNameInput('')
+    setDepartmentColorInput(null)
+    setDepartmentImportRows([])
+    setDepartmentActionError('')
+    setDepartmentActionResult('')
+  }
+
   const openEditDepartment = (department: Department) => {
     setDepartmentModal('edit')
     setActiveDepartment(department)
     setDepartmentNameInput(department.name)
+    setDepartmentColorInput(department.color ?? null)
     setDepartmentActionError('')
+    setDepartmentActionResult('')
     setDepartmentManagerActionError('')
     setDepartmentManagerSelectedId('')
     setDepartmentManagerLoading(true)
@@ -1878,48 +2365,75 @@ export default function TeamPage() {
   }
 
   const handleSaveDepartment = async () => {
-    if (!companyId || !activeDepartment) return
+    if (!companyId) return
     const name = departmentNameInput.trim()
-    if (!name) {
+    if (departmentModalTab === 'manual' && !name) {
       setDepartmentActionError('Department name is required.')
+      return
+    }
+    if (departmentModalTab === 'import' && departmentImportRows.length === 0) {
+      setDepartmentActionError('Choose a CSV file with department names.')
       return
     }
     setDepartmentActionLoading(true)
     setDepartmentActionError('')
+    setDepartmentActionResult('')
     setDepartmentManagerActionError('')
     try {
-      const res = await fetch('/api/company/update-department', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ department_id: activeDepartment.id, name }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to save department')
+      if (departmentModalTab === 'import') {
+        const res = await fetch('/api/import/departments', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ company_id: companyId, departments: departmentImportRows }),
+        })
+        const data = await res.json()
+        if (!data.success) throw new Error(data.message || 'Failed to import departments')
+        const created = data.result?.created?.length ?? 0
+        const skipped = data.result?.skipped?.length ?? 0
+        setDepartmentActionResult(`${created} department(s) created. ${skipped} skipped.`)
+        if (departmentSuccessTimerRef.current) clearTimeout(departmentSuccessTimerRef.current)
+        setDepartmentSuccessToast(`${created} department(s) imported successfully.`)
+        departmentSuccessTimerRef.current = setTimeout(() => setDepartmentSuccessToast(''), 3000)
+      } else {
+        const isEdit = departmentModal === 'edit'
+        const res = await fetch(isEdit ? '/api/company/update-department' : '/api/company/create-department', {
+          method: isEdit ? 'PATCH' : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(isEdit ? { department_id: activeDepartment?.id, name, color: departmentColorInput } : { company_id: companyId, name, color: departmentColorInput }),
+        })
+        const data = await res.json()
+        if (!data.success) throw new Error(data.message || 'Failed to save department')
 
-      const currentManagerId = departmentManagerAssignments.find(a => a.department_id === activeDepartment.id)?.manager_id ?? ''
-      if (departmentManagerSelectedId !== currentManagerId) {
-        if (departmentManagerSelectedId) {
-          const assignRes = await fetch('/api/team/department-manager', {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              company_id: companyId,
-              department_id: activeDepartment.id,
-              manager_id: departmentManagerSelectedId,
-              assigned_by: internalUserId,
-            }),
-          })
-          const assignData = await assignRes.json()
-          if (!assignData.success) throw new Error(assignData.message || 'Failed to assign manager')
+        if (isEdit) {
+          const currentManagerId = departmentManagerAssignments.find(a => a.department_id === activeDepartment?.id)?.manager_id ?? ''
+          if (departmentManagerSelectedId !== currentManagerId) {
+            if (departmentManagerSelectedId) {
+              const assignRes = await fetch('/api/team/department-manager', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  company_id: companyId,
+                  department_id: activeDepartment?.id,
+                  manager_id: departmentManagerSelectedId,
+                  assigned_by: internalUserId,
+                }),
+              })
+              const assignData = await assignRes.json()
+              if (!assignData.success) throw new Error(assignData.message || 'Failed to assign manager')
+            }
+          }
         }
-      }
 
-      setDepartmentModal(null)
-      setActiveDepartment(null)
+        setDepartmentModal(null)
+        setActiveDepartment(null)
+        if (departmentSuccessTimerRef.current) clearTimeout(departmentSuccessTimerRef.current)
+        setDepartmentSuccessToast(isEdit ? 'Department updated successfully.' : 'Department created successfully.')
+        departmentSuccessTimerRef.current = setTimeout(() => setDepartmentSuccessToast(''), 3000)
+      }
       await Promise.all([fetchTeamMembers(companyId), (async () => {
         const deptRes = await fetch(`/api/company/departments?company_id=${companyId}`)
         const deptData = await deptRes.json()
-        if (deptData.success) setCompanyDepartments(deptData.departments)
+        if (deptData.success) { setCompanyDepartments(deptData.departments); setDeptColorOverrides(deptData.departments) }
       })()])
     } catch (err) {
       setDepartmentActionError(err instanceof Error ? err.message : 'Failed to save department')
@@ -1942,12 +2456,15 @@ export default function TeamPage() {
       if (!data.success) throw new Error(data.message || 'Failed to delete department')
       setDepartmentModal(null)
       setActiveDepartment(null)
+      if (departmentSuccessTimerRef.current) clearTimeout(departmentSuccessTimerRef.current)
+      setDepartmentSuccessToast('Department deleted successfully.')
+      departmentSuccessTimerRef.current = setTimeout(() => setDepartmentSuccessToast(''), 3000)
       await Promise.all([
         fetchTeamMembers(companyId),
         (async () => {
           const deptRes = await fetch(`/api/company/departments?company_id=${companyId}`)
           const deptData = await deptRes.json()
-          if (deptData.success) setCompanyDepartments(deptData.departments)
+          if (deptData.success) { setCompanyDepartments(deptData.departments); setDeptColorOverrides(deptData.departments) }
         })(),
       ])
     } catch (err) {
@@ -2042,6 +2559,475 @@ export default function TeamPage() {
   const employeeCount     = teamMembers.filter(m => m.role === 'Employee').length
   const casualWorkerCount = teamMembers.filter(m => m.role === 'Casual Worker').length
   const totalInternal     = managerCount + employeeCount
+  const sharedIconColor = '#F97316'
+  const casualWorkers = teamMembers
+    .filter(m => m.role === 'Casual Worker')
+    .sort((a, b) => {
+      const aActive = (a.worker_status ?? 'active') === 'active' ? 0 : 1
+      const bActive = (b.worker_status ?? 'active') === 'active' ? 0 : 1
+      return aActive - bActive
+    })
+  const cwActiveCount = casualWorkers.filter(w => (w.worker_status ?? 'active') === 'active').length
+  const cwInactiveCount = casualWorkers.length - cwActiveCount
+  const partnerMembers = teamMembers.filter(m => m.role === 'Partner')
+  const managerMembers = teamMembers.filter(m => m.role === 'Manager')
+  const employeeMembers = teamMembers.filter(m => m.role === 'Employee')
+  const roleGroups = [
+    {
+      label: 'Partner',
+      icon: <Crown size={13} strokeWidth={2.2} style={{ color: '#374151' }} />,
+      members: partnerMembers,
+      emptyText: 'No partners have joined yet',
+    },
+    {
+      label: 'Manager',
+      icon: <UserCog size={13} strokeWidth={2.2} style={{ color: '#374151' }} />,
+      members: managerMembers,
+      emptyText: 'No managers have joined yet',
+    },
+    {
+      label: 'Employee',
+      icon: <UserRound size={13} strokeWidth={2.2} style={{ color: '#374151' }} />,
+      members: employeeMembers,
+      emptyText: 'No employees have joined yet',
+    },
+  ] as const
+
+  const renderAllBlockFrame = (blockId: AllBlockId, content: React.ReactNode) => (
+    <div
+      ref={el => {
+        if (el) allBlockEls.current.set(blockId, el)
+        else allBlockEls.current.delete(blockId)
+      }}
+      draggable
+      onDragStart={(event) => {
+        const target = event.target as HTMLElement | null
+        if (target?.closest('button, input, textarea, select, a, [role="button"]')) {
+          event.preventDefault()
+          return
+        }
+        event.dataTransfer.effectAllowed = 'move'
+        event.dataTransfer.setData('text/plain', blockId)
+        handleAllBlockDragStart(blockId)
+      }}
+      onDragEnd={handleAllBlockDragEnd}
+      onDragOver={(event) => {
+        event.preventDefault()
+        if (draggingAllBlockId && draggingAllBlockId !== blockId) {
+          setDragOverAllBlockId(blockId)
+        }
+      }}
+      onDragLeave={(event) => {
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+        setDragOverAllBlockId(current => current === blockId ? null : current)
+      }}
+      onDrop={(event) => {
+        event.preventDefault()
+        const sourceId = event.dataTransfer.getData('text/plain') as AllBlockId
+        if (sourceId) swapAllBlocks(sourceId, blockId)
+        handleAllBlockDragEnd()
+      }}
+      style={{
+        cursor: draggingAllBlockId === blockId ? 'grabbing' : 'grab',
+        opacity: draggingAllBlockId === blockId ? 0.88 : 1,
+        outline: dragOverAllBlockId === blockId ? '2px dashed #F97316' : 'none',
+        outlineOffset: 4,
+        boxShadow: dragOverAllBlockId === blockId ? '0 14px 34px rgba(249,115,22,0.12)' : undefined,
+        transform: draggingAllBlockId === blockId ? 'scale(0.985)' : undefined,
+        transition: 'box-shadow 180ms ease, opacity 180ms ease, transform 180ms ease',
+        minWidth: 0,
+      }}
+    >
+      {content}
+    </div>
+  )
+
+  const renderAllBlockContent = (blockId: AllBlockId): React.ReactNode => {
+    switch (blockId) {
+      case 'company':
+        return (
+          <div className="team-panel-card all-block-company" style={{ minHeight: 0, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: '14px', padding: '20px 24px 14px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', maxWidth: 500, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 18 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <Building2 size={15} style={{ color: '#F97316' }} />
+                </div>
+                <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', display: 'block' }}>
+                  {companyName || 'Company Name'}
+                </span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                {isCreator && (
+                  <button
+                    onClick={() => {
+                      setEditProfileName(companyName)
+                      setEditProfileDesc(companyProfile?.description ?? '')
+                      setEditProfileLoc(companyProfile?.location ?? '')
+                      setEditProfileAddress(companyProfile?.address ?? '')
+                      setEditProfilePostal(companyProfile?.postal_code ?? '')
+                      setEditProfileIndustry(companyProfile?.industry ?? '')
+                      setEditProfileIndustryOther('')
+                      setEditProfileSize(companyProfile?.size ?? '')
+                      setEditProfileError('')
+                      setEditProfileOpen(true)
+                    }}
+                    style={{ padding: '7px 14px', border: '1.5px solid #E5E7EB', borderRadius: '8px', background: 'none', fontWeight: 600, fontSize: '0.875rem', color: '#374151', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = '#9CA3AF' }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
+                  >
+                    Edit
+                  </button>
+                )}
+                <button
+                  onClick={() => { setInviteTab('manual'); openInviteModal() }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '7px 13px', border: 'none', borderRadius: '8px', background: '#F97316', fontWeight: 700, fontSize: '0.875rem', color: '#FFFFFF', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                  onMouseEnter={e => { e.currentTarget.style.background = '#EA6C0A' }}
+                  onMouseLeave={e => { e.currentTarget.style.background = '#F97316' }}
+                >
+                  <Plus size={14} strokeWidth={2.5} /> Invite
+                </button>
+              </div>
+            </div>
+
+            {!companyName ? (
+              <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                <div className="skeleton-line" style={{ height: 18, width: '40%' }} />
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <div className="skeleton-line" style={{ height: 32, width: 60, borderRadius: 8 }} />
+                  <div className="skeleton-line" style={{ height: 32, width: 72, borderRadius: 8 }} />
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div style={{ borderTop: '1px solid #E5E7EB', marginTop: 2 }} />
+
+                {[
+                  { label: 'Industry', value: companyProfile?.industry?.trim() || '—', icon: <BriefcaseBusiness size={13} strokeWidth={2.2} /> },
+                  { label: 'Number of Staff', value: companyProfile?.size?.trim() || '—', icon: <UsersRound size={13} strokeWidth={2.2} /> },
+                  { label: 'Address', value: companyProfile?.address?.trim() || '—', icon: <MapPinned size={13} strokeWidth={2.2} /> },
+                  { label: 'Description', value: companyProfile?.description?.trim() || '—', icon: <FileText size={13} strokeWidth={2.2} /> },
+                ].map((field) => (
+                  <div key={field.label} style={{ padding: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '0 0 6px' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: 6, background: 'transparent', color: '#374151', flexShrink: 0 }}>
+                        {field.icon}
+                      </span>
+                      <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#374151', margin: 0 }}>
+                        {field.label}
+                      </p>
+                    </div>
+                    <p style={{ fontWeight: 500, fontSize: '0.9375rem', color: '#111827', margin: 0, lineHeight: 1.45 }}>
+                      {field.value}
+                    </p>
+                  </div>
+                ))}
+                <div style={{ height: 0 }} />
+              </div>
+            )}
+          </div>
+        )
+      case 'activity': {
+        const unreadCount = activityLogs.filter(l => !l.is_read).length
+        const handleMarkAllRead = async () => {
+          if (!companyId) return
+          await fetch('/api/activity-log/mark-read', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ company_id: companyId }),
+          })
+          setActivityLogs(prev => prev.map(l => ({ ...l, is_read: true })))
+        }
+        return (
+          <div className="all-block-activity" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, padding: '18px 24px 20px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <FileText size={15} style={{ color: '#F97316' }} />
+                </div>
+                <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Activity Log</span>
+              </div>
+              {unreadCount > 0 && (
+                <button
+                  onClick={handleMarkAllRead}
+                  style={{ fontSize: '0.875rem', fontWeight: 700, color: '#F97316', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                >
+                  Mark all read
+                </button>
+              )}
+            </div>
+            <div style={{ borderTop: '1px solid #E5E7EB', marginBottom: 14 }} />
+            {activityLogs.length === 0 ? (
+              <p style={{ fontSize: 13, color: '#94A3B8', margin: 0, textAlign: 'center', padding: '16px 0' }}>No activity yet</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', maxHeight: 224, overflowY: 'auto' }}>
+                {activityLogs.map((log, i) => {
+                  const actionVerb: Record<string, string> = {
+                    invite_member: 'invited',
+                    remove_member: 'removed',
+                    set_active:    'activated',
+                    set_inactive:  'inactivated',
+                  }
+                  const actionIcon: Record<string, React.ReactNode> = {
+                    invite_member: <div style={{ width: 26, height: 26, borderRadius: 7, background: '#DCFCE7', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><UserPlus size={13} style={{ color: '#16A34A' }} /></div>,
+                    remove_member: <div style={{ width: 26, height: 26, borderRadius: 7, background: '#FEE2E2', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Trash2 size={13} style={{ color: '#DC2626' }} /></div>,
+                    set_active:    <div style={{ width: 26, height: 26, borderRadius: 7, background: '#DCFCE7', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><Check size={13} style={{ color: '#16A34A' }} /></div>,
+                    set_inactive:  <div style={{ width: 26, height: 26, borderRadius: 7, background: '#F1F5F9', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><X size={13} style={{ color: '#64748B' }} /></div>,
+                  }
+                  const verb = actionVerb[log.action] ?? log.action
+                  const icon = actionIcon[log.action] ?? <div style={{ width: 26, height: 26, borderRadius: 7, background: '#F1F5F9', flexShrink: 0 }} />
+                  const actor = teamMembers.find(m => m.id === log.actor_id)?.full_name ?? 'Unknown'
+                  const date = new Date(log.created_at)
+                  const timeStr = date.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })
+                  return (
+                    <div key={log.id} className="log-row-item" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: i < activityLogs.length - 1 ? '1px solid #F3F4F6' : 'none', animationDelay: `${0.22 + i * 0.06}s` }}>
+                      <div style={{ position: 'relative', flexShrink: 0 }}>
+                        {icon}
+                        {!log.is_read && (
+                          <span style={{ position: 'absolute', top: -2, right: -2, width: 7, height: 7, borderRadius: 999, background: '#F97316', border: '1.5px solid #fff' }} />
+                        )}
+                      </div>
+                      <div>
+                        <p style={{ fontSize: 13, color: '#0F172A', margin: 0, lineHeight: 1.5 }}>
+                          <span style={{ fontWeight: 600 }}>{actor}</span>
+                          {' '}{verb}{' '}
+                          <span style={{ fontWeight: 600 }}>{log.target_name ?? '—'}</span>
+                        </p>
+                        <p style={{ fontSize: 11, color: '#94A3B8', margin: '2px 0 0', fontWeight: 500 }}>{timeStr}</p>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )
+      }
+      case 'departments':
+        return (
+          <div className="all-block-dept" style={{ flex: 1, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, padding: '18px 24px 20px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, marginBottom: 14, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <Network size={15} style={{ color: '#F97316' }} />
+                </div>
+                <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Departments</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={openAddDepartment}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 5, border: 0, borderRadius: 10, background: OWNER_ORANGE, color: '#FFFFFF', height: 34, padding: '0 11px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                >
+                  <Plus size={14} /> Add
+                </button>
+              </div>
+            </div>
+            <div style={{ borderTop: '1px solid #E5E7EB', marginBottom: 14 }} />
+            {companyDepartments.length === 0 ? (
+              <p style={{ fontSize: 13, color: '#94A3B8', margin: 0, textAlign: 'center', padding: '16px 0' }}>No departments yet</p>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                {companyDepartments.map(dept => {
+                  const mgrCount = teamMembers.filter(m => m.role === 'Manager' && m.department_id === dept.id).length
+                  const empCount = teamMembers.filter(m => m.role === 'Employee' && m.department_id === dept.id).length
+                  return (
+                    <div
+                      key={dept.id}
+                      onClick={() => setHighlightDeptId(prev => prev === dept.id ? null : dept.id)}
+                      className="dept-card-item"
+                      style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '14px 16px', background: highlightDeptId === dept.id ? '#FFF7ED' : '#F9FAFB', border: `1px solid ${highlightDeptId === dept.id ? '#F97316' : '#E5E7EB'}`, borderRadius: 10, cursor: 'pointer', transition: 'border-color 0.15s, background 0.15s', animationDelay: `${0.28 + companyDepartments.indexOf(dept) * 0.07}s` }}
+                    >
+                      <div>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
+                          <span style={{ width: 8, height: 8, borderRadius: 999, background: deptColor(dept.id), flexShrink: 0 }} />
+                          <span style={{ fontSize: '0.9375rem', fontWeight: 600, color: '#374151' }}>{dept.name}</span>
+                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 999, background: '#FFF7ED', color: '#EA580C', flexShrink: 0 }}>
+                              <UserCog size={14} />
+                            </span>
+                            <span style={{ fontSize: 15, fontWeight: 700, color: '#111827' }}>{mgrCount}</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 999, background: '#F3F4F6', color: '#4B5563', flexShrink: 0 }}>
+                              <UserRound size={14} />
+                            </span>
+                            <span style={{ fontSize: 15, fontWeight: 700, color: '#111827' }}>{empCount}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, position: 'relative' }}>
+                        <button
+                          onClick={() => openEditDepartment(dept)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', alignItems: 'center', color: '#9CA3AF', borderRadius: 6, flexShrink: 0, marginTop: 1 }}
+                          onMouseEnter={e => { e.currentTarget.style.background = '#E5E7EB'; (e.currentTarget as HTMLButtonElement).style.color = '#F97316' }}
+                          onMouseLeave={e => { e.currentTarget.style.background = 'none'; (e.currentTarget as HTMLButtonElement).style.color = '#9CA3AF' }}
+                        >
+                          <Pencil size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )
+      case 'casual':
+        return (
+          <TeamShowcaseCard
+            className="all-block-cw"
+            icon={<HardHat size={15} style={{ color: sharedIconColor }} />}
+            title="Casual Workers"
+            rightContent={<CWStatusBar activeCount={cwActiveCount} inactiveCount={cwInactiveCount} totalCount={casualWorkers.length} />}
+            searchValue={cwSearchQuery}
+            onSearchChange={setCwSearchQuery}
+          >
+            {(() => {
+              if (teamLoading) {
+                return (
+                  <div style={{ display: 'flex', justifyContent: 'center', padding: '30px 0' }}>
+                    <Spinner size={16} dark />
+                  </div>
+                )
+              }
+
+              if (casualWorkers.length === 0) {
+                return (
+                  <div style={{ padding: '28px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                    <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No casual workers have joined yet</p>
+                  </div>
+                )
+              }
+
+              return (
+                <div
+                  ref={cwScrollRef}
+                  onWheel={handleCwWheel}
+                  className="cw-preview-scroll"
+                  style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 16, paddingTop: 6, marginTop: -6, paddingRight: 4, scrollBehavior: 'auto' }}
+                >
+                  {casualWorkers.map(worker => {
+                    const rawStatus = (worker.worker_status ?? 'active').toLowerCase()
+                    const displayStatus = rawStatus === 'active' ? 'Active' : 'Inactive'
+                    const matchesSearch = normalizedCwSearch.length === 0 || worker.full_name.toLowerCase().includes(normalizedCwSearch)
+                    return (
+                      <CasualWorkerPreviewCard
+                        key={worker.id}
+                        name={worker.full_name}
+                        lastShift="—"
+                        totalVisits={0}
+                        status={displayStatus}
+                        photoUrl={worker.profile_photo_url ?? null}
+                        highlighted={normalizedCwSearch.length > 0 && matchesSearch}
+                        dimmed={normalizedCwSearch.length > 0 && !matchesSearch}
+                        onClick={() => {
+                          setSelectedCWPreview({
+                            id: worker.id,
+                            name: worker.full_name,
+                            lastShift: '—',
+                            totalVisits: 0,
+                            status: displayStatus,
+                            inactiveReason: worker.inactivate_reason || null,
+                            email: worker.email_address || null,
+                            dateOfBirth: worker.date_of_birth || null,
+                            phoneNumber: worker.phone_number || null,
+                            photoUrl: worker.profile_photo_url || null,
+                          })
+                          setCWApplication(null)
+                          setCWApplicationLoading(true)
+                          fetch(`/api/team/cw-application?user_id=${worker.id}`)
+                            .then(r => r.json())
+                            .then(d => { if (d.success) setCWApplication(d.application) })
+                            .catch(() => {})
+                            .finally(() => setCWApplicationLoading(false))
+                        }}
+                      />
+                    )
+                  })}
+                </div>
+              )
+            })()}
+          </TeamShowcaseCard>
+        )
+      case 'internal':
+        return (
+          <TeamShowcaseCard
+            className="all-block-internal"
+            icon={<Users size={15} style={{ color: sharedIconColor }} />}
+            title="Internal Members"
+            rightContent={<InternalMembersBar partnerCount={partnerMembers.length} managerCount={managerMembers.length} employeeCount={employeeMembers.length} />}
+            searchValue={internalSearchQuery}
+            onSearchChange={setInternalSearchQuery}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {roleGroups.map((group, gi) => (
+                <RoleGroupCard
+                  key={group.label}
+                  icon={group.icon}
+                  label={group.label}
+                  count={group.members.length}
+                  emptyText={group.emptyText}
+                >
+                  <div
+                    ref={el => { roleScrollRefs.current[gi] = el }}
+                    onWheel={e => handleHorizWheel(e, roleScrollRefs.current[gi])}
+                    style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 8, paddingTop: 6, marginTop: -6, paddingRight: 4, scrollBehavior: 'auto' }}
+                  >
+                    {group.members.map(member => {
+                      const deptMatches = highlightDeptId !== null && member.department_id === highlightDeptId
+                      const searchMatches = normalizedInternalSearch.length > 0 && (
+                        member.full_name.toLowerCase().includes(normalizedInternalSearch) ||
+                        member.role.toLowerCase().includes(normalizedInternalSearch)
+                      )
+                      const isHighlighted = deptMatches || searchMatches
+                      const isDimmed = (highlightDeptId !== null || normalizedInternalSearch.length > 0) && !isHighlighted
+                      return (
+                        <button
+                          key={member.id}
+                          type="button"
+                          onClick={() => setProfileMember(member)}
+                          className="internal-member-card"
+                          style={{
+                            flex: '0 0 110px',
+                            width: 110,
+                            minWidth: 110,
+                            maxWidth: 110,
+                            height: 128,
+                            padding: '10px 1px',
+                            borderRadius: 8,
+                            border: isHighlighted ? '2px solid #F97316' : '1.5px solid #E5E7EB',
+                            background: isHighlighted ? '#FFF7ED' : '#FFFFFF',
+                            boxShadow: isHighlighted ? '0 0 0 3px rgba(249,115,22,0.18), 0 4px 12px rgba(249,115,22,0.15)' : '0 1px 3px rgba(15,23,42,0.06)',
+                            flexShrink: 0,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                            cursor: 'pointer',
+                            textAlign: 'center',
+                            opacity: isDimmed ? 0.35 : 1,
+                            transition: 'box-shadow 0.22s ease, border-color 0.22s ease, transform 0.22s ease, opacity 0.22s ease, background 0.22s ease',
+                          }}
+                        >
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, width: '100%' }}>
+                            <RoleAvatar role={member.role} size={80} photoUrl={member.profile_photo_url ?? null} />
+                            <p style={{ fontWeight: 700, fontSize: '0.875rem', color: '#0F172A', margin: 0, lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: '-0.2px', maxWidth: '100%' }}>
+                              {member.full_name}
+                            </p>
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </RoleGroupCard>
+              ))}
+            </div>
+          </TeamShowcaseCard>
+        )
+    }
+  }
 
   useLayoutEffect(() => {
     const container = tabBarRef.current
@@ -2085,7 +3071,7 @@ export default function TeamPage() {
   }
 
   return (
-    <div style={{ display: 'flex', height: '100vh', background: '#F1F5F9', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+    <div style={{ display: 'flex', height: '100vh', background: '#F1F5F9' }}>
       <style>{`
         ${teamTabKeyframes}
         @keyframes memberFadeIn {
@@ -2152,6 +3138,14 @@ export default function TeamPage() {
           box-shadow: 0 6px 18px rgba(0,0,0,0.13) !important;
           transform: translateY(-2px) scale(1.02) !important;
           z-index: 10;
+        }
+        .org-dept-col {
+          transition: box-shadow 0.18s ease, transform 0.18s ease, border-color 0.18s ease !important;
+        }
+        .org-dept-col:hover {
+          box-shadow: 0 10px 28px rgba(0,0,0,0.12) !important;
+          transform: translateY(-3px) !important;
+          border-color: #F97316 !important;
         }
         .cw-preview-card {
           flex: 0 0 110px !important;
@@ -2306,6 +3300,26 @@ export default function TeamPage() {
 
           <div key={teamViewTab} style={{ animation: 'teamTabContentIn 0.24s ease-out both' }}>
           {teamViewTab === 'all' && (() => {
+            const leftBlockIds = allBlockOrder.slice(0, 3)
+            const rightBlockIds = allBlockOrder.slice(3)
+            return (
+              <div style={{ display: 'flex', gap: 18, alignItems: 'stretch' }}>
+                <div style={{ flex: '0 0 500px', width: 500, display: 'flex', flexDirection: 'column', gap: 18 }}>
+                  {leftBlockIds.map(blockId => (
+                    <div key={blockId} style={{ minWidth: 0 }}>
+                      {renderAllBlockFrame(blockId, renderAllBlockContent(blockId))}
+                    </div>
+                  ))}
+                </div>
+                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 18 }}>
+                  {rightBlockIds.map(blockId => (
+                    <div key={blockId} style={{ minWidth: 0 }}>
+                      {renderAllBlockFrame(blockId, renderAllBlockContent(blockId))}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )
             const casualWorkers = teamMembers
               .filter(m => m.role === 'Casual Worker')
               .sort((a, b) => {
@@ -2320,19 +3334,19 @@ export default function TeamPage() {
             const roleGroups = [
               {
                 label: 'Partner',
-                icon: <Crown size={15} style={{ color: sharedIconColor }} />,
+                icon: <Crown size={13} strokeWidth={2.2} style={{ color: '#374151' }} />,
                 members: partnerMembers,
                 emptyText: 'No partners have joined yet',
               },
               {
                 label: 'Manager',
-                icon: <UserCog size={15} style={{ color: sharedIconColor }} />,
+                icon: <UserCog size={13} strokeWidth={2.2} style={{ color: '#374151' }} />,
                 members: managerMembers,
                 emptyText: 'No managers have joined yet',
               },
               {
                 label: 'Employee',
-                icon: <UserRound size={15} style={{ color: sharedIconColor }} />,
+                icon: <UserRound size={13} strokeWidth={2.2} style={{ color: '#374151' }} />,
                 members: employeeMembers,
                 emptyText: 'No employees have joined yet',
               },
@@ -2503,11 +3517,22 @@ export default function TeamPage() {
 
                   {/* Departments block */}
                   <div className="all-block-dept" style={{ flex: 1, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, padding: '18px 24px 20px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                      <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                        <Network size={15} style={{ color: '#F97316' }} />
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, marginBottom: 14, flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                          <Network size={15} style={{ color: '#F97316' }} />
+                        </div>
+                        <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Departments</span>
                       </div>
-                      <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Departments</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          onClick={openAddDepartment}
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: 5, border: 0, borderRadius: 10, background: OWNER_ORANGE, color: '#FFFFFF', height: 34, padding: '0 11px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                        >
+                          <Plus size={14} /> Add
+                        </button>
+                      </div>
                     </div>
                     <div style={{ borderTop: '1px solid #E5E7EB', marginBottom: 14 }} />
                     {companyDepartments.length === 0 ? (
@@ -2522,33 +3547,38 @@ export default function TeamPage() {
                             key={dept.id}
                             onClick={() => setHighlightDeptId(prev => prev === dept.id ? null : dept.id)}
                             className="dept-card-item"
-                            style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '10px 12px', background: highlightDeptId === dept.id ? '#FFF7ED' : '#F9FAFB', border: `1px solid ${highlightDeptId === dept.id ? '#F97316' : '#E5E7EB'}`, borderRadius: 10, cursor: 'pointer', transition: 'border-color 0.15s, background 0.15s', animationDelay: `${0.28 + companyDepartments.indexOf(dept) * 0.07}s` }}
+                            style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '14px 16px', background: highlightDeptId === dept.id ? '#FFF7ED' : '#F9FAFB', border: `1px solid ${highlightDeptId === dept.id ? '#F97316' : '#E5E7EB'}`, borderRadius: 10, cursor: 'pointer', transition: 'border-color 0.15s, background 0.15s', animationDelay: `${0.28 + companyDepartments.indexOf(dept) * 0.07}s` }}
                           >
                             <div>
-                              <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>{dept.name}</span>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                                  <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 22, height: 22, borderRadius: 999, background: '#FFF7ED', color: '#EA580C', flexShrink: 0 }}>
-                                    <UserCog size={11} />
+                              <span style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10 }}>
+                                <span style={{ width: 8, height: 8, borderRadius: 999, background: deptColor(dept.id), flexShrink: 0 }} />
+                                <span style={{ fontSize: '0.9375rem', fontWeight: 600, color: '#374151' }}>{dept.name}</span>
+                              </span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 999, background: '#FFF7ED', color: '#EA580C', flexShrink: 0 }}>
+                                    <UserCog size={14} />
                                   </span>
-                                  <span style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>{mgrCount}</span>
+                                  <span style={{ fontSize: 15, fontWeight: 700, color: '#111827' }}>{mgrCount}</span>
                                 </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                                  <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 22, height: 22, borderRadius: 999, background: '#F3F4F6', color: '#4B5563', flexShrink: 0 }}>
-                                    <UserRound size={11} />
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 999, background: '#F3F4F6', color: '#4B5563', flexShrink: 0 }}>
+                                    <UserRound size={14} />
                                   </span>
-                                  <span style={{ fontSize: 12, fontWeight: 700, color: '#111827' }}>{empCount}</span>
+                                  <span style={{ fontSize: 15, fontWeight: 700, color: '#111827' }}>{empCount}</span>
                                 </div>
                               </div>
                             </div>
-                            <button
-                              onClick={() => openEditDepartment(dept)}
-                              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', alignItems: 'center', color: '#9CA3AF', borderRadius: 6, flexShrink: 0, marginTop: 1 }}
-                              onMouseEnter={e => { e.currentTarget.style.background = '#E5E7EB'; (e.currentTarget as HTMLButtonElement).style.color = '#F97316' }}
-                              onMouseLeave={e => { e.currentTarget.style.background = 'none'; (e.currentTarget as HTMLButtonElement).style.color = '#9CA3AF' }}
-                            >
-                              <Pencil size={13} />
-                            </button>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, position: 'relative' }}>
+                              <button
+                                onClick={() => openEditDepartment(dept)}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', alignItems: 'center', color: '#9CA3AF', borderRadius: 6, flexShrink: 0, marginTop: 1 }}
+                                onMouseEnter={e => { e.currentTarget.style.background = '#E5E7EB'; (e.currentTarget as HTMLButtonElement).style.color = '#F97316' }}
+                                onMouseLeave={e => { e.currentTarget.style.background = 'none'; (e.currentTarget as HTMLButtonElement).style.color = '#9CA3AF' }}
+                              >
+                                <Pencil size={13} />
+                              </button>
+                            </div>
                           </div>
                           )
                         })}
@@ -2562,6 +3592,8 @@ export default function TeamPage() {
                       icon={<HardHat size={15} style={{ color: sharedIconColor }} />}
                       title="Casual Workers"
                       rightContent={<CWStatusBar activeCount={cwActiveCount} inactiveCount={cwInactiveCount} totalCount={casualWorkers.length} />}
+                      searchValue={cwSearchQuery}
+                      onSearchChange={setCwSearchQuery}
                     >
                       {(() => {
                         if (teamLoading) {
@@ -2590,6 +3622,7 @@ export default function TeamPage() {
                             {casualWorkers.map(worker => {
                               const rawStatus = (worker.worker_status ?? 'active').toLowerCase()
                               const displayStatus = rawStatus === 'active' ? 'Active' : 'Inactive'
+                              const matchesSearch = normalizedCwSearch.length === 0 || worker.full_name.toLowerCase().includes(normalizedCwSearch)
                               return (
                                 <CasualWorkerPreviewCard
                                   key={worker.id}
@@ -2598,6 +3631,8 @@ export default function TeamPage() {
                                   totalVisits={0}
                                   status={displayStatus}
                                   photoUrl={worker.profile_photo_url ?? null}
+                                  highlighted={normalizedCwSearch.length > 0 && matchesSearch}
+                                  dimmed={normalizedCwSearch.length > 0 && !matchesSearch}
                                   onClick={() => {
                                     setSelectedCWPreview({
                                       id: worker.id,
@@ -2627,12 +3662,14 @@ export default function TeamPage() {
                       })()}
                     </TeamShowcaseCard>
 
-                  <TeamShowcaseCard
-                    className="all-block-internal"
-                    icon={<Users size={15} style={{ color: sharedIconColor }} />}
-                    title="Internal Members"
-                    rightContent={<InternalMembersBar partnerCount={partnerMembers.length} managerCount={managerMembers.length} employeeCount={employeeMembers.length} />}
-                  >
+                    <TeamShowcaseCard
+                      className="all-block-internal"
+                      icon={<Users size={15} style={{ color: sharedIconColor }} />}
+                      title="Internal Members"
+                      rightContent={<InternalMembersBar partnerCount={partnerMembers.length} managerCount={managerMembers.length} employeeCount={employeeMembers.length} />}
+                      searchValue={internalSearchQuery}
+                      onSearchChange={setInternalSearchQuery}
+                    >
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                     {roleGroups.map((group, gi) => (
                       <RoleGroupCard
@@ -2642,14 +3679,19 @@ export default function TeamPage() {
                         count={group.members.length}
                         emptyText={group.emptyText}
                       >
-                        <div
+                          <div
                           ref={el => { roleScrollRefs.current[gi] = el }}
                           onWheel={e => handleHorizWheel(e, roleScrollRefs.current[gi])}
                           style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 8, paddingTop: 6, marginTop: -6, paddingRight: 4, scrollBehavior: 'auto' }}
                         >
                           {group.members.map(member => {
-                            const isHighlighted = highlightDeptId !== null && member.department_id === highlightDeptId
-                            const isDimmed = highlightDeptId !== null && !isHighlighted
+                            const deptMatches = highlightDeptId !== null && member.department_id === highlightDeptId
+                            const searchMatches = normalizedInternalSearch.length > 0 && (
+                              member.full_name.toLowerCase().includes(normalizedInternalSearch) ||
+                              member.role.toLowerCase().includes(normalizedInternalSearch)
+                            )
+                            const isHighlighted = deptMatches || searchMatches
+                            const isDimmed = (highlightDeptId !== null || normalizedInternalSearch.length > 0) && !isHighlighted
                             return (
                               <button
                                 key={member.id}
@@ -2664,7 +3706,7 @@ export default function TeamPage() {
                                   height: 128,
                                   padding: '10px 1px',
                                   borderRadius: 8,
-                                  border: isHighlighted ? '2px solid #F97316' : '1.5px solid #0F172A',
+                                  border: isHighlighted ? '2px solid #F97316' : '1.5px solid #E5E7EB',
                                   background: isHighlighted ? '#FFF7ED' : '#FFFFFF',
                                   boxShadow: isHighlighted ? '0 0 0 3px rgba(249,115,22,0.18), 0 4px 12px rgba(249,115,22,0.15)' : '0 1px 3px rgba(15,23,42,0.06)',
                                   flexShrink: 0,
@@ -2702,19 +3744,22 @@ export default function TeamPage() {
               className="org-chart-wrap"
               icon={<Network size={15} style={{ color: '#F97316' }} />}
               title="Organisation Chart"
+              searchValue={orgSearchQuery}
+              onSearchChange={setOrgSearchQuery}
               fillHeight
             >
               {teamLoading ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#9CA3AF', fontSize: '0.9375rem' }}>
                   <Spinner size={16} dark /> Loading…
                 </div>
-              ) : (
-                <OrgChartTree
+                ) : (
+                  <OrgChartTree
                   topMembers={teamMembers.filter(m => m.role === 'Owner' || m.role === 'Partner')}
                   departments={companyDepartments}
                   teamMembers={teamMembers}
                   onMemberClick={(m) => setProfileMember(m)}
                   onDepartmentClick={(department) => openEditDepartment(department)}
+                  searchQuery={normalizedOrgSearch}
                 />
               )}
             </TeamShowcaseCard>
@@ -2724,42 +3769,20 @@ export default function TeamPage() {
       </main>
 
       {/* ── Department Modal ───────────────────────────────────────────── */}
-      {departmentModal && activeDepartment && (
-        <ModalOverlay maxWidth="480px" onClose={() => { if (!departmentActionLoading) { setDepartmentModal(null); setActiveDepartment(null); setDepartmentActionError('') } }}>
+      {/* ── Add/Edit/Delete Department Modal ──────────────────────────── */}
+      {departmentModal && (
+        <ModalOverlay onClose={() => setDepartmentModal(null)} maxWidth="420px">
           <ModalBox>
-            <div style={{ display: 'flex', flexDirection: 'column' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', flexShrink: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <Building2 size={15} color="#fff" strokeWidth={2} />
-                  </div>
-                  <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>Edit Department</h2>
-                </div>
-                <button
-                  onClick={() => { if (!departmentActionLoading) { setDepartmentModal(null); setActiveDepartment(null); setDepartmentActionError('') } }}
-                  style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8, flexShrink: 0 }}
-                >
-                  <X size={16} />
-                </button>
-              </div>
-
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault()
-                  void handleSaveDepartment()
-                }}
-              >
-                <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+            {departmentModal === 'edit' && activeDepartment ? (
+              <>
+                <ModalHeader title="Edit Department" icon={<Network size={15} color="#fff" strokeWidth={2} />} onClose={() => setDepartmentModal(null)} />
+                <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
                   <div>
-                    <label style={modalLabelStyle}>Department Name</label>
-                    <input
-                      autoFocus
-                      value={departmentNameInput}
-                      onChange={(e) => setDepartmentNameInput(e.target.value)}
-                      style={modalInputStyle}
-                      placeholder="Finance"
-                    />
+                    <label style={modalLabelStyle}>Department name</label>
+                    <input value={departmentNameInput} onChange={e => setDepartmentNameInput(e.target.value)} style={modalInputStyle} placeholder="Operations" />
                   </div>
+
+                  <DepartmentColorPicker value={departmentColorInput} onChange={setDepartmentColorInput} />
 
                   <div>
                     <label style={modalLabelStyle}>Department Manager</label>
@@ -2779,38 +3802,105 @@ export default function TeamPage() {
                       />
                     )}
                   </div>
+                  {departmentActionError && <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>{departmentActionError}</div>}
+                  {departmentManagerActionError && <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>{departmentManagerActionError}</div>}
                 </div>
-
-                {departmentActionError && (
-                  <div style={{ margin: '0 24px 8px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>
-                    {departmentActionError}
-                  </div>
-                )}
-                {departmentManagerActionError && (
-                  <div style={{ margin: '0 24px 8px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>
-                    {departmentManagerActionError}
-                  </div>
-                )}
-
-                <div style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                  <button
-                    type="button"
-                    onClick={handleDeleteDepartment}
-                    disabled={departmentActionLoading}
-                    style={{ padding: '7px 16px', background: departmentActionLoading ? '#EF4444' : 'linear-gradient(135deg, #EF4444, #DC2626)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: departmentActionLoading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: departmentActionLoading ? 0.65 : 1, marginRight: 'auto' }}
-                  >
-                    {departmentActionLoading ? <Spinner size={13} /> : <Trash2 size={13} />} Delete
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={departmentActionLoading}
-                    style={{ padding: '7px 18px', background: departmentActionLoading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: departmentActionLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: departmentActionLoading ? 0.65 : 1 }}
-                  >
-                    {departmentActionLoading ? <Spinner size={13} /> : <Check size={13} />} Save Changes
-                  </button>
+                <div style={{ padding: '0 24px 20px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10 }}>
+                  {(() => {
+                    const hasMembers = teamMembers.filter(m => m.department_id === activeDepartment.id).length > 0
+                    const deleteDisabled = departmentActionLoading || hasMembers
+                    return (
+                      <button type="button" onClick={handleDeleteDepartment} disabled={deleteDisabled} title={hasMembers ? 'Reassign or remove all members before deleting this department' : undefined} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: 'none', borderRadius: 8, background: deleteDisabled ? '#F3A8A8' : 'linear-gradient(135deg, #EF4444, #DC2626)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: '0.8125rem', fontWeight: 600, cursor: deleteDisabled ? 'not-allowed' : 'pointer', opacity: deleteDisabled ? 0.7 : 1, marginRight: 'auto' }}>{departmentActionLoading ? <Spinner size={13} /> : <Trash2 size={13} />} Delete</button>
+                    )
+                  })()}
+                  {(() => {
+                    const editDisabled = departmentActionLoading || !departmentNameInput.trim()
+                    return (
+                      <button type="button" onClick={handleSaveDepartment} disabled={editDisabled} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: editDisabled ? '#FDA060' : '#F97316', color: '#FFFFFF', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: editDisabled ? 'not-allowed' : 'pointer', opacity: editDisabled ? 0.65 : 1 }}>{departmentActionLoading ? <Spinner /> : <Check size={16} />} Save</button>
+                    )
+                  })()}
                 </div>
-              </form>
-            </div>
+              </>
+            ) : (
+              <>
+                <ModalHeader title={departmentModal === 'add' ? 'Add Department' : 'Edit Department'} icon={<Network size={15} color="#fff" strokeWidth={2} />} onClose={() => setDepartmentModal(null)} />
+                <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  {departmentModal === 'add' && (
+                    <div style={{ alignSelf: 'flex-start', marginBottom: 8 }}>
+                      <div style={{ display: 'inline-flex', border: '1.5px solid #E5E7EB', borderRadius: 9, overflow: 'hidden' }}>
+                        {(['manual', 'import'] as const).map(tab => (
+                          <button key={tab} type="button" onClick={() => setDepartmentModalTab(tab)} style={{ border: 0, height: 34, padding: '0 20px', background: departmentModalTab === tab ? '#0F172A' : '#FFFFFF', color: departmentModalTab === tab ? '#FFFFFF' : '#374151', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}>
+                            {tab === 'manual' ? 'Single' : 'Import'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div key={departmentModalTab} style={{ display: 'flex', flexDirection: 'column', gap: 14, animation: 'tabFadeIn 0.2s ease-out' }}>
+                  {departmentModalTab === 'manual' ? (
+                    <>
+                      <div>
+                        <label style={modalLabelStyle}>Department name</label>
+                        <input value={departmentNameInput} onChange={e => setDepartmentNameInput(e.target.value)} style={modalInputStyle} placeholder="Operations" />
+                      </div>
+                      <DepartmentColorPicker value={departmentColorInput} onChange={setDepartmentColorInput} />
+                    </>
+                  ) : (
+                    <>
+                      {/* Sample CSV preview */}
+                      <div>
+                        <p style={{ margin: '0 0 8px', fontSize: '0.8125rem', fontWeight: 600, color: '#374151' }}>Sample CSV format</p>
+                        <div style={{ border: '1.5px solid #E5E7EB', borderRadius: 8, overflow: 'hidden', fontSize: '0.8125rem' }}>
+                          <div style={{ background: '#F9FAFB', borderBottom: '1px solid #E5E7EB' }}>
+                            <div style={{ padding: '7px 12px', fontWeight: 700, color: '#6B7280', fontFamily: "'Inter', system-ui, sans-serif" }}>Department</div>
+                          </div>
+                          {['Operations', 'Marketing', 'Engineering'].map((name, i) => (
+                            <div key={i} style={{ borderBottom: i < 2 ? '1px solid #F3F4F6' : 'none' }}>
+                              <div style={{ padding: '6px 12px', color: '#374151' }}>{name}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', border: '1.5px solid #E5E7EB', borderRadius: 8, cursor: 'pointer', background: '#FFFFFF' }}
+                        onMouseEnter={e => { e.currentTarget.style.borderColor = '#F97316' }}
+                        onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
+                      >
+                        <input
+                          type="file"
+                          accept=".csv,text/csv,text/plain"
+                          onChange={e => void handleDepartmentImportFile(e.target.files?.[0] ?? null)}
+                          style={{ display: 'none' }}
+                        />
+                        <Upload size={15} style={{ color: '#9CA3AF', flexShrink: 0 }} />
+                        <span style={{ fontSize: '0.9375rem', color: departmentImportRows.length > 0 ? '#111827' : '#9CA3AF' }}>
+                          {departmentImportRows.length > 0 ? `${departmentImportRows.length} row(s) ready to import` : 'Choose a CSV file'}
+                        </span>
+                      </label>
+                      {departmentImportRows.length > 0 && (
+                        <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, overflow: 'hidden', maxHeight: 220, overflowY: 'auto' }}>
+                          {departmentImportRows.map(name => (
+                            <div key={name} style={{ padding: '9px 12px', borderBottom: '1px solid #F1F5F9', fontSize: '0.8125rem', color: '#374151' }}>
+                              {name}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+                  </div>
+                  {departmentActionError && <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>{departmentActionError}</div>}
+                  {departmentActionResult && <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#166534' }}>{departmentActionResult}</div>}
+                </div>
+                <div style={{ padding: '0 24px 20px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10 }}>
+                  {(() => {
+                    const addDisabled = departmentActionLoading || (departmentModalTab === 'manual' ? !departmentNameInput.trim() : departmentImportRows.length === 0)
+                    return (
+                      <button type="button" onClick={handleSaveDepartment} disabled={addDisabled} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: addDisabled ? '#FDA060' : '#F97316', color: '#FFFFFF', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: addDisabled ? 'not-allowed' : 'pointer', opacity: addDisabled ? 0.65 : 1 }}>{departmentActionLoading ? <Spinner /> : departmentModalTab === 'import' ? <Upload size={16} /> : <Check size={16} />} Save</button>
+                    )
+                  })()}
+                </div>
+              </>
+            )}
           </ModalBox>
         </ModalOverlay>
       )}
@@ -2886,13 +3976,6 @@ export default function TeamPage() {
             )}
 
             <div style={{ display: 'flex', gap: '10px' }}>
-              <button
-                onClick={() => { setEditManagerModal(null); setEditManagerError('') }}
-                disabled={editManagerSaving}
-                style={{ flex: 1, padding: '10px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: '8px', fontWeight: 600, fontSize: '0.9375rem', color: '#6B7280', cursor: editManagerSaving ? 'not-allowed' : 'pointer' }}
-              >
-                Cancel
-              </button>
               <button
                 onClick={handleEditManagerSave}
                 disabled={editManagerSaving || editDeptLoading || !editHomeDeptId}
@@ -2979,10 +4062,9 @@ export default function TeamPage() {
       {/* ── Manage Departments Modal ─────────────────────────────────────── */}
       {manageDeptModal && (
         <div
-          onClick={() => { if (!manageDeptSaving) { setManageDeptModal(null); setManageDeptToast('') } }}
           style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}
         >
-          <div onClick={(e) => e.stopPropagation()} style={{ width: '560px' }}>
+          <div style={{ width: '560px' }}>
             <ModalBox>
               <ModalHeader
                 title={`Manage Departments — ${manageDeptModal.member.full_name}`}
@@ -3052,13 +4134,6 @@ export default function TeamPage() {
               )}
 
               <div style={{ display: 'flex', gap: '10px' }}>
-                <button
-                  onClick={() => { setManageDeptModal(null); setManageDeptToast('') }}
-                  disabled={manageDeptSaving}
-                  style={{ flex: 1, padding: '10px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: '8px', fontWeight: 600, fontSize: '0.9375rem', color: '#6B7280', cursor: manageDeptSaving ? 'not-allowed' : 'pointer' }}
-                >
-                  Cancel
-                </button>
                 <button
                   onClick={handleManageDeptSave}
                   disabled={manageDeptSaving || manageDeptLoading}
@@ -3662,9 +4737,6 @@ export default function TeamPage() {
             {/* Footer */}
             {inviteTab === 'import' && currentUserRole !== 'Manager' ? (
               <div style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                <button onClick={closeModal} style={{ padding: '7px 16px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', cursor: 'pointer' }}>
-                  Cancel
-                </button>
                 <button
                   onClick={confirmMemberImport}
                   disabled={memberImportLoading || memberImportRows.length === 0}
@@ -3679,9 +4751,6 @@ export default function TeamPage() {
                 title={noManagersInDept ? 'Add a manager to this department first' : undefined}
                 style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}
               >
-                <button onClick={closeModal} style={{ padding: '7px 16px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', cursor: 'pointer' }}>
-                  Cancel
-                </button>
                 <button
                   onClick={handleSendInvite}
                   disabled={sendDisabled}
@@ -3816,11 +4885,6 @@ export default function TeamPage() {
               {/* Footer */}
               <div style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
                 <button
-                  type="button"
-                  onClick={() => setEditProfileOpen(false)}
-                  style={{ padding: '7px 16px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', cursor: 'pointer' }}
-                >Cancel</button>
-                <button
                   type="submit"
                   disabled={editProfileLoading}
                   style={{ padding: '7px 18px', background: editProfileLoading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: editProfileLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: editProfileLoading ? 0.65 : 1 }}
@@ -3855,6 +4919,30 @@ export default function TeamPage() {
         }}>
           <Check size={15} style={{ color: '#10B981', flexShrink: 0 }} />
           {editProfileSuccess}
+        </div>
+      )}
+      {departmentSuccessToast && (
+        <div style={{
+          position: 'fixed',
+          bottom: 28,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 9999,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          background: '#0F172A',
+          color: '#FFFFFF',
+          borderRadius: 12,
+          padding: '12px 20px',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
+          fontSize: 13,
+          fontWeight: 600,
+          whiteSpace: 'nowrap',
+          animation: 'fadeSlideUpToast 0.22s ease',
+        }}>
+          <Check size={15} style={{ color: '#10B981', flexShrink: 0 }} />
+          {departmentSuccessToast}
         </div>
       )}
       {inviteSuccessToast && (

@@ -1534,7 +1534,6 @@ export default function OwnerCommunicationPage() {
               {editError && <div style={{ fontSize: 12.5, color: '#DC2626', background: '#FEF2F2', padding: '9px 12px', borderRadius: 8, fontWeight: 600 }}>{editError}</div>}
             </div>
             <div style={{ padding: '0 24px 20px', display: 'flex', gap: 10 }}>
-              <button onClick={() => setShowEditModal(false)} disabled={saving} style={cancelBtnStyle}>Cancel</button>
               <button onClick={handleSaveEdit} disabled={saving || !editTitle.trim() || !editContent.trim()} style={{ ...primaryBtnStyle, opacity: saving || !editTitle.trim() || !editContent.trim() ? 0.55 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                 {saving ? <><Spinner size={13} light /> Saving…</> : 'Save Changes'}
               </button>
@@ -1590,7 +1589,7 @@ export default function OwnerCommunicationPage() {
 
       {/* ── Compose Message Modal ── */}
       {composeOpen && (
-        <div onClick={() => { if (!composeSending) setComposeOpen(false) }} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
           <div onClick={e => e.stopPropagation()} style={{ width: 480, background: '#fff', borderRadius: 18, boxShadow: '0 24px 70px rgba(0,0,0,0.18)', display: 'flex', flexDirection: 'column', maxHeight: '88vh', overflow: 'hidden', animation: 'fadeSlideUp 0.22s ease both' }}>
             <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -1659,7 +1658,6 @@ export default function OwnerCommunicationPage() {
             </div>
 
             <div style={{ display: 'flex', gap: 10, padding: '14px 24px', borderTop: '1px solid #F0F4F8' }}>
-              <button onClick={() => setComposeOpen(false)} disabled={composeSending} style={cancelBtnStyle}>Cancel</button>
               <button onClick={handleComposeSend} disabled={composeSending || !selectedRecipient || !composeText.trim()}
                 style={{ ...primaryBtnStyle, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, opacity: (composeSending || !selectedRecipient || !composeText.trim()) ? 0.5 : 1 }}
               >

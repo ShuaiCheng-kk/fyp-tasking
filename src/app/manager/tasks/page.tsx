@@ -182,7 +182,7 @@ function isDueOverdue(due: string): boolean {
   return new Date(due) < new Date()
 }
 
-import { deptColor } from '@/lib/deptColor'
+import { deptColor, setDeptColorOverrides } from '@/lib/deptColor'
 
 const PRIORITY_ORDER: Record<string, number> = { Urgent: 0, High: 1, Medium: 2, Low: 3 }
 
@@ -654,7 +654,10 @@ export default function ManagerTasksPage() {
       fetch(`/api/manager/departments?manager_id=${internalUserId}&company_id=${companyId}`).then(r => r.json()),
     ]).then(([deptData, memberData, mgrData, managerDeptData]) => {
       const managerDeptIds = new Set((managerDeptData.success ? managerDeptData.departments : []).map((dept: { department_id: string }) => dept.department_id))
-      if (deptData.success) setDepartments(deptData.departments.filter((dept: Department) => managerDeptIds.has(dept.id)))
+      if (deptData.success) {
+        setDepartments(deptData.departments.filter((dept: Department) => managerDeptIds.has(dept.id)))
+        setDeptColorOverrides(deptData.departments)
+      }
       if (memberData.success) setMembers(memberData.members.filter((member: Member) => member.department_id && managerDeptIds.has(member.department_id)))
       if (mgrData.success) {
         setAllManagers(mgrData.managers)

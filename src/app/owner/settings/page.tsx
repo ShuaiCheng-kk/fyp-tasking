@@ -43,14 +43,13 @@ function Spinner({ size = 16, dark = false }: { size?: number; dark?: boolean })
 function ModalOverlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
   return (
     <div
-      onClick={onClose}
       style={{
         position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
         backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'center',
         justifyContent: 'center', zIndex: 100,
       }}
     >
-      <div onClick={(e) => e.stopPropagation()} style={{ width: '540px' }}>
+      <div style={{ width: '540px' }}>
         {children}
       </div>
     </div>
@@ -772,7 +771,6 @@ export default function SettingsPage() {
             <InlineError message={editError} />
 
             <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-              <button style={ghostBtn} onClick={() => setEditTarget(null)}>Cancel</button>
               <button style={primaryBtn(editLoading)} onClick={handleEdit} disabled={editLoading}>
                 {editLoading && <Spinner size={14} />}
                 Save Changes
@@ -1015,7 +1013,6 @@ export default function SettingsPage() {
             <InlineError message={addError} />
 
             <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
-              <button style={ghostBtn} onClick={() => setAddOpen(false)}>Cancel</button>
               <button style={primaryBtn(addLoading)} onClick={handleAdd} disabled={addLoading}>
                 {addLoading && <Spinner size={14} />}
                 Create Company

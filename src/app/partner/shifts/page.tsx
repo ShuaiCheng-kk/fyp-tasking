@@ -24,7 +24,7 @@ import {
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import PartnerSidebar from '@/components/PartnerSidebar'
-import { deptColor } from '@/lib/deptColor'
+import { deptColor, setDeptColorOverrides } from '@/lib/deptColor'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 import {
   DropdownMenu,
@@ -36,6 +36,7 @@ type Department = {
   id: string
   name: string
   company_id?: string
+  color?: string | null
   created_at?: string
 }
 
@@ -709,6 +710,7 @@ export default function OwnerShiftsPage() {
       if (deptData.success) {
         const nextDepartments: Department[] = (deptData.departments ?? []).sort((a: Department, b: Department) => a.name.localeCompare(b.name))
         setDepartments(nextDepartments)
+        setDeptColorOverrides(nextDepartments)
       }
       if (memberData.success) {
         const schedulable = (memberData.members ?? [])

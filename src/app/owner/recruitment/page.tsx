@@ -2287,7 +2287,7 @@ export default function OwnerRecruitmentPage() {
 
       {/* ══ Reject reason modal ════════════════════════════════════════════════ */}
       {rejectModalOpen && createPortal(
-        <div onClick={() => { setRejectModalOpen(false); setRejectReason(''); setPendingRejectId('') }} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.42)', zIndex: 10000, display: 'grid', placeItems: 'center', padding: 20, backdropFilter: 'blur(4px)', animation: 'overlayFadeIn 0.18s ease-out' }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.42)', zIndex: 10000, display: 'grid', placeItems: 'center', padding: 20, backdropFilter: 'blur(4px)', animation: 'overlayFadeIn 0.18s ease-out' }}>
           <div onClick={e => e.stopPropagation()} style={{ width: 420, background: '#FFFFFF', borderRadius: 20, padding: '24px', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
               <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#111827' }}>Reject Job Posting</h2>
@@ -2786,7 +2786,7 @@ export default function OwnerRecruitmentPage() {
 
       {/* ══ Delete confirm modal (draft + live) ══════════════════════════════ */}
       {deleteConfirm && (
-        <div onClick={() => setDeleteConfirm(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.42)', zIndex: 110, display: 'grid', placeItems: 'center', padding: 20, backdropFilter: 'blur(4px)', animation: 'overlayFadeIn 0.18s ease-out' }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.42)', zIndex: 110, display: 'grid', placeItems: 'center', padding: 20, backdropFilter: 'blur(4px)', animation: 'overlayFadeIn 0.18s ease-out' }}>
           <div onClick={e => e.stopPropagation()} style={{ width: 420, background: '#FFFFFF', borderRadius: 20, padding: '24px', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
               <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#111827' }}>{deleteConfirm.isDraft === false ? 'Delete Job Posting' : 'Delete Draft'}</h2>

@@ -54,6 +54,7 @@ export const companyService = {
   async createDepartment(data: {
     name: string
     company_id: string
+    color?: string | null
   }): Promise<Department> {
     return await departmentRepository.createDepartment(data)
   },
@@ -68,17 +69,13 @@ export const companyService = {
     await companyRepository.updatePlanByOwnerId(company.owner_id, plan)
   },
 
-  async updateDepartment(department_id: string, name: string): Promise<void> {
-    await departmentRepository.updateById(department_id, name)
+  async updateDepartment(department_id: string, name: string, color?: string | null): Promise<void> {
+    await departmentRepository.updateById(department_id, name, color)
   },
 
   async deleteDepartment(department_id: string): Promise<void> {
-    const supabase = getSupabaseAdmin()
-    // Remove membership records so members no longer reference this department
-    await Promise.all([
-      supabase.from('manager_departments').delete().eq('department_id', department_id),
-      supabase.from('employee_departments').delete().eq('department_id', department_id),
-    ])
+    const memberCount = await departmentRepository.countMembers(department_id)
+    if (memberCount > 0) throw new Error('Department still has active members. Reassign or remove all members before deleting this department.')
     await departmentRepository.deleteById(department_id)
   },
 

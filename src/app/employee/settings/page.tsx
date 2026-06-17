@@ -3,10 +3,10 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
-import { CalendarOff, Clock, Plus, Check, AlertTriangle, RefreshCw, Trash2 } from 'lucide-react'
-import ManagerSidebar from '@/components/ManagerSidebar'
+import { CalendarOff, Clock, Plus, Check, AlertTriangle, RefreshCw } from 'lucide-react'
+import EmployeeSidebar from '@/components/EmployeeSidebar'
 
-const BLUE   = '#2563EB'
+const GREEN  = '#16A34A'
 const APP_BG = '#F1F5F9'
 const PANEL  = '#FFFFFF'
 const BORDER = '#E2E8F0'
@@ -30,9 +30,9 @@ type LeaveRequest = {
 
 function statusChip(status: string) {
   const map: Record<string, { bg: string; color: string; label: string }> = {
-    pending:          { bg: '#FFFBEB', color: '#B45309', label: 'Pending' },
-    approved:         { bg: '#ECFDF5', color: '#047857', label: 'Approved' },
-    rejected:         { bg: '#FEF2F2', color: '#B91C1C', label: 'Rejected' },
+    pending:  { bg: '#FFFBEB', color: '#B45309', label: 'Pending' },
+    approved: { bg: '#ECFDF5', color: '#047857', label: 'Approved' },
+    rejected: { bg: '#FEF2F2', color: '#B91C1C', label: 'Rejected' },
   }
   const s = map[status] ?? { bg: '#F1F5F9', color: MUTED, label: status }
   return (
@@ -42,7 +42,7 @@ function statusChip(status: string) {
   )
 }
 
-export default function ManagerSettingsPage() {
+export default function EmployeeSettingsPage() {
   const router = useRouter()
   const [userId, setUserId] = useState('')
   const [companyId, setCompanyId] = useState('')
@@ -80,19 +80,17 @@ export default function ManagerSettingsPage() {
 
       const meRes = await fetch(`/api/user/me?user_id=${uid}`)
       const me = await meRes.json()
-      if (!me.success || me.user?.role !== 'Manager') { router.replace('/manager/dashboard'); return }
+      if (!me.success || me.user?.role !== 'Employee') { router.replace('/employee/dashboard'); return }
       const internalId: string = me.user.id
       setUserId(internalId)
 
       const cid = localStorage.getItem('tasking_company_id') ?? localStorage.getItem(`tasking_company_id_${uid}`) ?? ''
       setCompanyId(cid)
 
-      // Load fixed off days
       const daysRes = await fetch(`/api/user/fixed-off-days?user_id=${internalId}`)
       const daysData = await daysRes.json()
       if (daysData.success) setFixedOffDays((daysData.days ?? []).map((d: { weekday: number }) => d.weekday))
 
-      // Load leave requests
       setLoadingLeave(true)
       const leavRes = await fetch(`/api/user/leave-requests?user_id=${internalId}`)
       const leavData = await leavRes.json()
@@ -142,7 +140,7 @@ export default function ManagerSettingsPage() {
       if (!data.success) throw new Error(data.message)
       setLeaveRequests(prev => [data.request, ...prev])
       setLeaveReason('')
-      setLeaveMsg({ type: 'ok', text: 'Leave request submitted. Your manager/owner will review it.' })
+      setLeaveMsg({ type: 'ok', text: 'Leave request submitted. Your manager will review it.' })
     } catch (err) {
       setLeaveMsg({ type: 'err', text: err instanceof Error ? err.message : 'Failed to submit' })
     } finally {
@@ -152,9 +150,9 @@ export default function ManagerSettingsPage() {
 
   return (
     <div style={{ minHeight: '100vh', background: APP_BG, fontFamily: 'system-ui, -apple-system, sans-serif' }}>
-      <ManagerSidebar />
+      <EmployeeSidebar />
       <main style={{ marginLeft: 64, minHeight: '100vh' }}>
-        <header style={{ height: 64, background: '#1E3A5F', borderBottom: '1px solid #163050', display: 'flex', alignItems: 'center', padding: '0 32px', position: 'sticky', top: 0, zIndex: 10 }}>
+        <header style={{ height: 64, background: '#14532D', borderBottom: '1px solid #0F3F24', display: 'flex', alignItems: 'center', padding: '0 32px', position: 'sticky', top: 0, zIndex: 10 }}>
           <h1 style={{ margin: 0, fontSize: 19, fontWeight: 800, color: '#FFFFFF' }}>Settings</h1>
         </header>
 
@@ -163,7 +161,7 @@ export default function ManagerSettingsPage() {
           {/* ── Fixed Off Days ── */}
           <section style={{ background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 10, overflow: 'hidden' }}>
             <div style={{ padding: '16px 20px', borderBottom: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ width: 34, height: 34, borderRadius: 8, background: '#EFF6FF', color: BLUE, display: 'grid', placeItems: 'center', flexShrink: 0 }}>
+              <span style={{ width: 34, height: 34, borderRadius: 8, background: '#DCFCE7', color: GREEN, display: 'grid', placeItems: 'center', flexShrink: 0 }}>
                 <CalendarOff size={16} />
               </span>
               <div>
@@ -184,9 +182,9 @@ export default function ManagerSettingsPage() {
                         height: 36,
                         padding: '0 16px',
                         borderRadius: 999,
-                        border: selected ? `1.5px solid ${BLUE}` : `1.5px solid ${BORDER}`,
-                        background: selected ? '#EFF6FF' : '#FFFFFF',
-                        color: selected ? BLUE : MUTED,
+                        border: selected ? `1.5px solid ${GREEN}` : `1.5px solid ${BORDER}`,
+                        background: selected ? '#DCFCE7' : '#FFFFFF',
+                        color: selected ? GREEN : MUTED,
                         fontWeight: selected ? 700 : 500,
                         fontSize: 13,
                         cursor: 'pointer',
@@ -209,7 +207,7 @@ export default function ManagerSettingsPage() {
                   type="button"
                   onClick={saveDays}
                   disabled={savingDays}
-                  style={{ height: 36, padding: '0 20px', borderRadius: 8, border: 'none', background: BLUE, color: '#FFFFFF', fontWeight: 700, fontSize: 13, cursor: savingDays ? 'not-allowed' : 'pointer', opacity: savingDays ? 0.7 : 1, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                  style={{ height: 36, padding: '0 20px', borderRadius: 8, border: 'none', background: GREEN, color: '#FFFFFF', fontWeight: 700, fontSize: 13, cursor: savingDays ? 'not-allowed' : 'pointer', opacity: savingDays ? 0.7 : 1, display: 'inline-flex', alignItems: 'center', gap: 6 }}
                 >
                   {savingDays ? <RefreshCw size={13} /> : <Check size={13} />}
                   {savingDays ? 'Saving…' : 'Save Changes'}
@@ -270,7 +268,6 @@ export default function ManagerSettingsPage() {
                 </button>
               </div>
 
-              {/* Request history */}
               {loadingLeave ? (
                 <p style={{ color: MUTED, fontSize: 13 }}>Loading…</p>
               ) : leaveRequests.length > 0 ? (

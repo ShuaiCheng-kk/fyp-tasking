@@ -3,12 +3,13 @@
 import { useState } from 'react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { LayoutDashboard, ClipboardList, LogOut } from 'lucide-react'
+import { LayoutDashboard, ClipboardList, LogOut, Settings } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 
 const NAV_ITEMS = [
   { label: 'Dashboard',  Icon: LayoutDashboard, href: '/employee/dashboard' },
   { label: 'Attendance', Icon: ClipboardList,   href: '/employee/attendance' },
+  { label: 'Settings',   Icon: Settings,        href: '/employee/settings' },
 ]
 
 const EMPLOYEE_GREEN = '#16A34A'
