@@ -1,12 +1,13 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import {
   AlertTriangle,
   CalendarDays,
   Check,
+  CheckCheck,
   ChevronLeft,
   ChevronRight,
   ChevronDown,
@@ -14,6 +15,7 @@ import {
   MoreHorizontal,
   Pencil,
   Plus,
+  GripVertical,
   Sparkles,
   Trash2,
   Upload,
@@ -23,13 +25,13 @@ import {
   X,
   Crown,
 } from 'lucide-react'
-import { ShiftSuggestion } from '@/types/AI'
 import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
-import { deptColor } from '@/lib/deptColor'
+import { deptColor, setDeptColorOverrides } from '@/lib/deptColor'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
+import { AiShiftSlot, ShiftTypeInput } from '@/types/SchedulingRule'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -40,6 +42,7 @@ type Department = {
   id: string
   name: string
   company_id?: string
+  color?: string | null
   created_at?: string
 }
 
@@ -55,6 +58,17 @@ type Company = {
   id: string
   name: string
   plan: string
+}
+
+type UserProfileSummary = {
+  user_id: string
+  full_name: string
+  role: string
+  weekly_working_hours: number
+  max_weekly_hours: number
+  contracted_weekly_hours: number
+  fixed_off_days: number[]
+  leave_requests: Array<{ id: string; request_type: string; reason: string | null; status: string; created_at: string }>
 }
 
 type DepartmentManagerAssignment = {
@@ -90,6 +104,21 @@ type ShiftEditForm = {
 
 type DepartmentModalMode = 'add' | 'edit' | 'delete' | null
 
+type AutoShiftBlock = {
+  key: string
+  department_id: string
+  department_name: string
+  shift_date: string
+  slots: AiShiftSlot[]
+  warning: string | null
+}
+
+type AiScheduleViolation = {
+  rule_name: string
+  message: string
+}
+
+
 const TIME_OPTIONS: { value: string; label: string }[] = (() => {
   const opts: { value: string; label: string }[] = []
   for (let h = 0; h < 24; h++) {
@@ -109,6 +138,24 @@ const OWNER_ORANGE = '#F97316'
 const _PANEL_BORDER_PICKER = '#E2E8F0'
 const _TEXT_DARK_PICKER = '#0F172A'
 const _MUTED_PICKER = '#64748B'
+const MEMBER_NAME_STYLE = {
+  fontSize: '0.9375rem',
+  fontWeight: 600,
+  color: '#111827',
+} as const
+const DEPARTMENT_NAME_STYLE = {
+  fontSize: '0.9375rem',
+  fontWeight: 600,
+  color: '#374151',
+  lineHeight: 1.2,
+} as const
+const SECTION_TITLE_STYLE = {
+  fontSize: 18,
+  fontWeight: 700,
+  color: '#0F172A',
+  letterSpacing: '-0.2px',
+  lineHeight: 1.2,
+} as const
 
 function TimePicker({ value, onChange, compact = false }: { value: string; onChange: (v: string) => void; compact?: boolean }) {
   const [open, setOpen] = useState(false)
@@ -216,7 +263,7 @@ function TimePicker({ value, onChange, compact = false }: { value: string; onCha
               borderRadius: 7, border: 'none',
               background: meridiem === mp ? OWNER_ORANGE : '#F1F5F9',
               color: meridiem === mp ? '#FFFFFF' : _TEXT_DARK_PICKER,
-              fontWeight: 700, fontSize: 12, padding: '7px 10px', cursor: 'pointer', lineHeight: 1,
+              fontWeight: 600, fontSize: 12, padding: '7px 10px', cursor: 'pointer', lineHeight: 1,
             }}
           >{mp}</button>
         ))}
@@ -247,11 +294,33 @@ const TEXT_DARK = '#0F172A'
 const MUTED = '#64748B'
 
 const pageKeyframes = `
-  @keyframes overlayFadeIn { from { opacity: 0 } to { opacity: 1 } }
-  @keyframes modalSlideIn  { from { opacity: 0; transform: scale(0.97) translateY(8px) } to { opacity: 1; transform: scale(1) translateY(0) } }
-  @keyframes blockSlideUp  { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
+  @keyframes overlayFadeIn    { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes modalSlideIn     { from { opacity: 0; transform: scale(0.97) translateY(8px) } to { opacity: 1; transform: scale(1) translateY(0) } }
+  @keyframes drawerSlideIn    { from { opacity: 0; transform: translateX(24px) } to { opacity: 1; transform: translateX(0) } }
+  @keyframes blockSlideUp     { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
+  @keyframes blockPopIn       { 0% { opacity: 0; transform: scale(0.93) translateY(10px) } 65% { opacity: 1; transform: scale(1.025) translateY(-2px) } 100% { transform: scale(1) translateY(0) } }
   @keyframes fadeSlideUpToast { from { opacity: 0; transform: translateX(-50%) translateY(10px) } to { opacity: 1; transform: translateX(-50%) translateY(0) } }
-  @keyframes fadeSlideUp   { from { opacity: 0; transform: scale(0.97) translateY(8px) } to { opacity: 1; transform: scale(1) translateY(0) } }
+  @keyframes fadeSlideUp      { from { opacity: 0; transform: scale(0.97) translateY(8px) } to { opacity: 1; transform: scale(1) translateY(0) } }
+  @keyframes cardStagger      { from { opacity: 0; transform: translateY(14px) scale(0.96) } to { opacity: 1; transform: translateY(0) scale(1) } }
+  @keyframes deptCardIn       { from { opacity: 0; transform: translateX(-10px) } to { opacity: 1; transform: translateX(0) } }
+  @keyframes rowSlideIn       { from { opacity: 0; transform: translateX(-8px) } to { opacity: 1; transform: translateX(0) } }
+  @keyframes tabContentIn     { from { opacity: 0; transform: translateY(8px) scale(0.99) } to { opacity: 1; transform: translateY(0) scale(1) } }
+  @keyframes shimmer          { 0% { background-position: -400px 0 } 100% { background-position: 400px 0 } }
+
+  .shift-dept-panel  { animation: blockPopIn 0.42s cubic-bezier(0.34,1.56,0.64,1) both 0.05s; }
+  .shift-timeline-panel { animation: blockSlideUp 0.38s ease both 0.12s; }
+  .shift-dept-card:hover { box-shadow: 0 4px 14px rgba(0,0,0,0.09) !important; transform: translateY(-1px) !important; }
+  .member-card       { animation: cardStagger 0.30s ease both; transition: box-shadow 0.18s ease, border-color 0.18s ease; }
+  .member-card:hover { box-shadow: 0 3px 10px rgba(0,0,0,0.08); border-color: #FDBA74 !important; }
+  .tl-row            { transition: background 0.14s ease; }
+  .tl-row:hover      { background: #FAFAFA !important; }
+  .tl-name           { transition: color 0.14s ease; }
+  .tl-row:hover .tl-name { color: #F97316; }
+  .shift-tab-content { animation: tabContentIn 0.22s ease-out both; }
+  .people-chip       { transition: box-shadow 0.16s ease, border-color 0.16s ease, transform 0.16s ease; }
+  .people-chip:hover:not([data-locked="true"]) { box-shadow: 0 3px 10px rgba(0,0,0,0.08); transform: translateY(-1px); }
+  .ai-wizard-back-circle { transition: background 0.14s ease; }
+  .ai-wizard-back-circle:hover { background: #EDE9FE; }
 `
 
 function formatDateKey(date: Date): string {
@@ -259,6 +328,25 @@ function formatDateKey(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
+}
+
+function normalizeDateInput(value: string): string {
+  const trimmed = value.trim().replace(/[^\d/-]/g, '')
+  const standardMatch = trimmed.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/)
+  if (standardMatch) {
+    const [, year, month, day] = standardMatch
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`
+  }
+  const slashMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (slashMatch) {
+    const [, month, day, year] = slashMatch
+    const normalized = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`
+    const date = new Date(`${normalized}T00:00:00`)
+    if (!Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === normalized) return normalized
+  }
+  const parsed = new Date(value)
+  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10)
+  return trimmed
 }
 
 function addDays(date: Date, days: number): Date {
@@ -297,13 +385,14 @@ function previewDateLabel(dateKey: string): string {
   return `${weekday}, ${month} ${dayNum}`
 }
 
-function TimelineDatePicker({ value, onChange, shiftDates, anchorRef, triggerStyle, minDate: minDateProp }: {
+function TimelineDatePicker({ value, onChange, shiftDates, anchorRef, triggerStyle, minDate: minDateProp, accentColor = OWNER_ORANGE }: {
   value: string
   onChange: (date: string) => void
   shiftDates: Set<string>
   anchorRef?: React.RefObject<HTMLDivElement | null>
   minDate?: string
   triggerStyle?: React.CSSProperties
+  accentColor?: string
 }) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState({ top: 0, left: 0, width: 292 })
@@ -360,7 +449,7 @@ function TimelineDatePicker({ value, onChange, shiftDates, anchorRef, triggerSty
     }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
         <button type="button" onClick={goPrev} disabled={!canGoPrevMonth} style={{ width: 26, height: 26, border: `1px solid ${PANEL_BORDER}`, borderRadius: 7, background: '#FFFFFF', cursor: canGoPrevMonth ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', color: canGoPrevMonth ? '#64748B' : '#D1D5DB' }}><ChevronLeft size={13} /></button>
-        <span style={{ fontSize: 13, fontWeight: 700, color: TEXT_DARK }}>{monthLabel}</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: TEXT_DARK }}>{monthLabel}</span>
         <button type="button" onClick={goNext} style={{ width: 26, height: 26, border: `1px solid ${PANEL_BORDER}`, borderRadius: 7, background: '#FFFFFF', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748B' }}><ChevronRight size={13} /></button>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', marginBottom: 4 }}>
@@ -371,28 +460,27 @@ function TimelineDatePicker({ value, onChange, shiftDates, anchorRef, triggerSty
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
         {cells.map((date, i) => {
           if (!date) return <div key={`e-${i}`} style={{ height: 36 }} />
-          const isTooOld = date < minSelectableStr
-          if (isTooOld) return <div key={date} style={{ height: 36 }} />
+          const isDisabled = date < minSelectableStr
           const isSel = date === value
           const isToday = date === todayStr
           const isPast = date < todayStr
           const hasShift = shiftDates.has(date)
           return (
-            <button key={date} type="button" onClick={() => { onChange(date); setOpen(false) }}
+            <button key={date} type="button" disabled={isDisabled} onClick={() => { if (isDisabled) return; onChange(date); setOpen(false) }}
               style={{
-                height: 36, width: '100%', border: isToday && !isSel ? `2px solid ${OWNER_ORANGE}` : 'none',
-                borderRadius: 8, background: isSel ? OWNER_ORANGE : 'transparent',
-                color: isSel ? '#FFFFFF' : isToday ? OWNER_ORANGE : TEXT_DARK,
-                fontWeight: isSel || isToday ? 700 : 400, fontSize: 13, cursor: 'pointer',
+                height: 36, width: '100%', border: isToday && !isSel ? `2px solid ${accentColor}` : 'none',
+                borderRadius: 8, background: isSel ? accentColor : 'transparent',
+                color: isDisabled ? '#D1D5DB' : isSel ? '#FFFFFF' : isToday ? accentColor : TEXT_DARK,
+                fontWeight: isSel || isToday ? 700 : 400, fontSize: 13, cursor: isDisabled ? 'default' : 'pointer',
                 display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: 0,
                 position: 'relative',
               }}
-              onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = '#F8FAFC' }}
-              onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = 'transparent' }}
+              onMouseEnter={e => { if (!isSel && !isDisabled) e.currentTarget.style.background = '#F8FAFC' }}
+              onMouseLeave={e => { if (!isSel && !isDisabled) e.currentTarget.style.background = 'transparent' }}
             >
               <span style={{ lineHeight: 1 }}>{parseInt(date.split('-')[2])}</span>
               {hasShift && (
-                <span style={{ width: 4, height: 4, borderRadius: '50%', background: isPast ? '#94A3B8' : isSel ? 'rgba(255,255,255,0.8)' : OWNER_ORANGE, flexShrink: 0 }} />
+                <span style={{ width: 4, height: 4, borderRadius: '50%', background: isPast ? '#94A3B8' : isSel ? 'rgba(255,255,255,0.8)' : accentColor, flexShrink: 0 }} />
               )}
             </button>
           )
@@ -404,7 +492,7 @@ function TimelineDatePicker({ value, onChange, shiftDates, anchorRef, triggerSty
   return (
     <>
       <button ref={triggerRef} type="button" onClick={handleOpen}
-        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 38, padding: '0 12px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 9, background: '#FFFFFF', cursor: 'pointer', fontSize: 13, fontWeight: 500, color: TEXT_DARK, minWidth: 140, ...triggerStyle }}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 38, padding: '0 12px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 9, background: '#FFFFFF', cursor: 'pointer', fontSize: 13, fontWeight: 500, color: TEXT_DARK, minWidth: 140, fontFamily: 'var(--font-body), system-ui, sans-serif', ...triggerStyle }}
       >
         <CalendarDays size={14} color="#64748B" style={{ flexShrink: 0 }} />
         <span>{displayLabel}</span>
@@ -449,13 +537,13 @@ function InlineDatePicker({ value, onChange, shiftDates }: {
   }
 
   return (
-    <div style={{ border: `1px solid ${PANEL_BORDER}`, borderRadius: 10, padding: '8px 10px', background: '#FAFBFC' }}>
+    <div style={{ border: `1px solid ${PANEL_BORDER}`, borderRadius: 10, padding: '8px 10px', background: '#FFFFFF' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
         <button type="button" onClick={goPrev} disabled={!canGoPrevMonth}
           style={{ width: 22, height: 22, border: `1px solid ${PANEL_BORDER}`, borderRadius: 6, background: '#fff', cursor: canGoPrevMonth ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', color: canGoPrevMonth ? '#64748B' : '#D1D5DB', padding: 0 }}>
           <ChevronLeft size={11} />
         </button>
-        <span style={{ fontSize: 12, fontWeight: 700, color: TEXT_DARK }}>{monthLabel}</span>
+        <span style={{ fontSize: 12, fontWeight: 600, color: TEXT_DARK }}>{monthLabel}</span>
         <button type="button" onClick={goNext}
           style={{ width: 22, height: 22, border: `1px solid ${PANEL_BORDER}`, borderRadius: 6, background: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748B', padding: 0 }}>
           <ChevronRight size={11} />
@@ -529,6 +617,21 @@ function roleRank(role: string): number {
   return 2
 }
 
+function buildDateRangeKeys(from: string, to: string): string[] {
+  if (!from || !to) return []
+  const start = new Date(`${from}T00:00:00`)
+  const end = new Date(`${to}T00:00:00`)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) return []
+  const dates: string[] = []
+  const cursor = new Date(start)
+  while (cursor <= end) {
+    dates.push(formatDateKey(cursor))
+    cursor.setDate(cursor.getDate() + 1)
+  }
+  return dates
+}
+
+
 function Spinner({ size = 16, dark = false }: { size?: number; dark?: boolean }) {
   return (
     <svg className="animate-spin" width={size} height={size} viewBox="0 0 18 18" style={{ display: 'inline-block', flexShrink: 0 }}>
@@ -559,6 +662,30 @@ const labelStyle: React.CSSProperties = {
   fontWeight: 600,
 }
 
+const EMPTY_DATE_SET = new Set<string>()
+
+const modalLabelStyle: React.CSSProperties = {
+  display: 'block',
+  fontWeight: 600,
+  fontSize: '0.875rem',
+  color: '#374151',
+  marginBottom: '8px',
+}
+
+const modalInputStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '10px 12px',
+  border: '1.5px solid #E5E7EB',
+  borderRadius: 8,
+  fontSize: '0.9375rem',
+  fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
+  fontWeight: 400,
+  color: '#111827',
+  outline: 'none',
+  boxSizing: 'border-box',
+  background: '#FFFFFF',
+}
+
 export default function OwnerShiftsPage() {
   const router = useRouter()
   const timelineControlsRef = useRef<HTMLDivElement>(null)
@@ -586,6 +713,11 @@ export default function OwnerShiftsPage() {
   const [departmentManagers, setDepartmentManagers] = useState<DepartmentManagerAssignment[]>([])
   const [assignmentDataLoading, setAssignmentDataLoading] = useState(false)
   const [selectedDepartmentId, setSelectedDepartmentId] = useState<string | null>(null)
+  const [departmentOrder, setDepartmentOrder] = useState<string[]>([])
+  const [draggingDepartmentId, setDraggingDepartmentId] = useState<string | null>(null)
+  const [dragOverDepartmentId, setDragOverDepartmentId] = useState<string | null>(null)
+  const departmentOrderRef = useRef<string[]>([])
+  const deptOrderKey = companyId ? `owner_shift_department_order_${companyId}` : null
 
   const [timelineRows, setTimelineRows] = useState<TimelineRow[]>([])
   const [futureRows, setFutureRows] = useState<TimelineRow[]>([])
@@ -596,6 +728,9 @@ export default function OwnerShiftsPage() {
   const [rangeEndHour, setRangeEndHour] = useState(23)
   const [isAutoFit, setIsAutoFit] = useState(false)
   const [shiftViewMode, setShiftViewMode] = useState<'timeline' | 'calendar'>('timeline')
+  const shiftTabBarRef = useRef<HTMLDivElement>(null)
+  const shiftTabButtonRefs = useRef<Record<'timeline' | 'calendar', HTMLButtonElement | null>>({ timeline: null, calendar: null })
+  const [shiftTabIndicator, setShiftTabIndicator] = useState({ left: 0, width: 0, opacity: 0 })
   const [calWeekRows, setCalWeekRows] = useState<TimelineRow[]>([])
   const [calWeekLoading, setCalWeekLoading] = useState(false)
   const [selectedTimelineUserIds, setSelectedTimelineUserIds] = useState<string[]>([])
@@ -620,18 +755,24 @@ export default function OwnerShiftsPage() {
   const [managerRemoveLoading, setManagerRemoveLoading] = useState<string | null>(null)
 
   // AI Shift Scheduling state
-  const [aiShiftModal,         setAiShiftModal]         = useState(false)
-  const [aiShiftContext,       setAiShiftContext]       = useState('')
-  const [aiShiftDeptId,        setAiShiftDeptId]        = useState('')
-  const [aiShiftDateFrom,      setAiShiftDateFrom]      = useState('')
-  const [aiShiftDateTo,        setAiShiftDateTo]        = useState('')
-  const [aiShiftPreferredHours,setAiShiftPreferredHours]= useState('')
-  const [aiShiftLoading,       setAiShiftLoading]       = useState(false)
-  const [aiShiftError,         setAiShiftError]         = useState('')
-  const [aiShiftSuggestions,   setAiShiftSuggestions]   = useState<ShiftSuggestion[]>([])
-  const [aiShiftSelected,      setAiShiftSelected]      = useState<Set<number>>(new Set())
+  const [aiShiftModal, setAiShiftModal] = useState(false)
+  const [aiShiftWizardStep, setAiShiftWizardStep] = useState<'dates' | 'departments' | 'shiftTypes' | 'generate'>('dates')
+  const [aiShiftDateFrom, setAiShiftDateFrom] = useState('')
+  const [aiShiftDateTo, setAiShiftDateTo] = useState('')
+  const [aiShiftTypes, setAiShiftTypes] = useState<ShiftTypeInput[]>([
+    { label: 'Shift 1', start_time: '09:00', end_time: '17:00' },
+  ])
+  const [aiShiftSelectedDepartmentIds, setAiShiftSelectedDepartmentIds] = useState<string[]>([])
+  const [aiShiftLoading, setAiShiftLoading] = useState(false)
+  const [aiShiftProgress, setAiShiftProgress] = useState(0)
+  const [aiShiftEtaSeconds, setAiShiftEtaSeconds] = useState(0)
+  const aiShiftProgressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [aiShiftError, setAiShiftError] = useState('')
+  const [aiShiftNotice, setAiShiftNotice] = useState('')
+  const [aiShiftSuggestions, setAiShiftSuggestions] = useState<AutoShiftBlock[]>([])
+  const [aiShiftSelected, setAiShiftSelected] = useState<Set<string>>(new Set())
   const [aiShiftCreateLoading, setAiShiftCreateLoading] = useState(false)
-  const [aiShiftCreateError,   setAiShiftCreateError]   = useState('')
+  const [aiShiftCreateError, setAiShiftCreateError] = useState('')
 
   const [batchDepartment, setBatchDepartment] = useState<Department | null>(null)
   const [batchSingleMember, setBatchSingleMember] = useState<TeamMember | null>(null)
@@ -644,13 +785,35 @@ export default function OwnerShiftsPage() {
   const [defaultStartTime, setDefaultStartTime] = useState('09:00')
   const [defaultEndTime, setDefaultEndTime] = useState('17:00')
   const [batchCells, setBatchCells] = useState<Record<string, BatchCell>>({})
+  const [editShiftCalMonth, setEditShiftCalMonth] = useState('')
+  const [editShiftCalDir, setEditShiftCalDir] = useState<'next' | 'prev'>('next')
+  const [editShiftCalKey, setEditShiftCalKey] = useState(0)
   const [bulkSubmitting, setBulkSubmitting] = useState(false)
   const [bulkError, setBulkError] = useState('')
   const [bulkResult, setBulkResult] = useState('')
   const [bulkFailures, setBulkFailures] = useState<BulkFailure[]>([])
-  const [batchDeadline, setBatchDeadline] = useState('')
   const [successToast, setSuccessToast] = useState<string | null>(null)
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const aiGenerateAbortRef = useRef<AbortController | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (aiShiftProgressTimerRef.current) clearInterval(aiShiftProgressTimerRef.current)
+    }
+  }, [])
+
+  const profileSummary: UserProfileSummary = {
+    user_id: '',
+    full_name: '',
+    role: '',
+    weekly_working_hours: 0,
+    max_weekly_hours: 44,
+    contracted_weekly_hours: 44,
+    fixed_off_days: [],
+    leave_requests: [],
+  }
+  const profileSummaryLoading = false
+  const setProfileDrawerUserId = (_value: null) => {}
 
   const [selectedShift, setSelectedShift] = useState<TimelineShiftBlock | null>(null)
   const [shiftEditForm, setShiftEditForm] = useState<ShiftEditForm>({
@@ -663,6 +826,12 @@ export default function OwnerShiftsPage() {
   })
   const [shiftActionLoading, setShiftActionLoading] = useState(false)
   const [shiftActionError, setShiftActionError] = useState('')
+
+  useEffect(() => {
+    return () => {
+      aiGenerateAbortRef.current?.abort()
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -752,6 +921,7 @@ export default function OwnerShiftsPage() {
       if (deptData.success) {
         const nextDepartments: Department[] = (deptData.departments ?? []).sort((a: Department, b: Department) => a.name.localeCompare(b.name))
         setDepartments(nextDepartments)
+        setDeptColorOverrides(nextDepartments)
       }
       if (memberData.success) {
         const schedulable = (memberData.members ?? [])
@@ -801,6 +971,40 @@ export default function OwnerShiftsPage() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!companyId || departments.length === 0) return
+
+    const fallbackOrder = departments.map(dept => dept.id)
+    let nextOrder = fallbackOrder
+
+    if (deptOrderKey) {
+      try {
+        const raw = localStorage.getItem(deptOrderKey)
+        if (raw) {
+          const parsed = JSON.parse(raw)
+          if (Array.isArray(parsed)) {
+            const saved = parsed.filter((id): id is string => fallbackOrder.includes(id))
+            const remaining = fallbackOrder.filter(id => !saved.includes(id))
+            nextOrder = [...saved, ...remaining]
+          }
+        }
+      } catch {}
+    }
+
+    setDepartmentOrder(nextOrder)
+  }, [companyId, departments, deptOrderKey])
+
+  useEffect(() => {
+    if (!deptOrderKey || departmentOrder.length === 0) return
+    try {
+      localStorage.setItem(deptOrderKey, JSON.stringify(departmentOrder))
+    } catch {}
+  }, [deptOrderKey, departmentOrder])
+
+  useEffect(() => {
+    departmentOrderRef.current = departmentOrder
+  }, [departmentOrder])
+
   const refreshShiftData = useCallback(async () => {
     if (!companyId) return
     await Promise.all([
@@ -844,6 +1048,14 @@ export default function OwnerShiftsPage() {
     () => departments.find(department => department.id === selectedDepartmentId) ?? null,
     [departments, selectedDepartmentId],
   )
+  const orderedDepartments = useMemo(() => {
+    if (departments.length === 0) return []
+    const byId = new Map(departments.map(dept => [dept.id, dept] as const))
+    const saved = departmentOrder.filter(id => byId.has(id))
+    const remaining = departments.map(dept => dept.id).filter(id => !saved.includes(id))
+    const orderedIds = saved.length > 0 ? [...saved, ...remaining] : departments.map(dept => dept.id)
+    return orderedIds.map(id => byId.get(id)!).filter(Boolean)
+  }, [departments, departmentOrder])
   const getDepartmentPeople = useCallback((department: Department): TeamMember[] => {
     const managerIds = new Set(
       departmentManagers
@@ -979,6 +1191,28 @@ export default function OwnerShiftsPage() {
   }, [batchCells, defaultEndTime, defaultStartTime, selectedDates, selectedMemberIds])
 
   const enabledBatchCells = selectedBatchCells.filter(cell => cell.enabled)
+  const moveDepartment = useCallback((sourceId: string, targetId: string) => {
+    if (!sourceId || !targetId || sourceId === targetId) return
+    const ids = departmentOrderRef.current.length > 0 ? departmentOrderRef.current : departments.map(dept => dept.id)
+    const sourceIdx = ids.indexOf(sourceId)
+    const targetIdx = ids.indexOf(targetId)
+    if (sourceIdx < 0 || targetIdx < 0 || sourceIdx === targetIdx) return
+    const next = [...ids]
+    next.splice(sourceIdx, 1)
+    next.splice(targetIdx, 0, sourceId)
+    departmentOrderRef.current = next
+    setDepartmentOrder(next)
+  }, [departments])
+
+  const handleDepartmentDragStart = useCallback((departmentId: string) => {
+    setDraggingDepartmentId(departmentId)
+  }, [])
+
+  const handleDepartmentDragEnd = useCallback(() => {
+    setDraggingDepartmentId(null)
+    setDragOverDepartmentId(null)
+  }, [])
+
   const clearTimelineSelection = () => {
     setSelectedTimelineUserIds([])
     setTimelineDeleteError('')
@@ -1128,74 +1362,241 @@ export default function OwnerShiftsPage() {
     })
   }
 
-  const openAiShiftModal = (dept?: Department) => {
-    const todayStr = new Date().toISOString().slice(0, 10)
-    const nextWeek = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
-    setAiShiftContext('')
-    setAiShiftDeptId(dept?.id ?? (departments[0]?.id ?? ''))
+  const openAiShiftModal = (_dept?: Department | null) => {
+    aiGenerateAbortRef.current?.abort()
+    aiGenerateAbortRef.current = null
+    setAiShiftWizardStep('dates')
+    const today = new Date()
+    const dow = (today.getDay() + 6) % 7
+    const nextMonday = addDays(today, 7 - dow)
+    const nextSunday = addDays(nextMonday, 6)
+    const todayStr = formatDateKey(nextMonday)
+    const nextWeek = formatDateKey(nextSunday)
     setAiShiftDateFrom(todayStr)
     setAiShiftDateTo(nextWeek)
-    setAiShiftPreferredHours('')
+    setAiShiftTypes([{ label: 'Shift 1', start_time: '09:00', end_time: '17:00' }])
+    setAiShiftSelectedDepartmentIds([])
+    if (aiShiftProgressTimerRef.current) {
+      clearInterval(aiShiftProgressTimerRef.current)
+      aiShiftProgressTimerRef.current = null
+    }
     setAiShiftLoading(false)
+    setAiShiftProgress(0)
+    setAiShiftEtaSeconds(0)
     setAiShiftError('')
+    setAiShiftNotice('')
     setAiShiftSuggestions([])
     setAiShiftSelected(new Set())
     setAiShiftCreateError('')
     setAiShiftModal(true)
   }
 
+  const closeAiShiftModal = () => {
+    aiGenerateAbortRef.current?.abort()
+    aiGenerateAbortRef.current = null
+    if (aiShiftProgressTimerRef.current) {
+      clearInterval(aiShiftProgressTimerRef.current)
+      aiShiftProgressTimerRef.current = null
+    }
+    setAiShiftLoading(false)
+    setAiShiftModal(false)
+  }
+
+  const estimateAiScheduleSeconds = (departmentCount: number, dayCount: number, shiftTypeCount: number) => {
+    const blockCount = Math.max(1, departmentCount * dayCount)
+    const slotCount = Math.max(1, blockCount * shiftTypeCount)
+    // Baseline latency plus a per-slot cost, derived from observed generation times.
+    const estimate = 6 + slotCount * 1.6
+    return Math.min(60, Math.round(estimate))
+  }
+
+  const startAiShiftProgress = (etaSeconds: number) => {
+    if (aiShiftProgressTimerRef.current) clearInterval(aiShiftProgressTimerRef.current)
+    const startedAt = Date.now()
+    setAiShiftProgress(0)
+    setAiShiftEtaSeconds(etaSeconds)
+    aiShiftProgressTimerRef.current = setInterval(() => {
+      const elapsedSeconds = (Date.now() - startedAt) / 1000
+      // Approach 92% asymptotically so the bar never appears finished before the response lands.
+      const ratio = 1 - Math.exp(-elapsedSeconds / Math.max(4, etaSeconds * 0.6))
+      const progress = Math.min(92, ratio * 92)
+      setAiShiftProgress(progress)
+      setAiShiftEtaSeconds(Math.max(0, Math.ceil(etaSeconds - elapsedSeconds)))
+    }, 200)
+  }
+
+  const stopAiShiftProgress = (complete: boolean) => {
+    if (aiShiftProgressTimerRef.current) {
+      clearInterval(aiShiftProgressTimerRef.current)
+      aiShiftProgressTimerRef.current = null
+    }
+    if (complete) setAiShiftProgress(100)
+    setAiShiftEtaSeconds(0)
+  }
+
   const handleAiGenerateShifts = async () => {
-    if (!aiShiftContext.trim()) { setAiShiftError('Describe your coverage needs first'); return }
-    if (!aiShiftDeptId) { setAiShiftError('Select a department'); return }
-    if (!aiShiftDateFrom || !aiShiftDateTo) { setAiShiftError('Select a date range'); return }
-    setAiShiftLoading(true); setAiShiftError(''); setAiShiftSuggestions([]); setAiShiftSelected(new Set())
+    const normalizedDateFrom = normalizeDateInput(aiShiftDateFrom)
+    const normalizedDateTo = normalizeDateInput(aiShiftDateTo)
+    if (!normalizedDateFrom || !normalizedDateTo) { setAiShiftError('Select a date range'); return }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDateFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(normalizedDateTo)) {
+      setAiShiftError('Select a valid date range')
+      return
+    }
+    if (aiShiftSelectedDepartmentIds.length === 0) { setAiShiftError('Select at least one department'); return }
+    const validShiftTypes = aiShiftTypes
+      .map((shift, index) => ({
+        label: shift.label?.trim() || `Shift ${index + 1}`,
+        start_time: shift.start_time,
+        end_time: shift.end_time,
+      }))
+      .filter(shift => shift.start_time && shift.end_time)
+    if (validShiftTypes.length === 0) { setAiShiftError('Add at least one shift type'); return }
+    if (validShiftTypes.some(shift => shift.start_time >= shift.end_time)) {
+      setAiShiftError('Each shift type start time must be before end time')
+      return
+    }
+
+    const dayCount = Math.floor((new Date(`${normalizedDateTo}T00:00:00Z`).getTime() - new Date(`${normalizedDateFrom}T00:00:00Z`).getTime()) / 86_400_000) + 1
+    const etaSeconds = estimateAiScheduleSeconds(aiShiftSelectedDepartmentIds.length, dayCount, validShiftTypes.length)
+
+    setAiShiftLoading(true)
+    setAiShiftError('')
+    setAiShiftNotice('')
+    setAiShiftSuggestions([])
+    setAiShiftSelected(new Set())
+    startAiShiftProgress(etaSeconds)
+    aiGenerateAbortRef.current?.abort()
+    const controller = new AbortController()
+    aiGenerateAbortRef.current = controller
     try {
-      const deptName = departments.find(d => d.id === aiShiftDeptId)?.name ?? null
-      const res = await fetch('/api/ai/shift-scheduling', {
+      const res = await fetch('/api/owner/scheduling-rules/generate', {
         method: 'POST',
+        signal: controller.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          context: aiShiftContext.trim(),
-          department_name: deptName,
-          date_from: aiShiftDateFrom,
-          date_to: aiShiftDateTo,
-          preferred_hours: aiShiftPreferredHours.trim() || null,
+          company_id: companyId,
+          user_id: internalUserId,
+          date_from: normalizedDateFrom,
+          date_to: normalizedDateTo,
+          department_ids: aiShiftSelectedDepartmentIds,
+          shift_types: validShiftTypes,
         }),
       })
       const data = await res.json()
-      if (!data.success) throw new Error(data.message)
-      const suggestions: ShiftSuggestion[] = data.draft.shifts ?? []
-      setAiShiftSuggestions(suggestions)
-      setAiShiftSelected(new Set(suggestions.map((_, i) => i)))
+      if (!data.success) throw new Error(data.message || 'AI schedule generation failed')
+
+      const rawBlocks = data.suggestions as Array<{
+        department_id: string
+        department_name?: string
+        shift_date: string
+        slots: AiShiftSlot[]
+        warning: string | null
+      }>
+
+      const deptNameMap = new Map(departments.map(d => [d.id, d.name]))
+
+      const generated: AutoShiftBlock[] = rawBlocks.map(block => {
+        const deptName = block.department_name ?? deptNameMap.get(block.department_id) ?? block.department_id
+        return {
+          key: `${block.department_id}_${block.shift_date}`,
+          department_id: block.department_id,
+          department_name: deptName,
+          shift_date: block.shift_date,
+          slots: Array.isArray(block.slots) ? block.slots : [],
+          warning: block.warning,
+        }
+      })
+
+      setAiShiftSuggestions(generated)
+      setAiShiftSelected(new Set(generated.map(block => block.key)))
+      setAiShiftNotice(data.notice ?? `AI generated ${generated.length} schedule block${generated.length === 1 ? '' : 's'} for Owner review.`)
+      stopAiShiftProgress(true)
     } catch (err) {
-      setAiShiftError(err instanceof Error ? err.message : 'AI generation failed')
+      if (err instanceof DOMException && err.name === 'AbortError') return
+      setAiShiftError(err instanceof Error ? err.message : 'Schedule generation failed')
+      stopAiShiftProgress(false)
     } finally {
-      setAiShiftLoading(false)
+      if (aiGenerateAbortRef.current === controller) {
+        aiGenerateAbortRef.current = null
+        setAiShiftLoading(false)
+      }
     }
   }
+
 
   const handleAiCreateShifts = async () => {
     if (aiShiftSelected.size === 0) return
     if (!companyId || !internalUserId) return
+    const normalizedDateFrom = normalizeDateInput(aiShiftDateFrom)
+    const normalizedDateTo = normalizeDateInput(aiShiftDateTo)
     setAiShiftCreateLoading(true); setAiShiftCreateError('')
     try {
-      for (const idx of aiShiftSelected) {
-        const s = aiShiftSuggestions[idx]
-        await fetch('/api/shift', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            company_id: companyId,
-            department_id: aiShiftDeptId,
-            title: s.title,
-            shift_date: s.shift_date,
-            start_time: s.start_time,
-            end_time: s.end_time,
-            created_by: internalUserId,
-          }),
-        })
+      const selectedScheduleItems = aiShiftSuggestions
+        .filter(block => aiShiftSelected.has(block.key))
+        .flatMap(block => block.slots.map(shift => ({
+          department_id: block.department_id,
+          shift_date: block.shift_date,
+          start_time: shift.start_time,
+          end_time: shift.end_time,
+          user_id: shift.assigned_user_id,
+        })))
+
+      const existingScheduleItems = futureRows.flatMap(row => row.shifts
+        .filter(shift => shift.shift_date >= normalizedDateFrom && shift.shift_date <= normalizedDateTo)
+        .map(shift => ({
+          department_id: shift.department_id,
+          shift_date: shift.shift_date,
+          start_time: shift.start_time,
+          end_time: shift.end_time,
+          user_id: row.user_id,
+        })))
+
+      const validationRes = await fetch('/api/owner/scheduling-rules/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          company_id: companyId,
+          date_from: normalizedDateFrom,
+          date_to: normalizedDateTo,
+          items: [...existingScheduleItems, ...selectedScheduleItems],
+        }),
+      })
+      const validationData = await validationRes.json()
+      if (!validationData.success) throw new Error(validationData.message || 'Failed to validate generated schedule')
+      const validation = validationData.validation as { valid: boolean; errors: AiScheduleViolation[]; warnings: AiScheduleViolation[] }
+      if (!validation.valid) {
+        const firstErrors = validation.errors.slice(0, 4).map(item => `${item.rule_name}: ${item.message}`)
+        throw new Error(`AI schedule was not saved because it violates hard rules. ${firstErrors.join(' ')}`)
+      }
+
+      for (const block of aiShiftSuggestions) {
+        if (!aiShiftSelected.has(block.key)) continue
+        for (const shift of block.slots) {
+          const res = await fetch('/api/shift', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              company_id: companyId,
+              department_id: block.department_id,
+              title: `${block.department_name} ${shift.shift_label}`,
+              instruction: `${block.department_name} | ${shift.shift_label} | ${shift.reason}`,
+              shift_date: block.shift_date,
+              start_time: shift.start_time,
+              end_time: shift.end_time,
+              created_by: internalUserId,
+              assigned_user_id: shift.assigned_user_id,
+            }),
+          })
+          const data = await res.json()
+          if (!data.success) throw new Error(data.message || 'Failed to create shift')
+        }
       }
       setAiShiftModal(false)
+      setSuccessToast(validation.warnings.length > 0
+        ? `Draft shifts created with ${validation.warnings.length} soft-rule warning${validation.warnings.length === 1 ? '' : 's'}`
+        : 'Draft shifts created')
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+      toastTimerRef.current = setTimeout(() => setSuccessToast(null), 3000)
       void refreshShiftData()
     } catch (err) {
       setAiShiftCreateError(err instanceof Error ? err.message : 'Failed to create shifts')
@@ -1253,7 +1654,6 @@ export default function OwnerShiftsPage() {
     setBulkError('')
     setBulkResult('')
     setBulkFailures([])
-    setBatchDeadline('')
   }
 
   const submitBulkAssignment = async () => {
@@ -1285,9 +1685,7 @@ export default function OwnerShiftsPage() {
             shift_date: cell.shift_date,
             start_time: cell.start_time,
             end_time: cell.end_time,
-            acceptance_deadline_at: batchDeadline
-              ? new Date(Date.now() + Number(batchDeadline) * 3600 * 1000).toISOString()
-              : null,
+            acceptance_deadline_at: null,
           })),
         }),
       })
@@ -1484,6 +1882,9 @@ export default function OwnerShiftsPage() {
         ? shift.acceptance_deadline_at.slice(0, 16)
         : '',
     })
+    setEditShiftCalMonth(shift.shift_date.slice(0, 7))
+    setEditShiftCalDir('next')
+    setEditShiftCalKey(k => k + 1)
     setShiftActionError('')
   }
 
@@ -1519,6 +1920,9 @@ export default function OwnerShiftsPage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to update shift')
       setSelectedShift(null)
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+      setSuccessToast('Shift updated successfully')
+      toastTimerRef.current = setTimeout(() => setSuccessToast(null), 3000)
       await refreshShiftData()
     } catch (err) {
       setShiftActionError(err instanceof Error ? err.message.replace('CLOPENING_CONFLICT: ', '') : 'Failed to update shift')
@@ -1537,6 +1941,9 @@ export default function OwnerShiftsPage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to delete shift')
       setSelectedShift(null)
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+      setSuccessToast('Shift deleted')
+      toastTimerRef.current = setTimeout(() => setSuccessToast(null), 3000)
       await refreshShiftData()
     } catch (err) {
       setShiftActionError(err instanceof Error ? err.message : 'Failed to delete shift')
@@ -1554,6 +1961,7 @@ export default function OwnerShiftsPage() {
     setCompany(nextCompany)
   }
 
+  const TL_NAME_COL = 180
   const TL_PAD = 4
   const tlHourTicks: number[] = []
   for (let h = rangeStartHour; h <= rangeEndHour; h++) tlHourTicks.push(h)
@@ -1565,7 +1973,7 @@ export default function OwnerShiftsPage() {
 
   const renderTimeAxis = () => (
     <div style={{ display: 'flex', background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', borderRadius: '12px 12px 0 0' }}>
-      <div style={{ width: 228, flexShrink: 0 }} />
+      <div style={{ width: TL_NAME_COL, flexShrink: 0 }} />
       <div style={{ position: 'relative', height: 44, flex: 1 }}>
         {tlHourTicks.map(h => (
           <div key={h} style={{ position: 'absolute', top: 0, left: `${tlPad(h * 60)}%`, transform: 'translateX(-50%)', height: '100%', display: 'flex', alignItems: 'center', pointerEvents: 'none' }}>
@@ -1580,31 +1988,21 @@ export default function OwnerShiftsPage() {
 
   const renderShiftRow = (row: TimelineRow, isDeptBoundary = false, barColor = deptColor(row.department_id)) => {
     const EDGE = '2px solid rgba(15,23,42,0.45)'
-    const rowSelected = !timelineIsPast && !!row.user_id && selectedTimelineUserIds.includes(row.user_id)
     const borderTop = isDeptBoundary ? EDGE : 'none'
     return (
-      <div key={row.user_id ?? `${row.department_id}_open`} className="tl-row" style={{ display: 'flex', height: 58, borderTop, background: rowSelected ? '#FFF7ED' : '#FFFFFF' }}>
+      <div key={row.user_id ?? `${row.department_id}_open`} className="tl-row" style={{ display: 'flex', height: 58, borderTop, background: '#FFFFFF' }}>
         <div style={{ width: 8, flexShrink: 0, background: barColor, opacity: 0.85 }} />
-        <div style={{ width: 220, flexShrink: 0, display: 'flex', alignItems: 'center', padding: '0 10px 0 12px', overflow: 'hidden' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+        <div style={{ width: TL_NAME_COL - 8, flexShrink: 0, display: 'flex', alignItems: 'center', overflow: 'hidden' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1, padding: '0 10px 0 12px', cursor: 'default', textAlign: 'left', height: '100%' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: row.profile_photo_url ? 'transparent' : (row.role === 'Manager' ? '#FFF7ED' : '#F3F4F6'), color: row.role === 'Manager' ? '#EA580C' : '#4B5563', borderRadius: 999, overflow: 'hidden' }}>
               {row.profile_photo_url
                 ? <img src={row.profile_photo_url} alt={row.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 : row.role === 'Manager' ? <UserCog size={13} /> : <UserRound size={13} />}
             </div>
-            <span className="tl-name" style={{ minWidth: 0, fontSize: 13, fontWeight: 600, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', transition: 'color 0.14s ease' }}>
+            <span className="tl-name" style={{ ...MEMBER_NAME_STYLE, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', transition: 'color 0.14s ease' }}>
               {row.full_name}
             </span>
           </div>
-          {row.user_id && !timelineIsPast ? (
-            <input
-              type="checkbox"
-              aria-label={`Select ${row.full_name} for deletion`}
-              checked={rowSelected}
-              onChange={() => toggleTimelineUserSelection(row.user_id!)}
-              style={{ width: 16, height: 16, flexShrink: 0, marginLeft: 12, accentColor: OWNER_ORANGE, cursor: 'pointer' }}
-            />
-          ) : null}
         </div>
         <div style={{ position: 'relative', flex: 1 }}>
           {tlHourTicks.map(h => (
@@ -1621,7 +2019,7 @@ export default function OwnerShiftsPage() {
                 style={{ position: 'absolute', top: 10, bottom: 10, left: `${TL_PAD}%`, right: `${TL_PAD}%`, borderRadius: 999, background: '#E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1, border: 'none', cursor: isTimelinePast ? 'default' : 'pointer' }}
                 title={isTimelinePast ? undefined : `Assign shift to ${row.full_name}`}
               >
-                <span style={{ fontSize: '0.78rem', fontWeight: 800, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em', pointerEvents: 'none' }}>Off</span>
+                <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em', pointerEvents: 'none' }}>Off</span>
               </button>
             )
           })()}
@@ -1660,7 +2058,7 @@ export default function OwnerShiftsPage() {
                 }}
                 title={`${row.full_name} ${formatShiftHour(shift.start_time)}–${formatShiftHour(shift.end_time)}`}
               >
-                <span style={{ fontSize: '0.72rem', fontWeight: 900, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <span style={{ fontSize: '0.72rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {formatShiftHour(shift.start_time)} – {formatShiftHour(shift.end_time)}
                 </span>
               </button>
@@ -1695,7 +2093,7 @@ export default function OwnerShiftsPage() {
     )
 
     const BORDER = PANEL_BORDER
-    const NAME_COL = 180
+    const NAME_COL = TL_NAME_COL
 
     if (calWeekLoading) {
       return (
@@ -1706,24 +2104,21 @@ export default function OwnerShiftsPage() {
     }
 
     // Group rows by department to apply dept-boundary borders (same logic as timeline)
-    const deptOrderCal: string[] = []
     const deptRowsCal: Record<string, TimelineRow[]> = {}
     for (const row of sortedRows) {
-      if (!deptRowsCal[row.department_id]) {
-        deptOrderCal.push(row.department_id)
-        deptRowsCal[row.department_id] = []
-      }
+      if (!deptRowsCal[row.department_id]) deptRowsCal[row.department_id] = []
       deptRowsCal[row.department_id].push(row)
     }
+    const deptOrderCal = orderedDepartments.map(dept => dept.id).filter(deptId => deptRowsCal[deptId])
 
     const EDGE = '2px solid rgba(15,23,42,0.45)'
 
     return (
-      <div style={{ overflowX: 'auto', padding: '14px 16px 18px 18px', marginRight: 8, marginBottom: 8 }}>
+      <div className="shift-tab-content" style={{ overflowX: 'auto', padding: '14px 16px 18px 18px' }}>
         <div style={{ minWidth: 700, borderRadius: 12, overflow: 'hidden', border: `1px solid ${BORDER}` }}>
           {/* Header row */}
-          <div style={{ display: 'grid', gridTemplateColumns: `${NAME_COL}px repeat(7, 1fr)`, background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)' }}>
-            <div style={{ padding: '10px 14px', borderRight: '1px solid rgba(255,255,255,0.08)' }} />
+          <div style={{ display: 'grid', gridTemplateColumns: `${NAME_COL}px repeat(7, 1fr)`, background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', height: 54 }}>
+            <div style={{ padding: '10px 14px', borderRight: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center' }} />
             {weekDates.map(date => {
               const d = new Date(`${date}T00:00:00`)
               const dayNum = String(d.getDate()).padStart(2, '0')
@@ -1731,9 +2126,9 @@ export default function OwnerShiftsPage() {
               const weekday = d.toLocaleDateString('en-AU', { weekday: 'long' })
               const isToday = date === todayStr
               return (
-                <div key={date} style={{ padding: '10px 8px', borderRight: '1px solid rgba(255,255,255,0.08)', textAlign: 'center' }}>
-                  <p style={{ margin: 0, fontSize: 13, fontWeight: 800, color: isToday ? OWNER_ORANGE : 'rgba(255,255,255,0.9)', letterSpacing: '0.01em' }}>{dayNum} {month}</p>
-                  <p style={{ margin: '2px 0 0', fontSize: 10, fontWeight: 600, color: isToday ? OWNER_ORANGE : 'rgba(255,255,255,0.5)', letterSpacing: '0.03em' }}>{weekday}</p>
+                <div key={date} style={{ padding: '10px 8px', borderRight: '1px solid rgba(255,255,255,0.08)', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                  <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: isToday ? OWNER_ORANGE : 'rgba(255,255,255,0.85)', letterSpacing: '0.01em', lineHeight: 1.2 }}>{dayNum} {month}</p>
+                  <p style={{ margin: '3px 0 0', fontSize: 12, fontWeight: 500, color: isToday ? OWNER_ORANGE : 'rgba(255,255,255,0.5)', letterSpacing: '0.01em', lineHeight: 1.2 }}>{weekday}</p>
                 </div>
               )
             })}
@@ -1743,7 +2138,7 @@ export default function OwnerShiftsPage() {
           {sortedRows.length === 0 ? (
             <div style={{ padding: '48px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, color: '#9CA3AF' }}>
               <CalendarDays size={22} strokeWidth={1.5} />
-              <p style={{ margin: 0, fontWeight: 700, fontSize: 14 }}>No shifts this week</p>
+              <p style={{ margin: 0, fontWeight: 600, fontSize: 14 }}>No shifts this week</p>
             </div>
           ) : (
             <div style={{ borderLeft: EDGE, borderRight: EDGE, borderBottom: EDGE }}>
@@ -1758,11 +2153,13 @@ export default function OwnerShiftsPage() {
                       {/* Color bar + Name cell */}
                       <div style={{ display: 'flex', alignItems: 'center', borderRight: `1px solid ${BORDER}`, overflow: 'hidden', height: 58 }}>
                         <div style={{ width: 8, alignSelf: 'stretch', flexShrink: 0, background: barColor, opacity: 0.85 }} />
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px 0 12px', minWidth: 0, flex: 1 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: isManager ? '#FFF7ED' : '#F3F4F6', color: isManager ? '#EA580C' : '#4B5563', borderRadius: 999 }}>
-                            {isManager ? <UserCog size={13} /> : <UserRound size={13} />}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px 0 12px', minWidth: 0, flex: 1, cursor: 'default', textAlign: 'left', height: '100%' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: row.profile_photo_url ? 'transparent' : (isManager ? '#FFF7ED' : '#F3F4F6'), color: isManager ? '#EA580C' : '#4B5563', borderRadius: 999, overflow: 'hidden' }}>
+                            {row.profile_photo_url
+                              ? <img src={row.profile_photo_url} alt={row.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                              : isManager ? <UserCog size={13} /> : <UserRound size={13} />}
                           </div>
-                          <span style={{ fontSize: 13, fontWeight: 600, color: TEXT_DARK, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.full_name}</span>
+                          <span className="tl-name" style={{ ...MEMBER_NAME_STYLE, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', transition: 'color 0.14s ease' }}>{row.full_name}</span>
                         </div>
                       </div>
                       {/* Day cells */}
@@ -1781,7 +2178,7 @@ export default function OwnerShiftsPage() {
                                 }}
                                 title={isPastDate ? undefined : `Assign shift to ${row.full_name} on ${date}`}
                               >
-                                <span style={{ fontSize: 10, fontWeight: 800, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Off</span>
+                                <span style={{ fontSize: 10, fontWeight: 600, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Off</span>
                               </div>
                             ) : dayShifts.map((shift: TimelineShiftBlock) => (
                                 <button
@@ -1798,7 +2195,7 @@ export default function OwnerShiftsPage() {
                                   onMouseEnter={e => { if (!isPastDate) e.currentTarget.style.filter = 'brightness(1.08)' }}
                                   onMouseLeave={e => { e.currentTarget.style.filter = 'none' }}
                                 >
-                                  <span style={{ fontSize: 10.5, fontWeight: 700, color: '#FFFFFF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                  <span style={{ fontSize: 10.5, fontWeight: 600, color: '#FFFFFF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                     {formatShiftHour(shift.start_time)}–{formatShiftHour(shift.end_time)}
                                   </span>
                                 </button>
@@ -1842,16 +2239,16 @@ export default function OwnerShiftsPage() {
       }
       deptMap[row.department_id].rows.push(row)
     }
-    deptOrder.sort((a, b) => deptMap[a].name.localeCompare(deptMap[b].name))
+    const orderedDeptIds = orderedDepartments.map(dept => dept.id).filter(deptId => deptMap[deptId])
     for (const dept of Object.values(deptMap)) {
       dept.rows.sort((a, b) => roleRank(a.role) - roleRank(b.role) || a.full_name.localeCompare(b.full_name))
     }
     return (
-      <div style={{ overflowX: 'auto', padding: '14px 16px 18px 18px', borderRadius: '0 0 14px 14px' }}>
+      <div className="shift-tab-content" style={{ overflowX: 'auto', padding: '14px 16px 18px 18px' }}>
         <div style={{ minWidth: 860 }}>
           {renderTimeAxis()}
           <div style={{ borderLeft: EDGE, borderRight: EDGE, borderBottom: EDGE }}>
-            {deptOrder.map((deptId, deptIdx) => {
+            {orderedDeptIds.map((deptId, deptIdx) => {
               const dept = deptMap[deptId]
               return dept.rows.map((row, rowIdx) =>
                 renderShiftRow(row, deptIdx > 0 && rowIdx === 0, dept.color)
@@ -1863,11 +2260,44 @@ export default function OwnerShiftsPage() {
     )
   }
 
+  useLayoutEffect(() => {
+    const container = shiftTabBarRef.current
+    const activeButton = shiftTabButtonRefs.current[shiftViewMode]
+    if (!container || !activeButton) return
+
+    const containerRect = container.getBoundingClientRect()
+    const activeRect = activeButton.getBoundingClientRect()
+    setShiftTabIndicator({
+      left: activeRect.left - containerRect.left,
+      width: activeRect.width,
+      opacity: 1,
+    })
+  }, [shiftViewMode])
+
+  useEffect(() => {
+    const updateIndicator = () => {
+      const container = shiftTabBarRef.current
+      const activeButton = shiftTabButtonRefs.current[shiftViewMode]
+      if (!container || !activeButton) return
+
+      const containerRect = container.getBoundingClientRect()
+      const activeRect = activeButton.getBoundingClientRect()
+      setShiftTabIndicator({
+        left: activeRect.left - containerRect.left,
+        width: activeRect.width,
+        opacity: 1,
+      })
+    }
+
+    window.addEventListener('resize', updateIndicator)
+    return () => window.removeEventListener('resize', updateIndicator)
+  }, [shiftViewMode])
+
   if (!initialReady) {
     return (
       <div style={{ display: 'flex', minHeight: '100vh', background: APP_BG }}>
         <OwnerSidebar />
-        <main style={{ flex: 1, display: 'grid', placeItems: 'center', color: TEXT_DARK, fontWeight: 800 }}>
+        <main style={{ flex: 1, display: 'grid', placeItems: 'center', color: TEXT_DARK, fontWeight: 600 }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}><Spinner dark /> Loading shifts</span>
         </main>
       </div>
@@ -1892,6 +2322,76 @@ export default function OwnerShiftsPage() {
           </div>
         </div>
 
+        <div style={{ padding: '0 28px 16px', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start' }}>
+            <div
+              ref={shiftTabBarRef}
+              style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: 4,
+              background: '#FFFFFF',
+              border: '1px solid #E5E7EB',
+              borderRadius: 999,
+              boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
+              overflow: 'hidden',
+              position: 'relative',
+            }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  position: 'absolute',
+                  top: 4,
+                  left: shiftTabIndicator.left,
+                  width: shiftTabIndicator.width,
+                  height: 'calc(100% - 8px)',
+                  borderRadius: 999,
+                  background: 'linear-gradient(180deg, #0F172A 0%, #111827 100%)',
+                  boxShadow: '0 6px 18px rgba(15,23,42,0.18)',
+                  opacity: shiftTabIndicator.opacity,
+                  transform: shiftTabIndicator.opacity ? 'translateY(0)' : 'translateY(4px)',
+                  transition: 'left 0.24s cubic-bezier(0.22, 1, 0.36, 1), width 0.24s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.16s ease, transform 0.24s cubic-bezier(0.22, 1, 0.36, 1)',
+                  pointerEvents: 'none',
+                }}
+              />
+              {([
+                { id: 'timeline' as const, label: 'Timeline' },
+                { id: 'calendar' as const, label: 'Calendar' },
+              ]).map(tab => {
+                const active = shiftViewMode === tab.id
+                return (
+                  <button
+                    key={tab.id}
+                    ref={el => { shiftTabButtonRefs.current[tab.id] = el }}
+                    type="button"
+                    onClick={() => setShiftViewMode(tab.id)}
+                    style={{
+                      position: 'relative',
+                      zIndex: 1,
+                      height: 36,
+                      padding: '0 18px',
+                      borderRadius: 999,
+                      border: 'none',
+                      background: active ? '#0F172A' : 'transparent',
+                      color: active ? '#FFFFFF' : '#64748B',
+                      fontSize: 13,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      boxShadow: 'none',
+                      transition: 'color 0.18s ease, transform 0.18s ease',
+                      transform: active ? 'translateY(-0.5px)' : 'translateY(0)',
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+
         <div style={{ display: 'flex', flexDirection: 'column', gap: 24, padding: '0 28px 24px' }}>
           {initialReady && !companyId && (
             <div style={{ background: '#FFFBEB', borderRadius: 12, padding: '14px 16px', fontSize: 13, color: '#92400E', border: '1px solid #FDE68A' }}>
@@ -1901,48 +2401,52 @@ export default function OwnerShiftsPage() {
 
           {companyId && (
             <>
-              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 290px) minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
-        <section style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'visible' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, padding: '16px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Users size={15} style={{ color: '#F97316' }} />
-              <h2 style={{ margin: 0, color: '#0F172A', fontSize: 14, fontWeight: 700, letterSpacing: '-0.2px' }}>Departments</h2>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <button
-                type="button"
-                onClick={openAddDepartment}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 5, border: 0, borderRadius: 10, background: OWNER_ORANGE, color: '#FFFFFF', height: 34, padding: '0 11px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-              >
-                <Plus size={14} /> Add
-              </button>
-            </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 326px) minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
+        <section className="shift-dept-panel" style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'visible' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: 12, padding: '16px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, flexWrap: 'wrap' }}>
+            {selectedDepartment ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => { clearTimelineSelection(); setSelectedDepartmentId(null) }}
+                  aria-label="Back to all departments"
+                  title="Back to all departments"
+                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, borderRadius: 8, border: '1px solid #E2E8F0', background: '#FFFFFF', color: MUTED, cursor: 'pointer', flexShrink: 0 }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = '#FDBA74'; e.currentTarget.style.color = '#F97316'; e.currentTarget.style.background = '#FFF7ED' }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = '#E2E8F0'; e.currentTarget.style.color = MUTED; e.currentTarget.style.background = '#FFFFFF' }}
+                >
+                  <ChevronLeft size={14} />
+                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                  <span style={{ width: 10, height: 10, borderRadius: 999, background: deptColor(selectedDepartment.id), flexShrink: 0 }} />
+                  <h2 style={{ margin: 0, ...DEPARTMENT_NAME_STYLE, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {selectedDepartment.name}
+                  </h2>
+                </div>
+              </>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <Users size={15} style={{ color: '#F97316' }} />
+                </div>
+                <span style={SECTION_TITLE_STYLE}>Departments</span>
+              </div>
+            )}
           </div>
           <div style={{ padding: 14 }}>
             {assignmentDataLoading ? (
-              <div style={{ minHeight: 150, display: 'grid', placeItems: 'center', color: MUTED, fontWeight: 700 }}>
+              <div style={{ minHeight: 150, display: 'grid', placeItems: 'center', color: MUTED, fontWeight: 600 }}>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}><Spinner dark /> Loading departments</span>
               </div>
             ) : selectedDepartment ? (
               <div style={{ display: 'grid', gap: 12 }}>
-                <button
-                  type="button"
-                  onClick={() => { clearTimelineSelection(); setSelectedDepartmentId(null) }}
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, width: 'fit-content', border: 0, background: 'transparent', color: MUTED, fontSize: 12, fontWeight: 700, cursor: 'pointer', padding: 0 }}
-                >
-                  <ChevronLeft size={14} /> All Departments
-                </button>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                  <span style={{ width: 8, height: 8, borderRadius: 999, background: deptColor(selectedDepartment.id), flexShrink: 0 }} />
-                  <h3 style={{ margin: 0, color: TEXT_DARK, fontSize: 16, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{selectedDepartment.name}</h3>
-                </div>
                 <div style={{ display: 'grid', gap: 12 }}>
                   {getDepartmentPeople(selectedDepartment).length === 0 ? (
-                    <div style={{ borderRadius: 12, background: '#F8FAFC', padding: 18, color: '#94A3B8', fontSize: 13, fontWeight: 700, textAlign: 'center' }}>
+                    <div style={{ borderRadius: 12, background: '#F8FAFC', padding: 18, color: '#94A3B8', fontSize: 13, fontWeight: 600, textAlign: 'center' }}>
                       No Manager or Employee yet.
                     </div>
-                  ) : getDepartmentPeople(selectedDepartment).map(member => (
-                    <div key={member.id} className="member-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, border: `1px solid ${PANEL_BORDER}`, borderRadius: 12, padding: '13px 12px', background: '#FFFFFF' }}>
+                  ) : getDepartmentPeople(selectedDepartment).map((member, memberIdx) => (
+                    <div key={`${member.id}-${shiftViewMode}`} className="member-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, border: member.role === 'Manager' ? '1.5px solid #FDBA74' : `1px solid ${PANEL_BORDER}`, borderRadius: 12, padding: '13px 12px', background: member.role === 'Manager' ? '#FFFBF7' : '#FFFFFF', animationDelay: `${memberIdx * 50}ms` }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                         <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 999, background: member.profile_photo_url ? 'transparent' : (member.role === 'Manager' ? '#FFF7ED' : '#F3F4F6'), color: member.role === 'Manager' ? '#EA580C' : '#4B5563', flexShrink: 0, overflow: 'hidden' }}>
                           {member.profile_photo_url
@@ -1950,12 +2454,12 @@ export default function OwnerShiftsPage() {
                             : member.role === 'Manager' ? <UserCog size={14} /> : <UserRound size={14} />}
                         </span>
                         <div style={{ minWidth: 0 }}>
-                          <p style={{ margin: 0, color: TEXT_DARK, fontSize: 13, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{member.full_name}</p>
+                          <p style={{ margin: 0, ...MEMBER_NAME_STYLE, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{member.full_name}</p>
                         </div>
                       </div>
                       <button
                         type="button"
-                        onClick={() => router.push(`/owner/communication?tab=messages&partner_id=${member.id}`)}
+                        onClick={e => { e.stopPropagation(); router.push(`/owner/communication?tab=messages&partner_id=${member.id}`) }}
                         title="Send message"
                         style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: `1px solid #E2E8F0`, borderRadius: 9, background: '#F8FAFC', color: '#CBD5E1', width: 30, height: 30, cursor: 'pointer', flexShrink: 0 }}
                         onMouseEnter={e => { e.currentTarget.style.color = '#F97316'; e.currentTarget.style.borderColor = '#FDBA74'; e.currentTarget.style.background = '#FFF7ED' }}
@@ -1966,182 +2470,174 @@ export default function OwnerShiftsPage() {
                     </div>
                   ))}
                 </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button
-                    type="button"
-                    onClick={() => openAiShiftModal(selectedDepartment)}
-                    style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 800, cursor: 'pointer' }}
-                  >
-                    <Sparkles size={14} /> AI Schedule
-                  </button>
-                  <button
-                    type="button"
-                    className="schedule-btn"
-                    onClick={() => openBatchDrawer(selectedDepartment)}
-                    disabled={getDepartmentPeople(selectedDepartment).length === 0}
-                    style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: getDepartmentPeople(selectedDepartment).length === 0 ? '#E2E8F0' : 'linear-gradient(135deg, #F97316, #EA580C)', color: getDepartmentPeople(selectedDepartment).length === 0 ? '#94A3B8' : '#FFFFFF', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 800, cursor: getDepartmentPeople(selectedDepartment).length === 0 ? 'not-allowed' : 'pointer' }}
-                  >
-                    <CalendarDays size={14} /> Schedule shifts
-                  </button>
-                </div>
               </div>
-            ) : departments.length === 0 ? (
-              <div style={{ minHeight: 150, display: 'grid', placeItems: 'center', color: MUTED, fontWeight: 700 }}>No departments yet.</div>
+            ) : orderedDepartments.length === 0 ? (
+              <div style={{ minHeight: 150, display: 'grid', placeItems: 'center', color: MUTED, fontWeight: 600 }}>No departments yet.</div>
             ) : (
-              <div style={{ display: 'grid', gap: 10 }}>
-                {departments.map((department, deptIdx) => {
+              <>
+              <div style={{ display: 'grid', gap: 10, marginBottom: 12 }}>
+                {orderedDepartments.map((department, deptIdx) => {
                   const deptMembers = membersByDepartment.get(department.id) ?? []
                   const employeeCount = deptMembers.filter(member => member.role === 'Employee').length
                   const deptManagerList = departmentManagers.filter(item => item.department_id === department.id)
+                  const isDragging = draggingDepartmentId === department.id
+                  const isDragOver = dragOverDepartmentId === department.id
                   return (
                     <article
-                      key={department.id}
-                      className="dept-card"
+                      key={`${department.id}-${shiftViewMode}`}
+                      draggable
+                      className="shift-dept-card"
+                      onDragStart={(event) => {
+                        const target = event.target as HTMLElement | null
+                        if (target?.closest('button, input, textarea, select, a, [role="button"]')) {
+                          event.preventDefault()
+                          return
+                        }
+                        event.dataTransfer.effectAllowed = 'move'
+                        event.dataTransfer.setData('text/plain', department.id)
+                        handleDepartmentDragStart(department.id)
+                      }}
+                      onDragEnd={handleDepartmentDragEnd}
+                      onDragOver={(event) => {
+                        event.preventDefault()
+                        if (draggingDepartmentId && draggingDepartmentId !== department.id) {
+                          setDragOverDepartmentId(department.id)
+                        }
+                      }}
+                      onDragLeave={(event) => {
+                        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+                        setDragOverDepartmentId(current => current === department.id ? null : current)
+                      }}
+                      onDrop={(event) => {
+                        event.preventDefault()
+                        const sourceId = event.dataTransfer.getData('text/plain')
+                        if (sourceId) moveDepartment(sourceId, department.id)
+                        handleDepartmentDragEnd()
+                      }}
                       style={{
                         position: 'relative',
-                        animationDelay: `${deptIdx * 55}ms`,
+                        animation: `deptCardIn 0.28s ease both ${deptIdx * 55}ms`,
                         zIndex: 1,
                         display: 'flex',
                         flexDirection: 'column',
                         justifyContent: 'space-between',
                         gap: 10,
-                        minHeight: 80,
+                        minHeight: 84,
                         border: `1px solid ${PANEL_BORDER}`,
-                        borderRadius: 12,
-                        padding: '12px 12px 12px 15px',
-                        background: '#FFFFFF',
-                        cursor: 'pointer',
+                        borderRadius: 10,
+                        padding: '14px 16px',
+                        background: '#F9FAFB',
+                        cursor: isDragging ? 'grabbing' : 'grab',
                         overflow: 'hidden',
-                        transition: 'box-shadow 0.16s ease, transform 0.16s ease, border-color 0.16s ease',
+                        transition: 'box-shadow 0.18s ease, transform 0.18s ease, border-color 0.18s ease, opacity 0.18s ease',
+                        opacity: isDragging ? 0.88 : 1,
+                        outline: isDragOver ? '2px dashed #F97316' : 'none',
+                        outlineOffset: 3,
+                        boxShadow: isDragOver ? '0 14px 34px rgba(249,115,22,0.12)' : undefined,
+                        transform: isDragging ? 'scale(0.985)' : undefined,
                       }}
-                      onClick={() => { clearTimelineSelection(); setSelectedDepartmentId(department.id) }}
+                      onClick={() => {
+                        clearTimelineSelection()
+                        setSelectedDepartmentId(department.id)
+                      }}
                       onMouseEnter={event => {
+                        if (draggingDepartmentId) return
                         event.currentTarget.style.transform = 'translateY(-3px)'
                         event.currentTarget.style.boxShadow = `0 10px 28px rgba(15,23,42,0.11)`
                         event.currentTarget.style.borderColor = deptColor(department.id)
                       }}
                       onMouseLeave={event => {
-                        event.currentTarget.style.transform = 'none'
+                        if (draggingDepartmentId) return
+                        event.currentTarget.style.transform = isDragging ? 'scale(0.985)' : 'none'
                         event.currentTarget.style.boxShadow = 'none'
                         event.currentTarget.style.borderColor = PANEL_BORDER
                       }}
                     >
-                      <span className="dept-card-bar" style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: 3, background: deptColor(department.id), borderRadius: '12px 0 0 12px' }} />
-                      <button
-                        type="button"
-                        data-department-menu-root="true"
-                        aria-label={`Open ${department.name} actions`}
-                        onClick={(event) => {
-                          event.stopPropagation()
-                          if (openDepartmentMenuId === department.id) {
-                            setOpenDepartmentMenuId(null)
-                          } else {
-                            const r = event.currentTarget.getBoundingClientRect()
-                            setDeptMenuPos({ top: r.bottom + 4, right: window.innerWidth - r.right })
-                            setOpenDepartmentMenuId(department.id)
-                          }
-                        }}
-                        style={{ position: 'absolute', top: 12, right: 12, width: 30, height: 30, borderRadius: 9, border: `1px solid ${PANEL_BORDER}`, background: '#FFFFFF', display: 'grid', placeItems: 'center', cursor: 'pointer', flexShrink: 0 }}
-                      >
-                        <MoreHorizontal size={17} color={TEXT_DARK} />
-                      </button>
-
-                      <div style={{ minWidth: 0, display: 'grid', gap: 14, paddingRight: 34 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ minWidth: 0, display: 'grid', gap: 14 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+                            <span
+                              className={activeDeptIds.has(department.id) ? 'dept-dot-active' : undefined}
+                              style={{ width: 8, height: 8, borderRadius: 999, background: deptColor(department.id), flexShrink: 0, display: 'inline-block' }}
+                            />
+                            <h3 style={{ margin: 0, ...DEPARTMENT_NAME_STYLE, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{department.name}</h3>
+                          </div>
                           <span
-                            className={activeDeptIds.has(department.id) ? 'dept-dot-active' : undefined}
-                            style={{ width: 8, height: 8, borderRadius: 999, background: deptColor(department.id), flexShrink: 0, display: 'inline-block' }}
-                          />
-                          <h3 style={{ margin: 0, color: '#0F172A', fontSize: 15, fontWeight: 800, letterSpacing: '-0.15px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{department.name}</h3>
+                            aria-hidden="true"
+                            title="Drag to reorder"
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              width: 26,
+                              height: 26,
+                              borderRadius: 8,
+                              color: '#9CA3AF',
+                              flexShrink: 0,
+                              cursor: 'grab',
+                              background: 'transparent',
+                              transition: 'color 0.15s ease, background 0.15s ease, transform 0.15s ease',
+                            }}
+                            onMouseEnter={event => {
+                              event.currentTarget.style.color = '#F97316'
+                              event.currentTarget.style.background = '#FFF7ED'
+                              event.currentTarget.style.transform = 'scale(1.04)'
+                            }}
+                            onMouseLeave={event => {
+                              event.currentTarget.style.color = '#9CA3AF'
+                              event.currentTarget.style.background = 'transparent'
+                              event.currentTarget.style.transform = 'none'
+                            }}
+                          >
+                            <GripVertical size={16} strokeWidth={2.2} />
+                          </span>
                         </div>
-
                         <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: '#FFF7ED', color: '#EA580C', flexShrink: 0 }}>
-                              <UserCog size={13} />
+                            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 999, background: '#FFF7ED', color: '#EA580C', flexShrink: 0 }}>
+                              <UserCog size={14} />
                             </span>
-                            <span style={{ color: '#111827', fontSize: 13, fontWeight: 700 }}>{deptManagerList.length}</span>
+                            <span style={{ color: '#111827', fontSize: 15, fontWeight: 600 }}>{deptManagerList.length}</span>
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: '#F3F4F6', color: '#4B5563', flexShrink: 0 }}>
-                              <UserRound size={13} />
+                            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 999, background: '#F3F4F6', color: '#4B5563', flexShrink: 0 }}>
+                              <UserRound size={14} />
                             </span>
-                            <span style={{ color: '#111827', fontSize: 13, fontWeight: 700 }}>{employeeCount}</span>
+                            <span style={{ color: '#111827', fontSize: 15, fontWeight: 600 }}>{employeeCount}</span>
                           </div>
                         </div>
                       </div>
-
                     </article>
                   )
                 })}
               </div>
+              <div style={{ display: 'flex', justifyContent: 'center' }}>
+                <button
+                  type="button"
+                  onClick={() => openAiShiftModal(null)}
+                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 36, padding: '0 24px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+                >
+                  <Sparkles size={14} /> AI Schedule
+                </button>
+              </div>
+              </>
             )}
           </div>
         </section>
 
-        <section style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, display: 'flex', flexDirection: 'column' }}>
+        <section className="shift-timeline-panel" style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, flexWrap: 'wrap', flexShrink: 0 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   <CalendarDays size={15} style={{ color: '#F97316' }} />
                 </div>
-                <h2 style={{ margin: 0, color: '#0F172A', fontSize: 14, fontWeight: 700, letterSpacing: '-0.2px' }}>Shift Timeline</h2>
+                <span style={SECTION_TITLE_STYLE}>Shift Timeline</span>
               </div>
-              {timelineDeleteError ? (
-                <p style={{ margin: 0, color: '#DC2626', fontSize: 12, fontWeight: 700 }}>{timelineDeleteError}</p>
-              ) : null}
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <div ref={timelineControlsRef} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                {!timelineIsPast && selectedTimelineUserIds.length > 0 ? (
-                  <>
-                    <button
-                      type="button"
-                      aria-label="Cancel timeline selection"
-                      onClick={() => { setSelectedTimelineUserIds([]); setTimelineDeleteError('') }}
-                      style={{ ...iconButtonStyle, width: 38, height: 38, color: MUTED }}
-                    >
-                      <X size={16} />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`Assign shifts for ${selectedTimelineUserIds.length} selected people`}
-                      onClick={openBatchDrawerForSelection}
-                      style={{
-                        ...iconButtonStyle,
-                        width: 38,
-                        height: 38,
-                        background: '#FFF7ED',
-                        border: '1px solid #FDBA74',
-                        color: '#EA580C',
-                        cursor: 'pointer',
-                      }}
-                      title={`Assign shifts to ${selectedTimelineUserIds.length} selected people`}
-                    >
-                      <CalendarDays size={16} />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`Delete shifts for ${selectedTimelineUserIds.length} selected people`}
-                      onClick={deleteSelectedTimelineAssignments}
-                      disabled={timelineBulkDeleting}
-                      style={{
-                        ...iconButtonStyle,
-                        width: 38,
-                        height: 38,
-                        background: '#FEF2F2',
-                        border: '1px solid #FECACA',
-                        color: '#DC2626',
-                        cursor: timelineBulkDeleting ? 'default' : 'pointer',
-                        opacity: timelineBulkDeleting ? 0.65 : 1,
-                      }}
-                      title={selectedTimelineAssignmentIds.length === 0 ? 'No shifts selected on this date' : `Delete ${selectedTimelineAssignmentIds.length} selected shift assignment${selectedTimelineAssignmentIds.length === 1 ? '' : 's'}`}
-                    >
-                      {timelineBulkDeleting ? <Spinner dark /> : <Trash2 size={16} />}
-                    </button>
-                  </>
-                ) : shiftViewMode === 'calendar' ? (
+                {shiftViewMode === 'calendar' ? (
                   // Calendar week navigation — no Today button, no date picker
                   (() => {
                     const anchor = new Date(`${timelineDate}T00:00:00`)
@@ -2159,13 +2655,13 @@ export default function OwnerShiftsPage() {
                     return (
                       <>
                         <button type="button" onClick={() => goWeek(-1)} disabled={!canGoPrev} style={{ ...iconButtonStyle, opacity: canGoPrev ? 1 : 0.3, cursor: canGoPrev ? 'pointer' : 'default' }}><ChevronLeft size={16} /></button>
-                        <span style={{ fontSize: 13, fontWeight: 700, color: TEXT_DARK, padding: '0 10px', minWidth: 176, textAlign: 'center', height: 38, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#FFFFFF' }}>{weekLabel}</span>
+                        <span style={{ fontSize: 13, fontWeight: 500, color: TEXT_DARK, padding: '0 12px', minWidth: 176, textAlign: 'center', height: 38, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: `1px solid ${PANEL_BORDER}`, borderRadius: 9, background: '#FFFFFF', fontFamily: 'var(--font-body), system-ui, sans-serif' }}><CalendarDays size={14} color="#64748B" style={{ flexShrink: 0 }} />{weekLabel}</span>
                         <button type="button" onClick={() => goWeek(1)} style={iconButtonStyle}><ChevronRight size={16} /></button>
                       </>
                     )
                   })()
                 ) : (
-                  <button type="button" onClick={() => setTimelineDateAndClearSelection(formatDateKey(new Date()))} style={{ height: 38, padding: '0 14px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: timelineDate === formatDateKey(new Date()) ? '#F97316' : '#FFFFFF', color: timelineDate === formatDateKey(new Date()) ? '#FFFFFF' : TEXT_DARK, fontSize: 13, fontWeight: 700, cursor: 'pointer', transition: 'background 0.15s, color 0.15s' }}>Today</button>
+                  <button type="button" onClick={() => setTimelineDateAndClearSelection(formatDateKey(new Date()))} style={{ height: 38, padding: '0 14px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: timelineDate === formatDateKey(new Date()) ? '#F97316' : '#FFFFFF', color: timelineDate === formatDateKey(new Date()) ? '#FFFFFF' : TEXT_DARK, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'background 0.15s, color 0.15s' }}>Today</button>
                 )}
                 {shiftViewMode !== 'calendar' && (
                   <>
@@ -2175,7 +2671,7 @@ export default function OwnerShiftsPage() {
                   </>
                 )}
               </div>
-              <DropdownMenu>
+              {shiftViewMode !== 'calendar' && <DropdownMenu>
                 <DropdownMenuTrigger
                   data-testid="shift-timeline-menu"
                   aria-label="Timeline options"
@@ -2183,36 +2679,9 @@ export default function OwnerShiftsPage() {
                 >
                   <MoreHorizontal size={16} />
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" sideOffset={10} style={{ width: 300, borderRadius: 16, padding: 16, border: `1px solid ${PANEL_BORDER}`, background: '#FFFFFF', boxShadow: '0 4px 24px rgba(0,0,0,0.10)' }}>
-                  {/* View mode */}
-                  <div style={{ marginBottom: 8 }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9CA3AF' }}>View</span>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 16 }}>
-                    {([
-                      { value: 'timeline', label: 'Timeline' },
-                      { value: 'calendar', label: 'Calendar' },
-                    ] as const).map(opt => (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        onClick={() => setShiftViewMode(opt.value)}
-                        style={{
-                          cursor: 'pointer', borderRadius: 10,
-                          border: shiftViewMode === opt.value ? '1.5px solid #FDBA74' : `1px solid ${PANEL_BORDER}`,
-                          background: shiftViewMode === opt.value ? '#FFF7ED' : '#F9FAFB',
-                          padding: '8px 6px', textAlign: 'center',
-                        }}
-                      >
-                        <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: shiftViewMode === opt.value ? '#EA580C' : '#374151' }}>{opt.label}</p>
-                      </button>
-                    ))}
-                  </div>
-                  <div style={{ height: 1, background: '#F3F4F6', margin: '0 0 12px' }} />
-                  <div style={{ marginBottom: 8 }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9CA3AF' }}>Time window</span>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 10 }}>
+                <DropdownMenuContent align="end" sideOffset={10} style={{ width: 280, borderRadius: 16, padding: 16, border: `1px solid ${PANEL_BORDER}`, background: '#FFFFFF', boxShadow: '0 4px 24px rgba(0,0,0,0.10)' }}>
+                  <p style={{ margin: '0 0 10px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.07em', color: '#9CA3AF' }}>Time Window</p>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 14 }}>
                     {[
                       {
                         label: 'Auto-fit',
@@ -2238,27 +2707,27 @@ export default function OwnerShiftsPage() {
                           textAlign: 'center',
                         }}
                       >
-                        <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: option.active ? '#EA580C' : '#374151' }}>{option.label}</p>
+                        <p style={{ margin: 0, fontSize: 12, fontWeight: 600, color: option.active ? '#EA580C' : '#374151' }}>{option.label}</p>
                       </button>
                     ))}
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                     {[
                       { label: 'From', val: rangeStartHour, dec: () => { setIsAutoFit(false); setRangeStartHour(Math.max(0, rangeStartHour - 1)) }, inc: () => { setIsAutoFit(false); setRangeStartHour(Math.min(rangeEndHour - 1, rangeStartHour + 1)) } },
                       { label: 'To', val: rangeEndHour, dec: () => { setIsAutoFit(false); setRangeEndHour(Math.max(rangeStartHour + 1, rangeEndHour - 1)) }, inc: () => { setIsAutoFit(false); setRangeEndHour(Math.min(24, rangeEndHour + 1)) } },
                     ].map(control => (
-                      <div key={control.label} style={{ borderRadius: 10, border: `1px solid ${PANEL_BORDER}`, background: '#F9FAFB', padding: '8px 10px' }}>
-                        <p style={{ margin: '0 0 6px 0', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9CA3AF' }}>{control.label}</p>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
-                          <button type="button" onClick={control.dec} aria-label={`Decrease ${control.label}`} style={{ width: 26, height: 26, borderRadius: 8, border: `1px solid ${PANEL_BORDER}`, background: '#FFFFFF', cursor: 'pointer', fontSize: 14, color: MUTED, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>-</button>
-                          <span style={{ fontSize: 13, fontWeight: 700, color: TEXT_DARK }}>{formatHourLabel(control.val)}</span>
-                          <button type="button" onClick={control.inc} aria-label={`Increase ${control.label}`} style={{ width: 26, height: 26, borderRadius: 8, border: `1px solid ${PANEL_BORDER}`, background: '#FFFFFF', cursor: 'pointer', fontSize: 14, color: MUTED, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
+                      <div key={control.label}>
+                        <p style={{ margin: '0 0 6px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.07em', color: '#9CA3AF' }}>{control.label}</p>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <button type="button" onClick={control.dec} aria-label={`Decrease ${control.label}`} style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${PANEL_BORDER}`, background: '#F9FAFB', cursor: 'pointer', fontSize: 14, color: MUTED, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>−</button>
+                          <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: TEXT_DARK, textAlign: 'center' }}>{formatHourLabel(control.val)}</span>
+                          <button type="button" onClick={control.inc} aria-label={`Increase ${control.label}`} style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${PANEL_BORDER}`, background: '#F9FAFB', cursor: 'pointer', fontSize: 14, color: MUTED, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>+</button>
                         </div>
                       </div>
                     ))}
                   </div>
                 </DropdownMenuContent>
-              </DropdownMenu>
+              </DropdownMenu>}
             </div>
           </div>
           {shiftViewMode === 'calendar' ? renderCalendarView() : renderTimeline()}
@@ -2269,149 +2738,372 @@ export default function OwnerShiftsPage() {
         </div>
       </main>
 
-      {/* ═══════════════ AI SHIFT SCHEDULING MODAL ═══════════════ */}
-      {aiShiftModal && (
-        <div onClick={() => setAiShiftModal(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, animation: 'overlayFadeIn 0.18s ease-out' }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: 560, maxHeight: '90vh', background: '#FFFFFF', borderRadius: 20, boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', overflow: 'hidden', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
-
-            {/* Header */}
-            <div style={{ padding: '20px 24px 18px', background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
-                <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, borderRadius: 10, background: 'rgba(255,255,255,0.18)' }}>
-                  <Sparkles size={18} color="#FFFFFF" strokeWidth={2} />
-                </div>
+      {/* ═══════════════ USER PROFILE SUMMARY DRAWER ═══════════════ */}
+      {false && (
+        <div>
+          <div>
+            <div style={{ padding: '18px 20px', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                <span style={{ width: 32, height: 32, borderRadius: 8, background: '#FFF7ED', color: OWNER_ORANGE, display: 'grid', placeItems: 'center' }}>
+                  <UserCog size={15} />
+                </span>
                 <div>
-                  <h2 style={{ margin: 0, fontSize: '1.0625rem', fontWeight: 800, color: '#FFFFFF', letterSpacing: '-0.2px' }}>AI Shift Scheduling</h2>
-                  <p style={{ margin: 0, fontSize: 12, color: 'rgba(255,255,255,0.7)', marginTop: 1 }}>Describe your needs — AI suggests practical shift slots</p>
+                  <p style={{ margin: 0, fontWeight: 800, fontSize: 14, color: TEXT_DARK }}>{profileSummary?.full_name ?? '…'}</p>
+                  <p style={{ margin: '1px 0 0', fontSize: 11, color: MUTED, fontWeight: 600 }}>{profileSummary?.role ?? ''}</p>
                 </div>
               </div>
-              <button onClick={() => setAiShiftModal(false)} style={{ background: 'rgba(255,255,255,0.15)', border: 'none', borderRadius: 8, cursor: 'pointer', color: '#FFFFFF', display: 'flex', padding: 6 }}><X size={16} /></button>
+              <button type="button" onClick={() => setProfileDrawerUserId(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: MUTED, display: 'grid', placeItems: 'center' }}><X size={16} /></button>
             </div>
-
-            {/* Body */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-
-              {/* Context */}
-              <div>
-                <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 700, color: '#374151', marginBottom: 6 }}>
-                  Coverage needs <span style={{ color: '#F97316' }}>*</span>
-                </label>
-                <textarea
-                  autoFocus
-                  value={aiShiftContext}
-                  onChange={e => setAiShiftContext(e.target.value)}
-                  rows={3}
-                  placeholder="e.g. Weekend restaurant service needs coverage from 9am to 10pm across two days, with morning and evening shifts..."
-                  style={{ width: '100%', border: '1.5px solid #E5E7EB', borderRadius: 8, padding: '10px 12px', fontSize: '0.9375rem', color: '#111827', background: '#FAFAFA', resize: 'vertical', lineHeight: 1.55, boxSizing: 'border-box', outline: 'none', fontFamily: 'inherit' }}
-                />
-              </div>
-
-              {/* Department + Preferred hours */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 700, color: '#374151', marginBottom: 6 }}>
-                    Department <span style={{ color: '#F97316' }}>*</span>
-                  </label>
-                  <select
-                    value={aiShiftDeptId}
-                    onChange={e => setAiShiftDeptId(e.target.value)}
-                    style={{ width: '100%', border: '1.5px solid #E5E7EB', borderRadius: 8, padding: '10px 12px', fontSize: '0.9375rem', color: '#111827', background: '#FFFFFF', cursor: 'pointer', outline: 'none', fontFamily: 'inherit' }}
-                  >
-                    <option value="">Select department</option>
-                    {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                  </select>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+              {profileSummaryLoading ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 120, color: MUTED, gap: 8, fontSize: 13 }}>
+                  <Spinner dark /> Loading…
                 </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 700, color: '#374151', marginBottom: 6 }}>
-                    Preferred shift length <span style={{ color: '#D1D5DB', fontWeight: 400 }}>(optional)</span>
-                  </label>
-                  <input
-                    value={aiShiftPreferredHours}
-                    onChange={e => setAiShiftPreferredHours(e.target.value)}
-                    placeholder="e.g. 8-hour shifts"
-                    style={{ width: '100%', border: '1.5px solid #E5E7EB', borderRadius: 8, padding: '10px 12px', fontSize: '0.9375rem', color: '#111827', background: '#FAFAFA', outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit' }}
-                  />
-                </div>
-              </div>
+              ) : profileSummary ? (
+                <>
+                  {/* Weekly Hours */}
+                  <div>
+                    <p style={{ margin: '0 0 8px', fontSize: 11, fontWeight: 800, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Weekly Hours</p>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                      {([
+                        { label: 'Used this week', value: profileSummary.weekly_working_hours, color: '#F97316', bg: '#FFF7ED' },
+                        { label: 'Max allowed', value: profileSummary.max_weekly_hours, color: '#2563EB', bg: '#EFF6FF' },
+                        { label: 'Contracted', value: profileSummary.contracted_weekly_hours, color: '#16A34A', bg: '#DCFCE7' },
+                      ] as const).map(card => (
+                        <div key={card.label} style={{ background: card.bg, borderRadius: 8, padding: '10px 8px 8px', textAlign: 'center' }}>
+                          <p style={{ margin: 0, fontSize: 20, fontWeight: 800, color: card.color }}>{card.value != null ? `${card.value}h` : '—'}</p>
+                          <p style={{ margin: '3px 0 0', fontSize: 10, fontWeight: 700, color: card.color, opacity: 0.7, textTransform: 'uppercase', letterSpacing: '0.04em', lineHeight: 1.3 }}>{card.label}</p>
+                        </div>
+                      ))}
+                    </div>
+                    {profileSummary.max_weekly_hours != null && profileSummary.weekly_working_hours != null && (
+                      <div style={{ marginTop: 10 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+                          <span style={{ fontSize: 11, color: MUTED, fontWeight: 600 }}>Remaining this week</span>
+                          <span style={{ fontSize: 11, fontWeight: 800, color: TEXT_DARK }}>{Math.max(0, profileSummary.max_weekly_hours - profileSummary.weekly_working_hours)}h left</span>
+                        </div>
+                        <div style={{ height: 6, borderRadius: 999, background: '#E2E8F0', overflow: 'hidden' }}>
+                          <div style={{ height: '100%', borderRadius: 999, background: OWNER_ORANGE, width: `${Math.min(100, (profileSummary.weekly_working_hours / profileSummary.max_weekly_hours) * 100)}%` }} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
 
-              {/* Date range */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 700, color: '#374151', marginBottom: 6 }}>From <span style={{ color: '#F97316' }}>*</span></label>
-                  <input
-                    type="date"
-                    value={aiShiftDateFrom}
-                    onChange={e => setAiShiftDateFrom(e.target.value)}
-                    style={{ width: '100%', border: '1.5px solid #E5E7EB', borderRadius: 8, padding: '10px 12px', fontSize: '0.9375rem', color: '#111827', background: '#FFFFFF', outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit' }}
-                  />
-                </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 700, color: '#374151', marginBottom: 6 }}>To <span style={{ color: '#F97316' }}>*</span></label>
-                  <input
-                    type="date"
-                    value={aiShiftDateTo}
-                    onChange={e => setAiShiftDateTo(e.target.value)}
-                    style={{ width: '100%', border: '1.5px solid #E5E7EB', borderRadius: 8, padding: '10px 12px', fontSize: '0.9375rem', color: '#111827', background: '#FFFFFF', outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit' }}
-                  />
-                </div>
-              </div>
+                  {/* Fixed Off Days */}
+                  <div>
+                    <p style={{ margin: '0 0 8px', fontSize: 11, fontWeight: 800, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Fixed Off Days</p>
+                    {profileSummary.fixed_off_days.length === 0 ? (
+                      <p style={{ margin: 0, fontSize: 13, color: MUTED }}>No fixed off days set.</p>
+                    ) : (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((day, i) => {
+                          const isOff = profileSummary.fixed_off_days.includes(i)
+                          return (
+                            <span key={day} style={{ height: 28, padding: '0 12px', borderRadius: 999, fontSize: 12, fontWeight: 700, display: 'inline-flex', alignItems: 'center', background: isOff ? '#FEF2F2' : '#F1F5F9', color: isOff ? '#B91C1C' : '#94A3B8', border: `1px solid ${isOff ? '#FECACA' : '#E2E8F0'}` }}>
+                              {day}
+                            </span>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
 
-              {/* Generate button */}
-              <button
-                type="button"
-                onClick={handleAiGenerateShifts}
-                disabled={!aiShiftContext.trim() || aiShiftLoading}
-                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '10px', background: !aiShiftContext.trim() || aiShiftLoading ? '#E5E7EB' : 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 9, fontWeight: 700, fontSize: '0.9375rem', color: !aiShiftContext.trim() || aiShiftLoading ? '#9CA3AF' : '#FFFFFF', cursor: !aiShiftContext.trim() || aiShiftLoading ? 'default' : 'pointer' }}
-              >
-                <Sparkles size={15} strokeWidth={2.2} />
-                {aiShiftLoading ? 'Generating shifts...' : 'Generate Shift Suggestions'}
-              </button>
-
-              {aiShiftError && (
-                <div style={{ padding: '10px 14px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 9, fontSize: '0.875rem', color: '#DC2626', fontWeight: 600 }}>
-                  {aiShiftError}
-                </div>
+                  {/* Leave Requests */}
+                  <div>
+                    <p style={{ margin: '0 0 8px', fontSize: 11, fontWeight: 800, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Leave Requests</p>
+                    {profileSummary.leave_requests.length === 0 ? (
+                      <p style={{ margin: 0, fontSize: 13, color: MUTED }}>No leave requests.</p>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {profileSummary.leave_requests.map(req => {
+                          const sMap: Record<string, { bg: string; color: string }> = {
+                            pending:  { bg: '#FFFBEB', color: '#B45309' },
+                            approved: { bg: '#ECFDF5', color: '#047857' },
+                            rejected: { bg: '#FEF2F2', color: '#B91C1C' },
+                          }
+                          const s = sMap[req.status] ?? { bg: '#F1F5F9', color: MUTED }
+                          return (
+                            <div key={req.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderRadius: 7, background: '#F8FAFC', border: '1px solid #E2E8F0', gap: 8 }}>
+                              <div style={{ minWidth: 0 }}>
+                                <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: TEXT_DARK, textTransform: 'capitalize' }}>{req.request_type.replace('_', ' ')}</p>
+                                {req.reason && <p style={{ margin: '1px 0 0', fontSize: 11, color: MUTED, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{req.reason}</p>}
+                              </div>
+                              <span style={{ flexShrink: 0, height: 20, padding: '0 8px', borderRadius: 999, fontSize: 10, fontWeight: 800, display: 'inline-flex', alignItems: 'center', background: s.bg, color: s.color, textTransform: 'capitalize' }}>{req.status}</span>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <p style={{ color: MUTED, fontSize: 13 }}>Failed to load profile.</p>
               )}
+            </div>
+          </div>
+        </div>
+      )}
 
-              {/* Suggestions */}
-              {aiShiftSuggestions.length > 0 && (
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                    <p style={{ margin: 0, fontSize: '0.7rem', fontWeight: 700, color: '#7C3AED', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                      {aiShiftSuggestions.length} shift{aiShiftSuggestions.length !== 1 ? 's' : ''} suggested
-                    </p>
+      {/* ═══════════════ AI SHIFT SCHEDULING MODAL ═══════════════ */}      {aiShiftModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, animation: 'overlayFadeIn 0.18s ease-out' }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: 360, maxWidth: 'calc(100% - 32px)', maxHeight: '90vh', background: '#FFFFFF', borderRadius: 20, boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', overflow: 'hidden', flexShrink: 0, animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
+            {(() => {
+              const AI_WIZARD_STEPS = ['dates', 'departments', 'shiftTypes', 'generate'] as const
+              const stepIdx = AI_WIZARD_STEPS.indexOf(aiShiftWizardStep)
+              const stepLabel: Record<typeof AI_WIZARD_STEPS[number], string> = {
+                dates: 'Dates',
+                departments: 'Departments',
+                shiftTypes: 'Shift',
+                generate: 'Generate',
+              }
+              const canContinueFromDates = !!aiShiftDateFrom && !!aiShiftDateTo
+              const canContinueFromDepartments = aiShiftSelectedDepartmentIds.length > 0
+              const canContinueFromShiftTypes = aiShiftTypes.length > 0
+              return (
+                <>
+                  <div style={{ padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <Sparkles size={15} color="#FFFFFF" strokeWidth={2.5} />
+                      </div>
+                      <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#111827', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>Auto Shift Scheduling</h2>
+                    </div>
+                    <button
+                      onClick={closeAiShiftModal}
+                      style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8, flexShrink: 0 }}
+                      onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+                      onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
+                    ><X size={16} /></button>
+                  </div>
+
+                  <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 28 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                      {AI_WIZARD_STEPS.map((s, i) => {
+                        const isDone = stepIdx > i
+                        return (
+                          <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                            {isDone ? (
+                              <button
+                                type="button"
+                                onClick={() => setAiShiftWizardStep(s)}
+                                title="Back"
+                                aria-label={`Back to ${stepLabel[s]}`}
+                                className="ai-wizard-back-circle"
+                                style={{ width: 24, height: 24, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, border: 'none', background: '#F5F3FF', color: '#7C3AED', padding: 0, cursor: 'pointer' }}
+                              >
+                                <ChevronLeft size={14} strokeWidth={2.75} />
+                              </button>
+                            ) : (
+                              <div style={{ width: 20, height: 20, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, background: aiShiftWizardStep === s ? '#7C3AED' : '#F3F4F6', color: aiShiftWizardStep === s ? '#FFF' : '#9CA3AF', flexShrink: 0 }}>
+                                {i + 1}
+                              </div>
+                            )}
+                            {aiShiftWizardStep === s && (
+                              <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#111827' }}>{stepLabel[s]}</span>
+                            )}
+                            {i < AI_WIZARD_STEPS.length - 1 && <div style={{ width: 16, height: 1.5, background: '#E5E7EB', margin: '0 1px' }} />}
+                          </div>
+                        )
+                      })}
+                    </div>
+
+                    <div key={aiShiftWizardStep} style={{ display: 'flex', flexDirection: 'column', gap: 20, animation: 'tabContentIn 0.22s ease-out' }}>
+                    {aiShiftWizardStep === 'dates' && (
+                      <div style={{ display: 'flex', gap: 12 }}>
+                        <div style={{ flex: 1 }}>
+                          <label style={modalLabelStyle}>From</label>
+                          <TimelineDatePicker
+                            value={normalizeDateInput(aiShiftDateFrom)}
+                            onChange={date => {
+                              setAiShiftDateFrom(date)
+                              if (aiShiftDateTo && date > aiShiftDateTo) setAiShiftDateTo(date)
+                            }}
+                            shiftDates={EMPTY_DATE_SET}
+                            minDate={formatDateKey(new Date())}
+                            accentColor="#7C3AED"
+                            triggerStyle={{ width: '100%' }}
+                          />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <label style={modalLabelStyle}>To</label>
+                          <TimelineDatePicker
+                            value={normalizeDateInput(aiShiftDateTo)}
+                            onChange={setAiShiftDateTo}
+                            shiftDates={EMPTY_DATE_SET}
+                            minDate={aiShiftDateFrom ? normalizeDateInput(aiShiftDateFrom) : formatDateKey(new Date())}
+                            accentColor="#7C3AED"
+                            triggerStyle={{ width: '100%' }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {aiShiftWizardStep === 'departments' && (
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, gap: 12, flexWrap: 'wrap' }}>
+                          <label style={{ ...modalLabelStyle, marginBottom: 0 }}>
+                            Departments
+                          </label>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <button
+                              type="button"
+                              onClick={() => setAiShiftSelectedDepartmentIds(departments.map(dept => dept.id))}
+                              title="Select all"
+                              aria-label="Select all"
+                              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 7, background: 'none', border: '1px solid #E5E7EB', color: '#7C3AED', cursor: 'pointer' }}
+                            ><CheckCheck size={13} /></button>
+                            <button
+                              type="button"
+                              onClick={() => setAiShiftSelectedDepartmentIds([])}
+                              title="Clear"
+                              aria-label="Clear"
+                              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 7, background: 'none', border: '1px solid #E5E7EB', color: '#9CA3AF', cursor: 'pointer' }}
+                            ><X size={13} /></button>
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+                          {departments.map(dept => {
+                            const checked = aiShiftSelectedDepartmentIds.includes(dept.id)
+                            return (
+                              <button key={dept.id} type="button" onClick={() => setAiShiftSelectedDepartmentIds(prev => prev.includes(dept.id) ? prev.filter(id => id !== dept.id) : [...prev, dept.id])} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '10px 12px', borderRadius: 10, border: '1.5px solid #E5E7EB', background: '#FFFFFF', cursor: 'pointer', textAlign: 'left' }}>
+                                <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                                  <span style={{ width: 8, height: 8, borderRadius: 999, background: deptColor(dept.id), flexShrink: 0 }} />
+                                  <span style={{ fontSize: 13, fontWeight: 600, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{dept.name}</span>
+                                </span>
+                                <span style={{ width: 18, height: 18, borderRadius: 6, border: `2px solid ${checked ? '#7C3AED' : '#D1D5DB'}`, background: checked ? '#7C3AED' : 'transparent', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{checked && <Check size={11} color="#FFFFFF" strokeWidth={3} />}</span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {aiShiftWizardStep === 'shiftTypes' && (
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, gap: 12 }}>
+                          <label style={{ ...modalLabelStyle, marginBottom: 0 }}>Shift</label>
+                          <button
+                            type="button"
+                            onClick={() => setAiShiftTypes(prev => [...prev, { label: `Shift ${prev.length + 1}`, start_time: '09:00', end_time: '17:00' }])}
+                            aria-label="Add shift"
+                            title="Add shift"
+                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 7, background: 'none', border: '1px solid #E5E7EB', color: '#7C3AED', cursor: 'pointer' }}
+                          >
+                            <Plus size={14} strokeWidth={2.5} />
+                          </button>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
+                          {aiShiftTypes.map((shift, index) => (
+                            <div key={index} style={{ position: 'relative', border: '1px solid #E5E7EB', background: '#FFFFFF', borderRadius: 10, padding: '10px 12px' }}>
+                              {aiShiftTypes.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => setAiShiftTypes(prev => prev.filter((_, i) => i !== index))}
+                                  aria-label="Remove shift"
+                                  style={{ position: 'absolute', top: 8, right: 8, width: 20, height: 20, border: 'none', borderRadius: 6, background: '#F9FAFB', color: '#9CA3AF', cursor: 'pointer', display: 'grid', placeItems: 'center' }}
+                                  onMouseEnter={e => { e.currentTarget.style.background = '#FEF2F2'; e.currentTarget.style.color = '#DC2626' }}
+                                  onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB'; e.currentTarget.style.color = '#9CA3AF' }}
+                                >
+                                  <X size={12} strokeWidth={2.5} />
+                                </button>
+                              )}
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                                <div><label style={labelStyle}>Start time</label><TimePicker value={shift.start_time} onChange={value => setAiShiftTypes(prev => prev.map((item, i) => i === index ? { ...item, start_time: value } : item))} /></div>
+                                <div><label style={labelStyle}>End time</label><TimePicker value={shift.end_time} onChange={value => setAiShiftTypes(prev => prev.map((item, i) => i === index ? { ...item, end_time: value } : item))} /></div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {aiShiftWizardStep === 'dates' && (
+                      <button type="button" onClick={() => setAiShiftWizardStep('departments')} disabled={!canContinueFromDates} style={{ alignSelf: 'flex-end', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '9px 20px', background: !canContinueFromDates ? '#EDE9FE' : 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: !canContinueFromDates ? '#A78BFA' : '#FFFFFF', cursor: !canContinueFromDates ? 'default' : 'pointer' }}>
+                        Continue
+                      </button>
+                    )}
+                    {aiShiftWizardStep === 'departments' && (
+                      <button type="button" onClick={() => setAiShiftWizardStep('shiftTypes')} disabled={!canContinueFromDepartments} style={{ alignSelf: 'flex-end', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '9px 20px', background: !canContinueFromDepartments ? '#EDE9FE' : 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: !canContinueFromDepartments ? '#A78BFA' : '#FFFFFF', cursor: !canContinueFromDepartments ? 'default' : 'pointer' }}>
+                        Continue
+                      </button>
+                    )}
+                    {aiShiftWizardStep === 'shiftTypes' && (
+                      <button type="button" onClick={() => setAiShiftWizardStep('generate')} disabled={!canContinueFromShiftTypes} style={{ alignSelf: 'flex-end', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '9px 20px', background: !canContinueFromShiftTypes ? '#EDE9FE' : 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: !canContinueFromShiftTypes ? '#A78BFA' : '#FFFFFF', cursor: !canContinueFromShiftTypes ? 'default' : 'pointer' }}>
+                        Continue
+                      </button>
+                    )}
+
+                    {aiShiftWizardStep === 'generate' && aiShiftSuggestions.length === 0 && !aiShiftLoading && (
+                      <button type="button" onClick={handleAiGenerateShifts} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '11px 14px', background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: 'pointer' }}>
+                        <Sparkles size={13} strokeWidth={2.5} />
+                        Generate Schedule with AI
+                      </button>
+                    )}
+
+                    {aiShiftWizardStep === 'generate' && aiShiftLoading && (
+                      <div style={{ width: '100%', height: 8, borderRadius: 999, background: '#EDE9FE', overflow: 'hidden' }}>
+                        <div style={{ width: `${aiShiftProgress}%`, height: '100%', borderRadius: 999, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', transition: 'width 0.2s linear' }} />
+                      </div>
+                    )}
+
+                    {aiShiftWizardStep === 'generate' && aiShiftError && <div style={{ padding: '10px 14px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, fontSize: '0.875rem', color: '#DC2626' }}>{aiShiftError}</div>}
+                    {aiShiftWizardStep === 'generate' && aiShiftNotice && <div style={{ padding: '10px 14px', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 8, fontSize: '0.875rem', color: '#92400E', fontWeight: 600, lineHeight: 1.45 }}>{aiShiftNotice}</div>}
+
+                    {aiShiftWizardStep === 'generate' && aiShiftSuggestions.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                    <p style={{ margin: 0, fontSize: '0.72rem', fontWeight: 700, color: '#7C3AED', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{aiShiftSuggestions.length} schedule block{aiShiftSuggestions.length !== 1 ? 's' : ''} suggested</p>
                     <div style={{ display: 'flex', gap: 10 }}>
-                      <button type="button" onClick={() => setAiShiftSelected(new Set(aiShiftSuggestions.map((_, i) => i)))} style={{ fontSize: '0.75rem', fontWeight: 700, color: '#7C3AED', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>Select all</button>
+                      <button type="button" onClick={() => setAiShiftSelected(new Set(aiShiftSuggestions.map(block => block.key)))} style={{ fontSize: '0.75rem', fontWeight: 700, color: '#7C3AED', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>Select all</button>
                       <button type="button" onClick={() => setAiShiftSelected(new Set())} style={{ fontSize: '0.75rem', fontWeight: 700, color: '#9CA3AF', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>Clear</button>
                       <button type="button" onClick={handleAiGenerateShifts} disabled={aiShiftLoading} style={{ fontSize: '0.75rem', fontWeight: 700, color: '#F97316', background: 'none', border: 'none', cursor: aiShiftLoading ? 'default' : 'pointer', padding: 0, opacity: aiShiftLoading ? 0.5 : 1 }}>Regenerate</button>
                     </div>
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {aiShiftSuggestions.map((s, idx) => {
-                      const checked = aiShiftSelected.has(idx)
-                      const dateObj = new Date(`${s.shift_date}T00:00:00`)
-                      const dateLabel = dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-                      const [sh, sm] = s.start_time.split(':').map(Number)
-                      const [eh, em] = s.end_time.split(':').map(Number)
-                      const fmt = (h: number, m: number) => { const ap = h < 12 ? 'am' : 'pm'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return m === 0 ? `${h12}${ap}` : `${h12}:${String(m).padStart(2,'0')}${ap}` }
-                      const timeLabel = `${fmt(sh, sm)} – ${fmt(eh, em)}`
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {aiShiftSuggestions.map(block => {
+                      const checked = aiShiftSelected.has(block.key)
+                      const dateLabel = new Date(`${block.shift_date}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+                      const personChip = (name: string | null) => (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, borderRadius: 999, padding: '4px 9px', background: name ? '#EEF2FF' : '#F3F4F6', color: name ? '#4F46E5' : '#6B7280', fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                          <span style={{ width: 6, height: 6, borderRadius: 999, background: name ? '#A78BFA' : '#9CA3AF', flexShrink: 0 }} />
+                          {name ?? 'Unassigned'}
+                        </span>
+                      )
+
                       return (
-                        <div
-                          key={idx}
-                          onClick={() => setAiShiftSelected(prev => { const n = new Set(prev); if (n.has(idx)) n.delete(idx); else n.add(idx); return n })}
-                          style={{ display: 'flex', alignItems: 'flex-start', gap: 11, padding: '11px 14px', border: `1.5px solid ${checked ? '#7C3AED' : '#E5E7EB'}`, borderRadius: 10, background: checked ? '#F5F3FF' : '#FAFAFA', cursor: 'pointer', transition: 'border-color 0.12s, background 0.12s' }}
-                        >
-                          <div style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 5, border: `2px solid ${checked ? '#7C3AED' : '#D1D5DB'}`, background: checked ? '#7C3AED' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 1 }}>
-                            {checked && <Check size={11} color="#FFFFFF" strokeWidth={3} />}
-                          </div>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 3 }}>
-                              <span style={{ fontSize: 13, fontWeight: 800, color: '#111827' }}>{s.title}</span>
-                              <span style={{ fontSize: 11, fontWeight: 700, color: '#6B7280', background: '#F3F4F6', padding: '1px 7px', borderRadius: 99 }}>{dateLabel}</span>
-                              <span style={{ fontSize: 11, fontWeight: 700, color: '#7C3AED', background: '#EDE9FE', padding: '1px 7px', borderRadius: 99 }}>{timeLabel}</span>
+                        <div key={block.key} onClick={() => setAiShiftSelected(prev => { const next = new Set(prev); if (next.has(block.key)) next.delete(block.key); else next.add(block.key); return next })} style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '14px 14px 13px', border: `1.5px solid ${checked ? '#7C3AED' : '#E5E7EB'}`, borderRadius: 12, background: checked ? '#F5F3FF' : '#FAFAFA', cursor: 'pointer', transition: 'border-color 0.12s, background 0.12s' }}>
+                          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
+                                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, borderRadius: 5, border: `2px solid ${checked ? '#7C3AED' : '#D1D5DB'}`, background: checked ? '#7C3AED' : 'transparent', flexShrink: 0 }}>{checked && <Check size={11} color="#FFFFFF" strokeWidth={3} />}</span>
+                                <span style={{ fontSize: 14, fontWeight: 700, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{block.department_name}</span>
+                                <span style={{ fontSize: 11, fontWeight: 700, color: '#6B7280', background: '#F3F4F6', padding: '2px 8px', borderRadius: 999 }}>{dateLabel}</span>
+                              </div>
+                              <p style={{ margin: 0, fontSize: 12, color: '#6B7280', lineHeight: 1.5 }}>
+                                {block.slots[0]?.reason ?? 'AI generated schedule slots for this department and date.'}
+                              </p>
                             </div>
-                            <p style={{ margin: 0, fontSize: 12, color: '#6B7280', lineHeight: 1.5 }}>{s.reason}</p>
+                            {block.warning && <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 8px', borderRadius: 999, background: '#FEF3C7', color: '#92400E', fontSize: 11, fontWeight: 700, flexShrink: 0 }}><AlertTriangle size={12} />Review</span>}
                           </div>
+
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 10, alignItems: 'stretch' }}>
+                            {block.slots.map((slot, slotIndex) => (
+                              <div key={`${block.key}_${slot.shift_label}_${slotIndex}`} style={{ borderRadius: 10, background: '#FFFFFF', border: '1px solid #E5E7EB', padding: '10px 11px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
+                                  <span style={{ fontSize: 11, fontWeight: 700, color: slotIndex % 2 === 0 ? '#7C3AED' : '#F97316', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{slot.shift_label}</span>
+                                  <span style={{ fontSize: 11, fontWeight: 700, color: '#6B7280', background: '#F3F4F6', padding: '2px 7px', borderRadius: 999 }}>{formatShiftHour(slot.start_time)} - {formatShiftHour(slot.end_time)}</span>
+                                </div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                  <span style={{ fontSize: 13, fontWeight: 700, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{`${block.department_name} ${slot.shift_label}`}</span>
+                                  {personChip(slot.assigned_user_name)}
+                                </div>
+                                <p style={{ margin: '8px 0 0', fontSize: 11, lineHeight: 1.45, color: '#6B7280' }}>{slot.reason}</p>
+                              </div>
+                            ))}
+                          </div>
+
+                          {block.warning && <div style={{ fontSize: 12, color: '#B45309', lineHeight: 1.45, background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 10, padding: '9px 11px' }}>{block.warning}</div>}
                         </div>
                       )
                     })}
@@ -2419,41 +3111,39 @@ export default function OwnerShiftsPage() {
                 </div>
               )}
 
-              {aiShiftCreateError && (
-                <div style={{ padding: '10px 14px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 9, fontSize: '0.875rem', color: '#DC2626', fontWeight: 600 }}>
-                  {aiShiftCreateError}
-                </div>
-              )}
-            </div>
+                    {aiShiftWizardStep === 'generate' && aiShiftCreateError && <div style={{ padding: '10px 14px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 9, fontSize: '0.875rem', color: '#DC2626', fontWeight: 600 }}>{aiShiftCreateError}</div>}
+                    </div>
+                  </div>
 
-            {/* Footer */}
-            <div style={{ padding: '14px 24px 20px', borderTop: '1px solid #F3F4F6', display: 'flex', gap: 10, flexShrink: 0 }}>
-              <button
-                type="button"
-                onClick={() => setAiShiftModal(false)}
-                style={{ flex: 1, padding: '10px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: 8, fontWeight: 600, fontSize: '0.9375rem', color: '#6B7280', cursor: 'pointer' }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleAiCreateShifts}
-                disabled={aiShiftSelected.size === 0 || aiShiftCreateLoading}
-                style={{ flex: 1, padding: '10px', background: aiShiftSelected.size === 0 || aiShiftCreateLoading ? '#E5E7EB' : 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: '0.9375rem', color: aiShiftSelected.size === 0 || aiShiftCreateLoading ? '#9CA3AF' : '#FFFFFF', cursor: aiShiftSelected.size === 0 || aiShiftCreateLoading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7 }}
-              >
-                {aiShiftCreateLoading ? 'Creating...' : `Create ${aiShiftSelected.size} Shift${aiShiftSelected.size !== 1 ? 's' : ''}`}
-              </button>
-            </div>
+                  {aiShiftWizardStep === 'generate' && aiShiftSuggestions.length > 0 && (
+                    <div style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8, flexShrink: 0 }}>
+                      <button
+                        type="button"
+                        onClick={handleAiCreateShifts}
+                        disabled={aiShiftSelected.size === 0 || aiShiftCreateLoading}
+                        style={{ padding: '7px 18px', background: aiShiftSelected.size === 0 || aiShiftCreateLoading ? '#A78BFA' : 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: aiShiftSelected.size === 0 || aiShiftCreateLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: aiShiftSelected.size === 0 || aiShiftCreateLoading ? 0.65 : 1 }}
+                      >
+                        {aiShiftCreateLoading ? <Spinner size={13} /> : <Check size={13} />}
+                        {aiShiftCreateLoading ? 'Creating...' : `Create ${aiShiftSuggestions.filter(block => aiShiftSelected.has(block.key)).reduce((total, block) => total + block.slots.length, 0)} Shifts`}
+                      </button>
+                    </div>
+                  )}
+                </>
+              )
+            })()}
           </div>
         </div>
       )}
 
       {batchDepartment && (
-        <div style={drawerOverlayStyle}>
-          <div style={drawerStyle}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, padding: 18, borderBottom: `1px solid ${PANEL_BORDER}` }}>
-              <div>
-                <h2 style={{ margin: 0, color: TEXT_DARK, fontSize: '1.25rem', fontWeight: 900 }}>
+        <div style={modalOverlayStyle}>
+          <div style={{ ...modalStyle, width: 'min(520px, calc(100% - 32px))', padding: 0, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', flexShrink: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <CalendarDays size={15} color="#fff" strokeWidth={2} />
+                </div>
+                <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
                   {batchSingleMember
                     ? `Assign Shift to ${batchSingleMember.full_name}`
                     : selectedMemberIds.length > 0 && new Set(selectedMemberIds.map(id => members.find(m => m.id === id)?.department_id)).size > 1
@@ -2462,13 +3152,21 @@ export default function OwnerShiftsPage() {
                   }
                 </h2>
               </div>
-              <button type="button" onClick={closeBatchDrawer} style={iconButtonStyle}><X size={18} /></button>
+              <button
+                type="button"
+                onClick={closeBatchDrawer}
+                style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8, flexShrink: 0 }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+                onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
+              >
+                <X size={16} />
+              </button>
             </div>
-            <div style={{ padding: '20px 22px 0', overflowY: 'auto', flex: 1 }}>
+            <div style={{ padding: '20px 24px 4px', overflowY: 'auto', flex: 1 }}>
               {/* Batch mode: People picker */}
               {!batchSingleMember && (
                 <div style={{ marginBottom: 20 }}>
-                  <p style={{ margin: '0 0 8px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: '#94A3B8' }}>People</p>
+                  <p style={{ margin: '0 0 8px', fontWeight: 600, fontSize: '0.875rem', color: '#374151', display: 'block' }}>People</p>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 8 }}>
                     {(batchFromSelection
                       ? members.filter(m => selectedMemberIds.includes(m.id))
@@ -2488,7 +3186,7 @@ export default function OwnerShiftsPage() {
                               {isManager ? <UserCog size={13} /> : <UserRound size={13} />}
                             </span>
                             <div style={{ minWidth: 0 }}>
-                              <p style={{ margin: 0, color: TEXT_DARK, fontSize: 13, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{member.full_name}</p>
+                            <p style={{ margin: 0, ...MEMBER_NAME_STYLE, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{member.full_name}</p>
                               <p style={{ margin: '2px 0 0', color: '#94A3B8', fontSize: 11, fontWeight: 600 }}>{member.role}</p>
                             </div>
                           </div>
@@ -2504,7 +3202,7 @@ export default function OwnerShiftsPage() {
               {!batchSingleMember && calMonth && selectedMemberIds.length === 0 && (
                 <div style={{ marginBottom: 20, background: '#F8FAFC', borderRadius: 14, padding: '24px 18px', border: `1.5px dashed ${PANEL_BORDER}`, textAlign: 'center' }}>
                   <div style={{ marginBottom: 6, display: 'flex', justifyContent: 'center' }}><CalendarDays size={20} color="#CBD5E1" /></div>
-                  <p style={{ margin: 0, color: '#94A3B8', fontSize: 13, fontWeight: 500 }}>Select team members above to pick shift dates</p>
+                  <p style={{ margin: 0, color: '#94A3B8', fontSize: 13, fontWeight: 600 }}>Select team members above to pick shift dates</p>
                 </div>
               )}
 
@@ -2540,48 +3238,53 @@ export default function OwnerShiftsPage() {
                       @keyframes calSlidePrev { from { opacity: 0; transform: translateX(-18px) } to { opacity: 1; transform: translateX(0) } }
                     `}</style>
                     <div style={{ marginBottom: 20 }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 210px', gap: 14, alignItems: 'stretch' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 190px', gap: 14, alignItems: 'stretch' }}>
                       {/* Calendar */}
-                      <div style={{ background: '#F8FAFC', borderRadius: 14, padding: '12px 14px', border: `1px solid ${PANEL_BORDER}` }}>
-                        <p style={{ margin: '0 0 10px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: '#94A3B8' }}>Select Dates</p>
+                      <div style={{ background: '#FFFFFF', borderRadius: 14, padding: '12px 14px', border: `1px solid ${PANEL_BORDER}` }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
                           <button type="button" onClick={goPrev} disabled={!canGoPrev}
                             style={{ width: 26, height: 26, border: `1px solid ${canGoPrev ? PANEL_BORDER : 'transparent'}`, background: canGoPrev ? '#FFFFFF' : 'transparent', borderRadius: 7, cursor: canGoPrev ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', color: canGoPrev ? MUTED : '#D1D5DB', flexShrink: 0, opacity: canGoPrev ? 1 : 0.3, transition: 'opacity 0.15s' }}>
                             <ChevronLeft size={12} />
                           </button>
-                          <span style={{ fontSize: 13, fontWeight: 700, color: TEXT_DARK }}>{monthLabel}</span>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: TEXT_DARK }}>{monthLabel}</span>
                           <button type="button" onClick={goNext}
                             style={{ width: 26, height: 26, border: `1px solid ${PANEL_BORDER}`, background: '#FFFFFF', borderRadius: 7, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: MUTED, flexShrink: 0 }}>
                             <ChevronRight size={12} />
                           </button>
                         </div>
-                        <div key={`hd-${calKey}`} style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 36px)', justifyContent: 'center', marginBottom: 2 }}>
+                        <div key={`hd-${calKey}`} style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 32px)', justifyContent: 'center', marginBottom: 2 }}>
                           {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(d => (
                             <div key={d} style={{ fontSize: 11, fontWeight: 600, color: '#9CA3AF', textAlign: 'center', height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{d}</div>
                           ))}
                         </div>
-                        <div key={`grid-${calKey}`} style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 36px)', justifyContent: 'center', gap: 2, animation: `${calDir === 'next' ? 'calSlideNext' : 'calSlidePrev'} 0.18s ease` }}>
+                        <div key={`grid-${calKey}`} style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 32px)', justifyContent: 'center', gap: 2, animation: `${calDir === 'next' ? 'calSlideNext' : 'calSlidePrev'} 0.18s ease` }}>
                           {cells.map((date, i) => {
-                            if (!date || date < todayStr) return <div key={`e-${i}`} style={{ width: 36, height: 36 }} />
-                            const avail = date >= todayStr
+                            if (!date) return <div key={`e-${i}`} style={{ width: 32, height: 32 }} />
+                            const isPast = date < todayStr
                             const sel = selectedDates.includes(date)
                             const isToday = date === todayStr
                             const dayNum = new Date(date + 'T00:00:00').getDate()
+                            if (isPast) {
+                              return (
+                                <div key={date} style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, color: '#D1D5DB', userSelect: 'none' }}>
+                                  {dayNum}
+                                </div>
+                              )
+                            }
                             return (
                               <button
                                 key={date}
                                 type="button"
-                                disabled={!avail}
-                                onClick={() => avail && toggleBatchDate(date)}
+                                onClick={() => toggleBatchDate(date)}
                                 style={{
-                                  width: 36, height: 36,
+                                  width: 32, height: 32,
                                   borderRadius: '50%',
                                   border: isToday && !sel ? `2px solid ${OWNER_ORANGE}` : 'none',
                                   background: sel ? OWNER_ORANGE : 'transparent',
-                                  color: sel ? '#FFFFFF' : isToday ? OWNER_ORANGE : avail ? TEXT_DARK : '#94A3B8',
+                                  color: sel ? '#FFFFFF' : isToday ? OWNER_ORANGE : TEXT_DARK,
                                   fontWeight: sel || isToday ? 700 : 400,
                                   fontSize: 13,
-                                  cursor: avail ? 'pointer' : 'default',
+                                  cursor: 'pointer',
                                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                                   padding: 0, flexShrink: 0,
                                   transition: 'background 0.12s, color 0.12s',
@@ -2595,18 +3298,17 @@ export default function OwnerShiftsPage() {
                       </div>
 
                       {/* Shift Hours */}
-                      <div style={{ background: '#F8FAFC', borderRadius: 14, padding: '12px 14px', border: `1px solid ${PANEL_BORDER}`, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                        <p style={{ margin: 0, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: '#94A3B8' }}>Shift Hours</p>
+                      <div style={{ background: '#FFFFFF', borderRadius: 14, padding: '12px 14px', border: `1px solid ${PANEL_BORDER}`, display: 'flex', flexDirection: 'column', gap: 12 }}>
                         <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                          <span style={{ ...labelStyle, margin: 0 }}>Start time</span>
+                          <span style={{ display: 'block', fontWeight: 600, fontSize: '0.875rem', color: '#374151', marginBottom: 4 }}>Start time</span>
                           <TimePicker value={defaultStartTime} onChange={setDefaultStartTime} />
                         </label>
                         <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                          <span style={{ ...labelStyle, margin: 0 }}>End time</span>
+                          <span style={{ display: 'block', fontWeight: 600, fontSize: '0.875rem', color: '#374151', marginBottom: 4 }}>End time</span>
                           <TimePicker value={defaultEndTime} onChange={setDefaultEndTime} />
                         </label>
                         <button type="button" onClick={applyDefaultToAllCells}
-                          style={{ border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#FFFFFF', color: TEXT_DARK, height: 34, padding: '0 12px', fontWeight: 700, fontSize: 12, cursor: 'pointer', width: '100%', marginTop: 2 }}
+                          style={{ border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#FFFFFF', color: TEXT_DARK, height: 34, padding: '0 12px', fontWeight: 600, fontSize: 12, cursor: 'pointer', width: '100%', marginTop: 2 }}
                         >
                           Apply to all
                         </button>
@@ -2620,15 +3322,15 @@ export default function OwnerShiftsPage() {
               {/* Preview Grid */}
               <div style={{ marginBottom: 20 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                  <p style={{ margin: 0, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: '#94A3B8' }}>Preview</p>
-                  <span style={{ fontSize: 12, color: enabledBatchCells.length > 0 ? OWNER_ORANGE : '#CBD5E1', fontWeight: 700 }}>
+                  <p style={{ margin: 0, fontWeight: 600, fontSize: '0.875rem', color: '#374151', display: 'block' }}>Preview</p>
+                  <span style={{ fontSize: 12, color: enabledBatchCells.length > 0 ? OWNER_ORANGE : '#CBD5E1', fontWeight: 600 }}>
                     {enabledBatchCells.length} shift{enabledBatchCells.length !== 1 ? 's' : ''} selected
                   </span>
                 </div>
                 {selectedMembers.length === 0 || selectedDates.length === 0 ? (
                   <div style={{ border: `1.5px dashed ${PANEL_BORDER}`, borderRadius: 12, padding: '22px 18px', textAlign: 'center' }}>
                     <div style={{ marginBottom: 6, display: 'flex', justifyContent: 'center' }}><CalendarDays size={20} color="#CBD5E1" /></div>
-                    <p style={{ margin: 0, color: '#94A3B8', fontSize: 13, fontWeight: 500 }}>
+                    <p style={{ margin: 0, color: '#94A3B8', fontSize: 13, fontWeight: 600 }}>
                       {selectedMembers.length === 0 ? 'Select team members to get started' : 'Select dates from the calendar above'}
                     </p>
                   </div>
@@ -2646,8 +3348,8 @@ export default function OwnerShiftsPage() {
                                   : <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                                 }
                               </div>
-                              <span style={{ fontSize: 12, fontWeight: 700, color: isManager ? OWNER_ORANGE : TEXT_DARK }}>{member.full_name}</span>
-                              <span style={{ fontSize: 11, color: '#94A3B8', fontWeight: 500 }}>{member.role}</span>
+                              <span style={MEMBER_NAME_STYLE}>{member.full_name}</span>
+                              <span style={{ fontSize: 11, color: '#94A3B8', fontWeight: 600 }}>{member.role}</span>
                             </div>
                           )}
                           <div style={{ padding: '10px', display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
@@ -2667,13 +3369,13 @@ export default function OwnerShiftsPage() {
                                   >
                                     <X size={10} />
                                   </button>
-                                  <p style={{ margin: '0 0 7px', fontSize: 11, fontWeight: 700, color: TEXT_DARK, paddingRight: 14 }}>{previewDateLabel(date)}</p>
+                                  <p style={{ margin: '0 0 7px', fontSize: 11, fontWeight: 600, color: TEXT_DARK, paddingRight: 14 }}>{previewDateLabel(date)}</p>
                                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5 }}>
                                     <TimePicker compact value={cell.start_time} onChange={v => updateBatchCell(member.id, date, { start_time: v })} />
                                     <TimePicker compact value={cell.end_time} onChange={v => updateBatchCell(member.id, date, { end_time: v })} />
                                   </div>
                                   {existing.length > 0 && (
-                                    <div style={{ display: 'flex', gap: 4, marginTop: 5, color: '#B45309', fontSize: '0.68rem', fontWeight: 700, alignItems: 'center', flexWrap: 'wrap' }}>
+                                    <div style={{ display: 'flex', gap: 4, marginTop: 5, color: '#B45309', fontSize: '0.68rem', fontWeight: 600, alignItems: 'center', flexWrap: 'wrap' }}>
                                       <AlertTriangle size={11} style={{ flexShrink: 0 }} />
                                       <span>Has {existing.length} shift{existing.length !== 1 ? 's' : ''} ({[...new Set(existing.map(s => s.department_name))].join(', ')})</span>
                                     </div>
@@ -2689,33 +3391,6 @@ export default function OwnerShiftsPage() {
                 )}
               </div>
 
-              {/* UC1: Acceptance Deadline */}
-              <div style={{ marginBottom: 20 }}>
-                <p style={{ margin: '0 0 10px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: '#94A3B8' }}>Acceptance Deadline</p>
-                <div style={{ background: '#F8FAFC', border: `1px solid ${PANEL_BORDER}`, borderRadius: 12, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    <span style={labelStyle}>Response window (hours)</span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 0, border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, overflow: 'hidden', background: '#FFFFFF', width: 140 }}>
-                      <input
-                        type="number"
-                        min={1}
-                        max={168}
-                        value={batchDeadline}
-                        onChange={e => setBatchDeadline(e.target.value)}
-                        placeholder="e.g. 24"
-                        style={{ flex: 1, padding: '9px 11px', border: 'none', outline: 'none', fontSize: 13, fontWeight: 500, color: TEXT_DARK, background: 'transparent' }}
-                      />
-                      <span style={{ padding: '9px 11px 9px 0', fontSize: 13, fontWeight: 600, color: MUTED, background: 'transparent', whiteSpace: 'nowrap' }}>hrs</span>
-                    </div>
-                  </label>
-                  {batchDeadline && (
-                    <p style={{ margin: 0, fontSize: 12, fontWeight: 500, color: MUTED }}>
-                      Workers must accept or decline within <strong style={{ color: TEXT_DARK }}>{batchDeadline} hour{Number(batchDeadline) === 1 ? '' : 's'}</strong> of being assigned.
-                    </p>
-                  )}
-                </div>
-              </div>
-
               {(bulkError || bulkFailures.length > 0) && (
                 <div style={{ marginBottom: 16 }}>
                   {bulkError && <div style={errorBoxStyle}>{bulkError}</div>}
@@ -2729,198 +3404,169 @@ export default function OwnerShiftsPage() {
                 </div>
               )}
             </div>
-            <div style={{ padding: 18, borderTop: `1px solid ${PANEL_BORDER}`, display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-              <button type="button" onClick={closeBatchDrawer} style={secondaryButtonStyle}>Cancel</button>
-              <button type="button" onClick={submitBulkAssignment} disabled={bulkSubmitting} style={primaryButtonStyle}>
-                {bulkSubmitting ? <Spinner /> : <Check size={16} />} Assign {enabledBatchCells.length || ''} Shift{enabledBatchCells.length === 1 ? '' : 's'}
+            <div style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: '1px solid #F3F4F6' }}>
+              <button type="button" onClick={submitBulkAssignment} disabled={bulkSubmitting} style={{ padding: '7px 18px', background: bulkSubmitting ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: bulkSubmitting ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: bulkSubmitting ? 0.65 : 1 }}>
+                {bulkSubmitting ? <Spinner size={13} /> : <Check size={13} />} Assign {enabledBatchCells.length || ''} Shift{enabledBatchCells.length === 1 ? '' : 's'}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {departmentModal && (
-        <Modal title={departmentModal === 'delete' ? 'Delete Department' : departmentModal === 'edit' ? 'Edit Department' : 'Add Department'} onClose={() => setDepartmentModal(null)}>
-          {departmentModal === 'delete' ? (() => {
-            const deptMembers = activeDepartment ? (membersByDepartment.get(activeDepartment.id) ?? []) : []
-            const hasMembers = deptMembers.length > 0
-            const managerCount = deptMembers.filter(m => m.role === 'Manager').length
-            const employeeCount = deptMembers.filter(m => m.role === 'Employee').length
-            return (
-              <>
-                {hasMembers ? (
-                  <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 10, padding: '14px 16px', marginTop: 0 }}>
-                    <p style={{ fontSize: 13, color: '#B91C1C', margin: '0 0 4px' }}>Department still has active members.</p>
-                    <p style={{ fontSize: 13, color: '#B91C1C', margin: 0 }}>Reassign or remove all members before deleting this department.</p>
-                  </div>
-                ) : (
-                  <p style={{ color: MUTED, marginTop: 0, fontSize: 13 }}>Are you sure you want to delete <strong>{activeDepartment?.name}</strong>? This cannot be undone.</p>
-                )}
-                {departmentActionError && <div style={errorBoxStyle}>{departmentActionError}</div>}
-                <div style={modalFooterStyle}>
-                  <button type="button" onClick={() => setDepartmentModal(null)} style={secondaryButtonStyle}>Cancel</button>
-                  {!hasMembers && (
-                    <button type="button" onClick={handleDeleteDepartment} disabled={departmentActionLoading} style={{ ...primaryButtonStyle, background: '#DC2626' }}>{departmentActionLoading ? <Spinner /> : <Trash2 size={16} />} Delete</button>
-                  )}
-                </div>
-              </>
-            )
-          })() : (
-            <>
-              {departmentModal === 'add' && (
-                <div style={{ display: 'inline-flex', border: `1px solid ${PANEL_BORDER}`, borderRadius: 9, overflow: 'hidden', marginBottom: 16 }}>
-                  {(['manual', 'import'] as const).map(tab => (
-                    <button key={tab} type="button" onClick={() => setDepartmentModalTab(tab)} style={{ border: 0, height: 34, padding: '0 13px', background: departmentModalTab === tab ? '#111827' : '#FFFFFF', color: departmentModalTab === tab ? '#FFFFFF' : TEXT_DARK, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
-                      {tab === 'manual' ? 'Manual' : 'Import'}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {departmentModalTab === 'manual' ? (
-                <label>
-                  <span style={labelStyle}>Department name</span>
-                  <input value={departmentNameInput} onChange={e => setDepartmentNameInput(e.target.value)} style={inputStyle} placeholder="Operations" />
-                </label>
-              ) : (
-                <>
-                  <label>
-                    <span style={labelStyle}>CSV file</span>
-                    <input type="file" accept=".csv,text/csv,text/plain" onChange={e => void handleDepartmentImportFile(e.target.files?.[0] ?? null)} style={inputStyle} />
-                  </label>
-                  {departmentImportRows.length > 0 && (
-                    <div style={{ marginTop: 12, border: `1px solid ${PANEL_BORDER}`, borderRadius: 10, maxHeight: 180, overflowY: 'auto' }}>
-                      {departmentImportRows.map(name => <div key={name} style={{ padding: '8px 10px', borderBottom: `1px solid ${PANEL_BORDER}`, color: TEXT_DARK, fontWeight: 800, fontSize: '0.82rem' }}>{name}</div>)}
-                    </div>
-                  )}
-                </>
-              )}
-              {departmentActionError && <div style={{ ...errorBoxStyle, marginTop: 12 }}>{departmentActionError}</div>}
-              {departmentActionResult && <div style={{ ...successBoxStyle, marginTop: 12 }}>{departmentActionResult}</div>}
-              <div style={modalFooterStyle}>
-                <button type="button" onClick={() => setDepartmentModal(null)} style={secondaryButtonStyle}>Cancel</button>
-                <button type="button" onClick={handleSaveDepartment} disabled={departmentActionLoading} style={primaryButtonStyle}>{departmentActionLoading ? <Spinner /> : departmentModalTab === 'import' ? <Upload size={16} /> : <Check size={16} />} Save</button>
-              </div>
-            </>
-          )}
-        </Modal>
-      )}
 
-      {managerModalDepartment && (
-        <Modal title={`Edit Managers — ${managerModalDepartment.name}`} onClose={() => { setManagerModalDepartment(null); setSelectedManagerId(''); setManagerActionError('') }}>
-          {/* Current managers in this dept */}
-          {(() => {
-            const currentManagers = departmentManagers.filter(a => a.department_id === managerModalDepartment.id)
-            return currentManagers.length > 0 ? (
-              <div style={{ marginBottom: 16 }}>
-                <span style={labelStyle}>Current managers</span>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 }}>
-                  {currentManagers.map(a => (
-                    <div key={a.manager_id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 8, padding: '8px 12px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <UserCog size={14} color="#EA580C" />
-                        <span style={{ fontSize: 13, fontWeight: 700, color: '#EA580C' }}>{a.manager_name}</span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveManager(a.manager_id)}
-                        disabled={managerRemoveLoading === a.manager_id}
-                        style={{ border: 'none', background: 'transparent', cursor: managerRemoveLoading === a.manager_id ? 'default' : 'pointer', color: '#9CA3AF', display: 'flex', alignItems: 'center', padding: 4, borderRadius: 6 }}
-                        title="Remove from this department"
-                        onMouseEnter={e => { e.currentTarget.style.color = '#EF4444' }}
-                        onMouseLeave={e => { e.currentTarget.style.color = '#9CA3AF' }}
-                      >
-                        {managerRemoveLoading === a.manager_id ? <Spinner dark size={14} /> : <X size={15} />}
+      {selectedShift && (() => {
+        const todayStr = formatDateKey(new Date())
+        const todayMonthStr = todayStr.slice(0, 7)
+        const monthKey = editShiftCalMonth || shiftEditForm.shift_date.slice(0, 7)
+        const [cy, cm] = monthKey.split('-').map(Number)
+        const firstDay = new Date(cy, cm - 1, 1).getDay()
+        const daysInMonth = new Date(cy, cm, 0).getDate()
+        const monthLabel = new Date(cy, cm - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+        const canGoPrev = monthKey > todayMonthStr
+        const cells: (string | null)[] = []
+        for (let i = 0; i < firstDay; i++) cells.push(null)
+        for (let d = 1; d <= daysInMonth; d++) cells.push(`${cy}-${String(cm).padStart(2, '0')}-${String(d).padStart(2, '0')}`)
+        const goPrev = () => {
+          if (!canGoPrev) return
+          setEditShiftCalDir('prev')
+          setEditShiftCalKey(k => k + 1)
+          const d = new Date(cy, cm - 2, 1)
+          setEditShiftCalMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
+        }
+        const goNext = () => {
+          setEditShiftCalDir('next')
+          setEditShiftCalKey(k => k + 1)
+          const d = new Date(cy, cm, 1)
+          setEditShiftCalMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
+        }
+
+        return (
+          <div style={modalOverlayStyle}>
+            <div style={{ ...modalStyle, width: 'min(780px, calc(100% - 32px))', padding: 0, display: 'flex', flexDirection: 'column' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', flexShrink: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <Pencil size={14} color="#fff" strokeWidth={2} />
+                  </div>
+                  <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>Edit Shift</h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSelectedShift(null)}
+                  style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8, flexShrink: 0 }}
+                  onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+                  onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div style={{ padding: '28px 34px 24px', overflowY: 'auto', flex: 1 }}>
+                <div style={{ marginBottom: 20 }}>
+                  <span style={{ display: 'block', fontWeight: 700, fontSize: '0.9375rem', color: '#374151', marginBottom: 10 }}>Reassign to</span>
+                  <DropdownField
+                    value={shiftEditForm.assigned_user_id}
+                    options={members
+                      .filter(member => member.department_id === shiftEditForm.department_id)
+                      .map(member => ({ value: member.id, label: `${member.full_name} � ${member.role}` }))}
+                    onChange={v => setShiftEditForm(prev => ({ ...prev, assigned_user_id: v }))}
+                    placeholder="Select person"
+                  />
+                </div>
+
+                <style>{`
+                  @keyframes editCalSlideNext { from { opacity: 0; transform: translateX(18px) } to { opacity: 1; transform: translateX(0) } }
+                  @keyframes editCalSlidePrev { from { opacity: 0; transform: translateX(-18px) } to { opacity: 1; transform: translateX(0) } }
+                `}</style>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.35fr) minmax(220px, 0.9fr)', gap: 22, alignItems: 'stretch' }}>
+                  <div style={{ background: '#FFFFFF', borderRadius: 16, padding: '18px 20px 20px', border: `1px solid ${PANEL_BORDER}` }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+                      <button type="button" onClick={goPrev} disabled={!canGoPrev}
+                        style={{ width: 38, height: 38, border: `1px solid ${canGoPrev ? PANEL_BORDER : 'transparent'}`, background: canGoPrev ? '#FFFFFF' : 'transparent', borderRadius: 10, cursor: canGoPrev ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', color: canGoPrev ? MUTED : '#D1D5DB', flexShrink: 0, opacity: canGoPrev ? 1 : 0.3 }}>
+                        <ChevronLeft size={15} />
+                      </button>
+                      <span style={{ fontSize: 16, fontWeight: 800, color: TEXT_DARK }}>{monthLabel}</span>
+                      <button type="button" onClick={goNext}
+                        style={{ width: 38, height: 38, border: `1px solid ${PANEL_BORDER}`, background: '#FFFFFF', borderRadius: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: MUTED, flexShrink: 0 }}>
+                        <ChevronRight size={15} />
                       </button>
                     </div>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <p style={{ fontSize: 13, color: '#9CA3AF', marginBottom: 16 }}>No managers assigned to this department yet.</p>
-            )
-          })()}
+                    <div key={`edit-hd-${editShiftCalKey}`} style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 42px)', justifyContent: 'center', marginBottom: 8 }}>
+                      {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(d => (
+                        <div key={d} style={{ fontSize: 13, fontWeight: 800, color: '#9CA3AF', textAlign: 'center', height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{d}</div>
+                      ))}
+                    </div>
+                    <div key={`edit-grid-${editShiftCalKey}`} style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 42px)', justifyContent: 'center', rowGap: 8, columnGap: 8, animation: `${editShiftCalDir === 'next' ? 'editCalSlideNext' : 'editCalSlidePrev'} 0.18s ease` }}>
+                      {cells.map((date, i) => {
+                        if (!date) return <div key={`e-${i}`} style={{ width: 42, height: 42 }} />
+                        const isPast = date < todayStr
+                        const isSel = date === shiftEditForm.shift_date
+                        const isToday = date === todayStr
+                        const hasShift = editUserShiftDates.has(date)
+                        const dayNum = new Date(`${date}T00:00:00`).getDate()
+                        if (isPast) {
+                          return (
+                            <div key={date} style={{ width: 42, height: 42, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, color: '#CBD5E1', userSelect: 'none' }}>
+                              {dayNum}
+                            </div>
+                          )
+                        }
+                        return (
+                          <button
+                            key={date}
+                            type="button"
+                            onClick={() => setShiftEditForm(prev => ({ ...prev, shift_date: date }))}
+                            style={{
+                              width: 42, height: 42,
+                              borderRadius: '50%',
+                              border: isToday && !isSel ? `2px solid ${OWNER_ORANGE}` : 'none',
+                              background: isSel ? OWNER_ORANGE : 'transparent',
+                              color: isSel ? '#FFFFFF' : isToday ? OWNER_ORANGE : TEXT_DARK,
+                              fontWeight: isSel || isToday ? 800 : 500,
+                              fontSize: 18,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: 2,
+                              padding: 0,
+                              transition: 'background 0.12s, color 0.12s',
+                            }}
+                            onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = '#F8FAFC' }}
+                            onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = 'transparent' }}
+                          >
+                            <span style={{ lineHeight: 1 }}>{dayNum}</span>
+                            {hasShift && <span style={{ width: 4, height: 4, borderRadius: '50%', background: isSel ? 'rgba(255,255,255,0.85)' : OWNER_ORANGE, flexShrink: 0 }} />}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
 
-          {/* Assign a manager from another dept or unassigned */}
-          <div>
-            <span style={labelStyle}>Assign manager</span>
-            <p style={{ fontSize: 12, color: '#6B7280', margin: '2px 0 8px' }}>
-              Selecting a manager already in another department will move them here.
-            </p>
-            <DropdownField
-              value={selectedManagerId}
-              options={(() => {
-                const assignedMap = new Map(departmentManagers.map(a => [a.manager_id, a.department_id]))
-                const deptNameMap = new Map(departments.map(d => [d.id, d.name]))
-                const alreadyHere = managerOptions.filter(m => assignedMap.get(m.id) === managerModalDepartment.id)
-                const inOtherDept = managerOptions.filter(m => assignedMap.has(m.id) && assignedMap.get(m.id) !== managerModalDepartment.id)
-                const free = managerOptions.filter(m => !assignedMap.has(m.id))
-                return [
-                  ...free.map(m => ({ value: m.id, label: m.full_name })),
-                  ...inOtherDept.map(m => ({ value: m.id, label: `${m.full_name} (${deptNameMap.get(assignedMap.get(m.id)!) ?? ''})` })),
-                  ...alreadyHere.map(m => ({ value: m.id, label: `${m.full_name} (${managerModalDepartment.name})` })),
-                ]
-              })()}
-              onChange={v => {
-                const alreadyHere = departmentManagers.filter(a => a.department_id === managerModalDepartment.id).map(a => a.manager_id)
-                if (alreadyHere.includes(v)) return
-                setSelectedManagerId(v)
-              }}
-              placeholder="Select manager to assign"
-            />
-          </div>
-          {managerActionError && <div style={{ ...errorBoxStyle, marginTop: 12 }}>{managerActionError}</div>}
-          <div style={modalFooterStyle}>
-            <button type="button" onClick={() => { setManagerModalDepartment(null); setSelectedManagerId(''); setManagerActionError('') }} style={secondaryButtonStyle}>Close</button>
-            <button type="button" onClick={handleSetManager} disabled={managerActionLoading || !selectedManagerId} style={primaryButtonStyle}>{managerActionLoading ? <Spinner /> : <Check size={16} />} Assign</button>
-          </div>
-        </Modal>
-      )}
+                  <div style={{ background: '#FFFFFF', borderRadius: 16, padding: '20px 22px', border: `1px solid ${PANEL_BORDER}`, display: 'flex', flexDirection: 'column', gap: 18 }}>
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      <span style={{ display: 'block', fontWeight: 800, fontSize: '0.9375rem', color: '#374151' }}>Start time</span>
+                      <TimePicker value={shiftEditForm.start_time} onChange={val => setShiftEditForm(prev => ({ ...prev, start_time: val }))} />
+                    </label>
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      <span style={{ display: 'block', fontWeight: 800, fontSize: '0.9375rem', color: '#374151' }}>End time</span>
+                      <TimePicker value={shiftEditForm.end_time} onChange={val => setShiftEditForm(prev => ({ ...prev, end_time: val }))} />
+                    </label>
+                  </div>
+                </div>
 
-      {selectedShift && (
-        <Modal title="Edit Shift" onClose={() => setSelectedShift(null)}>
-          <div style={{ display: 'grid', gap: 12 }}>
-            <div>
-              <span style={labelStyle}>Reassign to</span>
-              <DropdownField
-                value={shiftEditForm.assigned_user_id}
-                options={members
-                  .filter(member => member.department_id === shiftEditForm.department_id)
-                  .map(member => ({ value: member.id, label: `${member.full_name} · ${member.role}` }))}
-                onChange={v => setShiftEditForm(prev => ({ ...prev, assigned_user_id: v }))}
-                placeholder="Select person"
-              />
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, alignItems: 'start' }}>
-              <div>
-                <span style={labelStyle}>Date</span>
-                <InlineDatePicker
-                  value={shiftEditForm.shift_date}
-                  onChange={date => setShiftEditForm(prev => ({ ...prev, shift_date: date }))}
-                  shiftDates={editUserShiftDates}
-                />
+                {shiftActionError && <div style={{ ...errorBoxStyle, marginTop: 18 }}>{shiftActionError}</div>}
               </div>
-              <div style={{ display: 'grid', gap: 8 }}>
-                <div>
-                  <span style={labelStyle}>Start</span>
-                  <TimePicker value={shiftEditForm.start_time} onChange={val => setShiftEditForm(prev => ({ ...prev, start_time: val }))} />
-                </div>
-                <div>
-                  <span style={labelStyle}>End</span>
-                  <TimePicker value={shiftEditForm.end_time} onChange={val => setShiftEditForm(prev => ({ ...prev, end_time: val }))} />
-                </div>
+
+              <div style={{ padding: '18px 34px 24px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, borderTop: '1px solid #F3F4F6' }}>
+                <button type="button" onClick={deleteShift} disabled={shiftActionLoading} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: 'none', borderRadius: 10, background: shiftActionLoading ? '#F3A8A8' : 'linear-gradient(135deg, #EF4444, #DC2626)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: shiftActionLoading ? 'not-allowed' : 'pointer', marginRight: 'auto' }}>{shiftActionLoading ? <Spinner size={13} /> : <Trash2 size={13} />} Delete</button>
+                <button type="button" onClick={saveShiftEdit} disabled={shiftActionLoading} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: shiftActionLoading ? '#FDA060' : '#F97316', color: '#FFFFFF', height: 36, padding: '0 18px', fontSize: 13, fontWeight: 700, cursor: shiftActionLoading ? 'not-allowed' : 'pointer', opacity: shiftActionLoading ? 0.65 : 1 }}>{shiftActionLoading ? <Spinner size={13} /> : <Check size={16} />} Save</button>
               </div>
             </div>
-
           </div>
-          {shiftActionError && <div style={{ ...errorBoxStyle, marginTop: 12 }}>{shiftActionError}</div>}
-          <div style={modalFooterStyle}>
-            <button type="button" onClick={deleteShift} disabled={shiftActionLoading} style={{ ...secondaryButtonStyle, color: '#DC2626' }}><Trash2 size={16} /> Delete</button>
-            <div style={{ flex: 1 }} />
-            <button type="button" onClick={() => setSelectedShift(null)} style={secondaryButtonStyle}>Close</button>
-            <button type="button" onClick={saveShiftEdit} disabled={shiftActionLoading} style={primaryButtonStyle}>{shiftActionLoading ? <Spinner /> : <Check size={16} />} Save</button>
-          </div>
-        </Modal>
-      )}
+        )
+      })()}
 
       {/* ── Success toast ── */}
       {successToast && (
@@ -2936,37 +3582,6 @@ export default function OwnerShiftsPage() {
           {successToast}
         </div>
       )}
-      {/* Department card menu — rendered at fixed position to escape overflow:hidden cards */}
-      {openDepartmentMenuId && (() => {
-        const department = departments.find(d => d.id === openDepartmentMenuId)
-        if (!department) return null
-        return (
-          <div
-            data-department-menu-root="true"
-            onClick={e => e.stopPropagation()}
-            style={{
-              position: 'fixed',
-              top: deptMenuPos.top,
-              right: deptMenuPos.right,
-              zIndex: 9999,
-              width: 180,
-              background: '#FFFFFF',
-              border: '1px solid #E5E7EB',
-              borderRadius: 14,
-              boxShadow: '0 4px 24px rgba(0,0,0,0.10)',
-              padding: '8px 6px',
-            }}
-          >
-            <p style={{ margin: '0 6px 4px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9CA3AF' }}>
-              Department
-            </p>
-            <button type="button" onClick={() => { setOpenDepartmentMenuId(null); openEditDepartment(department) }} style={menuButtonStyle}><Pencil size={13} style={{ color: '#F97316' }} /> Edit department</button>
-            <button type="button" onClick={() => { setOpenDepartmentMenuId(null); openManagerModal(department) }} style={menuButtonStyle}><Users size={13} style={{ color: '#F97316' }} /> Edit manager</button>
-            <div style={{ height: 1, background: '#F1F5F9', margin: '4px 6px' }} />
-            <button type="button" onClick={() => { setOpenDepartmentMenuId(null); openDeleteDepartment(department) }} style={{ ...menuButtonStyle, color: '#DC2626' }}><Trash2 size={13} /> Delete</button>
-          </div>
-        )
-      })()}
     </div>
   )
 }
@@ -2974,12 +3589,27 @@ export default function OwnerShiftsPage() {
 function Modal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
   return (
     <div style={modalOverlayStyle}>
-      <div style={modalStyle}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 16 }}>
-          <h2 style={{ margin: 0, color: TEXT_DARK, fontSize: 16, fontWeight: 700 }}>{title}</h2>
-          <button type="button" onClick={onClose} style={{ ...iconButtonStyle, width: 34, height: 34 }}><X size={16} /></button>
+      <div style={{ ...modalStyle, padding: 0, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <Pencil size={14} color="#fff" strokeWidth={2} />
+            </div>
+            <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>{title}</h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8, flexShrink: 0 }}
+            onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+            onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
+          >
+            <X size={16} />
+          </button>
         </div>
-        {children}
+        <div style={{ padding: '20px 24px' }}>
+          {children}
+        </div>
       </div>
     </div>
   )
@@ -3029,8 +3659,8 @@ function DropdownField({ value, options, onChange, placeholder, disabled = false
         style={{
           width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           padding: '10px 12px', border: `1.5px solid ${open ? '#F97316' : '#E5E7EB'}`, borderRadius: 8,
-          background: disabled ? '#F9FAFB' : '#FAFAFA', cursor: canOpen ? 'pointer' : 'default',
-          fontSize: '0.9375rem', color: selected ? '#111827' : '#9CA3AF',
+          background: disabled ? '#F9FAFB' : '#FFFFFF', cursor: canOpen ? 'pointer' : 'default',
+          fontSize: '0.875rem', color: selected ? '#111827' : '#9CA3AF',
           fontWeight: selected ? 500 : 400, outline: 'none', boxSizing: 'border-box',
           transition: 'border-color 0.15s',
         }}>
@@ -3079,7 +3709,7 @@ const menuButtonStyle: React.CSSProperties = {
   borderRadius: 10,
   padding: '5px 10px',
   fontSize: 12,
-  fontWeight: 500,
+  fontWeight: 600,
   cursor: 'pointer',
   textAlign: 'left',
 }
@@ -3108,7 +3738,7 @@ const primaryButtonStyle: React.CSSProperties = {
   height: 36,
   padding: '0 12px',
   fontSize: 13,
-  fontWeight: 700,
+  fontWeight: 600,
   cursor: 'pointer',
 }
 
@@ -3124,7 +3754,7 @@ const secondaryButtonStyle: React.CSSProperties = {
   height: 36,
   padding: '0 12px',
   fontSize: 13,
-  fontWeight: 700,
+  fontWeight: 600,
   cursor: 'pointer',
 }
 
@@ -3180,7 +3810,7 @@ const drawerSectionTitleStyle: React.CSSProperties = {
   margin: '0 0 9px',
   color: TEXT_DARK,
   fontSize: '0.92rem',
-  fontWeight: 900,
+  fontWeight: 600,
 }
 
 const tableHeaderStyle: React.CSSProperties = {
@@ -3188,7 +3818,7 @@ const tableHeaderStyle: React.CSSProperties = {
   background: '#F8FAFC',
   color: '#334155',
   fontSize: '0.76rem',
-  fontWeight: 900,
+  fontWeight: 600,
   borderBottom: `1px solid ${PANEL_BORDER}`,
   textAlign: 'left',
 }
@@ -3196,7 +3826,7 @@ const tableHeaderStyle: React.CSSProperties = {
 const tablePersonStyle: React.CSSProperties = {
   padding: 10,
   color: TEXT_DARK,
-  fontWeight: 900,
+  fontWeight: 600,
   fontSize: '0.82rem',
   borderTop: `1px solid ${PANEL_BORDER}`,
   verticalAlign: 'top',
@@ -3226,7 +3856,7 @@ const errorBoxStyle: React.CSSProperties = {
   borderRadius: 10,
   padding: '10px 12px',
   fontSize: '0.82rem',
-  fontWeight: 800,
+  fontWeight: 600,
 }
 
 const successBoxStyle: React.CSSProperties = {
@@ -3236,5 +3866,5 @@ const successBoxStyle: React.CSSProperties = {
   borderRadius: 10,
   padding: '10px 12px',
   fontSize: '0.82rem',
-  fontWeight: 800,
+  fontWeight: 600,
 }

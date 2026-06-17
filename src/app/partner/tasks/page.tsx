@@ -19,6 +19,28 @@ const TASK_ORANGE = '#F97316'
 const TASK_BORDER = '#E2E8F0'
 const TASK_TEXT   = '#0F172A'
 
+function formatDeadlineDisplay(value: string | null | undefined): string {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const dayMonth = date.toLocaleDateString('en-US', { day: 'numeric', month: 'long' })
+  const hours = date.getHours()
+  const minutes = date.getMinutes()
+  const hour12 = hours % 12 || 12
+  const suffix = hours < 12 ? 'AM' : 'PM'
+  const time = minutes === 0 ? `${hour12}${suffix}` : `${hour12}:${String(minutes).padStart(2, '0')}${suffix}`
+  return `${dayMonth}, ${time}`
+}
+
+function formatDeadlineInputDisplay(dateValue: string, timeValue: string): string {
+  if (!dateValue) return 'Select deadline'
+  if (!timeValue) {
+    const dayMonth = new Date(`${dateValue}T00:00:00`).toLocaleDateString('en-US', { day: 'numeric', month: 'long' })
+    return `${dayMonth}, select time`
+  }
+  return formatDeadlineDisplay(`${dateValue}T${timeValue}:00`)
+}
+
 
 // ─── Task Date Picker ──────────────────────────────────────────────────────────
 
@@ -195,7 +217,7 @@ function formatShiftOptionLabel(shift: ShiftOption): string {
   return `${date} · ${time} · ${shift.assignee_name}`
 }
 
-import { deptColor } from '@/lib/deptColor'
+import { deptColor, setDeptColorOverrides } from '@/lib/deptColor'
 function deptCardBg(deptId: string): string {
   const hex = deptColor(deptId)
   const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16)
@@ -556,7 +578,7 @@ function TaskCard({
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
             {overdue && <AlertCircle size={11} color="#EF4444" />}
             <span style={{ fontSize: '0.7rem', fontWeight: 600, color: overdue ? '#EF4444' : '#9CA3AF' }}>
-              {new Date(task.due_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}
+              {formatDeadlineDisplay(task.due_at)}
             </span>
           </div>
         )}
@@ -708,7 +730,7 @@ export default function OwnerTasksPage() {
       fetch(`/api/company/managers?company_id=${companyId}`).then(r => r.json()),
       fetch(`/api/task?company_id=${companyId}&dept_stats=true`).then(r => r.json()),
     ]).then(([deptData, memberData, mgrData, statsData]) => {
-      if (deptData.success) setDepartments(deptData.departments)
+      if (deptData.success) { setDepartments(deptData.departments); setDeptColorOverrides(deptData.departments) }
       if (memberData.success) setMembers(memberData.members)
       if (mgrData.success) {
         setAllManagers(mgrData.managers)
@@ -999,7 +1021,7 @@ export default function OwnerTasksPage() {
       setEditDeptModal(null)
       const deptRes = await fetch(`/api/company/departments?company_id=${companyId}`)
       const deptData = await deptRes.json()
-      if (deptData.success) setDepartments(deptData.departments)
+      if (deptData.success) { setDepartments(deptData.departments); setDeptColorOverrides(deptData.departments) }
     } catch (err) { setEditDeptError(err instanceof Error ? err.message : 'Failed to update') }
     finally { setEditDeptLoading(false) }
   }
@@ -1015,7 +1037,7 @@ export default function OwnerTasksPage() {
       if (selectedDeptId === deleteDeptModal.id) setSelectedDeptId('')
       const deptRes = await fetch(`/api/company/departments?company_id=${companyId}`)
       const deptData = await deptRes.json()
-      if (deptData.success) setDepartments(deptData.departments)
+      if (deptData.success) { setDepartments(deptData.departments); setDeptColorOverrides(deptData.departments) }
     } catch (err) { setDeleteDeptError(err instanceof Error ? err.message : 'Failed to delete') }
     finally { setDeleteDeptLoading(false) }
   }
@@ -1714,7 +1736,6 @@ export default function OwnerTasksPage() {
 
             {/* Footer */}
             <div style={{ padding: '0 24px 20px', display: 'flex', gap: 10 }}>
-              <button style={ghostBtn} onClick={closePanel}>Cancel</button>
               <button
                 style={{ ...primaryBtn(editLoading), background: editLoading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', border: 'none' }}
                 onClick={handleSaveTask}
@@ -1897,7 +1918,6 @@ export default function OwnerTasksPage() {
             <input autoFocus value={editDeptName} onChange={e => setEditDeptName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleEditDept() }} style={modalInputStyle} />
             <InlineError message={editDeptError} />
             <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
-              <button style={ghostBtn} onClick={() => setEditDeptModal(null)}>Cancel</button>
               <button style={primaryBtn(editDeptLoading)} onClick={handleEditDept} disabled={editDeptLoading}>
                 {editDeptLoading && <Spinner size={14} />} Save Changes
               </button>
@@ -1956,7 +1976,6 @@ export default function OwnerTasksPage() {
             }
             <InlineError message={editManagerError} />
             <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
-              <button style={ghostBtn} onClick={() => { setEditManagerModal(null); setEditManagerSelectedId('') }}>Cancel</button>
               <button style={primaryBtn(editManagerLoading)} onClick={handleEditDeptManager} disabled={editManagerLoading || !editManagerSelectedId}>
                 {editManagerLoading && <Spinner size={14} />} Save
               </button>

@@ -10,7 +10,7 @@ export const activityLogService = {
   },
 
   async getCompanyLogs(company_id: string): Promise<ActivityLog[]> {
-    return activityLogRepository.listByCompany(company_id, 30)
+    return activityLogRepository.listByCompany(company_id, 30, 500)
   },
 
   async markAllRead(company_id: string): Promise<void> {

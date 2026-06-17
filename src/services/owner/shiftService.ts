@@ -2,7 +2,9 @@
 // RULE: Business logic only. No HTTP handling. No direct DB access.
 
 import { shiftRepository } from '@/repositories/owner/shiftRepository'
+import { schedulingRuleService } from '@/services/owner/schedulingRuleService'
 import { BulkShiftAssignmentPayload, BulkShiftAssignmentResult, ClopeningConflict, DuplicateShiftInput, RecurringShiftInput, Shift, ShiftInput, ShiftMutationResult } from '@/types/Shift'
+import { ScheduleValidationResult } from '@/types/SchedulingRule'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 
 const TIMELINE_ROLE_ORDER: Record<string, number> = {
@@ -110,7 +112,7 @@ export const shiftService = {
     date_from: string
     date_to: string
     publication_status: 'draft' | 'published'
-  }): Promise<Shift[]> {
+  }): Promise<{ shifts: Shift[]; validation: ScheduleValidationResult }> {
     if (!input.company_id || !input.date_from || !input.date_to) {
       throw new Error('company_id, date_from, and date_to are required')
     }
@@ -120,7 +122,17 @@ export const shiftService = {
     if (input.date_from > input.date_to) {
       throw new Error('date_from must be before date_to')
     }
-    return shiftRepository.updateSchedulePublication(input)
+    const validation = await schedulingRuleService.validateSchedule({
+      company_id: input.company_id,
+      date_from: input.date_from,
+      date_to: input.date_to,
+    })
+    if (input.publication_status === 'published' && !validation.valid) {
+      const first = validation.errors[0]
+      throw new Error(first?.message ?? 'Schedule violates hard scheduling rules')
+    }
+    const shifts = await shiftRepository.updateSchedulePublication(input)
+    return { shifts, validation }
   },
 
   async duplicateShift(id: string, input: DuplicateShiftInput): Promise<ShiftMutationResult> {

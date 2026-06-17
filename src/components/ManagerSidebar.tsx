@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation'
 import Link from 'next/link'
 import {
   LayoutDashboard, BarChart2, Users, MessageCircle,
-  LogOut, UserPlus, ClipboardList, CalendarDays, CheckSquare,
+  LogOut, UserPlus, ClipboardList, CalendarDays, CheckSquare, Settings,
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 
@@ -22,6 +22,7 @@ const NAV_ITEMS = [
   { label: 'Recruitment',   Icon: UserPlus,        href: '/manager/recruitment',   dot: 'rejected' as const },
   { label: 'Attendance',    Icon: ClipboardList,   href: '/manager/attendance',    dot: null },
   { label: 'Report',        Icon: BarChart2,       href: '/manager/report',        dot: null },
+  { label: 'Settings',      Icon: Settings,        href: '/manager/settings',      dot: null },
 ]
 
 export default function ManagerSidebar({

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { createBrowserClient } from '@supabase/ssr'
 import { X, Star, Check, Trash2 } from 'lucide-react'
+import { ownerStep5 } from '@/app/(auth)/get-started/content'
 
 const planKeyframes = `
   @keyframes planOverlayIn { from { opacity: 0 } to { opacity: 1 } }
@@ -204,14 +205,14 @@ export default function OwnerPlanBadge({ plan, currentCompanyId }: { plan: strin
           ) : (
             <div style={{ padding: '0 24px 4px', display: 'flex', flexDirection: 'column' }}>
 
-              {/* Billing amount */}
-              <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
-                <label style={labelSt}>Billing amount</label>
-                <p style={valueSt}>{effectiveIsPro ? '$20 / month' : '—'}</p>
-              </div>
-
-              {effectiveIsPro && (
+              {effectiveIsPro ? (
                 <>
+                  {/* Billing amount */}
+                  <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
+                    <label style={labelSt}>Billing amount</label>
+                    <p style={valueSt}>{ownerStep5.proPlan.price} {ownerStep5.proPlan.priceSub}</p>
+                  </div>
+
                   {/* Member since */}
                   <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
                     <label style={labelSt}>Member since</label>
@@ -229,6 +230,22 @@ export default function OwnerPlanBadge({ plan, currentCompanyId }: { plan: strin
                   </div>
 
                 </>
+              ) : (
+                /* Pro upsell — same copy as Get Started "Choose Pro" */
+                <div style={{ padding: '14px 0' }}>
+                  <label style={labelSt}>Upgrade to Pro — {ownerStep5.proPlan.price} {ownerStep5.proPlan.priceSub}</label>
+                  <p style={{ ...valueSt, color: '#6B7280', fontSize: '0.8125rem', marginBottom: 8 }}>
+                    {ownerStep5.proPlan.featuresIntro}
+                  </p>
+                  <ul style={{ margin: 0, paddingLeft: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {ownerStep5.proPlan.features.map((f) => (
+                      <li key={f} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: '0.875rem', color: '#111827' }}>
+                        <Check size={14} style={{ color: '#10B981', flexShrink: 0, marginTop: 2 }} />
+                        {f}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )}
             </div>
           )}
@@ -297,14 +314,16 @@ export default function OwnerPlanBadge({ plan, currentCompanyId }: { plan: strin
           color: isPro ? '#fff' : '#4B5563',
           border: isPro ? 'none' : '1.5px solid #E5E7EB',
           boxShadow: isPro ? '0 1px 4px rgba(16,185,129,0.3)' : 'none',
-          transition: 'box-shadow 0.16s ease, transform 0.16s ease',
+          transition: 'box-shadow 0.16s ease, transform 0.16s ease, border-color 0.16s ease',
         }}
         onMouseEnter={e => {
           e.currentTarget.style.transform = 'translateY(-2px)'
-          e.currentTarget.style.boxShadow = isPro ? '0 8px 18px rgba(16,185,129,0.28)' : '0 8px 18px rgba(15,23,42,0.10)'
+          if (!isPro) e.currentTarget.style.borderColor = '#F97316'
+          e.currentTarget.style.boxShadow = isPro ? '0 8px 18px rgba(16,185,129,0.28)' : '0 2px 8px rgba(249,115,22,0.15)'
         }}
         onMouseLeave={e => {
           e.currentTarget.style.transform = 'none'
+          if (!isPro) e.currentTarget.style.borderColor = '#E5E7EB'
           e.currentTarget.style.boxShadow = isPro ? '0 1px 4px rgba(16,185,129,0.3)' : 'none'
         }}
       >

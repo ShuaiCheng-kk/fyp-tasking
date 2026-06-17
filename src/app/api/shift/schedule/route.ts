@@ -27,13 +27,13 @@ export async function PATCH(req: NextRequest) {
   }
 
   try {
-    const shifts = await shiftService.publishSchedule({
+    const result = await shiftService.publishSchedule({
       company_id,
       date_from,
       date_to,
       publication_status,
     })
-    return NextResponse.json({ success: true, shifts })
+    return NextResponse.json({ success: true, shifts: result.shifts, validation: result.validation })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to update schedule'
     return NextResponse.json({ success: false, message }, { status: 400 })

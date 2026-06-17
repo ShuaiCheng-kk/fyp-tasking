@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { Plus, X, ChevronDown, Check, Building2, Network, Crown, UserCog, UserRound, HardHat, Users } from 'lucide-react'
-import { deptColor } from '@/lib/deptColor'
+import { deptColor, setDeptColorOverrides } from '@/lib/deptColor'
 import { createBrowserClient } from '@supabase/ssr'
 import ManagerSidebar from '@/components/ManagerSidebar'
 
@@ -489,7 +489,10 @@ export default function ManagerTeamPage() {
         ])
         const [compData, deptsData] = await Promise.all([compRes.json(), deptsRes.json()])
         if (!cancelled && compData.success && compData.company?.name) setCompanyName(compData.company.name)
-        if (!cancelled && deptsData.success) setCompanyDepartments(deptsData.departments)
+        if (!cancelled && deptsData.success) {
+          setCompanyDepartments(deptsData.departments)
+          setDeptColorOverrides(deptsData.departments)
+        }
 
         if (internalId) {
           const assignedRes = await fetch(`/api/manager/departments?manager_id=${internalId}&company_id=${cid}`)

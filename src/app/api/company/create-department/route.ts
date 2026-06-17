@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { company_id, name } = body as Record<string, unknown>
+  const { company_id, name, color } = body as Record<string, unknown>
 
   if (!company_id || typeof company_id !== 'string') {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
@@ -20,9 +20,12 @@ export async function POST(req: NextRequest) {
   if (!name || typeof name !== 'string') {
     return NextResponse.json({ success: false, message: 'name is required' }, { status: 400 })
   }
+  if (color !== undefined && color !== null && typeof color !== 'string') {
+    return NextResponse.json({ success: false, message: 'color must be a string' }, { status: 400 })
+  }
 
   try {
-    const department = await companyService.createDepartment({ company_id, name })
+    const department = await companyService.createDepartment({ company_id, name, color: color as string | null | undefined })
     return NextResponse.json(
       { success: true, department: { id: department.id, name: department.name } },
       { status: 201 },
