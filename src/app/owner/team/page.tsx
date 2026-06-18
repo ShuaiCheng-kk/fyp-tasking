@@ -3849,7 +3849,7 @@ export default function TeamPage() {
                     <>
                       {/* Sample CSV preview */}
                       <div>
-                        <p style={{ margin: '0 0 8px', fontSize: '0.8125rem', fontWeight: 600, color: '#374151' }}>Sample CSV format</p>
+                        <p style={{ margin: '0 0 8px', fontSize: '0.8125rem', fontWeight: 600, color: '#374151' }}>Sample CSV format <span style={{ fontWeight: 400, color: '#9CA3AF' }}>(save as &quot;CSV UTF-8 (Comma delimited)&quot;)</span></p>
                         <div style={{ border: '1.5px solid #E5E7EB', borderRadius: 8, overflow: 'hidden', fontSize: '0.8125rem' }}>
                           <div style={{ background: '#F9FAFB', borderBottom: '1px solid #E5E7EB' }}>
                             <div style={{ padding: '7px 12px', fontWeight: 700, color: '#6B7280', fontFamily: "'Inter', system-ui, sans-serif" }}>Department</div>
@@ -4601,7 +4601,7 @@ export default function TeamPage() {
                 <>
                   {/* Sample CSV preview */}
                   <div>
-                    <p style={{ margin: '0 0 8px', fontSize: '0.8125rem', fontWeight: 600, color: '#374151' }}>Sample CSV format</p>
+                    <p style={{ margin: '0 0 8px', fontSize: '0.8125rem', fontWeight: 600, color: '#374151' }}>Sample CSV format <span style={{ fontWeight: 400, color: '#9CA3AF' }}>(save as &quot;CSV UTF-8 (Comma delimited)&quot;)</span></p>
                     <div style={{ border: '1.5px solid #E5E7EB', borderRadius: 8, overflow: 'hidden', fontSize: '0.8125rem' }}>
                       <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr 1.2fr', background: '#F9FAFB', borderBottom: '1px solid #E5E7EB' }}>
                         {['Email', 'Role', 'Department'].map((h, i) => (

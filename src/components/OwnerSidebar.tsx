@@ -37,6 +37,20 @@ function mergeOrder(saved: string[]): string[] {
   return [...valid, ...missing]
 }
 
+// Used by the sign-in flow so the post-login landing page matches whatever
+// the user dragged to the top of their sidebar, instead of always /owner/dashboard.
+export function getOwnerLandingHref(): string {
+  const fallback = NAV_ITEMS[0].href
+  try {
+    const saved = localStorage.getItem(ORDER_KEY)
+    if (!saved) return fallback
+    const firstLabel = mergeOrder(JSON.parse(saved))[0]
+    return NAV_ITEMS.find(i => i.label === firstLabel)?.href ?? fallback
+  } catch {
+    return fallback
+  }
+}
+
 const THEME = {
   sidebarBg: '#1C1C1E',
   sidebarText: '#FFFFFF',
