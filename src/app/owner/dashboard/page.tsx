@@ -954,7 +954,7 @@ export default function OwnerDashboard() {
       <OwnerSidebar />
 
       <main
-        style={{ marginLeft: 64, height: '100vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', flex: 1, padding: '20px 28px', gap: 0 }}
+        style={{ marginLeft: 64, height: '100vh', overflowX: 'hidden', overflowY: 'auto', display: 'flex', flexDirection: 'column', flex: 1, padding: '20px 28px 32px', gap: 0 }}
       >
 
         {/* ── Page header ────────────────────────────────────────── */}
@@ -976,7 +976,7 @@ export default function OwnerDashboard() {
         </div>
 
         {/* ── Content ──────────────────────────────────────────────────── */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 24, flex: 1, overflow: 'hidden', minHeight: 0 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 24, flex: 1, overflow: 'visible', minHeight: 0 }}>
 
           {initialReady && !companyId && (
             <div style={{ background: '#FFFBEB', borderRadius: 12, padding: '14px 16px', fontSize: 13, color: '#92400E', border: '1px solid #FDE68A' }}>
@@ -985,7 +985,7 @@ export default function OwnerDashboard() {
           )}
 
           {companyId && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 24, flex: 1, overflow: 'hidden', minHeight: 0 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 24, flex: 1, overflow: 'visible', minHeight: 0 }}>
               {/* ── Last refreshed chip ── */}
               {lastRefreshed && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0, marginBottom: -8 }}>
@@ -1237,7 +1237,7 @@ export default function OwnerDashboard() {
               </div>
 
               {/* ── ROW 3: 4 draggable panels ─── */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 16, alignItems: 'start', position: 'relative' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 16, alignItems: 'start', position: 'relative', paddingBottom: 16 }}>
                 {panelOrder.map((panelId, idx) => {
                   const isDragging = panelDrag?.panelId === panelId
                   const shift = panelDrag ? getPanelShift(idx, panelDrag.fromIdx, panelDrag.insertAt) : 0
@@ -1257,6 +1257,8 @@ export default function OwnerDashboard() {
                       background: '#fff', borderRadius: 20, padding: 20,
                       boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)',
                       display: 'flex', flexDirection: 'column',
+                      height: 360,
+                      overflow: 'hidden',
                       transform: isDragging ? 'scale(0.97)' : `translateX(${shift}px)`,
                       transition: isDragging
                         ? 'opacity 0.12s, transform 0.12s'
@@ -1296,7 +1298,7 @@ export default function OwnerDashboard() {
 
                     {/* ── Focus content ── */}
                     {panelId === 'focus' && (
-                    <div style={{ }}>
+                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 4 }}>
                     {taskStatsLoading ? (
                       <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}><Spinner size={20} dark /></div>
                     ) : (
@@ -1423,7 +1425,7 @@ export default function OwnerDashboard() {
 
                     {/* ── Team content ── */}
                     {panelId === 'team' && (
-                    <div style={{ }}>
+                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 4 }}>
                   {timelineLoading ? (
                     <div style={{ display: 'flex', justifyContent: 'center', padding: '24px 0' }}><Spinner size={16} dark /></div>
                   ) : todayShiftCount === 0 ? (
@@ -1473,7 +1475,7 @@ export default function OwnerDashboard() {
 
                     {/* ── Activity content ── */}
                     {panelId === 'activity' && (
-                    <div style={{ }}>
+                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 4 }}>
                     {activityFeedLoading ? (
                       <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}><Spinner size={16} dark /></div>
                     ) : activityFeed.length === 0 ? (
@@ -1523,7 +1525,7 @@ export default function OwnerDashboard() {
 
                     {/* ── Tasks content ── */}
                     {panelId === 'tasks' && (
-                    <div style={{ }}>
+                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 4 }}>
                     {taskStatsLoading ? (
                       <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}><Spinner size={16} dark /></div>
                     ) : todayTasks.length === 0 ? (

@@ -2830,7 +2830,7 @@ export default function OwnerShiftsPage() {
 
       {/* ═══════════════ AI SHIFT SCHEDULING MODAL ═══════════════ */}      {aiShiftModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, animation: 'overlayFadeIn 0.18s ease-out' }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: aiShiftWizardStep === 'generate' && aiShiftSuggestions.length > 0 ? 920 : 360, maxWidth: 'calc(100% - 32px)', maxHeight: '90vh', background: '#FFFFFF', borderRadius: 20, boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', overflow: 'hidden', flexShrink: 0, transition: 'width 0.25s ease', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: aiShiftWizardStep === 'generate' && aiShiftSuggestions.length > 0 ? 1120 : 360, maxWidth: 'calc(100% - 40px)', maxHeight: '92vh', background: '#FFFFFF', borderRadius: 20, boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', overflow: 'hidden', flexShrink: 0, transition: 'width 0.25s ease', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
             {(() => {
               const AI_WIZARD_STEPS = ['dates', 'departments', 'shiftTypes', 'generate'] as const
               const stepIdx = AI_WIZARD_STEPS.indexOf(aiShiftWizardStep)
@@ -3040,6 +3040,7 @@ export default function OwnerShiftsPage() {
                       const weekDates = allDates.slice(clampedWeekOffset * 7, clampedWeekOffset * 7 + 7)
 
                       const membersById = new Map(members.map(m => [m.id, m]))
+                      const departmentOrder = new Map(orderedDepartments.map((dept, index) => [dept.id, index]))
 
                       type PersonRow = { key: string; name: string; deptId: string; deptName: string; isUnassigned: boolean; photoUrl: string | null; role: string | null }
                       const rowMap = new Map<string, PersonRow>()
@@ -3062,7 +3063,10 @@ export default function OwnerShiftsPage() {
                       }
                       const rows = Array.from(rowMap.values()).sort((a, b) => {
                         if (a.isUnassigned !== b.isUnassigned) return a.isUnassigned ? 1 : -1
-                        if (a.deptName !== b.deptName) return a.deptName.localeCompare(b.deptName)
+                        const deptOrderDiff = (departmentOrder.get(a.deptId) ?? 999) - (departmentOrder.get(b.deptId) ?? 999)
+                        if (deptOrderDiff !== 0) return deptOrderDiff
+                        const roleDiff = roleRank(a.role ?? '') - roleRank(b.role ?? '')
+                        if (roleDiff !== 0) return roleDiff
                         return a.name.localeCompare(b.name)
                       })
 
@@ -3119,7 +3123,7 @@ export default function OwnerShiftsPage() {
                           )}
 
                           <div style={{ overflowX: 'auto' }}>
-                            <div style={{ minWidth: 700, borderRadius: 12, overflow: 'hidden', border: `1px solid ${PANEL_BORDER}` }}>
+                            <div style={{ minWidth: 900, borderRadius: 12, overflow: 'hidden', border: `1px solid ${PANEL_BORDER}` }}>
                               <div style={{ display: 'grid', gridTemplateColumns: `${TL_NAME_COL}px repeat(${weekDates.length}, 1fr)`, background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', height: 54 }}>
                                 <div style={{ borderRight: '1px solid rgba(255,255,255,0.08)' }} />
                                 {weekDates.map(date => {

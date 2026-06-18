@@ -1255,13 +1255,44 @@ export default function OwnerTasksPage() {
     const ROW_HEIGHT = 58
     const NAME_COL = 180
     const dayIndex = (date: string) => calendarWeekDates.indexOf(date)
+    const overlapsCalendarItems = (a: typeof taskCalendarItems[number], b: typeof taskCalendarItems[number]) => (
+      a.startDate <= b.endDate && b.startDate <= a.endDate
+    )
+    const taskCalendarRows = (() => {
+      const rows = new Map<string, {
+        key: string
+        assignee: typeof members[number] | null
+        items: typeof taskCalendarItems
+      }>()
+      for (const item of taskCalendarItems) {
+        const assignee = members.find(m => m.id === item.task.assigned_user_id) ?? null
+        const key = item.task.assigned_user_id ?? `unassigned_${item.task.department_id ?? 'none'}`
+        if (!rows.has(key)) rows.set(key, { key, assignee, items: [] })
+        rows.get(key)!.items.push(item)
+      }
+
+      return [...rows.values()].map(row => {
+        row.items = [...row.items].sort((a, b) => (
+          (PRIORITY_ORDER[a.task.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.task.priority ?? ''] ?? 4) ||
+          a.startDate.localeCompare(b.startDate) ||
+          a.task.title.localeCompare(b.task.title)
+        ))
+        return row
+      }).sort((a, b) => {
+        const aName = a.assignee?.full_name ?? 'Unassigned'
+        const bName = b.assignee?.full_name ?? 'Unassigned'
+        const aPriority = Math.min(...a.items.map(item => PRIORITY_ORDER[item.task.priority ?? ''] ?? 4))
+        const bPriority = Math.min(...b.items.map(item => PRIORITY_ORDER[item.task.priority ?? ''] ?? 4))
+        return aPriority - bPriority || aName.localeCompare(bName)
+      })
+    })()
 
     return (
       <div className="task-tab-content" style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '14px 16px 18px' }}>
-        <div style={{ minWidth: 880, border: `1px solid ${TASK_BORDER}`, borderRadius: 12, overflow: 'hidden', background: '#FFFFFF' }}>
+        <div style={{ minWidth: 880, border: `1px solid ${TASK_BORDER}`, borderRadius: 12, overflow: 'visible', background: '#FFFFFF' }}>
           {/* Header row — matches Shifts page Calendar tab date header */}
-          <div style={{ display: 'grid', gridTemplateColumns: `${NAME_COL}px repeat(7, 1fr)`, background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', height: 54 }}>
-            <div style={{ borderRight: '1px solid rgba(255,255,255,0.08)' }} />
+          <div style={{ position: 'sticky', top: 0, zIndex: 20, display: 'grid', gridTemplateColumns: `${NAME_COL}px repeat(7, 1fr)`, background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', height: 54, overflow: 'hidden' }}>
+            <div style={{ position: 'relative', marginLeft: -1, borderRight: '1px solid rgba(255,255,255,0.08)', background: '#0F172A' }} />
             {calendarWeekDates.map(date => {
               const day = new Date(`${date}T00:00:00`)
               const isToday = date === todayStr
@@ -1284,20 +1315,18 @@ export default function OwnerTasksPage() {
             </div>
           ) : (
             <div>
-              {taskCalendarItems.map(item => {
-                const dept = departments.find(d => d.id === item.task.department_id)
-                const color = dept ? deptColor(dept.id) : STATUS_CONFIG[item.task.status].color
-                const startCol = Math.max(0, dayIndex(item.startDate))
-                const endCol = dayIndex(item.endDate) === -1 ? 6 : dayIndex(item.endDate)
-                const truncatedStart = item.startDate < calendarWeekDates[0]
-                const truncatedEnd = item.endDate > calendarWeekDates[6]
-                const assignee = members.find(m => m.id === item.task.assigned_user_id)
+              {taskCalendarRows.map(row => {
+                const rowDept = departments.find(d => d.id === row.items[0]?.task.department_id)
+                const rowColor = rowDept ? deptColor(rowDept.id) : STATUS_CONFIG[row.items[0]?.task.status ?? 'Assigned'].color
+                const maxStackCount = Math.max(1, ...row.items.map(item => row.items.filter(other => overlapsCalendarItems(other, item)).length))
+                const rowHeight = Math.max(ROW_HEIGHT, maxStackCount * 34 + 18)
+                const assignee = row.assignee
                 const isManager = assignee?.role === 'Manager'
                 return (
-                  <div key={item.task.id} style={{ display: 'grid', gridTemplateColumns: `${NAME_COL}px repeat(7, 1fr)`, height: ROW_HEIGHT, borderBottom: '1px solid #CBD5E1', boxSizing: 'border-box' }}>
+                  <div key={row.key} style={{ display: 'grid', gridTemplateColumns: `${NAME_COL}px repeat(7, 1fr)`, minHeight: rowHeight, borderBottom: '1px solid #CBD5E1', boxSizing: 'border-box' }}>
                     {/* Assignee column */}
                     <div style={{ display: 'flex', alignItems: 'center', borderRight: `1px solid ${TASK_BORDER}`, overflow: 'hidden' }}>
-                      <div style={{ width: 8, alignSelf: 'stretch', flexShrink: 0, background: color, opacity: 0.85 }} />
+                      <div style={{ width: 8, alignSelf: 'stretch', flexShrink: 0, background: rowColor, opacity: 0.85 }} />
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px 0 12px', minWidth: 0, flex: 1 }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: assignee?.profile_photo_url ? 'transparent' : (isManager ? '#FFF7ED' : '#F3F4F6'), color: isManager ? '#EA580C' : '#4B5563', borderRadius: 999, overflow: 'hidden' }}>
                           {assignee?.profile_photo_url
@@ -1312,58 +1341,83 @@ export default function OwnerTasksPage() {
                     {calendarWeekDates.map((date, i) => (
                       <div key={date} style={{ gridColumn: i + 2, gridRow: 1, borderRight: i < 6 ? `1px solid ${TASK_BORDER}` : 'none', background: date === todayStr ? '#FFF7ED' : '#FFFFFF' }} />
                     ))}
-                    <button
-                      type="button"
-                      onClick={() => openTask(item.task, false)}
-                      title={`${item.task.title} • ${item.startDate} – ${item.endDate}`}
-                      style={{
-                        gridColumn: `${startCol + 2} / ${endCol + 3}`,
-                        gridRow: 1,
-                        alignSelf: 'center',
-                        position: 'relative',
-                        margin: '0 6px',
-                        height: 28,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        padding: '0 12px',
-                        border: 'none',
-                        borderRadius: 999,
-                        background: color,
-                        cursor: 'pointer',
-                        overflow: 'hidden',
-                      }}
-                      onMouseEnter={e => { e.currentTarget.style.filter = 'brightness(1.08)' }}
-                      onMouseLeave={e => { e.currentTarget.style.filter = 'none' }}
-                    >
-                      {truncatedStart && (
-                        <span
-                          role="button"
-                          aria-label="View previous week"
-                          title="View previous week"
-                          onClick={e => { e.stopPropagation(); setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), -7))) }}
-                          style={{ position: 'absolute', left: 2, top: 2, bottom: 2, width: 24, borderRadius: 999, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'transparent', transition: 'background 0.12s ease' }}
-                          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.25)' }}
-                          onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                    {[...row.items].sort((a, b) => (
+                      (PRIORITY_ORDER[a.task.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.task.priority ?? ''] ?? 4) ||
+                      a.startDate.localeCompare(b.startDate) ||
+                      a.task.title.localeCompare(b.task.title)
+                    )).map(item => {
+                      const dept = departments.find(d => d.id === item.task.department_id)
+                      const color = dept ? deptColor(dept.id) : STATUS_CONFIG[item.task.status].color
+                      const startCol = Math.max(0, dayIndex(item.startDate))
+                      const endCol = dayIndex(item.endDate) === -1 ? 6 : dayIndex(item.endDate)
+                      const truncatedStart = item.startDate < calendarWeekDates[0]
+                      const truncatedEnd = item.endDate > calendarWeekDates[6]
+                      const stackItems = row.items
+                        .filter(other => overlapsCalendarItems(other, item))
+                        .sort((a, b) => (
+                          (PRIORITY_ORDER[a.task.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.task.priority ?? ''] ?? 4) ||
+                          a.startDate.localeCompare(b.startDate) ||
+                          a.task.title.localeCompare(b.task.title)
+                        ))
+                      const stackIndex = Math.max(0, stackItems.findIndex(other => other.task.id === item.task.id))
+                      const stackHeight = stackItems.length * 28 + Math.max(0, stackItems.length - 1) * 6
+                      const stackTop = Math.max(0, (rowHeight - stackHeight) / 2) + stackIndex * 34
+                      return (
+                        <button
+                          key={item.task.id}
+                          type="button"
+                          onClick={() => openTask(item.task, false)}
+                          title={`${item.task.title} • ${item.startDate} – ${item.endDate}`}
+                          style={{
+                            gridColumn: `${startCol + 2} / ${endCol + 3}`,
+                            gridRow: 1,
+                            alignSelf: 'start',
+                            position: 'relative',
+                            margin: `${stackTop}px 6px 0`,
+                            height: 28,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            padding: '0 12px',
+                            border: 'none',
+                            borderRadius: 999,
+                            background: color,
+                            cursor: 'pointer',
+                            overflow: 'hidden',
+                          }}
+                          onMouseEnter={e => { e.currentTarget.style.filter = 'brightness(1.08)' }}
+                          onMouseLeave={e => { e.currentTarget.style.filter = 'none' }}
                         >
-                          <ChevronLeft size={13} color="#FFFFFF" strokeWidth={3} style={{ flexShrink: 0 }} />
-                        </span>
-                      )}
-                      <span style={{ fontSize: 12, fontWeight: 700, color: '#FFFFFF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.task.title}</span>
-                      {truncatedEnd && (
-                        <span
-                          role="button"
-                          aria-label="View next week"
-                          title="View next week"
-                          onClick={e => { e.stopPropagation(); setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), 7))) }}
-                          style={{ position: 'absolute', right: 2, top: 2, bottom: 2, width: 24, borderRadius: 999, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'transparent', transition: 'background 0.12s ease' }}
-                          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.25)' }}
-                          onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
-                        >
-                          <ChevronRight size={13} color="#FFFFFF" strokeWidth={3} style={{ flexShrink: 0 }} />
-                        </span>
-                      )}
-                    </button>
+                          {truncatedStart && (
+                            <span
+                              role="button"
+                              aria-label="View previous week"
+                              title="View previous week"
+                              onClick={e => { e.stopPropagation(); setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), -7))) }}
+                              style={{ position: 'absolute', left: 2, top: 2, bottom: 2, width: 24, borderRadius: 999, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'transparent', transition: 'background 0.12s ease' }}
+                              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.25)' }}
+                              onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                            >
+                              <ChevronLeft size={13} color="#FFFFFF" strokeWidth={3} style={{ flexShrink: 0 }} />
+                            </span>
+                          )}
+                          <span style={{ fontSize: 12, fontWeight: 700, color: '#FFFFFF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.task.title}</span>
+                          {truncatedEnd && (
+                            <span
+                              role="button"
+                              aria-label="View next week"
+                              title="View next week"
+                              onClick={e => { e.stopPropagation(); setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), 7))) }}
+                              style={{ position: 'absolute', right: 2, top: 2, bottom: 2, width: 24, borderRadius: 999, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'transparent', transition: 'background 0.12s ease' }}
+                              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.25)' }}
+                              onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                            >
+                              <ChevronRight size={13} color="#FFFFFF" strokeWidth={3} style={{ flexShrink: 0 }} />
+                            </span>
+                          )}
+                        </button>
+                      )
+                    })}
                   </div>
                 )
               })}
@@ -2522,6 +2576,13 @@ export default function OwnerTasksPage() {
           setAiCreateLoading(true); setAiError('')
           try {
             const due_at = new Date(`${aiDueDate}T${aiDueTime}:00`).toISOString()
+            const completionSteps = aiSuggestion.steps
+              .map((step, i) => `${i + 1}. ${step.title}\n   ${step.description}`)
+              .join('\n')
+            const taskDescription = [
+              aiDescription.trim(),
+              completionSteps ? `Completion Steps:\n${completionSteps}` : '',
+            ].filter(Boolean).join('\n\n') || null
             const res = await fetch('/api/task', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -2529,7 +2590,7 @@ export default function OwnerTasksPage() {
                 company_id: companyId,
                 department_id: aiDeptId,
                 title: aiTitle.trim(),
-                description: aiDescription || null,
+                description: taskDescription,
                 priority: aiPriority,
                 due_at,
                 assigned_user_id: aiManagerIds[0] || null,
@@ -2541,29 +2602,6 @@ export default function OwnerTasksPage() {
             })
             const data = await res.json()
             if (!data.success) throw new Error(data.message)
-            const parentId = data.task.id as string
-            if (aiSuggestion.steps.length > 0) {
-              await Promise.all(aiSuggestion.steps.map((step, i) =>
-                fetch('/api/task', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    company_id: companyId,
-                    department_id: aiDeptId,
-                    parent_task_id: parentId,
-                    title: step.title,
-                    description: step.description,
-                    priority: aiPriority,
-                    due_at,
-                    assigned_user_id: aiManagerIds.length > 0 ? aiManagerIds[i % aiManagerIds.length] : null,
-                    assigned_by: internalUserId || null,
-                    status: 'Assigned',
-                    percentage_complete: 0,
-                    task_date: taskDate,
-                  }),
-                })
-              ))
-            }
             setAiModal(false)
             fetchKanban(companyId)
             showTaskToast('Task created successfully.')

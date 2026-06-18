@@ -350,6 +350,12 @@ async function main() {
   const mgrId = (n) => userIdMap[`manager${n}@test.com`].internalId
   const empId = (n) => userIdMap[`employee${n}@test.com`].internalId
   const cwId = (n) => userIdMap[`cw${n}@test.com`].internalId
+  const managerIdsByDept = [
+    new Set([mgrId(1), mgrId(2)]),
+    new Set([mgrId(3), mgrId(4)]),
+    new Set([mgrId(5), mgrId(6)]),
+    new Set([mgrId(7), mgrId(8)]),
+  ]
 
   // dept[0]=Operations dept[1]=Marketing dept[2]=Engineering dept[3]=Customer Support.
   // Demo week is Mon dayOffset(-3) .. Sun dayOffset(3), i.e. day index i = 0..6.
@@ -444,39 +450,43 @@ async function main() {
   const findShift = (deptIdx, date) => createdShifts.find(cs => cs.deptIndex === deptIdx && cs.shift.shift_date === date)?.shift ?? null
 
   const taskDefs = [
-    { dept: 0, shiftDate: dayOffset(0), title: 'Restock front shelves',        desc: 'Pull from backroom inventory and restock aisle 1-3.', assignee: cwId(1), by: mgrId(1), status: 'Complete',    pct: 100, priority: 'Medium', due: dayOffset(0) },
-    { dept: 0, shiftDate: dayOffset(0), title: 'Clean and sanitize counters',  desc: null,                                                   assignee: cwId(2), by: mgrId(1), status: 'In Progress', pct: 60,  priority: 'Low',    due: dayOffset(0) },
-    { dept: 0, shiftDate: dayOffset(0), title: 'Closing cash reconciliation',  desc: 'Match till totals against POS report.',               assignee: empId(1), by: mgrId(1), status: 'Assigned',    pct: 0,   priority: 'High',   due: dayOffset(0) },
-    { dept: 1, shiftDate: dayOffset(0), title: 'Review ad spend report',       desc: 'Flag any campaign over budget by 10%.',               assignee: empId(3), by: mgrId(3), status: 'Review',      pct: 90,  priority: 'High',   due: dayOffset(0) },
-    { dept: 1, shiftDate: null, title: 'Draft Q3 social calendar',  desc: 'Cover all 4 platforms, 3 posts/week.',                assignee: empId(4), by: mgrId(4), status: 'In Progress', pct: 40,  priority: 'Medium', due: dayOffset(2) },
-    { dept: 2, shiftDate: dayOffset(0), title: 'Triage incident queue',        desc: 'Clear P3/P4 tickets, escalate P1/P2.',                assignee: empId(5), by: mgrId(5), status: 'In Progress', pct: 50,  priority: 'Urgent', due: dayOffset(0) },
-    { dept: 2, shiftDate: dayOffset(0), title: 'Update on-call runbook',       desc: null,                                                   assignee: empId(6), by: mgrId(5), status: 'Assigned',    pct: 0,   priority: 'Low',    due: dayOffset(3) },
-    { dept: 2, shiftDate: null, title: 'Code review backlog',       desc: 'Clear 5 pending PRs.',                                assignee: empId(5), by: mgrId(6), status: 'Complete',    pct: 100, priority: 'Medium', due: dayOffset(-1) },
-    { dept: 3, shiftDate: null, title: 'Respond to escalated ticket #4821', desc: 'Customer requesting refund.',                 assignee: empId(7), by: mgrId(7), status: 'Review',      pct: 85,  priority: 'Urgent', due: dayOffset(0) },
-    { dept: 3, shiftDate: null, title: 'Update FAQ knowledge base', desc: null,                                                   assignee: empId(8), by: mgrId(8), status: 'Assigned',    pct: 0,   priority: 'Low',    due: dayOffset(5) },
-    { dept: 0, shiftDate: null, title: 'Quarterly inventory audit', desc: 'Full count across all storage zones.',                assignee: empId(2), by: mgrId(2), status: 'Assigned',    pct: 0,   priority: 'High',   due: dayOffset(3) },
-    { dept: 1, shiftDate: null, title: 'Finalize client pitch deck', desc: 'Incorporate feedback from last review.',             assignee: empId(3), by: mgrId(3), status: 'In Progress', pct: 70,  priority: 'High',   due: dayOffset(4) },
+    { dept: 0, shiftDate: dayOffset(0), title: 'Restock front shelves',        desc: 'Pull from backroom inventory and restock aisle 1-3.', assignee: mgrId(1), by: mgrId(1), status: 'Complete',    pct: 100, priority: 'Medium', due: dayOffset(0) },
+    { dept: 0, shiftDate: dayOffset(0), title: 'Clean and sanitize counters',  desc: null,                                                   assignee: mgrId(2), by: mgrId(1), status: 'In Progress', pct: 60,  priority: 'Low',    due: dayOffset(0) },
+    { dept: 0, shiftDate: dayOffset(0), title: 'Closing cash reconciliation',  desc: 'Match till totals against POS report.',               assignee: mgrId(1), by: mgrId(1), status: 'Assigned',    pct: 0,   priority: 'High',   due: dayOffset(0) },
+    { dept: 1, shiftDate: dayOffset(0), title: 'Review ad spend report',       desc: 'Flag any campaign over budget by 10%.',               assignee: mgrId(3), by: mgrId(3), status: 'Review',      pct: 90,  priority: 'High',   due: dayOffset(0) },
+    { dept: 1, shiftDate: null, title: 'Draft Q3 social calendar',  desc: 'Cover all 4 platforms, 3 posts/week.',                assignee: mgrId(4), by: mgrId(4), status: 'In Progress', pct: 40,  priority: 'Medium', due: dayOffset(2) },
+    { dept: 2, shiftDate: dayOffset(0), title: 'Triage incident queue',        desc: 'Clear P3/P4 tickets, escalate P1/P2.',                assignee: mgrId(5), by: mgrId(5), status: 'In Progress', pct: 50,  priority: 'Urgent', due: dayOffset(0) },
+    { dept: 2, shiftDate: dayOffset(0), title: 'Update on-call runbook',       desc: null,                                                   assignee: mgrId(6), by: mgrId(5), status: 'Assigned',    pct: 0,   priority: 'Low',    due: dayOffset(3) },
+    { dept: 2, shiftDate: null, title: 'Code review backlog',       desc: 'Clear 5 pending PRs.',                                assignee: mgrId(5), by: mgrId(6), status: 'Complete',    pct: 100, priority: 'Medium', due: dayOffset(-1) },
+    { dept: 3, shiftDate: null, title: 'Respond to escalated ticket #4821', desc: 'Customer requesting refund.',                 assignee: mgrId(7), by: mgrId(7), status: 'Review',      pct: 85,  priority: 'Urgent', due: dayOffset(0) },
+    { dept: 3, shiftDate: null, title: 'Update FAQ knowledge base', desc: null,                                                   assignee: mgrId(8), by: mgrId(8), status: 'Assigned',    pct: 0,   priority: 'Low',    due: dayOffset(5) },
+    { dept: 0, shiftDate: null, title: 'Quarterly inventory audit', desc: 'Full count across all storage zones.',                assignee: mgrId(2), by: mgrId(2), status: 'Assigned',    pct: 0,   priority: 'High',   due: dayOffset(3) },
+    { dept: 1, shiftDate: null, title: 'Finalize client pitch deck', desc: 'Incorporate feedback from last review.',             assignee: mgrId(3), by: mgrId(3), status: 'In Progress', pct: 70,  priority: 'High',   due: dayOffset(4) },
     // ── Tomorrow: heavier task load across all departments ──
-    { dept: 0, shiftDate: dayOffset(1), title: 'Open floor and check stock',     desc: 'Verify shelves are stocked before doors open.',       assignee: cwId(1), by: mgrId(1), status: 'Assigned',    pct: 0,   priority: 'Medium', due: dayOffset(1) },
-    { dept: 0, shiftDate: dayOffset(1), title: 'Evening cash count',             desc: 'Reconcile till against POS report.',                  assignee: empId(2), by: mgrId(2), status: 'Assigned',    pct: 0,   priority: 'High',   due: dayOffset(1) },
-    { dept: 0, shiftDate: dayOffset(1), title: 'Restock backroom for next day',  desc: null,                                                   assignee: cwId(7), by: mgrId(2), status: 'Assigned',    pct: 0,   priority: 'Low',    due: dayOffset(1) },
-    { dept: 1, shiftDate: dayOffset(1), title: 'Shoot product photos',           desc: 'Studio booked 9-1pm, 20 SKUs to cover.',               assignee: empId(4), by: mgrId(4), status: 'Assigned',    pct: 0,   priority: 'Medium', due: dayOffset(1) },
-    { dept: 1, shiftDate: dayOffset(1), title: 'Review evening ad performance',  desc: 'Pull CTR/CPC numbers for the 1pm-9pm slot.',           assignee: empId(3), by: mgrId(3), status: 'Review',      pct: 90,  priority: 'High',   due: dayOffset(1) },
-    { dept: 1, shiftDate: null, title: 'Finalize product photo selects', desc: 'Pick the best 5 shots for the catalog.',             assignee: empId(4), by: mgrId(4), status: 'Complete',    pct: 100, priority: 'Medium', due: dayOffset(1) },
-    { dept: 2, shiftDate: dayOffset(1), title: 'Prepare sprint backlog',         desc: 'Groom top 15 tickets before planning.',                assignee: empId(6), by: mgrId(6), status: 'In Progress', pct: 30,  priority: 'Medium', due: dayOffset(1) },
-    { dept: 2, shiftDate: dayOffset(1), title: 'QA sign-off for v2.3',           desc: 'Run regression suite before deployment window.',      assignee: empId(5), by: mgrId(5), status: 'Review',      pct: 95,  priority: 'Urgent', due: dayOffset(1) },
-    { dept: 2, shiftDate: null, title: 'Merge hotfix branch',          desc: 'Hotfix for the login redirect bug.',                   assignee: empId(6), by: mgrId(6), status: 'Complete',    pct: 100, priority: 'High',   due: dayOffset(1) },
-    { dept: 3, shiftDate: dayOffset(1), title: 'Morning ticket triage',          desc: 'Clear overnight backlog before 9am.',                  assignee: empId(7), by: mgrId(7), status: 'Complete',    pct: 100, priority: 'High',   due: dayOffset(1) },
-    { dept: 3, shiftDate: dayOffset(1), title: 'Evening hotline coverage notes', desc: null,                                                   assignee: cwId(8), by: mgrId(8), status: 'Review',      pct: 80,  priority: 'Medium', due: dayOffset(1) },
-    { dept: 3, shiftDate: null, title: 'Prep tomorrow\'s FAQ updates', desc: 'Add macros for the 3 most common ticket types.',      assignee: empId(8), by: mgrId(8), status: 'In Progress', pct: 20,  priority: 'Low',    due: dayOffset(1) },
-    { dept: 0, shiftDate: null, title: 'Submit weekly headcount report', desc: 'Send to Owner for sign-off.',                       assignee: empId(1), by: mgrId(1), status: 'Review',      pct: 90,  priority: 'Medium', due: dayOffset(1) },
-    { dept: 0, shiftDate: null, title: 'Label and shelve new delivery', desc: null,                                                  assignee: cwId(1), by: mgrId(1), status: 'Complete',    pct: 100, priority: 'Low',    due: dayOffset(1) },
+    { dept: 0, shiftDate: dayOffset(1), title: 'Open floor and check stock',     desc: 'Verify shelves are stocked before doors open.',       assignee: mgrId(1), by: mgrId(1), status: 'Assigned',    pct: 0,   priority: 'Medium', due: dayOffset(1) },
+    { dept: 0, shiftDate: dayOffset(1), title: 'Evening cash count',             desc: 'Reconcile till against POS report.',                  assignee: mgrId(2), by: mgrId(2), status: 'Assigned',    pct: 0,   priority: 'High',   due: dayOffset(1) },
+    { dept: 0, shiftDate: dayOffset(1), title: 'Restock backroom for next day',  desc: null,                                                   assignee: mgrId(2), by: mgrId(2), status: 'Assigned',    pct: 0,   priority: 'Low',    due: dayOffset(1) },
+    { dept: 1, shiftDate: dayOffset(1), title: 'Shoot product photos',           desc: 'Studio booked 9-1pm, 20 SKUs to cover.',               assignee: mgrId(4), by: mgrId(4), status: 'Assigned',    pct: 0,   priority: 'Medium', due: dayOffset(1) },
+    { dept: 1, shiftDate: dayOffset(1), title: 'Review evening ad performance',  desc: 'Pull CTR/CPC numbers for the 1pm-9pm slot.',           assignee: mgrId(3), by: mgrId(3), status: 'Review',      pct: 90,  priority: 'High',   due: dayOffset(1) },
+    { dept: 1, shiftDate: null, title: 'Finalize product photo selects', desc: 'Pick the best 5 shots for the catalog.',             assignee: mgrId(4), by: mgrId(4), status: 'Complete',    pct: 100, priority: 'Medium', due: dayOffset(1) },
+    { dept: 2, shiftDate: dayOffset(1), title: 'Prepare sprint backlog',         desc: 'Groom top 15 tickets before planning.',                assignee: mgrId(6), by: mgrId(6), status: 'In Progress', pct: 30,  priority: 'Medium', due: dayOffset(1) },
+    { dept: 2, shiftDate: dayOffset(1), title: 'QA sign-off for v2.3',           desc: 'Run regression suite before deployment window.',      assignee: mgrId(5), by: mgrId(5), status: 'Review',      pct: 95,  priority: 'Urgent', due: dayOffset(1) },
+    { dept: 2, shiftDate: null, title: 'Merge hotfix branch',          desc: 'Hotfix for the login redirect bug.',                   assignee: mgrId(6), by: mgrId(6), status: 'Complete',    pct: 100, priority: 'High',   due: dayOffset(1) },
+    { dept: 3, shiftDate: dayOffset(1), title: 'Morning ticket triage',          desc: 'Clear overnight backlog before 9am.',                  assignee: mgrId(7), by: mgrId(7), status: 'Complete',    pct: 100, priority: 'High',   due: dayOffset(1) },
+    { dept: 3, shiftDate: dayOffset(1), title: 'Evening hotline coverage notes', desc: null,                                                   assignee: mgrId(8), by: mgrId(8), status: 'Review',      pct: 80,  priority: 'Medium', due: dayOffset(1) },
+    { dept: 3, shiftDate: null, title: 'Prep tomorrow\'s FAQ updates', desc: 'Add macros for the 3 most common ticket types.',      assignee: mgrId(8), by: mgrId(8), status: 'In Progress', pct: 20,  priority: 'Low',    due: dayOffset(1) },
+    { dept: 0, shiftDate: null, title: 'Submit weekly headcount report', desc: 'Send to Owner for sign-off.',                       assignee: mgrId(1), by: mgrId(1), status: 'Review',      pct: 90,  priority: 'Medium', due: dayOffset(1) },
+    { dept: 0, shiftDate: null, title: 'Label and shelve new delivery', desc: null,                                                  assignee: mgrId(1), by: mgrId(1), status: 'Complete',    pct: 100, priority: 'Low',    due: dayOffset(1) },
   ]
 
   const createdTasks = []
   for (const t of taskDefs) {
     const dept = depts[t.dept]
     const shift = t.shiftDate ? findShift(t.dept, t.shiftDate) : null
+    if (!managerIdsByDept[t.dept]?.has(t.assignee)) {
+      console.error(`  ✗ task assignee must be a manager in the same department: ${t.title}`)
+      process.exit(1)
+    }
     const { data: task, error: taskErr } = await supabase
       .from('tasks')
       .insert({
