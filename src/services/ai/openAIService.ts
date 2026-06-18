@@ -15,6 +15,10 @@ function extractOutputText(response: unknown): string {
   return r.output?.flatMap(item => item.content ?? []).map(content => content.text ?? '').join('') ?? ''
 }
 
+function supportsReasoning(model: string): boolean {
+  return /^(o\d|gpt-5)/i.test(model)
+}
+
 export const openAIService = {
   async generateStructuredJson<T>(data: {
     instructions: string
@@ -29,6 +33,31 @@ export const openAIService = {
     const controller = new AbortController()
     const timeoutMs = Number(process.env.OPENAI_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS)
     const timeout = setTimeout(() => controller.abort(), timeoutMs)
+    const model = process.env.OPENAI_MODEL || 'gpt-4o-mini'
+    const requestBody: Record<string, unknown> = {
+      model,
+      max_output_tokens: data.maxOutputTokens ?? Number(process.env.OPENAI_MAX_OUTPUT_TOKENS ?? DEFAULT_MAX_OUTPUT_TOKENS),
+      instructions: data.instructions,
+      input: JSON.stringify(data.input),
+      text: {
+        format: {
+          type: 'json_schema',
+          name: data.schemaName,
+          strict: true,
+          schema: data.schema,
+        },
+      },
+    }
+
+    if (supportsReasoning(model)) {
+      requestBody.reasoning = {
+        effort: process.env.OPENAI_REASONING_EFFORT || 'minimal',
+      }
+      requestBody.text = {
+        ...(requestBody.text as Record<string, unknown>),
+        verbosity: process.env.OPENAI_TEXT_VERBOSITY || 'low',
+      }
+    }
 
     let res: Response
     try {
@@ -39,24 +68,7 @@ export const openAIService = {
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          model: process.env.OPENAI_MODEL || 'gpt-5-nano',
-          reasoning: {
-            effort: process.env.OPENAI_REASONING_EFFORT || 'minimal',
-          },
-          max_output_tokens: data.maxOutputTokens ?? Number(process.env.OPENAI_MAX_OUTPUT_TOKENS ?? DEFAULT_MAX_OUTPUT_TOKENS),
-          instructions: data.instructions,
-          input: JSON.stringify(data.input),
-          text: {
-            verbosity: process.env.OPENAI_TEXT_VERBOSITY || 'low',
-            format: {
-              type: 'json_schema',
-              name: data.schemaName,
-              strict: true,
-              schema: data.schema,
-            },
-          },
-        }),
+        body: JSON.stringify(requestBody),
       })
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {

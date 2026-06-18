@@ -276,4 +276,15 @@ export const taskRepository = {
     return (data ?? []) as Task[]
   },
 
+  async getActiveTasksByAssignees(user_ids: string[]): Promise<{ assigned_user_id: string; priority: string | null; due_at: string | null }[]> {
+    if (user_ids.length === 0) return []
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('assigned_user_id, priority, due_at')
+      .in('assigned_user_id', user_ids)
+      .neq('status', 'Complete')
+    if (error) throw new Error(error.message)
+    return (data ?? []) as { assigned_user_id: string; priority: string | null; due_at: string | null }[]
+  },
+
 }

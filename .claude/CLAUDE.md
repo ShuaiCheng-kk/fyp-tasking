@@ -74,11 +74,12 @@ Day view splits into two 8-hour strips: top = 07:00–15:00, bottom = 15:00–23
 
 ## 5. AI boundary
 
-AI is used in **exactly four** features; everything else is manual:
+AI is used in **exactly five** features; everything else is manual:
 - AI Candidate Recommendation (Recruitment)
 - AI Job Description Generator (Recruitment)
 - AI Auto-approve Timesheets (Attendance)
 - AI Anomaly Detection (Dashboard / Report)
+- AI Assign (Tasks) — single button merging task breakdown + assignment. Given a title/description/priority, AI: (1) breaks the task into completion steps, (2) picks the best-fit department, (3) picks the best-fit manager in that department by comparing current workload (task count), priority mix, and deadlines across that department's managers, (4) proposes a deadline from priority + estimated size. All of it is presented to the Owner/Manager as an editable draft — nothing is created until the user confirms.
 
 **Build-order rule for everything (AI or not):**
 1. Build the feature **manually first** — it must fully work by hand.

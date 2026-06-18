@@ -9,7 +9,7 @@ import {
   Crown, UserCog, UserRound, Pencil, Trash2, CalendarDays, ChevronLeft, ChevronRight,
   Sparkles, Check,
 } from 'lucide-react'
-import { TaskSuggestion } from '@/types/AI'
+import { AiAssignSuggestion } from '@/types/AI'
 import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
@@ -48,12 +48,13 @@ function formatDeadlineInputDisplay(dateValue: string, timeValue: string): strin
 
 // ─── Task Date Picker ──────────────────────────────────────────────────────────
 
-function TaskDatePicker({ value, onChange, taskDates, minDate, accentColor }: {
+function TaskDatePicker({ value, onChange, taskDates, minDate, accentColor, fullWidth }: {
   value: string
   onChange: (date: string) => void
   taskDates: Set<string>
   minDate: string
   accentColor: string
+  fullWidth?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState({ top: 0, left: 0, width: 292 })
@@ -142,10 +143,27 @@ function TaskDatePicker({ value, onChange, taskDates, minDate, accentColor }: {
   return (
     <>
       <button ref={triggerRef} type="button" onClick={handleOpen}
-        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 38, padding: '0 12px', border: `1px solid ${TASK_BORDER}`, borderRadius: 9, background: '#FFFFFF', cursor: 'pointer', fontSize: 13, fontWeight: 500, color: TASK_TEXT, minWidth: 140, fontFamily: 'var(--font-body), system-ui, sans-serif' }}
+        style={fullWidth ? {
+          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '10px 12px', border: `1.5px solid ${open ? '#F97316' : '#E5E7EB'}`, borderRadius: 8,
+          background: '#FFFFFF', cursor: 'pointer', fontSize: '0.9375rem', color: '#111827', fontWeight: 500,
+          outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s',
+        } : { display: 'inline-flex', alignItems: 'center', gap: 6, height: 38, padding: '0 12px', border: `1px solid ${TASK_BORDER}`, borderRadius: 9, background: '#FFFFFF', cursor: 'pointer', fontSize: 13, fontWeight: 500, color: TASK_TEXT, minWidth: 140, boxSizing: 'border-box', fontFamily: 'var(--font-body), system-ui, sans-serif' }}
       >
-        <CalendarDays size={14} color="#64748B" style={{ flexShrink: 0 }} />
-        <span>{displayLabel}</span>
+        {fullWidth ? (
+          <>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <CalendarDays size={14} color="#9CA3AF" style={{ flexShrink: 0 }} />
+              {displayLabel}
+            </span>
+            <ChevronDown size={13} style={{ color: '#9CA3AF', flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+          </>
+        ) : (
+          <>
+            <CalendarDays size={14} color="#64748B" style={{ flexShrink: 0 }} />
+            <span>{displayLabel}</span>
+          </>
+        )}
       </button>
       {typeof document !== 'undefined' && createPortal(popover, document.body)}
     </>
@@ -544,14 +562,14 @@ function TaskCard({
         border: '1px solid #E5E7EB',
         borderLeft: '1px solid #E5E7EB',
         borderRadius: '10px',
-        padding: '12px 14px',
+        padding: '16px 16px',
         cursor: 'pointer',
         position: 'relative',
         marginBottom: 14,
       }}
     >
       {/* Top row: priority badge + edit pencil */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 7 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           {priority && task.priority && (
             <span style={{ fontSize: '0.65rem', fontWeight: 800, padding: '2px 7px', borderRadius: '99px', background: priority.bg, color: priority.text, letterSpacing: '0.01em' }}>
@@ -576,7 +594,7 @@ function TaskCard({
       </div>
 
       {/* Title */}
-      <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: '0 0 10px', lineHeight: 1.4 }}>
+      <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: '0 0 16px', lineHeight: 1.4 }}>
         {task.title}
       </p>
 
@@ -660,6 +678,7 @@ export default function OwnerTasksPage() {
   const [editTitle,       setEditTitle]       = useState('')
   const [editDescription, setEditDescription] = useState('')
   const [editDeptId,      setEditDeptId]      = useState('')
+  const [editStartDate,   setEditStartDate]   = useState('')
   const [editPriority,    setEditPriority]    = useState('')
   const [editDueAt,          setEditDueAt]          = useState('')
   const [editDeadlineTime,   setEditDeadlineTime]   = useState('')
@@ -703,21 +722,27 @@ export default function OwnerTasksPage() {
   const [newDeptId,       setNewDeptId]       = useState('')
   const [newAssigneeId,   setNewAssigneeId]   = useState('')
   const [newShiftId,        setNewShiftId]        = useState('')
+  const [newStartDate,      setNewStartDate]      = useState('')
   const [newPriority,       setNewPriority]       = useState('')
   const [newDeadlineDate,   setNewDeadlineDate]   = useState('')
   const [newDeadlineTime,   setNewDeadlineTime]   = useState('')
   const [newLoading,      setNewLoading]      = useState(false)
   const [newError,        setNewError]        = useState('')
 
-  // AI Task Breakdown state
+  // AI Assign state (merged breakdown + department/manager/deadline suggestion)
   const [aiModal,          setAiModal]          = useState(false)
-  const [aiContext,        setAiContext]        = useState('')
-  const [aiDeptId,         setAiDeptId]         = useState('')
-  const [aiShiftId,        setAiShiftId]        = useState('')
+  const [aiStep,           setAiStep]           = useState<'input' | 'review'>('input')
+  const [aiTitle,          setAiTitle]          = useState('')
+  const [aiDescription,    setAiDescription]    = useState('')
+  const [aiPriority,       setAiPriority]       = useState('')
+  const [aiPeopleNeeded,   setAiPeopleNeeded]   = useState(1)
   const [aiLoading,        setAiLoading]        = useState(false)
   const [aiError,          setAiError]          = useState('')
-  const [aiSuggestions,    setAiSuggestions]    = useState<TaskSuggestion[]>([])
-  const [aiSelected,       setAiSelected]       = useState<Set<number>>(new Set())
+  const [aiSuggestion,     setAiSuggestion]     = useState<AiAssignSuggestion | null>(null)
+  const [aiDeptId,         setAiDeptId]         = useState('')
+  const [aiManagerIds,     setAiManagerIds]     = useState<string[]>([])
+  const [aiDueDate,        setAiDueDate]        = useState('')
+  const [aiDueTime,        setAiDueTime]        = useState('')
   const [aiCreateLoading,  setAiCreateLoading]  = useState(false)
 
   // Toast
@@ -930,6 +955,7 @@ export default function OwnerTasksPage() {
     setEditTitle(task.title)
     setEditDescription(task.description ?? '')
     setEditDeptId(task.department_id)
+    setEditStartDate(kanbanDateKey(task))
     setEditPriority(task.priority ?? '')
     setEditDueAt(task.due_at ? formatDateKey(new Date(task.due_at)) : '')
     setEditDeadlineTime(task.due_at ? new Date(task.due_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '')
@@ -947,8 +973,8 @@ export default function OwnerTasksPage() {
   // ── Save task ─────────────────────────────────────────────────────────────
 
   const handleSaveTask = async () => {
-    if (!selectedTask || !editTitle.trim() || !editDeptId || !editPriority || !editDueAt || !editDeadlineTime) {
-      setPanelError('Title, department, priority, and deadline are required')
+    if (!selectedTask || !editTitle.trim() || !editDeptId || !editStartDate || !editPriority || !editDueAt || !editDeadlineTime) {
+      setPanelError('Title, department, start date, priority, and deadline are required')
       return
     }
     setEditLoading(true); setPanelError('')
@@ -962,6 +988,7 @@ export default function OwnerTasksPage() {
         description: editDescription || null,
         priority: editPriority || null,
         due_at,
+        task_date: editStartDate,
         assigned_user_id: editAssignee || null,
         shift_id: editShiftId || null,
         status: editStatus,
@@ -975,7 +1002,7 @@ export default function OwnerTasksPage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
       await fetchKanban(companyId)
-      setTaskDate(selectedTask.task_date ?? taskDate)
+      setTaskDate(editStartDate)
       closePanel()
       showTaskToast('Task updated successfully.')
     } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to save') }
@@ -1058,7 +1085,7 @@ export default function OwnerTasksPage() {
   }
 
   const handleCreateTask = async () => {
-    if (!newTitle.trim() || !newDeptId || !newPriority || !newDeadlineDate || !newDeadlineTime) { setNewError('Title, department, priority, and deadline are required'); return }
+    if (!newTitle.trim() || !newDeptId || !newPriority || !newStartDate || !newDeadlineDate || !newDeadlineTime) { setNewError('Title, department, priority, start date, and deadline are required'); return }
     setNewLoading(true); setNewError('')
     try {
       const input: Partial<TaskInput> & { company_id: string; department_id: string; title: string } = {
@@ -1071,7 +1098,7 @@ export default function OwnerTasksPage() {
         shift_id: newShiftId || null,
         priority: newPriority || null,
         due_at: newDeadlineDate && newDeadlineTime ? new Date(`${newDeadlineDate}T${newDeadlineTime}:00`).toISOString() : null,
-        task_date: taskDate,
+        task_date: newStartDate,
         status: 'Assigned',
         percentage_complete: 0,
       }
@@ -1083,7 +1110,7 @@ export default function OwnerTasksPage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
       setNewTaskModal(false)
-      setNewTitle(''); setNewDescription(''); setNewDeptId(''); setNewAssigneeId(''); setNewShiftId(''); setNewPriority(''); setNewDeadlineDate(''); setNewDeadlineTime('')
+      setNewTitle(''); setNewDescription(''); setNewDeptId(''); setNewAssigneeId(''); setNewShiftId(''); setNewStartDate(''); setNewPriority(''); setNewDeadlineDate(''); setNewDeadlineTime('')
       setTaskDate(taskDate)
       fetchKanban(companyId)
       showTaskToast('Task created successfully.')
@@ -1096,6 +1123,7 @@ export default function OwnerTasksPage() {
     setNewDeptId(deptId)
     setNewAssigneeId(memberId)
     setNewShiftId('')
+    setNewStartDate(taskDate)
     setNewTitle(''); setNewDescription(''); setNewPriority(''); setNewDeadlineDate(''); setNewDeadlineTime(''); setNewError('')
     setNewTaskModal(true)
   }
@@ -1213,63 +1241,37 @@ export default function OwnerTasksPage() {
   }, [calendarWeekDates])
 
   const taskCalendarItems = useMemo(() => {
-    const weekStart = new Date(`${calendarWeekDates[0]}T00:00:00`).getTime()
-    const weekEnd = new Date(`${calendarWeekDates[6]}T23:59:59`).getTime()
+    // Bar spans from the task's assigned start date (task_date, set when assigning) to its deadline date
     return allVisibleTasks.flatMap(task => {
-      const shift = task.shift_id ? shiftOptions.find(s => s.id === task.shift_id) : null
-      const due = task.due_at ? new Date(task.due_at) : null
-      const shiftDate = task.shift_date ?? shift?.shift_date ?? (due ? formatDateKey(due) : null)
-      if (!shiftDate && !due) return []
-
-      const start = shift
-        ? new Date(`${shift.shift_date}T${shift.start_time.slice(0, 5)}:00`)
-        : due
-          ? new Date(due.getTime() - 60 * 60 * 1000)
-          : null
-      const end = due
-        ? due
-        : shift
-          ? new Date(`${shift.shift_date}T${shift.end_time.slice(0, 5)}:00`)
-          : null
-      if (!start || !end) return []
-      if (end.getTime() < weekStart || start.getTime() > weekEnd) return []
-
-      return [{ task, shift, start, end: end.getTime() > start.getTime() ? end : new Date(start.getTime() + 30 * 60 * 1000) }]
-    })
-  }, [allVisibleTasks, calendarWeekDates, shiftOptions])
+      const startDate = kanbanDateKey(task)
+      const endDate = task.due_at ? formatDateKey(new Date(task.due_at)) : startDate
+      if (endDate < calendarWeekDates[0] || startDate > calendarWeekDates[6]) return []
+      return [{ task, startDate: startDate < endDate ? startDate : endDate, endDate: endDate > startDate ? endDate : startDate }]
+    }).sort((a, b) => (PRIORITY_ORDER[a.task.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.task.priority ?? ''] ?? 4) || a.startDate.localeCompare(b.startDate))
+  }, [allVisibleTasks, calendarWeekDates])
 
   const renderTaskCalendarView = () => {
-    const startHour = 6
-    const endHour = 24
-    const hourHeight = 44
-    const totalMinutes = (endHour - startHour) * 60
-    const bodyHeight = (endHour - startHour) * hourHeight
     const todayStr = formatDateKey(new Date())
-    const hours = Array.from({ length: endHour - startHour + 1 }, (_, i) => startHour + i)
-    const itemsByDate = calendarWeekDates.reduce<Record<string, typeof taskCalendarItems>>((acc, date) => {
-      acc[date] = taskCalendarItems.filter(item => {
-        const startDate = formatDateKey(item.start)
-        const endDate = formatDateKey(item.end)
-        return date >= startDate && date <= endDate
-      })
-      return acc
-    }, {})
-
-    const timeLabel = (date: Date) => date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
-    const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value))
+    const ROW_HEIGHT = 58
+    const NAME_COL = 180
+    const dayIndex = (date: string) => calendarWeekDates.indexOf(date)
 
     return (
       <div className="task-tab-content" style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '14px 16px 18px' }}>
-        <div style={{ minWidth: 900, border: `1px solid ${TASK_BORDER}`, borderRadius: 12, overflow: 'hidden', background: '#FFFFFF' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '72px repeat(7, minmax(112px, 1fr))', background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', minHeight: 56 }}>
+        <div style={{ minWidth: 880, border: `1px solid ${TASK_BORDER}`, borderRadius: 12, overflow: 'hidden', background: '#FFFFFF' }}>
+          {/* Header row — matches Shifts page Calendar tab date header */}
+          <div style={{ display: 'grid', gridTemplateColumns: `${NAME_COL}px repeat(7, 1fr)`, background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', height: 54 }}>
             <div style={{ borderRight: '1px solid rgba(255,255,255,0.08)' }} />
             {calendarWeekDates.map(date => {
               const day = new Date(`${date}T00:00:00`)
               const isToday = date === todayStr
+              const dayNum = String(day.getDate()).padStart(2, '0')
+              const month = day.toLocaleDateString('en-AU', { month: 'short' })
+              const weekday = day.toLocaleDateString('en-AU', { weekday: 'long' })
               return (
-                <div key={date} style={{ padding: '10px 8px', borderRight: '1px solid rgba(255,255,255,0.08)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
-                  <span style={{ fontSize: 14, fontWeight: 800, color: isToday ? TASK_ORANGE : 'rgba(255,255,255,0.88)' }}>{day.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
-                  <span style={{ marginTop: 3, fontSize: 12, fontWeight: 600, color: isToday ? TASK_ORANGE : 'rgba(255,255,255,0.52)' }}>{day.toLocaleDateString('en-US', { weekday: 'short' })}</span>
+                <div key={date} style={{ padding: '10px 8px', borderRight: '1px solid rgba(255,255,255,0.08)', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                  <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: isToday ? TASK_ORANGE : 'rgba(255,255,255,0.85)', letterSpacing: '0.01em', lineHeight: 1.2 }}>{dayNum} {month}</p>
+                  <p style={{ margin: '3px 0 0', fontSize: 12, fontWeight: 500, color: isToday ? TASK_ORANGE : 'rgba(255,255,255,0.5)', letterSpacing: '0.01em', lineHeight: 1.2 }}>{weekday}</p>
                 </div>
               )
             })}
@@ -1281,65 +1283,90 @@ export default function OwnerTasksPage() {
               <p style={{ margin: 0, fontWeight: 700, fontSize: 14 }}>{selectedDept ? `No tasks for ${selectedDept.name} this week` : 'No tasks this week'}</p>
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: '72px repeat(7, minmax(112px, 1fr))', height: bodyHeight, position: 'relative' }}>
-              <div style={{ position: 'relative', borderRight: `1px solid ${TASK_BORDER}`, background: '#F8FAFC' }}>
-                {hours.slice(0, -1).map(hour => (
-                  <div key={hour} style={{ position: 'absolute', top: (hour - startHour) * hourHeight + hourHeight / 2 - 8, right: 10, fontSize: 11, fontWeight: 700, color: '#94A3B8' }}>
-                    {`${hour > 12 ? hour - 12 : hour} ${hour >= 12 ? 'PM' : 'AM'}`}
-                  </div>
-                ))}
-              </div>
-              {calendarWeekDates.map(date => (
-                <div key={date} style={{ position: 'relative', borderRight: `1px solid ${TASK_BORDER}`, background: date === todayStr ? '#FFF7ED' : '#FFFFFF' }}>
-                  {hours.slice(0, -1).map(hour => (
-                    <div key={hour} style={{ position: 'absolute', left: 0, right: 0, top: (hour - startHour) * hourHeight, borderTop: `1px solid ${hour === startHour ? '#E2E8F0' : '#F1F5F9'}` }} />
-                  ))}
-                  {(itemsByDate[date] ?? []).map((item, idx) => {
-                    const startDate = formatDateKey(item.start)
-                    const endDate = formatDateKey(item.end)
-                    const dayStart = startDate < date ? startHour * 60 : item.start.getHours() * 60 + item.start.getMinutes()
-                    const dayEnd = endDate > date ? endHour * 60 : item.end.getHours() * 60 + item.end.getMinutes()
-                    const top = clamp(((dayStart - startHour * 60) / totalMinutes) * bodyHeight, 4, bodyHeight - 30)
-                    const bottom = clamp(((dayEnd - startHour * 60) / totalMinutes) * bodyHeight, top + 28, bodyHeight - 4)
-                    const status = STATUS_CONFIG[item.task.status]
-                    const dept = departments.find(d => d.id === item.task.department_id)
-                    const color = dept ? deptColor(dept.id) : status.color
-                    return (
-                      <button
-                        key={`${item.task.id}-${date}`}
-                        className="task-calendar-bar"
-                        type="button"
-                        onClick={() => openTask(item.task, true)}
-                        title={`${item.task.title} • ${timeLabel(item.start)} - ${timeLabel(item.end)}`}
-                        style={{
-                          position: 'absolute',
-                          left: 8 + (idx % 2) * 6,
-                          right: 8,
-                          top,
-                          height: Math.max(28, bottom - top),
-                          border: 0,
-                          borderLeft: `4px solid ${color}`,
-                          borderRadius: 9,
-                          background: '#F8FAFC',
-                          color: TASK_TEXT,
-                          boxShadow: '0 6px 16px rgba(15,23,42,0.08)',
-                          padding: '5px 8px',
-                          cursor: 'pointer',
-                          textAlign: 'left',
-                          overflow: 'hidden',
-                        }}
-                        onMouseEnter={e => { e.currentTarget.style.background = '#FFFFFF'; e.currentTarget.style.boxShadow = '0 10px 24px rgba(15,23,42,0.14)' }}
-                        onMouseLeave={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.boxShadow = '0 6px 16px rgba(15,23,42,0.08)' }}
-                      >
-                        <span style={{ display: 'block', fontSize: 11, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.task.title}</span>
-                        <span style={{ display: 'block', marginTop: 2, fontSize: 10, fontWeight: 700, color: '#64748B', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {timeLabel(item.start)} - {timeLabel(item.end)}
+            <div>
+              {taskCalendarItems.map(item => {
+                const dept = departments.find(d => d.id === item.task.department_id)
+                const color = dept ? deptColor(dept.id) : STATUS_CONFIG[item.task.status].color
+                const startCol = Math.max(0, dayIndex(item.startDate))
+                const endCol = dayIndex(item.endDate) === -1 ? 6 : dayIndex(item.endDate)
+                const truncatedStart = item.startDate < calendarWeekDates[0]
+                const truncatedEnd = item.endDate > calendarWeekDates[6]
+                const assignee = members.find(m => m.id === item.task.assigned_user_id)
+                const isManager = assignee?.role === 'Manager'
+                return (
+                  <div key={item.task.id} style={{ display: 'grid', gridTemplateColumns: `${NAME_COL}px repeat(7, 1fr)`, height: ROW_HEIGHT, borderBottom: '1px solid #CBD5E1', boxSizing: 'border-box' }}>
+                    {/* Assignee column */}
+                    <div style={{ display: 'flex', alignItems: 'center', borderRight: `1px solid ${TASK_BORDER}`, overflow: 'hidden' }}>
+                      <div style={{ width: 8, alignSelf: 'stretch', flexShrink: 0, background: color, opacity: 0.85 }} />
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px 0 12px', minWidth: 0, flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: assignee?.profile_photo_url ? 'transparent' : (isManager ? '#FFF7ED' : '#F3F4F6'), color: isManager ? '#EA580C' : '#4B5563', borderRadius: 999, overflow: 'hidden' }}>
+                          {assignee?.profile_photo_url
+                            ? <img src={assignee.profile_photo_url} alt={assignee.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            : isManager ? <UserCog size={13} /> : <UserRound size={13} />}
+                        </div>
+                        <span style={{ fontSize: '0.9375rem', fontWeight: 600, color: assignee ? '#111827' : '#9CA3AF', fontStyle: assignee ? 'normal' : 'italic', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {assignee?.full_name ?? 'Unassigned'}
                         </span>
-                      </button>
-                    )
-                  })}
-                </div>
-              ))}
+                      </div>
+                    </div>
+                    {calendarWeekDates.map((date, i) => (
+                      <div key={date} style={{ gridColumn: i + 2, gridRow: 1, borderRight: i < 6 ? `1px solid ${TASK_BORDER}` : 'none', background: date === todayStr ? '#FFF7ED' : '#FFFFFF' }} />
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => openTask(item.task, false)}
+                      title={`${item.task.title} • ${item.startDate} – ${item.endDate}`}
+                      style={{
+                        gridColumn: `${startCol + 2} / ${endCol + 3}`,
+                        gridRow: 1,
+                        alignSelf: 'center',
+                        position: 'relative',
+                        margin: '0 6px',
+                        height: 28,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        padding: '0 12px',
+                        border: 'none',
+                        borderRadius: 999,
+                        background: color,
+                        cursor: 'pointer',
+                        overflow: 'hidden',
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.filter = 'brightness(1.08)' }}
+                      onMouseLeave={e => { e.currentTarget.style.filter = 'none' }}
+                    >
+                      {truncatedStart && (
+                        <span
+                          role="button"
+                          aria-label="View previous week"
+                          title="View previous week"
+                          onClick={e => { e.stopPropagation(); setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), -7))) }}
+                          style={{ position: 'absolute', left: 2, top: 2, bottom: 2, width: 24, borderRadius: 999, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'transparent', transition: 'background 0.12s ease' }}
+                          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.25)' }}
+                          onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                        >
+                          <ChevronLeft size={13} color="#FFFFFF" strokeWidth={3} style={{ flexShrink: 0 }} />
+                        </span>
+                      )}
+                      <span style={{ fontSize: 12, fontWeight: 700, color: '#FFFFFF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.task.title}</span>
+                      {truncatedEnd && (
+                        <span
+                          role="button"
+                          aria-label="View next week"
+                          title="View next week"
+                          onClick={e => { e.stopPropagation(); setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), 7))) }}
+                          style={{ position: 'absolute', right: 2, top: 2, bottom: 2, width: 24, borderRadius: 999, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'transparent', transition: 'background 0.12s ease' }}
+                          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.25)' }}
+                          onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                        >
+                          <ChevronRight size={13} color="#FFFFFF" strokeWidth={3} style={{ flexShrink: 0 }} />
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>
@@ -1353,10 +1380,10 @@ export default function OwnerTasksPage() {
   const assigneeDropdownOptions = newTaskDeptMembers.map(m => ({ value: m.id, label: m.full_name }))
   const priorityDropdownOptions: { value: string; label: string }[] =
     (['Low', 'Medium', 'High', 'Urgent'] as PriorityLevel[]).map(p => ({ value: p, label: p }))
-  const isNewTaskValid = newTitle.trim() !== '' && newDeptId !== '' && newPriority !== '' && newDeadlineDate !== '' && newDeadlineTime !== ''
+  const isNewTaskValid = newTitle.trim() !== '' && newDeptId !== '' && newPriority !== '' && newStartDate !== '' && newDeadlineDate !== '' && newDeadlineTime !== ''
   const editTaskDeptMembers = editDeptId ? assignableMembers.filter(m => m.department_id === editDeptId) : assignableMembers
   const editAssigneeDropdownOptions = editTaskDeptMembers.map(m => ({ value: m.id, label: m.full_name }))
-  const isEditTaskValid = editTitle.trim() !== '' && editDeptId !== '' && editPriority !== '' && editDueAt !== '' && editDeadlineTime !== ''
+  const isEditTaskValid = editTitle.trim() !== '' && editDeptId !== '' && editStartDate !== '' && editPriority !== '' && editDueAt !== '' && editDeadlineTime !== ''
   const selectedSubTasks = selectedTask && kanban
     ? COLUMNS.flatMap(col => kanban[col]).filter(task => task.parent_task_id === selectedTask.id)
     : []
@@ -1475,10 +1502,6 @@ export default function OwnerTasksPage() {
           0% { background-position: -400px 0; }
           100% { background-position: 400px 0; }
         }
-        @keyframes calendarTaskIn {
-          from { opacity: 0; transform: translateY(8px) scale(0.96); }
-          to { opacity: 1; transform: translateY(0) scale(1); }
-        }
         @keyframes iconBounce {
           0%, 100% { transform: translateY(0); }
           40%      { transform: translateY(-3px); }
@@ -1519,13 +1542,6 @@ export default function OwnerTasksPage() {
         }
         .task-tab-content {
           animation: tabContentIn 0.22s ease-out both;
-        }
-        .task-calendar-bar {
-          animation: calendarTaskIn 0.24s ease both;
-          transition: background 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
-        }
-        .task-calendar-bar:hover {
-          transform: translateY(-1px);
         }
 
         /* Member sidebar cards */
@@ -1705,7 +1721,15 @@ export default function OwnerTasksPage() {
 
                     if (!dept) {
                       // ── Department cards grid (draggable to reorder) ──
-                      const dayTasks = COLUMNS.flatMap(col => (kanban?.[col] ?? [])).filter(t => kanbanDateKey(t) === taskDate)
+                      // Kanban tab: tasks due on the selected day. Calendar tab: tasks overlapping the visible week.
+                      const dayTasks = COLUMNS.flatMap(col => (kanban?.[col] ?? [])).filter(t => {
+                        if (boardViewMode === 'calendar') {
+                          const startDate = kanbanDateKey(t)
+                          const endDate = t.due_at ? formatDateKey(new Date(t.due_at)) : startDate
+                          return endDate >= calendarWeekDates[0] && startDate <= calendarWeekDates[6]
+                        }
+                        return kanbanDateKey(t) === taskDate
+                      })
                       return (
                         <>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 12 }}>
@@ -1803,7 +1827,7 @@ export default function OwnerTasksPage() {
                           <div style={{ display: 'flex', justifyContent: 'center' }}>
                             <button
                               type="button"
-                              onClick={() => { setAiModal(true); setAiContext(''); setAiDeptId(''); setAiShiftId(''); setAiSuggestions([]); setAiSelected(new Set()); setAiError('') }}
+                              onClick={() => { setAiModal(true); setAiStep('input'); setAiTitle(''); setAiDescription(''); setAiPriority(''); setAiPeopleNeeded(1); setAiSuggestion(null); setAiDeptId(''); setAiManagerIds([]); setAiDueDate(''); setAiDueTime(''); setAiError('') }}
                               style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 36, padding: '0 24px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
                             >
                               <Sparkles size={14} /> AI Assign
@@ -2006,6 +2030,7 @@ export default function OwnerTasksPage() {
           : null
         const viewDept = departments.find(d => d.id === selectedTask.department_id)
         const viewPriorityStyle = selectedTask.priority ? PRIORITY_COLORS[selectedTask.priority as keyof typeof PRIORITY_COLORS] : null
+        const viewStartDate = new Date(`${kanbanDateKey(selectedTask)}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
         const viewDeadline = selectedTask.due_at
           ? (() => {
               const d = new Date(selectedTask.due_at)
@@ -2084,8 +2109,12 @@ export default function OwnerTasksPage() {
                 {/* Divider */}
                 <div style={{ borderTop: '1px dashed #E5E7EB' }} />
 
-                {/* Priority + Deadline */}
+                {/* Start Date + Priority */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div>
+                    <label style={modalLabelStyle}>Start Date</label>
+                    <div style={viewFieldValue}>{viewStartDate}</div>
+                  </div>
                   <div>
                     <label style={modalLabelStyle}>Priority</label>
                     {viewPriorityStyle
@@ -2095,13 +2124,15 @@ export default function OwnerTasksPage() {
                       : <div style={viewEmpty}>None</div>
                     }
                   </div>
-                  <div>
-                    <label style={modalLabelStyle}>Deadline</label>
-                    {viewDeadline
-                      ? <div style={viewFieldValue}>{viewDeadline}</div>
-                      : <div style={viewEmpty}>No deadline set</div>
-                    }
-                  </div>
+                </div>
+
+                {/* Deadline */}
+                <div>
+                  <label style={modalLabelStyle}>Deadline</label>
+                  {viewDeadline
+                    ? <div style={viewFieldValue}>{viewDeadline}</div>
+                    : <div style={viewEmpty}>No deadline set</div>
+                  }
                 </div>
 
               </div>
@@ -2174,8 +2205,19 @@ export default function OwnerTasksPage() {
               {/* Divider */}
               <div style={{ borderTop: '1px dashed #E5E7EB' }} />
 
-              {/* Priority + Deadline */}
+              {/* Start Date + Priority */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div>
+                  <label style={modalLabelStyle}>Start Date</label>
+                  <TaskDatePicker
+                    value={editStartDate || formatDateKey(new Date())}
+                    onChange={setEditStartDate}
+                    taskDates={datesWithTasks}
+                    minDate={minTaskDate}
+                    accentColor={TASK_ORANGE}
+                    fullWidth
+                  />
+                </div>
                 <div>
                   <label style={modalLabelStyle}>Priority</label>
                   <DropdownField
@@ -2185,15 +2227,17 @@ export default function OwnerTasksPage() {
                     placeholder="Select priority"
                   />
                 </div>
-                <div>
-                  <label style={modalLabelStyle}>Deadline</label>
-                  <DeadlineDateTimePicker
-                    dateValue={editDueAt}
-                    timeValue={editDeadlineTime}
-                    onChange={(date, time) => { setEditDueAt(date); setEditDeadlineTime(time) }}
-                    minDate={formatDateKey(new Date())}
-                  />
-                </div>
+              </div>
+
+              {/* Deadline */}
+              <div>
+                <label style={modalLabelStyle}>Deadline</label>
+                <DeadlineDateTimePicker
+                  dateValue={editDueAt}
+                  timeValue={editDeadlineTime}
+                  onChange={(date, time) => { setEditDueAt(date); setEditDeadlineTime(time) }}
+                  minDate={editStartDate || formatDateKey(new Date())}
+                />
               </div>
 
               <InlineError message={panelError} />
@@ -2302,8 +2346,19 @@ export default function OwnerTasksPage() {
               {/* Divider */}
               <div style={{ borderTop: '1px dashed #E5E7EB' }} />
 
-              {/* Priority + Deadline */}
+              {/* Start Date + Priority */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div>
+                  <label style={modalLabelStyle}>Start Date</label>
+                  <TaskDatePicker
+                    value={newStartDate || formatDateKey(new Date())}
+                    onChange={setNewStartDate}
+                    taskDates={datesWithTasks}
+                    minDate={minTaskDate}
+                    accentColor={TASK_ORANGE}
+                    fullWidth
+                  />
+                </div>
                 <div>
                   <label style={modalLabelStyle}>Priority</label>
                   <DropdownField
@@ -2313,15 +2368,17 @@ export default function OwnerTasksPage() {
                     placeholder="Select priority"
                   />
                 </div>
-                <div>
-                  <label style={modalLabelStyle}>Deadline</label>
-                  <DeadlineDateTimePicker
-                    dateValue={newDeadlineDate}
-                    timeValue={newDeadlineTime}
-                    onChange={(date, time) => { setNewDeadlineDate(date); setNewDeadlineTime(time) }}
-                    minDate={formatDateKey(new Date())}
-                  />
-                </div>
+              </div>
+
+              {/* Deadline */}
+              <div>
+                <label style={modalLabelStyle}>Deadline</label>
+                <DeadlineDateTimePicker
+                  dateValue={newDeadlineDate}
+                  timeValue={newDeadlineTime}
+                  onChange={(date, time) => { setNewDeadlineDate(date); setNewDeadlineTime(time) }}
+                  minDate={newStartDate || formatDateKey(new Date())}
+                />
               </div>
 
             </div>
@@ -2423,77 +2480,98 @@ export default function OwnerTasksPage() {
 
       {/* ═══════════════ AI TASK BREAKDOWN MODAL ═══════════════ */}
       {aiModal && (() => {
-        const aiShiftOpts = aiDeptId
-          ? shiftOptions.filter(s => s.department_id === aiDeptId)
-          : shiftOptions
-        const selectedAiShift = aiShiftOpts.find(s => s.id === aiShiftId) ?? null
+        const isReview = aiStep === 'review'
+        const aiDeptManagers = members.filter(m => m.role === 'Manager' && m.department_id === aiDeptId)
 
         const handleGenerate = async () => {
-          if (!aiContext.trim()) { setAiError('Please describe the work context'); return }
-          if (!aiDeptId) { setAiError('Please select a department'); return }
-          setAiLoading(true); setAiError(''); setAiSuggestions([]); setAiSelected(new Set())
+          if (!aiTitle.trim()) { setAiError('Please enter a task title'); return }
+          if (!aiPriority) { setAiError('Please select a priority'); return }
+          setAiLoading(true); setAiError('')
           try {
-            const res = await fetch('/api/ai/task-breakdown', {
+            const res = await fetch('/api/ai/assign', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                context: aiContext,
-                shift_title: selectedAiShift?.title || null,
-                department_name: departments.find(d => d.id === aiDeptId)?.name || null,
-                shift_date: selectedAiShift?.shift_date || null,
-                start_time: selectedAiShift?.start_time || null,
-                end_time: selectedAiShift?.end_time || null,
+                company_id: companyId,
+                title: aiTitle,
+                description: aiDescription,
+                priority: aiPriority,
+                people_needed: aiPeopleNeeded,
+                task_date: taskDate,
               }),
             })
             const data = await res.json()
             if (!data.success) throw new Error(data.message)
-            setAiSuggestions(data.draft.tasks)
-            setAiSelected(new Set(data.draft.tasks.map((_: TaskSuggestion, i: number) => i)))
+            const suggestion = data.suggestion as AiAssignSuggestion
+            setAiSuggestion(suggestion)
+            setAiDeptId(suggestion.department_id)
+            setAiManagerIds(suggestion.suggested_manager_ids)
+            const due = new Date(suggestion.due_at)
+            setAiDueDate(formatDateKey(due))
+            setAiDueTime(due.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }))
+            setAiStep('review')
           } catch (err) {
-            setAiError(err instanceof Error ? err.message : 'Failed to generate tasks')
+            setAiError(err instanceof Error ? err.message : 'Failed to generate suggestion')
           } finally {
             setAiLoading(false)
           }
         }
 
-        const handleCreateSelected = async () => {
-          if (aiSelected.size === 0) return
+        const handleCreate = async () => {
+          if (!aiSuggestion || !aiDeptId || !aiDueDate || !aiDueTime) return
           setAiCreateLoading(true); setAiError('')
           try {
-            const selected = aiSuggestions.filter((_, i) => aiSelected.has(i))
-            await Promise.all(selected.map(t =>
-              fetch('/api/task', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  company_id: companyId,
-                  department_id: aiDeptId,
-                  title: t.title,
-                  description: t.description,
-                  priority: t.priority,
-                  shift_id: aiShiftId || null,
-                  assigned_by: internalUserId || null,
-                  status: 'Assigned',
-                  percentage_complete: 0,
-                  task_date: taskDate,
-                }),
-              })
-            ))
+            const due_at = new Date(`${aiDueDate}T${aiDueTime}:00`).toISOString()
+            const res = await fetch('/api/task', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                company_id: companyId,
+                department_id: aiDeptId,
+                title: aiTitle.trim(),
+                description: aiDescription || null,
+                priority: aiPriority,
+                due_at,
+                assigned_user_id: aiManagerIds[0] || null,
+                assigned_by: internalUserId || null,
+                status: 'Assigned',
+                percentage_complete: 0,
+                task_date: taskDate,
+              }),
+            })
+            const data = await res.json()
+            if (!data.success) throw new Error(data.message)
+            const parentId = data.task.id as string
+            if (aiSuggestion.steps.length > 0) {
+              await Promise.all(aiSuggestion.steps.map((step, i) =>
+                fetch('/api/task', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    company_id: companyId,
+                    department_id: aiDeptId,
+                    parent_task_id: parentId,
+                    title: step.title,
+                    description: step.description,
+                    priority: aiPriority,
+                    due_at,
+                    assigned_user_id: aiManagerIds.length > 0 ? aiManagerIds[i % aiManagerIds.length] : null,
+                    assigned_by: internalUserId || null,
+                    status: 'Assigned',
+                    percentage_complete: 0,
+                    task_date: taskDate,
+                  }),
+                })
+              ))
+            }
             setAiModal(false)
             fetchKanban(companyId)
-            showTaskToast(`${selected.length} task${selected.length !== 1 ? 's' : ''} created successfully.`)
+            showTaskToast('Task created successfully.')
           } catch (err) {
-            setAiError(err instanceof Error ? err.message : 'Failed to create tasks')
+            setAiError(err instanceof Error ? err.message : 'Failed to create task')
           } finally {
             setAiCreateLoading(false)
           }
-        }
-
-        const PRIORITY_BADGE: Record<string, { bg: string; color: string }> = {
-          Low:    { bg: '#F1F5F9', color: '#475569' },
-          Medium: { bg: '#DBEAFE', color: '#1D4ED8' },
-          High:   { bg: '#FFEDD5', color: '#C2410C' },
-          Urgent: { bg: '#FEE2E2', color: '#B91C1C' },
         }
 
         return (
@@ -2507,8 +2585,8 @@ export default function OwnerTasksPage() {
                     <Sparkles size={15} color="#fff" strokeWidth={2} />
                   </div>
                   <div>
-                    <p style={{ margin: 0, fontWeight: 700, fontSize: '1rem', color: '#111827' }}>AI Generate Tasks</p>
-                    <p style={{ margin: 0, fontSize: 11, color: '#9CA3AF' }}>Powered by OpenAI mini</p>
+                    <p style={{ margin: 0, fontWeight: 700, fontSize: '1rem', color: '#111827' }}>AI Assign</p>
+                    <p style={{ margin: 0, fontSize: 11, color: '#9CA3AF' }}>{isReview ? 'Review and confirm' : 'Powered by OpenAI'}</p>
                   </div>
                 </div>
                 <button onClick={() => setAiModal(false)} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}>
@@ -2519,109 +2597,184 @@ export default function OwnerTasksPage() {
               {/* Body */}
               <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
 
-                {/* Context */}
-                <div>
-                  <label style={modalLabelStyle}>Work Context <span style={{ color: '#F97316' }}>*</span></label>
-                  <textarea
-                    value={aiContext}
-                    onChange={e => setAiContext(e.target.value)}
-                    rows={3}
-                    placeholder="e.g. Kitchen opening prep for Saturday morning shift, need to set up stations and check inventory..."
-                    style={{ ...modalInputStyle, resize: 'vertical', background: '#FAFAFA', lineHeight: 1.55 }}
-                  />
-                </div>
+                {!isReview ? (
+                  <>
+                    {/* Title */}
+                    <div>
+                      <label style={modalLabelStyle}>Task Title <span style={{ color: '#F97316' }}>*</span></label>
+                      <input
+                        autoFocus
+                        value={aiTitle}
+                        onChange={e => setAiTitle(e.target.value)}
+                        placeholder="e.g. Prepare quarterly financial report"
+                        style={modalInputStyle}
+                        onKeyDown={e => { if (e.key === 'Enter') handleGenerate() }}
+                      />
+                    </div>
 
-                {/* Department */}
-                <div>
-                  <label style={modalLabelStyle}>Department <span style={{ color: '#F97316' }}>*</span></label>
-                  <DropdownField
-                    value={aiDeptId}
-                    options={departments.map(d => ({ value: d.id, label: d.name }))}
-                    onChange={v => { setAiDeptId(v); setAiShiftId('') }}
-                    placeholder="Select department"
-                  />
-                </div>
+                    {/* Description */}
+                    <div>
+                      <label style={modalLabelStyle}>Description</label>
+                      <textarea
+                        value={aiDescription}
+                        onChange={e => setAiDescription(e.target.value)}
+                        rows={3}
+                        placeholder="Add context to help AI break this down accurately..."
+                        style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
+                      />
+                    </div>
 
-                {/* Shift (optional) */}
-                <div>
-                  <label style={modalLabelStyle}>Link to Shift <span style={{ color: '#9CA3AF', fontWeight: 400 }}>(optional)</span></label>
-                  <DropdownField
-                    value={aiShiftId}
-                    options={aiShiftOpts.map(s => ({
-                      value: s.id,
-                      label: `${new Date(`${s.shift_date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} · ${s.start_time.slice(0, 5)} – ${s.end_time.slice(0, 5)}`,
-                    }))}
-                    onChange={setAiShiftId}
-                    placeholder="No shift selected"
-                    disabled={!aiDeptId}
-                  />
-                </div>
-
-                {/* Generate button */}
-                {aiSuggestions.length === 0 && (
-                  <button
-                    onClick={handleGenerate}
-                    disabled={aiLoading}
-                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '11px', background: aiLoading ? '#EDE9FE' : 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: '0.9375rem', color: '#fff', cursor: aiLoading ? 'default' : 'pointer' }}
-                  >
-                    {aiLoading ? <><Spinner size={16} /> Generating...</> : <><Sparkles size={15} /> Generate Tasks</>}
-                  </button>
-                )}
-
-                <InlineError message={aiError} />
-
-                {/* Suggestions */}
-                {aiSuggestions.length > 0 && (
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                      <label style={{ ...modalLabelStyle, margin: 0 }}>Suggested Tasks ({aiSelected.size} selected)</label>
-                      <div style={{ display: 'flex', gap: 8 }}>
-                        <button onClick={() => setAiSelected(new Set(aiSuggestions.map((_, i) => i)))} style={{ fontSize: 12, color: '#7C3AED', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>Select all</button>
-                        <span style={{ color: '#E5E7EB' }}>·</span>
-                        <button onClick={() => setAiSelected(new Set())} style={{ fontSize: 12, color: '#9CA3AF', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>Clear</button>
-                        <span style={{ color: '#E5E7EB' }}>·</span>
-                        <button onClick={handleGenerate} disabled={aiLoading} style={{ fontSize: 12, color: '#7C3AED', fontWeight: 600, background: 'none', border: 'none', cursor: aiLoading ? 'default' : 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <Sparkles size={11} /> Regenerate
-                        </button>
+                    {/* Priority + People Needed */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <div>
+                        <label style={modalLabelStyle}>Priority <span style={{ color: '#F97316' }}>*</span></label>
+                        <DropdownField
+                          value={aiPriority}
+                          options={priorityDropdownOptions}
+                          onChange={setAiPriority}
+                          placeholder="Select priority"
+                        />
+                      </div>
+                      <div>
+                        <label style={modalLabelStyle}>People Needed</label>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          {[1, 2, 3].map(n => (
+                            <button
+                              key={n}
+                              type="button"
+                              onClick={() => setAiPeopleNeeded(n)}
+                              style={{ flex: 1, height: 42, border: `1.5px solid ${aiPeopleNeeded === n ? '#7C3AED' : '#E5E7EB'}`, borderRadius: 8, background: aiPeopleNeeded === n ? '#7C3AED' : '#FFFFFF', color: aiPeopleNeeded === n ? '#FFFFFF' : '#374151', fontWeight: 700, fontSize: '0.9375rem', cursor: 'pointer' }}
+                            >
+                              {n}
+                            </button>
+                          ))}
+                        </div>
                       </div>
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      {aiSuggestions.map((task, i) => {
-                        const badge = PRIORITY_BADGE[task.priority] ?? PRIORITY_BADGE.Medium
-                        const checked = aiSelected.has(i)
-                        return (
-                          <div
-                            key={i}
-                            onClick={() => setAiSelected(prev => { const next = new Set(prev); checked ? next.delete(i) : next.add(i); return next })}
-                            style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', border: `1.5px solid ${checked ? '#7C3AED' : '#E5E7EB'}`, borderRadius: 10, background: checked ? '#FAF5FF' : '#FAFAFA', cursor: 'pointer' }}
-                          >
-                            <div style={{ width: 18, height: 18, borderRadius: 5, border: `2px solid ${checked ? '#7C3AED' : '#D1D5DB'}`, background: checked ? '#7C3AED' : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1 }}>
-                              {checked && <CheckCircle size={12} color="#fff" strokeWidth={3} />}
-                            </div>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 3 }}>
-                                <p style={{ margin: 0, fontWeight: 600, fontSize: '0.875rem', color: '#111827' }}>{task.title}</p>
-                                <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 7px', borderRadius: 99, background: badge.bg, color: badge.color, flexShrink: 0 }}>{task.priority}</span>
-                              </div>
-                              <p style={{ margin: 0, fontSize: '0.8rem', color: '#6B7280', lineHeight: 1.5 }}>{task.description}</p>
+
+                    <InlineError message={aiError} />
+
+                    <button
+                      onClick={handleGenerate}
+                      disabled={aiLoading}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '11px', background: aiLoading ? '#EDE9FE' : 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: '0.9375rem', color: '#fff', cursor: aiLoading ? 'default' : 'pointer' }}
+                    >
+                      {aiLoading ? <><Spinner size={16} /> Generating...</> : <><Sparkles size={15} /> Generate</>}
+                    </button>
+                  </>
+                ) : aiSuggestion && (
+                  <>
+                    {/* Steps */}
+                    <div>
+                      <label style={modalLabelStyle}>Completion Steps</label>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {aiSuggestion.steps.map((step, i) => (
+                          <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 9, padding: '9px 11px', border: '1px solid #E5E7EB', borderRadius: 9, background: '#FAFAFA' }}>
+                            <span style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 999, background: '#EDE9FE', color: '#7C3AED', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 1 }}>{i + 1}</span>
+                            <div style={{ minWidth: 0 }}>
+                              <p style={{ margin: 0, fontWeight: 600, fontSize: '0.8125rem', color: '#111827' }}>{step.title}</p>
+                              <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: '#6B7280', lineHeight: 1.45 }}>{step.description}</p>
                             </div>
                           </div>
-                        )
-                      })}
+                        ))}
+                      </div>
                     </div>
-                  </div>
+
+                    {/* Divider */}
+                    <div style={{ borderTop: '1px dashed #E5E7EB' }} />
+
+                    {/* Department */}
+                    <div>
+                      <label style={modalLabelStyle}>Department <span style={{ fontSize: 11, fontWeight: 400, color: '#7C3AED' }}>· AI picked</span></label>
+                      <DropdownField
+                        value={aiDeptId}
+                        options={deptDropdownOptions}
+                        onChange={v => { setAiDeptId(v); setAiManagerIds([]) }}
+                        placeholder="Select department"
+                      />
+                    </div>
+
+                    {/* Assign To (multi-select, up to people_needed) */}
+                    <div>
+                      <label style={modalLabelStyle}>
+                        Assign To <span style={{ fontWeight: 400, color: '#9CA3AF' }}>({aiManagerIds.length}/{aiPeopleNeeded} selected)</span>
+                        <span style={{ fontSize: 11, fontWeight: 400, color: '#7C3AED', marginLeft: 6 }}>· AI picked</span>
+                      </label>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        {aiDeptManagers.length === 0 && (
+                          <p style={{ margin: 0, fontSize: '0.8125rem', color: '#9CA3AF', fontStyle: 'italic' }}>No managers in this department.</p>
+                        )}
+                        {aiDeptManagers.map(m => {
+                          const cand = aiSuggestion.candidates.find(c => c.id === m.id)
+                          const checked = aiManagerIds.includes(m.id)
+                          const isAiPick = aiSuggestion.suggested_manager_ids.includes(m.id)
+                          const atLimit = aiManagerIds.length >= aiPeopleNeeded && !checked
+                          return (
+                            <div
+                              key={m.id}
+                              onClick={() => {
+                                if (atLimit) return
+                                setAiManagerIds(prev => checked ? prev.filter(id => id !== m.id) : [...prev, m.id])
+                              }}
+                              style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '9px 11px', border: `1.5px solid ${checked ? '#7C3AED' : '#E5E7EB'}`, borderRadius: 9, background: checked ? '#FAF5FF' : '#FFFFFF', cursor: atLimit ? 'not-allowed' : 'pointer', opacity: atLimit ? 0.5 : 1 }}
+                            >
+                              <div style={{ width: 16, height: 16, borderRadius: 5, border: `2px solid ${checked ? '#7C3AED' : '#D1D5DB'}`, background: checked ? '#7C3AED' : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                {checked && <CheckCircle size={11} color="#fff" strokeWidth={3} />}
+                              </div>
+                              <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#111827' }}>{m.full_name}</span>
+                              {cand && <span style={{ fontSize: 11, color: '#9CA3AF' }}>{cand.active_task_count} active</span>}
+                              {isAiPick && <span style={{ fontSize: 10, fontWeight: 700, color: '#7C3AED', marginLeft: 'auto' }}>AI PICK</span>}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Divider */}
+                    <div style={{ borderTop: '1px dashed #E5E7EB' }} />
+
+                    {/* Priority + Deadline */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <div>
+                        <label style={modalLabelStyle}>Priority</label>
+                        <DropdownField
+                          value={aiPriority}
+                          options={priorityDropdownOptions}
+                          onChange={setAiPriority}
+                          placeholder="Select priority"
+                        />
+                      </div>
+                      <div>
+                        <label style={modalLabelStyle}>Deadline <span style={{ fontSize: 11, fontWeight: 400, color: '#7C3AED' }}>· AI suggested</span></label>
+                        <DeadlineDateTimePicker
+                          dateValue={aiDueDate}
+                          timeValue={aiDueTime}
+                          onChange={(date, time) => { setAiDueDate(date); setAiDueTime(time) }}
+                          minDate={formatDateKey(new Date())}
+                        />
+                      </div>
+                    </div>
+
+                    <InlineError message={aiError} />
+                  </>
                 )}
               </div>
 
               {/* Footer */}
-              {aiSuggestions.length > 0 && (
+              {isReview && (
                 <div style={{ padding: '14px 24px', borderTop: '1px solid #F3F4F6', display: 'flex', gap: 10, flexShrink: 0 }}>
                   <button
-                    onClick={handleCreateSelected}
-                    disabled={aiCreateLoading || aiSelected.size === 0}
-                    style={{ ...primaryBtn(aiCreateLoading), background: aiSelected.size === 0 ? '#E5E7EB' : 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: aiSelected.size === 0 ? '#9CA3AF' : '#fff' }}
+                    onClick={() => setAiStep('input')}
+                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: '1px solid #E5E7EB', borderRadius: 10, background: '#FFFFFF', color: '#374151', height: 40, padding: '0 16px', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}
                   >
-                    {aiCreateLoading ? <><Spinner size={14} /> Creating...</> : `Create ${aiSelected.size} Task${aiSelected.size !== 1 ? 's' : ''}`}
+                    Back
+                  </button>
+                  <button
+                    onClick={handleCreate}
+                    disabled={aiCreateLoading}
+                    style={{ ...primaryBtn(aiCreateLoading), background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#fff', flex: 1 }}
+                  >
+                    {aiCreateLoading ? <><Spinner size={14} /> Creating...</> : 'Create Task'}
                   </button>
                 </div>
               )}
