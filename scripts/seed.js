@@ -351,42 +351,36 @@ async function main() {
   const empId = (n) => userIdMap[`employee${n}@test.com`].internalId
   const cwId = (n) => userIdMap[`cw${n}@test.com`].internalId
 
-  // dept[0]=Operations dept[1]=Marketing dept[2]=Engineering dept[3]=Customer Support
-  // Today is Thursday (dayOffset(0)). The demo week is Mon dayOffset(-3) .. Sun dayOffset(3),
-  // i.e. day index i = 0..6 (Mon=0 .. Sun=6). Each person works at most 5 of the 7 days,
-  // with explicit days off, and at most ONE shift per day (no AM+PM double-booking).
+  // dept[0]=Operations dept[1]=Marketing dept[2]=Engineering dept[3]=Customer Support.
+  // Demo week is Mon dayOffset(-3) .. Sun dayOffset(3), i.e. day index i = 0..6.
+  // Keep the demo timeline light: every department gets one manager and one employee
+  // per day, rotated across two managers and two employees.
   const deptStaffing = [
-    { dept: 0, mgr: 1, emp: 1, cw: 1, mgrOff: [5, 6], empOff: [3, 6], cwOff: [2, 5] },          // Operations
-    { dept: 1, mgr: 3, emp: 3, cw: 5, mgrOff: [2, 6], empOff: [4, 0], cwOff: [1, 4] },           // Marketing
-    { dept: 2, mgr: 5, emp: 5, cw: 7, mgrOff: [0, 3], empOff: [5, 2], cwOff: [6, 3] },           // Engineering
-    { dept: 3, mgr: 7, emp: 7, cw: 8, mgrOff: [1, 4], empOff: [0, 6], cwOff: [3, 0] },           // Customer Support
+    { dept: 0, mgrs: [1, 2], emps: [1, 2], title: 'Operations Coverage' },
+    { dept: 1, mgrs: [3, 4], emps: [3, 4], title: 'Marketing Coverage' },
+    { dept: 2, mgrs: [5, 6], emps: [5, 6], title: 'Engineering Coverage' },
+    { dept: 3, mgrs: [7, 8], emps: [7, 8], title: 'Support Coverage' },
   ]
-
-  const weekTitles = ['Morning Floor Ops', 'Campaign Monitoring', 'On-call Support', 'Customer Hotline']
 
   const shiftDefs = []
 
-  // ── Full week coverage (Mon i=0 .. Sun i=6): every dept, every day has 1 manager + 1
-  // employee scheduled (single 7am-3pm shift each), except on that person's day off — on a
-  // manager's/employee's day off, the OTHER one of the pair still covers so the department
-  // is never empty. Each person gets 2 days off out of 7 (5 working days max).
+  // Full week coverage: 4 departments x 7 days x 2 assignees. Each staff member gets
+  // only 3-4 baseline shifts this week, well under the max of 5.
   for (let dayIdx = -3; dayIdx <= 3; dayIdx++) {
     const i = dayIdx + 3 // 0=Mon .. 6=Sun
     for (const staffing of deptStaffing) {
-      const mgrWorks = !staffing.mgrOff.includes(i)
-      const empWorks = !staffing.empOff.includes(i)
-      const cwWorks = !staffing.cwOff.includes(i)
-      if (!mgrWorks && !empWorks) continue // safety net, shouldn't happen with current off-day sets
-
-      const assignees = []
-      if (mgrWorks) assignees.push({ u: mgrId(staffing.mgr), by: mgrId(staffing.mgr) })
-      if (empWorks) assignees.push({ u: empId(staffing.emp), by: mgrId(staffing.mgr) })
-      if (cwWorks) assignees.push({ u: cwId(staffing.cw), by: mgrId(staffing.mgr) })
+      const managerNo = staffing.mgrs[i % staffing.mgrs.length]
+      const employeeNo = staffing.emps[(i + Math.floor(i / 2)) % staffing.emps.length]
+      const manager = mgrId(managerNo)
 
       shiftDefs.push({
-        dept: staffing.dept, date: dayOffset(dayIdx), start: '07:00', end: '15:00',
-        title: weekTitles[staffing.dept], instruction: 'Standard coverage shift.', pub: 'published',
-        creator: mgrId(staffing.mgr), assignees,
+        dept: staffing.dept, date: dayOffset(dayIdx), start: '09:00', end: '17:00',
+        title: staffing.title, instruction: 'Baseline department coverage shift.', pub: 'published',
+        creator: manager,
+        assignees: [
+          { u: manager, by: manager },
+          { u: empId(employeeNo), by: manager },
+        ],
       })
     }
   }
