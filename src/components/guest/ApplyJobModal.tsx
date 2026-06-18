@@ -159,7 +159,7 @@ export default function ApplyJobModal({
 
       if (!data.success) throw new Error(data.message)
 
-      sessionStorage.removeItem('apply_job_id')
+      localStorage.removeItem('apply_job_id')
       onClose()
       router.replace('/guest/applications')
     } catch (err) {
