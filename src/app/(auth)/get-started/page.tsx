@@ -1390,6 +1390,10 @@ export default function GetStartedPage() {
   // Profile photo (shared across all paths)
   const [profilePhotoUrl, setProfilePhotoUrl] = useState<string | null>(null);
   const [profilePhotoFile, setProfilePhotoFile] = useState<File | null>(null);
+  const handleProfilePhotoChange = (url: string | null, file?: File | null) => {
+    setProfilePhotoUrl(url);
+    setProfilePhotoFile(file ?? null);
+  };
 
   // Owner form state
   const [ownerAccount, setOwnerAccount] = useState({ fullName: '', email: '', password: '', confirmPassword: '', phone: '', dateOfBirth: '' });
@@ -1661,7 +1665,10 @@ export default function GetStartedPage() {
     const ext = file.name.split('.').pop() ?? 'jpg';
     const filename = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
     const { data, error } = await supabase.storage.from('avatars').upload(filename, file, { contentType: file.type });
-    if (error || !data) return null;
+    if (error || !data) {
+      console.error('Profile photo upload failed:', error);
+      return null;
+    }
     const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(data.path);
     return publicUrl;
   };
@@ -2072,7 +2079,7 @@ export default function GetStartedPage() {
           <Card>
             <StepHeading headline={ownerStep2.headline} subheadline={ownerStep2.subheadline} onBack={goBack} />
             <ProgressBar current={1} steps={['Account', 'Verify', 'Company', 'Departments', 'Plan']} />
-            <AccountFields form={ownerAccount} setForm={setOwnerAccount} phoneError={ownerPhoneError} clearPhoneError={() => setOwnerPhoneError('')} profilePhotoUrl={profilePhotoUrl} onProfilePhotoChange={setProfilePhotoUrl} />
+            <AccountFields form={ownerAccount} setForm={setOwnerAccount} phoneError={ownerPhoneError} clearPhoneError={() => setOwnerPhoneError('')} profilePhotoUrl={profilePhotoUrl} onProfilePhotoChange={handleProfilePhotoChange} />
             <div style={{ marginTop: '28px' }}>
               <InlineError message={error} />
               <TermsCheckbox checked={termsAccepted} onChange={setTermsAccepted} />
@@ -2517,7 +2524,7 @@ export default function GetStartedPage() {
               phoneError={guestPhoneError}
               clearPhoneError={() => setGuestPhoneError('')}
               profilePhotoUrl={profilePhotoUrl}
-              onProfilePhotoChange={setProfilePhotoUrl}
+              onProfilePhotoChange={handleProfilePhotoChange}
             />
             <div style={{ marginTop: '28px' }}>
               <InlineError message={error} />
@@ -2549,7 +2556,7 @@ export default function GetStartedPage() {
           <Card>
             <StepHeading headline={invitedStep2.headline} subheadline={invitedStep2.subheadline} onBack={goBack} />
             <ProgressBar current={1} steps={['Account', 'Join']} />
-            <AccountFields form={invitedAccount} setForm={setInvitedAccount} phoneError={invitedPhoneError} clearPhoneError={() => setInvitedPhoneError('')} profilePhotoUrl={profilePhotoUrl} onProfilePhotoChange={setProfilePhotoUrl} />
+            <AccountFields form={invitedAccount} setForm={setInvitedAccount} phoneError={invitedPhoneError} clearPhoneError={() => setInvitedPhoneError('')} profilePhotoUrl={profilePhotoUrl} onProfilePhotoChange={handleProfilePhotoChange} />
             <div style={{ marginTop: '28px' }}>
               <InlineError message={error} />
               <TermsCheckbox checked={termsAccepted} onChange={setTermsAccepted} />

@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Eye, EyeOff } from 'lucide-react';
 import { createBrowserClient } from '@supabase/ssr';
+import { getOwnerLandingHref } from '@/components/OwnerSidebar';
 import { page as c } from './content';
 
 const fH = 'var(--font-heading)';
@@ -96,11 +97,7 @@ function SignInContent() {
       }
       localStorage.setItem('tasking_user_role', role);
 
-      let route = ROLE_ROUTES[role] || '/owner/dashboard';
-      if (role === 'Guest User') {
-        const pendingJobId = localStorage.getItem('apply_job_id');
-        if (pendingJobId) route = `/guest/applications?apply=true&job_id=${pendingJobId}`;
-      }
+      const route = role === 'Owner' ? getOwnerLandingHref() : (ROLE_ROUTES[role] || '/owner/dashboard');
       window.location.href = route;
     } catch (err) {
       const msg = err instanceof Error ? err.message : '';
