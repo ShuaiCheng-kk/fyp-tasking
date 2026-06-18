@@ -32,14 +32,33 @@ export interface JobDescriptionDraft {
   screening_questions: string[]
 }
 
-export interface TaskSuggestion {
+export interface AiAssignStep {
   title: string
   description: string
-  priority: 'Low' | 'Medium' | 'High' | 'Urgent'
 }
 
-export interface TaskBreakdownDraft {
-  tasks: TaskSuggestion[]
+// Raw structured-output shape returned by the LLM call
+export interface AiAssignDraft {
+  steps: AiAssignStep[]
+  department_id: string
+  due_in_days: number
+}
+
+export interface ScoredManager {
+  id: string
+  full_name: string
+  active_task_count: number
+  score: number
+}
+
+// Full orchestrated result returned to the client: LLM draft + department resolved + managers ranked
+export interface AiAssignSuggestion {
+  steps: AiAssignStep[]
+  department_id: string
+  department_name: string
+  due_at: string
+  candidates: ScoredManager[]
+  suggested_manager_ids: string[]
 }
 
 export interface ShiftSuggestion {
@@ -52,20 +71,4 @@ export interface ShiftSuggestion {
 
 export interface ShiftSchedulingDraft {
   shifts: ShiftSuggestion[]
-}
-
-export interface TaskAssignmentRecommendation {
-  candidate_id: string
-  candidate_name: string
-  score: number
-  fit: 'strong' | 'good' | 'fair'
-  workload_level: 'light' | 'balanced' | 'heavy'
-  skill_match: 'strong' | 'partial' | 'weak'
-  skill_evidence: string[]
-  reason: string
-  workload_reason: string
-}
-
-export interface TaskAssignmentDraft {
-  recommendations: TaskAssignmentRecommendation[]
 }

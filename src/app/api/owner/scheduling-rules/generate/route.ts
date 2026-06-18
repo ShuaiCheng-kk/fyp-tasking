@@ -85,20 +85,52 @@ export async function POST(req: NextRequest) {
   if (shiftTypes.length === 0)
     return NextResponse.json({ success: false, message: 'At least one valid shift type is required' }, { status: 400 })
 
-  try {
-    const result = await schedulingRuleService.generateScheduleWithAI({
-      company_id: b.company_id,
-      user_id: b.user_id,
-      date_from: dateFrom,
-      date_to: dateTo,
-      department_ids: b.department_ids as string[],
-      shiftTypes: shiftTypes as ShiftTypeInput[],
-    })
-    return NextResponse.json({ success: true, ...result })
-  } catch (err) {
-    console.error('[POST /api/owner/scheduling-rules/generate]', err)
-    const message = err instanceof Error ? err.message : 'Failed to generate schedule'
-    const status = message.includes('Only Owner') ? 403 : message.includes('Too many shifts') ? 400 : 500
-    return NextResponse.json({ success: false, message }, { status })
-  }
+  const encoder = new TextEncoder()
+  let closed = false
+  const sseStream = new ReadableStream({
+    async start(controller) {
+      const send = (event: string, data: unknown) => {
+        if (closed) return
+        try {
+          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`))
+        } catch {
+          closed = true
+        }
+      }
+      try {
+        const result = await schedulingRuleService.generateScheduleWithAIStream(
+          {
+            company_id: b.company_id as string,
+            user_id: b.user_id as string,
+            date_from: dateFrom,
+            date_to: dateTo,
+            department_ids: b.department_ids as string[],
+            shiftTypes: shiftTypes as ShiftTypeInput[],
+          },
+          (block, meta) => send('block', { block, ...meta }),
+        )
+        send('done', result)
+      } catch (err) {
+        console.error('[POST /api/owner/scheduling-rules/generate]', err)
+        const message = err instanceof Error ? err.message : 'Failed to generate schedule'
+        send('error', { message })
+      } finally {
+        if (!closed) {
+          closed = true
+          try { controller.close() } catch { /* already closed by client disconnect */ }
+        }
+      }
+    },
+    cancel() {
+      closed = true
+    },
+  })
+
+  return new Response(sseStream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    },
+  })
 }

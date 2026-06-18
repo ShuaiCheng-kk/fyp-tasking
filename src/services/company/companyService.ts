@@ -89,11 +89,14 @@ export const companyService = {
     const { supabase } = await import('@/lib/supabase')
     const { data, error } = await supabase
       .from('manager_departments')
-      .select('manager_id, users!inner(id, full_name)')
+      .select('manager_id, users!manager_departments_manager_id_fkey!inner(id, full_name)')
       .eq('company_id', company_id)
       .eq('department_id', department_id)
     if (error) throw new Error(error.message)
-    return (data || []).map((row: any) => ({ id: row.users.id, full_name: row.users.full_name }))
+    return (data || []).map((row: any) => {
+      const user = Array.isArray(row.users) ? row.users[0] : row.users
+      return { id: user.id, full_name: user.full_name }
+    })
   },
 
   async getAllManagersByCompany(company_id: string): Promise<{ id: string; full_name: string; department_id: string | null }[]> {
