@@ -12,9 +12,9 @@ We build **Owner first as the full superset**, then create lower roles by removi
 
 ---
 
-## 2. Roles (6) and inheritance
+## 2. Roles and inheritance
 
-Internal roles form a strict superset chain — a higher role has every feature of all roles below it:
+Internal company hierarchy is a strict superset chain — a higher role has every feature of all roles below it:
 ```
 Owner  ⊇  Partner  ⊇  Manager  ⊇  Employee
 ```
@@ -27,70 +27,40 @@ External roles are independent and **never inherited** by Owner:
 - **Casual Worker** — own work only: accept/reject shifts, clock in/out, profile, availability, skills.
 - **Guest User** — public job board only; on register becomes a Casual Worker (pending applicant).
 
-Platform role, separate from the company hierarchy and **not inherited** by Owner:
-- **Marketing Admin** — developer/platform-admin role for managing marketing-page content only. Login redirects to `/admin/dashboard`. It cannot manage users, companies, recruitment/job-board data, or any Owner/Partner/Manager/Employee/Casual Worker operational modules.
+Platform-level roles — manage the SaaS platform itself, not scoped to a single company, separate from the company hierarchy above and **never inherited** by Owner:
+- **Marketing Admin** — manages marketing-page content only (the public marketing site). Login redirects to `/admin/dashboard`. Cannot manage users, companies, recruitment/job-board data, or any Owner/Partner/Manager/Employee/Casual Worker operational module.
+- **User Admin** — manages platform-wide users and company accounts at the SaaS-operator level (e.g. account status, company onboarding/removal across the whole platform). Exact feature list to be finalized when this role is built.
 
-**No shared UI components between roles.** Each role has its own route group, layout, sidebar, theme (Owner: black/orange · Partner: white/orange · Manager: dark blue/white · Employee: dark green/white).
+**UI principle — applies to every role above:** there is exactly **one shared UI/component system** for the whole app. Owner is built first as the full feature superset; every other role (Partner, Manager, Employee, Marketing Admin, User Admin, Casual Worker, Guest) reuses the *same* components, layouts, and visual design — never a separate theme, never a rebuilt page. The only thing that changes per role is **which features/menu items are visible and which actions are permitted**, gated by permissions — not a visually distinct UI. Each role can still have its own Next.js route group (`src/app/owner/`, `src/app/partner/`, etc.) for access-control routing, but it must render the shared components, not a duplicated bespoke version.
 
 ---
 
-## 3. Data model (the spine — this reflects the REAL Supabase schema; do not deviate)
+## 3. Data model — live schema is the source of truth, not this file
 
-> This is the actual database. If code assumes a column that isn't here (e.g. `shifts.assigned_user_id`), the code is wrong — fix the code to match this, do NOT add the column. Always confirm against the live schema before coding.
+**Do not trust hardcoded column lists in docs (including this section) — they go stale the moment anyone edits the DB directly in Supabase.** Before writing any query or migration:
+1. Confirm the live schema first — via `supabase db pull` (pulls the current remote schema into a local migration) or by inspecting it through the Supabase MCP server (see tooling below). Never assume from memory or old docs.
+2. If a feature needs a column that doesn't exist, add it via a migration file in `supabase/migrations/` and push it — don't silently assume it exists.
 
-**Scheduling — a Shift and its assignment are SEPARATE tables (a shift can be assigned to one or more users):**
+**Conceptual map (tables and relationships, not exact columns — verify columns live):**
+- `shifts` / `shift_assignments` — a Shift and its assignment are separate tables; a shift can be assigned to one or more users via `shift_assignments`. There is no `assigned_user_id` on `shifts` itself.
+- `tasks` — belongs to a Shift; status flow `Todo` → `In Progress` → `Done`; supports sub-tasks via `parent_task_id`.
+- `attendance_records` — encodes the 4-tier approval chain described below.
+- `job_postings`, `job_applicants`, `job_invitations` — recruitment.
+- `manager_departments`, `employee_departments`, `casualworker_departments` — role↔department membership; authoritative for "who belongs to which department."
 
-- **`shifts`**: `id`, `company_id`, `department_id`, `title` (default ''), `instruction`, `shift_date`, `start_time`, `end_time`, `status` (default `'active'`), `created_by`, `created_at`, `updated_at`. **No assigned_user_id.**
-- **`shift_assignments`**: `id`, `shift_id`, `user_id` (the assignee), `assigned_by`, `assignment_status` (default `'assigned'`), `supervisor_employee_id` (the Employee overseeing), `created_at`, `updated_at`. **This is where "who is on a shift" lives.** To assign a shift to someone, insert a row here.
-
-**Tasks** (not built yet — block 2 will create the `tasks` table). A Task belongs to a Shift; fields to confirm at build time: `id`, `shift_id`, `company_id`, `department_id`, `title`, `description`, `assigned_user_id`, `assigned_by`, `status` (`Todo`→`In Progress`→`Done`), `percentage_complete` (0–100 int, default 0), `parent_task_id` (nullable, for sub-tasks), `priority` (opt), `due_at` (opt), `created_at`.
-
-**Attendance — already exists:**
-- **`attendance_records`**: `id`, `shift_assignment_id`, `casual_worker_id`, `clock_in_time`, `clock_out_time`, `confirmed_by_employee_id`, `submitted_by_employee_id`, `status` (default `'pending'`), `employee_notes`, `manager_notes`, `created_at`, `updated_at`. The columns encode the 4-tier chain (Employee confirms/submits → Manager notes → Owner final).
-
-**Recruitment — already exists:** `job_postings`, `job_applicants`, `job_invitations`. (See live schema for fields; postings carry title/description/requirements/location/employment_type/status/salary/recurrence.)
-
-**Role↔department membership tables:** `manager_departments`, `employee_departments`, `casualworker_departments`. Use these to list people in a department. (`users` also has a denormalized `department_id`, but the membership tables are authoritative for who belongs where.)
-
-**Rules that still hold:**
+**Business rules that hold regardless of column changes:**
 - **Task assignment is strictly one level down**: Owner→Manager, Manager→Employee, Employee→Casual Worker. No self-assign, no skipping levels.
 - **Both Employees and Casual Workers** are scheduled (via `shift_assignments`) and assigned tasks.
-- **Attendance approval = 4 tiers**: Casual Worker clocks in/out → supervising **Employee** confirms (`confirmed_by_employee_id`) and submits → **Manager** reviews (`manager_notes`) → **Owner** final approval. Each tier can approve, reject, or send back.
+- **Attendance approval = 4 tiers**: Casual Worker clocks in/out → supervising **Employee** confirms and submits → **Manager** reviews → **Owner** final approval. Each tier can approve, reject, or send back.
 
-If a feature needs a column not in the live schema, add it via a clearly listed SQL migration — and note it here so this stays the single source of truth.
-
----
-
-## 4. Timeline (the centrepiece)
-
-The Timeline lives **inside the Dashboard module** — not a separate sidebar item. The Dashboard is the command centre: the Timeline (scheduling + task allocation + anomaly highlights) is the main panel; existing Dashboard widgets (department management, etc.) are sub-sections of the same page.
-
-One Timeline pattern, reused per role; only **scope** and **edit rights** differ:
-- Owner / Partner: all departments, full edit.
-- Manager: own department(s), full edit.
-- Employee: own shifts, read-only (+ confirm attendance, update own task status).
-- Casual Worker: own shifts, read-only (+ accept/reject, clock in/out).
-
-Day view splits into two 8-hour strips: top = 07:00–15:00, bottom = 15:00–23:00. Date navigation: a compact date picker (calendar + prev/next arrows + Today), up to 2 days back, forward through next week. **Shifts are NOT created from the Timeline** — the Timeline is display-only for shifts (click an existing shift to view/edit/delete). New shifts are assigned from the Department side-drawer: open a department → pick a person → "Assign Shift". Owner Timeline surfaces anomaly highlights (uncovered = red, late/absent = orange, understaffed = warning) — the manual precursor to AI Anomaly Detection.
+**Local DB tooling — so schema changes never require manual copy-paste into the Supabase dashboard:**
+- The project uses the **Supabase CLI**, linked to the live project. Schema changes are written as migration files under `supabase/migrations/` and applied with `supabase db push` — directly from the terminal/VSCode.
+- A **Supabase MCP server** is configured so the assistant can inspect the live schema and apply migrations directly via tool calls during development.
+- Whenever the live schema changes (via migration or directly in the Supabase dashboard), run `supabase db pull` to resync local migration history before continuing work.
 
 ---
 
-## 5. AI boundary
-
-AI is used in **exactly four** features; everything else is manual:
-- AI Candidate Recommendation (Recruitment)
-- AI Job Description Generator (Recruitment)
-- AI Auto-approve Timesheets (Attendance)
-- AI Anomaly Detection (Dashboard / Report)
-
-**Build-order rule for everything (AI or not):**
-1. Build the feature **manually first** — it must fully work by hand.
-2. Isolate the decision point behind a **service function** (e.g. `recommendCandidates(applicants)`), so swapping manual logic for an OpenAI/Gemini API call later is a one-function change, no refactor.
-3. AI is "just an API behind a service function." Never let AI logic leak into routes, repositories, or UI. Do not add AI anywhere else; if it seems warranted, flag it instead.
-
----
-
-## 6. Architecture (non-negotiable)
+## 4. Architecture (non-negotiable)
 
 Strictly follow MVC + Repository:
 - **`route.ts` = Controller only** — parse request, validate, call service, return response. No business logic, no DB access.
@@ -98,10 +68,10 @@ Strictly follow MVC + Repository:
 - **`repository.ts` = DB access only** — Supabase queries only, no business logic.
 - **`page.tsx` = UI only** — call API routes only; no direct service or DB calls.
 
-**Folders:** `src/app/(marketing)/` · `src/app/(auth)/` · `src/app/api/` (controllers) · `src/app/owner|partner|manager|employee/` (pages) · `src/services/` · `src/repositories/` · `src/types/` · `src/lib/supabase.ts`.
+**Folders:** `src/app/(marketing)/` · `src/app/(auth)/` · `src/app/api/` (controllers) · `src/app/owner|partner|manager|employee|admin/` (pages) · `src/services/` · `src/repositories/` · `src/types/` · `src/lib/supabase.ts`.
 
 **Other firm rules:**
-- No shared components between roles. Branch-per-feature on GitHub.
+- Branch-per-feature on GitHub.
 - Auth via Supabase `supabase_auth_id`; passwords never stored in `users`.
 - Invitation codes: Manager/Employee = 5-digit numeric; Owner/Partner = 8-char alphanumeric; expire in 7 days; role values title-case (`'Manager'`).
 - Existing users get inbox notifications (not emails) for subsequent company invites.
@@ -114,7 +84,7 @@ Strictly follow MVC + Repository:
 
 ---
 
-## 7. Diagram-friendly code conventions
+## 5. Diagram-friendly code conventions
 
 Code must be readable enough that a teammate (or an AI given the code) can draw the MVC class diagram and sequence diagrams directly from it:
 1. One feature = one consistently named set of files across all four layers (e.g. `shift/route.ts`, `shiftService.ts`, `shiftRepository.ts`, `types/Shift.ts`).
@@ -125,15 +95,17 @@ Code must be readable enough that a teammate (or an AI given the code) can draw 
 
 ---
 
-## 8. Every Codex prompt must
+## 6. Every Codex prompt must
 
-1. **Begin** with the MVC + Repository block from section 6.
+1. **Begin** with the MVC + Repository block from section 4.
 2. **Follow** the structure: READ files first → PROBLEM → numbered FIX steps → constraints → CHANGE TYPE.
 3. **End** with one of: `CHANGE TYPE: Code only` or `CHANGE TYPE: Supabase SQL first, then code` (SQL listed separately).
+4. **Bug fixes**: don't narrate what was changed back to the user in detail — just confirm it's fixed, unless asked for specifics.
 
 ---
 
-## 9. Known open issues (don't re-break)
+## 7. Known open issues (don't re-break)
 
 - Middleware/session cookie timing: signin redirect can fire before cookie is fully written.
 - Navbar shows Dashboard/Logout in unauthenticated/incognito state (T-21, T-22).
+- `src/proxy.ts` contains role-based route-guard logic (redirects unauthenticated/wrong-role users) but is named wrong for Next.js to load it as middleware — it currently does nothing. No route-protection middleware is active. Needs a decision: rename to `src/middleware.ts` to wire it up, or remove if route guarding is meant to stay page-level.
