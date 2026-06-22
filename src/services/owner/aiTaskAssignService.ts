@@ -13,44 +13,73 @@ async function generateDraft(input: {
   priority: string
   departments: { id: string; name: string }[]
 }): Promise<AiAssignDraft> {
-  const draft = await openAIService.generateStructuredJson<AiAssignDraft>({
-    schemaName: 'ai_assign_draft',
-    maxOutputTokens: 700,
-    instructions: [
-      'You are a workforce task planner for SMEs.',
-      'Given a task title, description, and priority, break the task down into 3 to 6 concrete completion steps.',
-      'Each step needs a short title (under 10 words) and a 1-sentence description.',
-      'Pick the single best-fit department for this task from the given list of departments by id — return the exact id from the list, never invent one.',
-      'Estimate due_in_days: how many days from today this task should realistically be completed in, based on priority (Urgent = 1-2 days, High = 2-4 days, Medium = 4-7 days, Low = 7-14 days) and the number/complexity of the steps.',
-    ].join(' '),
-    input,
-    schema: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        steps: {
-          type: 'array',
-          items: {
-            type: 'object',
-            additionalProperties: false,
-            properties: {
-              title: { type: 'string' },
-              description: { type: 'string' },
+  let draft: AiAssignDraft
+
+  try {
+    draft = await openAIService.generateStructuredJson<AiAssignDraft>({
+      schemaName: 'ai_assign_draft',
+      maxOutputTokens: 700,
+      instructions: [
+        'You are a workforce task planner for SMEs.',
+        'Given a task title, description, and priority, break the task down into 3 to 6 concrete completion steps.',
+        'Each step needs a short title (under 10 words) and a 1-sentence description.',
+        'Pick the single best-fit department for this task from the given list of departments by id - return the exact id from the list, never invent one.',
+        'Estimate due_in_days: how many days from today this task should realistically be completed in, based on priority (Urgent = 1-2 days, High = 2-4 days, Medium = 4-7 days, Low = 7-14 days) and the number/complexity of the steps.',
+      ].join(' '),
+      input,
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          steps: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                title: { type: 'string' },
+                description: { type: 'string' },
+              },
+              required: ['title', 'description'],
             },
-            required: ['title', 'description'],
           },
+          department_id: { type: 'string' },
+          due_in_days: { type: 'integer' },
         },
-        department_id: { type: 'string' },
-        due_in_days: { type: 'integer' },
+        required: ['steps', 'department_id', 'due_in_days'],
       },
-      required: ['steps', 'department_id', 'due_in_days'],
-    },
-  })
+    })
+  } catch {
+    draft = buildFallbackDraft(input)
+  }
 
   if (!input.departments.some(d => d.id === draft.department_id)) {
     draft.department_id = input.departments[0].id
   }
   return draft
+}
+
+function buildFallbackDraft(input: {
+  title: string
+  description: string
+  priority: string
+  departments: { id: string; name: string }[]
+}): AiAssignDraft {
+  const dueByPriority: Record<string, number> = {
+    Urgent: 1,
+    High: 3,
+    Medium: 5,
+    Low: 10,
+  }
+  return {
+    department_id: input.departments[0]?.id ?? '',
+    due_in_days: dueByPriority[input.priority] ?? 5,
+    steps: [
+      { title: 'Confirm scope', description: `Review the requirements for ${input.title}.` },
+      { title: 'Assign owner', description: 'Choose the best available manager for delivery.' },
+      { title: 'Track completion', description: 'Move the task through review and completion.' },
+    ],
+  }
 }
 
 export const aiTaskAssignService = {

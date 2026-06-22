@@ -64,3 +64,39 @@ export interface KanbanGroup {
   Review: Task[]
   Complete: Task[]
 }
+
+export type TaskRecurrenceRule = 'daily' | 'weekly' | 'custom'
+
+export interface TaskRecurrenceInput {
+  recurrence_rule: TaskRecurrenceRule
+  recurrence_end_date: string
+  assigned_by?: string
+}
+
+export interface TaskCalendarItem extends Task {
+  calendar_date: string
+}
+
+export interface TaskWorkloadSuggestion {
+  type: 'balanced' | 'rebalance'
+  message: string
+  overloaded_user_id?: string
+  recommended_user_id?: string
+  overloaded_count?: number
+  recommended_count?: number
+}
+
+export interface TaskReassignmentSuggestion {
+  task_id: string
+  current_assignee_id: string | null
+  recommended_assignee_id: string | null
+  reason: string
+}
+
+export interface StalledTaskAlert {
+  task_id: string
+  title: string
+  status: Task['status']
+  days_since_update: number
+  message: string
+}

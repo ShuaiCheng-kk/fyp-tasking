@@ -130,6 +130,142 @@ export const ownerTeamRepository = {
     if (error) throw new Error(error.message)
   },
 
+  async deleteEmployeeDepartmentsByUserId(user_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('employee_departments')
+      .delete()
+      .eq('employee_id', user_id)
+    if (error) throw new Error(error.message)
+  },
+
+  async cleanupUserOperationalReferences(user_id: string, reassigned_by: string): Promise<void> {
+    const { data: assignments, error: assignmentError } = await supabase
+      .from('shift_assignments')
+      .select('id')
+      .eq('user_id', user_id)
+    if (assignmentError) throw new Error(assignmentError.message)
+
+    const assignmentIds = (assignments ?? []).map((row: { id: string }) => row.id)
+
+    if (assignmentIds.length > 0) {
+      const { error: attendanceError } = await supabase
+        .from('attendance_records')
+        .delete()
+        .in('shift_assignment_id', assignmentIds)
+      if (attendanceError) throw new Error(attendanceError.message)
+
+      const { error: swapByAssignmentError } = await supabase
+        .from('shift_swap_requests')
+        .delete()
+        .in('shift_assignment_id', assignmentIds)
+      if (swapByAssignmentError) throw new Error(swapByAssignmentError.message)
+
+      const { error: timeOffByAssignmentError } = await supabase
+        .from('time_off_requests')
+        .delete()
+        .in('shift_assignment_id', assignmentIds)
+      if (timeOffByAssignmentError) throw new Error(timeOffByAssignmentError.message)
+    }
+
+    const { error: attendanceByUserError } = await supabase
+      .from('attendance_records')
+      .delete()
+      .or(`casual_worker_id.eq.${user_id},confirmed_by_employee_id.eq.${user_id},submitted_by_employee_id.eq.${user_id}`)
+    if (attendanceByUserError) throw new Error(attendanceByUserError.message)
+
+    const { error: attendanceReviewedByError } = await supabase
+      .from('attendance_records')
+      .update({ owner_reviewed_by: null })
+      .eq('owner_reviewed_by', user_id)
+    if (attendanceReviewedByError) throw new Error(attendanceReviewedByError.message)
+
+    const { error: swapByUserError } = await supabase
+      .from('shift_swap_requests')
+      .delete()
+      .or(`requester_id.eq.${user_id},replacement_user_id.eq.${user_id}`)
+    if (swapByUserError) throw new Error(swapByUserError.message)
+
+    const { error: swapReviewedByError } = await supabase
+      .from('shift_swap_requests')
+      .update({ reviewed_by: null })
+      .eq('reviewed_by', user_id)
+    if (swapReviewedByError) throw new Error(swapReviewedByError.message)
+
+    const { error: timeOffByUserError } = await supabase
+      .from('time_off_requests')
+      .delete()
+      .eq('requester_id', user_id)
+    if (timeOffByUserError) throw new Error(timeOffByUserError.message)
+
+    const { error: timeOffReviewedByError } = await supabase
+      .from('time_off_requests')
+      .update({ reviewed_by: null })
+      .eq('reviewed_by', user_id)
+    if (timeOffReviewedByError) throw new Error(timeOffReviewedByError.message)
+
+    const { error: fixedOffError } = await supabase
+      .from('employee_fixed_off_days')
+      .delete()
+      .eq('user_id', user_id)
+    if (fixedOffError && !/does not exist|schema cache/i.test(fixedOffError.message)) {
+      throw new Error(fixedOffError.message)
+    }
+
+    const { error: tasksAssignedError } = await supabase
+      .from('tasks')
+      .update({ assigned_user_id: null })
+      .eq('assigned_user_id', user_id)
+    if (tasksAssignedError) throw new Error(tasksAssignedError.message)
+
+    const { error: tasksCreatedError } = await supabase
+      .from('tasks')
+      .update({ assigned_by: reassigned_by })
+      .eq('assigned_by', user_id)
+    if (tasksCreatedError) throw new Error(tasksCreatedError.message)
+
+    const { error: shiftsCreatedError } = await supabase
+      .from('shifts')
+      .update({ created_by: reassigned_by })
+      .eq('created_by', user_id)
+    if (shiftsCreatedError) throw new Error(shiftsCreatedError.message)
+
+    const { error: postingsCreatedError } = await supabase
+      .from('job_postings')
+      .update({ created_by: reassigned_by })
+      .eq('created_by', user_id)
+    if (postingsCreatedError) throw new Error(postingsCreatedError.message)
+
+    const { error: postingsAssignedError } = await supabase
+      .from('job_postings')
+      .update({ assigned_employee_id: null })
+      .eq('assigned_employee_id', user_id)
+    if (postingsAssignedError) throw new Error(postingsAssignedError.message)
+
+    const { error: announcementsError } = await supabase
+      .from('announcements')
+      .delete()
+      .eq('from_user_id', user_id)
+    if (announcementsError) throw new Error(announcementsError.message)
+
+    const { error: shiftSupervisorError } = await supabase
+      .from('shift_assignments')
+      .update({ supervisor_employee_id: null })
+      .eq('supervisor_employee_id', user_id)
+    if (shiftSupervisorError) throw new Error(shiftSupervisorError.message)
+
+    const { error: shiftAssignedByError } = await supabase
+      .from('shift_assignments')
+      .update({ assigned_by: reassigned_by })
+      .eq('assigned_by', user_id)
+    if (shiftAssignedByError) throw new Error(shiftAssignedByError.message)
+
+    const { error: shiftAssignmentError } = await supabase
+      .from('shift_assignments')
+      .delete()
+      .eq('user_id', user_id)
+    if (shiftAssignmentError) throw new Error(shiftAssignmentError.message)
+  },
+
   async findManagerDepartments(manager_id: string, company_id: string): Promise<{ department_id: string; department_name: string }[]> {
     const { data, error } = await supabase
       .from('manager_departments')

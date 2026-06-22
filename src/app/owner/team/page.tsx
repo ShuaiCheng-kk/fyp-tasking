@@ -6,6 +6,7 @@ import { Plus, X, ChevronDown, Upload, Building2, Network, Crown, UserCog, UserR
 import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
+import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import DatePickerField from '@/components/DatePickerField'
 import { DEPT_COLORS, deptColor, setDeptColorOverrides } from '@/lib/deptColor'
 import { ModalOverlay, ModalBox, ModalHeader, modalInputStyle, modalLabelStyle } from '@/components/modal'
@@ -18,7 +19,7 @@ import DropdownField from '@/components/DropdownField'
 
 // ─── Department color picker ────────────────────────────────────────────────
 
-function DepartmentColorPicker({ value, onChange }: { value: string | null; onChange: (color: string | null) => void }) {
+function DepartmentColorPicker({ value, onChange }: { value: string; onChange: (color: string) => void }) {
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
@@ -40,13 +41,13 @@ function DepartmentColorPicker({ value, onChange }: { value: string | null; onCh
           ref={triggerRef}
           type="button"
           onClick={() => setOpen(o => !o)}
-          aria-label={value ? 'Custom color selected' : 'Auto color not chosen'}
+          aria-label={`Department color ${value}`}
           style={{
             width: '100%',
             height: 40,
             borderRadius: 8,
-            border: value ? `1.5px solid ${value}` : `1.5px solid ${open ? '#F97316' : '#E5E7EB'}`,
-            background: value ?? '#FFFFFF',
+            border: `1.5px solid ${value}`,
+            background: value,
             cursor: 'pointer',
             padding: '0 12px',
             display: 'flex',
@@ -55,14 +56,8 @@ function DepartmentColorPicker({ value, onChange }: { value: string | null; onCh
             boxSizing: 'border-box',
           }}
         >
-          {value ? (
-            <span aria-hidden="true" />
-          ) : (
-            <span style={{ fontSize: '0.9375rem', fontWeight: 400, fontFamily: "'Inter', system-ui, -apple-system, sans-serif", color: '#9CA3AF' }}>
-              Auto (no color chosen)
-            </span>
-          )}
-          <ChevronDown size={14} style={{ color: value ? 'rgba(255,255,255,0.85)' : '#94A3B8', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+          <span aria-hidden="true" />
+          <ChevronDown size={14} style={{ color: 'rgba(255,255,255,0.85)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
         </button>
         {open && (
           <div
@@ -81,31 +76,6 @@ function DepartmentColorPicker({ value, onChange }: { value: string | null; onCh
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <button
-                type="button"
-                aria-label="Use auto color"
-                onClick={() => { onChange(null); setOpen(false) }}
-                style={{
-                  width: 26,
-                  height: 26,
-                  borderRadius: 999,
-                  border: value === null ? '2px solid #0F172A' : '1px solid #E5E7EB',
-                  background: value === null ? '#F1F5F9' : '#FFFFFF',
-                  color: '#374151',
-                  cursor: 'pointer',
-                  padding: 0,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  boxShadow: value === null ? '0 0 0 2px rgba(15,23,42,0.12)' : 'none',
-                  flexShrink: 0,
-                  fontSize: 11,
-                  fontWeight: 700,
-                  fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
-                }}
-              >
-                A
-              </button>
               {DEPT_COLORS.map(color => {
                 const active = value === color
                 return (
@@ -1052,16 +1022,6 @@ export default function TeamPage() {
   const [ownerName,          setOwnerName]          = useState('')
   const [currentPlan,        setCurrentPlan]        = useState('Free')
   const [companyProfile,     setCompanyProfile]     = useState<{ description: string | null; location: string | null; address: string | null; postal_code: string | null; industry: string | null; size: string | null } | null>(null)
-  // ── Owner self-profile modal ───────────────────────────────────────────────
-  const [ownerProfileModal, setOwnerProfileModal] = useState(false)
-  const [ownerProfile, setOwnerProfile] = useState<{ full_name: string; email_address: string; phone_number: string | null; date_of_birth: string | null; role: string; created_at: string; profile_photo_url?: string | null } | null>(null)
-  const [ownerProfileEditing, setOwnerProfileEditing] = useState(false)
-  const [ownerProfileName, setOwnerProfileName] = useState('')
-  const [ownerProfilePhone, setOwnerProfilePhone] = useState('')
-  const [ownerProfileDob, setOwnerProfileDob] = useState('')
-  const [ownerProfileLoading, setOwnerProfileLoading] = useState(false)
-  const [ownerProfileError, setOwnerProfileError] = useState('')
-  // ──────────────────────────────────────────────────────────────────────────
   const [editProfileOpen,    setEditProfileOpen]    = useState(false)
   const [editProfileName,    setEditProfileName]    = useState('')
   const [editProfileDesc,    setEditProfileDesc]    = useState('')
@@ -1196,17 +1156,10 @@ export default function TeamPage() {
   const [departmentModalTab, setDepartmentModalTab] = useState<'manual' | 'import'>('manual')
   const [activeDepartment, setActiveDepartment] = useState<Department | null>(null)
   const [departmentNameInput, setDepartmentNameInput] = useState('')
-  const [departmentColorInput, setDepartmentColorInput] = useState<string | null>(null)
+  const [departmentColorInput, setDepartmentColorInput] = useState(DEPT_COLORS[0])
   const [departmentImportRows, setDepartmentImportRows] = useState<string[]>([])
   const [departmentActionLoading, setDepartmentActionLoading] = useState(false)
   const [departmentActionError, setDepartmentActionError] = useState('')
-  const [departmentActionResult, setDepartmentActionResult] = useState('')
-  const [departmentManagerLoading, setDepartmentManagerLoading] = useState(false)
-  const [departmentManagerAssignments, setDepartmentManagerAssignments] = useState<{ department_id: string; manager_id: string; manager_name: string }[]>([])
-  const [departmentManagerSelectedId, setDepartmentManagerSelectedId] = useState('')
-  const [departmentManagerActionLoading, setDepartmentManagerActionLoading] = useState(false)
-  const [departmentManagerRemoveLoading, setDepartmentManagerRemoveLoading] = useState('')
-  const [departmentManagerActionError, setDepartmentManagerActionError] = useState('')
   const [departmentSuccessToast, setDepartmentSuccessToast] = useState('')
   const departmentSuccessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -1242,6 +1195,9 @@ export default function TeamPage() {
 
   // Profile modal
   const [profileMember, setProfileMember] = useState<TeamMember | null>(null)
+  const [profileDeptSelectedId, setProfileDeptSelectedId] = useState('')
+  const [profileDeptSaving, setProfileDeptSaving] = useState(false)
+  const [profileDeptError, setProfileDeptError] = useState('')
   const [highlightDeptId, setHighlightDeptId] = useState<string | null>(null)
   const [selectedCWPreview, setSelectedCWPreview] = useState<CWPreviewCard | null>(null)
   const [cwDetailSuccess, setCWDetailSuccess] = useState('')
@@ -1251,6 +1207,11 @@ export default function TeamPage() {
   const normalizedCwSearch = cwSearchQuery.trim().toLowerCase()
   const normalizedInternalSearch = internalSearchQuery.trim().toLowerCase()
   const normalizedOrgSearch = orgSearchQuery.trim().toLowerCase()
+
+  useEffect(() => {
+    setProfileDeptSelectedId(profileMember?.department_id ?? '')
+    setProfileDeptError('')
+  }, [profileMember])
 
   useEffect(() => {
     if (teamViewTab === 'all') {
@@ -1428,33 +1389,6 @@ export default function TeamPage() {
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [closeModal])
-
-  const openOwnerProfile = useCallback(async () => {
-    if (!internalUserId) return
-    setOwnerProfileModal(true)
-    setOwnerProfileEditing(false)
-    setOwnerProfileError('')
-    if (ownerProfile) return
-    try {
-      const res = await fetch(`/api/team/members?company_id=${companyId}`)
-      const data = await res.json()
-      if (data.success) {
-        const me = (data.members as TeamMember[]).find(m => m.id === internalUserId)
-        if (me) {
-          setOwnerProfile({ full_name: me.full_name, email_address: me.email_address, phone_number: me.phone_number, date_of_birth: me.date_of_birth, role: me.role, created_at: me.created_at, profile_photo_url: me.profile_photo_url ?? null })
-        }
-      }
-    } catch {}
-  }, [internalUserId, companyId, ownerProfile])
-
-  // Auto-populate ownerProfile from teamMembers once both are available
-  useEffect(() => {
-    if (!internalUserId || ownerProfile || teamMembers.length === 0) return
-    const me = teamMembers.find(m => m.id === internalUserId)
-    if (me) {
-      setOwnerProfile({ full_name: me.full_name, email_address: me.email_address, phone_number: me.phone_number, date_of_birth: me.date_of_birth, role: me.role, created_at: me.created_at, profile_photo_url: me.profile_photo_url ?? null })
-    }
-  }, [internalUserId, teamMembers, ownerProfile])
 
   const fetchTeamMembers = useCallback(async (cid: string) => {
     if (!cid) return
@@ -1825,6 +1759,34 @@ export default function TeamPage() {
     }
   }
 
+  const handleProfileDepartmentChange = async (departmentId: string) => {
+    if (!profileMember || !departmentId || departmentId === profileMember.department_id) return
+    setProfileDeptSelectedId(departmentId)
+    setProfileDeptSaving(true)
+    setProfileDeptError('')
+    try {
+      const res = await fetch('/api/user/update-department', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: profileMember.id, department_id: departmentId, company_id: companyId }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to update department')
+
+      const nextMember = { ...profileMember, department_id: departmentId }
+      setProfileMember(nextMember)
+      setTeamMembers(prev => prev.map(member => member.id === profileMember.id ? { ...member, department_id: departmentId } : member))
+      await fetchTeamMembers(companyId)
+      showCWDetailSuccess(`${profileMember.full_name}'s department has been updated.`)
+      logActivity('change_department', profileMember.full_name, companyDepartments.find(dept => dept.id === departmentId)?.name ?? undefined)
+    } catch (err) {
+      setProfileDeptSelectedId(profileMember.department_id ?? '')
+      setProfileDeptError(err instanceof Error ? err.message : 'Failed to update department')
+    } finally {
+      setProfileDeptSaving(false)
+    }
+  }
+
   const handleRemoveMember = async () => {
     if (!removeModal) return
     setRemoveLoading(true)
@@ -2000,7 +1962,6 @@ export default function TeamPage() {
 
   const handleDepartmentImportFile = async (file: File | null) => {
     setDepartmentActionError('')
-    setDepartmentActionResult('')
     if (!file) return
     const rows = parseDepartmentImportCsv(await file.text())
     setDepartmentImportRows(rows)
@@ -2012,40 +1973,17 @@ export default function TeamPage() {
     setDepartmentModalTab('manual')
     setActiveDepartment(null)
     setDepartmentNameInput('')
-    setDepartmentColorInput(null)
+    setDepartmentColorInput(DEPT_COLORS[companyDepartments.length % DEPT_COLORS.length])
     setDepartmentImportRows([])
     setDepartmentActionError('')
-    setDepartmentActionResult('')
   }
 
   const openEditDepartment = (department: Department) => {
     setDepartmentModal('edit')
     setActiveDepartment(department)
     setDepartmentNameInput(department.name)
-    setDepartmentColorInput(department.color ?? null)
+    setDepartmentColorInput(department.color ?? deptColor(department.id))
     setDepartmentActionError('')
-    setDepartmentActionResult('')
-    setDepartmentManagerActionError('')
-    setDepartmentManagerSelectedId('')
-    setDepartmentManagerLoading(true)
-    void (async () => {
-      if (!companyId) {
-        setDepartmentManagerLoading(false)
-        return
-      }
-      try {
-        const res = await fetch(`/api/team/department-manager?company_id=${companyId}`)
-        const data = await res.json()
-        if (data.success) {
-          const assignments = data.assignments ?? []
-          setDepartmentManagerAssignments(assignments)
-          setDepartmentManagerSelectedId(assignments.find((a: { department_id: string; manager_id: string }) => a.department_id === department.id)?.manager_id ?? '')
-        }
-      } catch {}
-      finally {
-        setDepartmentManagerLoading(false)
-      }
-    })()
   }
 
   const handleSaveDepartment = async () => {
@@ -2061,8 +1999,6 @@ export default function TeamPage() {
     }
     setDepartmentActionLoading(true)
     setDepartmentActionError('')
-    setDepartmentActionResult('')
-    setDepartmentManagerActionError('')
     try {
       if (departmentModalTab === 'import') {
         const res = await fetch('/api/import/departments', {
@@ -2073,8 +2009,6 @@ export default function TeamPage() {
         const data = await res.json()
         if (!data.success) throw new Error(data.message || 'Failed to import departments')
         const created = data.result?.created?.length ?? 0
-        const skipped = data.result?.skipped?.length ?? 0
-        setDepartmentActionResult(`${created} department(s) created. ${skipped} skipped.`)
         if (departmentSuccessTimerRef.current) clearTimeout(departmentSuccessTimerRef.current)
         setDepartmentSuccessToast(`${created} department(s) imported successfully.`)
         departmentSuccessTimerRef.current = setTimeout(() => setDepartmentSuccessToast(''), 3000)
@@ -2087,26 +2021,6 @@ export default function TeamPage() {
         })
         const data = await res.json()
         if (!data.success) throw new Error(data.message || 'Failed to save department')
-
-        if (isEdit) {
-          const currentManagerId = departmentManagerAssignments.find(a => a.department_id === activeDepartment?.id)?.manager_id ?? ''
-          if (departmentManagerSelectedId !== currentManagerId) {
-            if (departmentManagerSelectedId) {
-              const assignRes = await fetch('/api/team/department-manager', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  company_id: companyId,
-                  department_id: activeDepartment?.id,
-                  manager_id: departmentManagerSelectedId,
-                  assigned_by: internalUserId,
-                }),
-              })
-              const assignData = await assignRes.json()
-              if (!assignData.success) throw new Error(assignData.message || 'Failed to assign manager')
-            }
-          }
-        }
 
         setDepartmentModal(null)
         setActiveDepartment(null)
@@ -2155,69 +2069,6 @@ export default function TeamPage() {
       setDepartmentActionError(err instanceof Error ? err.message : 'Failed to delete department')
     } finally {
       setDepartmentActionLoading(false)
-    }
-  }
-
-  const handleAssignDepartmentManager = async () => {
-    if (!companyId || !internalUserId || !activeDepartment || !departmentManagerSelectedId) return
-    setDepartmentManagerActionLoading(true)
-    setDepartmentManagerActionError('')
-    try {
-      const res = await fetch('/api/team/department-manager', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          company_id: companyId,
-          department_id: activeDepartment.id,
-          manager_id: departmentManagerSelectedId,
-          assigned_by: internalUserId,
-        }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to assign manager')
-      setDepartmentManagerSelectedId('')
-      await Promise.all([
-        fetchTeamMembers(companyId),
-        (async () => {
-          const res2 = await fetch(`/api/team/department-manager?company_id=${companyId}`)
-          const data2 = await res2.json()
-          if (data2.success) setDepartmentManagerAssignments(data2.assignments ?? [])
-        })(),
-      ])
-    } catch (err) {
-      setDepartmentManagerActionError(err instanceof Error ? err.message : 'Failed to assign manager')
-    } finally {
-      setDepartmentManagerActionLoading(false)
-    }
-  }
-
-  const handleRemoveDepartmentManager = async (managerId: string) => {
-    if (!activeDepartment) return
-    setDepartmentManagerRemoveLoading(managerId)
-    setDepartmentManagerActionError('')
-    try {
-      const res = await fetch('/api/team/department-manager', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          manager_id: managerId,
-          department_id: activeDepartment.id,
-        }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to remove manager')
-      await Promise.all([
-        fetchTeamMembers(companyId),
-        (async () => {
-          const res2 = await fetch(`/api/team/department-manager?company_id=${companyId}`)
-          const data2 = await res2.json()
-          if (data2.success) setDepartmentManagerAssignments(data2.assignments ?? [])
-        })(),
-      ])
-    } catch (err) {
-      setDepartmentManagerActionError(err instanceof Error ? err.message : 'Failed to remove manager')
-    } finally {
-      setDepartmentManagerRemoveLoading('')
     }
   }
 
@@ -2891,23 +2742,7 @@ export default function TeamPage() {
             </h1>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
-            {ownerName && (
-              <button
-                onClick={openOwnerProfile}
-                style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, background: '#fff', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '0 14px 0 6px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', cursor: 'pointer', transition: 'border-color 0.15s, box-shadow 0.15s' }}
-                onMouseEnter={e => { e.currentTarget.style.borderColor = '#F97316'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(249,115,22,0.15)' }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.boxShadow = '0 1px 4px rgba(0,0,0,0.06)' }}
-              >
-                {ownerProfile?.profile_photo_url ? (
-                  <img src={ownerProfile.profile_photo_url} alt={ownerName} style={{ width: 26, height: 26, borderRadius: 999, objectFit: 'cover', flexShrink: 0 }} />
-                ) : (
-                  <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 999, background: '#0F172A', color: '#FFFFFF', flexShrink: 0 }}>
-                    <Crown size={13} />
-                  </span>
-                )}
-                <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{ownerName}</span>
-              </button>
-            )}
+            {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId} />}
             {companyId && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
           </div>
         </div>
@@ -3467,27 +3302,7 @@ export default function TeamPage() {
                   </div>
 
                   <DepartmentColorPicker value={departmentColorInput} onChange={setDepartmentColorInput} />
-
-                  <div>
-                    <label style={modalLabelStyle}>Department Manager</label>
-                    {departmentManagerLoading ? (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#9CA3AF', fontSize: 14, padding: '8px 0' }}>
-                        <Spinner size={14} dark /> Loading…
-                      </div>
-                    ) : (
-                      <DropdownField
-                        value={departmentManagerSelectedId}
-                        options={teamMembers
-                          .filter(member => member.role === 'Manager')
-                          .map(member => ({ value: member.id, label: member.full_name }))}
-                        onChange={setDepartmentManagerSelectedId}
-                        placeholder="Select manager"
-                        disabled={departmentManagerLoading}
-                      />
-                    )}
-                  </div>
                   {departmentActionError && <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>{departmentActionError}</div>}
-                  {departmentManagerActionError && <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>{departmentManagerActionError}</div>}
                 </div>
                 <div style={{ padding: '0 24px 20px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10 }}>
                   {(() => {
@@ -3533,7 +3348,7 @@ export default function TeamPage() {
                     <>
                       {/* Sample CSV preview */}
                       <div>
-                        <p style={{ margin: '0 0 8px', fontSize: '0.8125rem', fontWeight: 600, color: '#374151' }}>Sample CSV format <span style={{ fontWeight: 400, color: '#9CA3AF' }}>(save as &quot;CSV UTF-8 (Comma delimited)&quot;)</span></p>
+                        <p style={{ margin: '0 0 8px', fontSize: '0.8125rem', fontWeight: 600, color: '#374151' }}>Sample CSV format</p>
                         <div style={{ border: '1.5px solid #E5E7EB', borderRadius: 8, overflow: 'hidden', fontSize: '0.8125rem' }}>
                           <div style={{ background: '#F9FAFB', borderBottom: '1px solid #E5E7EB' }}>
                             <div style={{ padding: '7px 12px', fontWeight: 700, color: '#6B7280', fontFamily: "'Inter', system-ui, sans-serif" }}>Department</div>
@@ -3573,7 +3388,6 @@ export default function TeamPage() {
                   )}
                   </div>
                   {departmentActionError && <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>{departmentActionError}</div>}
-                  {departmentActionResult && <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#166534' }}>{departmentActionResult}</div>}
                 </div>
                 <div style={{ padding: '0 24px 20px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10 }}>
                   {(() => {
@@ -3923,100 +3737,6 @@ export default function TeamPage() {
         </div>
       )}
 
-      {/* ── Owner Self-Profile Modal ─────────────────────────────────────── */}
-      {ownerProfileModal && (
-        <ModalOverlay onClose={() => { setOwnerProfileModal(false); setOwnerProfileEditing(false); setOwnerProfileError('') }} maxWidth="420px">
-          <ModalBox>
-            <ModalHeader
-              title="My Profile"
-              onClose={() => { setOwnerProfileModal(false); setOwnerProfileEditing(false); setOwnerProfileError('') }}
-            />
-
-            {/* Avatar + name */}
-            <div style={{ padding: '16px 24px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', gap: 14 }}>
-              <RoleAvatar role="Owner" size={44} photoUrl={ownerProfile?.profile_photo_url ?? null} />
-              <div>
-                <p style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A', margin: '0 0 5px' }}>{ownerProfile?.full_name ?? ownerName}</p>
-                <span style={{ display: 'inline-block', padding: '3px 10px', borderRadius: 999, fontSize: '0.6875rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', background: '#0F172A', color: '#FFFFFF' }}>
-                  Owner
-                </span>
-              </div>
-            </div>
-
-            {/* Fields — same layout, field toggles between text and input */}
-            <form onSubmit={async (e) => {
-              e.preventDefault()
-              if (!ownerProfileEditing) return
-              if (!ownerProfileName.trim()) { setOwnerProfileError('Full name is required'); return }
-              setOwnerProfileLoading(true)
-              setOwnerProfileError('')
-              try {
-                const res = await fetch('/api/user/update-profile', {
-                  method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ user_id: internalUserId, full_name: ownerProfileName, phone_number: ownerProfilePhone, date_of_birth: ownerProfileDob }),
-                })
-                const data = await res.json()
-                if (!data.success) { setOwnerProfileError(data.message ?? 'Update failed'); return }
-                setOwnerProfile(prev => prev ? { ...prev, full_name: data.user.full_name, phone_number: data.user.phone_number, date_of_birth: data.user.date_of_birth } : prev)
-                setOwnerName(data.user.full_name)
-                setOwnerProfileEditing(false)
-              } catch { setOwnerProfileError('Something went wrong') }
-              finally { setOwnerProfileLoading(false) }
-            }}>
-              <div key={String(ownerProfileEditing)} style={{ padding: '0 24px 4px', display: 'flex', flexDirection: 'column', animation: 'profileFieldsIn 0.22s ease both' }}>
-                {/* Email — always read-only */}
-                <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
-                  <label style={{ ...modalLabelStyle, marginBottom: 4 }}>Email Address</label>
-                  <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{ownerProfile?.email_address ?? '—'}</p>
-                </div>
-                {/* Full Name */}
-                <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
-                  <label style={{ ...modalLabelStyle, marginBottom: 4 }}>Full Name</label>
-                  {ownerProfileEditing
-                    ? <input value={ownerProfileName} onChange={e => setOwnerProfileName(e.target.value)} style={modalInputStyle} autoFocus />
-                    : <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{ownerProfile?.full_name ?? '—'}</p>}
-                </div>
-                {/* Date of Birth */}
-                <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
-                  <label style={{ ...modalLabelStyle, marginBottom: 4 }}>Date of Birth</label>
-                  {ownerProfileEditing
-                    ? <DatePickerField value={ownerProfileDob} onChange={setOwnerProfileDob} placeholder="Select date" />
-                    : <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{formatDateDisplay(ownerProfile?.date_of_birth ?? null)}</p>}
-                </div>
-                {/* Phone Number */}
-                <div style={{ padding: '14px 0', borderBottom: ownerProfileEditing && ownerProfileError ? '1px solid #F3F4F6' : 'none' }}>
-                  <label style={{ ...modalLabelStyle, marginBottom: 4 }}>Phone Number</label>
-                  {ownerProfileEditing
-                    ? <input value={ownerProfilePhone} onChange={e => setOwnerProfilePhone(e.target.value)} style={modalInputStyle} placeholder="+65 9xxx xxxx" />
-                    : <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{ownerProfile?.phone_number ?? '—'}</p>}
-                </div>
-                {ownerProfileEditing && ownerProfileError && (
-                  <div style={{ padding: '12px 0 4px' }}>
-                    <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>{ownerProfileError}</div>
-                  </div>
-                )}
-              </div>
-              <div style={{ padding: '16px 24px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                {ownerProfileEditing ? (
-                  <>
-                    <button type="button" onClick={() => { setOwnerProfileEditing(false); setOwnerProfileError('') }} style={{ padding: '7px 16px', border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', fontWeight: 600, fontSize: '0.8125rem', color: '#374151', cursor: 'pointer' }}>
-                      Cancel
-                    </button>
-                    <button type="submit" disabled={ownerProfileLoading} style={{ padding: '7px 18px', border: 'none', borderRadius: 8, background: ownerProfileLoading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: ownerProfileLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: ownerProfileLoading ? 0.65 : 1 }}>
-                      {ownerProfileLoading ? <Spinner size={13} /> : <Check size={13} />} Save Changes
-                    </button>
-                  </>
-                ) : (
-                  <button type="button" onClick={() => { setOwnerProfileName(ownerProfile?.full_name ?? ''); setOwnerProfilePhone(ownerProfile?.phone_number ?? ''); setOwnerProfileDob(ownerProfile?.date_of_birth ?? ''); setOwnerProfileError(''); setOwnerProfileEditing(true) }} style={{ padding: '7px 16px', border: 'none', borderRadius: 8, background: 'linear-gradient(135deg, #F97316, #EA580C)', fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <Pencil size={13} /> Edit Profile
-                  </button>
-                )}
-              </div>
-            </form>
-          </ModalBox>
-        </ModalOverlay>
-      )}
 
       {/* ── Member Profile Modal ─────────────────────────────────────────── */}
       {profileMember && (
@@ -4056,16 +3776,42 @@ export default function TeamPage() {
                 { label: 'Date of Birth', value: formatDateDisplay(profileMember.date_of_birth) },
                 { label: 'Phone Number', value: profileMember.phone_number ?? '—' },
                 { label: 'Joined On', value: formatDateDisplay(profileMember.created_at) },
-                ...(profileMember.department_id ? [{
-                  label: 'Department',
-                  value: companyDepartments.find(d => d.id === profileMember.department_id)?.name ?? '—',
-                }] : []),
               ].map((field, i, arr) => (
                 <div key={field.label} style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
                   <label style={{ ...modalLabelStyle, marginBottom: 4 }}>{field.label}</label>
                   <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, sans-serif" }}>{field.value}</p>
                 </div>
               ))}
+              {(profileMember.role === 'Manager' || profileMember.role === 'Employee') && (
+                <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
+                  <label style={{ ...modalLabelStyle, marginBottom: 6 }}>Department</label>
+                  {canRemove(profileMember) && companyDepartments.length > 0 ? (
+                    <div style={{ display: 'grid', gap: 8 }}>
+                      <DropdownField
+                        value={profileDeptSelectedId}
+                        onChange={value => void handleProfileDepartmentChange(value)}
+                        placeholder="Select department"
+                        disabled={profileDeptSaving}
+                        options={companyDepartments.map(department => ({ value: department.id, label: department.name }))}
+                      />
+                      {profileDeptSaving && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 7, color: '#9CA3AF', fontSize: 13 }}>
+                          <Spinner size={13} dark /> Updating department...
+                        </div>
+                      )}
+                      {profileDeptError && (
+                        <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '9px 12px', fontSize: '0.8125rem', color: '#DC2626' }}>
+                          {profileDeptError}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, sans-serif" }}>
+                      {companyDepartments.find(d => d.id === profileMember.department_id)?.name ?? '—'}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Footer */}
@@ -4285,7 +4031,7 @@ export default function TeamPage() {
                 <>
                   {/* Sample CSV preview */}
                   <div>
-                    <p style={{ margin: '0 0 8px', fontSize: '0.8125rem', fontWeight: 600, color: '#374151' }}>Sample CSV format <span style={{ fontWeight: 400, color: '#9CA3AF' }}>(save as &quot;CSV UTF-8 (Comma delimited)&quot;)</span></p>
+                    <p style={{ margin: '0 0 8px', fontSize: '0.8125rem', fontWeight: 600, color: '#374151' }}>Sample CSV format</p>
                     <div style={{ border: '1.5px solid #E5E7EB', borderRadius: 8, overflow: 'hidden', fontSize: '0.8125rem' }}>
                       <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr 1.2fr', background: '#F9FAFB', borderBottom: '1px solid #E5E7EB' }}>
                         {['Email', 'Role', 'Department'].map((h, i) => (

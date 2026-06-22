@@ -24,6 +24,16 @@ export const authRepository = {
     return data
   },
 
+  async findByPhoneNumber(phone_number: string): Promise<User | null> {
+    const { data, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('phone_number', phone_number)
+      .single()
+    if (error) return null
+    return data
+  },
+
   async createUser(data: {
     supabase_auth_id: string
     full_name: string
@@ -94,7 +104,7 @@ export const authRepository = {
     if (error) throw new Error(error.message)
   },
 
-  async updateProfile(id: string, patch: { full_name?: string; phone_number?: string | null; date_of_birth?: string | null }): Promise<User> {
+  async updateProfile(id: string, patch: { full_name?: string; phone_number?: string | null; date_of_birth?: string | null; profile_photo_url?: string | null }): Promise<User> {
     const { data, error } = await supabase
       .from('users')
       .update(patch)

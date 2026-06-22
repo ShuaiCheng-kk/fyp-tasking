@@ -16,26 +16,60 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ success: false, message: 'department_id is required' }, { status: 400 })
     }
 
-    // Resolve company_id from users table if not provided
-    let resolvedCompanyId = company_id
-    if (!resolvedCompanyId) {
-      const { data: user } = await supabase.from('users').select('company_id').eq('id', user_id).single()
-      resolvedCompanyId = user?.company_id
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('id, company_id, role')
+      .eq('id', user_id)
+      .single()
+    if (userError || !user) {
+      return NextResponse.json({ success: false, message: 'User not found' }, { status: 404 })
     }
+
+    const resolvedCompanyId = company_id || user.company_id
     if (!resolvedCompanyId) {
       return NextResponse.json({ success: false, message: 'Cannot resolve company_id for user' }, { status: 400 })
     }
 
-    const { error } = await supabase
-      .from('manager_departments')
-      .upsert({ manager_id: user_id, department_id, company_id: resolvedCompanyId }, { onConflict: 'manager_id,department_id' })
+    if (user.company_id !== resolvedCompanyId) {
+      return NextResponse.json({ success: false, message: 'User is not a member of this company' }, { status: 400 })
+    }
 
-    if (error) throw new Error(error.message)
+    const { data: department, error: departmentError } = await supabase
+      .from('departments')
+      .select('id')
+      .eq('id', department_id)
+      .eq('company_id', resolvedCompanyId)
+      .single()
+    if (departmentError || !department) {
+      return NextResponse.json({ success: false, message: 'Department not found in this company' }, { status: 404 })
+    }
 
-    await supabase
-      .from('users')
-      .update({ department_id })
-      .eq('id', user_id)
+    if (user.role === 'Manager') {
+      const { error: deleteError } = await supabase
+        .from('manager_departments')
+        .delete()
+        .eq('manager_id', user_id)
+        .eq('company_id', resolvedCompanyId)
+      if (deleteError) throw new Error(deleteError.message)
+
+      const { error } = await supabase
+        .from('manager_departments')
+        .insert({ manager_id: user_id, department_id, company_id: resolvedCompanyId })
+      if (error) throw new Error(error.message)
+    } else if (user.role === 'Employee') {
+      const { error: deleteError } = await supabase
+        .from('employee_departments')
+        .delete()
+        .eq('employee_id', user_id)
+      if (deleteError) throw new Error(deleteError.message)
+
+      const { error } = await supabase
+        .from('employee_departments')
+        .insert({ employee_id: user_id, department_id })
+      if (error) throw new Error(error.message)
+    } else {
+      return NextResponse.json({ success: false, message: 'Only Managers and Employees can be assigned to departments' }, { status: 400 })
+    }
 
     return NextResponse.json({ success: true })
   } catch (error: unknown) {

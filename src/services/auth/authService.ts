@@ -4,6 +4,7 @@ import { authRepository } from '@/repositories/auth/authRepository'
 import { companyRepository } from '@/repositories/company/companyRepository'
 import { departmentRepository } from '@/repositories/department/departmentRepository'
 import { User } from '@/types/auth.types'
+import { DEPT_COLORS } from '@/lib/deptColor'
 
 function getAdminClient() {
   return createClient(
@@ -120,6 +121,11 @@ export const authService = {
 
   async signOut(): Promise<void> {
     const { error } = await supabase.auth.signOut()
+    if (error) throw new Error(error.message)
+  },
+
+  async resendConfirmation(email: string): Promise<void> {
+    const { error } = await supabase.auth.resend({ type: 'signup', email })
     if (error) throw new Error(error.message)
   },
 
@@ -263,9 +269,13 @@ export const authService = {
 
     await authRepository.updateCompanyId(user.id, company.id)
 
-    for (const deptName of data.departments) {
+    for (const [index, deptName] of data.departments.entries()) {
       if (deptName && deptName.trim()) {
-        await departmentRepository.createDepartment({ name: deptName.trim(), company_id: company.id })
+        await departmentRepository.createDepartment({
+          name: deptName.trim(),
+          company_id: company.id,
+          color: DEPT_COLORS[index % DEPT_COLORS.length],
+        })
       }
     }
 
@@ -333,11 +343,12 @@ export const authService = {
       await authRepository.updateCompanyId(user.id, company.id)
 
       console.log('Step 5: Creating departments...')
-      for (const deptName of data.departments) {
+      for (const [index, deptName] of data.departments.entries()) {
         if (deptName && deptName.trim()) {
           await departmentRepository.createDepartment({
             name: deptName.trim(),
             company_id: company.id,
+            color: DEPT_COLORS[index % DEPT_COLORS.length],
           })
         }
       }

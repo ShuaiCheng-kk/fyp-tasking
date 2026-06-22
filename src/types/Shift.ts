@@ -13,6 +13,7 @@ export interface Shift {
   recurrence_group_id: string | null
   recurrence_rule: 'daily' | 'weekly' | 'custom' | null
   source_shift_id: string | null
+  split_group_id: string | null
   created_by: string
   created_at: string
   updated_at: string
@@ -32,6 +33,26 @@ export interface ShiftInput {
   recurrence_group_id?: string | null
   recurrence_rule?: 'daily' | 'weekly' | 'custom' | null
   source_shift_id?: string | null
+  split_group_id?: string | null
+  override_clopening?: boolean
+}
+
+export interface SplitShiftBlockInput {
+  start_time: string
+  end_time: string
+}
+
+export interface SplitShiftInput {
+  company_id: string
+  department_id: string
+  title?: string | null
+  instruction?: string | null
+  shift_date: string
+  blocks: SplitShiftBlockInput[]
+  created_by: string
+  publication_status?: 'draft' | 'published'
+  assigned_user_id?: string | null
+  supervisor_employee_id?: string | null
   override_clopening?: boolean
 }
 
@@ -85,6 +106,11 @@ export interface ClopeningConflict {
 
 export interface ShiftMutationResult {
   shift: Shift
+  warning: ClopeningConflict | null
+}
+
+export interface SplitShiftResult {
+  shifts: Shift[]
   warning: ClopeningConflict | null
 }
 

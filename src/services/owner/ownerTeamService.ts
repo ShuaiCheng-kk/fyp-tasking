@@ -38,20 +38,20 @@ export const ownerTeamService = {
 
     if (user_id_to_remove === company.owner_id) throw new Error('Cannot remove the company creator')
     if (user_id_to_remove === requester.id) throw new Error('Cannot remove yourself')
+    if (target.company_id !== company_id) throw new Error('User is not a member of this company')
 
     const requesterIsCreator = requester.id === company.owner_id
     if (!requesterIsCreator && target.role === 'Owner') {
       throw new Error('Insufficient permissions to remove a Partner')
     }
 
-    const removed = await ownerTeamRepository.nullifyUserCompanyId(user_id_to_remove, company_id)
-    if (!removed) throw new Error('User is not a member of this company')
-
     const supabaseAuthId = target.supabase_auth_id
 
     await ownerTeamRepository.deleteInboxByUserId(user_id_to_remove)
     await ownerTeamRepository.deleteMessagesByUserId(user_id_to_remove)
+    await ownerTeamRepository.cleanupUserOperationalReferences(user_id_to_remove, requester.id)
     await ownerTeamRepository.deleteManagerDepartmentsByUserId(user_id_to_remove)
+    await ownerTeamRepository.deleteEmployeeDepartmentsByUserId(user_id_to_remove)
     await ownerTeamRepository.deleteUserById(user_id_to_remove)
 
     if (supabaseAuthId) {

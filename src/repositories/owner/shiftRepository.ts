@@ -4,6 +4,7 @@
 import { supabase } from '@/lib/supabase'
 import { Shift, ShiftInput } from '@/types/Shift'
 import { ShiftAssignment } from '@/types/ShiftAssignment'
+import { ShiftActionHistory, ShiftActionHistoryInput } from '@/types/ShiftActionHistory'
 import { User } from '@/types/auth.types'
 
 export const shiftRepository = {
@@ -25,11 +26,22 @@ export const shiftRepository = {
         recurrence_group_id: input.recurrence_group_id ?? null,
         recurrence_rule: input.recurrence_rule ?? null,
         source_shift_id: input.source_shift_id ?? null,
+        split_group_id: input.split_group_id ?? null,
       })
       .select()
       .single()
     if (error) throw new Error(error.message)
     return data as Shift
+  },
+
+  async getShiftsBySplitGroupId(split_group_id: string): Promise<Shift[]> {
+    const { data, error } = await supabase
+      .from('shifts')
+      .select('*')
+      .eq('split_group_id', split_group_id)
+      .order('start_time', { ascending: true })
+    if (error) throw new Error(error.message)
+    return (data ?? []) as Shift[]
   },
 
   async restoreShift(shift: Shift): Promise<Shift> {
@@ -62,7 +74,7 @@ export const shiftRepository = {
     return data as ShiftAssignment
   },
 
-  async restoreShiftAssignments(assignments: Array<Record<string, unknown>>): Promise<void> {
+  async restoreShiftAssignments(assignments: ShiftAssignment[]): Promise<void> {
     if (assignments.length === 0) return
     const { error } = await supabase
       .from('shift_assignments')
@@ -223,6 +235,44 @@ export const shiftRepository = {
       .in('id', ids)
     if (error) throw new Error(error.message)
     return (data ?? []) as { id: string; name: string }[]
+  },
+
+  async createActionHistory(input: ShiftActionHistoryInput): Promise<ShiftActionHistory> {
+    const { data, error } = await supabase
+      .from('shift_action_history')
+      .insert({
+        company_id: input.company_id,
+        performed_by: input.performed_by,
+        action_type: input.action_type,
+        affected_shift_ids: input.affected_shift_ids,
+        undo_payload: input.undo_payload,
+      })
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data as ShiftActionHistory
+  },
+
+  async getLatestUndoableAction(company_id: string, performed_by: string): Promise<ShiftActionHistory | null> {
+    const { data, error } = await supabase
+      .from('shift_action_history')
+      .select('*')
+      .eq('company_id', company_id)
+      .eq('performed_by', performed_by)
+      .eq('undone', false)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    return (data as ShiftActionHistory) ?? null
+  },
+
+  async markActionUndone(id: string): Promise<void> {
+    const { error } = await supabase
+      .from('shift_action_history')
+      .update({ undone: true })
+      .eq('id', id)
+    if (error) throw new Error(error.message)
   },
 
 }

@@ -8,6 +8,7 @@ import {
   MemberImportResult,
   MemberImportRow,
 } from '@/types/Import'
+import { DEPT_COLORS } from '@/lib/deptColor'
 
 function normalizeName(name: string): string {
   return name.trim().replace(/\s+/g, ' ')
@@ -34,7 +35,7 @@ export const importService = {
         skipped.push(name)
         continue
       }
-      await importRepository.createDepartment(company_id, name)
+      await importRepository.createDepartment(company_id, name, DEPT_COLORS[(existing.length + created.length) % DEPT_COLORS.length])
       existingNames.add(name.toLowerCase())
       created.push(name)
     }

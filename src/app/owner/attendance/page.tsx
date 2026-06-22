@@ -153,7 +153,7 @@ export default function OwnerAttendancePage() {
   const DUMMY_CASUAL_RECORDS: typeof realCasualRecords = [
     {
       assignment: { id: 'demo-1', shift_id: 'ds-1', user_id: 'du-1', assigned_by: 'owner', assignment_status: 'assigned', supervisor_employee_id: null, created_at: today, updated_at: today },
-      shift: { id: 'ds-1', company_id: '', department_id: 'dept-1', title: 'Morning Shift', instruction: null, shift_date: today, start_time: '09:00', end_time: '17:00', status: 'active', publication_status: 'published', acceptance_deadline_at: null, recurrence_group_id: null, recurrence_rule: null, source_shift_id: null, created_by: 'owner', created_at: today, updated_at: today },
+      shift: { id: 'ds-1', company_id: '', department_id: 'dept-1', title: 'Morning Shift', instruction: null, shift_date: today, start_time: '09:00', end_time: '17:00', status: 'active', publication_status: 'published', acceptance_deadline_at: null, recurrence_group_id: null, recurrence_rule: null, source_shift_id: null, split_group_id: null, created_by: 'owner', created_at: today, updated_at: today },
       assignee_name: 'Jordan Lee',
       assignee_role: 'Casual Worker',
       supervisor_name: 'Alex Thompson',
@@ -171,7 +171,7 @@ export default function OwnerAttendancePage() {
     },
     {
       assignment: { id: 'demo-2', shift_id: 'ds-2', user_id: 'du-2', assigned_by: 'owner', assignment_status: 'assigned', supervisor_employee_id: null, created_at: today, updated_at: today },
-      shift: { id: 'ds-2', company_id: '', department_id: 'dept-1', title: 'Afternoon Shift', instruction: null, shift_date: today, start_time: '13:00', end_time: '21:00', status: 'active', publication_status: 'published', acceptance_deadline_at: null, recurrence_group_id: null, recurrence_rule: null, source_shift_id: null, created_by: 'owner', created_at: today, updated_at: today },
+      shift: { id: 'ds-2', company_id: '', department_id: 'dept-1', title: 'Afternoon Shift', instruction: null, shift_date: today, start_time: '13:00', end_time: '21:00', status: 'active', publication_status: 'published', acceptance_deadline_at: null, recurrence_group_id: null, recurrence_rule: null, source_shift_id: null, split_group_id: null, created_by: 'owner', created_at: today, updated_at: today },
       assignee_name: 'Sam Rivera',
       assignee_role: 'Casual Worker',
       supervisor_name: 'Maria Chen',
@@ -189,7 +189,7 @@ export default function OwnerAttendancePage() {
     },
     {
       assignment: { id: 'demo-3', shift_id: 'ds-3', user_id: 'du-3', assigned_by: 'owner', assignment_status: 'assigned', supervisor_employee_id: null, created_at: today, updated_at: today },
-      shift: { id: 'ds-3', company_id: '', department_id: 'dept-2', title: 'Night Shift', instruction: null, shift_date: today, start_time: '22:00', end_time: '06:00', status: 'active', publication_status: 'published', acceptance_deadline_at: null, recurrence_group_id: null, recurrence_rule: null, source_shift_id: null, created_by: 'owner', created_at: today, updated_at: today },
+      shift: { id: 'ds-3', company_id: '', department_id: 'dept-2', title: 'Night Shift', instruction: null, shift_date: today, start_time: '22:00', end_time: '06:00', status: 'active', publication_status: 'published', acceptance_deadline_at: null, recurrence_group_id: null, recurrence_rule: null, source_shift_id: null, split_group_id: null, created_by: 'owner', created_at: today, updated_at: today },
       assignee_name: 'Chris Patel',
       assignee_role: 'Casual Worker',
       supervisor_name: null,

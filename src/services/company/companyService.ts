@@ -5,6 +5,7 @@ import { getSupabaseAdmin } from '@/lib/supabaseAdmin'
 import { Company, } from '@/types/company.types'
 import { Department } from '@/types/department.types'
 import { User } from '@/types/auth.types'
+import { DEPT_COLORS } from '@/lib/deptColor'
 
 async function resolveInternalOwnerUserId(ownerRef: string): Promise<string | null> {
   const byAuth = await authRepository.findByAuthId(ownerRef)
@@ -247,8 +248,12 @@ export const companyService = {
       logo_url: data.logo_url,
       website: data.website,
     })
-    for (const deptName of data.departments.filter((d) => d.trim())) {
-      await departmentRepository.createDepartment({ name: deptName.trim(), company_id: company.id })
+    for (const [index, deptName] of data.departments.filter((d) => d.trim()).entries()) {
+      await departmentRepository.createDepartment({
+        name: deptName.trim(),
+        company_id: company.id,
+        color: DEPT_COLORS[index % DEPT_COLORS.length],
+      })
     }
     return company
   },

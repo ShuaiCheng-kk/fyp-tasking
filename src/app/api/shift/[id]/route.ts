@@ -59,8 +59,12 @@ export async function PATCH(
     return NextResponse.json({ success: false, message: 'assigned_by is required when assigning a shift' }, { status: 400 })
   }
 
+  const performedBy = typeof (body as Record<string, unknown>).performed_by === 'string'
+    ? (body as Record<string, unknown>).performed_by as string
+    : undefined
+
   try {
-    const result = await shiftService.editShift(id, fields, assignment)
+    const result = await shiftService.editShift(id, fields, assignment, performedBy)
     return NextResponse.json({ success: true, shift: result.shift, warning: result.warning })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to update shift'
@@ -74,8 +78,10 @@ export async function DELETE(
 ) {
   const { id } = await params
   if (!id) return NextResponse.json({ success: false, message: 'id is required' }, { status: 400 })
+  const { searchParams } = new URL(req.url)
+  const performedBy = searchParams.get('performed_by') ?? undefined
   try {
-    await shiftService.deleteShift(id)
+    await shiftService.deleteShift(id, performedBy)
     return NextResponse.json({ success: true })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to delete shift'
