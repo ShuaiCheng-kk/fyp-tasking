@@ -2829,7 +2829,7 @@ export default function OwnerShiftsPage() {
       )}
 
       {/* ═══════════════ AI SHIFT SCHEDULING MODAL ═══════════════ */}      {aiShiftModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, animation: 'overlayFadeIn 0.18s ease-out' }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>
           <div onClick={e => e.stopPropagation()} style={{ width: aiShiftWizardStep === 'generate' && aiShiftSuggestions.length > 0 ? 1120 : 360, maxWidth: 'calc(100% - 40px)', maxHeight: '92vh', background: '#FFFFFF', borderRadius: 20, boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', overflow: 'hidden', flexShrink: 0, transition: 'width 0.25s ease', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
             {(() => {
               const AI_WIZARD_STEPS = ['dates', 'departments', 'shiftTypes', 'generate'] as const
@@ -3849,11 +3849,11 @@ const secondaryButtonStyle: React.CSSProperties = {
 const modalOverlayStyle: React.CSSProperties = {
   position: 'fixed',
   inset: 0,
-  background: 'rgba(15,23,42,0.42)',
+  background: 'rgba(15,23,42,0.45)',
   display: 'grid',
   placeItems: 'center',
   padding: 18,
-  zIndex: 80,
+  zIndex: 100,
   backdropFilter: 'blur(4px)',
   animation: 'overlayFadeIn 0.18s ease-out',
 }

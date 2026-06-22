@@ -13,6 +13,8 @@ import {
 import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
+import { ModalOverlay, ModalBox, ModalHeader, modalDestructiveButtonStyle } from '@/components/modal'
+import Spinner from '@/components/Spinner'
 import { CandidateRecommendation } from '@/types/AI'
 import { JobApplicant, JobPostingPendingApproval, JobPostingSummary } from '@/types/Recruitment'
 
@@ -51,15 +53,6 @@ const pageKeyframes = `
   @keyframes blockSlideUp  { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
   @keyframes fadeSlideUpToast { from { opacity: 0; transform: translateX(-50%) translateY(10px) } to { opacity: 1; transform: translateX(-50%) translateY(0) } }
 `
-
-function Spinner({ size = 16, dark = false }: { size?: number; dark?: boolean }) {
-  return (
-    <svg className="animate-spin" width={size} height={size} viewBox="0 0 18 18" style={{ display: 'inline-block', flexShrink: 0 }}>
-      <circle cx="9" cy="9" r="7" stroke={dark ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.35)'} strokeWidth="2.5" fill="none" />
-      <path d="M9 2a7 7 0 0 1 7 7" stroke={dark ? '#111827' : 'white'} strokeWidth="2.5" strokeLinecap="round" fill="none" />
-    </svg>
-  )
-}
 
 // ─── Custom dropdown matching Task modal DropdownField style ─────────────────
 function RDrop({ value, options, onChange, placeholder, disabled = false }: {
@@ -2287,37 +2280,40 @@ export default function OwnerRecruitmentPage() {
 
       {/* ══ Reject reason modal ════════════════════════════════════════════════ */}
       {rejectModalOpen && createPortal(
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.42)', zIndex: 10000, display: 'grid', placeItems: 'center', padding: 20, backdropFilter: 'blur(4px)', animation: 'overlayFadeIn 0.18s ease-out' }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: 420, background: '#FFFFFF', borderRadius: 20, padding: '24px', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-              <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#111827' }}>Reject Job Posting</h2>
-              <button onClick={() => { setRejectModalOpen(false); setRejectReason(''); setPendingRejectId('') }} style={{ border: 'none', background: '#F9FAFB', color: '#6B7280', cursor: 'pointer', padding: '5px', borderRadius: 7, display: 'flex' }}><X size={15} /></button>
-            </div>
-            <p style={{ margin: '0 0 14px', color: '#6B7280', fontSize: '0.9rem', lineHeight: 1.55 }}>
-              Provide a reason so the manager can understand what needs to be fixed.
-            </p>
-            <textarea
-              value={rejectReason}
-              onChange={e => setRejectReason(e.target.value)}
-              placeholder="e.g. Salary range is missing, please add before resubmitting."
-              rows={4}
-              style={{ width: '100%', padding: '10px 12px', border: '1.5px solid #E5E7EB', borderRadius: 8, fontSize: '0.875rem', color: '#111827', resize: 'vertical', outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit', lineHeight: 1.55 }}
-              onFocus={e => { e.currentTarget.style.borderColor = '#F97316' }}
-              onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
+        <ModalOverlay onClose={() => { setRejectModalOpen(false); setRejectReason(''); setPendingRejectId('') }} maxWidth="420px">
+          <ModalBox>
+            <ModalHeader
+              title="Reject Job Posting"
+              icon={<Trash2 size={15} color="#fff" strokeWidth={2.5} />}
+              iconBg="linear-gradient(135deg, #EF4444, #DC2626)"
+              onClose={() => { setRejectModalOpen(false); setRejectReason(''); setPendingRejectId('') }}
             />
-            {error && <p style={{ margin: '8px 0 0', fontSize: '0.8rem', color: '#DC2626' }}>{error}</p>}
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 20 }}>
+            <div style={{ padding: '20px 24px 0' }}>
+              <p style={{ margin: '0 0 14px', color: '#6B7280', fontSize: '0.9rem', lineHeight: 1.55 }}>
+                Provide a reason so the manager can understand what needs to be fixed.
+              </p>
+              <textarea
+                value={rejectReason}
+                onChange={e => setRejectReason(e.target.value)}
+                placeholder="e.g. Salary range is missing, please add before resubmitting."
+                rows={4}
+                style={{ width: '100%', padding: '10px 12px', border: '1.5px solid #E5E7EB', borderRadius: 8, fontSize: '0.875rem', color: '#111827', resize: 'vertical', outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit', lineHeight: 1.55 }}
+                onFocus={e => { e.currentTarget.style.borderColor = '#F97316' }}
+                onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
+              />
+              {error && <p style={{ margin: '8px 0 0', fontSize: '0.8rem', color: '#DC2626' }}>{error}</p>}
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', padding: '20px 24px' }}>
               <button onClick={() => { setRejectModalOpen(false); setRejectReason(''); setPendingRejectId('') }}
-                style={{ border: '1.5px solid #E5E7EB', background: '#FFFFFF', color: '#374151', borderRadius: 8, padding: '8px 18px', fontWeight: 700, cursor: 'pointer', fontSize: '0.875rem' }}>
+                style={{ border: '1.5px solid #E5E7EB', background: '#FFFFFF', color: '#374151', borderRadius: 8, padding: '7px 16px', fontWeight: 600, cursor: 'pointer', fontSize: '0.8125rem' }}>
                 Cancel
               </button>
-              <button onClick={() => decidePosting(pendingRejectId, 'reject_posting', rejectReason)} disabled={actionLoading || !rejectReason.trim()}
-                style={{ border: 'none', background: '#DC2626', color: '#FFFFFF', borderRadius: 8, padding: '8px 18px', fontWeight: 700, cursor: actionLoading || !rejectReason.trim() ? 'default' : 'pointer', fontSize: '0.875rem', opacity: actionLoading || !rejectReason.trim() ? 0.65 : 1, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button onClick={() => decidePosting(pendingRejectId, 'reject_posting', rejectReason)} disabled={actionLoading || !rejectReason.trim()} style={modalDestructiveButtonStyle(actionLoading || !rejectReason.trim())}>
                 {actionLoading ? <Spinner size={13} /> : <Trash2 size={13} />} Reject
               </button>
             </div>
-          </div>
-        </div>,
+          </ModalBox>
+        </ModalOverlay>,
         document.body
       )}
 
@@ -2786,25 +2782,27 @@ export default function OwnerRecruitmentPage() {
 
       {/* ══ Delete confirm modal (draft + live) ══════════════════════════════ */}
       {deleteConfirm && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.42)', zIndex: 110, display: 'grid', placeItems: 'center', padding: 20, backdropFilter: 'blur(4px)', animation: 'overlayFadeIn 0.18s ease-out' }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: 420, background: '#FFFFFF', borderRadius: 20, padding: '24px', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-              <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#111827' }}>{deleteConfirm.isDraft === false ? 'Delete Job Posting' : 'Delete Draft'}</h2>
-              <button onClick={() => setDeleteConfirm(null)} style={{ border: 'none', background: '#F9FAFB', color: '#6B7280', cursor: 'pointer', padding: '5px', borderRadius: 7, display: 'flex' }}><X size={15} /></button>
+        <ModalOverlay onClose={() => setDeleteConfirm(null)} maxWidth="420px">
+          <ModalBox>
+            <ModalHeader
+              title={deleteConfirm.isDraft === false ? 'Delete Job Posting' : 'Delete Draft'}
+              icon={<Trash2 size={15} color="#fff" strokeWidth={2.5} />}
+              iconBg="linear-gradient(135deg, #EF4444, #DC2626)"
+              onClose={() => setDeleteConfirm(null)}
+            />
+            <div style={{ padding: '20px 24px 0' }}>
+              <p style={{ margin: 0, color: '#6B7280', fontSize: '0.9rem', lineHeight: 1.55 }}>
+                Permanently delete <strong style={{ color: '#111827' }}>"{deleteConfirm.title}"</strong>? This cannot be undone.
+              </p>
             </div>
-            <p style={{ margin: '0 0 20px', color: '#6B7280', fontSize: '0.9rem', lineHeight: 1.55 }}>
-              Permanently delete <strong style={{ color: '#111827' }}>"{deleteConfirm.title}"</strong>? This cannot be undone.
-            </p>
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button onClick={() => setDeleteConfirm(null)} style={{ border: '1.5px solid #E5E7EB', background: '#FFFFFF', color: '#374151', borderRadius: 8, padding: '8px 18px', fontWeight: 700, cursor: 'pointer', fontSize: '0.875rem' }}>Cancel</button>
-              <button onClick={() => deleteDraft(deleteConfirm.id, deleteConfirm.isDraft !== false)} disabled={actionLoading}
-                style={{ border: 'none', background: '#DC2626', color: '#FFFFFF', borderRadius: 8, padding: '8px 18px', fontWeight: 700, cursor: actionLoading ? 'default' : 'pointer', fontSize: '0.875rem', opacity: actionLoading ? 0.65 : 1, display: 'flex', alignItems: 'center', gap: 6 }}
-              >
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', padding: '20px 24px' }}>
+              <button onClick={() => setDeleteConfirm(null)} style={{ border: '1.5px solid #E5E7EB', background: '#FFFFFF', color: '#374151', borderRadius: 8, padding: '7px 16px', fontWeight: 600, cursor: 'pointer', fontSize: '0.8125rem' }}>Cancel</button>
+              <button onClick={() => deleteDraft(deleteConfirm.id, deleteConfirm.isDraft !== false)} disabled={actionLoading} style={modalDestructiveButtonStyle(actionLoading)}>
                 {actionLoading ? <Spinner size={13} /> : <Trash2 size={13} />} Delete
               </button>
             </div>
-          </div>
-        </div>
+          </ModalBox>
+        </ModalOverlay>
       )}
     </div>
   )

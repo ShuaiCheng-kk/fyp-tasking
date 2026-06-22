@@ -10,6 +10,8 @@ import {
 import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
+import { ModalOverlay, ModalBox, ModalHeader, modalErrorBoxStyle, modalPrimaryButtonStyle } from '@/components/modal'
+import Spinner from '@/components/Spinner'
 import { AIAutoApprovalDecision } from '@/types/AI'
 import {
   AttendanceDashboard,
@@ -60,15 +62,6 @@ function statusColor(status: string): { bg: string; text: string } {
   if (status === 'rejected' || status === 'absent') return { bg: '#FEF2F2', text: '#B91C1C' }
   if (status === 'modified' || status === 'late' || status === 'overtime') return { bg: '#FFF7ED', text: '#C2410C' }
   return { bg: '#FFFBEB', text: '#B45309' }
-}
-
-function Spinner({ dark = false }: { dark?: boolean }) {
-  return (
-    <svg className="animate-spin" width="15" height="15" viewBox="0 0 18 18" style={{ display: 'inline-block', flexShrink: 0 }}>
-      <circle cx="9" cy="9" r="7" stroke={dark ? 'rgba(17,24,39,0.2)' : 'rgba(255,255,255,0.35)'} strokeWidth="2.5" fill="none" />
-      <path d="M9 2a7 7 0 0 1 7 7" stroke={dark ? '#111827' : 'white'} strokeWidth="2.5" strokeLinecap="round" fill="none" />
-    </svg>
-  )
 }
 
 function AiComingSoonBadge() {
@@ -385,7 +378,7 @@ export default function OwnerAttendancePage() {
             disabled={loading || !companyId}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1.5px solid #E5E7EB', borderRadius: 8, background: '#fff', color: '#374151', padding: '6px 13px', fontWeight: 600, fontSize: '0.8125rem', cursor: loading || !companyId ? 'default' : 'pointer', opacity: loading || !companyId ? 0.5 : 1 }}
           >
-            {loading ? <Spinner dark /> : null} Refresh
+            {loading ? <Spinner size={15} dark /> : null} Refresh
           </button>
         </div>
 
@@ -650,7 +643,7 @@ export default function OwnerAttendancePage() {
 
             {loading ? (
               <div style={{ padding: '20px 18px', color: '#9CA3AF', fontSize: '0.875rem', display: 'flex', gap: 8, alignItems: 'center' }}>
-                <Spinner dark /> Loading...
+                <Spinner size={15} dark /> Loading...
               </div>
             ) : internalRecords.length === 0 ? (
               <div style={{ padding: '20px 18px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>
@@ -724,7 +717,7 @@ export default function OwnerAttendancePage() {
                   disabled={aiLoading || !companyId}
                   style={{ border: 'none', borderRadius: 8, background: '#111827', color: '#FFFFFF', padding: '7px 12px', fontWeight: 700, fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: 6, cursor: aiLoading ? 'default' : 'pointer', opacity: aiLoading || !companyId ? 0.6 : 1 }}
                 >
-                  {aiLoading ? <Spinner /> : <Sparkles size={13} />} AI Review
+                  {aiLoading ? <Spinner size={15} /> : <Sparkles size={13} />} AI Review
                 </button>
                 <button
                   onClick={() => runTimesheetAI(true)}
@@ -761,7 +754,7 @@ export default function OwnerAttendancePage() {
 
             {loading ? (
               <div style={{ padding: '24px 18px', color: '#9CA3AF', fontSize: '0.875rem', display: 'flex', gap: 8, alignItems: 'center' }}>
-                <Spinner dark /> Loading...
+                <Spinner size={15} dark /> Loading...
               </div>
             ) : casualRecords.length === 0 ? (
               <div style={{ padding: '28px 18px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>
@@ -963,84 +956,85 @@ export default function OwnerAttendancePage() {
 
       {/* ── Review Modal ────────────────────────────────────────────────────────── */}
       {reviewOpen && selectedRecord?.record && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.42)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-          <div onClick={event => event.stopPropagation()} style={{ width: 520, background: '#FFFFFF', borderRadius: 14, padding: 24, boxShadow: '0 12px 48px rgba(0,0,0,0.18)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-              <h2 style={{ margin: 0, color: '#111827', fontSize: '1.05rem', fontWeight: 700 }}>Final Attendance Review</h2>
-              <button onClick={() => setReviewOpen(false)} style={{ border: 'none', background: 'transparent', color: '#9CA3AF', cursor: 'pointer' }}><X size={18} /></button>
-            </div>
+        <ModalOverlay onClose={() => setReviewOpen(false)}>
+          <ModalBox>
+            <ModalHeader title="Final Attendance Review" icon={<ShieldCheck size={15} color="#fff" strokeWidth={2.5} />} onClose={() => setReviewOpen(false)} />
 
-            {/* UC2: Tier status badge */}
-            {(() => {
-              const rec = selectedRecord.record
-              const tierLabel = rec.submitted_by_employee_id
-                ? 'Manager Reviewed — Awaiting Owner Final'
-                : rec.confirmed_by_employee_id
-                ? 'Employee Confirmed — Awaiting Manager'
-                : rec.clock_in_time
-                ? 'CW Clocked In — Awaiting Employee Confirm'
-                : 'Not Yet Clocked In'
-              return (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                  <ShieldCheck size={13} style={{ color: '#F97316', flexShrink: 0 }} />
-                  <span style={{ fontSize: '0.775rem', fontWeight: 700, color: '#C2410C', background: '#FFF7ED', padding: '4px 10px', borderRadius: 999, border: '1px solid #FDBA74' }}>
-                    {tierLabel}
-                  </span>
+            <div style={{ padding: '20px 24px 0' }}>
+              {/* UC2: Tier status badge */}
+              {(() => {
+                const rec = selectedRecord.record
+                const tierLabel = rec.submitted_by_employee_id
+                  ? 'Manager Reviewed — Awaiting Owner Final'
+                  : rec.confirmed_by_employee_id
+                  ? 'Employee Confirmed — Awaiting Manager'
+                  : rec.clock_in_time
+                  ? 'CW Clocked In — Awaiting Employee Confirm'
+                  : 'Not Yet Clocked In'
+                return (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                    <ShieldCheck size={13} style={{ color: '#F97316', flexShrink: 0 }} />
+                    <span style={{ fontSize: '0.775rem', fontWeight: 700, color: '#C2410C', background: '#FFF7ED', padding: '4px 10px', borderRadius: 999, border: '1px solid #FDBA74' }}>
+                      {tierLabel}
+                    </span>
+                  </div>
+                )
+              })()}
+
+              {/* Record summary */}
+              <div style={{ padding: '10px 14px', background: '#F8FAFC', borderRadius: 8, marginBottom: 16, fontSize: '0.84rem', color: '#374151' }}>
+                <strong>{selectedRecord.assignee_name}</strong> · {selectedRecord.shift.title || 'Shift'} ·{' '}
+                Clocked: {formatTime(selectedRecord.record.clock_in_time)} – {formatTime(selectedRecord.record.clock_out_time)}
+              </div>
+
+              <div style={{ display: 'grid', gap: 13 }}>
+                <div>
+                  <label style={labelStyle}>Decision</label>
+                  <select value={reviewDecision} onChange={event => setReviewDecision(event.target.value as AttendanceOwnerStatus)} style={inputStyle}>
+                    <option value="approved">Approve</option>
+                    <option value="modified">Modify times</option>
+                    <option value="rejected">Reject</option>
+                  </select>
                 </div>
-              )
-            })()}
-
-            {/* Record summary */}
-            <div style={{ padding: '10px 14px', background: '#F8FAFC', borderRadius: 8, marginBottom: 16, fontSize: '0.84rem', color: '#374151' }}>
-              <strong>{selectedRecord.assignee_name}</strong> · {selectedRecord.shift.title || 'Shift'} ·{' '}
-              Clocked: {formatTime(selectedRecord.record.clock_in_time)} – {formatTime(selectedRecord.record.clock_out_time)}
-            </div>
-
-            <div style={{ display: 'grid', gap: 13 }}>
-              <div>
-                <label style={labelStyle}>Decision</label>
-                <select value={reviewDecision} onChange={event => setReviewDecision(event.target.value as AttendanceOwnerStatus)} style={inputStyle}>
-                  <option value="approved">Approve</option>
-                  <option value="modified">Modify times</option>
-                  <option value="rejected">Reject</option>
-                </select>
-              </div>
-              {reviewDecision === 'modified' && (
-                <>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                    <div>
-                      <label style={labelStyle}>Original Clock In</label>
-                      <div style={{ ...inputStyle, background: '#F8FAFC', color: '#6B7280', display: 'flex', alignItems: 'center' }}>
-                        {formatTime(selectedRecord.record.clock_in_time)}
+                {reviewDecision === 'modified' && (
+                  <>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <div>
+                        <label style={labelStyle}>Original Clock In</label>
+                        <div style={{ ...inputStyle, background: '#F8FAFC', color: '#6B7280', display: 'flex', alignItems: 'center' }}>
+                          {formatTime(selectedRecord.record.clock_in_time)}
+                        </div>
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Original Clock Out</label>
+                        <div style={{ ...inputStyle, background: '#F8FAFC', color: '#6B7280', display: 'flex', alignItems: 'center' }}>
+                          {formatTime(selectedRecord.record.clock_out_time)}
+                        </div>
                       </div>
                     </div>
-                    <div>
-                      <label style={labelStyle}>Original Clock Out</label>
-                      <div style={{ ...inputStyle, background: '#F8FAFC', color: '#6B7280', display: 'flex', alignItems: 'center' }}>
-                        {formatTime(selectedRecord.record.clock_out_time)}
-                      </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <div><label style={labelStyle}>Adjusted Clock In</label><input value={clockIn} onChange={event => setClockIn(event.target.value)} style={inputStyle} placeholder="HH:MM" /></div>
+                      <div><label style={labelStyle}>Adjusted Clock Out</label><input value={clockOut} onChange={event => setClockOut(event.target.value)} style={inputStyle} placeholder="HH:MM" /></div>
                     </div>
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                    <div><label style={labelStyle}>Adjusted Clock In</label><input value={clockIn} onChange={event => setClockIn(event.target.value)} style={inputStyle} placeholder="HH:MM" /></div>
-                    <div><label style={labelStyle}>Adjusted Clock Out</label><input value={clockOut} onChange={event => setClockOut(event.target.value)} style={inputStyle} placeholder="HH:MM" /></div>
-                  </div>
-                  <div>
-                    <label style={labelStyle}>Reason for Modification</label>
-                    <textarea value={reviewModifyReason} onChange={event => setReviewModifyReason(event.target.value)} rows={2} placeholder="Explain why times are being adjusted…" style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5 }} />
-                  </div>
-                </>
-              )}
-              <div><label style={labelStyle}>Owner Notes</label><textarea value={reviewNotes} onChange={event => setReviewNotes(event.target.value)} rows={3} style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5 }} /></div>
-              {error && <div style={{ padding: 11, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 8, fontSize: '0.84rem', fontWeight: 700 }}>{error}</div>}
-              <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
-                <button onClick={submitReview} disabled={actionLoading} style={{ flex: 1, border: 'none', background: '#F97316', color: '#FFFFFF', borderRadius: 8, padding: 11, fontWeight: 900, cursor: actionLoading ? 'default' : 'pointer', display: 'flex', justifyContent: 'center', gap: 8, alignItems: 'center', opacity: actionLoading ? 0.7 : 1 }}>
-                  {actionLoading ? <Spinner /> : null} Save Review
-                </button>
+                    <div>
+                      <label style={labelStyle}>Reason for Modification</label>
+                      <textarea value={reviewModifyReason} onChange={event => setReviewModifyReason(event.target.value)} rows={2} placeholder="Explain why times are being adjusted…" style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5 }} />
+                    </div>
+                  </>
+                )}
+                <div><label style={labelStyle}>Owner Notes</label><textarea value={reviewNotes} onChange={event => setReviewNotes(event.target.value)} rows={3} style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5 }} /></div>
               </div>
             </div>
-          </div>
-        </div>
+
+            {error && <div style={modalErrorBoxStyle}>{error}</div>}
+
+            <div style={{ padding: '0 24px 20px', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={submitReview} disabled={actionLoading} style={modalPrimaryButtonStyle(actionLoading)}>
+                {actionLoading ? <Spinner size={13} /> : <Check size={13} />} Save Review
+              </button>
+            </div>
+          </ModalBox>
+        </ModalOverlay>
       )}
     </div>
   )
