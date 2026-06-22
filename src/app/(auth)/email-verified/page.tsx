@@ -8,6 +8,7 @@ const fB = 'var(--font-body, system-ui, sans-serif)';
 
 export default function EmailVerifiedPage() {
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
+  const [continueHref, setContinueHref] = useState('/get-started?verified=true');
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -16,6 +17,12 @@ export default function EmailVerifiedPage() {
     } else {
       setStatus('success');
     }
+    const continueParams = new URLSearchParams({ verified: 'true' });
+    const jobId = params.get('job_id');
+    const email = params.get('email');
+    if (jobId) continueParams.set('job_id', jobId);
+    if (email) continueParams.set('guest_email', email);
+    setContinueHref(`/get-started?${continueParams.toString()}`);
   }, []);
 
   if (status === 'loading') {
@@ -104,7 +111,7 @@ export default function EmailVerifiedPage() {
               Your email has been confirmed. Continue to finish setting up your company and choose a plan.
             </p>
             <Link
-              href="/get-started?verified=true"
+              href={continueHref}
               style={{
                 display: 'inline-block',
                 background: '#F97316',

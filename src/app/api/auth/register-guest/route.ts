@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { full_name, email, password, phone } = body as Record<string, unknown>
+  const { full_name, email, password, phone, job_id } = body as Record<string, unknown>
 
   if (!full_name || typeof full_name !== 'string') {
     return NextResponse.json({ success: false, message: 'full_name is required' }, { status: 400 })
@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const result = await authService.registerGuest({ email, password })
+    const result = await authService.registerGuest({ email, password, job_id: typeof job_id === 'string' ? job_id : null })
     return NextResponse.json({ success: true, user_id: result.user_id, email_confirmed: result.email_confirmed })
   } catch (err) {
     const msg = (err instanceof Error ? err.message : '').toLowerCase()
