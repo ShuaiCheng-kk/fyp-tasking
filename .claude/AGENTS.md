@@ -1,6 +1,6 @@
 # AGENTS.md — Tasking Project Rules
 
-> Read this and `Owner_Use_Cases.md` before writing any code. This file is the source of truth and overrides the PRD. If a request conflicts with this file, stop and flag it instead of guessing.
+> Read this and `docs/Use_Cases_List.md` before writing any code. This file is the source of truth and overrides the PRD. If a request conflicts with this file, stop and flag it instead of guessing.
 
 ---
 
@@ -32,6 +32,8 @@ Platform-level roles — manage the SaaS platform itself, not scoped to a single
 - **User Admin** — manages platform-wide users and company accounts at the SaaS-operator level (e.g. account status, company onboarding/removal across the whole platform). Exact feature list to be finalized when this role is built.
 
 **UI principle — applies to every role above:** there is exactly **one shared UI/component system** for the whole app. Owner is built first as the full feature superset; every other role (Partner, Manager, Employee, Marketing Admin, User Admin, Casual Worker, Guest) reuses the *same* components, layouts, and visual design — never a separate theme, never a rebuilt page. The only thing that changes per role is **which features/menu items are visible and which actions are permitted**, gated by permissions — not a visually distinct UI. Each role can still have its own Next.js route group (`src/app/owner/`, `src/app/partner/`, etc.) for access-control routing, but it must render the shared components, not a duplicated bespoke version.
+
+**Subscription tier (Free/Paid) is a second, independent axis — same shared-UI principle, gated separately from role.** Build every feature assuming the Paid tier first (the full feature set per `docs/Use_Cases_List.md`), then gate Free-tier restrictions through **one shared mechanism** (e.g. a single `isFeatureEnabled(plan, ucId)` check or a `<PaidGate>` wrapper component) — never by duplicating "if Free, hide this" logic separately on each role's page. Role scope and tier gating both apply at once and independently: a Manager on a Free-plan company still only sees their own department (role scope) and, within that, only the Free-tier features (tier gating). Gating happens at the individual feature/action level inside the existing shared page (e.g. one button on the Shifts page shows an upgrade prompt instead of running) — never by building a separate "Free" page or duplicating a page per tier.
 
 ---
 
@@ -109,3 +111,18 @@ Code must be readable enough that a teammate (or an AI given the code) can draw 
 - Middleware/session cookie timing: signin redirect can fire before cookie is fully written.
 - Navbar shows Dashboard/Logout in unauthenticated/incognito state (T-21, T-22).
 - `src/proxy.ts` contains role-based route-guard logic (redirects unauthenticated/wrong-role users) but is named wrong for Next.js to load it as middleware — it currently does nothing. No route-protection middleware is active. Needs a decision: rename to `src/middleware.ts` to wire it up, or remove if route guarding is meant to stay page-level.
+
+---
+
+## 8. Testing requirement per use case
+
+Reference `docs/Use_Cases_List.md` for the UC list. For every use case's backend work (`route.ts` -> `service.ts` -> `repository.ts`), before touching its UI or moving to the next use case:
+
+1. **Write and run a Unit Test** for the service-layer logic — Vitest, co-located next to the service file as `xxxService.test.ts` (e.g. `src/services/company/companyService.test.ts`). Mock the repository module it calls, and always mock `@/lib/supabase` (`vi.mock('@/lib/supabase', () => ({ supabase: {}, createClient: () => ({}) }))`) so unit tests need no real env vars or network access. Run with `npm test`.
+2. **Write and run an Integration/API Test** for the route — Playwright `request` fixture (no browser) hitting the real `route.ts` endpoint against the real dev Supabase project, in `tests/api/<feature>.spec.ts`. Use the seeding helper pattern in `tests/helpers/seed.ts` (create a throwaway Owner+Company via the service-role client, clean it up in `afterAll`). Run with `npm run test:api`.
+3. **If a test fails, fix the implementation (or the test, if the test was wrong) before continuing.** Never move to the next use case with a known-failing test.
+4. **After any fix, re-run the full existing Unit + Integration suite** (`npm test` and `npm run test:api`), not just the one use case you were working on — this is the regression check that catches a fix breaking something else.
+
+**E2E is the exception — it is NOT required per use case.** Reserve Playwright browser tests (`tests/e2e/<flow>.spec.ts`, `page` fixture, run with `npm run test:e2e`) for the P1 core user journeys (the ones tied to Smart Task Allocation, e.g. job posting -> hire -> schedule -> assign task -> clock in -> attendance approval) once that journey's UI is wired end to end. Add to it incrementally and re-run it as regression whenever related code changes — do not write a new E2E spec for every use case.
+
+**File-naming rule to avoid the two test runners colliding:** Unit Test files use the `.test.ts` suffix and live under `src/`; Integration and E2E files use the `.spec.ts` suffix and live under `tests/`. Vitest is configured to only look at `src/**/*.test.ts`; Playwright's `testDir` is `./tests`. Keep this split — do not rename across it.

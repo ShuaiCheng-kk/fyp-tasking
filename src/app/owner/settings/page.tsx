@@ -2,11 +2,13 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Plus, X, Pencil, Trash2, Crown } from 'lucide-react'
+import { Plus, X, Pencil, Trash2, Crown, Building2 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
+import { ModalOverlay, ModalBox, ModalHeader, modalInputStyle, modalLabelStyle, modalErrorBoxStyle, modalGhostButtonStyle, modalPrimaryButtonStyle, modalDestructiveButtonStyle } from '@/components/modal'
+import Spinner from '@/components/Spinner'
 
 const INDUSTRIES = ['Retail', 'F&B', 'Logistics', 'Event Management']
 const SIZES = ['1-10', '11-50', '51-200', '200+']
@@ -27,74 +29,12 @@ type Company = {
 }
 
 
-// ─── Spinner ──────────────────────────────────────────────────────────────────
-
-function Spinner({ size = 16, dark = false }: { size?: number; dark?: boolean }) {
-  return (
-    <svg className="animate-spin" width={size} height={size} viewBox="0 0 18 18" style={{ display: 'inline-block', flexShrink: 0 }}>
-      <circle cx="9" cy="9" r="7" stroke={dark ? 'rgba(17,24,39,0.2)' : 'rgba(255,255,255,0.35)'} strokeWidth="2.5" fill="none" />
-      <path d="M9 2a7 7 0 0 1 7 7" stroke={dark ? '#111827' : 'white'} strokeWidth="2.5" strokeLinecap="round" fill="none" />
-    </svg>
-  )
-}
-
-// ─── Modal primitives ─────────────────────────────────────────────────────────
-
-function ModalOverlay({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
-  return (
-    <div
-      style={{
-        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
-        backdropFilter: 'blur(2px)', display: 'flex', alignItems: 'center',
-        justifyContent: 'center', zIndex: 100,
-      }}
-    >
-      <div style={{ width: '540px' }}>
-        {children}
-      </div>
-    </div>
-  )
-}
-
-function ModalBox({ children }: { children: React.ReactNode }) {
-  return (
-    <div style={{ background: '#FFFFFF', borderRadius: '16px', padding: '32px', boxShadow: '0 8px 40px rgba(0,0,0,0.12)', maxHeight: '90vh', overflowY: 'auto' }}>
-      {children}
-    </div>
-  )
-}
-
-function ModalHeader({ title, onClose }: { title: string; onClose: () => void }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
-      <h2 style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827', margin: 0 }}>{title}</h2>
-      <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', display: 'flex', padding: '4px', borderRadius: '6px' }}>
-        <X size={18} />
-      </button>
-    </div>
-  )
-}
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 function InlineError({ message }: { message: string }) {
   if (!message) return null
-  return (
-    <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '8px', padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626', marginTop: '12px', lineHeight: 1.5 }}>
-      {message}
-    </div>
-  )
+  return <div style={modalErrorBoxStyle}>{message}</div>
 }
-
-const inputStyle: React.CSSProperties = {
-  width: '100%', padding: '10px 12px', border: '1.5px solid #E5E7EB',
-  borderRadius: '8px', fontSize: '0.9375rem', color: '#111827',
-  outline: 'none', boxSizing: 'border-box', background: '#FFFFFF',
-}
-
-const labelStyle: React.CSSProperties = {
-  display: 'block', fontWeight: 600, fontSize: '0.875rem', color: '#374151', marginBottom: '6px',
-}
-
-// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function SettingsPage() {
   const router = useRouter()
@@ -451,17 +391,10 @@ export default function SettingsPage() {
     }
   }
 
-  const primaryBtn = (disabled: boolean): React.CSSProperties => ({
-    flex: 1, padding: '10px', background: '#111827', border: 'none', borderRadius: '8px',
-    fontWeight: 600, fontSize: '0.9375rem', color: '#FFFFFF',
-    cursor: disabled ? 'default' : 'pointer', display: 'flex', alignItems: 'center',
-    justifyContent: 'center', gap: '7px', opacity: disabled ? 0.65 : 1,
-  })
-
-  const ghostBtn: React.CSSProperties = {
-    flex: 1, padding: '10px', background: 'none', border: '1.5px solid #E5E7EB',
-    borderRadius: '8px', fontWeight: 600, fontSize: '0.9375rem', color: '#6B7280', cursor: 'pointer',
-  }
+  const primaryBtn = modalPrimaryButtonStyle
+  const ghostBtn = modalGhostButtonStyle
+  const inputStyle = modalInputStyle
+  const labelStyle = modalLabelStyle
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -717,9 +650,9 @@ export default function SettingsPage() {
       {editTarget && (
         <ModalOverlay onClose={() => setEditTarget(null)}>
           <ModalBox>
-            <ModalHeader title="Edit Company" onClose={() => setEditTarget(null)} />
+            <ModalHeader title="Edit Company" icon={<Building2 size={15} color="#fff" strokeWidth={2} />} onClose={() => setEditTarget(null)} />
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
               <div>
                 <label style={labelStyle}>Company Name <span style={{ color: '#EF4444' }}>*</span></label>
                 <input
@@ -770,9 +703,9 @@ export default function SettingsPage() {
 
             <InlineError message={editError} />
 
-            <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+            <div style={{ padding: '0 24px 20px', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button style={primaryBtn(editLoading)} onClick={handleEdit} disabled={editLoading}>
-                {editLoading && <Spinner size={14} />}
+                {editLoading && <Spinner size={13} />}
                 Save Changes
               </button>
             </div>
@@ -784,28 +717,21 @@ export default function SettingsPage() {
       {deleteTarget && (
         <ModalOverlay onClose={() => setDeleteTarget(null)}>
           <ModalBox>
-            <ModalHeader title="Delete Company" onClose={() => setDeleteTarget(null)} />
+            <ModalHeader title="Delete Company" icon={<Trash2 size={15} color="#fff" strokeWidth={2.5} />} iconBg="linear-gradient(135deg, #EF4444, #DC2626)" onClose={() => setDeleteTarget(null)} />
 
-            <p style={{ fontSize: '0.9375rem', color: '#374151', marginBottom: '4px', lineHeight: 1.6 }}>
-              Are you sure you want to delete <strong>{deleteTarget.name}</strong>?{' '}
-              This cannot be undone.
-            </p>
+            <div style={{ padding: '20px 24px 0' }}>
+              <p style={{ fontSize: '0.9375rem', color: '#374151', marginBottom: '4px', lineHeight: 1.6 }}>
+                Are you sure you want to delete <strong>{deleteTarget.name}</strong>?{' '}
+                This cannot be undone.
+              </p>
+            </div>
 
             <InlineError message={deleteError} />
 
-            <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+            <div style={{ padding: '0 24px 20px', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button style={ghostBtn} onClick={() => setDeleteTarget(null)}>Cancel</button>
-              <button
-                onClick={handleDelete}
-                disabled={deleteLoading}
-                style={{
-                  flex: 1, padding: '10px', background: '#EF4444', border: 'none', borderRadius: '8px',
-                  fontWeight: 600, fontSize: '0.9375rem', color: '#FFFFFF',
-                  cursor: deleteLoading ? 'default' : 'pointer', display: 'flex', alignItems: 'center',
-                  justifyContent: 'center', gap: '7px', opacity: deleteLoading ? 0.65 : 1,
-                }}
-              >
-                {deleteLoading && <Spinner size={14} />}
+              <button onClick={handleDelete} disabled={deleteLoading} style={modalDestructiveButtonStyle(deleteLoading)}>
+                {deleteLoading ? <Spinner size={13} /> : <Trash2 size={13} />}
                 Delete Company
               </button>
             </div>
@@ -817,48 +743,52 @@ export default function SettingsPage() {
       {leaveTarget && (
         <ModalOverlay onClose={() => { setLeaveTarget(null); setLeaveCompanyCount(null) }}>
           <ModalBox>
-            <ModalHeader title="Leave Company" onClose={() => { setLeaveTarget(null); setLeaveCompanyCount(null) }} />
+            <ModalHeader title="Leave Company" icon={<Trash2 size={15} color="#fff" strokeWidth={2.5} />} iconBg="linear-gradient(135deg, #EF4444, #DC2626)" onClose={() => { setLeaveTarget(null); setLeaveCompanyCount(null) }} />
 
-            {leaveCountLoading ? (
-              <div style={{ display: 'flex', justifyContent: 'center', padding: '16px 0' }}>
-                <Spinner size={20} dark />
-              </div>
-            ) : leaveCompanyCount === 1 ? (
-              <p style={{ fontSize: '0.9375rem', color: '#374151', marginBottom: '4px', lineHeight: 1.6 }}>
-                Are you sure you want to leave <strong>{leaveTarget.name}</strong>?{' '}
-                Since this is your only company, your account will be permanently deleted and you will be signed out.{' '}
-                This cannot be undone.
-              </p>
-            ) : (
-              <p style={{ fontSize: '0.9375rem', color: '#374151', marginBottom: '4px', lineHeight: 1.6 }}>
-                Are you sure you want to leave <strong>{leaveTarget.name}</strong>?{' '}
-                You will lose access to this company. Your account will not be deleted.
-              </p>
-            )}
+            <div style={{ padding: '20px 24px 0' }}>
+              {leaveCountLoading ? (
+                <div style={{ display: 'flex', justifyContent: 'center', padding: '16px 0' }}>
+                  <Spinner size={20} dark />
+                </div>
+              ) : leaveCompanyCount === 1 ? (
+                <p style={{ fontSize: '0.9375rem', color: '#374151', marginBottom: '4px', lineHeight: 1.6 }}>
+                  Are you sure you want to leave <strong>{leaveTarget.name}</strong>?{' '}
+                  Since this is your only company, your account will be permanently deleted and you will be signed out.{' '}
+                  This cannot be undone.
+                </p>
+              ) : (
+                <p style={{ fontSize: '0.9375rem', color: '#374151', marginBottom: '4px', lineHeight: 1.6 }}>
+                  Are you sure you want to leave <strong>{leaveTarget.name}</strong>?{' '}
+                  You will lose access to this company. Your account will not be deleted.
+                </p>
+              )}
+            </div>
 
             <InlineError message={leaveError} />
 
-            <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+            <div style={{ padding: '0 24px 20px', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button style={ghostBtn} onClick={() => { setLeaveTarget(null); setLeaveCompanyCount(null) }}>Cancel</button>
-              <button
-                onClick={handleLeave}
-                disabled={leaveLoading || leaveCountLoading}
-                style={{
-                  flex: 1, padding: '10px',
-                  background: leaveCompanyCount === 1 ? '#EF4444' : 'none',
-                  border: leaveCompanyCount === 1 ? 'none' : '1.5px solid #EF4444',
-                  borderRadius: '8px',
-                  fontWeight: 600, fontSize: '0.9375rem',
-                  color: leaveCompanyCount === 1 ? '#FFFFFF' : '#EF4444',
-                  cursor: (leaveLoading || leaveCountLoading) ? 'default' : 'pointer',
-                  display: 'flex', alignItems: 'center',
-                  justifyContent: 'center', gap: '7px',
-                  opacity: (leaveLoading || leaveCountLoading) ? 0.65 : 1,
-                }}
-              >
-                {leaveLoading && <Spinner size={14} dark={leaveCompanyCount !== 1} />}
-                Leave Company
-              </button>
+              {leaveCompanyCount === 1 ? (
+                <button onClick={handleLeave} disabled={leaveLoading || leaveCountLoading} style={modalDestructiveButtonStyle(leaveLoading || leaveCountLoading)}>
+                  {leaveLoading ? <Spinner size={13} /> : <Trash2 size={13} />}
+                  Leave Company
+                </button>
+              ) : (
+                <button
+                  onClick={handleLeave}
+                  disabled={leaveLoading || leaveCountLoading}
+                  style={{
+                    padding: '7px 18px', background: 'none', border: '1.5px solid #EF4444', borderRadius: 8,
+                    fontWeight: 600, fontSize: '0.8125rem', color: '#EF4444',
+                    cursor: (leaveLoading || leaveCountLoading) ? 'not-allowed' : 'pointer',
+                    display: 'flex', alignItems: 'center', gap: 6,
+                    opacity: (leaveLoading || leaveCountLoading) ? 0.65 : 1,
+                  }}
+                >
+                  {leaveLoading && <Spinner size={13} dark />}
+                  Leave Company
+                </button>
+              )}
             </div>
           </ModalBox>
         </ModalOverlay>
@@ -870,46 +800,49 @@ export default function SettingsPage() {
           <ModalBox>
             <ModalHeader
               title={planModalType === 'upgrade' ? 'Upgrade to Pro?' : 'Downgrade to Free?'}
+              icon={<Crown size={15} color="#fff" strokeWidth={2} />}
               onClose={() => { setPlanModalTarget(null); setPlanModalType(null) }}
             />
-            {planModalType === 'upgrade' ? (
-              <div style={{ fontSize: '0.9375rem', color: '#374151', margin: '0 0 4px', lineHeight: 1.6 }}>
-                <p style={{ margin: '0 0 12px' }}>
-                  All your companies will be upgraded to Pro.
+            <div style={{ padding: '20px 24px 0' }}>
+              {planModalType === 'upgrade' ? (
+                <div style={{ fontSize: '0.9375rem', color: '#374151', margin: '0 0 4px', lineHeight: 1.6 }}>
+                  <p style={{ margin: '0 0 12px' }}>
+                    All your companies will be upgraded to Pro.
+                  </p>
+                  {memberCountLoading
+                    ? <span style={{ color: '#9CA3AF' }}>Calculating cost…</span>
+                    : (
+                      <div style={{ background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: '10px', padding: '14px 18px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                          <span style={{ color: '#6B7280' }}>Users</span>
+                          <span style={{ fontWeight: 600 }}>{memberCount}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+                          <span style={{ color: '#6B7280' }}>Price per user</span>
+                          <span style={{ fontWeight: 600 }}>$6 / month</span>
+                        </div>
+                        <div style={{ borderTop: '1px solid #FED7AA', paddingTop: '10px', display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ fontWeight: 700 }}>Total</span>
+                          <span style={{ fontWeight: 700, color: '#F97316', fontSize: '1rem' }}>${6 * memberCount}/month</span>
+                        </div>
+                      </div>
+                    )}
+                </div>
+              ) : (
+                <p style={{ fontSize: '0.9375rem', color: '#374151', margin: '0 0 4px', lineHeight: 1.6 }}>
+                  All your companies and their members will be downgraded to Free.
                 </p>
-                {memberCountLoading
-                  ? <span style={{ color: '#9CA3AF' }}>Calculating cost…</span>
-                  : (
-                    <div style={{ background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: '10px', padding: '14px 18px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                        <span style={{ color: '#6B7280' }}>Users</span>
-                        <span style={{ fontWeight: 600 }}>{memberCount}</span>
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
-                        <span style={{ color: '#6B7280' }}>Price per user</span>
-                        <span style={{ fontWeight: 600 }}>$6 / month</span>
-                      </div>
-                      <div style={{ borderTop: '1px solid #FED7AA', paddingTop: '10px', display: 'flex', justifyContent: 'space-between' }}>
-                        <span style={{ fontWeight: 700 }}>Total</span>
-                        <span style={{ fontWeight: 700, color: '#F97316', fontSize: '1rem' }}>${6 * memberCount}/month</span>
-                      </div>
-                    </div>
-                  )}
-              </div>
-            ) : (
-              <p style={{ fontSize: '0.9375rem', color: '#374151', margin: '0 0 4px', lineHeight: 1.6 }}>
-                All your companies and their members will be downgraded to Free.
-              </p>
-            )}
+              )}
+            </div>
             <InlineError message={planChangeError} />
-            <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+            <div style={{ padding: '0 24px 20px', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button style={ghostBtn} onClick={() => { setPlanModalTarget(null); setPlanModalType(null) }}>Cancel</button>
               <button
                 style={primaryBtn(planChangeLoading)}
                 onClick={handlePlanChange}
                 disabled={planChangeLoading}
               >
-                {planChangeLoading && <Spinner size={14} />}
+                {planChangeLoading && <Spinner size={13} />}
                 {planModalType === 'upgrade' ? 'Confirm Upgrade' : 'Confirm Downgrade'}
               </button>
             </div>
@@ -921,8 +854,9 @@ export default function SettingsPage() {
       {addOpen && (
         <ModalOverlay onClose={() => setAddOpen(false)}>
           <ModalBox>
-            <ModalHeader title="Add New Company" onClose={() => setAddOpen(false)} />
+            <ModalHeader title="Add New Company" icon={<Building2 size={15} color="#fff" strokeWidth={2} />} onClose={() => setAddOpen(false)} />
 
+            <div style={{ padding: '20px 24px 0' }}>
             <div style={{ marginBottom: '16px' }}>
               <label style={labelStyle}>Company Name <span style={{ color: '#EF4444' }}>*</span></label>
               <input
@@ -1009,12 +943,13 @@ export default function SettingsPage() {
                 + Add another
               </button>
             </div>
+            </div>
 
             <InlineError message={addError} />
 
-            <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
+            <div style={{ padding: '0 24px 20px', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button style={primaryBtn(addLoading)} onClick={handleAdd} disabled={addLoading}>
-                {addLoading && <Spinner size={14} />}
+                {addLoading && <Spinner size={13} />}
                 Create Company
               </button>
             </div>

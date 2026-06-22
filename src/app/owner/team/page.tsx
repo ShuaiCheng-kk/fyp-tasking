@@ -8,6 +8,13 @@ import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import DatePickerField from '@/components/DatePickerField'
 import { DEPT_COLORS, deptColor, setDeptColorOverrides } from '@/lib/deptColor'
+import { ModalOverlay, ModalBox, ModalHeader, modalInputStyle, modalLabelStyle } from '@/components/modal'
+import { SectionBlock, ShowcaseCard } from '@/components/panel'
+import Toast from '@/components/Toast'
+import Spinner from '@/components/Spinner'
+import AnimatedNumber from '@/components/AnimatedNumber'
+import RoleAvatar from '@/components/RoleAvatar'
+import DropdownField from '@/components/DropdownField'
 
 // ─── Department color picker ────────────────────────────────────────────────
 
@@ -132,141 +139,6 @@ function DepartmentColorPicker({ value, onChange }: { value: string | null; onCh
       </div>
     </div>
   )
-}
-
-// ─── Spinner ──────────────────────────────────────────────────────────────────
-
-function Spinner({ size = 16, dark = false }: { size?: number; dark?: boolean }) {
-  return (
-    <svg className="animate-spin" width={size} height={size} viewBox="0 0 18 18" style={{ display: 'inline-block', flexShrink: 0 }}>
-      <circle cx="9" cy="9" r="7" stroke={dark ? 'rgba(17,24,39,0.2)' : 'rgba(255,255,255,0.35)'} strokeWidth="2.5" fill="none" />
-      <path d="M9 2a7 7 0 0 1 7 7" stroke={dark ? '#111827' : 'white'} strokeWidth="2.5" strokeLinecap="round" fill="none" />
-    </svg>
-  )
-}
-
-// ─── Animated counter ────────────────────────────────────────────────────────
-
-function AnimatedNumber({ value, duration = 550 }: { value: number; duration?: number }) {
-  const [display, setDisplay] = useState(value)
-  const prevRef = useRef(value)
-  const rafRef  = useRef<number | null>(null)
-
-  useEffect(() => {
-    const from = prevRef.current
-    const to   = value
-    if (from === to) return
-    if (rafRef.current) cancelAnimationFrame(rafRef.current)
-    const start = performance.now()
-    const tick = (now: number) => {
-      const t = Math.min((now - start) / duration, 1)
-      const eased = 1 - (1 - t) ** 3
-      setDisplay(Math.round(from + (to - from) * eased))
-      if (t < 1) rafRef.current = requestAnimationFrame(tick)
-      else prevRef.current = to
-    }
-    rafRef.current = requestAnimationFrame(tick)
-    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
-  }, [value, duration])
-
-  return <>{display.toLocaleString()}</>
-}
-
-// ─── Modal primitives ─────────────────────────────────────────────────────────
-
-const modalKeyframes = `
-  @keyframes overlayFadeIn { from { opacity: 0 } to { opacity: 1 } }
-  @keyframes modalSlideIn  { from { opacity: 0; transform: scale(0.97) translateY(8px) } to { opacity: 1; transform: scale(1) translateY(0) } }
-  @keyframes modalSlideOut { from { opacity: 1; transform: scale(1) translateY(0) } to { opacity: 0; transform: scale(0.97) translateY(8px) } }
-  @keyframes tabFadeIn     { from { opacity: 0; transform: translateY(5px) } to { opacity: 1; transform: translateY(0) } }
-  @keyframes fadeIn        { from { opacity: 0 } to { opacity: 1 } }
-  @keyframes profileFieldsIn { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: translateY(0) } }
-`
-
-function ModalOverlay({ children, onClose, maxWidth = '540px' }: { children: React.ReactNode; onClose: () => void; maxWidth?: string }) {
-  return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(15,23,42,0.45)',
-        backdropFilter: 'blur(4px)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 100,
-        animation: 'overlayFadeIn 0.18s ease-out',
-      }}
-    >
-      <style>{modalKeyframes}</style>
-      <div style={{ width: `min(${maxWidth}, calc(100% - 32px))` }}>
-        {children}
-      </div>
-    </div>
-  )
-}
-
-function ModalBox({ children, closing = false }: { children: React.ReactNode; closing?: boolean }) {
-  return (
-    <div style={{
-      background: '#FFFFFF',
-      borderRadius: 20,
-      overflow: 'hidden',
-      boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)',
-      maxHeight: '90vh',
-      overflowY: 'auto',
-      display: 'flex',
-      flexDirection: 'column',
-      animation: `${closing ? 'modalSlideOut' : 'modalSlideIn'} 0.22s cubic-bezier(0.16,1,0.3,1)`,
-    }}>
-      {children}
-    </div>
-  )
-}
-
-function ModalHeader({ title, icon, iconBg, onClose }: { title: string; icon?: React.ReactNode; iconBg?: string; onClose: () => void }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', flexShrink: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        {icon && (
-          <div style={{ width: 32, height: 32, borderRadius: 9, background: iconBg ?? 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-            {icon}
-          </div>
-        )}
-        <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>{title}</h2>
-      </div>
-      <button
-        onClick={onClose}
-        style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8, flexShrink: 0 }}
-        onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
-        onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
-      >
-        <X size={16} />
-      </button>
-    </div>
-  )
-}
-
-const modalInputStyle: React.CSSProperties = {
-  width: '100%',
-  padding: '10px 12px',
-  border: '1.5px solid #E5E7EB',
-  borderRadius: 8,
-  fontSize: '0.9375rem',
-  fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
-  fontWeight: 400,
-  color: '#111827',
-  outline: 'none',
-  boxSizing: 'border-box',
-  background: '#FFFFFF',
-}
-
-const modalLabelStyle: React.CSSProperties = {
-  display: 'block',
-  fontWeight: 600,
-  fontSize: '0.875rem',
-  color: '#374151',
-  marginBottom: '8px',
 }
 
 const OWNER_ORANGE = '#F97316'
@@ -437,110 +309,6 @@ const teamTabKeyframes = `
   .org-dept-col       { animation: blockSlideUp 0.36s ease both; }
 `
 
-// ─── Custom Dropdown ──────────────────────────────────────────────────────────
-
-function DropdownField({ value, options, onChange, placeholder, disabled = false }: {
-  value: string
-  options: { value: string; label: string }[]
-  onChange: (v: string) => void
-  placeholder?: string
-  disabled?: boolean
-}) {
-  const [open, setOpen] = useState(false)
-  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 })
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const dropdownRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const h = (e: MouseEvent) => {
-      if (!triggerRef.current?.contains(e.target as Node) && !dropdownRef.current?.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', h)
-    return () => document.removeEventListener('mousedown', h)
-  }, [open])
-
-  const selected = options.find(o => o.value === value)
-
-  const handleOpen = () => {
-    if (!open && triggerRef.current) {
-      const r = triggerRef.current.getBoundingClientRect()
-      const DROPDOWN_H = Math.min(options.length * 37 + 8, 208)
-      const fitsBelow = r.bottom + DROPDOWN_H + 4 <= window.innerHeight
-      setPos({ top: fitsBelow ? r.bottom + 4 : r.top - DROPDOWN_H - 4, left: r.left, width: r.width })
-    }
-    setOpen(o => !o)
-  }
-
-  return (
-    <div style={{ position: 'relative' }}>
-      <button ref={triggerRef} type="button" onClick={handleOpen}
-        style={{
-          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '10px 12px', border: `1.5px solid ${open ? '#F97316' : '#E5E7EB'}`, borderRadius: 8,
-          background: '#FFFFFF', cursor: 'pointer', fontSize: '0.9375rem',
-          color: selected ? '#111827' : '#9CA3AF', fontWeight: selected ? 500 : 400,
-          outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s', minHeight: 40,
-        }}>
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {selected?.label ?? placeholder ?? 'Select...'}
-        </span>
-        <ChevronDown size={13} style={{ color: '#94A3B8', flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
-      </button>
-      {open && (
-        <div ref={dropdownRef} style={{
-          position: 'fixed', top: pos.top, left: pos.left, width: pos.width,
-          background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 10,
-          boxShadow: '0 8px 24px rgba(15,23,42,0.12)', zIndex: 9999, maxHeight: 208, overflowY: 'auto',
-          padding: '4px 0',
-        }}>
-          {options.map(opt => {
-            const isSel = opt.value === value
-            return (
-              <button key={opt.value} type="button"
-                onClick={() => { onChange(opt.value); setOpen(false) }}
-                style={{
-                  display: 'block', width: '100%', padding: '8px 14px', textAlign: 'left',
-                  border: 'none', background: isSel ? '#FFF7ED' : 'transparent',
-                  color: isSel ? '#EA580C' : '#374151', fontWeight: isSel ? 700 : 400,
-                  fontSize: 13, cursor: 'pointer',
-                }}
-                onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = '#F9FAFB' }}
-                onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = 'transparent' }}
-              >{opt.label}</button>
-            )
-          })}
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ─── Role avatar config ───────────────────────────────────────────────────────
-
-function RoleAvatar({ role, size = 36, photoUrl }: { role: string; size?: number; photoUrl?: string | null }) {
-  if (photoUrl) {
-    return (
-      <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: size, height: size, borderRadius: 999, flexShrink: 0, overflow: 'hidden' }}>
-        <img src={photoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-      </span>
-    )
-  }
-  const cfg: Record<string, { bg: string; color: string; icon: React.ReactNode }> = {
-    Owner:   { bg: '#0F172A', color: '#FFFFFF',  icon: <Crown    size={size * 0.42} /> },
-    Partner: { bg: '#0F172A', color: '#FFFFFF',  icon: <Crown    size={size * 0.42} /> },
-    Manager: { bg: '#FFF7ED', color: '#EA580C',  icon: <UserCog  size={size * 0.42} /> },
-    Employee:{ bg: '#F3F4F6', color: '#4B5563',  icon: <UserRound size={size * 0.42} /> },
-    'Casual Worker': { bg: '#EFF6FF', color: '#2563EB', icon: <HardHat size={size * 0.42} /> },
-  }
-  const { bg, color, icon } = cfg[role] ?? { bg: '#F3F4F6', color: '#6B7280', icon: <UserRound size={size * 0.42} /> }
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: size, height: size, borderRadius: 999, background: bg, color, flexShrink: 0 }}>
-      {icon}
-    </span>
-  )
-}
-
 // ─── Org Chart sub-components ────────────────────────────────────────────────
 
 function OrgMemberCard({ member, onClick }: { member: TeamMember; onClick: () => void }) {
@@ -647,90 +415,6 @@ function HorizontalMemberCard({
         </span>
       )}
     </button>
-  )
-}
-
-function SectionBlock({
-  icon,
-  title,
-  subtitle,
-  children,
-}: {
-  icon: React.ReactNode
-  title: string
-  subtitle?: string
-  children: React.ReactNode
-}) {
-  return (
-    <div style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 18, padding: 22, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: subtitle ? 12 : 18 }}>
-        <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          {icon}
-        </div>
-        <div style={{ minWidth: 0 }}>
-          <p style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', margin: 0, letterSpacing: '-0.2px' }}>{title}</p>
-          {subtitle && <p style={{ fontSize: 12, fontWeight: 500, color: '#64748B', margin: '3px 0 0' }}>{subtitle}</p>}
-        </div>
-      </div>
-      {children}
-    </div>
-  )
-}
-
-function TeamShowcaseCard({
-  icon,
-  title,
-  rightContent,
-  searchValue,
-  onSearchChange,
-  searchPlaceholder,
-  fillHeight,
-  className,
-  children,
-}: {
-  icon: React.ReactNode
-  title: string
-  rightContent?: React.ReactNode
-  searchValue?: string
-  onSearchChange?: (value: string) => void
-  searchPlaceholder?: string
-  fillHeight?: boolean
-  className?: string
-  children: React.ReactNode
-}) {
-  return (
-    <div className={className} style={{ flex: fillHeight ? 1 : undefined, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
-      <div style={{ minHeight: 78, padding: '20px 24px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 18, minWidth: 0, flex: 1 }}>
-          <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-            {icon}
-          </div>
-          <div style={{ minWidth: 0, flexShrink: 0 }}>
-            <p style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', margin: 0, letterSpacing: '-0.2px', lineHeight: 1.2 }}>{title}</p>
-          </div>
-          {rightContent}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexShrink: 0 }}>
-          {onSearchChange && (
-            <div style={{ position: 'relative', flexShrink: 0 }}>
-              <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
-              <input
-                value={searchValue ?? ''}
-                onChange={e => onSearchChange(e.target.value)}
-                placeholder={searchPlaceholder}
-                style={{ width: 180, height: 34, borderRadius: 999, border: '1px solid #E5E7EB', background: '#F9FAFB', padding: '0 12px 0 32px', fontSize: 13, color: '#111827', outline: 'none', boxSizing: 'border-box' }}
-                onFocus={e => { e.currentTarget.style.borderColor = '#F97316'; e.currentTarget.style.background = '#FFFFFF' }}
-                onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.background = '#F9FAFB' }}
-              />
-            </div>
-          )}
-        </div>
-      </div>
-      <div style={{ borderTop: '1px solid #E5E7EB', flexShrink: 0 }} />
-      <div style={{ flex: 1, minHeight: 0, padding: '18px 24px 20px', overflowY: fillHeight ? 'auto' : undefined }}>
-        {children}
-      </div>
-    </div>
   )
 }
 
@@ -2876,7 +2560,7 @@ export default function TeamPage() {
         )
       case 'casual':
         return (
-          <TeamShowcaseCard
+          <ShowcaseCard
             className="all-block-cw"
             icon={<HardHat size={15} style={{ color: sharedIconColor }} />}
             title="Casual Workers"
@@ -2949,11 +2633,11 @@ export default function TeamPage() {
                 </div>
               )
             })()}
-          </TeamShowcaseCard>
+          </ShowcaseCard>
         )
       case 'internal':
         return (
-          <TeamShowcaseCard
+          <ShowcaseCard
             className="all-block-internal"
             icon={<Users size={15} style={{ color: sharedIconColor }} />}
             title="Internal Members"
@@ -3024,7 +2708,7 @@ export default function TeamPage() {
                 </RoleGroupCard>
               ))}
             </div>
-          </TeamShowcaseCard>
+          </ShowcaseCard>
         )
     }
   }
@@ -3587,7 +3271,7 @@ export default function TeamPage() {
                   </div>
                   </div>
                   <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 18 }}>
-                    <TeamShowcaseCard
+                    <ShowcaseCard
                       className="all-block-cw"
                       icon={<HardHat size={15} style={{ color: sharedIconColor }} />}
                       title="Casual Workers"
@@ -3660,9 +3344,9 @@ export default function TeamPage() {
                           </div>
                         )
                       })()}
-                    </TeamShowcaseCard>
+                    </ShowcaseCard>
 
-                    <TeamShowcaseCard
+                    <ShowcaseCard
                       className="all-block-internal"
                       icon={<Users size={15} style={{ color: sharedIconColor }} />}
                       title="Internal Members"
@@ -3733,14 +3417,14 @@ export default function TeamPage() {
                       </RoleGroupCard>
                     ))}
                   </div>
-                </TeamShowcaseCard>
+                </ShowcaseCard>
                   </div>
               </div>
             )
           })()}
 
           {teamViewTab === 'org' && (
-            <TeamShowcaseCard
+            <ShowcaseCard
               className="org-chart-wrap"
               icon={<Network size={15} style={{ color: '#F97316' }} />}
               title="Organisation Chart"
@@ -3762,7 +3446,7 @@ export default function TeamPage() {
                   searchQuery={normalizedOrgSearch}
                 />
               )}
-            </TeamShowcaseCard>
+            </ShowcaseCard>
           )}
           </div>
         </div>
@@ -4897,108 +4581,11 @@ export default function TeamPage() {
         </ModalOverlay>
       )}
 
-      {editProfileSuccess && (
-        <div style={{
-          position: 'fixed',
-          bottom: 28,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 9999,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          background: '#0F172A',
-          color: '#FFFFFF',
-          borderRadius: 12,
-          padding: '12px 20px',
-          boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
-          fontSize: 13,
-          fontWeight: 600,
-          whiteSpace: 'nowrap',
-          animation: 'fadeSlideUpToast 0.22s ease',
-        }}>
-          <Check size={15} style={{ color: '#10B981', flexShrink: 0 }} />
-          {editProfileSuccess}
-        </div>
-      )}
-      {departmentSuccessToast && (
-        <div style={{
-          position: 'fixed',
-          bottom: 28,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 9999,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          background: '#0F172A',
-          color: '#FFFFFF',
-          borderRadius: 12,
-          padding: '12px 20px',
-          boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
-          fontSize: 13,
-          fontWeight: 600,
-          whiteSpace: 'nowrap',
-          animation: 'fadeSlideUpToast 0.22s ease',
-        }}>
-          <Check size={15} style={{ color: '#10B981', flexShrink: 0 }} />
-          {departmentSuccessToast}
-        </div>
-      )}
-      {inviteSuccessToast && (
-        <div style={{
-          position: 'fixed',
-          bottom: 28,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 9999,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          background: '#0F172A',
-          color: '#FFFFFF',
-          borderRadius: 12,
-          padding: '12px 20px',
-          boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
-          fontSize: 13,
-          fontWeight: 600,
-          whiteSpace: 'nowrap',
-          animation: 'fadeSlideUpToast 0.22s ease',
-        }}>
-          <Check size={15} style={{ color: '#10B981', flexShrink: 0 }} />
-          {inviteSuccessToast}
-        </div>
-      )}
-      {cwDetailSuccess && (
-        <div style={{
-          position: 'fixed',
-          bottom: 28,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 9999,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          background: '#0F172A',
-          color: '#FFFFFF',
-          borderRadius: 12,
-          padding: '12px 20px',
-          boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
-          fontSize: 13,
-          fontWeight: 600,
-          whiteSpace: 'nowrap',
-          animation: 'fadeSlideUpToast 0.22s ease',
-          pointerEvents: 'none',
-        }}>
-          <Check size={15} style={{ color: '#10B981', flexShrink: 0 }} />
-          {cwDetailSuccess}
-        </div>
-      )}
+      <Toast message={editProfileSuccess} />
+      <Toast message={departmentSuccessToast} />
+      <Toast message={inviteSuccessToast} />
+      <Toast message={cwDetailSuccess} />
       <style>{`
-        @keyframes fadeSlideUpToast {
-          from { opacity: 0; transform: translateX(-50%) translateY(10px); }
-          to { opacity: 1; transform: translateX(-50%) translateY(0); }
-        }
         .cw-preview-scroll::-webkit-scrollbar { height: 10px; }
         .cw-preview-scroll::-webkit-scrollbar-track { background: #E5E7EB; border-radius: 999px; }
         .cw-preview-scroll::-webkit-scrollbar-thumb { background: #A3A3A3; border-radius: 999px; }

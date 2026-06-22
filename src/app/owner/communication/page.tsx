@@ -6,6 +6,8 @@ import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import { createClient } from '@/lib/supabase'
+import { ModalOverlay, ModalBox, ModalHeader, modalErrorBoxStyle, modalDestructiveButtonStyle } from '@/components/modal'
+import Spinner from '@/components/Spinner'
 import {
   Plus, X, Trash2, Pencil, Megaphone,
   Send, Search, SquarePen, Check, Bell, MessageSquare, Crown,
@@ -143,15 +145,6 @@ function Avatar({ name, size = 36, role, photoUrl }: { name: string; size?: numb
     }}>
       {icon}
     </div>
-  )
-}
-
-function Spinner({ size = 15, light = false }: { size?: number; light?: boolean }) {
-  return (
-    <svg className="animate-spin" width={size} height={size} viewBox="0 0 18 18" style={{ display: 'inline-block', flexShrink: 0 }}>
-      <circle cx="9" cy="9" r="7" stroke={light ? 'rgba(255,255,255,0.35)' : 'rgba(17,24,39,0.15)'} strokeWidth="2.5" fill="none" />
-      <path d="M9 2a7 7 0 0 1 7 7" stroke={light ? 'white' : '#111827'} strokeWidth="2.5" strokeLinecap="round" fill="none" />
-    </svg>
   )
 }
 
@@ -1275,7 +1268,7 @@ export default function OwnerCommunicationPage() {
                                 disabled={sending || uploading || (!input.trim() && !attachFile)}
                                 style={{ height: 34, padding: '0 12px', background: (sending || uploading || (!input.trim() && !attachFile)) ? '#E5E7EB' : '#F97316', color: (sending || uploading || (!input.trim() && !attachFile)) ? '#9CA3AF' : '#fff', border: 'none', borderRadius: 9, cursor: (sending || uploading || (!input.trim() && !attachFile)) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 5, fontWeight: 700, fontSize: 12, transition: 'background 0.15s', flexShrink: 0 }}
                               >
-                                {(sending || uploading) ? <Spinner size={12} light /> : <Send size={12} />} Send
+                                {(sending || uploading) ? <Spinner size={12} /> : <Send size={12} />} Send
                               </button>
                             )}
                           </div>
@@ -1407,7 +1400,7 @@ export default function OwnerCommunicationPage() {
           {activeTab === 'invites' && (
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 24, background: '#FFFFFF' }}>
               {inviteLoading ? (
-                <div style={{ padding: 48, textAlign: 'center' }}><Spinner size={18} /></div>
+                <div style={{ padding: 48, textAlign: 'center' }}><Spinner size={18} dark /></div>
               ) : invites.length === 0 ? (
                 <div style={{ height: 240, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 10 }}>
                   <div style={{ width: 56, height: 56, borderRadius: 18, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#F97316' }}>
@@ -1436,7 +1429,7 @@ export default function OwnerCommunicationPage() {
                         <button onClick={() => handleAcceptInvite(invite)} disabled={inviteActing === invite.id}
                           style={{ flex: 1, height: 34, background: '#10B981', color: '#fff', border: 'none', borderRadius: 9, fontWeight: 700, fontSize: 12, cursor: inviteActing === invite.id ? 'not-allowed' : 'pointer', opacity: inviteActing === invite.id ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}
                         >
-                          {inviteActing === invite.id ? <Spinner size={12} light /> : <Check size={13} />} Accept
+                          {inviteActing === invite.id ? <Spinner size={12} /> : <Check size={13} />} Accept
                         </button>
                         <button onClick={() => handleDeclineInvite(invite)} disabled={inviteActing === invite.id}
                           style={{ flex: 1, height: 34, background: '#fff', color: '#64748B', border: '1.5px solid #E2E8F0', borderRadius: 9, fontWeight: 700, fontSize: 12, cursor: inviteActing === invite.id ? 'not-allowed' : 'pointer', opacity: inviteActing === invite.id ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}
@@ -1469,44 +1462,32 @@ export default function OwnerCommunicationPage() {
 
       {/* ── Delete Confirmation Modal ── */}
       {deleteConfirmId && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: '#fff', borderRadius: 16, padding: 28, width: 400, maxWidth: '90vw', boxShadow: '0 20px 60px rgba(0,0,0,0.18)', animation: 'fadeSlideUp 0.2s ease both' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
-              <div style={{ width: 38, height: 38, borderRadius: 10, background: '#FEF2F2', color: '#DC2626', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <Trash2 size={17} />
-              </div>
-              <h3 style={{ fontWeight: 800, fontSize: '1rem', color: '#0F172A', margin: 0 }}>Delete Announcement</h3>
+        <ModalOverlay onClose={() => setDeleteConfirmId(null)} maxWidth="400px">
+          <ModalBox>
+            <ModalHeader title="Delete Announcement" icon={<Trash2 size={15} color="#fff" strokeWidth={2.5} />} iconBg="linear-gradient(135deg, #EF4444, #DC2626)" onClose={() => setDeleteConfirmId(null)} />
+            <div style={{ padding: '20px 24px 0' }}>
+              <p style={{ fontSize: '0.9375rem', color: '#374151', margin: 0, lineHeight: 1.6 }}>
+                Are you sure you want to delete this announcement?
+              </p>
             </div>
-            <p style={{ fontSize: 13.5, color: '#64748B', margin: '0 0 20px', lineHeight: 1.6 }}>
-              Are you sure you want to delete this announcement?
-            </p>
-            <div style={{ display: 'flex', gap: 10 }}>
+            <div style={{ padding: '20px 24px 20px', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <button onClick={() => setDeleteConfirmId(null)} disabled={deleting}
-                style={{ flex: 1, height: 38, background: 'none', border: '1.5px solid #E2E8F0', borderRadius: 9, fontWeight: 700, fontSize: 13, color: '#64748B', cursor: 'pointer' }}>
+                style={{ padding: '7px 16px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', cursor: 'pointer' }}>
                 Cancel
               </button>
-              <button onClick={() => handleDeleteAnnouncement(deleteConfirmId)} disabled={deleting}
-                style={{ flex: 1, height: 38, background: '#DC2626', border: 'none', borderRadius: 9, fontWeight: 700, fontSize: 13, color: '#fff', cursor: deleting ? 'not-allowed' : 'pointer', opacity: deleting ? 0.65 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
-                {deleting ? <><Spinner size={12} light /> Deleting…</> : 'Delete'}
+              <button onClick={() => handleDeleteAnnouncement(deleteConfirmId)} disabled={deleting} style={modalDestructiveButtonStyle(deleting)}>
+                {deleting ? <Spinner size={13} /> : <Trash2 size={13} />} Delete
               </button>
             </div>
-          </div>
-        </div>
+          </ModalBox>
+        </ModalOverlay>
       )}
 
       {/* ── Edit Announcement Modal ── */}
       {showEditModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: '#fff', borderRadius: 18, width: 500, maxWidth: '92vw', boxShadow: '0 24px 70px rgba(0,0,0,0.18)', overflow: 'hidden', animation: 'fadeSlideUp 0.22s ease both' }}>
-            <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid #F0F4F8', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ width: 34, height: 34, borderRadius: 9, background: '#FFF7ED', color: '#F97316', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Pencil size={15} />
-                </div>
-                <h3 style={{ fontWeight: 800, fontSize: '1rem', color: '#0F172A', margin: 0 }}>Edit Announcement</h3>
-              </div>
-              <button onClick={() => setShowEditModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', display: 'flex', padding: 4, borderRadius: 6 }}><X size={18} /></button>
-            </div>
+        <ModalOverlay onClose={() => setShowEditModal(false)} maxWidth="500px">
+          <ModalBox>
+            <ModalHeader title="Edit Announcement" icon={<Pencil size={15} color="#fff" strokeWidth={2} />} onClose={() => setShowEditModal(false)} />
             <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div>
                 <label style={labelStyle}>Title</label>
@@ -1531,30 +1512,22 @@ export default function OwnerCommunicationPage() {
                   placeholder="Select audience"
                 />
               </div>
-              {editError && <div style={{ fontSize: 12.5, color: '#DC2626', background: '#FEF2F2', padding: '9px 12px', borderRadius: 8, fontWeight: 600 }}>{editError}</div>}
             </div>
-            <div style={{ padding: '0 24px 20px', display: 'flex', gap: 10 }}>
-              <button onClick={handleSaveEdit} disabled={saving || !editTitle.trim() || !editContent.trim()} style={{ ...primaryBtnStyle, opacity: saving || !editTitle.trim() || !editContent.trim() ? 0.55 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                {saving ? <><Spinner size={13} light /> Saving…</> : 'Save Changes'}
+            {editError && <div style={modalErrorBoxStyle}>{editError}</div>}
+            <div style={{ padding: '0 24px 20px', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={handleSaveEdit} disabled={saving || !editTitle.trim() || !editContent.trim()} style={{ ...primaryBtnStyle, flex: 'none', padding: '7px 18px', height: 'auto', opacity: saving || !editTitle.trim() || !editContent.trim() ? 0.55 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                {saving ? <><Spinner size={13} /> Saving…</> : 'Save Changes'}
               </button>
             </div>
-          </div>
-        </div>
+          </ModalBox>
+        </ModalOverlay>
       )}
 
       {/* ── New Announcement Modal ── */}
       {showNewAnnModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: '#fff', borderRadius: 18, width: 500, maxWidth: '92vw', boxShadow: '0 24px 70px rgba(0,0,0,0.18)', overflow: 'hidden', animation: 'fadeSlideUp 0.22s ease both' }}>
-            <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid #F0F4F8', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ width: 34, height: 34, borderRadius: 9, background: '#FFF7ED', color: '#F97316', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Megaphone size={16} />
-                </div>
-                <h3 style={{ fontWeight: 800, fontSize: '1rem', color: '#0F172A', margin: 0 }}>New Announcement</h3>
-              </div>
-              <button onClick={() => setShowNewAnnModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', display: 'flex', padding: 4, borderRadius: 6 }}><X size={18} /></button>
-            </div>
+        <ModalOverlay onClose={() => setShowNewAnnModal(false)} maxWidth="500px">
+          <ModalBox>
+            <ModalHeader title="New Announcement" icon={<Megaphone size={15} color="#fff" strokeWidth={2} />} onClose={() => setShowNewAnnModal(false)} />
             <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div>
                 <label style={labelStyle}>Title</label>
@@ -1577,29 +1550,21 @@ export default function OwnerCommunicationPage() {
                 />
               </div>
             </div>
-            <div style={{ padding: '0 24px 20px' }}>
+            <div style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end' }}>
               <button onClick={handlePostAnnouncement} disabled={!communicationReady || posting || !annTitle.trim() || !annContent.trim()}
-                style={{ ...primaryBtnStyle, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, opacity: !communicationReady || posting || !annTitle.trim() || !annContent.trim() ? 0.55 : 1 }}>
-                {posting ? <><Spinner size={14} light /> Posting…</> : <><Megaphone size={14} /> Post Announcement</>}
+                style={{ ...primaryBtnStyle, flex: 'none', height: 'auto', padding: '7px 18px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, opacity: !communicationReady || posting || !annTitle.trim() || !annContent.trim() ? 0.55 : 1 }}>
+                {posting ? <><Spinner size={13} /> Posting…</> : <><Megaphone size={13} /> Post Announcement</>}
               </button>
             </div>
-          </div>
-        </div>
+          </ModalBox>
+        </ModalOverlay>
       )}
 
       {/* ── Compose Message Modal ── */}
       {composeOpen && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: 480, background: '#fff', borderRadius: 18, boxShadow: '0 24px 70px rgba(0,0,0,0.18)', display: 'flex', flexDirection: 'column', maxHeight: '88vh', overflow: 'hidden', animation: 'fadeSlideUp 0.22s ease both' }}>
-            <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ width: 34, height: 34, borderRadius: 9, background: '#FFF7ED', color: '#F97316', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <SquarePen size={15} />
-                </div>
-                <h2 style={{ fontWeight: 800, fontSize: '1rem', color: '#0F172A', margin: 0 }}>New Message</h2>
-              </div>
-              <button onClick={() => setComposeOpen(false)} disabled={composeSending} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', display: 'flex', padding: 4, borderRadius: 6 }}><X size={18} /></button>
-            </div>
+        <ModalOverlay onClose={() => setComposeOpen(false)} maxWidth="480px">
+          <ModalBox>
+            <ModalHeader title="New Message" icon={<SquarePen size={15} color="#fff" strokeWidth={2} />} onClose={() => setComposeOpen(false)} />
 
             <div style={{ padding: '18px 24px', display: 'flex', flexDirection: 'column', gap: 16, overflowY: 'auto', flex: 1 }}>
               <div>
@@ -1657,15 +1622,15 @@ export default function OwnerCommunicationPage() {
               )}
             </div>
 
-            <div style={{ display: 'flex', gap: 10, padding: '14px 24px', borderTop: '1px solid #F0F4F8' }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '14px 24px', borderTop: '1px solid #F0F4F8' }}>
               <button onClick={handleComposeSend} disabled={composeSending || !selectedRecipient || !composeText.trim()}
-                style={{ ...primaryBtnStyle, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, opacity: (composeSending || !selectedRecipient || !composeText.trim()) ? 0.5 : 1 }}
+                style={{ ...primaryBtnStyle, flex: 'none', height: 'auto', padding: '7px 18px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, opacity: (composeSending || !selectedRecipient || !composeText.trim()) ? 0.5 : 1 }}
               >
-                {composeSending ? <><Spinner size={13} light /> Sending…</> : <><Send size={13} /> Send</>}
+                {composeSending ? <><Spinner size={13} /> Sending…</> : <><Send size={13} /> Send</>}
               </button>
             </div>
-          </div>
-        </div>
+          </ModalBox>
+        </ModalOverlay>
       )}
     </div>
   )
