@@ -25,6 +25,10 @@ import {
   UserRound,
   X,
   Crown,
+  SplitSquareHorizontal,
+  Undo2,
+  Copy,
+  Send,
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
@@ -103,6 +107,23 @@ type ShiftEditForm = {
   acceptance_deadline_at: string
 }
 
+type SplitShiftForm = {
+  department_id: string
+  shift_date: string
+  block1_start: string
+  block1_end: string
+  block2_start: string
+  block2_end: string
+  assigned_user_id: string
+}
+
+type DuplicateShiftForm = {
+  shift_date: string
+  start_time: string
+  end_time: string
+  assigned_user_id: string
+}
+
 type DepartmentModalMode = 'add' | 'edit' | 'delete' | null
 
 type AutoShiftBlock = {
@@ -158,7 +179,7 @@ const SECTION_TITLE_STYLE = {
   lineHeight: 1.2,
 } as const
 
-function TimePicker({ value, onChange, compact = false }: { value: string; onChange: (v: string) => void; compact?: boolean }) {
+function TimePicker({ value, onChange, compact = false, minTime }: { value: string; onChange: (v: string) => void; compact?: boolean; minTime?: string }) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState({ top: 0, left: 0, width: 0 })
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -236,14 +257,16 @@ function TimePicker({ value, onChange, compact = false }: { value: string; onCha
       <div ref={listRef} style={{ flex: 1, maxHeight: 192, overflowY: 'auto', padding: '4px 0' }}>
         {times.map(t => {
           const isSel = t.value === value
+          const isDisabled = Boolean(minTime) && t.value <= minTime!
           return (
             <button key={t.value} type="button" data-selected={isSel ? 'true' : 'false'}
-              onClick={() => { onChange(t.value); setOpen(false) }}
+              disabled={isDisabled}
+              onClick={() => { if (isDisabled) return; onChange(t.value); setOpen(false) }}
               style={{
                 display: 'block', width: '100%', padding: '7px 16px', textAlign: 'left',
                 border: 'none', background: isSel ? '#FFF7ED' : 'transparent',
-                color: isSel ? OWNER_ORANGE : _TEXT_DARK_PICKER,
-                fontWeight: isSel ? 700 : 400, fontSize: 13, cursor: 'pointer',
+                color: isDisabled ? '#D1D5DB' : isSel ? OWNER_ORANGE : _TEXT_DARK_PICKER,
+                fontWeight: isSel ? 700 : 400, fontSize: 13, cursor: isDisabled ? 'not-allowed' : 'pointer',
               }}
             >{t.label}</button>
           )
@@ -794,6 +817,8 @@ export default function OwnerShiftsPage() {
   const [bulkFailures, setBulkFailures] = useState<BulkFailure[]>([])
   const [successToast, setSuccessToast] = useState<string | null>(null)
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [errorToast, setErrorToast] = useState<string | null>(null)
+  const errorToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const aiGenerateAbortRef = useRef<AbortController | null>(null)
 
   const profileSummary: UserProfileSummary = {
@@ -820,6 +845,47 @@ export default function OwnerShiftsPage() {
   })
   const [shiftActionLoading, setShiftActionLoading] = useState(false)
   const [shiftActionError, setShiftActionError] = useState('')
+  const shiftActionErrorRef = useRef<HTMLDivElement>(null)
+  const [hoveredEditCalDate, setHoveredEditCalDate] = useState<string | null>(null)
+
+  const [splitShiftModalOpen, setSplitShiftModalOpen] = useState(false)
+  const [splitShiftForm, setSplitShiftForm] = useState<SplitShiftForm>({
+    department_id: '',
+    shift_date: minDate,
+    block1_start: '09:00',
+    block1_end: '12:00',
+    block2_start: '14:00',
+    block2_end: '18:00',
+    assigned_user_id: '',
+  })
+  const [splitShiftLoading, setSplitShiftLoading] = useState(false)
+  const [splitShiftError, setSplitShiftError] = useState('')
+  const splitShiftErrorRef = useRef<HTMLDivElement>(null)
+  const [undoLoading, setUndoLoading] = useState(false)
+
+  const [duplicateShiftModalOpen, setDuplicateShiftModalOpen] = useState(false)
+  const [duplicateShiftForm, setDuplicateShiftForm] = useState<DuplicateShiftForm>({
+    shift_date: minDate,
+    start_time: '09:00',
+    end_time: '17:00',
+    assigned_user_id: '',
+  })
+  const [duplicateShiftLoading, setDuplicateShiftLoading] = useState(false)
+  const [duplicateShiftError, setDuplicateShiftError] = useState('')
+  const duplicateShiftErrorRef = useRef<HTMLDivElement>(null)
+  const [publishLoading, setPublishLoading] = useState(false)
+
+  useEffect(() => {
+    if (shiftActionError) shiftActionErrorRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [shiftActionError])
+
+  useEffect(() => {
+    if (splitShiftError) splitShiftErrorRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [splitShiftError])
+
+  useEffect(() => {
+    if (duplicateShiftError) duplicateShiftErrorRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [duplicateShiftError])
 
   useEffect(() => {
     return () => {
@@ -1155,16 +1221,19 @@ export default function OwnerShiftsPage() {
     return dates
   }, [futureRows, selectedDepartmentId])
 
-  const editUserShiftDates = useMemo(() => {
+  const editUserShiftsByDate = useMemo(() => {
     const uid = shiftEditForm.assigned_user_id
-    if (!uid) return new Set<string>()
-    const s = new Set<string>()
+    const map = new Map<string, { start_time: string; end_time: string }[]>()
+    if (!uid) return map
     for (const row of futureRows) {
-      if (row.user_id === uid) {
-        for (const shift of row.shifts) s.add(shift.shift_date)
+      if (row.user_id !== uid) continue
+      for (const shift of row.shifts) {
+        const list = map.get(shift.shift_date) ?? []
+        list.push({ start_time: shift.start_time, end_time: shift.end_time })
+        map.set(shift.shift_date, list)
       }
     }
-    return s
+    return map
   }, [futureRows, shiftEditForm.assigned_user_id])
 
   const selectedBatchCells = useMemo(() => {
@@ -1936,6 +2005,213 @@ export default function OwnerShiftsPage() {
     }
   }
 
+  const openDuplicateShiftModal = () => {
+    if (!selectedShift) return
+    const nextDate = formatDateKey(addDays(new Date(`${selectedShift.shift_date}T00:00:00`), 1))
+    setDuplicateShiftForm({
+      shift_date: nextDate > maxDate ? selectedShift.shift_date : nextDate,
+      start_time: selectedShift.start_time,
+      end_time: selectedShift.end_time,
+      assigned_user_id: shiftEditForm.assigned_user_id,
+    })
+    setDuplicateShiftError('')
+    setDuplicateShiftModalOpen(true)
+  }
+
+  const closeDuplicateShiftModal = () => {
+    setDuplicateShiftModalOpen(false)
+    setDuplicateShiftError('')
+  }
+
+  const submitDuplicateShift = async () => {
+    if (!selectedShift || !internalUserId) return
+    if (duplicateShiftForm.shift_date > maxDate) {
+      setDuplicateShiftError('Shift date must be within the next 30 days.')
+      return
+    }
+    if (duplicateShiftForm.start_time >= duplicateShiftForm.end_time) {
+      setDuplicateShiftError('Start time must be before end time.')
+      return
+    }
+    setDuplicateShiftLoading(true)
+    setDuplicateShiftError('')
+    try {
+      const res = await fetch(`/api/shift/${selectedShift.id}/duplicate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shift_date: duplicateShiftForm.shift_date,
+          start_time: duplicateShiftForm.start_time,
+          end_time: duplicateShiftForm.end_time,
+          created_by: internalUserId,
+          assigned_user_id: duplicateShiftForm.assigned_user_id || null,
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error((data.message || 'Failed to duplicate shift').replace('CLOPENING_CONFLICT: ', ''))
+      setDuplicateShiftModalOpen(false)
+      setSelectedShift(null)
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+      setSuccessToast(data.warning ? 'Shift duplicated with a clopening warning' : 'Shift duplicated as a draft')
+      toastTimerRef.current = setTimeout(() => setSuccessToast(null), 3000)
+      await refreshShiftData()
+    } catch (err) {
+      setDuplicateShiftError(err instanceof Error ? err.message : 'Failed to duplicate shift')
+    } finally {
+      setDuplicateShiftLoading(false)
+    }
+  }
+
+  const openSplitShiftModal = () => {
+    const defaultDept = selectedDepartment ?? departments[0] ?? null
+    setSplitShiftForm({
+      department_id: defaultDept?.id ?? '',
+      shift_date: minDate,
+      block1_start: '09:00',
+      block1_end: '12:00',
+      block2_start: '14:00',
+      block2_end: '18:00',
+      assigned_user_id: '',
+    })
+    setSplitShiftError('')
+    setSplitShiftModalOpen(true)
+  }
+
+  const closeSplitShiftModal = () => {
+    setSplitShiftModalOpen(false)
+    setSplitShiftError('')
+  }
+
+  const submitSplitShift = async () => {
+    if (!companyId || !internalUserId) return
+    if (!splitShiftForm.department_id) {
+      setSplitShiftError('Select a department.')
+      return
+    }
+    if (splitShiftForm.block1_start >= splitShiftForm.block1_end) {
+      setSplitShiftError('Block 1: start time must be before end time.')
+      return
+    }
+    if (splitShiftForm.block2_start >= splitShiftForm.block2_end) {
+      setSplitShiftError('Block 2: start time must be before end time.')
+      return
+    }
+    if (splitShiftForm.block1_end > splitShiftForm.block2_start) {
+      setSplitShiftError('Block 1 must end before Block 2 starts.')
+      return
+    }
+    setSplitShiftLoading(true)
+    setSplitShiftError('')
+    try {
+      const res = await fetch('/api/shift/split', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          company_id: companyId,
+          department_id: splitShiftForm.department_id,
+          shift_date: splitShiftForm.shift_date,
+          blocks: [
+            { start_time: splitShiftForm.block1_start, end_time: splitShiftForm.block1_end },
+            { start_time: splitShiftForm.block2_start, end_time: splitShiftForm.block2_end },
+          ],
+          created_by: internalUserId,
+          assigned_user_id: splitShiftForm.assigned_user_id || null,
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error((data.message || 'Failed to create split shift').replace('CLOPENING_CONFLICT: ', ''))
+      setSplitShiftModalOpen(false)
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+      setSuccessToast(data.warning ? 'Split shift created with a clopening warning' : 'Split shift created')
+      toastTimerRef.current = setTimeout(() => setSuccessToast(null), 3000)
+      await refreshShiftData()
+    } catch (err) {
+      setSplitShiftError(err instanceof Error ? err.message : 'Failed to create split shift')
+    } finally {
+      setSplitShiftLoading(false)
+    }
+  }
+
+  const handleUndoLastAction = async () => {
+    if (!companyId || !internalUserId) return
+    setUndoLoading(true)
+    try {
+      const res = await fetch('/api/shift/undo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company_id: companyId, performed_by: internalUserId }),
+      })
+      const data = await res.json()
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+      if (!data.success) {
+        setSuccessToast(null)
+        setErrorToast(data.message || 'No recent shift action to undo')
+        errorToastTimerRef.current = setTimeout(() => setErrorToast(null), 3000)
+        return
+      }
+      setErrorToast(null)
+      setSuccessToast(`Undid last action: ${data.action_type}`)
+      toastTimerRef.current = setTimeout(() => setSuccessToast(null), 3000)
+      await refreshShiftData()
+    } catch (err) {
+      if (errorToastTimerRef.current) clearTimeout(errorToastTimerRef.current)
+      setErrorToast(err instanceof Error ? err.message : 'Failed to undo last action')
+      errorToastTimerRef.current = setTimeout(() => setErrorToast(null), 3000)
+    } finally {
+      setUndoLoading(false)
+    }
+  }
+
+  const visibleScheduleRange = (): { date_from: string; date_to: string } => {
+    if (shiftViewMode === 'calendar') {
+      const anchor = new Date(`${timelineDate}T00:00:00`)
+      const dow = (anchor.getDay() + 6) % 7  // 0=Mon … 6=Sun
+      const mon = new Date(anchor); mon.setDate(anchor.getDate() - dow)
+      const sun = new Date(mon); sun.setDate(mon.getDate() + 6)
+      return { date_from: formatDateKey(mon), date_to: formatDateKey(sun) }
+    }
+    return { date_from: timelineDate, date_to: timelineDate }
+  }
+
+  const visibleShiftsForPublishToggle = shiftViewMode === 'calendar'
+    ? calWeekRows.flatMap(row => row.shifts)
+    : timelineRows.flatMap(row => row.shifts)
+  const publishedCount = visibleShiftsForPublishToggle.filter(s => s.publication_status === 'published').length
+  const isMajorityPublished = visibleShiftsForPublishToggle.length > 0
+    && publishedCount >= visibleShiftsForPublishToggle.length / 2
+
+  const handleTogglePublishSchedule = async () => {
+    if (!companyId) return
+    const nextStatus: 'draft' | 'published' = isMajorityPublished ? 'draft' : 'published'
+    const { date_from, date_to } = visibleScheduleRange()
+    setPublishLoading(true)
+    try {
+      const res = await fetch('/api/shift/schedule', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company_id: companyId, date_from, date_to, publication_status: nextStatus }),
+      })
+      const data = await res.json()
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+      if (!data.success) {
+        setSuccessToast(null)
+        setErrorToast(data.message || `Failed to ${nextStatus === 'published' ? 'publish' : 'unpublish'} schedule`)
+        errorToastTimerRef.current = setTimeout(() => setErrorToast(null), 4000)
+        return
+      }
+      setErrorToast(null)
+      setSuccessToast(nextStatus === 'published' ? 'Schedule published' : 'Schedule unpublished')
+      toastTimerRef.current = setTimeout(() => setSuccessToast(null), 3000)
+      await refreshShiftData()
+    } catch (err) {
+      if (errorToastTimerRef.current) clearTimeout(errorToastTimerRef.current)
+      setErrorToast(err instanceof Error ? err.message : 'Failed to update schedule')
+      errorToastTimerRef.current = setTimeout(() => setErrorToast(null), 4000)
+    } finally {
+      setPublishLoading(false)
+    }
+  }
+
   const switchCompany = (nextCompany: Company) => {
     if (!authUserId) return
     localStorage.setItem(`tasking_company_id_${authUserId}`, nextCompany.id)
@@ -2301,6 +2577,43 @@ export default function OwnerShiftsPage() {
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
+            {companyId && (
+              <button
+                type="button"
+                onClick={handleUndoLastAction}
+                disabled={undoLoading}
+                aria-label="Undo last shift action"
+                title="Undo last shift action"
+                style={{ ...secondaryButtonStyle, opacity: undoLoading ? 0.65 : 1, cursor: undoLoading ? 'not-allowed' : 'pointer' }}
+              >
+                {undoLoading ? <Spinner size={13} /> : <Undo2 size={14} />} Undo
+              </button>
+            )}
+            {companyId && departments.length > 0 && (
+              <button
+                type="button"
+                onClick={openSplitShiftModal}
+                style={secondaryButtonStyle}
+              >
+                <SplitSquareHorizontal size={14} /> Split Shift
+              </button>
+            )}
+            {companyId && (
+              <button
+                type="button"
+                onClick={handleTogglePublishSchedule}
+                disabled={publishLoading || visibleShiftsForPublishToggle.length === 0}
+                aria-label={isMajorityPublished ? 'Unpublish schedule' : 'Publish schedule'}
+                title={isMajorityPublished ? 'Unpublish the currently viewed schedule' : 'Publish the currently viewed schedule'}
+                style={{
+                  ...secondaryButtonStyle,
+                  opacity: (publishLoading || visibleShiftsForPublishToggle.length === 0) ? 0.55 : 1,
+                  cursor: (publishLoading || visibleShiftsForPublishToggle.length === 0) ? 'not-allowed' : 'pointer',
+                }}
+              >
+                {publishLoading ? <Spinner size={13} /> : <Send size={14} />} {isMajorityPublished ? 'Unpublish Schedule' : 'Publish Schedule'}
+              </button>
+            )}
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId} />}
             {companyId && <OwnerPlanBadge plan={company?.plan ?? 'Free'} currentCompanyId={companyId} />}
           </div>
@@ -3222,6 +3535,108 @@ export default function OwnerShiftsPage() {
         </div>
       )}
 
+      {splitShiftModalOpen && (
+        <div style={modalOverlayStyle}>
+          <div style={{ ...modalStyle, width: 'min(520px, calc(100% - 32px))', padding: 0, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', flexShrink: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <SplitSquareHorizontal size={14} color="#fff" strokeWidth={2} />
+                </div>
+                <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>Create Split Shift</h2>
+              </div>
+              <button
+                type="button"
+                onClick={closeSplitShiftModal}
+                style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8, flexShrink: 0 }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+                onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ padding: '20px 24px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <p style={{ margin: 0, fontSize: 12, color: MUTED, lineHeight: 1.5 }}>
+                Splits one day into two separate time blocks (e.g. a long unpaid break in the middle of the day). Both blocks will be linked as one split shift.
+              </p>
+
+              <div>
+                <span style={{ display: 'block', fontWeight: 700, fontSize: '0.875rem', color: '#374151', marginBottom: 8 }}>Department</span>
+                <DropdownField
+                  value={splitShiftForm.department_id}
+                  options={departments.map(dept => ({ value: dept.id, label: dept.name }))}
+                  onChange={v => setSplitShiftForm(prev => ({ ...prev, department_id: v, assigned_user_id: '' }))}
+                  placeholder="Select department"
+                />
+              </div>
+
+              <div>
+                <span style={{ display: 'block', fontWeight: 700, fontSize: '0.875rem', color: '#374151', marginBottom: 8 }}>Assign to (optional)</span>
+                <DropdownField
+                  value={splitShiftForm.assigned_user_id}
+                  options={members
+                    .filter(member => member.department_id === splitShiftForm.department_id)
+                    .map(member => ({ value: member.id, label: `${member.full_name} · ${member.role}` }))}
+                  onChange={v => setSplitShiftForm(prev => ({ ...prev, assigned_user_id: v }))}
+                  placeholder="Leave unassigned"
+                  disabled={!splitShiftForm.department_id}
+                />
+              </div>
+
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span style={{ display: 'block', fontWeight: 600, fontSize: '0.875rem', color: '#374151', marginBottom: 4 }}>Date</span>
+                <input
+                  type="date"
+                  value={splitShiftForm.shift_date}
+                  min={minDate}
+                  max={maxDate}
+                  onChange={e => setSplitShiftForm(prev => ({ ...prev, shift_date: e.target.value }))}
+                  style={{ width: '100%', padding: '9px 12px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, fontSize: 13, color: TEXT_DARK, boxSizing: 'border-box', fontFamily: 'inherit' }}
+                />
+              </label>
+
+              <div style={{ background: '#FFFFFF', borderRadius: 14, padding: '12px 14px', border: `1px solid ${PANEL_BORDER}` }}>
+                <p style={{ margin: '0 0 10px', fontSize: 12, fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Block 1</p>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <span style={{ display: 'block', fontWeight: 600, fontSize: '0.8125rem', color: '#374151', marginBottom: 4 }}>Start time</span>
+                    <TimePicker value={splitShiftForm.block1_start} onChange={v => setSplitShiftForm(prev => ({ ...prev, block1_start: v }))} />
+                  </label>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <span style={{ display: 'block', fontWeight: 600, fontSize: '0.8125rem', color: '#374151', marginBottom: 4 }}>End time</span>
+                    <TimePicker value={splitShiftForm.block1_end} onChange={v => setSplitShiftForm(prev => ({ ...prev, block1_end: v }))} minTime={splitShiftForm.block1_start} />
+                  </label>
+                </div>
+              </div>
+
+              <div style={{ background: '#FFFFFF', borderRadius: 14, padding: '12px 14px', border: `1px solid ${PANEL_BORDER}` }}>
+                <p style={{ margin: '0 0 10px', fontSize: 12, fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Block 2</p>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <span style={{ display: 'block', fontWeight: 600, fontSize: '0.8125rem', color: '#374151', marginBottom: 4 }}>Start time</span>
+                    <TimePicker value={splitShiftForm.block2_start} onChange={v => setSplitShiftForm(prev => ({ ...prev, block2_start: v }))} minTime={splitShiftForm.block1_end} />
+                  </label>
+                  <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <span style={{ display: 'block', fontWeight: 600, fontSize: '0.8125rem', color: '#374151', marginBottom: 4 }}>End time</span>
+                    <TimePicker value={splitShiftForm.block2_end} onChange={v => setSplitShiftForm(prev => ({ ...prev, block2_end: v }))} minTime={splitShiftForm.block2_start} />
+                  </label>
+                </div>
+              </div>
+
+              {splitShiftError && <div ref={splitShiftErrorRef} style={errorBoxStyle}>{splitShiftError}</div>}
+            </div>
+
+            <div style={{ padding: '18px 24px 24px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, borderTop: '1px solid #F3F4F6' }}>
+              <button type="button" onClick={closeSplitShiftModal} disabled={splitShiftLoading} style={{ ...secondaryButtonStyle, height: 36 }}>Cancel</button>
+              <button type="button" onClick={submitSplitShift} disabled={splitShiftLoading} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: splitShiftLoading ? '#FDA060' : '#F97316', color: '#FFFFFF', height: 36, padding: '0 18px', fontSize: 13, fontWeight: 700, cursor: splitShiftLoading ? 'not-allowed' : 'pointer', opacity: splitShiftLoading ? 0.65 : 1 }}>
+                {splitShiftLoading ? <Spinner size={13} /> : <Check size={16} />} Create Split Shift
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {batchDepartment && (
         <div style={modalOverlayStyle}>
           <div style={{ ...modalStyle, width: 'min(520px, calc(100% - 32px))', padding: 0, display: 'flex', flexDirection: 'column' }}>
@@ -3392,7 +3807,7 @@ export default function OwnerShiftsPage() {
                         </label>
                         <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                           <span style={{ display: 'block', fontWeight: 600, fontSize: '0.875rem', color: '#374151', marginBottom: 4 }}>End time</span>
-                          <TimePicker value={defaultEndTime} onChange={setDefaultEndTime} />
+                          <TimePicker value={defaultEndTime} onChange={setDefaultEndTime} minTime={defaultStartTime} />
                         </label>
                         <button type="button" onClick={applyDefaultToAllCells}
                           style={{ border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#FFFFFF', color: TEXT_DARK, height: 34, padding: '0 12px', fontWeight: 600, fontSize: 12, cursor: 'pointer', width: '100%', marginTop: 2 }}
@@ -3459,7 +3874,7 @@ export default function OwnerShiftsPage() {
                                   <p style={{ margin: '0 0 7px', fontSize: 11, fontWeight: 600, color: TEXT_DARK, paddingRight: 14 }}>{previewDateLabel(date)}</p>
                                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 5 }}>
                                     <TimePicker compact value={cell.start_time} onChange={v => updateBatchCell(member.id, date, { start_time: v })} />
-                                    <TimePicker compact value={cell.end_time} onChange={v => updateBatchCell(member.id, date, { end_time: v })} />
+                                    <TimePicker compact value={cell.end_time} onChange={v => updateBatchCell(member.id, date, { end_time: v })} minTime={cell.start_time} />
                                   </div>
                                   {existing.length > 0 && (
                                     <div style={{ display: 'flex', gap: 4, marginTop: 5, color: '#B45309', fontSize: '0.68rem', fontWeight: 600, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -3589,7 +4004,8 @@ export default function OwnerShiftsPage() {
                         const isPast = date < todayStr
                         const isSel = date === shiftEditForm.shift_date
                         const isToday = date === todayStr
-                        const hasShift = editUserShiftDates.has(date)
+                        const dateShifts = editUserShiftsByDate.get(date) ?? []
+                        const hasShift = dateShifts.length > 0
                         const dayNum = new Date(`${date}T00:00:00`).getDate()
                         if (isPast) {
                           return (
@@ -3599,34 +4015,53 @@ export default function OwnerShiftsPage() {
                           )
                         }
                         return (
-                          <button
-                            key={date}
-                            type="button"
-                            onClick={() => setShiftEditForm(prev => ({ ...prev, shift_date: date }))}
-                            style={{
-                              width: 32, height: 32,
-                              borderRadius: '50%',
-                              border: isToday && !isSel ? `2px solid ${OWNER_ORANGE}` : 'none',
-                              background: isSel ? OWNER_ORANGE : 'transparent',
-                              color: isSel ? '#FFFFFF' : isToday ? OWNER_ORANGE : TEXT_DARK,
-                              fontWeight: isSel || isToday ? 700 : 400,
-                              fontSize: 13,
-                              cursor: 'pointer',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: 1,
-                              padding: 0,
-                              flexShrink: 0,
-                              transition: 'background 0.12s, color 0.12s',
-                            }}
-                            onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = '#F8FAFC' }}
-                            onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = 'transparent' }}
-                          >
-                            <span style={{ lineHeight: 1 }}>{dayNum}</span>
-                            {hasShift && <span style={{ width: 3, height: 3, borderRadius: '50%', background: isSel ? 'rgba(255,255,255,0.85)' : OWNER_ORANGE, flexShrink: 0 }} />}
-                          </button>
+                          <div key={date} style={{ position: 'relative', width: 32, height: 32 }}>
+                            <button
+                              type="button"
+                              onClick={() => setShiftEditForm(prev => ({ ...prev, shift_date: date }))}
+                              onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = '#F8FAFC'; if (hasShift) setHoveredEditCalDate(date) }}
+                              onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = 'transparent'; setHoveredEditCalDate(prev => prev === date ? null : prev) }}
+                              style={{
+                                width: 32, height: 32,
+                                borderRadius: '50%',
+                                border: isToday && !isSel ? `2px solid ${OWNER_ORANGE}` : 'none',
+                                background: isSel ? OWNER_ORANGE : 'transparent',
+                                color: isSel ? '#FFFFFF' : isToday ? OWNER_ORANGE : TEXT_DARK,
+                                fontWeight: isSel || isToday ? 700 : 400,
+                                fontSize: 13,
+                                cursor: 'pointer',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: 1,
+                                padding: 0,
+                                flexShrink: 0,
+                                transition: 'background 0.12s, color 0.12s',
+                              }}
+                            >
+                              <span style={{ lineHeight: 1 }}>{dayNum}</span>
+                              {hasShift && <span style={{ width: 3, height: 3, borderRadius: '50%', background: isSel ? 'rgba(255,255,255,0.85)' : OWNER_ORANGE, flexShrink: 0 }} />}
+                            </button>
+                            {hoveredEditCalDate === date && hasShift && (
+                              <div style={{
+                                position: 'absolute', bottom: '100%', left: '50%', transform: 'translateX(-50%)',
+                                marginBottom: 6, padding: '6px 10px', borderRadius: 8,
+                                background: '#0F172A', color: '#FFFFFF', fontSize: 11, fontWeight: 600,
+                                whiteSpace: 'nowrap', zIndex: 20, pointerEvents: 'none',
+                                boxShadow: '0 4px 14px rgba(15,23,42,0.25)',
+                              }}>
+                                {dateShifts.map((s, idx) => (
+                                  <div key={idx}>{formatShiftHour(s.start_time)} – {formatShiftHour(s.end_time)}</div>
+                                ))}
+                                <div style={{
+                                  position: 'absolute', top: '100%', left: '50%', transform: 'translateX(-50%)',
+                                  width: 0, height: 0, borderLeft: '5px solid transparent', borderRight: '5px solid transparent',
+                                  borderTop: '5px solid #0F172A',
+                                }} />
+                              </div>
+                            )}
+                          </div>
                         )
                       })}
                     </div>
@@ -3639,22 +4074,98 @@ export default function OwnerShiftsPage() {
                     </label>
                     <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                       <span style={{ display: 'block', fontWeight: 600, fontSize: '0.875rem', color: '#374151', marginBottom: 4 }}>End time</span>
-                      <TimePicker value={shiftEditForm.end_time} onChange={val => setShiftEditForm(prev => ({ ...prev, end_time: val }))} />
+                      <TimePicker value={shiftEditForm.end_time} onChange={val => setShiftEditForm(prev => ({ ...prev, end_time: val }))} minTime={shiftEditForm.start_time} />
                     </label>
                   </div>
                 </div>
 
-                {shiftActionError && <div style={errorBoxStyle}>{shiftActionError}</div>}
+                {shiftActionError && <div ref={shiftActionErrorRef} style={errorBoxStyle}>{shiftActionError}</div>}
               </div>
 
               <div style={{ padding: '18px 34px 24px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, borderTop: '1px solid #F3F4F6' }}>
                 <button type="button" onClick={deleteShift} disabled={shiftActionLoading} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: 'none', borderRadius: 10, background: shiftActionLoading ? '#F3A8A8' : 'linear-gradient(135deg, #EF4444, #DC2626)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: shiftActionLoading ? 'not-allowed' : 'pointer', marginRight: 'auto' }}>{shiftActionLoading ? <Spinner size={13} /> : <Trash2 size={13} />} Delete</button>
+                <button type="button" onClick={openDuplicateShiftModal} disabled={shiftActionLoading} style={{ ...secondaryButtonStyle, height: 36, opacity: shiftActionLoading ? 0.65 : 1, cursor: shiftActionLoading ? 'not-allowed' : 'pointer' }}><Copy size={13} /> Duplicate</button>
                 <button type="button" onClick={saveShiftEdit} disabled={shiftActionLoading} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: shiftActionLoading ? '#FDA060' : '#F97316', color: '#FFFFFF', height: 36, padding: '0 18px', fontSize: 13, fontWeight: 700, cursor: shiftActionLoading ? 'not-allowed' : 'pointer', opacity: shiftActionLoading ? 0.65 : 1 }}>{shiftActionLoading ? <Spinner size={13} /> : <Check size={16} />} Save</button>
               </div>
             </div>
           </div>
         )
       })()}
+
+      {duplicateShiftModalOpen && selectedShift && (
+        <div style={modalOverlayStyle}>
+          <div style={{ ...modalStyle, width: 'min(440px, calc(100% - 32px))', padding: 0, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', flexShrink: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <Copy size={14} color="#fff" strokeWidth={2} />
+                </div>
+                <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>Duplicate Shift</h2>
+              </div>
+              <button
+                type="button"
+                onClick={closeDuplicateShiftModal}
+                disabled={duplicateShiftLoading}
+                style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8, flexShrink: 0 }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+                onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ padding: '20px 24px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <p style={{ margin: 0, fontSize: 12, color: MUTED, lineHeight: 1.5 }}>
+                Creates a new shift on a different date with the same time and department, saved as a draft.
+              </p>
+
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <span style={{ display: 'block', fontWeight: 600, fontSize: '0.875rem', color: '#374151', marginBottom: 4 }}>Date</span>
+                <input
+                  type="date"
+                  value={duplicateShiftForm.shift_date}
+                  min={minDate}
+                  max={maxDate}
+                  onChange={e => setDuplicateShiftForm(prev => ({ ...prev, shift_date: e.target.value }))}
+                  style={{ width: '100%', padding: '9px 12px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, fontSize: 13, color: TEXT_DARK, boxSizing: 'border-box', fontFamily: 'inherit' }}
+                />
+              </label>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <span style={{ display: 'block', fontWeight: 600, fontSize: '0.8125rem', color: '#374151', marginBottom: 4 }}>Start time</span>
+                  <TimePicker value={duplicateShiftForm.start_time} onChange={v => setDuplicateShiftForm(prev => ({ ...prev, start_time: v }))} />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <span style={{ display: 'block', fontWeight: 600, fontSize: '0.8125rem', color: '#374151', marginBottom: 4 }}>End time</span>
+                  <TimePicker value={duplicateShiftForm.end_time} onChange={v => setDuplicateShiftForm(prev => ({ ...prev, end_time: v }))} minTime={duplicateShiftForm.start_time} />
+                </label>
+              </div>
+
+              <div>
+                <span style={{ display: 'block', fontWeight: 700, fontSize: '0.875rem', color: '#374151', marginBottom: 8 }}>Assign to (optional)</span>
+                <DropdownField
+                  value={duplicateShiftForm.assigned_user_id}
+                  options={members
+                    .filter(member => member.department_id === selectedShift.department_id)
+                    .map(member => ({ value: member.id, label: `${member.full_name} · ${member.role}` }))}
+                  onChange={v => setDuplicateShiftForm(prev => ({ ...prev, assigned_user_id: v }))}
+                  placeholder="Leave unassigned"
+                />
+              </div>
+
+              {duplicateShiftError && <div ref={duplicateShiftErrorRef} style={errorBoxStyle}>{duplicateShiftError}</div>}
+            </div>
+
+            <div style={{ padding: '18px 24px 24px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, borderTop: '1px solid #F3F4F6' }}>
+              <button type="button" onClick={closeDuplicateShiftModal} disabled={duplicateShiftLoading} style={{ ...secondaryButtonStyle, height: 36 }}>Cancel</button>
+              <button type="button" onClick={submitDuplicateShift} disabled={duplicateShiftLoading} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: duplicateShiftLoading ? '#FDA060' : '#F97316', color: '#FFFFFF', height: 36, padding: '0 18px', fontSize: 13, fontWeight: 700, cursor: duplicateShiftLoading ? 'not-allowed' : 'pointer', opacity: duplicateShiftLoading ? 0.65 : 1 }}>
+                {duplicateShiftLoading ? <Spinner size={13} /> : <Copy size={14} />} Duplicate
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Success toast ── */}
       {successToast && (
@@ -3668,6 +4179,21 @@ export default function OwnerShiftsPage() {
         }}>
           <Check size={15} style={{ color: '#10B981', flexShrink: 0 }} />
           {successToast}
+        </div>
+      )}
+
+      {/* ── Error toast ── */}
+      {errorToast && (
+        <div style={{
+          position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 9999, display: 'flex', alignItems: 'center', gap: 10,
+          background: '#0F172A', color: '#fff', borderRadius: 12,
+          padding: '12px 20px', boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
+          fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap',
+          animation: 'fadeSlideUpToast 0.22s ease',
+        }}>
+          <AlertTriangle size={15} style={{ color: '#F87171', flexShrink: 0 }} />
+          {errorToast}
         </div>
       )}
     </div>

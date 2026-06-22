@@ -1,9 +1,11 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { Crown, X, Check, Pencil } from 'lucide-react'
+import { createBrowserClient } from '@supabase/ssr'
+import { Crown, X, Check, Pencil, Camera } from 'lucide-react'
 import DatePickerField from '@/components/DatePickerField'
+import Toast from '@/components/Toast'
 
 const keyframes = `
   @keyframes oubOverlayIn  { from { opacity: 0 } to { opacity: 1 } }
@@ -60,7 +62,7 @@ const inputStyle: React.CSSProperties = {
 }
 const labelStyle: React.CSSProperties = {
   display: 'block', fontWeight: 600, fontSize: '0.75rem',
-  color: '#6B7280', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em',
+  color: '#6B7280', marginBottom: 4, letterSpacing: '0.05em',
 }
 
 interface ProfileData {
@@ -80,9 +82,16 @@ export default function OwnerUserBadge({ userId, companyId }: { userId: string; 
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [dob, setDob] = useState('')
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null)
+  const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [successToast, setSuccessToast] = useState('')
   const [mounted, setMounted] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const successToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => () => { if (successToastTimerRef.current) clearTimeout(successToastTimerRef.current) }, [])
 
   useEffect(() => { setMounted(true) }, [])
 
@@ -113,21 +122,51 @@ export default function OwnerUserBadge({ userId, companyId }: { userId: string; 
     setError('')
   }
 
+  const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setUploadingPhoto(true)
+    setError('')
+    try {
+      const supabase = createBrowserClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      )
+      const ext = file.name.split('.').pop() ?? 'jpg'
+      const filename = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`
+      const { data, error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(filename, file, { contentType: file.type })
+      if (uploadError || !data) throw new Error('Photo upload failed')
+      const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(data.path)
+      setPhotoUrl(publicUrl)
+    } catch {
+      setError('Failed to upload photo. Please try again.')
+    } finally {
+      setUploadingPhoto(false)
+    }
+  }
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!name.trim()) { setError('Full name is required'); return }
+    if (!phone) { setError('Phone number is required'); return }
+    if (phone.length !== 8) { setError('Phone number must be exactly 8 digits'); return }
     setSaving(true)
     setError('')
     try {
       const res = await fetch('/api/user/update-profile', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: userId, full_name: name, phone_number: phone, date_of_birth: dob }),
+        body: JSON.stringify({ user_id: userId, full_name: name, phone_number: phone, date_of_birth: dob, profile_photo_url: photoUrl }),
       })
       const data = await res.json()
       if (!data.success) { setError(data.message ?? 'Update failed'); return }
-      setProfile(prev => prev ? { ...prev, full_name: data.user.full_name, phone_number: data.user.phone_number, date_of_birth: data.user.date_of_birth } : prev)
+      setProfile(prev => prev ? { ...prev, full_name: data.user.full_name, phone_number: data.user.phone_number, date_of_birth: data.user.date_of_birth, profile_photo_url: data.user.profile_photo_url } : prev)
       setEditing(false)
+      if (successToastTimerRef.current) clearTimeout(successToastTimerRef.current)
+      setSuccessToast('Profile updated successfully.')
+      successToastTimerRef.current = setTimeout(() => setSuccessToast(''), 3000)
     } catch { setError('Something went wrong') }
     finally { setSaving(false) }
   }
@@ -162,7 +201,27 @@ export default function OwnerUserBadge({ userId, companyId }: { userId: string; 
 
           {/* Avatar + name hero */}
           <div style={{ padding: '16px 24px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', gap: 14 }}>
-            <BigAvatar photoUrl={profile?.profile_photo_url} name={profile?.full_name ?? ''} size={44} />
+            <div style={{ position: 'relative', flexShrink: 0 }}>
+              <BigAvatar photoUrl={editing ? photoUrl : profile?.profile_photo_url} name={profile?.full_name ?? ''} size={44} />
+              {editing && (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploadingPhoto}
+                  title="Change photo"
+                  style={{ position: 'absolute', bottom: -2, right: -2, width: 20, height: 20, borderRadius: 999, background: '#F97316', border: '2px solid #FFFFFF', color: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: uploadingPhoto ? 'not-allowed' : 'pointer', padding: 0 }}
+                >
+                  {uploadingPhoto ? <Spinner size={10} /> : <Camera size={11} />}
+                </button>
+              )}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
+                onChange={handlePhotoChange}
+              />
+            </div>
             <div>
               <p style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A', margin: '0 0 5px' }}>{profile?.full_name ?? '—'}</p>
               <span style={{ display: 'inline-block', padding: '3px 10px', borderRadius: 999, fontSize: '0.6875rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', background: '#0F172A', color: '#FFFFFF' }}>
@@ -197,7 +256,14 @@ export default function OwnerUserBadge({ userId, companyId }: { userId: string; 
               <div style={{ padding: '14px 0', borderBottom: editing && error ? '1px solid #F3F4F6' : 'none' }}>
                 <label style={labelStyle}>Phone Number</label>
                 {editing
-                  ? <input value={phone} onChange={e => setPhone(e.target.value)} style={inputStyle} placeholder="+65 9xxx xxxx" />
+                  ? <input
+                      type="tel"
+                      value={phone}
+                      onChange={e => { setPhone(e.target.value.replace(/\D/g, '')); setError('') }}
+                      maxLength={8}
+                      style={inputStyle}
+                      placeholder="91234567"
+                    />
                   : <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{profile?.phone_number ?? '—'}</p>}
               </div>
               {editing && error && (
@@ -211,7 +277,7 @@ export default function OwnerUserBadge({ userId, companyId }: { userId: string; 
             <div style={{ padding: '16px 24px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
               {editing ? (
                 <>
-                  <button type="button" onClick={() => { setEditing(false); setError('') }} style={{ padding: '7px 16px', border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', fontWeight: 600, fontSize: '0.8125rem', color: '#374151', cursor: 'pointer' }}>
+                  <button type="button" onClick={() => { setEditing(false); setError(''); setPhotoUrl(profile?.profile_photo_url ?? null) }} style={{ padding: '7px 16px', border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', fontWeight: 600, fontSize: '0.8125rem', color: '#374151', cursor: 'pointer' }}>
                     Cancel
                   </button>
                   <button type="submit" disabled={saving} style={{ padding: '7px 18px', border: 'none', borderRadius: 8, background: saving ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: saving ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: saving ? 0.65 : 1 }}>
@@ -219,7 +285,7 @@ export default function OwnerUserBadge({ userId, companyId }: { userId: string; 
                   </button>
                 </>
               ) : (
-                <button type="button" onClick={() => { setName(profile?.full_name ?? ''); setPhone(profile?.phone_number ?? ''); setDob(profile?.date_of_birth ?? ''); setError(''); setEditing(true) }} style={{ padding: '7px 16px', border: 'none', borderRadius: 8, background: 'linear-gradient(135deg, #F97316, #EA580C)', fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <button type="button" onClick={() => { setName(profile?.full_name ?? ''); setPhone(profile?.phone_number ?? ''); setDob(profile?.date_of_birth ?? ''); setPhotoUrl(profile?.profile_photo_url ?? null); setError(''); setEditing(true) }} style={{ padding: '7px 16px', border: 'none', borderRadius: 8, background: 'linear-gradient(135deg, #F97316, #EA580C)', fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
                   <Pencil size={13} /> Edit Profile
                 </button>
               )}
@@ -244,6 +310,12 @@ export default function OwnerUserBadge({ userId, companyId }: { userId: string; 
         <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{profile?.full_name ?? '—'}</span>
       </button>
       {modal}
+      {mounted && createPortal(
+        <div style={{ position: 'fixed', inset: 0, zIndex: 10000, pointerEvents: 'none' }}>
+          <Toast message={successToast} />
+        </div>,
+        document.body,
+      )}
     </>
   )
 }

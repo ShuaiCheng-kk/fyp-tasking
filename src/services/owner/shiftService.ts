@@ -3,9 +3,10 @@
 
 import { shiftRepository } from '@/repositories/owner/shiftRepository'
 import { schedulingRuleService } from '@/services/owner/schedulingRuleService'
-import { BulkShiftAssignmentPayload, BulkShiftAssignmentResult, ClopeningConflict, DuplicateShiftInput, RecurringShiftInput, Shift, ShiftInput, ShiftMutationResult } from '@/types/Shift'
+import { BulkShiftAssignmentPayload, BulkShiftAssignmentResult, ClopeningConflict, DuplicateShiftInput, RecurringShiftInput, Shift, ShiftInput, ShiftMutationResult, SplitShiftInput, SplitShiftResult } from '@/types/Shift'
 import { ScheduleValidationResult } from '@/types/SchedulingRule'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
+import { ShiftActionType } from '@/types/ShiftActionHistory'
 
 const TIMELINE_ROLE_ORDER: Record<string, number> = {
   Manager: 1,
@@ -51,7 +52,70 @@ export const shiftService = {
         supervisor_employee_id: input.supervisor_employee_id ?? null,
       })
     }
+    await recordCreateHistory('create', input.company_id, input.created_by, [shift])
     return { shift, warning }
+  },
+
+  async createSplitShift(input: SplitShiftInput): Promise<SplitShiftResult> {
+    if (!input.company_id || !input.department_id || !input.shift_date || !input.created_by) {
+      throw new Error('Missing required shift fields')
+    }
+    if (input.blocks.length !== 2) {
+      throw new Error('A split shift must have exactly 2 time blocks')
+    }
+    for (const block of input.blocks) {
+      if (!block.start_time || !block.end_time || block.start_time >= block.end_time) {
+        throw new Error('Each block must have start_time before end_time')
+      }
+    }
+    const sortedBlocks = [...input.blocks].sort((a, b) => a.start_time.localeCompare(b.start_time))
+    const [first, second] = sortedBlocks
+    if (second.start_time < first.end_time) {
+      throw new Error('Split shift blocks must not overlap')
+    }
+
+    let warning: ClopeningConflict | null = null
+    if (input.assigned_user_id) {
+      for (const block of sortedBlocks) {
+        const blockWarning = await detectClopeningConflict({
+          user_id: input.assigned_user_id,
+          shift_date: input.shift_date,
+          start_time: block.start_time,
+          end_time: block.end_time,
+        })
+        warning = warning ?? blockWarning
+      }
+      if (warning && !input.override_clopening) throw new Error(`CLOPENING_CONFLICT: ${warning.message}`)
+    }
+
+    const splitGroupId = crypto.randomUUID()
+    const shifts: Shift[] = []
+    for (const block of sortedBlocks) {
+      const shift = await shiftRepository.createShift({
+        company_id: input.company_id,
+        department_id: input.department_id,
+        title: input.title ?? null,
+        instruction: input.instruction ?? null,
+        shift_date: input.shift_date,
+        start_time: block.start_time,
+        end_time: block.end_time,
+        created_by: input.created_by,
+        publication_status: input.publication_status ?? 'draft',
+        split_group_id: splitGroupId,
+      })
+      if (input.assigned_user_id) {
+        await shiftRepository.createShiftAssignment({
+          shift_id: shift.id,
+          user_id: input.assigned_user_id,
+          assigned_by: input.created_by,
+          supervisor_employee_id: input.supervisor_employee_id ?? null,
+        })
+      }
+      shifts.push(shift)
+    }
+
+    await recordCreateHistory('split', input.company_id, input.created_by, shifts)
+    return { shifts, warning }
   },
 
   async editShift(
@@ -62,6 +126,7 @@ export const shiftService = {
       assigned_by: string
       supervisor_employee_id: string | null
     },
+    performed_by?: string,
   ): Promise<ShiftMutationResult> {
     const existing = await shiftRepository.getShiftById(id)
     if (!existing) throw new Error('Shift not found')
@@ -88,6 +153,8 @@ export const shiftService = {
       : null
     if (warning && !fields.override_clopening) throw new Error(`CLOPENING_CONFLICT: ${warning.message}`)
 
+    const previousAssignments = await shiftRepository.getAssignmentsByShiftIds([id])
+
     const { override_clopening, ...persistedFields } = fields
     void override_clopening
     const shift = Object.keys(persistedFields).length > 0
@@ -103,6 +170,18 @@ export const shiftService = {
           supervisor_employee_id: assignment.supervisor_employee_id,
         })
       }
+    }
+    if (performed_by) {
+      await shiftRepository.createActionHistory({
+        company_id: existing.company_id,
+        performed_by,
+        action_type: 'edit',
+        affected_shift_ids: [id],
+        undo_payload: {
+          previous_shift: existing,
+          previous_assignments: previousAssignments,
+        },
+      })
     }
     return { shift, warning }
   },
@@ -188,6 +267,7 @@ export const shiftService = {
       })
     }
 
+    await recordCreateHistory('duplicate', original.company_id, input.created_by, [shift])
     return { shift, warning }
   },
 
@@ -255,14 +335,28 @@ export const shiftService = {
       nextDate = addDaysToDateKey(nextDate, intervalDays)
     }
 
+    await recordCreateHistory('recurrence', original.company_id, input.created_by, created)
     return created
   },
 
-  async deleteShift(id: string): Promise<void> {
+  async deleteShift(id: string, performed_by?: string): Promise<void> {
     const shift = await shiftRepository.getShiftById(id)
     if (!shift) throw new Error('Shift not found')
+    const assignments = await shiftRepository.getAssignmentsByShiftIds([id])
     await shiftRepository.deleteAssignmentsByShiftId(id)
     await shiftRepository.deleteShift(id)
+    if (performed_by) {
+      await shiftRepository.createActionHistory({
+        company_id: shift.company_id,
+        performed_by,
+        action_type: 'delete',
+        affected_shift_ids: [id],
+        undo_payload: {
+          deleted_shifts: [shift],
+          deleted_assignments: assignments,
+        },
+      })
+    }
   },
 
   async deleteShiftAssignment(assignment_id: string): Promise<void> {
@@ -318,6 +412,9 @@ export const shiftService = {
       }
     }
 
+    if (created.length > 0) {
+      await recordCreateHistory('bulk', company_id, created_by, created)
+    }
     return { created, failed }
   },
 
@@ -439,6 +536,58 @@ export const shiftService = {
       })
   },
 
+  async undoLastShiftAction(company_id: string, performed_by: string): Promise<{ action_type: ShiftActionType }> {
+    if (!company_id || !performed_by) throw new Error('company_id and performed_by are required')
+    const action = await shiftRepository.getLatestUndoableAction(company_id, performed_by)
+    if (!action) throw new Error('No recent shift action to undo')
+
+    if (action.action_type === 'edit') {
+      const previousShift = action.undo_payload.previous_shift as Shift | undefined
+      if (previousShift) {
+        const { id, company_id: _companyId, created_by: _createdBy, created_at: _createdAt, ...fields } = previousShift
+        void _companyId
+        void _createdBy
+        void _createdAt
+        await shiftRepository.updateShift(id, fields)
+      }
+      await shiftRepository.deleteAssignmentsByShiftId(action.affected_shift_ids[0])
+      const previousAssignments = action.undo_payload.previous_assignments ?? []
+      await shiftRepository.restoreShiftAssignments(previousAssignments)
+    } else if (action.action_type === 'delete') {
+      const deletedShifts = action.undo_payload.deleted_shifts ?? []
+      for (const shift of deletedShifts) {
+        await shiftRepository.restoreShift(shift)
+      }
+      const deletedAssignments = action.undo_payload.deleted_assignments ?? []
+      await shiftRepository.restoreShiftAssignments(deletedAssignments)
+    } else {
+      for (const shiftId of action.affected_shift_ids) {
+        await shiftRepository.deleteAssignmentsByShiftId(shiftId)
+        await shiftRepository.deleteShift(shiftId)
+      }
+    }
+
+    await shiftRepository.markActionUndone(action.id)
+    return { action_type: action.action_type }
+  },
+
+}
+
+async function recordCreateHistory(
+  action_type: ShiftActionType,
+  company_id: string,
+  performed_by: string,
+  shifts: Shift[],
+): Promise<void> {
+  await shiftRepository.createActionHistory({
+    company_id,
+    performed_by,
+    action_type,
+    affected_shift_ids: shifts.map(s => s.id),
+    undo_payload: {
+      created_shift_ids: shifts.map(s => s.id),
+    },
+  })
 }
 
 function toTimelineShiftBlock(

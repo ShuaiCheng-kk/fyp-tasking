@@ -15,6 +15,11 @@ export async function GET(req: NextRequest) {
   const stats = searchParams.get('stats') === 'true'
   const dept_stats = searchParams.get('dept_stats') === 'true'
   const activity_feed = searchParams.get('activity_feed') === 'true'
+  const calendar = searchParams.get('calendar') === 'true'
+  const suggestion = searchParams.get('suggestion')
+  const task_id = searchParams.get('task_id') ?? undefined
+  const date_from = searchParams.get('date_from') ?? undefined
+  const date_to = searchParams.get('date_to') ?? undefined
 
   if (!company_id) {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
@@ -36,6 +41,23 @@ export async function GET(req: NextRequest) {
     if (activity_feed) {
       const feed = await taskService.getTodayActivityFeed(company_id)
       return NextResponse.json({ success: true, feed })
+    }
+    if (calendar) {
+      const tasks = await taskService.getCalendarTasks(company_id, date_from ?? '', date_to ?? '')
+      return NextResponse.json({ success: true, tasks })
+    }
+    if (suggestion === 'workload') {
+      const workloadSuggestion = await taskService.getWorkloadRebalancingSuggestion(company_id)
+      return NextResponse.json({ success: true, suggestion: workloadSuggestion })
+    }
+    if (suggestion === 'reassignment' && task_id) {
+      const reassignmentSuggestion = await taskService.getTaskReassignmentSuggestion(task_id)
+      return NextResponse.json({ success: true, suggestion: reassignmentSuggestion })
+    }
+    if (suggestion === 'stalled') {
+      const staleAfterDays = Number(searchParams.get('stale_after_days') ?? 3)
+      const alerts = await taskService.getStalledTaskAlerts(company_id, staleAfterDays)
+      return NextResponse.json({ success: true, alerts })
     }
     if (shift_id) {
       const tasks = await taskService.getTasksByCompanyShift(company_id, shift_id)
@@ -66,6 +88,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, task }, { status: 201 })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to duplicate task'
+      return NextResponse.json({ success: false, message }, { status: 400 })
+    }
+  }
+
+  if (b.action === 'recurring' && typeof b.id === 'string') {
+    try {
+      const tasks = await taskService.createRecurringTasks(b.id, {
+        recurrence_rule: b.recurrence_rule as 'daily' | 'weekly' | 'custom',
+        recurrence_end_date: String(b.recurrence_end_date ?? ''),
+        assigned_by: b.assigned_by as string | undefined,
+      })
+      return NextResponse.json({ success: true, tasks }, { status: 201 })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to create recurring tasks'
       return NextResponse.json({ success: false, message }, { status: 400 })
     }
   }
@@ -113,6 +149,29 @@ export async function PATCH(req: NextRequest) {
   const b = body as Record<string, unknown>
   if (!b.id || typeof b.id !== 'string')
     return NextResponse.json({ success: false, message: 'id is required' }, { status: 400 })
+
+  if (b.action === 'archive') {
+    try {
+      const task = await taskService.archiveTask(b.id)
+      return NextResponse.json({ success: true, task })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to archive task'
+      return NextResponse.json({ success: false, message }, { status: 400 })
+    }
+  }
+
+  if (b.action === 'dependencies') {
+    try {
+      const dependencies = await taskService.setTaskDependencies(
+        b.id,
+        Array.isArray(b.dependency_ids) ? b.dependency_ids.map(String) : [],
+      )
+      return NextResponse.json({ success: true, dependencies })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to set task dependencies'
+      return NextResponse.json({ success: false, message }, { status: 400 })
+    }
+  }
 
   // Quick status+percentage update shortcut (only when no other fields are present)
   if (b.status !== undefined && b.percentage_complete !== undefined && !b.title) {

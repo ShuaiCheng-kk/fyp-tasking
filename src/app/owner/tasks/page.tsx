@@ -7,14 +7,14 @@ import {
   Plus, X, ChevronDown, Calendar, AlertCircle,
   CheckCircle, Clock, Eye, Layers, Users,
   Crown, UserCog, UserRound, Pencil, Trash2, CalendarDays, ChevronLeft, ChevronRight,
-  Sparkles, Check,
+  Sparkles, Check, Archive, Repeat, Copy, GitBranch, Bell, ArrowRightLeft,
 } from 'lucide-react'
 import { AiAssignSuggestion } from '@/types/AI'
 import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
-import { Task, TaskInput, KanbanGroup } from '@/types/Task'
+import { Task, TaskInput, KanbanGroup, TaskReassignmentSuggestion, TaskWorkloadSuggestion, StalledTaskAlert } from '@/types/Task'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 
 // ─── Date picker constants ────────────────────────────────────────────────────
@@ -198,6 +198,7 @@ type DeptTaskStats = {
 }
 
 type PriorityLevel = 'Low' | 'Medium' | 'High' | 'Urgent'
+type TaskRecurrenceRule = 'daily' | 'weekly' | 'custom'
 const PRIORITY_COLORS: Record<string, { bg: string; text: string }> = {
   Low:    { bg: '#F1F5F9', text: '#475569' },
   Medium: { bg: '#DBEAFE', text: '#1D4ED8' },
@@ -693,6 +694,15 @@ export default function OwnerTasksPage() {
   const [subTaskTitle,    setSubTaskTitle]    = useState('')
   const [subTaskLoading,  setSubTaskLoading]  = useState(false)
   const [taskViewMode,    setTaskViewMode]    = useState(false)
+  const [taskActionLoading, setTaskActionLoading] = useState('')
+  const [recurrenceRule, setRecurrenceRule] = useState<TaskRecurrenceRule>('weekly')
+  const [recurrenceEndDate, setRecurrenceEndDate] = useState('')
+  const [dependencyIds, setDependencyIds] = useState<string[]>([])
+  const [reassignmentSuggestion, setReassignmentSuggestion] = useState<TaskReassignmentSuggestion | null>(null)
+  const [workloadSuggestion, setWorkloadSuggestion] = useState<TaskWorkloadSuggestion | null>(null)
+  const [stalledAlerts, setStalledAlerts] = useState<StalledTaskAlert[]>([])
+  const [insightLoading, setInsightLoading] = useState('')
+  const [insightError, setInsightError] = useState('')
 
   // Board view mode (Kanban / Calendar) + animated tab indicator
   const [boardViewMode, setBoardViewMode] = useState<'kanban' | 'calendar'>('kanban')
@@ -950,6 +960,9 @@ export default function OwnerTasksPage() {
   // ── Open task panel ────────────────────────────────────────────────────────
 
   const openTask = (task: Task, viewOnly = false) => {
+    const existingDependencies = kanban
+      ? COLUMNS.flatMap(col => kanban[col]).filter(row => row.parent_task_id === task.id).map(row => row.id)
+      : []
     setTaskViewMode(viewOnly)
     setSelectedTask(task)
     setEditTitle(task.title)
@@ -966,6 +979,11 @@ export default function OwnerTasksPage() {
     setPanelError('')
     setDeleteConfirm(false)
     setSubTaskTitle('')
+    setTaskActionLoading('')
+    setRecurrenceRule('weekly')
+    setRecurrenceEndDate(formatDateKey(addDays(new Date(`${kanbanDateKey(task)}T00:00:00`), 28)))
+    setDependencyIds(existingDependencies)
+    setReassignmentSuggestion(null)
   }
 
   const closePanel = () => { setSelectedTask(null); setDeleteConfirm(false); setPanelError(''); setSubTaskTitle('') }
@@ -1052,7 +1070,123 @@ export default function OwnerTasksPage() {
     finally { setDeleteTaskLoading(false) }
   }
 
+  const handleDuplicateTask = async () => {
+    if (!selectedTask) return
+    setTaskActionLoading('duplicate'); setPanelError('')
+    try {
+      const res = await fetch('/api/task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'duplicate', id: selectedTask.id, assigned_by: internalUserId || undefined }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      await fetchKanban(companyId)
+      showTaskToast('Task duplicated.')
+    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to duplicate task') }
+    finally { setTaskActionLoading('') }
+  }
+
+  const handleArchiveTask = async () => {
+    if (!selectedTask) return
+    setTaskActionLoading('archive'); setPanelError('')
+    try {
+      const res = await fetch('/api/task', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'archive', id: selectedTask.id }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      await fetchKanban(companyId)
+      closePanel()
+      showTaskToast('Task archived.')
+    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to archive task') }
+    finally { setTaskActionLoading('') }
+  }
+
+  const handleCreateRecurringTasks = async () => {
+    if (!selectedTask || !recurrenceEndDate) return
+    setTaskActionLoading('recurring'); setPanelError('')
+    try {
+      const res = await fetch('/api/task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'recurring',
+          id: selectedTask.id,
+          recurrence_rule: recurrenceRule,
+          recurrence_end_date: recurrenceEndDate,
+          assigned_by: internalUserId || undefined,
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      await fetchKanban(companyId)
+      showTaskToast(`${data.tasks?.length ?? 0} recurring task${data.tasks?.length === 1 ? '' : 's'} created.`)
+    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to create recurring tasks') }
+    finally { setTaskActionLoading('') }
+  }
+
+  const handleSaveDependencies = async () => {
+    if (!selectedTask) return
+    setTaskActionLoading('dependencies'); setPanelError('')
+    try {
+      const res = await fetch('/api/task', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'dependencies', id: selectedTask.id, dependency_ids: dependencyIds }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      await fetchKanban(companyId)
+      showTaskToast('Task dependencies updated.')
+    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to update dependencies') }
+    finally { setTaskActionLoading('') }
+  }
+
+  const handleFetchReassignmentSuggestion = async () => {
+    if (!selectedTask || !companyId) return
+    setTaskActionLoading('reassignment'); setPanelError('')
+    try {
+      const res = await fetch(`/api/task?company_id=${companyId}&suggestion=reassignment&task_id=${selectedTask.id}`)
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      setReassignmentSuggestion(data.suggestion)
+    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to fetch reassignment suggestion') }
+    finally { setTaskActionLoading('') }
+  }
+
+  const handleApplyReassignment = async () => {
+    if (!selectedTask || !reassignmentSuggestion?.recommended_assignee_id) return
+    setEditAssignee(reassignmentSuggestion.recommended_assignee_id)
+    setPanelError('')
+    showTaskToast('Suggested assignee selected. Save changes to apply.')
+  }
+
+  const refreshTaskInsights = useCallback(async (kind: 'workload' | 'stalled') => {
+    if (!companyId) return
+    setInsightLoading(kind); setInsightError('')
+    try {
+      const query = kind === 'workload'
+        ? `/api/task?company_id=${companyId}&suggestion=workload`
+        : `/api/task?company_id=${companyId}&suggestion=stalled&stale_after_days=3`
+      const res = await fetch(query)
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      if (kind === 'workload') setWorkloadSuggestion(data.suggestion)
+      else setStalledAlerts(data.alerts ?? [])
+    } catch (err) { setInsightError(err instanceof Error ? err.message : 'Failed to refresh task insight') }
+    finally { setInsightLoading('') }
+  }, [companyId])
+
   // ── Create task ────────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!companyId) return
+    void refreshTaskInsights('workload')
+    void refreshTaskInsights('stalled')
+  }, [companyId, refreshTaskInsights])
 
   const handleCreateSubTask = async () => {
     if (!selectedTask || !subTaskTitle.trim()) return
@@ -1441,6 +1575,15 @@ export default function OwnerTasksPage() {
   const selectedSubTasks = selectedTask && kanban
     ? COLUMNS.flatMap(col => kanban[col]).filter(task => task.parent_task_id === selectedTask.id)
     : []
+  const dependencyTaskOptions = selectedTask && kanban
+    ? COLUMNS.flatMap(col => kanban[col]).filter(task => task.id !== selectedTask.id && task.parent_task_id !== selectedTask.id)
+    : []
+  const recommendedAssigneeName = reassignmentSuggestion?.recommended_assignee_id
+    ? members.find(m => m.id === reassignmentSuggestion.recommended_assignee_id)?.full_name ?? 'Unknown'
+    : ''
+  const currentAssigneeName = reassignmentSuggestion?.current_assignee_id
+    ? members.find(m => m.id === reassignmentSuggestion.current_assignee_id)?.full_name ?? 'Unassigned'
+    : 'Unassigned'
 
   const visibleDepts = departments.filter(d =>
     selectedDeptId === '' ? true : d.id === selectedDeptId
@@ -1731,6 +1874,40 @@ export default function OwnerTasksPage() {
         </div>
 
         {/* Content — single card like Shifts/Communication */}
+        <div style={{ padding: '0 28px 16px', flexShrink: 0 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 12 }}>
+            <div style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#FFFFFF', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+              <span style={{ width: 34, height: 34, borderRadius: 10, background: '#EEF2FF', color: '#4F46E5', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <ArrowRightLeft size={16} />
+              </span>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Workload suggestion</p>
+                <p style={{ margin: '3px 0 0', color: '#0F172A', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {workloadSuggestion?.message ?? 'No workload suggestion loaded yet.'}
+                </p>
+              </div>
+              <button type="button" onClick={() => void refreshTaskInsights('workload')} disabled={insightLoading === 'workload'} style={{ height: 32, border: '1px solid #E2E8F0', borderRadius: 8, background: '#FFFFFF', color: '#334155', padding: '0 10px', fontSize: 12, fontWeight: 700, cursor: insightLoading === 'workload' ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                {insightLoading === 'workload' ? <Spinner size={12} dark /> : null} Refresh
+              </button>
+            </div>
+            <div style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#FFFFFF', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+              <span style={{ width: 34, height: 34, borderRadius: 10, background: stalledAlerts.length > 0 ? '#FEF2F2' : '#F0FDF4', color: stalledAlerts.length > 0 ? '#DC2626' : '#16A34A', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <Bell size={16} />
+              </span>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Stalled tasks</p>
+                <p style={{ margin: '3px 0 0', color: '#0F172A', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {stalledAlerts.length > 0 ? `${stalledAlerts.length} task${stalledAlerts.length === 1 ? '' : 's'} need attention: ${stalledAlerts[0].title}` : 'No stalled tasks found.'}
+                </p>
+              </div>
+              <button type="button" onClick={() => void refreshTaskInsights('stalled')} disabled={insightLoading === 'stalled'} style={{ height: 32, border: '1px solid #E2E8F0', borderRadius: 8, background: '#FFFFFF', color: '#334155', padding: '0 10px', fontSize: 12, fontWeight: 700, cursor: insightLoading === 'stalled' ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                {insightLoading === 'stalled' ? <Spinner size={12} dark /> : null} Refresh
+              </button>
+            </div>
+          </div>
+          {insightError && <div style={{ marginTop: 8, color: '#DC2626', fontSize: 12, fontWeight: 700 }}>{insightError}</div>}
+        </div>
+
         <div style={{ padding: '0 28px 28px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           {!initialReady || kanbanLoading ? (
             <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flex: 1 }}>
@@ -2292,6 +2469,96 @@ export default function OwnerTasksPage() {
                   onChange={(date, time) => { setEditDueAt(date); setEditDeadlineTime(time) }}
                   minDate={editStartDate || formatDateKey(new Date())}
                 />
+              </div>
+
+              <div style={{ borderTop: '1px dashed #E5E7EB', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                  <button type="button" onClick={handleDuplicateTask} disabled={taskActionLoading === 'duplicate'} style={{ height: 36, border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', color: '#334155', fontSize: 12, fontWeight: 700, cursor: taskActionLoading ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                    {taskActionLoading === 'duplicate' ? <Spinner size={12} dark /> : <Copy size={13} />} Duplicate
+                  </button>
+                  <button type="button" onClick={handleArchiveTask} disabled={taskActionLoading === 'archive'} style={{ height: 36, border: '1px solid #FED7AA', borderRadius: 8, background: '#FFF7ED', color: '#C2410C', fontSize: 12, fontWeight: 700, cursor: taskActionLoading ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                    {taskActionLoading === 'archive' ? <Spinner size={12} dark /> : <Archive size={13} />} Archive
+                  </button>
+                  <button type="button" onClick={handleFetchReassignmentSuggestion} disabled={taskActionLoading === 'reassignment'} style={{ height: 36, border: '1px solid #DDD6FE', borderRadius: 8, background: '#F5F3FF', color: '#6D28D9', fontSize: 12, fontWeight: 700, cursor: taskActionLoading ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                    {taskActionLoading === 'reassignment' ? <Spinner size={12} dark /> : <ArrowRightLeft size={13} />} Suggest
+                  </button>
+                </div>
+
+                {reassignmentSuggestion && (
+                  <div style={{ border: '1px solid #DDD6FE', background: '#F5F3FF', borderRadius: 10, padding: 10 }}>
+                    <p style={{ margin: '0 0 4px', fontSize: 12, fontWeight: 800, color: '#5B21B6' }}>Reassignment suggestion</p>
+                    <p style={{ margin: 0, fontSize: 12, color: '#4C1D95', lineHeight: 1.45 }}>
+                      {recommendedAssigneeName ? `Move from ${currentAssigneeName} to ${recommendedAssigneeName}.` : reassignmentSuggestion.reason}
+                    </p>
+                    {reassignmentSuggestion.recommended_assignee_id && (
+                      <button type="button" onClick={handleApplyReassignment} style={{ marginTop: 8, height: 30, border: 0, borderRadius: 8, background: '#7C3AED', color: '#FFFFFF', fontSize: 12, fontWeight: 700, padding: '0 10px', cursor: 'pointer' }}>
+                        Use suggested assignee
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                    <Repeat size={14} color="#475569" />
+                    <span style={{ fontSize: 13, fontWeight: 800, color: '#0F172A' }}>Recurring task</span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 8, alignItems: 'end' }}>
+                    <div>
+                      <label style={{ ...modalLabelStyle, fontSize: 12, marginBottom: 6 }}>Rule</label>
+                      <DropdownField
+                        value={recurrenceRule}
+                        options={[
+                          { value: 'daily', label: 'Daily' },
+                          { value: 'weekly', label: 'Weekly' },
+                          { value: 'custom', label: 'Every 14 days' },
+                        ]}
+                        onChange={v => setRecurrenceRule(v as TaskRecurrenceRule)}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ ...modalLabelStyle, fontSize: 12, marginBottom: 6 }}>End date</label>
+                      <TaskDatePicker value={recurrenceEndDate || editStartDate || formatDateKey(new Date())} onChange={setRecurrenceEndDate} taskDates={datesWithTasks} minDate={editStartDate || minTaskDate} accentColor={TASK_ORANGE} fullWidth />
+                    </div>
+                    <button type="button" onClick={handleCreateRecurringTasks} disabled={taskActionLoading === 'recurring' || !recurrenceEndDate} style={{ height: 40, border: 0, borderRadius: 8, background: '#0F172A', color: '#FFFFFF', fontSize: 12, fontWeight: 800, padding: '0 12px', cursor: taskActionLoading === 'recurring' ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      {taskActionLoading === 'recurring' ? <Spinner size={12} /> : null} Create
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <GitBranch size={14} color="#475569" />
+                    <span style={{ fontSize: 13, fontWeight: 800, color: '#0F172A' }}>Task dependencies</span>
+                  </div>
+                  {selectedSubTasks.length > 0 && (
+                    <p style={{ margin: '0 0 8px', color: '#64748B', fontSize: 12 }}>
+                      Current dependencies: {selectedSubTasks.map(task => task.title).join(', ')}
+                    </p>
+                  )}
+                  {dependencyTaskOptions.length === 0 ? (
+                    <p style={{ margin: 0, color: '#94A3B8', fontSize: 12 }}>Create another task before setting dependencies.</p>
+                  ) : (
+                    <div style={{ maxHeight: 120, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {dependencyTaskOptions.slice(0, 8).map(task => {
+                        const checked = dependencyIds.includes(task.id)
+                        return (
+                          <label key={task.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#334155', cursor: 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={event => setDependencyIds(prev => event.target.checked ? [...prev, task.id] : prev.filter(id => id !== task.id))}
+                            />
+                            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.title}</span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  )}
+                  <button type="button" onClick={handleSaveDependencies} disabled={taskActionLoading === 'dependencies'} style={{ marginTop: 10, height: 32, border: '1px solid #E2E8F0', borderRadius: 8, background: '#FFFFFF', color: '#334155', fontSize: 12, fontWeight: 800, padding: '0 10px', cursor: taskActionLoading === 'dependencies' ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    {taskActionLoading === 'dependencies' ? <Spinner size={12} dark /> : null} Save dependencies
+                  </button>
+                </div>
               </div>
 
               <InlineError message={panelError} />

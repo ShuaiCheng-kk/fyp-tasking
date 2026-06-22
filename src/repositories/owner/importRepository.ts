@@ -14,10 +14,10 @@ export const importRepository = {
     return (data ?? []) as Department[]
   },
 
-  async createDepartment(company_id: string, name: string): Promise<Department> {
+  async createDepartment(company_id: string, name: string, color?: string): Promise<Department> {
     const { data, error } = await supabase
       .from('departments')
-      .insert({ company_id, name })
+      .insert({ company_id, name, color })
       .select()
       .single()
     if (error) throw new Error(error.message)

@@ -146,7 +146,6 @@ export const invitationService = {
     }
 
     if (data.phone_number && data.phone_number.trim()) {
-      const { supabase } = await import('@/lib/supabase')
       const trimmed = data.phone_number.trim()
       const digits = trimmed.replace(/\D/g, '')
       const variants = new Set<string>([trimmed])
@@ -155,11 +154,7 @@ export const invitationService = {
         variants.add(`+${digits}`)
       }
       for (const v of variants) {
-        const { data: existing } = await supabase
-          .from('users')
-          .select('*')
-          .eq('phone_number', v)
-          .single()
+        const existing = await authRepository.findByPhoneNumber(v)
         if (existing) throw new Error('This phone number is already registered')
       }
     }
@@ -202,14 +197,6 @@ export const invitationService = {
       }
       if (normalizedRole === 'Employee' && invitation.department_id) {
         await invitationRepository.insertEmployeeDepartment(user.id, invitation.department_id)
-      }
-
-      if (invitation.department_id && (normalizedRole === 'Manager' || normalizedRole === 'Employee')) {
-        const { supabase } = await import('@/lib/supabase')
-        await supabase
-          .from('users')
-          .update({ department_id: invitation.department_id })
-          .eq('id', user.id)
       }
 
       await invitationRepository.markAsUsed(data.code, user.id)

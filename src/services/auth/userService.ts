@@ -101,7 +101,7 @@ export const userService = {
     return (memberCount ?? 0) + 1
   },
 
-  async updateProfile(id: string, patch: { full_name?: string; phone_number?: string | null; date_of_birth?: string | null }): Promise<User> {
+  async updateProfile(id: string, patch: { full_name?: string; phone_number?: string | null; date_of_birth?: string | null; profile_photo_url?: string | null }): Promise<User> {
     return authRepository.updateProfile(id, patch)
   },
 

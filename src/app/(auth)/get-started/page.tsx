@@ -22,6 +22,19 @@ import {
 const fH = 'var(--font-heading)';
 const fB = 'var(--font-body)';
 
+async function uploadProfilePhoto(file: File): Promise<string | null> {
+  const supabase = createClient();
+  const ext = file.name.split('.').pop() ?? 'jpg';
+  const filename = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+  const { data, error } = await supabase.storage.from('avatars').upload(filename, file, { contentType: file.type });
+  if (error || !data) {
+    console.error('Profile photo upload failed:', error);
+    return null;
+  }
+  const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(data.path);
+  return publicUrl;
+}
+
 // ─── Spinner ──────────────────────────────────────────────────────────────────
 
 function Spinner() {
@@ -1071,16 +1084,29 @@ function AccountFields({ form, setForm, phoneError, clearPhoneError, profilePhot
   onProfilePhotoChange?: (url: string | null, file?: File | null) => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [localPreview, setLocalPreview] = useState<string | null>(null);
+  const [photoUploading, setPhotoUploading] = useState(false);
+  const [photoUploadError, setPhotoUploadError] = useState('');
 
   const handlePhotoClick = () => fileInputRef.current?.click();
 
-  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    const url = URL.createObjectURL(file);
-    onProfilePhotoChange?.(url, file);
     e.target.value = '';
+    if (!file) return;
+    setPhotoUploadError('');
+    setLocalPreview(URL.createObjectURL(file));
+    setPhotoUploading(true);
+    try {
+      const realUrl = await uploadProfilePhoto(file);
+      if (!realUrl) { setPhotoUploadError('Failed to upload photo. Please try again.'); return; }
+      onProfilePhotoChange?.(realUrl, file);
+    } finally {
+      setPhotoUploading(false);
+    }
   };
+
+  const displayPhotoUrl = profilePhotoUrl ?? localPreview;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -1091,11 +1117,12 @@ function AccountFields({ form, setForm, phoneError, clearPhoneError, profilePhot
         <button
           type="button"
           onClick={handlePhotoClick}
+          disabled={photoUploading}
           style={{
             width: 88, height: 88, borderRadius: '50%',
             border: '2px dashed #E5E7EB',
-            background: profilePhotoUrl ? 'transparent' : '#F9FAFB',
-            cursor: 'pointer',
+            background: displayPhotoUrl ? 'transparent' : '#F9FAFB',
+            cursor: photoUploading ? 'not-allowed' : 'pointer',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             overflow: 'hidden', padding: 0, position: 'relative',
             transition: 'border-color 0.15s',
@@ -1103,8 +1130,8 @@ function AccountFields({ form, setForm, phoneError, clearPhoneError, profilePhot
           onMouseEnter={e => { e.currentTarget.style.borderColor = '#F97316' }}
           onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
         >
-          {profilePhotoUrl ? (
-            <img src={profilePhotoUrl} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          {displayPhotoUrl ? (
+            <img src={displayPhotoUrl} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -1113,10 +1140,18 @@ function AccountFields({ form, setForm, phoneError, clearPhoneError, profilePhot
               </svg>
             </div>
           )}
+          {photoUploading && (
+            <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Spinner />
+            </div>
+          )}
         </button>
         <span style={{ fontFamily: fB, fontSize: '0.8125rem', color: '#9CA3AF' }}>
-          {profilePhotoUrl ? 'Click to change photo' : 'Upload Profile Photo'}
+          {photoUploading ? 'Uploading…' : displayPhotoUrl ? 'Click to change photo' : 'Upload Profile Photo'}
         </span>
+        {photoUploadError && (
+          <span style={{ fontFamily: fB, fontSize: '0.8125rem', color: '#DC2626' }}>{photoUploadError}</span>
+        )}
       </div>
 
       <div className="gs-field">
@@ -1393,6 +1428,7 @@ export default function GetStartedPage() {
   const handleProfilePhotoChange = (url: string | null, file?: File | null) => {
     setProfilePhotoUrl(url);
     setProfilePhotoFile(file ?? null);
+    if (url) sessionStorage.setItem('owner_photo_url', url);
   };
 
   // Owner form state
@@ -1660,19 +1696,6 @@ export default function GetStartedPage() {
     setStep(5);
   };
 
-  const uploadProfilePhoto = async (file: File): Promise<string | null> => {
-    const supabase = createClient();
-    const ext = file.name.split('.').pop() ?? 'jpg';
-    const filename = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
-    const { data, error } = await supabase.storage.from('avatars').upload(filename, file, { contentType: file.type });
-    if (error || !data) {
-      console.error('Profile photo upload failed:', error);
-      return null;
-    }
-    const { data: { publicUrl } } = supabase.storage.from('avatars').getPublicUrl(data.path);
-    return publicUrl;
-  };
-
   const runCompanySetup = async (plan: 'Free' | 'Paid', clearSession = true) => {
     const userId = sessionStorage.getItem('owner_user_id') || '';
     const ownerEmail = sessionStorage.getItem('owner_email') || '';
@@ -1930,6 +1953,7 @@ export default function GetStartedPage() {
           password: invitedAccount.password,
           phone_number: invitedAccount.phone || null,
           date_of_birth: invitedAccount.dateOfBirth || null,
+          profile_photo_url: profilePhotoUrl || null,
         }),
       });
       const redeemData = await redeemRes.json();
