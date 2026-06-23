@@ -13,7 +13,9 @@ export interface TimelineShiftBlock {
   acceptance_deadline_at: string | null
   recurrence_group_id: string | null
   recurrence_rule: 'daily' | 'weekly' | 'custom' | null
+  source_shift_id: string | null
   assignment_status: string | null
+  template_id: string | null
 }
 
 export interface TimelineRow {

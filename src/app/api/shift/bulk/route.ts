@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { company_id, department_id, created_by, assignments, override_clopening } = body as Record<string, unknown>
+  const { company_id, department_id, created_by, assignments } = body as Record<string, unknown>
 
   if (!company_id || typeof company_id !== 'string') {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
@@ -36,6 +36,7 @@ export async function POST(req: NextRequest) {
       start_time: typeof item.start_time === 'string' ? item.start_time : '',
       end_time: typeof item.end_time === 'string' ? item.end_time : '',
       supervisor_employee_id: typeof item.supervisor_employee_id === 'string' ? item.supervisor_employee_id : null,
+      template_id: typeof item.template_id === 'string' && item.template_id ? item.template_id : null,
     }))
 
   try {
@@ -44,7 +45,6 @@ export async function POST(req: NextRequest) {
       department_id,
       created_by,
       assignments: cleanedAssignments,
-      override_clopening: override_clopening === true,
     })
     return NextResponse.json({ success: true, result }, { status: 201 })
   } catch (err) {

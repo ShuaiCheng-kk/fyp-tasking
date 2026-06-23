@@ -32,10 +32,10 @@ export async function PATCH(
     assigned_user_id,
     assigned_by,
     supervisor_employee_id,
-    override_clopening,
+    template_id,
   } = body as Record<string, unknown>
 
-  const fields: Partial<Omit<Shift, 'id' | 'company_id' | 'created_by' | 'created_at'>> & { override_clopening?: boolean } = {}
+  const fields: Partial<Omit<Shift, 'id' | 'company_id' | 'created_by' | 'created_at'>> = {}
   if (typeof department_id === 'string') fields.department_id = department_id
   if (typeof title === 'string' || title === null) fields.title = title
   if (typeof instruction === 'string' || instruction === null) fields.instruction = instruction
@@ -45,7 +45,7 @@ export async function PATCH(
   if (status === 'active' || status === 'inactive') fields.status = status
   if (publication_status === 'draft' || publication_status === 'published') fields.publication_status = publication_status
   if (typeof acceptance_deadline_at === 'string' || acceptance_deadline_at === null) fields.acceptance_deadline_at = acceptance_deadline_at
-  if (override_clopening === true) fields.override_clopening = true
+  if (typeof template_id === 'string' || template_id === null) fields.template_id = template_id
 
   const assignment = assigned_user_id === undefined
     ? undefined

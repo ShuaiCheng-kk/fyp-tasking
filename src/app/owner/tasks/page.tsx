@@ -257,7 +257,7 @@ function isDueOverdue(due: string): boolean {
 function formatShiftOptionLabel(shift: ShiftOption): string {
   const date = new Date(`${shift.shift_date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
   const time = `${shift.start_time.slice(0, 5)}-${shift.end_time.slice(0, 5)}`
-  return `${date} · ${time} · ${shift.assignee_name}`
+  return `${date} | ${time} | ${shift.assignee_name}`
 }
 
 import { deptColor, setDeptColorOverrides } from '@/lib/deptColor'
@@ -456,7 +456,7 @@ function DeadlineDateTimePicker({ dateValue, timeValue, onChange, minDate }: {
   const dateLabel = dateValue
     ? new Date(`${dateValue}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
     : null
-  const displayLabel = dateLabel && timeLabel ? `${dateLabel} · ${timeLabel}` : dateLabel ? `${dateLabel} · select time` : 'Select deadline'
+  const displayLabel = dateLabel && timeLabel ? `${dateLabel} | ${timeLabel}` : dateLabel ? `${dateLabel} | select time` : 'Select deadline'
 
   const popover = open ? (
     <div ref={popoverRef} style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 9999, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 16, boxShadow: '0 8px 32px rgba(15,23,42,0.14)', padding: '14px 14px', width: pos.width, display: 'flex', gap: 12 }}>
@@ -765,6 +765,7 @@ export default function OwnerTasksPage() {
   }, [])
 
   const panelRef = useRef<HTMLDivElement>(null)
+  const hasAutoSelectedTaskDateRef = useRef(false)
 
   const canManageDepartments = userRole === 'Owner' || userRole === 'Partner'
 
@@ -1252,6 +1253,35 @@ export default function OwnerTasksPage() {
     finally { setNewLoading(false) }
   }
 
+  const openNewTask = () => {
+    setNewDeptId(selectedDeptId || '')
+    setNewAssigneeId('')
+    setNewShiftId('')
+    setNewStartDate(taskDate)
+    setNewTitle('')
+    setNewDescription('')
+    setNewPriority('')
+    setNewDeadlineDate('')
+    setNewDeadlineTime('')
+    setNewError('')
+    setNewTaskModal(true)
+  }
+
+  const openAiAssign = () => {
+    setAiModal(true)
+    setAiStep('input')
+    setAiTitle('')
+    setAiDescription('')
+    setAiPriority('')
+    setAiPeopleNeeded(1)
+    setAiSuggestion(null)
+    setAiDeptId(selectedDeptId || '')
+    setAiManagerIds([])
+    setAiDueDate('')
+    setAiDueTime('')
+    setAiError('')
+  }
+
   // Open new task modal pre-filled with dept + assignee
   const openNewTaskFor = (memberId: string, deptId: string) => {
     setNewDeptId(deptId)
@@ -1332,6 +1362,19 @@ export default function OwnerTasksPage() {
     }
     return dates
   }, [kanban])
+
+  useEffect(() => {
+    if (hasAutoSelectedTaskDateRef.current || datesWithTasks.size === 0) return
+    if (datesWithTasks.has(taskDate)) {
+      hasAutoSelectedTaskDateRef.current = true
+      return
+    }
+    const today = formatDateKey(new Date())
+    const orderedDates = [...datesWithTasks].sort()
+    const nextDate = orderedDates.find(date => date >= today) ?? orderedDates[0]
+    if (nextDate) setTaskDate(nextDate)
+    hasAutoSelectedTaskDateRef.current = true
+  }, [datesWithTasks, taskDate])
 
   const minTaskDate = useMemo(() => {
     const d = addDays(new Date(), -7)
@@ -1501,7 +1544,7 @@ export default function OwnerTasksPage() {
                           key={item.task.id}
                           type="button"
                           onClick={() => openTask(item.task, false)}
-                          title={`${item.task.title} • ${item.startDate} – ${item.endDate}`}
+                          title={`${item.task.title} | ${item.startDate} - ${item.endDate}`}
                           style={{
                             gridColumn: `${startCol + 2} / ${endCol + 3}`,
                             gridRow: 1,
@@ -1799,6 +1842,49 @@ export default function OwnerTasksPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId} />}
             {companyId && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
+            <button
+              type="button"
+              onClick={openAiAssign}
+              disabled={!companyId || departments.length === 0}
+              style={{
+                height: 36,
+                border: '1px solid #DDD6FE',
+                borderRadius: 9,
+                background: companyId && departments.length > 0 ? '#F5F3FF' : '#F8FAFC',
+                color: companyId && departments.length > 0 ? '#6D28D9' : '#94A3B8',
+                padding: '0 14px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 7,
+                fontSize: 13,
+                fontWeight: 800,
+                cursor: companyId && departments.length > 0 ? 'pointer' : 'not-allowed',
+              }}
+            >
+              <Sparkles size={15} strokeWidth={2.5} /> AI Assign
+            </button>
+            <button
+              type="button"
+              onClick={openNewTask}
+              disabled={!companyId || departments.length === 0}
+              style={{
+                height: 36,
+                border: 'none',
+                borderRadius: 9,
+                background: companyId && departments.length > 0 ? '#F97316' : '#E5E7EB',
+                color: companyId && departments.length > 0 ? '#FFFFFF' : '#94A3B8',
+                padding: '0 14px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 7,
+                fontSize: 13,
+                fontWeight: 800,
+                cursor: companyId && departments.length > 0 ? 'pointer' : 'not-allowed',
+                boxShadow: companyId && departments.length > 0 ? '0 8px 18px rgba(249,115,22,0.2)' : 'none',
+              }}
+            >
+              <Plus size={15} strokeWidth={2.5} /> New Task
+            </button>
           </div>
         </div>
 
@@ -2058,7 +2144,7 @@ export default function OwnerTasksPage() {
                           <div style={{ display: 'flex', justifyContent: 'center' }}>
                             <button
                               type="button"
-                              onClick={() => { setAiModal(true); setAiStep('input'); setAiTitle(''); setAiDescription(''); setAiPriority(''); setAiPeopleNeeded(1); setAiSuggestion(null); setAiDeptId(''); setAiManagerIds([]); setAiDueDate(''); setAiDueTime(''); setAiError('') }}
+                              onClick={openAiAssign}
                               style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 36, padding: '0 24px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
                             >
                               <Sparkles size={14} /> AI Assign
@@ -2890,8 +2976,7 @@ export default function OwnerTasksPage() {
                     <Sparkles size={15} color="#fff" strokeWidth={2} />
                   </div>
                   <div>
-                    <p style={{ margin: 0, fontWeight: 700, fontSize: '1rem', color: '#111827' }}>AI Assign</p>
-                    <p style={{ margin: 0, fontSize: 11, color: '#9CA3AF' }}>{isReview ? 'Review and confirm' : 'Powered by OpenAI'}</p>
+                    <h2 style={{ margin: 0, fontWeight: 700, fontSize: '1rem', color: '#111827' }}>AI Assign</h2>
                   </div>
                 </div>
                 <button onClick={() => setAiModal(false)} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}>
@@ -2990,7 +3075,7 @@ export default function OwnerTasksPage() {
 
                     {/* Department */}
                     <div>
-                      <label style={modalLabelStyle}>Department <span style={{ fontSize: 11, fontWeight: 400, color: '#7C3AED' }}>· AI picked</span></label>
+                      <label style={modalLabelStyle}>Department <span style={{ fontSize: 11, fontWeight: 400, color: '#7C3AED' }}>| AI picked</span></label>
                       <DropdownField
                         value={aiDeptId}
                         options={deptDropdownOptions}
@@ -3003,7 +3088,7 @@ export default function OwnerTasksPage() {
                     <div>
                       <label style={modalLabelStyle}>
                         Assign To <span style={{ fontWeight: 400, color: '#9CA3AF' }}>({aiManagerIds.length}/{aiPeopleNeeded} selected)</span>
-                        <span style={{ fontSize: 11, fontWeight: 400, color: '#7C3AED', marginLeft: 6 }}>· AI picked</span>
+                        <span style={{ fontSize: 11, fontWeight: 400, color: '#7C3AED', marginLeft: 6 }}>| AI picked</span>
                       </label>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                         {aiDeptManagers.length === 0 && (
@@ -3050,7 +3135,7 @@ export default function OwnerTasksPage() {
                         />
                       </div>
                       <div>
-                        <label style={modalLabelStyle}>Deadline <span style={{ fontSize: 11, fontWeight: 400, color: '#7C3AED' }}>· AI suggested</span></label>
+                        <label style={modalLabelStyle}>Deadline <span style={{ fontSize: 11, fontWeight: 400, color: '#7C3AED' }}>| AI suggested</span></label>
                         <DeadlineDateTimePicker
                           dateValue={aiDueDate}
                           timeValue={aiDueTime}

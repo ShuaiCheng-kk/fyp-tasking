@@ -12,7 +12,7 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { company_id, date_from, date_to, publication_status } = body as Record<string, unknown>
+  const { company_id, date_from, date_to, publication_status, performed_by } = body as Record<string, unknown>
   if (typeof company_id !== 'string' || !company_id) {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
   }
@@ -32,6 +32,7 @@ export async function PATCH(req: NextRequest) {
       date_from,
       date_to,
       publication_status,
+      performed_by: typeof performed_by === 'string' ? performed_by : undefined,
     })
     return NextResponse.json({ success: true, shifts: result.shifts, validation: result.validation })
   } catch (err) {

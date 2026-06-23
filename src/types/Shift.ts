@@ -14,6 +14,7 @@ export interface Shift {
   recurrence_rule: 'daily' | 'weekly' | 'custom' | null
   source_shift_id: string | null
   split_group_id: string | null
+  template_id: string | null
   created_by: string
   created_at: string
   updated_at: string
@@ -34,7 +35,7 @@ export interface ShiftInput {
   recurrence_rule?: 'daily' | 'weekly' | 'custom' | null
   source_shift_id?: string | null
   split_group_id?: string | null
-  override_clopening?: boolean
+  template_id?: string | null
 }
 
 export interface SplitShiftBlockInput {
@@ -53,7 +54,6 @@ export interface SplitShiftInput {
   publication_status?: 'draft' | 'published'
   assigned_user_id?: string | null
   supervisor_employee_id?: string | null
-  override_clopening?: boolean
 }
 
 export interface DuplicateShiftInput {
@@ -62,7 +62,7 @@ export interface DuplicateShiftInput {
   end_time: string
   created_by: string
   assigned_user_id?: string | null
-  override_clopening?: boolean
+  template_id?: string | null
 }
 
 export interface RecurringShiftInput {
@@ -71,7 +71,14 @@ export interface RecurringShiftInput {
   custom_interval_days?: number
   created_by: string
   assigned_user_id?: string | null
-  override_clopening?: boolean
+}
+
+export interface RecurringSplitShiftInput {
+  recurrence_rule: 'daily' | 'weekly' | 'custom'
+  recurrence_end_date: string
+  custom_interval_days?: number
+  created_by: string
+  assigned_user_id?: string | null
 }
 
 export interface BulkShiftAssignmentInput {
@@ -80,6 +87,7 @@ export interface BulkShiftAssignmentInput {
   start_time: string
   end_time: string
   supervisor_employee_id?: string | null
+  template_id?: string | null
 }
 
 export interface BulkShiftAssignmentPayload {
@@ -87,12 +95,48 @@ export interface BulkShiftAssignmentPayload {
   department_id: string
   created_by: string
   assignments: BulkShiftAssignmentInput[]
-  override_clopening?: boolean
 }
 
 export interface BulkShiftAssignmentResult {
   created: Shift[]
   failed: { user_id: string; shift_date: string; start_time: string; end_time: string; message: string }[]
+  warnings: { user_id: string; shift_date: string; start_time: string; end_time: string; message: string }[]
+}
+
+export interface BulkCreateShiftInput {
+  department_id: string
+  title?: string | null
+  instruction?: string | null
+  shift_date: string
+  start_time: string
+  end_time: string
+  assigned_user_id?: string | null
+  template_id?: string | null
+}
+
+export interface BulkCreateShiftsPayload {
+  company_id: string
+  created_by: string
+  items: BulkCreateShiftInput[]
+}
+
+export interface BulkCreateShiftsResult {
+  created: Shift[]
+  failed: { shift_date: string; start_time: string; end_time: string; message: string }[]
+}
+
+export interface BulkEditShiftItem {
+  id: string
+  shift_date?: string
+  start_time?: string
+  end_time?: string
+  department_id?: string
+  assigned_user_id?: string | null
+}
+
+export interface BulkEditShiftsResult {
+  updated: Shift[]
+  failed: { id: string; message: string }[]
 }
 
 export interface ClopeningConflict {
@@ -113,4 +157,3 @@ export interface SplitShiftResult {
   shifts: Shift[]
   warning: ClopeningConflict | null
 }
-

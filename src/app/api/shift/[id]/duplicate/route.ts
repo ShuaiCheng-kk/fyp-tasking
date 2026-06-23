@@ -18,7 +18,7 @@ export async function POST(
     return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { shift_date, start_time, end_time, created_by, assigned_user_id, override_clopening } = body as Record<string, unknown>
+  const { shift_date, start_time, end_time, created_by, assigned_user_id, template_id } = body as Record<string, unknown>
   if (typeof shift_date !== 'string' || !shift_date) {
     return NextResponse.json({ success: false, message: 'shift_date is required' }, { status: 400 })
   }
@@ -39,7 +39,7 @@ export async function POST(
       end_time,
       created_by,
       assigned_user_id: typeof assigned_user_id === 'string' && assigned_user_id ? assigned_user_id : null,
-      override_clopening: override_clopening === true,
+      template_id: typeof template_id === 'string' && template_id ? template_id : null,
     })
     return NextResponse.json({ success: true, shift: result.shift, warning: result.warning }, { status: 201 })
   } catch (err) {
