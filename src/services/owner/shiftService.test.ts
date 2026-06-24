@@ -167,7 +167,7 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
           supervisor_employee_id: null,
           created_at: '2026-06-01T00:00:00.000Z',
           updated_at: '2026-06-01T00:00:00.000Z',
-          shifts: { ...baseShift, id: 'shift-prev', shift_date: '2026-06-21', start_time: '14:00', end_time: '23:00' },
+          shifts: { ...baseShift, id: 'shift-prev', shift_date: '2026-06-22', start_time: '00:00', end_time: '02:00' },
         },
       ])
       vi.mocked(shiftRepository.createShift).mockResolvedValue(baseShift)
@@ -288,7 +288,7 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
           supervisor_employee_id: null,
           created_at: '2026-06-01T00:00:00.000Z',
           updated_at: '2026-06-01T00:00:00.000Z',
-          shifts: { ...baseShift, id: 'shift-prev', shift_date: '2026-06-21', start_time: '20:00', end_time: '23:59' },
+          shifts: { ...baseShift, id: 'shift-prev', shift_date: '2026-06-22', start_time: '00:00', end_time: '02:00' },
         },
       ])
       vi.mocked(shiftRepository.createShift).mockImplementation(async (input) => ({
@@ -590,8 +590,8 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
   })
 
   describe('publishSchedule (UC6)', () => {
-    it('publishes a schedule that passes hard-rule validation', async () => {
-      vi.mocked(schedulingRuleService.validateSchedule).mockResolvedValue({ valid: true, errors: [], warnings: [] })
+    it('publishes a schedule without running any scheduling-rule validation', async () => {
+      vi.mocked(shiftRepository.getShiftsByCompanyAndDateRange).mockResolvedValue([baseShift])
       vi.mocked(shiftRepository.updateSchedulePublication).mockResolvedValue([baseShift])
 
       const result = await shiftService.publishSchedule({
@@ -601,12 +601,13 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
         publication_status: 'published',
       })
 
+      expect(schedulingRuleService.validateSchedule).not.toHaveBeenCalled()
       expect(shiftRepository.updateSchedulePublication).toHaveBeenCalled()
       expect(result.shifts).toEqual([baseShift])
     })
 
-    it('allows unpublishing (draft) without running hard-rule validation gate', async () => {
-      vi.mocked(schedulingRuleService.validateSchedule).mockResolvedValue({ valid: false, errors: [{ rule_key: 'weekly_hours_limit', rule_name: 'x', severity: 'error', message: 'bad' }], warnings: [] })
+    it('allows unpublishing (draft) without running any scheduling-rule validation', async () => {
+      vi.mocked(shiftRepository.getShiftsByCompanyAndDateRange).mockResolvedValue([{ ...baseShift, publication_status: 'published' }])
       vi.mocked(shiftRepository.updateSchedulePublication).mockResolvedValue([baseShift])
 
       const result = await shiftService.publishSchedule({
@@ -616,24 +617,9 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
         publication_status: 'draft',
       })
 
+      expect(schedulingRuleService.validateSchedule).not.toHaveBeenCalled()
       expect(shiftRepository.updateSchedulePublication).toHaveBeenCalled()
       expect(result.shifts).toEqual([baseShift])
-    })
-
-    it('blocks publishing when hard-rule validation fails', async () => {
-      vi.mocked(schedulingRuleService.validateSchedule).mockResolvedValue({
-        valid: false,
-        errors: [{ rule_key: 'weekly_hours_limit', rule_name: 'Weekly hours', severity: 'error', message: 'Worker exceeds weekly hours' }],
-        warnings: [],
-      })
-
-      await expect(shiftService.publishSchedule({
-        company_id: 'company-1',
-        date_from: '2026-06-22',
-        date_to: '2026-06-28',
-        publication_status: 'published',
-      })).rejects.toThrow('Worker exceeds weekly hours')
-      expect(shiftRepository.updateSchedulePublication).not.toHaveBeenCalled()
     })
 
     it('rejects an inverted date range', async () => {
@@ -804,6 +790,49 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
         recurrence_end_date: '2026-06-22',
         created_by: 'owner-1',
       })).rejects.toThrow('recurrence_end_date must be after the shift date')
+    })
+
+    it('rejects editing recurrence on a non-original occurrence', async () => {
+      vi.mocked(shiftRepository.getShiftById).mockResolvedValue({ ...baseShift, id: 'shift-occurrence', source_shift_id: 'shift-1', recurrence_group_id: 'group-1' })
+
+      await expect(shiftService.createRecurringShifts('shift-occurrence', {
+        recurrence_rule: 'daily',
+        recurrence_end_date: '2026-07-13',
+        created_by: 'owner-1',
+      })).rejects.toThrow('Only the original shift in a recurring series can have its recurrence edited')
+    })
+
+    it('replaces existing future occurrences when editing an already-recurring original\'s settings', async () => {
+      const original = { ...baseShift, id: 'shift-1', recurrence_group_id: 'group-1', recurrence_rule: 'weekly' as const, source_shift_id: null }
+      vi.mocked(shiftRepository.getShiftById).mockResolvedValue(original)
+      vi.mocked(shiftRepository.getAssignmentsByShiftIds).mockResolvedValue([])
+      vi.mocked(shiftRepository.updateShift).mockResolvedValue(original)
+      vi.mocked(shiftRepository.getShiftsByRecurrenceGroupId).mockResolvedValue([
+        original,
+        { ...baseShift, id: 'old-occurrence-1', recurrence_group_id: 'group-1', source_shift_id: 'shift-1', shift_date: '2026-06-29' },
+        { ...baseShift, id: 'old-occurrence-2', recurrence_group_id: 'group-1', source_shift_id: 'shift-1', shift_date: '2026-07-06' },
+      ])
+      vi.mocked(shiftRepository.deleteAssignmentsByShiftId).mockResolvedValue(undefined)
+      vi.mocked(shiftRepository.deleteShift).mockResolvedValue(undefined)
+      let counter = 0
+      vi.mocked(shiftRepository.createShift).mockImplementation(async (input) => ({
+        ...original,
+        id: `shift-gen-${++counter}`,
+        shift_date: input.shift_date,
+      }))
+
+      const created = await shiftService.createRecurringShifts('shift-1', {
+        recurrence_rule: 'daily',
+        recurrence_end_date: '2026-06-25',
+        created_by: 'owner-1',
+      })
+
+      expect(shiftRepository.deleteShift).toHaveBeenCalledWith('old-occurrence-1')
+      expect(shiftRepository.deleteShift).toHaveBeenCalledWith('old-occurrence-2')
+      expect(shiftRepository.deleteAssignmentsByShiftId).toHaveBeenCalledWith('old-occurrence-1')
+      expect(shiftRepository.deleteAssignmentsByShiftId).toHaveBeenCalledWith('old-occurrence-2')
+      expect(shiftRepository.updateShift).toHaveBeenCalledWith('shift-1', expect.objectContaining({ recurrence_rule: 'daily' }))
+      expect(created.map(s => s.shift_date)).toEqual(['2026-06-23', '2026-06-24', '2026-06-25'])
     })
   })
 

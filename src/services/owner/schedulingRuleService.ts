@@ -466,6 +466,13 @@ export const schedulingRuleService = {
     let notice = ''
     const seenLines = new Set<string>()
     const seenBlockKeys = new Set<string>()
+    const validDepartmentIds = new Set(input.department_ids)
+    const isBlockInScope = (block: Record<string, unknown>) =>
+      typeof block.shift_date === 'string' &&
+      block.shift_date >= input.date_from &&
+      block.shift_date <= input.date_to &&
+      typeof block.department_id === 'string' &&
+      validDepartmentIds.has(block.department_id)
     const normalizer = createScheduleBlockNormalizer({
       shiftTypes: input.shiftTypes,
       staff: eligibleStaff,
@@ -491,7 +498,7 @@ export const schedulingRuleService = {
           notice = obj.notice
           continue
         }
-        if (obj.department_id && obj.shift_date && Array.isArray(obj.slots)) {
+        if (obj.department_id && obj.shift_date && Array.isArray(obj.slots) && isBlockInScope(obj)) {
           const block = obj as unknown as AiScheduleBlock
           const key = `${block.department_id}_${block.shift_date}`
           if (seenBlockKeys.has(key)) continue
@@ -509,7 +516,7 @@ export const schedulingRuleService = {
         const obj = JSON.parse(tail) as Record<string, unknown>
         if (typeof obj.notice === 'string') {
           notice = obj.notice
-        } else if (obj.department_id && obj.shift_date && Array.isArray(obj.slots)) {
+        } else if (obj.department_id && obj.shift_date && Array.isArray(obj.slots) && isBlockInScope(obj)) {
           const block = obj as unknown as AiScheduleBlock
           const key = `${block.department_id}_${block.shift_date}`
           if (!seenBlockKeys.has(key)) {
@@ -995,11 +1002,14 @@ function pickStaffForSlot(input: {
     )) ? 300 : 0
     return {
       staff,
+      // assignedDates dominates the score so the current generation run always rotates evenly
+      // across equally-eligible staff first; historical/weekend stats only break ties when
+      // candidates have been assigned the same number of times so far in this run.
       score:
         softStreakPenalty +
         pendingLeavePenalty +
+        assignedDates * 1000 +
         (weekend ? (weekendDuties + staff.previous_weekend_duties) * 100 : 0) +
-        assignedDates * 25 +
         assignedHours * 2 +
         staff.previous_working_days,
     }

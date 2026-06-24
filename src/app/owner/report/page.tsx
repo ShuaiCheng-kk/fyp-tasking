@@ -274,7 +274,7 @@ export default function ReportPage() {
   const totalDonutTasks = taskDonutData.reduce((s, d) => s + d.value, 0)
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: '#F1F5F9', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+    <div style={{ display: 'flex', minHeight: '100vh', background: '#F1F5F9' }}>
       <style>{`
         @keyframes fadeSlideUp {
           from { opacity: 0; transform: translateY(14px); }

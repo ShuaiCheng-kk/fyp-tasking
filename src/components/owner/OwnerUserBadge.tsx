@@ -249,7 +249,7 @@ export default function OwnerUserBadge({ userId, companyId }: { userId: string; 
               <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
                 <label style={labelStyle}>Date of Birth</label>
                 {editing
-                  ? <DatePickerField value={dob} onChange={setDob} placeholder="Select date" />
+                  ? <DatePickerField value={dob} onChange={setDob} placeholder="Select date" max={(() => { const d = new Date(); d.setFullYear(d.getFullYear() - 16); return d.toISOString().slice(0, 10) })()} />
                   : <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{formatDateDisplay(profile?.date_of_birth)}</p>}
               </div>
               {/* Phone */}

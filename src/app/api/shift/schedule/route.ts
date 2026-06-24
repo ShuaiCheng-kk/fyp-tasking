@@ -34,7 +34,7 @@ export async function PATCH(req: NextRequest) {
       publication_status,
       performed_by: typeof performed_by === 'string' ? performed_by : undefined,
     })
-    return NextResponse.json({ success: true, shifts: result.shifts, validation: result.validation })
+    return NextResponse.json({ success: true, shifts: result.shifts })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to update schedule'
     return NextResponse.json({ success: false, message }, { status: 400 })

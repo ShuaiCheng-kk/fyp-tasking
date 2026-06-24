@@ -264,6 +264,61 @@ test('UC8 creates weekly recurring shifts from the original shift', async ({ req
   expect(body.shifts.every((s: { recurrence_rule: string }) => s.recurrence_rule === 'weekly')).toBe(true)
 })
 
+test('UC8 editing an already-recurring original\'s settings replaces its future occurrences', async ({ request }) => {
+  const createRes = await request.post('/api/shift', {
+    data: { company_id: seeded.companyId, department_id: departmentId, shift_date: '2026-09-21', start_time: '09:00', end_time: '17:00', created_by: seeded.ownerId },
+  })
+  const originalId = (await createRes.json()).shift.id
+
+  const weeklyRes = await request.post(`/api/shift/${originalId}/recurrence`, {
+    data: { recurrence_rule: 'weekly', recurrence_end_date: '2026-10-05', created_by: seeded.ownerId },
+  })
+  const weeklyBody = await weeklyRes.json()
+  expect(weeklyBody.shifts).toHaveLength(2)
+  const weeklyOccurrenceIds = weeklyBody.shifts.map((s: { id: string }) => s.id)
+
+  const dailyRes = await request.post(`/api/shift/${originalId}/recurrence`, {
+    data: { recurrence_rule: 'daily', recurrence_end_date: '2026-09-23', created_by: seeded.ownerId },
+  })
+  expect(dailyRes.status()).toBe(201)
+  const dailyBody = await dailyRes.json()
+  expect(dailyBody.success).toBe(true)
+  expect(dailyBody.shifts).toHaveLength(2)
+  expect(dailyBody.shifts.map((s: { shift_date: string }) => s.shift_date)).toEqual(['2026-09-22', '2026-09-23'])
+  expect(dailyBody.shifts.every((s: { recurrence_rule: string }) => s.recurrence_rule === 'daily')).toBe(true)
+
+  const checkRes = await request.get(`/api/shift?company_id=${seeded.companyId}&date_from=2026-09-21&date_to=2026-10-05`)
+  const checkBody = await checkRes.json()
+  const allShiftIds = checkBody.rows.flatMap((row: { shifts: { id: string }[] }) => row.shifts.map(s => s.id))
+  for (const id of weeklyOccurrenceIds) {
+    expect(allShiftIds).not.toContain(id)
+  }
+
+  await request.delete(`/api/shift/${originalId}`)
+})
+
+test('UC8 rejects editing recurrence settings on a non-original occurrence', async ({ request }) => {
+  const createRes = await request.post('/api/shift', {
+    data: { company_id: seeded.companyId, department_id: departmentId, shift_date: '2026-09-28', start_time: '09:00', end_time: '17:00', created_by: seeded.ownerId },
+  })
+  const originalId = (await createRes.json()).shift.id
+
+  const recRes = await request.post(`/api/shift/${originalId}/recurrence`, {
+    data: { recurrence_rule: 'weekly', recurrence_end_date: '2026-10-12', created_by: seeded.ownerId },
+  })
+  const recBody = await recRes.json()
+  const occurrenceId = recBody.shifts[0].id
+
+  const editOccurrenceRecurrenceRes = await request.post(`/api/shift/${occurrenceId}/recurrence`, {
+    data: { recurrence_rule: 'daily', recurrence_end_date: '2026-10-05', created_by: seeded.ownerId },
+  })
+  expect(editOccurrenceRecurrenceRes.status()).toBe(400)
+  const editOccurrenceRecurrenceBody = await editOccurrenceRecurrenceRes.json()
+  expect(editOccurrenceRecurrenceBody.success).toBe(false)
+
+  await request.delete(`/api/shift/${originalId}`)
+})
+
 test('UC8 editing the original recurring shift cascades the time change to all occurrences, but editing an occurrence does not', async ({ request }) => {
   const createRes = await request.post('/api/shift', {
     data: { company_id: seeded.companyId, department_id: departmentId, shift_date: '2026-08-03', start_time: '09:00', end_time: '17:00', created_by: seeded.ownerId },

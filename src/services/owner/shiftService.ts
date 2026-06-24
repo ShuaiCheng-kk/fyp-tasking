@@ -2,9 +2,7 @@
 // RULE: Business logic only. No HTTP handling. No direct DB access.
 
 import { shiftRepository } from '@/repositories/owner/shiftRepository'
-import { schedulingRuleService } from '@/services/owner/schedulingRuleService'
 import { BulkCreateShiftsPayload, BulkCreateShiftsResult, BulkEditShiftItem, BulkEditShiftsResult, BulkShiftAssignmentPayload, BulkShiftAssignmentResult, ClopeningConflict, DuplicateShiftInput, RecurringShiftInput, RecurringSplitShiftInput, Shift, ShiftInput, ShiftMutationResult, SplitShiftInput, SplitShiftResult } from '@/types/Shift'
-import { ScheduleValidationResult } from '@/types/SchedulingRule'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 import { ShiftActionRedoPayload, ShiftActionType } from '@/types/ShiftActionHistory'
 
@@ -13,7 +11,7 @@ const TIMELINE_ROLE_ORDER: Record<string, number> = {
   Employee: 2,
   'Casual Worker': 3,
 }
-const MIN_REST_HOURS = 8
+const MIN_REST_HOURS = 5
 
 export const shiftService = {
 
@@ -329,7 +327,7 @@ export const shiftService = {
     date_to: string
     publication_status: 'draft' | 'published'
     performed_by?: string
-  }): Promise<{ shifts: Shift[]; validation: ScheduleValidationResult }> {
+  }): Promise<{ shifts: Shift[] }> {
     if (!input.company_id || !input.date_from || !input.date_to) {
       throw new Error('company_id, date_from, and date_to are required')
     }
@@ -338,15 +336,6 @@ export const shiftService = {
     }
     if (input.date_from > input.date_to) {
       throw new Error('date_from must be before date_to')
-    }
-    const validation = await schedulingRuleService.validateSchedule({
-      company_id: input.company_id,
-      date_from: input.date_from,
-      date_to: input.date_to,
-    })
-    if (input.publication_status === 'published' && !validation.valid) {
-      const first = validation.errors[0]
-      throw new Error(first?.message ?? 'Schedule violates hard scheduling rules')
     }
     const beforeShifts = input.performed_by
       ? await shiftRepository.getShiftsByCompanyAndDateRange(input.company_id, input.date_from, input.date_to)
@@ -363,7 +352,7 @@ export const shiftService = {
         },
       })
     }
-    return { shifts, validation }
+    return { shifts }
   },
 
   async duplicateShift(id: string, input: DuplicateShiftInput): Promise<ShiftMutationResult> {
@@ -431,6 +420,9 @@ export const shiftService = {
 
     const original = await shiftRepository.getShiftById(id)
     if (!original) throw new Error('Shift not found')
+    if (original.source_shift_id !== null) {
+      throw new Error('Only the original shift in a recurring series can have its recurrence edited')
+    }
     if (input.recurrence_end_date <= original.shift_date) {
       throw new Error('recurrence_end_date must be after the shift date')
     }
@@ -442,6 +434,17 @@ export const shiftService = {
         : input.custom_interval_days ?? 1
     if (intervalDays < 1 || intervalDays > 31) {
       throw new Error('custom_interval_days must be between 1 and 31')
+    }
+
+    // Editing an already-recurring shift's settings (e.g. weekly -> daily) replaces its
+    // previously generated future occurrences rather than layering new ones alongside them.
+    if (original.recurrence_group_id) {
+      const siblings = (await shiftRepository.getShiftsByRecurrenceGroupId(original.recurrence_group_id))
+        .filter(s => s.id !== id)
+      for (const sibling of siblings) {
+        await shiftRepository.deleteAssignmentsByShiftId(sibling.id)
+        await shiftRepository.deleteShift(sibling.id)
+      }
     }
 
     const recurrenceGroupId = original.recurrence_group_id ?? crypto.randomUUID()
@@ -1006,6 +1009,7 @@ function toTimelineShiftBlock(
     recurrence_group_id: shift.recurrence_group_id,
     recurrence_rule: shift.recurrence_rule,
     source_shift_id: shift.source_shift_id,
+    split_group_id: shift.split_group_id,
     assignment_status,
     template_id: shift.template_id,
   }

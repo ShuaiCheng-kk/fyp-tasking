@@ -1842,49 +1842,6 @@ export default function OwnerTasksPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId} />}
             {companyId && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
-            <button
-              type="button"
-              onClick={openAiAssign}
-              disabled={!companyId || departments.length === 0}
-              style={{
-                height: 36,
-                border: '1px solid #DDD6FE',
-                borderRadius: 9,
-                background: companyId && departments.length > 0 ? '#F5F3FF' : '#F8FAFC',
-                color: companyId && departments.length > 0 ? '#6D28D9' : '#94A3B8',
-                padding: '0 14px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 7,
-                fontSize: 13,
-                fontWeight: 800,
-                cursor: companyId && departments.length > 0 ? 'pointer' : 'not-allowed',
-              }}
-            >
-              <Sparkles size={15} strokeWidth={2.5} /> AI Assign
-            </button>
-            <button
-              type="button"
-              onClick={openNewTask}
-              disabled={!companyId || departments.length === 0}
-              style={{
-                height: 36,
-                border: 'none',
-                borderRadius: 9,
-                background: companyId && departments.length > 0 ? '#F97316' : '#E5E7EB',
-                color: companyId && departments.length > 0 ? '#FFFFFF' : '#94A3B8',
-                padding: '0 14px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 7,
-                fontSize: 13,
-                fontWeight: 800,
-                cursor: companyId && departments.length > 0 ? 'pointer' : 'not-allowed',
-                boxShadow: companyId && departments.length > 0 ? '0 8px 18px rgba(249,115,22,0.2)' : 'none',
-              }}
-            >
-              <Plus size={15} strokeWidth={2.5} /> New Task
-            </button>
           </div>
         </div>
 
@@ -2241,6 +2198,49 @@ export default function OwnerTasksPage() {
                     <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A' }}>{boardViewMode === 'calendar' ? 'Calendar' : 'Kanban'}</span>
                   </div>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      onClick={openAiAssign}
+                      disabled={!companyId || departments.length === 0}
+                      style={{
+                        height: 38,
+                        border: '1px solid #DDD6FE',
+                        borderRadius: 9,
+                        background: companyId && departments.length > 0 ? '#F5F3FF' : '#F8FAFC',
+                        color: companyId && departments.length > 0 ? '#6D28D9' : '#94A3B8',
+                        padding: '0 14px',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 7,
+                        fontSize: 13,
+                        fontWeight: 800,
+                        cursor: companyId && departments.length > 0 ? 'pointer' : 'not-allowed',
+                      }}
+                    >
+                      <Sparkles size={15} strokeWidth={2.5} /> AI Assign
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openNewTask}
+                      disabled={!companyId || departments.length === 0}
+                      style={{
+                        height: 38,
+                        border: 'none',
+                        borderRadius: 9,
+                        background: companyId && departments.length > 0 ? '#F97316' : '#E5E7EB',
+                        color: companyId && departments.length > 0 ? '#FFFFFF' : '#94A3B8',
+                        padding: '0 14px',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 7,
+                        fontSize: 13,
+                        fontWeight: 800,
+                        cursor: companyId && departments.length > 0 ? 'pointer' : 'not-allowed',
+                        boxShadow: companyId && departments.length > 0 ? '0 8px 18px rgba(249,115,22,0.2)' : 'none',
+                      }}
+                    >
+                      <Plus size={15} strokeWidth={2.5} /> New Task
+                    </button>
                     {boardViewMode === 'calendar' ? (
                       <>
                         <button

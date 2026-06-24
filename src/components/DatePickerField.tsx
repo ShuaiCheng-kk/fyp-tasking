@@ -41,10 +41,16 @@ function CalNavBtn({ onClick, disabled, children }: { onClick: () => void; disab
 const ChevL = () => <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M8.5 2.5L4.5 7l4 4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
 const ChevR = () => <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5.5 2.5L9.5 7l-4 4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>
 
-export default function DatePickerField({ value, onChange, placeholder = 'Select date' }: {
+export default function DatePickerField({ value, onChange, placeholder = 'Select date', min, max, clearable = true, disableYearJump = false, compact = false, disabled = false }: {
   value: string
   onChange: (v: string) => void
   placeholder?: string
+  min?: string
+  max?: string
+  clearable?: boolean
+  disableYearJump?: boolean
+  compact?: boolean
+  disabled?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<CalMode>('day')
@@ -56,14 +62,23 @@ export default function DatePickerField({ value, onChange, placeholder = 'Select
   useEffect(() => { setMounted(true) }, [])
 
   const today = new Date()
-  const maxDate = new Date(today.getFullYear() - 16, today.getMonth(), today.getDate())
+  const maxDate = max ? new Date(`${max}T00:00:00`) : new Date(today.getFullYear() + 50, today.getMonth(), today.getDate())
   const maxY = maxDate.getFullYear()
   const maxM = maxDate.getMonth()
   const maxD = maxDate.getDate()
 
+  const minDate = min ? new Date(`${min}T00:00:00`) : null
+  const minY = minDate?.getFullYear() ?? -Infinity
+  const minM = minDate?.getMonth() ?? 0
+  const minD = minDate?.getDate() ?? 1
+
   const parseView = () => {
     if (value) { const [y, m] = value.split('-').map(Number); return { y, m: m - 1 } }
-    return { y: maxY, m: maxM }
+    const todayY = today.getFullYear()
+    const todayM = today.getMonth()
+    if (minDate && (todayY < minY || (todayY === minY && todayM < minM))) return { y: minY, m: minM }
+    if (todayY > maxY || (todayY === maxY && todayM > maxM)) return { y: maxY, m: maxM }
+    return { y: todayY, m: todayM }
   }
 
   const [view, setView] = useState<{ y: number; m: number }>(parseView)
@@ -96,16 +111,19 @@ export default function DatePickerField({ value, onChange, placeholder = 'Select
   }
 
   const handleOpen = () => {
+    if (disabled) return
     if (!open) { const v = parseView(); setView(v); setMode('day'); recalcPos() }
     setOpen(o => !o)
   }
 
   const canNextMonth = view.y < maxY || (view.y === maxY && view.m < maxM)
-  const prevMonth = () => setView(v => v.m === 0 ? { y: v.y - 1, m: 11 } : { y: v.y, m: v.m - 1 })
+  const canPrevMonth = !minDate || view.y > minY || (view.y === minY && view.m > minM)
+  const prevMonth = () => { if (!canPrevMonth) return; setView(v => v.m === 0 ? { y: v.y - 1, m: 11 } : { y: v.y, m: v.m - 1 }) }
   const nextMonth = () => { if (!canNextMonth) return; setView(v => v.m === 11 ? { y: v.y + 1, m: 0 } : { y: v.y, m: v.m + 1 }) }
 
   const canNextYear = view.y < maxY
-  const prevYear = () => setView(v => ({ ...v, y: v.y - 1 }))
+  const canPrevYear = !minDate || view.y > minY
+  const prevYear = () => { if (canPrevYear) setView(v => ({ ...v, y: v.y - 1 })) }
   const nextYear = () => { if (!canNextYear) return; setView(v => ({ ...v, y: v.y + 1 })) }
 
   const canPrevYearBlock = yearBlockStart > 1924
@@ -116,17 +134,21 @@ export default function DatePickerField({ value, onChange, placeholder = 'Select
   const selParts = value ? value.split('-').map(Number) : []
   const selY = selParts[0], selM = (selParts[1] ?? 0) - 1, selD = selParts[2]
 
-  const isDayFuture = (d: number) => view.y > maxY || (view.y === maxY && (view.m > maxM || (view.m === maxM && d > maxD)))
-  const isMonthFuture = (mi: number) => view.y > maxY || (view.y === maxY && mi > maxM)
-  const isYearFuture = (y: number) => y > maxY
+  const isDayOutOfRange = (d: number) =>
+    view.y > maxY || (view.y === maxY && (view.m > maxM || (view.m === maxM && d > maxD))) ||
+    (!!minDate && (view.y < minY || (view.y === minY && (view.m < minM || (view.m === minM && d < minD)))))
+  const isMonthOutOfRange = (mi: number) =>
+    view.y > maxY || (view.y === maxY && mi > maxM) ||
+    (!!minDate && (view.y < minY || (view.y === minY && mi < minM)))
+  const isYearOutOfRange = (y: number) => y > maxY || (!!minDate && y < minY)
 
   const selectDay = (d: number) => {
-    if (isDayFuture(d)) return
+    if (isDayOutOfRange(d)) return
     onChange(`${view.y}-${String(view.m + 1).padStart(2,'0')}-${String(d).padStart(2,'0')}`)
     setOpen(false)
   }
-  const selectMonth = (mi: number) => { if (!isMonthFuture(mi)) { setView(v => ({ ...v, m: mi })); setMode('day') } }
-  const selectYear = (y: number) => { if (!isYearFuture(y)) { setView(v => ({ ...v, y })); setMode('month') } }
+  const selectMonth = (mi: number) => { if (!isMonthOutOfRange(mi)) { setView(v => ({ ...v, m: mi })); setMode('day') } }
+  const selectYear = (y: number) => { if (!isYearOutOfRange(y)) { setView(v => ({ ...v, y })); setMode('month') } }
 
   const firstDow = new Date(view.y, view.m, 1).getDay()
   const daysInMonth = new Date(view.y, view.m + 1, 0).getDate()
@@ -149,23 +171,24 @@ export default function DatePickerField({ value, onChange, placeholder = 'Select
         ref={triggerRef}
         type="button"
         onClick={handleOpen}
+        disabled={disabled}
         style={{
           width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '10px 12px', border: `1.5px solid ${open ? '#F97316' : '#E5E7EB'}`,
-          borderRadius: '8px', background: '#FFFFFF', cursor: 'pointer',
-          fontSize: '0.9375rem', color: label ? '#111827' : '#9CA3AF',
+          padding: compact ? '8px 10px' : '10px 12px', border: `1.5px solid ${open ? '#F97316' : '#E5E7EB'}`,
+          borderRadius: '8px', background: disabled ? '#F3F4F6' : '#FFFFFF', cursor: disabled ? 'not-allowed' : 'pointer',
+          fontSize: compact ? '0.8125rem' : '0.9375rem', color: disabled ? '#9CA3AF' : label ? '#111827' : '#9CA3AF',
           outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s',
           fontFamily: 'inherit',
         }}
       >
         <span>{label || placeholder}</span>
-        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0, color: '#9CA3AF' }}>
+        <svg width={compact ? 13 : 15} height={compact ? 13 : 15} viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0, color: '#9CA3AF' }}>
           <rect x="2" y="3" width="12" height="11" rx="2" stroke="currentColor" strokeWidth="1.5" fill="none"/>
           <path d="M5 1v2M11 1v2M2 7h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
         </svg>
       </button>
 
-      {open && mounted && createPortal(
+      {open && !disabled && mounted && createPortal(
         <div ref={calRef} style={{
           position: 'fixed', top: pos.top, left: pos.left, width: calWidth,
           background: '#FFFFFF', border: '1.5px solid #E5E7EB', borderRadius: 16,
@@ -176,19 +199,25 @@ export default function DatePickerField({ value, onChange, placeholder = 'Select
           {/* ── DAY VIEW ── */}
           {mode === 'day' && (<>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-              <CalNavBtn onClick={prevMonth}><ChevL /></CalNavBtn>
-              <button
-                type="button"
-                style={headerBtnStyle}
-                onClick={() => openYearMode(view.y)}
-                onMouseEnter={e => { e.currentTarget.style.background = '#FFF7ED' }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'none' }}
-              >
-                {MONTHS[view.m]} {view.y}
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ color: '#9CA3AF' }}>
-                  <path d="M2.5 4.5L6 8l3.5-3.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
-                </svg>
-              </button>
+              <CalNavBtn onClick={prevMonth} disabled={!canPrevMonth}><ChevL /></CalNavBtn>
+              {disableYearJump ? (
+                <span style={{ fontWeight: 700, fontSize: '0.9375rem', color: '#1C1917' }}>
+                  {MONTHS[view.m]} {view.y}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  style={headerBtnStyle}
+                  onClick={() => openYearMode(view.y)}
+                  onMouseEnter={e => { e.currentTarget.style.background = '#FFF7ED' }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'none' }}
+                >
+                  {MONTHS[view.m]} {view.y}
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ color: '#9CA3AF' }}>
+                    <path d="M2.5 4.5L6 8l3.5-3.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </button>
+              )}
               <CalNavBtn onClick={nextMonth} disabled={!canNextMonth}><ChevR /></CalNavBtn>
             </div>
 
@@ -202,7 +231,7 @@ export default function DatePickerField({ value, onChange, placeholder = 'Select
               {cells.map((d, i) => {
                 if (d === null) return <div key={`e-${i}`} />
                 const sel = d === selD && view.m === selM && view.y === selY
-                const fut = isDayFuture(d)
+                const fut = isDayOutOfRange(d)
                 return (
                   <button key={`d-${i}`} type="button" onClick={() => selectDay(d)} disabled={fut}
                     style={{
@@ -224,10 +253,12 @@ export default function DatePickerField({ value, onChange, placeholder = 'Select
             {value && (
               <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #F3F4F6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ fontSize: '0.8125rem', color: '#6B7280' }}>{label}</span>
-                <button type="button" onClick={() => { onChange(''); setOpen(false) }}
-                  style={{ fontSize: '0.8125rem', color: '#F97316', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
-                  Clear
-                </button>
+                {clearable && (
+                  <button type="button" onClick={() => { onChange(''); setOpen(false) }}
+                    style={{ fontSize: '0.8125rem', color: '#F97316', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                    Clear
+                  </button>
+                )}
               </div>
             )}
           </>)}
@@ -235,7 +266,7 @@ export default function DatePickerField({ value, onChange, placeholder = 'Select
           {/* ── MONTH VIEW ── */}
           {mode === 'month' && (<>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-              <CalNavBtn onClick={prevYear}><ChevL /></CalNavBtn>
+              <CalNavBtn onClick={prevYear} disabled={!canPrevYear}><ChevL /></CalNavBtn>
               <button
                 type="button"
                 style={headerBtnStyle}
@@ -254,7 +285,7 @@ export default function DatePickerField({ value, onChange, placeholder = 'Select
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
               {MONTHS_SHORT.map((name, mi) => {
                 const isCurSel = mi === selM && view.y === selY
-                const fut = isMonthFuture(mi)
+                const fut = isMonthOutOfRange(mi)
                 const isViewMonth = mi === view.m
                 return (
                   <button key={name} type="button" onClick={() => selectMonth(mi)} disabled={fut}
@@ -295,7 +326,7 @@ export default function DatePickerField({ value, onChange, placeholder = 'Select
               {yearList.map(y => {
                 const isCurSel = y === selY
                 const isViewY = y === view.y
-                const fut = isYearFuture(y)
+                const fut = isYearOutOfRange(y)
                 return (
                   <button key={y} type="button" onClick={() => selectYear(y)} disabled={fut}
                     style={{

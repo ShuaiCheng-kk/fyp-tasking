@@ -318,7 +318,7 @@ export default function OwnerAttendancePage() {
   ] as const
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: '#F1F5F9', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+    <div style={{ display: 'flex', minHeight: '100vh', background: '#F1F5F9' }}>
       <OwnerSidebar />
       <main style={{ marginLeft: '64px', flex: 1, minHeight: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
 
@@ -331,18 +331,11 @@ export default function OwnerAttendancePage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId} />}
             {companyId && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
-            <button
-              onClick={() => fetchAttendanceData(companyId)}
-              disabled={loading || !companyId}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 36, border: '1px solid #E5E7EB', borderRadius: 9, background: '#FFFFFF', color: '#0F172A', padding: '0 13px', fontWeight: 700, fontSize: 13, cursor: loading || !companyId ? 'default' : 'pointer', opacity: loading || !companyId ? 0.55 : 1, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}
-            >
-              {loading ? <Spinner size={14} dark /> : <RefreshCw size={14} />} Refresh
-            </button>
           </div>
         </div>
 
         {/* ── UC3: Tab bar ──────────────────────────────────────────────────────── */}
-        <div style={{ padding: '0 28px 16px', flexShrink: 0 }}>
+        <div style={{ padding: '0 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: 4, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 999, boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
           {tabItems.map(tab => (
             <button
@@ -372,6 +365,13 @@ export default function OwnerAttendancePage() {
             </button>
           ))}
         </div>
+        <button
+          onClick={() => fetchAttendanceData(companyId)}
+          disabled={loading || !companyId}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 36, border: '1px solid #E5E7EB', borderRadius: 9, background: '#FFFFFF', color: '#0F172A', padding: '0 13px', fontWeight: 700, fontSize: 13, cursor: loading || !companyId ? 'default' : 'pointer', opacity: loading || !companyId ? 0.55 : 1, boxShadow: '0 1px 4px rgba(0,0,0,0.05)', flexShrink: 0 }}
+        >
+          {loading ? <Spinner size={14} dark /> : <RefreshCw size={14} />} Refresh
+        </button>
         </div>
 
         <div style={{ padding: '0 28px 24px', display: 'flex', flexDirection: 'column', gap: 24 }}>

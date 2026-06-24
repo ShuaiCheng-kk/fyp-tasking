@@ -14,6 +14,7 @@ export interface TimelineShiftBlock {
   recurrence_group_id: string | null
   recurrence_rule: 'daily' | 'weekly' | 'custom' | null
   source_shift_id: string | null
+  split_group_id: string | null
   assignment_status: string | null
   template_id: string | null
 }

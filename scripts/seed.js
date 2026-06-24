@@ -2,20 +2,18 @@
  * scripts/seed.js — Tasking 基础测试数据重建脚本
  *
  * 功能：
- *   1. 清空账户/公司/部门/Shift 相关数据表
+ *   1. 清空账户/公司/部门相关数据表
  *   2. 删除 auth.users 里的旧测试账号
  *   3. 在 Supabase Auth 创建真实账号（密码统一 111111）
  *   4. 插入 public.users、companies、departments 及部门分配
  *   5. 插入 Casual Workers（含 date_of_birth, phone_number, worker_status 等）
- *   6. 插入一个 Shift Template，以及 2026-06-22 当天覆盖 4 个部门的 Shifts
- *      （含 Split Shift、引用 Template 的 Shift、一条待审批的 Shift Swap Request）
  *
  * 测试账号结构：
  *   1 Owner, 2 Partner, 8 Manager, 8 Employee, 10 Casual Worker
  *   1 Company, 4 Department, 2 Manager/dept, 2 Employee/dept
  *
- * 不创建：tasks/recruitment/messages/announcements 等业务数据，
- * 仅用于测试账户/公司/部门/Shift 相关的 UC。
+ * 不创建：shifts/tasks/recruitment/messages/announcements 等业务数据，
+ * 仅用于测试账户/公司/部门相关的 UC。
  *
  * 使用方法：
  *   node scripts/seed.js
@@ -133,6 +131,8 @@ async function main() {
     'manager_departments',
     'employee_departments',
   ]
+  // NOTE: shifts/tasks 等业务表仍需清空，因为旧数据可能在外键上阻塞 users/companies 的删除，
+  // 即便本脚本不再重新插入这些业务数据。
   for (const table of tablesToClear) {
     const { error } = await supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000')
     if (error) console.warn(`  ⚠ 清空 ${table} 失败: ${error.message}`)
@@ -332,147 +332,6 @@ async function main() {
     else console.log(`  ✓ ${employeeEmails[i]} → ${dept.name}`)
   }
 
-  // ── Step 10: Shift Template ────────────────────────────────────────────
-  console.log('\nStep 10: 创建 Shift Template...')
-  const { data: template, error: tplErr } = await supabase
-    .from('shift_templates')
-    .insert({
-      company_id: company.id,
-      name: 'Standard Day Shift (9-5)',
-      start_time: '09:00',
-      end_time: '17:00',
-      created_by: ownerUser.id,
-    })
-    .select()
-    .single()
-  if (tplErr) console.warn(`  ⚠ shift_template 创建失败: ${tplErr.message}`)
-  else console.log(`  ✓ Template: ${template.name} (${template.id})`)
-
-  // ── Step 11: Shifts on 2026-06-22 across all departments ───────────────
-  console.log('\nStep 11: 创建 2026-06-22 的 Shifts...')
-
-  const mgrId = (n) => userIdMap[`manager${n}@test.com`].internalId
-  const empId = (n) => userIdMap[`employee${n}@test.com`].internalId
-  const cwId = (n) => userIdMap[`cw${n}@test.com`].internalId
-  const SHIFT_DATE = '2026-06-22'
-
-  // A shift maps to at most one shift_assignment row — never pass more than one assignee here.
-  const createShiftWithAssignees = async ({ dept, start, end, title, instruction, pub, creator, assignee, template_id }) => {
-    const { data: shift, error: shiftErr } = await supabase
-      .from('shifts')
-      .insert({
-        company_id: company.id,
-        department_id: depts[dept].id,
-        title,
-        instruction,
-        shift_date: SHIFT_DATE,
-        start_time: start,
-        end_time: end,
-        status: 'active',
-        publication_status: pub,
-        created_by: creator,
-        template_id: template_id ?? null,
-      })
-      .select()
-      .single()
-    if (shiftErr) { console.warn(`  ⚠ shift 创建失败 (${title}): ${shiftErr.message}`); return null }
-
-    let assignmentRecord = null
-    if (assignee) {
-      const { data: sa, error: saErr } = await supabase
-        .from('shift_assignments')
-        .insert({ shift_id: shift.id, user_id: assignee.u, assigned_by: assignee.by })
-        .select()
-        .single()
-      if (saErr) { console.warn(`  ⚠ shift_assignment 创建失败: ${saErr.message}`) }
-      else assignmentRecord = { id: sa.id, userId: assignee.u }
-    }
-    console.log(`  ✓ Shift: ${title} @ ${SHIFT_DATE} (${depts[dept].name}, ${pub}) — ${assignmentRecord ? '1 assignee' : 'unassigned'}`)
-    return { shift, assignments: assignmentRecord ? [assignmentRecord] : [] }
-  }
-
-  // Operations: standard published shift using the template, assigned to the manager.
-  // A second, separate shift covers the employee on the same slot — one assignee per shift.
-  await createShiftWithAssignees({
-    dept: 0, start: '09:00', end: '17:00', title: 'Operations Coverage',
-    instruction: 'Baseline department coverage shift.', pub: 'published',
-    creator: mgrId(1), template_id: template?.id,
-    assignee: { u: mgrId(1), by: mgrId(1) },
-  })
-  await createShiftWithAssignees({
-    dept: 0, start: '09:00', end: '17:00', title: 'Operations Coverage',
-    instruction: 'Baseline department coverage shift.', pub: 'published',
-    creator: mgrId(1), template_id: template?.id,
-    assignee: { u: empId(1), by: mgrId(1) },
-  })
-
-  // Marketing: draft shift, unassigned
-  await createShiftWithAssignees({
-    dept: 1, start: '10:00', end: '18:00', title: 'Marketing Coverage',
-    instruction: 'Campaign monitoring and content review.', pub: 'draft',
-    creator: mgrId(3), assignee: null,
-  })
-
-  // Engineering: published shift assigned to a manager.
-  // A second, separate shift covers the employee on the same slot — one assignee per shift.
-  const engShift = await createShiftWithAssignees({
-    dept: 2, start: '08:00', end: '16:00', title: 'Engineering On-call',
-    instruction: 'Monitor incident queue and deploy pipeline.', pub: 'published',
-    creator: mgrId(5), assignee: { u: mgrId(5), by: mgrId(5) },
-  })
-  await createShiftWithAssignees({
-    dept: 2, start: '08:00', end: '16:00', title: 'Engineering On-call',
-    instruction: 'Monitor incident queue and deploy pipeline.', pub: 'published',
-    creator: mgrId(5), assignee: { u: empId(5), by: mgrId(5) },
-  })
-
-  // Customer Support: published shift assigned to a casual worker, supervised by an employee
-  await createShiftWithAssignees({
-    dept: 3, start: '13:00', end: '21:00', title: 'Customer Hotline',
-    instruction: 'Cover overflow calls.', pub: 'published',
-    creator: mgrId(7),
-    assignee: { u: empId(7), by: mgrId(7) },
-  })
-
-  // Operations: split shift (two non-contiguous blocks, same day) — UC9
-  const splitGroupId = require('crypto').randomUUID()
-  for (const block of [{ start: '09:00', end: '12:00' }, { start: '15:00', end: '18:00' }]) {
-    const { data: splitShift, error: splitErr } = await supabase
-      .from('shifts')
-      .insert({
-        company_id: company.id,
-        department_id: depts[0].id,
-        title: 'Lunch Rush Split Shift',
-        instruction: 'Cover the morning and evening rush separately.',
-        shift_date: SHIFT_DATE,
-        start_time: block.start,
-        end_time: block.end,
-        status: 'active',
-        publication_status: 'published',
-        created_by: mgrId(2),
-        split_group_id: splitGroupId,
-      })
-      .select()
-      .single()
-    if (splitErr) { console.warn(`  ⚠ split shift 创建失败: ${splitErr.message}`); continue }
-    await supabase.from('shift_assignments').insert({ shift_id: splitShift.id, user_id: cwId(1), assigned_by: mgrId(2) })
-    console.log(`  ✓ Split Shift block: ${block.start}-${block.end} @ ${SHIFT_DATE} (Operations)`)
-  }
-
-  // Engineering: a shift swap request pending review — UC for shift swap
-  if (engShift && engShift.assignments[0]) {
-    const { error: swapErr } = await supabase.from('shift_swap_requests').insert({
-      company_id: company.id,
-      shift_assignment_id: engShift.assignments[0].id,
-      requester_id: mgrId(5),
-      replacement_user_id: mgrId(6),
-      reason: 'Personal appointment, requesting coverage swap.',
-      status: 'pending',
-    })
-    if (swapErr) console.warn(`  ⚠ shift_swap_request 创建失败: ${swapErr.message}`)
-    else console.log('  ✓ Shift Swap Request: manager5 → manager6 (pending)')
-  }
-
   // ── 完成 ───────────────────────────────────────────────────────────────
   console.log('\n═══════════════════════════════════════════')
   console.log('  ✅ Seed 完成！')
@@ -492,12 +351,6 @@ async function main() {
   console.log('\nCasual Workers：')
   console.log('  Active (7):   cw1~7@test.com')
   console.log('  Inactive (3): cw8~10@test.com（含 inactivate_reason）')
-  console.log('\nShifts（2026-06-22）：')
-  console.log('  Operations:       Operations Coverage（已发布，引用 Template）')
-  console.log('  Operations:       Lunch Rush Split Shift（Split Shift，2 blocks）')
-  console.log('  Marketing:        Marketing Coverage（draft，未分配）')
-  console.log('  Engineering:      Engineering On-call（已发布，附带待审批的 Swap Request）')
-  console.log('  Customer Support: Customer Hotline（已发布）')
 }
 
 main().catch(err => {
