@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { seedTestOwnerAndCompany, cleanupTestOwnerAndCompany, TestOwner } from '../helpers/seed'
 
-// Integration test for UC27 — Manage Departments.
+// Integration test for UC29-31 — Create / Edit / Delete Department.
 // Hits the real route.ts -> service -> repository -> Supabase chain, no UI involved.
 
 let seeded: TestOwner

@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import { createClient } from '@supabase/supabase-js'
 import { seedTestOwnerAndCompany, cleanupTestOwnerAndCompany, TestOwner } from '../helpers/seed'
 
-// Integration tests for Module 1 — Shift (UC1-8, UC10, UC12).
+// Integration tests for Module 1 — Shift (UC1-14, except UC4 Create Shift Template — see shiftTemplate.spec.ts).
 // Hits the real route.ts -> service -> repository -> Supabase chain, no UI involved.
 
 const admin = createClient(
@@ -153,7 +153,7 @@ test('UC1/UC2 views the allocation timeline filtered by date range', async ({ re
   expect(hasShift).toBe(true)
 })
 
-test('UC4 edits the shift and assigns it to an employee', async ({ request }) => {
+test('UC5 edits the shift and assigns it to an employee', async ({ request }) => {
   const res = await request.patch(`/api/shift/${shiftId}`, {
     data: {
       title: 'Morning Prep',
@@ -167,7 +167,7 @@ test('UC4 edits the shift and assigns it to an employee', async ({ request }) =>
   expect(body.shift.title).toBe('Morning Prep')
 })
 
-test('UC10 surfaces a clopening conflict as a non-blocking warning', async ({ request }) => {
+test('UC11 surfaces a clopening conflict as a non-blocking warning', async ({ request }) => {
   const res = await request.post('/api/shift', {
     data: {
       company_id: seeded.companyId,
@@ -188,7 +188,7 @@ test('UC10 surfaces a clopening conflict as a non-blocking warning', async ({ re
   await request.delete(`/api/shift/${body.shift.id}`)
 })
 
-test('UC10 does not warn when rest between shifts is 8 hours or more', async ({ request }) => {
+test('UC11 does not warn when rest between shifts is 8 hours or more', async ({ request }) => {
   const res = await request.post('/api/shift', {
     data: {
       company_id: seeded.companyId,
@@ -208,7 +208,7 @@ test('UC10 does not warn when rest between shifts is 8 hours or more', async ({ 
   await request.delete(`/api/shift/${body.shift.id}`)
 })
 
-test('UC7 duplicates the shift as a new draft shift', async ({ request }) => {
+test('UC8 duplicates the shift as a new draft shift', async ({ request }) => {
   const res = await request.post(`/api/shift/${shiftId}/duplicate`, {
     data: {
       shift_date: '2026-07-08',
@@ -225,7 +225,7 @@ test('UC7 duplicates the shift as a new draft shift', async ({ request }) => {
   expect(body.shift.publication_status).toBe('draft')
 })
 
-test('UC7 duplicating a recurring original does not pull the duplicate into the recurring series', async ({ request }) => {
+test('UC8 duplicating a recurring original does not pull the duplicate into the recurring series', async ({ request }) => {
   const createRes = await request.post('/api/shift', {
     data: { company_id: seeded.companyId, department_id: departmentId, shift_date: '2026-08-05', start_time: '09:00', end_time: '17:00', created_by: seeded.ownerId },
   })
@@ -249,7 +249,7 @@ test('UC7 duplicating a recurring original does not pull the duplicate into the 
   await request.delete(`/api/shift/${dupBody.shift.id}`)
 })
 
-test('UC8 creates weekly recurring shifts from the original shift', async ({ request }) => {
+test('UC9 creates weekly recurring shifts from the original shift', async ({ request }) => {
   const res = await request.post(`/api/shift/${shiftId}/recurrence`, {
     data: {
       recurrence_rule: 'weekly',
@@ -264,7 +264,7 @@ test('UC8 creates weekly recurring shifts from the original shift', async ({ req
   expect(body.shifts.every((s: { recurrence_rule: string }) => s.recurrence_rule === 'weekly')).toBe(true)
 })
 
-test('UC8 editing an already-recurring original\'s settings replaces its future occurrences', async ({ request }) => {
+test('UC9 editing an already-recurring original\'s settings replaces its future occurrences', async ({ request }) => {
   const createRes = await request.post('/api/shift', {
     data: { company_id: seeded.companyId, department_id: departmentId, shift_date: '2026-09-21', start_time: '09:00', end_time: '17:00', created_by: seeded.ownerId },
   })
@@ -297,7 +297,7 @@ test('UC8 editing an already-recurring original\'s settings replaces its future 
   await request.delete(`/api/shift/${originalId}`)
 })
 
-test('UC8 rejects editing recurrence settings on a non-original occurrence', async ({ request }) => {
+test('UC9 rejects editing recurrence settings on a non-original occurrence', async ({ request }) => {
   const createRes = await request.post('/api/shift', {
     data: { company_id: seeded.companyId, department_id: departmentId, shift_date: '2026-09-28', start_time: '09:00', end_time: '17:00', created_by: seeded.ownerId },
   })
@@ -319,7 +319,7 @@ test('UC8 rejects editing recurrence settings on a non-original occurrence', asy
   await request.delete(`/api/shift/${originalId}`)
 })
 
-test('UC8 editing the original recurring shift cascades the time change to all occurrences, but editing an occurrence does not', async ({ request }) => {
+test('UC9 editing the original recurring shift cascades the time change to all occurrences, but editing an occurrence does not', async ({ request }) => {
   const createRes = await request.post('/api/shift', {
     data: { company_id: seeded.companyId, department_id: departmentId, shift_date: '2026-08-03', start_time: '09:00', end_time: '17:00', created_by: seeded.ownerId },
   })
@@ -362,7 +362,7 @@ test('UC8 editing the original recurring shift cascades the time change to all o
   await request.delete(`/api/shift/${originalId}`)
 })
 
-test('UC8 reassigning the original recurring shift cascades the new assignee to all occurrences', async ({ request }) => {
+test('UC9 reassigning the original recurring shift cascades the new assignee to all occurrences', async ({ request }) => {
   const createRes = await request.post('/api/shift', {
     data: { company_id: seeded.companyId, department_id: departmentId, shift_date: '2026-08-10', start_time: '09:00', end_time: '17:00', created_by: seeded.ownerId, assigned_user_id: employeeId },
   })
@@ -392,7 +392,7 @@ test('UC8 reassigning the original recurring shift cascades the new assignee to 
   await request.delete(`/api/shift/${originalId}`)
 })
 
-test('UC5/UC8 deleting the original recurring shift cascades to delete all occurrences', async ({ request }) => {
+test('UC6/UC9 deleting the original recurring shift cascades to delete all occurrences', async ({ request }) => {
   const createRes = await request.post('/api/shift', {
     data: { company_id: seeded.companyId, department_id: departmentId, shift_date: '2026-08-04', start_time: '09:00', end_time: '17:00', created_by: seeded.ownerId },
   })
@@ -415,7 +415,7 @@ test('UC5/UC8 deleting the original recurring shift cascades to delete all occur
   }
 })
 
-test('UC12 bulk-assigns shifts and reports per-row failures', async ({ request }) => {
+test('UC13 bulk-assigns shifts and reports per-row failures', async ({ request }) => {
   const res = await request.post('/api/shift/bulk', {
     data: {
       company_id: seeded.companyId,
@@ -519,8 +519,8 @@ test('Bulk Shift Editor reports a per-row failure without aborting the batch', a
   expect(body.result.failed).toHaveLength(1)
 })
 
-test('UC6 publishes the schedule for the date range', async ({ request }) => {
-  // Satisfy the min-managers-per-department-day hard rule before publishing (UC6 gates on schedule validation).
+test('UC7 publishes the schedule for the date range', async ({ request }) => {
+  // Satisfy the min-managers-per-department-day hard rule before publishing (UC7 gates on schedule validation).
   const managerShiftRes = await request.post('/api/shift', {
     data: {
       company_id: seeded.companyId,
@@ -548,7 +548,7 @@ test('UC6 publishes the schedule for the date range', async ({ request }) => {
   expect(body.shifts.some((s: { id: string; publication_status: string }) => s.id === shiftId && s.publication_status === 'published')).toBe(true)
 })
 
-test('UC7/UC11 publishing with performed_by records history that can be undone and redone', async ({ request }) => {
+test('UC8/UC12 publishing with performed_by records history that can be undone and redone', async ({ request }) => {
   // Satisfy the min-managers/min-employees-per-department-day hard rule before publishing.
   const employeeShiftRes = await request.post('/api/shift', {
     data: {
@@ -618,7 +618,7 @@ test('UC7/UC11 publishing with performed_by records history that can be undone a
   await request.delete(`/api/shift/${employeeShiftId}`)
 })
 
-test('UC6/UC7 hides draft shifts from Manager and Employee viewers, visible only to Owner/Partner', async ({ request }) => {
+test('UC7/UC8 hides draft shifts from Manager and Employee viewers, visible only to Owner/Partner', async ({ request }) => {
   const createRes = await request.post('/api/shift', {
     data: {
       company_id: seeded.companyId,
@@ -661,7 +661,7 @@ test('UC6/UC7 hides draft shifts from Manager and Employee viewers, visible only
   expect(ownerSeesDraft).toBe(true)
 })
 
-test('UC9 creates a split shift with two linked time blocks', async ({ request }) => {
+test('UC10 creates a split shift with two linked time blocks', async ({ request }) => {
   const res = await request.post('/api/shift/split', {
     data: {
       company_id: seeded.companyId,
@@ -683,7 +683,7 @@ test('UC9 creates a split shift with two linked time blocks', async ({ request }
   expect(body.shifts[0].split_group_id).toBeTruthy()
 })
 
-test('UC9 editing one block of a split shift does not flag a clopening conflict against its own other block', async ({ request }) => {
+test('UC10 editing one block of a split shift does not flag a clopening conflict against its own other block', async ({ request }) => {
   const splitRes = await request.post('/api/shift/split', {
     data: {
       company_id: seeded.companyId,
@@ -714,7 +714,7 @@ test('UC9 editing one block of a split shift does not flag a clopening conflict 
   expect(editBody.warning).toBeNull()
 })
 
-test('UC9 rejects a split shift with overlapping blocks', async ({ request }) => {
+test('UC10 rejects a split shift with overlapping blocks', async ({ request }) => {
   const res = await request.post('/api/shift/split', {
     data: {
       company_id: seeded.companyId,
@@ -732,7 +732,7 @@ test('UC9 rejects a split shift with overlapping blocks', async ({ request }) =>
   expect(body.success).toBe(false)
 })
 
-test('UC9 repeats a split shift weekly, creating a matching two-block pair per occurrence', async ({ request }) => {
+test('UC10 repeats a split shift weekly, creating a matching two-block pair per occurrence', async ({ request }) => {
   const splitRes = await request.post('/api/shift/split', {
     data: {
       company_id: seeded.companyId,
@@ -778,7 +778,7 @@ test('UC9 repeats a split shift weekly, creating a matching two-block pair per o
   await request.delete(`/api/shift/${splitBody.shifts[1].id}`)
 })
 
-test('UC11 undoes the most recent create action by deleting the shift it created', async ({ request }) => {
+test('UC12 undoes the most recent create action by deleting the shift it created', async ({ request }) => {
   const createRes = await request.post('/api/shift', {
     data: {
       company_id: seeded.companyId,
@@ -810,7 +810,7 @@ test('UC11 undoes the most recent create action by deleting the shift it created
   expect(stillPresent).toBe(false)
 })
 
-test('UC11 undoes a delete action by restoring the deleted shift', async ({ request }) => {
+test('UC12 undoes a delete action by restoring the deleted shift', async ({ request }) => {
   const createRes = await request.post('/api/shift', {
     data: {
       company_id: seeded.companyId,
@@ -846,7 +846,7 @@ test('UC11 undoes a delete action by restoring the deleted shift', async ({ requ
   await request.delete(`/api/shift/${tempShiftId}`)
 })
 
-test('UC11 rejects undo when there is no recent action for that user', async ({ request }) => {
+test('UC12 rejects undo when there is no recent action for that user', async ({ request }) => {
   const res = await request.post('/api/shift/undo', {
     data: { company_id: seeded.companyId, performed_by: employeeId },
   })
@@ -855,7 +855,7 @@ test('UC11 rejects undo when there is no recent action for that user', async ({ 
   expect(body.success).toBe(false)
 })
 
-test('UC11 redoes an undone create action by recreating the shift', async ({ request }) => {
+test('UC12 redoes an undone create action by recreating the shift', async ({ request }) => {
   const createRes = await request.post('/api/shift', {
     data: {
       company_id: seeded.companyId,
@@ -894,7 +894,7 @@ test('UC11 redoes an undone create action by recreating the shift', async ({ req
   await request.delete(`/api/shift/${redoableShiftId}`)
 })
 
-test('UC11 rejects redo when there is no recently undone action for that user', async ({ request }) => {
+test('UC12 rejects redo when there is no recently undone action for that user', async ({ request }) => {
   const res = await request.post('/api/shift/redo', {
     data: { company_id: seeded.companyId, performed_by: employeeId },
   })
@@ -903,7 +903,7 @@ test('UC11 rejects redo when there is no recently undone action for that user', 
   expect(body.success).toBe(false)
 })
 
-test('UC5 deletes the shift', async ({ request }) => {
+test('UC6 deletes the shift', async ({ request }) => {
   const res = await request.delete(`/api/shift/${shiftId}`)
   expect(res.status()).toBe(200)
   const body = await res.json()

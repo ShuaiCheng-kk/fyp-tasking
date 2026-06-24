@@ -93,7 +93,7 @@ test.afterAll(async () => {
   await cleanupTestOwnerAndCompany(seeded)
 })
 
-test('UC30 generates an invitation code for a department role', async ({ request }) => {
+test('UC32 generates an invitation code for a department role', async ({ request }) => {
   const res = await request.post('/api/invitation/generate', {
     data: {
       company_id: seeded.companyId,
@@ -108,7 +108,7 @@ test('UC30 generates an invitation code for a department role', async ({ request
   expect(body.code).toMatch(/^\d{5}$/)
 })
 
-test('UC32 assigns, lists, and removes a department manager', async ({ request }) => {
+test('UC33 assigns, lists, and removes a department manager', async ({ request }) => {
   const manager = await createMember('Manager', 'assign', departments.primary)
 
   const assign = await request.patch('/api/team/department-manager', {
@@ -138,7 +138,7 @@ test('UC32 assigns, lists, and removes a department manager', async ({ request }
   expect((await remove.json()).success).toBe(true)
 })
 
-test('UC33 and UC34 list team members and remove a member', async ({ request }) => {
+test('UC34 and UC37 list team members and remove a member', async ({ request }) => {
   const employee = await createMember('Employee', 'remove', departments.primary)
   const { data: shift, error: shiftError } = await admin
     .from('shifts')
@@ -186,7 +186,7 @@ test('UC33 and UC34 list team members and remove a member', async ({ request }) 
   expect(await remove.json()).toMatchObject({ success: true, accountDeleted: true })
 })
 
-test('UC34 removes a manager who created shifts without leaving a partial membership update', async ({ request }) => {
+test('UC37 removes a manager who created shifts without leaving a partial membership update', async ({ request }) => {
   const manager = await createMember('Manager', 'remove-manager', departments.primary)
   const { data: shift, error: shiftError } = await admin
     .from('shifts')
@@ -223,7 +223,7 @@ test('UC34 removes a manager who created shifts without leaving a partial member
   expect(updatedShift!.created_by).toBe(seeded.ownerId)
 })
 
-test('UC35 changes an employee department in the employee department mapping', async ({ request }) => {
+test('UC38 changes an employee department in the employee department mapping', async ({ request }) => {
   const employee = await createMember('Employee', 'move', departments.primary)
 
   const res = await request.patch('/api/user/update-department', {
@@ -244,7 +244,7 @@ test('UC35 changes an employee department in the employee department mapping', a
   expect(employeeDepartments).toEqual([{ department_id: departments.secondary }])
 })
 
-test('UC37 imports departments and skips duplicates', async ({ request }) => {
+test('UC40 imports departments and skips duplicates', async ({ request }) => {
   const res = await request.post('/api/import/departments', {
     data: {
       company_id: seeded.companyId,
@@ -260,7 +260,7 @@ test('UC37 imports departments and skips duplicates', async ({ request }) => {
   })
 })
 
-test('UC39 writes and reads company activity logs', async ({ request }) => {
+test('UC42 writes and reads company activity logs', async ({ request }) => {
   const write = await request.post('/api/activity-log', {
     data: {
       company_id: seeded.companyId,
@@ -283,7 +283,124 @@ test('UC39 writes and reads company activity logs', async ({ request }) => {
   )
 })
 
-test('UC40 edits company profile fields', async ({ request }) => {
+test('UC35 returns member data with full_name and role fields the UI search filters on', async ({ request }) => {
+  await createMember('Employee', 'search-target', departments.primary)
+
+  const res = await request.get(`/api/team/members?company_id=${seeded.companyId}`)
+  expect(res.status()).toBe(200)
+  const body = await res.json()
+  expect(body.success).toBe(true)
+  expect(body.members).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ full_name: expect.stringContaining('Module 3 Employee search-target'), role: 'Employee' }),
+    ]),
+  )
+
+  const scoped = await request.get(`/api/team/members?company_id=${seeded.companyId}&department_id=${departments.primary}`)
+  expect(scoped.status()).toBe(200)
+  const scopedBody = await scoped.json()
+  expect(scopedBody.members).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ full_name: expect.stringContaining('Module 3 Employee search-target') }),
+    ]),
+  )
+})
+
+test('UC36 toggles a casual worker between active and inactive', async ({ request }) => {
+  const email = `test-module3-casual-${Date.now()}@tasking-tests.local`
+  const { data: authData, error: authError } = await admin.auth.admin.createUser({
+    email,
+    password: 'Test-Password-123!',
+    email_confirm: true,
+  })
+  if (authError || !authData.user) throw new Error(`Failed to create auth user: ${authError?.message}`)
+
+  const { data: worker, error: workerError } = await admin
+    .from('users')
+    .insert({
+      supabase_auth_id: authData.user.id,
+      full_name: 'Module 3 Casual Worker',
+      email_address: email,
+      phone_number: null,
+      role: 'Casual Worker',
+      company_id: seeded.companyId,
+      worker_status: 'active',
+    })
+    .select()
+    .single()
+  if (workerError || !worker) throw new Error(`Failed to create casual worker row: ${workerError?.message}`)
+  members.push({ authUserId: authData.user.id, userId: worker.id as string, email })
+
+  const deactivate = await request.patch('/api/team/casual-worker-status', {
+    data: { user_id: worker.id, worker_status: 'inactive', inactivate_reason: 'No longer available' },
+  })
+  expect(deactivate.status()).toBe(200)
+  const deactivateBody = await deactivate.json()
+  expect(deactivateBody).toMatchObject({ success: true, user: { worker_status: 'inactive', inactivate_reason: 'No longer available' } })
+
+  const reactivate = await request.patch('/api/team/casual-worker-status', {
+    data: { user_id: worker.id, worker_status: 'active' },
+  })
+  expect(reactivate.status()).toBe(200)
+  const reactivateBody = await reactivate.json()
+  expect(reactivateBody).toMatchObject({ success: true, user: { worker_status: 'active', inactivate_reason: null } })
+
+  const invalid = await request.patch('/api/team/casual-worker-status', {
+    data: { user_id: worker.id, worker_status: 'on-leave' },
+  })
+  expect(invalid.status()).toBe(400)
+  expect((await invalid.json()).success).toBe(false)
+})
+
+test('UC39 invites members by CSV row and reports per-row failures', async ({ request }) => {
+  const goodEmail = `test-module3-csv-${Date.now()}@tasking-tests.local`
+  const res = await request.post('/api/import/members', {
+    data: {
+      company_id: seeded.companyId,
+      invited_by: seeded.ownerId,
+      members: [
+        { email: goodEmail, role: 'Employee', department_name: 'Front Desk' },
+        { email: 'bad-email', role: 'Employee', department_name: 'Front Desk' },
+        { email: `test-module3-csv-nodept-${Date.now()}@tasking-tests.local`, role: 'Employee', department_name: 'Nonexistent Dept' },
+      ],
+    },
+  })
+  expect(res.status()).toBe(200)
+  const body = await res.json()
+  expect(body.success).toBe(true)
+  expect(body.result.invited).toEqual([goodEmail])
+  expect(body.result.failed).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ email: 'bad-email', message: 'Invalid email address' }),
+      expect.objectContaining({ message: 'Department not found' }),
+    ]),
+  )
+
+  await admin.from('invitation_code').delete().eq('company_id', seeded.companyId).eq('email', goodEmail)
+})
+
+test('UC41 org chart data: members carry department_id and role so the UI can group by department', async ({ request }) => {
+  const manager = await createMember('Manager', 'orgchart', departments.secondary)
+
+  const members_ = await request.get(`/api/team/members?company_id=${seeded.companyId}`)
+  expect(members_.status()).toBe(200)
+  const membersBody = await members_.json()
+  expect(membersBody.members).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ id: manager.userId, role: 'Manager', department_id: departments.secondary }),
+      expect.objectContaining({ id: seeded.ownerId, role: 'Owner' }),
+    ]),
+  )
+
+  const depts = await request.get(`/api/company/departments?company_id=${seeded.companyId}`)
+  expect(depts.status()).toBe(200)
+  const deptsBody = await depts.json()
+  expect(deptsBody.departments).toEqual(
+    expect.arrayContaining([expect.objectContaining({ id: departments.secondary, name: 'Kitchen' })]),
+  )
+})
+
+test('UC43 edits company profile fields', async ({ request }) => {
   const res = await request.patch('/api/company/update-profile', {
     data: {
       company_id: seeded.companyId,

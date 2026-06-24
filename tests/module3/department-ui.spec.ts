@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { seedTestOwnerAndCompany, cleanupTestOwnerAndCompany, TestOwner } from '../helpers/seed'
 
-// End-to-end test for UC27 — Manage Departments, driven entirely through the real UI.
+// End-to-end test for UC29-31 — Create / Edit / Delete Department, driven entirely through the real UI.
 
 let seeded: TestOwner
 

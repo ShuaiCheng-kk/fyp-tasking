@@ -99,7 +99,7 @@ test.afterAll(async () => {
 
 test.describe.configure({ mode: 'serial' })
 
-test('UC70 posts a company-wide announcement as Owner and a department announcement as Manager', async ({ request }) => {
+test('UC73 posts a company-wide announcement as Owner and a department announcement as Manager', async ({ request }) => {
   const ownerPost = await request.post('/api/inbox/announcements', {
     data: {
       from_user_id: seeded.ownerId,
@@ -127,7 +127,7 @@ test('UC70 posts a company-wide announcement as Owner and a department announcem
   expect(managerBody).toMatchObject({ success: true, announcement: { department_id: departments.ops, title: 'Ops department notice' } })
 })
 
-test('UC70 rejects an Employee attempting to post an announcement', async ({ request }) => {
+test('UC73 rejects an Employee attempting to post an announcement', async ({ request }) => {
   const res = await request.post('/api/inbox/announcements', {
     data: {
       from_user_id: employeeOps.userId,
@@ -154,7 +154,7 @@ test('Manager-posted announcement is scoped to its own department only', async (
   expect(mktBody.announcements.map((a: { title: string }) => a.title)).not.toContain('Ops department notice')
 })
 
-test('UC71 edits own announcement but rejects editing someone else\'s', async ({ request }) => {
+test('UC74 edits own announcement but rejects editing someone else\'s', async ({ request }) => {
   const list = await request.get(`/api/inbox/announcements?company_id=${seeded.companyId}&role=owner`)
   expect(list.status()).toBe(200)
   const listBody = await list.json()
@@ -186,7 +186,7 @@ test('UC71 edits own announcement but rejects editing someone else\'s', async ({
   expect(hijackBody.success).toBe(false)
 })
 
-test('UC72 deletes own announcement and rejects deleting it twice', async ({ request }) => {
+test('UC75 deletes own announcement and rejects deleting it twice', async ({ request }) => {
   const list = await request.get(`/api/inbox/announcements?company_id=${seeded.companyId}&role=manager&department_id=${departments.ops}`)
   expect(list.status()).toBe(200)
   const listBody = await list.json()
@@ -207,7 +207,7 @@ test('UC72 deletes own announcement and rejects deleting it twice', async ({ req
   expect(deleteAgainBody.success).toBe(false)
 })
 
-test('UC73 sends a direct message and the recipient can read the conversation', async ({ request }) => {
+test('UC76 sends a direct message and the recipient can read the conversation', async ({ request }) => {
   const send = await request.post('/api/inbox/messages', {
     data: {
       from_user_id: employeeOps.userId,

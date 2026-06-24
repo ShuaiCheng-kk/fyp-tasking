@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import { createClient } from '@supabase/supabase-js'
 import { seedTestOwnerAndCompany, cleanupTestOwnerAndCompany, TestOwner } from '../helpers/seed'
 
-// Integration tests for Module 9 — Account & Authentication (UC82-88).
+// Integration tests for Module 9 — Account & Authentication (UC85-91).
 // Hit the real route.ts -> service -> repository -> Supabase chain, no UI involved.
 
 const admin = createClient(
@@ -20,7 +20,7 @@ test.afterAll(async () => {
   await cleanupTestOwnerAndCompany(seeded)
 })
 
-test.describe('UC82 — Register Account', () => {
+test.describe('UC85 — Register Account', () => {
   let registeredAuthId: string | null = null
   let registeredEmail: string
 
@@ -74,7 +74,7 @@ test.describe('UC82 — Register Account', () => {
   })
 })
 
-test.describe('UC83 — Sign In', () => {
+test.describe('UC86 — Sign In', () => {
   test('signs in with valid credentials and returns the user profile', async ({ request }) => {
     const res = await request.post('/api/auth/signin', {
       data: { email_address: seeded.email, password: seeded.password },
@@ -96,7 +96,7 @@ test.describe('UC83 — Sign In', () => {
   })
 })
 
-test.describe('UC84 — Forgot Password', () => {
+test.describe('UC87 — Forgot Password', () => {
   test('accepts a forgot-password request for an existing email', async ({ request }) => {
     const res = await request.post('/api/auth/forgot-password', {
       data: { email: seeded.email },
@@ -112,7 +112,55 @@ test.describe('UC84 — Forgot Password', () => {
   })
 })
 
-test.describe('UC86 — Edit Own Profile', () => {
+test.describe('UC88 — Email Verification / Resend Confirmation', () => {
+  let unverifiedAuthId: string | null = null
+  let unverifiedEmail: string
+
+  test.afterAll(async () => {
+    if (unverifiedAuthId) {
+      await admin.auth.admin.deleteUser(unverifiedAuthId)
+    }
+  })
+
+  test('reports false for an unconfirmed account, then resends the confirmation email', async ({ request }) => {
+    unverifiedEmail = `test-unverified-${Date.now()}@tasking-tests.local`
+    const { data: authData, error: authError } = await admin.auth.admin.createUser({
+      email: unverifiedEmail,
+      password: 'Test-Password-123!',
+      email_confirm: false,
+    })
+    if (authError || !authData.user) throw new Error(`Failed to create unconfirmed user: ${authError?.message}`)
+    unverifiedAuthId = authData.user.id
+
+    const checkUnverified = await request.get(`/api/auth/check-verified?email=${encodeURIComponent(unverifiedEmail)}`)
+    expect(checkUnverified.status()).toBe(200)
+    const checkUnverifiedBody = await checkUnverified.json()
+    expect(checkUnverifiedBody).toMatchObject({ success: true, verified: false })
+
+    const resend = await request.post('/api/auth/resend-confirmation', {
+      data: { email: unverifiedEmail },
+    })
+    expect(resend.status()).toBe(200)
+    const resendBody = await resend.json()
+    expect(resendBody.success).toBe(true)
+  })
+
+  test('reports true once an account has email_confirmed_at set', async ({ request }) => {
+    const checkVerified = await request.get(`/api/auth/check-verified?email=${encodeURIComponent(seeded.email)}`)
+    expect(checkVerified.status()).toBe(200)
+    const checkVerifiedBody = await checkVerified.json()
+    expect(checkVerifiedBody).toMatchObject({ success: true, verified: true })
+  })
+
+  test('rejects a resend-confirmation request with no email', async ({ request }) => {
+    const res = await request.post('/api/auth/resend-confirmation', { data: {} })
+    expect(res.status()).toBe(400)
+    const body = await res.json()
+    expect(body.success).toBe(false)
+  })
+})
+
+test.describe('UC89 — Edit Own Profile', () => {
   test('updates the profile fields and persists them', async ({ request }) => {
     const res = await request.patch('/api/user/update-profile', {
       data: {
@@ -139,7 +187,7 @@ test.describe('UC86 — Edit Own Profile', () => {
   })
 })
 
-test.describe('UC87 — Accept Company Invitation', () => {
+test.describe('UC90 — Accept Company Invitation', () => {
   let invitedAuthId: string | null = null
 
   test.afterAll(async () => {
@@ -193,7 +241,7 @@ test.describe('UC87 — Accept Company Invitation', () => {
   })
 })
 
-test.describe('UC88 — Logout', () => {
+test.describe('UC91 — Logout', () => {
   test('signs out successfully', async ({ request }) => {
     const res = await request.post('/api/auth/signout')
     expect(res.status()).toBe(200)
