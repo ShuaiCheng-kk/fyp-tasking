@@ -726,23 +726,23 @@ export default function ManagerShiftsPage() {
     if (!cid || !date) return
     setTimelineLoading(true)
     try {
-      const params = new URLSearchParams({ company_id: cid, date_from: date, date_to: date })
+      const params = new URLSearchParams({ company_id: cid, date_from: date, date_to: date, viewer_role: 'Manager', viewer_user_id: managerId })
       if (selectedDeptId) params.set('department_id', selectedDeptId)
       const res = await fetch(`/api/shift?${params}`)
       const data = await res.json()
       setTimelineRows(data.success ? data.rows ?? [] : [])
     } finally { setTimelineLoading(false) }
-  }, [selectedDeptId])
+  }, [selectedDeptId, managerId])
 
   // ── Fetch future rows for date picker dots ──
   const fetchFutureRows = useCallback(async (cid: string) => {
     if (!cid) return
-    const params = new URLSearchParams({ company_id: cid, date_from: minDate, date_to: maxDate })
+    const params = new URLSearchParams({ company_id: cid, date_from: minDate, date_to: maxDate, viewer_role: 'Manager', viewer_user_id: managerId })
     if (selectedDeptId) params.set('department_id', selectedDeptId)
     const res = await fetch(`/api/shift?${params}`)
     const data = await res.json()
     setFutureRows(data.success ? data.rows ?? [] : [])
-  }, [selectedDeptId])
+  }, [selectedDeptId, managerId])
 
   // ── Fetch calendar week rows ──
   const fetchCalWeek = useCallback(async (cid: string, anchorDate: string) => {
@@ -754,13 +754,13 @@ export default function ManagerShiftsPage() {
       const mon = new Date(anchor); mon.setDate(anchor.getDate() - dow)
       const sun = new Date(mon); sun.setDate(mon.getDate() + 6)
       const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
-      const params = new URLSearchParams({ company_id: cid, date_from: fmt(mon), date_to: fmt(sun) })
+      const params = new URLSearchParams({ company_id: cid, date_from: fmt(mon), date_to: fmt(sun), viewer_role: 'Manager', viewer_user_id: managerId })
       if (selectedDeptId) params.set('department_id', selectedDeptId)
       const res = await fetch(`/api/shift?${params}`)
       const data = await res.json()
       setCalWeekRows(data.success ? data.rows ?? [] : [])
     } finally { setCalWeekLoading(false) }
-  }, [selectedDeptId])
+  }, [selectedDeptId, managerId])
 
   useEffect(() => {
     if (!companyId) return

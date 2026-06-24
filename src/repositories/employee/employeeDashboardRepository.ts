@@ -52,10 +52,12 @@ export const employeeDashboardRepository = {
           instruction,
           shift_date,
           start_time,
-          end_time
+          end_time,
+          publication_status
         )
       `)
       .eq('user_id', user_id)
+      .eq('shifts.publication_status', 'published')
       .order('created_at', { ascending: false })
 
     if (error) {

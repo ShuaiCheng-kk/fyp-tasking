@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import {
   AlertTriangle, ArrowLeftRight, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronUp, Clock,
-  Crown, Edit3, Filter, HardHat, Settings2, ShieldCheck, Sparkles, UserCog, Users, UserX, X,
+  Crown, Edit3, Filter, HardHat, RefreshCw, Settings2, ShieldCheck, Sparkles, UserCog, Users, UserX, X,
 } from 'lucide-react'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
@@ -52,7 +52,7 @@ const sectionHeaderStyle: React.CSSProperties = {
 }
 
 function formatTime(value: string | null | undefined): string {
-  if (!value) return '—'
+  if (!value) return '-'
   if (value.includes('T')) return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   return value.slice(0, 5)
 }
@@ -62,20 +62,6 @@ function statusColor(status: string): { bg: string; text: string } {
   if (status === 'rejected' || status === 'absent') return { bg: '#FEF2F2', text: '#B91C1C' }
   if (status === 'modified' || status === 'late' || status === 'overtime') return { bg: '#FFF7ED', text: '#C2410C' }
   return { bg: '#FFFBEB', text: '#B45309' }
-}
-
-function AiComingSoonBadge() {
-  return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 4,
-      background: '#F3F4F6', color: '#6B7280',
-      borderRadius: 999, padding: '3px 10px',
-      fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.04em',
-      border: '1px dashed #D1D5DB',
-    }}>
-      <Sparkles size={10} /> AI · Coming soon
-    </span>
-  )
 }
 
 function PipelineStage({ label, done, active }: { label: string; done: boolean; active: boolean }) {
@@ -133,6 +119,7 @@ export default function OwnerAttendancePage() {
   const [autoApprovalExpanded, setAutoApprovalExpanded] = useState(false)
   const [autoApprovalEnabled, setAutoApprovalEnabled] = useState(false)
   const [autoApprovalThreshold, setAutoApprovalThreshold] = useState(85)
+  const [autoApprovalSaved, setAutoApprovalSaved] = useState(false)
 
   // UC2: Expand review modal with modification reason
   const [reviewModifyReason, setReviewModifyReason] = useState('')
@@ -146,68 +133,8 @@ export default function OwnerAttendancePage() {
   )
 
   const records = dashboard?.records ?? []
-  const todayRecords = records.filter(row => row.shift.shift_date === today)
-  const internalRecords = todayRecords.filter(row => row.assignee_role === 'Manager' || row.assignee_role === 'Employee')
-  const realCasualRecords = todayRecords.filter(row => row.assignee_role === 'Casual Worker')
-
-  const DUMMY_CASUAL_RECORDS: typeof realCasualRecords = [
-    {
-      assignment: { id: 'demo-1', shift_id: 'ds-1', user_id: 'du-1', assigned_by: 'owner', assignment_status: 'assigned', supervisor_employee_id: null, created_at: today, updated_at: today },
-      shift: { id: 'ds-1', company_id: '', department_id: 'dept-1', title: 'Morning Shift', instruction: null, shift_date: today, start_time: '09:00', end_time: '17:00', status: 'active', publication_status: 'published', acceptance_deadline_at: null, recurrence_group_id: null, recurrence_rule: null, source_shift_id: null, split_group_id: null, created_by: 'owner', created_at: today, updated_at: today },
-      assignee_name: 'Jordan Lee',
-      assignee_role: 'Casual Worker',
-      supervisor_name: 'Alex Thompson',
-      department_name: 'Customer Support',
-      exceptions: ['late'],
-      record: {
-        id: 'demo-rec-1', shift_assignment_id: 'demo-1', casual_worker_id: 'du-1',
-        clock_in_time: `${today}T09:22:00`, clock_out_time: `${today}T17:05:00`,
-        confirmed_by_employee_id: 'emp-1', submitted_by_employee_id: 'emp-1',
-        status: 'submitted', employee_notes: 'Arrived late due to transport delay.', manager_notes: 'Confirmed with worker. Minor delay only.',
-        owner_status: 'pending', owner_notes: null, owner_reviewed_by: null, owner_reviewed_at: null,
-        owner_adjusted_clock_in_time: null, owner_adjusted_clock_out_time: null,
-        created_at: today, updated_at: today,
-      },
-    },
-    {
-      assignment: { id: 'demo-2', shift_id: 'ds-2', user_id: 'du-2', assigned_by: 'owner', assignment_status: 'assigned', supervisor_employee_id: null, created_at: today, updated_at: today },
-      shift: { id: 'ds-2', company_id: '', department_id: 'dept-1', title: 'Afternoon Shift', instruction: null, shift_date: today, start_time: '13:00', end_time: '21:00', status: 'active', publication_status: 'published', acceptance_deadline_at: null, recurrence_group_id: null, recurrence_rule: null, source_shift_id: null, split_group_id: null, created_by: 'owner', created_at: today, updated_at: today },
-      assignee_name: 'Sam Rivera',
-      assignee_role: 'Casual Worker',
-      supervisor_name: 'Maria Chen',
-      department_name: 'Warehouse',
-      exceptions: [],
-      record: {
-        id: 'demo-rec-2', shift_assignment_id: 'demo-2', casual_worker_id: 'du-2',
-        clock_in_time: `${today}T13:00:00`, clock_out_time: `${today}T21:02:00`,
-        confirmed_by_employee_id: 'emp-2', submitted_by_employee_id: 'emp-2',
-        status: 'submitted', employee_notes: null, manager_notes: 'All good.',
-        owner_status: 'pending', owner_notes: null, owner_reviewed_by: null, owner_reviewed_at: null,
-        owner_adjusted_clock_in_time: null, owner_adjusted_clock_out_time: null,
-        created_at: today, updated_at: today,
-      },
-    },
-    {
-      assignment: { id: 'demo-3', shift_id: 'ds-3', user_id: 'du-3', assigned_by: 'owner', assignment_status: 'assigned', supervisor_employee_id: null, created_at: today, updated_at: today },
-      shift: { id: 'ds-3', company_id: '', department_id: 'dept-2', title: 'Night Shift', instruction: null, shift_date: today, start_time: '22:00', end_time: '06:00', status: 'active', publication_status: 'published', acceptance_deadline_at: null, recurrence_group_id: null, recurrence_rule: null, source_shift_id: null, split_group_id: null, created_by: 'owner', created_at: today, updated_at: today },
-      assignee_name: 'Chris Patel',
-      assignee_role: 'Casual Worker',
-      supervisor_name: null,
-      department_name: 'Security',
-      exceptions: ['absent'],
-      record: {
-        id: 'demo-rec-3', shift_assignment_id: 'demo-3', casual_worker_id: 'du-3',
-        clock_in_time: null, clock_out_time: null,
-        confirmed_by_employee_id: '', submitted_by_employee_id: '',
-        status: 'pending', employee_notes: null, manager_notes: null,
-        owner_status: 'pending', owner_notes: null, owner_reviewed_by: null, owner_reviewed_at: null,
-        owner_adjusted_clock_in_time: null, owner_adjusted_clock_out_time: null,
-        created_at: today, updated_at: today,
-      },
-    },
-  ]
-
-  const casualRecords = realCasualRecords.length > 0 ? realCasualRecords : DUMMY_CASUAL_RECORDS
+  const internalRecords = records.filter(row => row.assignee_role === 'Manager' || row.assignee_role === 'Employee')
+  const casualRecords = records.filter(row => row.assignee_role === 'Casual Worker')
   const summary = dashboard?.summary
 
   const fetchAttendanceData = useCallback(async (cid: string) => {
@@ -266,6 +193,19 @@ export default function OwnerAttendancePage() {
     void run()
     return () => { cancelled = true }
   }, [router, fetchAttendanceData])
+
+  useEffect(() => {
+    if (!companyId) return
+    const raw = localStorage.getItem(`tasking_auto_approval_${companyId}`)
+    if (!raw) return
+    try {
+      const settings = JSON.parse(raw) as { enabled?: boolean; threshold?: number }
+      setAutoApprovalEnabled(settings.enabled === true)
+      if (typeof settings.threshold === 'number' && settings.threshold >= 0 && settings.threshold <= 100) {
+        setAutoApprovalThreshold(settings.threshold)
+      }
+    } catch {}
+  }, [companyId])
 
   const openReview = (row: AttendanceDashboardRecord, decision: AttendanceOwnerStatus) => {
     if (!row.record) return
@@ -336,7 +276,12 @@ export default function OwnerAttendancePage() {
       const res = await fetch('/api/ai/timesheets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company_id: companyId, owner_id: internalUserId, apply }),
+        body: JSON.stringify({
+          company_id: companyId,
+          owner_id: internalUserId,
+          apply,
+          min_confidence: autoApprovalThreshold,
+        }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to review timesheets')
@@ -349,13 +294,35 @@ export default function OwnerAttendancePage() {
     }
   }
 
+  const saveAutoApprovalSettings = () => {
+    if (!companyId) return
+    localStorage.setItem(
+      `tasking_auto_approval_${companyId}`,
+      JSON.stringify({ enabled: autoApprovalEnabled, threshold: autoApprovalThreshold }),
+    )
+    setAutoApprovalSaved(true)
+    window.setTimeout(() => setAutoApprovalSaved(false), 1800)
+  }
+
+  const pendingAttendanceCount = records.filter(row => row.record?.owner_status === 'pending').length
+  const exceptionCount = records.filter(row => row.exceptions.length > 0).length
+  const pendingSwapCount = swapRequests.filter(request => request.status === 'pending').length
+  const pendingTimeOffCount = timeOffRequests.filter(request => request.status === 'pending').length
+  const reviewedCount = records.filter(row => ['approved', 'rejected', 'modified'].includes(row.record?.owner_status ?? '')).length
+  const reviewRate = records.length > 0 ? Math.round((reviewedCount / records.length) * 100) : 0
+  const tabItems = [
+    { key: 'records', label: 'Records', count: records.length },
+    { key: 'exceptions', label: 'Exceptions', count: exceptionCount },
+    { key: 'swaps', label: 'Shift Swaps', count: pendingSwapCount },
+    { key: 'timeoff', label: 'Time Off', count: pendingTimeOffCount },
+  ] as const
+
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: '#F7F8FA', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+    <div style={{ display: 'flex', minHeight: '100vh', background: '#F1F5F9' }}>
       <OwnerSidebar />
       <main style={{ marginLeft: '64px', flex: 1, minHeight: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
 
-        {/* Page header */}
-        <div style={{ padding: '20px 28px 0', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
+        <div style={{ padding: '20px 28px 16px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24, flexShrink: 0 }}>
           <div>
             <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
               Attendance
@@ -367,50 +334,47 @@ export default function OwnerAttendancePage() {
           </div>
         </div>
 
-        {/* Date + Refresh row */}
-        <div style={{ padding: '14px 28px 0', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 14 }}>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#F0F4F8', borderRadius: 8, padding: '6px 12px' }}>
-            <CalendarDays size={13} style={{ color: '#6B7280' }} />
-            <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#374151' }}>{todayLabel}</span>
-          </div>
-          <button
-            onClick={() => fetchAttendanceData(companyId)}
-            disabled={loading || !companyId}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: '1.5px solid #E5E7EB', borderRadius: 8, background: '#fff', color: '#374151', padding: '6px 13px', fontWeight: 600, fontSize: '0.8125rem', cursor: loading || !companyId ? 'default' : 'pointer', opacity: loading || !companyId ? 0.5 : 1 }}
-          >
-            {loading ? <Spinner size={15} dark /> : null} Refresh
-          </button>
-        </div>
-
         {/* ── UC3: Tab bar ──────────────────────────────────────────────────────── */}
-        <div style={{ padding: '14px 28px 0', display: 'flex', gap: 4, flexShrink: 0 }}>
-          {([
-            { key: 'records',    label: 'Records' },
-            { key: 'exceptions', label: 'Exceptions' },
-            { key: 'swaps',      label: 'Shift Swaps' },
-            { key: 'timeoff',    label: 'Time Off' },
-          ] as const).map(tab => (
+        <div style={{ padding: '0 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: 4, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 999, boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+          {tabItems.map(tab => (
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
               style={{
-                padding: '8px 18px',
+                height: 36,
+                padding: '0 18px',
                 border: 'none',
-                borderRadius: 8,
+                borderRadius: 999,
                 fontWeight: 700,
-                fontSize: '0.8125rem',
+                fontSize: 13,
                 cursor: 'pointer',
                 background: activeTab === tab.key ? '#0F172A' : 'transparent',
-                color: activeTab === tab.key ? '#FFFFFF' : '#6B7280',
-                transition: 'background 0.15s, color 0.15s',
+                color: activeTab === tab.key ? '#FFFFFF' : '#64748B',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                transition: 'color 0.18s ease, transform 0.18s ease, background 0.18s ease',
+                transform: activeTab === tab.key ? 'translateY(-0.5px)' : 'translateY(0)',
               }}
             >
               {tab.label}
+              <span style={{ minWidth: 22, height: 22, padding: '0 7px', borderRadius: 999, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: activeTab === tab.key ? 'rgba(255,255,255,0.16)' : '#F1F5F9', color: activeTab === tab.key ? '#FFFFFF' : '#64748B', fontSize: 11, fontWeight: 900 }}>
+                {loading ? '-' : tab.count}
+              </span>
             </button>
           ))}
         </div>
+        <button
+          onClick={() => fetchAttendanceData(companyId)}
+          disabled={loading || !companyId}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 36, border: '1px solid #E5E7EB', borderRadius: 9, background: '#FFFFFF', color: '#0F172A', padding: '0 13px', fontWeight: 700, fontSize: 13, cursor: loading || !companyId ? 'default' : 'pointer', opacity: loading || !companyId ? 0.55 : 1, boxShadow: '0 1px 4px rgba(0,0,0,0.05)', flexShrink: 0 }}
+        >
+          {loading ? <Spinner size={14} dark /> : <RefreshCw size={14} />} Refresh
+        </button>
+        </div>
 
-        <div style={{ padding: '16px 28px 24px', display: 'flex', flexDirection: 'column', gap: 18 }}>
+        <div style={{ padding: '0 28px 24px', display: 'flex', flexDirection: 'column', gap: 24 }}>
 
           {error && (
             <div style={{ padding: 12, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 8, fontSize: '0.84rem', fontWeight: 800 }}>
@@ -443,16 +407,14 @@ export default function OwnerAttendancePage() {
                       onChange={e => setAutoApprovalEnabled(e.target.checked)}
                       style={{ width: 16, height: 16, accentColor: '#F97316', cursor: 'pointer' }}
                     />
-                    <div>
-                      <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#111827', display: 'block' }}>Enable AI auto-approval for clean records</span>
-                      <span style={{ fontSize: '0.775rem', color: '#6B7280' }}>Records that pass the confidence threshold will be approved automatically</span>
-                    </div>
+                    <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#111827' }}>Enable AI auto-approval for clean records</span>
                   </label>
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 16, alignItems: 'end' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '220px auto', gap: 16, alignItems: 'end' }}>
                   <div>
-                    <label style={labelStyle}>Confidence Threshold (%)</label>
+                    <label htmlFor="auto-approval-threshold" style={labelStyle}>Confidence Threshold (%)</label>
                     <input
+                      id="auto-approval-threshold"
                       type="number"
                       min={0}
                       max={100}
@@ -462,25 +424,14 @@ export default function OwnerAttendancePage() {
                       style={{ ...inputStyle, opacity: autoApprovalEnabled ? 1 : 0.5 }}
                     />
                   </div>
-                  <div>
-                    <p style={{ margin: 0, fontSize: '0.775rem', color: '#6B7280', lineHeight: 1.5 }}>
-                      Records with AI confidence below <strong>{autoApprovalThreshold}%</strong> will be flagged for manual review.
-                    </p>
-                  </div>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', background: '#FFFBEB', borderRadius: 8, border: '1px solid #FDE68A' }}>
-                  <Sparkles size={12} style={{ color: '#D97706', flexShrink: 0 }} />
-                  <span style={{ fontSize: '0.775rem', color: '#92400E' }}>
-                    Use the <strong>AI Review</strong> button in the Casual Worker section to run the AI analysis. Results will appear there.
-                  </span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                   <button
-                    disabled
-                    title="Settings persistence coming soon"
-                    style={{ padding: '8px 18px', border: 'none', borderRadius: 8, background: '#F3F4F6', color: '#9CA3AF', fontWeight: 700, fontSize: '0.8125rem', cursor: 'not-allowed' }}
+                    onClick={saveAutoApprovalSettings}
+                    disabled={!companyId}
+                    style={{ padding: '8px 18px', border: 'none', borderRadius: 8, background: companyId ? '#111827' : '#F3F4F6', color: companyId ? '#FFFFFF' : '#9CA3AF', fontWeight: 700, fontSize: '0.8125rem', cursor: companyId ? 'pointer' : 'not-allowed' }}
                   >
-                    Save Settings
+                    {autoApprovalSaved ? 'Saved' : 'Save Settings'}
                   </button>
                 </div>
               </div>
@@ -507,7 +458,7 @@ export default function OwnerAttendancePage() {
                   style={{ ...inputStyle, width: 'auto', height: 34, padding: '6px 10px', fontSize: '0.8125rem' }}
                   placeholder="From"
                 />
-                <span style={{ color: '#9CA3AF', fontSize: '0.8rem' }}>–</span>
+                <span style={{ color: '#9CA3AF', fontSize: '0.8rem' }}>-</span>
                 <input
                   type="date"
                   value={exceptionDateTo}
@@ -620,7 +571,7 @@ export default function OwnerAttendancePage() {
             ].map(({ label, value }) => (
               <div key={label} style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 10, padding: '12px 14px' }}>
                 <p style={{ margin: 0, color: '#6B7280', fontSize: '0.72rem', fontWeight: 900, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{label}</p>
-                <strong style={{ display: 'block', marginTop: 6, fontSize: '1.35rem', color: '#111827' }}>{loading ? '—' : value}</strong>
+                <strong style={{ display: 'block', marginTop: 6, fontSize: '1.35rem', color: '#111827' }}>{loading ? '-' : value}</strong>
               </div>
             ))}
           </section>
@@ -637,7 +588,7 @@ export default function OwnerAttendancePage() {
                 <span style={{ marginLeft: 8, fontSize: '0.72rem', fontWeight: 700, color: '#6B7280', background: '#F3F4F6', padding: '2px 8px', borderRadius: 99 }}>Manager &amp; Employee</span>
               </div>
               <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#6B7280' }}>
-                {internalRecords.length} assigned today
+                {internalRecords.length} assignment{internalRecords.length !== 1 ? 's' : ''}
               </span>
             </div>
 
@@ -647,14 +598,14 @@ export default function OwnerAttendancePage() {
               </div>
             ) : internalRecords.length === 0 ? (
               <div style={{ padding: '20px 18px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>
-                No Manager or Employee shifts scheduled for today.
+                No Manager or Employee attendance assignments found.
               </div>
             ) : (
               <div style={{ overflowX: 'auto' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                   <thead>
                     <tr style={{ background: '#F8FAFC' }}>
-                      {['Name', 'Role', 'Department', 'Shift', 'Scheduled', 'Clock In', 'Clock Out'].map(h => (
+                      {['Name', 'Role', 'Department', 'Date', 'Shift', 'Scheduled', 'Clock In', 'Clock Out'].map(h => (
                         <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 700, fontSize: '0.72rem', color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.04em', borderBottom: '1px solid #F0F4F8', whiteSpace: 'nowrap' }}>{h}</th>
                       ))}
                     </tr>
@@ -673,10 +624,11 @@ export default function OwnerAttendancePage() {
                             </div>
                           </td>
                           <td style={{ padding: '11px 14px', color: '#374151', fontWeight: 500 }}>{row.assignee_role}</td>
-                          <td style={{ padding: '11px 14px', color: '#6B7280' }}>{row.department_name ?? '—'}</td>
+                          <td style={{ padding: '11px 14px', color: '#6B7280' }}>{row.department_name ?? '-'}</td>
+                          <td style={{ padding: '11px 14px', color: '#374151', whiteSpace: 'nowrap' }}>{row.shift.shift_date}</td>
                           <td style={{ padding: '11px 14px', color: '#374151' }}>{row.shift.title || 'Shift'}</td>
                           <td style={{ padding: '11px 14px', color: '#374151', whiteSpace: 'nowrap' }}>
-                            {formatTime(row.shift.start_time)} – {formatTime(row.shift.end_time)}
+                            {formatTime(row.shift.start_time)} - {formatTime(row.shift.end_time)}
                           </td>
                           <td style={{ padding: '11px 14px', whiteSpace: 'nowrap' }}>
                             <span style={{ fontWeight: 700, color: row.record?.clock_in_time ? '#059669' : '#9CA3AF' }}>
@@ -707,7 +659,7 @@ export default function OwnerAttendancePage() {
               <div style={{ flex: 1 }}>
                 <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#111827' }}>Casual Worker Attendance Review</span>
                 <span style={{ marginLeft: 8, fontSize: '0.72rem', fontWeight: 700, color: '#2563EB', background: '#EFF6FF', padding: '2px 8px', borderRadius: 99, border: '1px solid #BFDBFE' }}>
-                  {casualRecords.length} record{casualRecords.length !== 1 ? 's' : ''} today
+                  {casualRecords.length} record{casualRecords.length !== 1 ? 's' : ''}
                 </span>
               </div>
               {/* AI Timesheet Review buttons */}
@@ -729,14 +681,6 @@ export default function OwnerAttendancePage() {
               </div>
             </div>
 
-            {/* Pipeline explanation strip */}
-            <div style={{ padding: '10px 18px', background: '#F8FAFC', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <ShieldCheck size={12} style={{ color: '#6B7280', flexShrink: 0 }} />
-              <span style={{ fontSize: '0.76rem', color: '#6B7280' }}>
-                4-tier chain: Casual Worker clocks in/out → <strong style={{ color: '#374151' }}>Employee confirms</strong> → <strong style={{ color: '#374151' }}>Manager submits</strong> → <strong style={{ color: '#374151' }}>Owner approves</strong>
-              </span>
-            </div>
-
             {/* AI decisions display */}
             {aiDecisions.length > 0 && (
               <div style={{ padding: '10px 18px', background: '#F0FDF4', borderBottom: '1px solid #BBF7D0', display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -744,7 +688,7 @@ export default function OwnerAttendancePage() {
                 {aiDecisions.map(decision => (
                   <div key={decision.record_id} style={{ display: 'flex', gap: 10, padding: '7px 10px', background: '#FFFFFF', borderRadius: 7, fontSize: '0.8rem', border: '1px solid #BBF7D0' }}>
                     <strong style={{ color: decision.decision === 'auto_approve' ? '#047857' : '#B45309', flexShrink: 0 }}>
-                      {decision.decision === 'auto_approve' ? '✓ Auto-approve' : '⚠ Flag'} · {decision.confidence}%
+                      {decision.decision === 'auto_approve' ? 'Auto-approve' : 'Flag'} | {decision.confidence}%
                     </strong>
                     <span style={{ color: '#4B5563' }}>{decision.reason}</span>
                   </div>
@@ -758,7 +702,7 @@ export default function OwnerAttendancePage() {
               </div>
             ) : casualRecords.length === 0 ? (
               <div style={{ padding: '28px 18px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>
-                No casual worker attendance records submitted for today.
+                No casual worker attendance assignments found.
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
@@ -782,7 +726,7 @@ export default function OwnerAttendancePage() {
                             <strong style={{ fontSize: '0.875rem', color: '#111827' }}>{row.assignee_name}</strong>
                           </div>
                           <p style={{ margin: '0 0 0 36px', fontSize: '0.76rem', color: '#9CA3AF' }}>
-                            {row.shift.title || 'Shift'} · {row.department_name ?? 'No dept'}
+                            {row.shift.shift_date} | {row.shift.title || 'Shift'} | {row.department_name ?? 'No dept'}
                           </p>
                         </div>
 
@@ -790,13 +734,13 @@ export default function OwnerAttendancePage() {
                         <div>
                           <p style={{ margin: 0, fontSize: '0.72rem', color: '#9CA3AF', fontWeight: 700, textTransform: 'uppercase' }}>Scheduled</p>
                           <p style={{ margin: '2px 0 0', fontSize: '0.84rem', color: '#374151', fontWeight: 600 }}>
-                            {formatTime(row.shift.start_time)} – {formatTime(row.shift.end_time)}
+                            {formatTime(row.shift.start_time)} - {formatTime(row.shift.end_time)}
                           </p>
                         </div>
                         <div>
                           <p style={{ margin: 0, fontSize: '0.72rem', color: '#9CA3AF', fontWeight: 700, textTransform: 'uppercase' }}>Clocked</p>
                           <p style={{ margin: '2px 0 0', fontSize: '0.84rem', fontWeight: 600, color: row.record?.clock_in_time ? '#111827' : '#D1D5DB' }}>
-                            {formatTime(row.record?.clock_in_time)} – {formatTime(row.record?.clock_out_time)}
+                            {formatTime(row.record?.clock_in_time)} - {formatTime(row.record?.clock_out_time)}
                           </p>
                         </div>
 
@@ -861,13 +805,6 @@ export default function OwnerAttendancePage() {
                 <div style={{ flex: 1 }}>
                   <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#111827' }}>Shift Swaps</span>
                 </div>
-                <AiComingSoonBadge />
-              </div>
-
-              <div style={{ padding: '10px 14px', background: '#FFFBEB', borderBottom: '1px solid #FDE68A' }}>
-                <p style={{ margin: 0, fontSize: '0.775rem', color: '#92400E' }}>
-                  Manager and Employee swap requests require your approval before taking effect.
-                </p>
               </div>
 
               {swapRequests.length === 0 ? (
@@ -886,7 +823,7 @@ export default function OwnerAttendancePage() {
                           <strong style={{ fontSize: '0.875rem', color: '#111827' }}>{request.replacement_name}</strong>
                         </div>
                         <p style={{ margin: 0, fontSize: '0.775rem', color: '#6B7280' }}>
-                          {request.shift_title ?? 'Shift'} · {request.shift_date ?? '—'} · {formatTime(request.start_time)}–{formatTime(request.end_time)}
+                          {request.shift_title ?? 'Shift'} | {request.shift_date ?? '-'} | {formatTime(request.start_time)} - {formatTime(request.end_time)}
                         </p>
                       </div>
                       <span style={{ background: color.bg, color: color.text, borderRadius: 999, padding: '2px 9px', fontSize: '0.65rem', fontWeight: 900, flexShrink: 0, height: 'fit-content' }}>{request.status}</span>
@@ -932,7 +869,7 @@ export default function OwnerAttendancePage() {
                         <strong style={{ fontSize: '0.875rem', color: '#111827', textTransform: 'capitalize' }}>{request.request_type.replace('_', ' ')}</strong>
                         <p style={{ margin: '3px 0 0', fontSize: '0.775rem', color: '#374151', fontWeight: 600 }}>{request.requester_name}</p>
                         <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: '#6B7280' }}>
-                          {request.shift_date ?? '—'} · {formatTime(request.start_time)}–{formatTime(request.end_time)}
+                          {request.shift_date ?? '-'} | {formatTime(request.start_time)} - {formatTime(request.end_time)}
                         </p>
                       </div>
                       <span style={{ background: color.bg, color: color.text, borderRadius: 999, padding: '2px 9px', fontSize: '0.65rem', fontWeight: 900, flexShrink: 0, height: 'fit-content' }}>{request.status}</span>
@@ -965,11 +902,11 @@ export default function OwnerAttendancePage() {
               {(() => {
                 const rec = selectedRecord.record
                 const tierLabel = rec.submitted_by_employee_id
-                  ? 'Manager Reviewed — Awaiting Owner Final'
+                  ? 'Manager Reviewed - Awaiting Owner Final'
                   : rec.confirmed_by_employee_id
-                  ? 'Employee Confirmed — Awaiting Manager'
+                  ? 'Employee Confirmed - Awaiting Manager'
                   : rec.clock_in_time
-                  ? 'CW Clocked In — Awaiting Employee Confirm'
+                  ? 'CW Clocked In - Awaiting Employee Confirm'
                   : 'Not Yet Clocked In'
                 return (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
@@ -983,8 +920,8 @@ export default function OwnerAttendancePage() {
 
               {/* Record summary */}
               <div style={{ padding: '10px 14px', background: '#F8FAFC', borderRadius: 8, marginBottom: 16, fontSize: '0.84rem', color: '#374151' }}>
-                <strong>{selectedRecord.assignee_name}</strong> · {selectedRecord.shift.title || 'Shift'} ·{' '}
-                Clocked: {formatTime(selectedRecord.record.clock_in_time)} – {formatTime(selectedRecord.record.clock_out_time)}
+                <strong>{selectedRecord.assignee_name}</strong> | {selectedRecord.shift.title || 'Shift'} |{' '}
+                Clocked: {formatTime(selectedRecord.record.clock_in_time)} - {formatTime(selectedRecord.record.clock_out_time)}
               </div>
 
               <div style={{ display: 'grid', gap: 13 }}>
@@ -1018,7 +955,7 @@ export default function OwnerAttendancePage() {
                     </div>
                     <div>
                       <label style={labelStyle}>Reason for Modification</label>
-                      <textarea value={reviewModifyReason} onChange={event => setReviewModifyReason(event.target.value)} rows={2} placeholder="Explain why times are being adjusted…" style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5 }} />
+                      <textarea value={reviewModifyReason} onChange={event => setReviewModifyReason(event.target.value)} rows={2} placeholder="Explain why times are being adjusted..." style={{ ...inputStyle, resize: 'vertical', lineHeight: 1.5 }} />
                     </div>
                   </>
                 )}

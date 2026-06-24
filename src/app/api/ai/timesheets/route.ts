@@ -16,10 +16,14 @@ export async function POST(req: NextRequest) {
   if (typeof b.company_id !== 'string') {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
   }
+  const minConfidence = typeof b.min_confidence === 'number' ? b.min_confidence : 85
+  if (!Number.isFinite(minConfidence) || minConfidence < 0 || minConfidence > 100) {
+    return NextResponse.json({ success: false, message: 'min_confidence must be between 0 and 100' }, { status: 400 })
+  }
 
   try {
     const decisions = b.apply === true && typeof b.owner_id === 'string'
-      ? await timesheetAutoApprovalService.applyAutoApprovals(b.company_id, b.owner_id)
+      ? await timesheetAutoApprovalService.applyAutoApprovals(b.company_id, b.owner_id, minConfidence)
       : await timesheetAutoApprovalService.reviewTimesheets(b.company_id)
     return NextResponse.json({ success: true, decisions })
   } catch (err) {

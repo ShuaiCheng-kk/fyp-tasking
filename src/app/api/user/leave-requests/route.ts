@@ -35,6 +35,7 @@ export async function POST(req: NextRequest) {
       company_id: b.company_id,
       request_type: b.request_type,
       reason: typeof b.reason === 'string' ? b.reason : null,
+      shift_assignment_id: typeof b.shift_assignment_id === 'string' ? b.shift_assignment_id : null,
     })
     return NextResponse.json({ success: true, request })
   } catch (err) {

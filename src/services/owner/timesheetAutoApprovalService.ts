@@ -63,9 +63,9 @@ export const timesheetAutoApprovalService = {
     return result.decisions
   },
 
-  async applyAutoApprovals(company_id: string, owner_id: string): Promise<AIAutoApprovalDecision[]> {
+  async applyAutoApprovals(company_id: string, owner_id: string, min_confidence = 85): Promise<AIAutoApprovalDecision[]> {
     const decisions = await this.reviewTimesheets(company_id)
-    const autoApproved = decisions.filter(decision => decision.decision === 'auto_approve' && decision.confidence >= 85)
+    const autoApproved = decisions.filter(decision => decision.decision === 'auto_approve' && decision.confidence >= min_confidence)
     await Promise.all(autoApproved.map(decision =>
       attendanceService.finalReviewAttendance({
         id: decision.record_id,

@@ -5,7 +5,7 @@ export const casualAvailabilityRepository = {
     const { data, error } = await supabase
       .from('users')
       .select('id, full_name, role')
-      .eq('supabase_auth_id', authId)
+      .or(`supabase_auth_id.eq.${authId},id.eq.${authId}`)
       .eq('role', 'Casual Worker')
       .maybeSingle()
 

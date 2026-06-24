@@ -678,7 +678,7 @@ export default function ManagerTasksPage() {
     const dateFrom = formatDateKey(addDays(today, -30))
     const dateTo = formatDateKey(addDays(today, 14))
 
-    fetch(`/api/shift?company_id=${companyId}&date_from=${dateFrom}&date_to=${dateTo}`)
+    fetch(`/api/shift?company_id=${companyId}&date_from=${dateFrom}&date_to=${dateTo}&viewer_role=Manager&viewer_user_id=${internalUserId}`)
       .then(r => r.json())
       .then(data => {
         if (!data.success) return
@@ -692,7 +692,7 @@ export default function ManagerTasksPage() {
         setShiftOptions(options)
       })
       .catch(() => setShiftOptions([]))
-  }, [companyId])
+  }, [companyId, internalUserId])
 
   const fetchKanban = useCallback(async (cid: string, silent = false) => {
     if (!cid) return

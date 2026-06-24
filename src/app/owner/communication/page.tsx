@@ -1,12 +1,12 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import { createClient } from '@/lib/supabase'
-import { ModalOverlay, ModalBox, ModalHeader, modalErrorBoxStyle, modalDestructiveButtonStyle } from '@/components/modal'
+import { ModalOverlay, ModalBox, ModalHeader, modalInputStyle, modalLabelStyle, modalErrorBoxStyle, modalGhostButtonStyle, modalPrimaryButtonStyle, modalDestructiveButtonStyle } from '@/components/modal'
 import Spinner from '@/components/Spinner'
 import {
   Plus, X, Trash2, Pencil, Megaphone,
@@ -192,7 +192,7 @@ function DropdownField({ value, options, onChange, placeholder, disabled = false
         style={{
           width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           padding: '10px 12px', border: `1.5px solid ${open ? '#F97316' : '#E2E8F0'}`, borderRadius: 9,
-          background: disabled ? '#F9FAFB' : '#FAFBFC', cursor: canOpen ? 'pointer' : 'default',
+          background: disabled ? '#F9FAFB' : '#FFFFFF', cursor: canOpen ? 'pointer' : 'default',
           fontSize: 13, color: selected ? '#0F172A' : '#9CA3AF',
           fontWeight: selected ? 500 : 400, outline: 'none', boxSizing: 'border-box' as const,
           transition: 'border-color 0.15s',
@@ -237,6 +237,18 @@ function DropdownField({ value, options, onChange, placeholder, disabled = false
 
 export default function OwnerCommunicationPage() {
   const [activeTab, setActiveTab] = useState<'chat' | 'announcements' | 'invites'>('chat')
+  const commTabBarRef = useRef<HTMLDivElement>(null)
+  const commTabButtonRefs = useRef<Record<'chat' | 'announcements' | 'invites', HTMLButtonElement | null>>({ chat: null, announcements: null, invites: null })
+  const [commTabIndicator, setCommTabIndicator] = useState({ left: 0, width: 0, opacity: 0 })
+
+  useLayoutEffect(() => {
+    const container = commTabBarRef.current
+    const activeButton = commTabButtonRefs.current[activeTab]
+    if (!container || !activeButton) return
+    const containerRect = container.getBoundingClientRect()
+    const activeRect = activeButton.getBoundingClientRect()
+    setCommTabIndicator({ left: activeRect.left - containerRect.left, width: activeRect.width, opacity: 1 })
+  }, [activeTab])
 
   const [authUserId, setAuthUserId] = useState<string | null>(null)
   const [internalUserId, setInternalUserId] = useState<string | null>(null)
@@ -301,10 +313,6 @@ export default function OwnerCommunicationPage() {
   const [composeOpen, setComposeOpen] = useState(false)
   const [companyMembers, setCompanyMembers] = useState<CompanyMember[]>([])
   const [composeSearch, setComposeSearch] = useState('')
-  const [selectedRecipient, setSelectedRecipient] = useState<CompanyMember | null>(null)
-  const [composeText, setComposeText] = useState('')
-  const [composeSending, setComposeSending] = useState(false)
-  const [composeError, setComposeError] = useState('')
 
   const [pendingPartnerId, setPendingPartnerId] = useState<string | null>(null)
   const [pendingPrefill, setPendingPrefill] = useState('')
@@ -394,13 +402,24 @@ export default function OwnerCommunicationPage() {
     return () => { supabase.removeChannel(channel) }
   }, [companyId, userRole, userDeptId])
 
-  const fetchConversations = useCallback(() => {
+  // `keepPlaceholderId`: when refreshing after opening a brand-new conversation
+  // (zero messages yet), the server's list won't include that partner — keep
+  // whatever local placeholder entry already exists for them so the open panel
+  // doesn't lose its `conv` lookup and disappear.
+  const fetchConversations = useCallback((keepPlaceholderId?: string) => {
     if (!internalUserId) return
     fetch(`/api/inbox/messages?user_id=${internalUserId}`)
       .then(r => r.json())
       .then(d => {
         if (d.success) {
-          setConversations(d.conversations ?? [])
+          const fetched = (d.conversations ?? []) as Conversation[]
+          setConversations(prev => {
+            const fetchedIds = new Set(fetched.map(c => c.partnerId))
+            const placeholder = keepPlaceholderId && !fetchedIds.has(keepPlaceholderId)
+              ? prev.find(c => c.partnerId === keepPlaceholderId)
+              : undefined
+            return placeholder ? [placeholder, ...fetched] : fetched
+          })
           setConversationsFetched(true)
         }
       })
@@ -446,11 +465,8 @@ export default function OwnerCommunicationPage() {
           setCompanyMembers(eligible)
           const partner = eligible.find(m => m.id === pid)
           if (partner) {
-            setSelectedRecipient(partner)
-            setComposeText(pre ?? '')
-            setComposeOpen(true)
-            setComposeSearch('')
-            setComposeError('')
+            selectComposeRecipient(partner)
+            if (pre) setPanelInputs(p => ({ ...p, [partner.id]: pre }))
           }
         })
     }
@@ -484,7 +500,7 @@ export default function OwnerCommunicationPage() {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ user_id: internalUserId }),
-          }).then(() => { fetchUnreadCount(); fetchConversations() }).catch(() => {})
+          }).then(() => { fetchUnreadCount(); fetchConversations(partnerId) }).catch(() => {})
         }
       })
   }
@@ -620,10 +636,7 @@ export default function OwnerCommunicationPage() {
   const openCompose = useCallback(() => {
     if (!companyId || !internalUserId) return
     setComposeOpen(true)
-    setSelectedRecipient(null)
-    setComposeText('')
     setComposeSearch('')
-    setComposeError('')
     fetch(`/api/team/members?company_id=${companyId}`)
       .then(r => r.json())
       .then(d => {
@@ -672,28 +685,23 @@ export default function OwnerCommunicationPage() {
     } finally { setInviteActing(null) }
   }
 
-  async function handleComposeSend() {
-    if (!selectedRecipient || !composeText.trim() || !internalUserId || !companyId) return
-    setComposeSending(true)
-    setComposeError('')
-    try {
-      const res = await fetch('/api/inbox/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from_user_id: internalUserId, to_user_id: selectedRecipient.id, company_id: companyId, content: composeText.trim() }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.error ?? 'Failed to send')
-      setComposeOpen(false)
-      const convRes = await fetch(`/api/inbox/messages?user_id=${internalUserId}`)
-      const convData = await convRes.json()
-      if (convData.success) {
-        setConversations(convData.conversations ?? [])
-        if (selectedRecipient) openPanel(selectedRecipient.id)
+  // Picking a recipient opens the chat panel immediately — no separate "type then Send"
+  // step, since the recipient may just want to send a photo/file rather than text.
+  function selectComposeRecipient(member: CompanyMember) {
+    setComposeOpen(false)
+    setConversations(prev => {
+      if (prev.some(c => c.partnerId === member.id)) return prev
+      const placeholder: Conversation = {
+        partnerId: member.id,
+        partnerName: member.full_name,
+        partnerRole: member.role,
+        lastMessage: '',
+        lastTime: new Date().toISOString(),
+        unreadCount: 0,
       }
-    } catch (err) {
-      setComposeError(err instanceof Error ? err.message : 'Something went wrong')
-    } finally { setComposeSending(false) }
+      return [placeholder, ...prev]
+    })
+    openPanel(member.id)
   }
 
   // ── Panel management ──────────────────────────────────────────────────────────
@@ -838,7 +846,7 @@ export default function OwnerCommunicationPage() {
   // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ display: 'flex', height: '100vh', background: '#F7F8FA', color: '#0F172A', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+    <div style={{ display: 'flex', height: '100vh', background: '#F7F8FA', color: '#0F172A' }}>
       <style>{`
         @keyframes fadeSlideUp {
           from { opacity: 0; transform: translateY(12px); }
@@ -913,70 +921,91 @@ export default function OwnerCommunicationPage() {
           </div>
         </div>
 
-        {/* Single content card — matches Tasks page */}
+        {/* Tab switcher row — floating pill capsule with animated indicator, matches Shifts/Tasks pages */}
+        <div style={{ padding: '0 28px 16px', flexShrink: 0 }}>
+          <div
+            ref={commTabBarRef}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: 4,
+              background: '#FFFFFF',
+              border: '1px solid #E5E7EB',
+              borderRadius: 999,
+              boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
+              overflow: 'hidden',
+              position: 'relative',
+            }}
+          >
+            <span
+              aria-hidden="true"
+              style={{
+                position: 'absolute',
+                top: 4,
+                left: commTabIndicator.left,
+                width: commTabIndicator.width,
+                height: 'calc(100% - 8px)',
+                borderRadius: 999,
+                background: 'linear-gradient(180deg, #0F172A 0%, #111827 100%)',
+                boxShadow: '0 6px 18px rgba(15,23,42,0.18)',
+                opacity: commTabIndicator.opacity,
+                transform: commTabIndicator.opacity ? 'translateY(0)' : 'translateY(4px)',
+                transition: 'left 0.24s cubic-bezier(0.22, 1, 0.36, 1), width 0.24s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.16s ease, transform 0.24s cubic-bezier(0.22, 1, 0.36, 1)',
+                pointerEvents: 'none',
+              }}
+            />
+            {([
+              { key: 'chat',          label: 'Chat',          badge: unreadMessages  },
+              { key: 'announcements', label: 'Announcements', badge: unreadAnnCount  },
+              { key: 'invites',       label: 'Invites',       badge: invites.length },
+            ] as const).map(tab => {
+              const active = activeTab === tab.key
+              return (
+                <button
+                  key={tab.key}
+                  ref={el => { commTabButtonRefs.current[tab.key] = el }}
+                  type="button"
+                  onClick={() => setActiveTab(tab.key)}
+                  style={{
+                    position: 'relative',
+                    zIndex: 1,
+                    height: 36,
+                    padding: '0 18px',
+                    borderRadius: 999,
+                    border: 'none',
+                    background: 'transparent',
+                    color: active ? '#FFFFFF' : '#64748B',
+                    fontSize: 13,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    transition: 'color 0.18s ease, transform 0.18s ease',
+                    transform: active ? 'translateY(-0.5px)' : 'translateY(0)',
+                  }}
+                >
+                  {tab.label}
+                  {tab.badge > 0 && (
+                    <span style={{
+                      minWidth: 17, height: 17, padding: '0 4px', borderRadius: 999,
+                      background: '#F97316',
+                      color: '#fff', fontSize: 10, fontWeight: 900,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      {tab.badge}
+                    </span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Content panel */}
         <div style={{ padding: '0 28px 28px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           <div style={{ background: '#FFFFFF', borderRadius: 16, border: '1px solid #E5E7EB', boxShadow: '0 1px 6px rgba(0,0,0,0.06)', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
-
-          {/* ── Card top bar: tabs + action button ── */}
-          <div style={{ padding: '14px 20px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, gap: 12 }}>
-            {/* Tab pills — same style as Task page dept pills */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              {([
-                { key: 'chat',          label: 'Chat',          icon: <MessageSquare size={13} />, badge: unreadMessages  },
-                { key: 'announcements', label: 'Announcements', icon: <Megaphone size={13} />,     badge: unreadAnnCount  },
-                { key: 'invites',       label: 'Invites',       icon: <Bell size={13} />,           badge: invites.length },
-              ] as const).map(tab => {
-                const active = activeTab === tab.key
-                return (
-                  <button
-                    key={tab.key}
-                    onClick={() => setActiveTab(tab.key)}
-                    className="comm-tab-btn"
-                    style={{
-                      padding: '5px 13px', borderRadius: '99px', cursor: 'pointer',
-                      fontWeight: 600, fontSize: '0.8rem',
-                      background: active ? '#111827' : 'transparent',
-                      border: active ? '2px solid #111827' : '1.5px solid #E5E7EB',
-                      color: active ? '#FFFFFF' : '#374151',
-                      display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
-                    }}
-                  >
-                    {tab.icon}
-                    {tab.label}
-                    {tab.badge > 0 && (
-                      <span style={{
-                        minWidth: 17, height: 17, padding: '0 4px', borderRadius: 999,
-                        background: active ? '#F97316' : '#F97316',
-                        color: '#fff', fontSize: 10, fontWeight: 900,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      }}>
-                        {tab.badge}
-                      </span>
-                    )}
-                  </button>
-                )
-              })}
-            </div>
-            {/* Action button — same style as Task page "+ New Task" */}
-            <div style={{ flexShrink: 0 }}>
-              {activeTab === 'chat' && (
-                <button onClick={openCompose} disabled={!communicationReady}
-                  className={communicationReady ? 'comm-action-btn' : ''}
-                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: communicationReady ? '#F97316' : '#E5E7EB', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: communicationReady ? '#fff' : '#9CA3AF', cursor: communicationReady ? 'pointer' : 'not-allowed', height: 38 }}
-                >
-                  <SquarePen size={13} strokeWidth={2.5} /> New Message
-                </button>
-              )}
-              {activeTab === 'announcements' && (
-                <button onClick={() => setShowNewAnnModal(true)}
-                  className="comm-action-btn"
-                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: '#F97316', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#fff', cursor: 'pointer', height: 38 }}
-                >
-                  <Plus size={13} strokeWidth={2.5} /> Post Announcement
-                </button>
-              )}
-            </div>
-          </div>
 
         {/* Main communication panel */}
         <section style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -987,8 +1016,8 @@ export default function OwnerCommunicationPage() {
 
               {/* Left: conversations — own card */}
               <div style={{ minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
-                <div style={{ padding: '12px 12px 10px', flexShrink: 0 }}>
-                  <div style={{ height: 34, display: 'flex', alignItems: 'center', gap: 7, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 9, padding: '0 10px' }}>
+                <div style={{ padding: '10px 12px 0', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ flex: 1, minWidth: 0, height: 36, display: 'flex', alignItems: 'center', gap: 8, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 9, padding: '0 11px' }}>
                     <Search size={13} color="#94A3B8" />
                     <input
                       value={search} onChange={e => setSearch(e.target.value)}
@@ -996,9 +1025,15 @@ export default function OwnerCommunicationPage() {
                       style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: 12, color: '#0F172A', fontWeight: 500 }}
                     />
                   </div>
+                  <button onClick={openCompose} disabled={!communicationReady} title="New message"
+                    className={communicationReady ? 'comm-action-btn' : ''}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, background: communicationReady ? '#F97316' : '#E5E7EB', border: 'none', borderRadius: 9, color: communicationReady ? '#fff' : '#9CA3AF', cursor: communicationReady ? 'pointer' : 'not-allowed', flexShrink: 0 }}
+                  >
+                    <SquarePen size={16} strokeWidth={2.5} />
+                  </button>
                 </div>
 
-                <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, padding: '0 10px 10px' }}>
+                <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, padding: 10 }}>
                     {filteredConversations.length === 0 ? (
                       <div style={{ height: 180, borderRadius: 12, background: '#F8FAFC', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 8, fontWeight: 600, fontSize: 13 }}>
                         <MessageSquare size={26} strokeWidth={1.5} />
@@ -1288,8 +1323,8 @@ export default function OwnerCommunicationPage() {
               {/* Left: list */}
               <div style={{ minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
 
-                <div style={{ padding: '10px 12px 0', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <div style={{ height: 36, display: 'flex', alignItems: 'center', gap: 8, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 9, padding: '0 11px' }}>
+                <div style={{ padding: '10px 12px 0', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ flex: 1, minWidth: 0, height: 36, display: 'flex', alignItems: 'center', gap: 8, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 9, padding: '0 11px' }}>
                     <Search size={13} color="#94A3B8" />
                     <input
                       value={annSearch}
@@ -1298,6 +1333,12 @@ export default function OwnerCommunicationPage() {
                       style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: 12, color: '#0F172A', fontWeight: 500 }}
                     />
                   </div>
+                  <button onClick={() => setShowNewAnnModal(true)} title="Post announcement"
+                    className="comm-action-btn"
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, background: '#F97316', border: 'none', borderRadius: 9, color: '#fff', cursor: 'pointer', flexShrink: 0 }}
+                  >
+                    <Plus size={16} strokeWidth={2.5} />
+                  </button>
                 </div>
 
                 <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, padding: 10 }}>
@@ -1490,15 +1531,15 @@ export default function OwnerCommunicationPage() {
             <ModalHeader title="Edit Announcement" icon={<Pencil size={15} color="#fff" strokeWidth={2} />} onClose={() => setShowEditModal(false)} />
             <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div>
-                <label style={labelStyle}>Title</label>
-                <input value={editTitle} onChange={e => setEditTitle(e.target.value)} placeholder="Announcement title" className="comm-input" style={inputStyle} />
+                <label style={modalLabelStyle}>Title</label>
+                <input value={editTitle} onChange={e => setEditTitle(e.target.value)} placeholder="Announcement title" className="comm-input" style={modalInputStyle} />
               </div>
               <div>
-                <label style={labelStyle}>Content</label>
-                <textarea value={editContent} onChange={e => setEditContent(e.target.value)} placeholder="Write your announcement..." rows={5} className="comm-textarea" style={textareaStyle} />
+                <label style={modalLabelStyle}>Content</label>
+                <textarea value={editContent} onChange={e => setEditContent(e.target.value)} placeholder="Write your announcement..." rows={5} className="comm-textarea" style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }} />
               </div>
               <div>
-                <label style={labelStyle}>Audience</label>
+                <label style={modalLabelStyle}>Audience</label>
                 <DropdownField
                   value={editAudience === 'company-wide' ? 'company-wide' : (editDeptId ?? '')}
                   options={[
@@ -1515,8 +1556,9 @@ export default function OwnerCommunicationPage() {
             </div>
             {editError && <div style={modalErrorBoxStyle}>{editError}</div>}
             <div style={{ padding: '0 24px 20px', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button onClick={handleSaveEdit} disabled={saving || !editTitle.trim() || !editContent.trim()} style={{ ...primaryBtnStyle, flex: 'none', padding: '7px 18px', height: 'auto', opacity: saving || !editTitle.trim() || !editContent.trim() ? 0.55 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                {saving ? <><Spinner size={13} /> Saving…</> : 'Save Changes'}
+              <button style={modalGhostButtonStyle} onClick={() => setShowEditModal(false)}>Cancel</button>
+              <button onClick={handleSaveEdit} disabled={saving || !editTitle.trim() || !editContent.trim()} style={modalPrimaryButtonStyle(saving || !editTitle.trim() || !editContent.trim())}>
+                {saving ? <Spinner size={13} /> : null} Save Changes
               </button>
             </div>
           </ModalBox>
@@ -1530,15 +1572,15 @@ export default function OwnerCommunicationPage() {
             <ModalHeader title="New Announcement" icon={<Megaphone size={15} color="#fff" strokeWidth={2} />} onClose={() => setShowNewAnnModal(false)} />
             <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div>
-                <label style={labelStyle}>Title</label>
-                <input value={annTitle} onChange={e => setAnnTitle(e.target.value)} placeholder="Announcement title" className="comm-input" style={inputStyle} />
+                <label style={modalLabelStyle}>Title</label>
+                <input value={annTitle} onChange={e => setAnnTitle(e.target.value)} placeholder="Announcement title" className="comm-input" style={modalInputStyle} />
               </div>
               <div>
-                <label style={labelStyle}>Content</label>
-                <textarea data-testid="announcement-content" value={annContent} onChange={e => setAnnContent(e.target.value)} placeholder="Write your announcement here..." rows={5} className="comm-textarea" style={textareaStyle} />
+                <label style={modalLabelStyle}>Content</label>
+                <textarea data-testid="announcement-content" value={annContent} onChange={e => setAnnContent(e.target.value)} placeholder="Write your announcement here..." rows={5} className="comm-textarea" style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }} />
               </div>
               <div>
-                <label style={labelStyle}>Audience</label>
+                <label style={modalLabelStyle}>Audience</label>
                 <DropdownField
                   value={annDeptId}
                   options={[
@@ -1550,10 +1592,11 @@ export default function OwnerCommunicationPage() {
                 />
               </div>
             </div>
-            <div style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end' }}>
+            <div style={{ padding: '0 24px 20px', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button style={modalGhostButtonStyle} onClick={() => setShowNewAnnModal(false)}>Cancel</button>
               <button onClick={handlePostAnnouncement} disabled={!communicationReady || posting || !annTitle.trim() || !annContent.trim()}
-                style={{ ...primaryBtnStyle, flex: 'none', height: 'auto', padding: '7px 18px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, opacity: !communicationReady || posting || !annTitle.trim() || !annContent.trim() ? 0.55 : 1 }}>
-                {posting ? <><Spinner size={13} /> Posting…</> : <><Megaphone size={13} /> Post Announcement</>}
+                style={modalPrimaryButtonStyle(!communicationReady || posting || !annTitle.trim() || !annContent.trim())}>
+                {posting ? <Spinner size={13} /> : <Megaphone size={13} />} {posting ? 'Posting…' : 'Post Announcement'}
               </button>
             </div>
           </ModalBox>
@@ -1566,68 +1609,28 @@ export default function OwnerCommunicationPage() {
           <ModalBox>
             <ModalHeader title="New Message" icon={<SquarePen size={15} color="#fff" strokeWidth={2} />} onClose={() => setComposeOpen(false)} />
 
-            <div style={{ padding: '18px 24px', display: 'flex', flexDirection: 'column', gap: 16, overflowY: 'auto', flex: 1 }}>
-              <div>
-                <p style={labelStyle}>To</p>
-                {selectedRecipient ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 13px', background: '#FFF7ED', border: '1.5px solid rgba(249,115,22,0.3)', borderRadius: 11 }}>
-                    <Avatar name={selectedRecipient.full_name} size={34} role={selectedRecipient.role} photoUrl={selectedRecipient.profile_photo_url ?? null} />
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ fontWeight: 700, fontSize: 13.5, color: '#0F172A', margin: 0 }}>{selectedRecipient.full_name}</p>
-                    </div>
-                    <button onClick={() => setSelectedRecipient(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', display: 'flex', padding: 2 }}><X size={15} /></button>
-                  </div>
-                ) : (
-                  <>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: 10, padding: '8px 12px', marginBottom: 8 }}>
-                      <Search size={13} color="#9CA3AF" />
-                      <input autoFocus value={composeSearch} onChange={e => setComposeSearch(e.target.value)} placeholder="Search people…" style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: 13, color: '#374151', fontWeight: 500 }} />
-                    </div>
-                    <div style={{ maxHeight: 220, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      {filteredMembers.length === 0 ? (
-                        <p style={{ fontSize: 13, color: '#9CA3AF', textAlign: 'center', padding: '14px 0', margin: 0, fontWeight: 500 }}>No people found</p>
-                      ) : filteredMembers.map(m => (
-                        <button key={m.id} onClick={() => setSelectedRecipient(m)}
-                          style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', background: 'none', border: '1px solid transparent', borderRadius: 10, cursor: 'pointer', textAlign: 'left', width: '100%', transition: 'background 0.12s' }}
-                          onMouseEnter={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.borderColor = '#E2E8F0' }}
-                          onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.borderColor = 'transparent' }}
-                        >
-                          <Avatar name={m.full_name} size={34} role={m.role} photoUrl={m.profile_photo_url ?? null} />
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <p style={{ fontWeight: 700, fontSize: 13, color: '#0F172A', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.full_name}</p>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </>
-                )}
+            <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <label style={modalLabelStyle}>To</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: 10, padding: '8px 12px' }}>
+                <Search size={13} color="#9CA3AF" />
+                <input autoFocus value={composeSearch} onChange={e => setComposeSearch(e.target.value)} placeholder="Search people…" style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: 13, color: '#374151', fontWeight: 500 }} />
               </div>
-
-              {selectedRecipient && (
-                <div>
-                  <p style={labelStyle}>Message</p>
-                  <textarea autoFocus value={composeText} onChange={e => setComposeText(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && composeText.trim()) { e.preventDefault(); handleComposeSend() } }}
-                    placeholder="Type your message…" rows={4}
-                    className="comm-textarea"
-                    style={textareaStyle}
-                  />
-                </div>
-              )}
-
-              {composeError && (
-                <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 9, padding: '10px 14px', fontSize: 12.5, color: '#DC2626', fontWeight: 600 }}>
-                  {composeError}
-                </div>
-              )}
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '14px 24px', borderTop: '1px solid #F0F4F8' }}>
-              <button onClick={handleComposeSend} disabled={composeSending || !selectedRecipient || !composeText.trim()}
-                style={{ ...primaryBtnStyle, flex: 'none', height: 'auto', padding: '7px 18px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, opacity: (composeSending || !selectedRecipient || !composeText.trim()) ? 0.5 : 1 }}
-              >
-                {composeSending ? <><Spinner size={13} /> Sending…</> : <><Send size={13} /> Send</>}
-              </button>
+              <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {filteredMembers.length === 0 ? (
+                  <p style={{ fontSize: 13, color: '#9CA3AF', textAlign: 'center', padding: '14px 0', margin: 0, fontWeight: 500 }}>No people found</p>
+                ) : filteredMembers.map(m => (
+                  <button key={m.id} onClick={() => selectComposeRecipient(m)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', background: 'none', border: '1px solid transparent', borderRadius: 10, cursor: 'pointer', textAlign: 'left', width: '100%', transition: 'background 0.12s' }}
+                    onMouseEnter={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.borderColor = '#E2E8F0' }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.borderColor = 'transparent' }}
+                  >
+                    <Avatar name={m.full_name} size={34} role={m.role} photoUrl={m.profile_photo_url ?? null} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ fontWeight: 700, fontSize: 13, color: '#0F172A', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.full_name}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
             </div>
           </ModalBox>
         </ModalOverlay>
@@ -1636,32 +1639,3 @@ export default function OwnerCommunicationPage() {
   )
 }
 
-// ─── Shared form styles ────────────────────────────────────────────────────────
-
-const labelStyle: React.CSSProperties = {
-  display: 'block', fontSize: 12, fontWeight: 700, color: '#374151',
-  marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em',
-}
-
-const inputStyle: React.CSSProperties = {
-  width: '100%', padding: '9px 12px', border: '1.5px solid #E2E8F0', borderRadius: 9,
-  fontSize: 13, outline: 'none', boxSizing: 'border-box', background: '#FAFBFC',
-  color: '#0F172A', fontWeight: 500, transition: 'border-color 0.15s, box-shadow 0.15s',
-}
-
-const textareaStyle: React.CSSProperties = {
-  width: '100%', padding: '10px 12px', border: '1.5px solid #E2E8F0', borderRadius: 9,
-  fontSize: 13, outline: 'none', boxSizing: 'border-box', resize: 'vertical',
-  fontFamily: 'inherit', lineHeight: 1.55, background: '#FAFBFC', color: '#0F172A',
-  fontWeight: 500, transition: 'border-color 0.15s, box-shadow 0.15s',
-}
-
-const cancelBtnStyle: React.CSSProperties = {
-  flex: 1, height: 40, background: 'none', border: '1.5px solid #E2E8F0', borderRadius: 10,
-  fontWeight: 700, fontSize: 13, color: '#64748B', cursor: 'pointer',
-}
-
-const primaryBtnStyle: React.CSSProperties = {
-  flex: 1, height: 40, background: '#F97316', border: 'none', borderRadius: 10,
-  fontWeight: 700, fontSize: 13, color: '#fff', cursor: 'pointer', transition: 'opacity 0.15s',
-}

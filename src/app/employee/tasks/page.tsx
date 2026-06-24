@@ -659,7 +659,7 @@ export default function EmployeeTasksPage() {
     const dateFrom = formatDateKey(addDays(today, -30))
     const dateTo = formatDateKey(addDays(today, 14))
 
-    fetch(`/api/shift?company_id=${companyId}&date_from=${dateFrom}&date_to=${dateTo}`)
+    fetch(`/api/shift?company_id=${companyId}&date_from=${dateFrom}&date_to=${dateTo}&viewer_role=Employee`)
       .then(r => r.json())
       .then(data => {
         if (!data.success) return

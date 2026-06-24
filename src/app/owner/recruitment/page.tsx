@@ -975,7 +975,7 @@ export default function OwnerRecruitmentPage() {
   // ── render ───────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ display: 'flex', height: '100vh', background: '#F7F8FA', fontFamily: "'Inter', system-ui, sans-serif" }}>
+    <div style={{ display: 'flex', height: '100vh', background: '#F7F8FA' }}>
       <style>{pageKeyframes}</style>
       <OwnerSidebar />
       <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', scrollbarGutter: 'stable' }}>

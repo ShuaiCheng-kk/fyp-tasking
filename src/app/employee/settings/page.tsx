@@ -54,7 +54,7 @@ export default function EmployeeSettingsPage() {
 
   // Leave requests
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([])
-  const [leaveType, setLeaveType] = useState('annual')
+  const [leaveType, setLeaveType] = useState('time_off')
   const [leaveReason, setLeaveReason] = useState('')
   const [submittingLeave, setSubmittingLeave] = useState(false)
   const [leaveMsg, setLeaveMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)

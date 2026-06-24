@@ -28,14 +28,48 @@ export interface AttendanceRecord {
 }
 
 export interface AttendanceRecordUpdate {
+  clock_in_time?: string | null
+  clock_out_time?: string | null
+  confirmed_by_employee_id?: string | null
+  submitted_by_employee_id?: string | null
   owner_status?: AttendanceOwnerStatus
   owner_notes?: string | null
   owner_reviewed_by?: string | null
   owner_reviewed_at?: string | null
   owner_adjusted_clock_in_time?: string | null
   owner_adjusted_clock_out_time?: string | null
+  employee_notes?: string | null
   manager_notes?: string | null
   status?: string
+}
+
+export interface AttendanceRecordCreate {
+  shift_assignment_id: string
+  casual_worker_id: string
+  clock_in_time: string | null
+  clock_out_time?: string | null
+  confirmed_by_employee_id: string
+  submitted_by_employee_id: string
+  status: string
+  employee_notes?: string | null
+  manager_notes?: string | null
+  owner_status?: AttendanceOwnerStatus
+}
+
+export interface CasualAttendanceShift {
+  assignment: ShiftAssignment
+  shift: Shift
+  record: AttendanceRecord | null
+}
+
+export interface CasualAttendanceOverview {
+  user: {
+    id: string
+    full_name: string
+    role: string
+  }
+  shifts: CasualAttendanceShift[]
+  message: string
 }
 
 export interface AttendanceManagerReviewInput {
@@ -97,6 +131,14 @@ export interface TimeOffRequestDecisionInput {
   decision: AttendanceRequestStatus
 }
 
+export interface TimeOffRequestCreateInput {
+  user_id: string
+  company_id: string
+  request_type: TimeOffRequestType
+  reason: string | null
+  shift_assignment_id?: string | null
+}
+
 export interface TimeOffRequestView extends TimeOffRequest {
   requester_name: string
   shift_title: string | null
@@ -123,6 +165,14 @@ export interface ShiftSwapDecisionInput {
   id: string
   reviewer_id: string
   decision: AttendanceRequestStatus
+}
+
+export interface ShiftSwapRequestCreateInput {
+  company_id: string
+  shift_assignment_id: string
+  requester_id: string
+  replacement_user_id: string
+  reason: string | null
 }
 
 export interface ShiftSwapRequestView extends ShiftSwapRequest {

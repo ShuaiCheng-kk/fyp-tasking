@@ -24,7 +24,6 @@ export async function POST(req: NextRequest) {
     publication_status,
     assigned_user_id,
     supervisor_employee_id,
-    override_clopening,
   } = body as Record<string, unknown>
 
   if (!company_id || typeof company_id !== 'string')
@@ -55,7 +54,6 @@ export async function POST(req: NextRequest) {
       publication_status: publication_status === 'published' ? 'published' : 'draft',
       assigned_user_id: typeof assigned_user_id === 'string' && assigned_user_id ? assigned_user_id : null,
       supervisor_employee_id: typeof supervisor_employee_id === 'string' && supervisor_employee_id ? supervisor_employee_id : null,
-      override_clopening: override_clopening === true,
     })
     return NextResponse.json({ success: true, shifts: result.shifts, warning: result.warning }, { status: 201 })
   } catch (err) {

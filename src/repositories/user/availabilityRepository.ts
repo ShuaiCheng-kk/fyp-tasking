@@ -2,6 +2,7 @@
 // RULE: Supabase queries only. No business logic.
 
 import { supabase } from '@/lib/supabase'
+import { ShiftSwapRequest, ShiftSwapRequestCreateInput, TimeOffRequestCreateInput } from '@/types/Attendance'
 
 export type FixedOffDay = {
   user_id: string
@@ -60,17 +61,13 @@ export const availabilityRepository = {
     return (data ?? []) as LeaveRequest[]
   },
 
-  async createLeaveRequest(input: {
-    company_id: string
-    requester_id: string
-    request_type: string
-    reason: string | null
-  }): Promise<LeaveRequest> {
+  async createLeaveRequest(input: TimeOffRequestCreateInput): Promise<LeaveRequest> {
     const { data, error } = await supabase
       .from('time_off_requests')
       .insert({
         company_id: input.company_id,
-        requester_id: input.requester_id,
+        requester_id: input.user_id,
+        shift_assignment_id: input.shift_assignment_id ?? null,
         request_type: input.request_type,
         reason: input.reason,
         status: 'pending',
@@ -79,5 +76,22 @@ export const availabilityRepository = {
       .single()
     if (error) throw new Error(error.message)
     return data as LeaveRequest
+  },
+
+  async createShiftSwapRequest(input: ShiftSwapRequestCreateInput): Promise<ShiftSwapRequest> {
+    const { data, error } = await supabase
+      .from('shift_swap_requests')
+      .insert({
+        company_id: input.company_id,
+        shift_assignment_id: input.shift_assignment_id,
+        requester_id: input.requester_id,
+        replacement_user_id: input.replacement_user_id,
+        reason: input.reason,
+        status: 'pending',
+      })
+      .select('id, company_id, shift_assignment_id, requester_id, replacement_user_id, reason, status, reviewed_by, reviewed_at, created_at, updated_at')
+      .single()
+    if (error) throw new Error(error.message)
+    return data as ShiftSwapRequest
   },
 }

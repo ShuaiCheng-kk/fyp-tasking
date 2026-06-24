@@ -221,7 +221,7 @@ export default function ManagerDashboard() {
       setStatsLoading(true)
       try {
         const [shiftRes, taskRes] = await Promise.all([
-          fetch(`/api/shift?company_id=${company_id}&date_from=${today}&date_to=${today}`),
+          fetch(`/api/shift?company_id=${company_id}&date_from=${today}&date_to=${today}&viewer_role=Manager&viewer_user_id=${internalId}`),
           fetch(`/api/task?company_id=${company_id}&stats=true`),
         ])
         const shiftData = await shiftRes.json()
@@ -289,7 +289,7 @@ export default function ManagerDashboard() {
     setTimelineLoading(true)
     try {
       const today = formatDateKey(new Date())
-      const res = await fetch(`/api/shift?company_id=${cid}&date_from=${today}&date_to=${today}`)
+      const res = await fetch(`/api/shift?company_id=${cid}&date_from=${today}&date_to=${today}&viewer_role=Manager&viewer_user_id=${managerId}`)
       const data = await res.json()
       if (data.success) {
         const deptRows = (data.rows as TimelineRow[]).filter(
@@ -299,7 +299,7 @@ export default function ManagerDashboard() {
       }
     } catch {}
     finally { setTimelineLoading(false) }
-  }, [])
+  }, [managerId])
 
   useEffect(() => {
     if (!companyId || !selectedDeptId) return

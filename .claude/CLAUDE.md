@@ -81,6 +81,7 @@ Strictly follow MVC + Repository:
 - Import departments = read data only, **no emails**. Import members = **sends invitation emails**. Keep these separate.
 - Announcements + Messages = one "Communication" module, two tabs.
 - Any clickable non-button surface (for example cards, badges, tiles, rows, and plan/subscription chips) must have a visible interaction motion such as hover lift, shadow, or border/accent change. Buttons already have their own button states; this rule is for clickable surfaces that might otherwise look static.
+- No subtitles/helper-text captions under section headings or toggles (e.g. a small gray line under a heading like "Repeat this shift" explaining what it does). The control and its label must be self-explanatory; don't add a second line of descriptive copy underneath.
 - RLS disabled in dev; re-enable before production.
 - Read existing files before creating new ones. Don't change unrelated pages or API routes.
 

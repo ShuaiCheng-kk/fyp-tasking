@@ -4,7 +4,7 @@
 import { supabase } from '@/lib/supabase'
 import { Shift, ShiftInput } from '@/types/Shift'
 import { ShiftAssignment } from '@/types/ShiftAssignment'
-import { ShiftActionHistory, ShiftActionHistoryInput } from '@/types/ShiftActionHistory'
+import { ShiftActionHistory, ShiftActionHistoryInput, ShiftActionRedoPayload } from '@/types/ShiftActionHistory'
 import { User } from '@/types/auth.types'
 
 export const shiftRepository = {
@@ -27,6 +27,7 @@ export const shiftRepository = {
         recurrence_rule: input.recurrence_rule ?? null,
         source_shift_id: input.source_shift_id ?? null,
         split_group_id: input.split_group_id ?? null,
+        template_id: input.template_id ?? null,
       })
       .select()
       .single()
@@ -40,6 +41,16 @@ export const shiftRepository = {
       .select('*')
       .eq('split_group_id', split_group_id)
       .order('start_time', { ascending: true })
+    if (error) throw new Error(error.message)
+    return (data ?? []) as Shift[]
+  },
+
+  async getShiftsByRecurrenceGroupId(recurrence_group_id: string): Promise<Shift[]> {
+    const { data, error } = await supabase
+      .from('shifts')
+      .select('*')
+      .eq('recurrence_group_id', recurrence_group_id)
+      .order('shift_date', { ascending: true })
     if (error) throw new Error(error.message)
     return (data ?? []) as Shift[]
   },
@@ -267,10 +278,32 @@ export const shiftRepository = {
     return (data as ShiftActionHistory) ?? null
   },
 
-  async markActionUndone(id: string): Promise<void> {
+  async getLatestRedoableAction(company_id: string, performed_by: string): Promise<ShiftActionHistory | null> {
+    const { data, error } = await supabase
+      .from('shift_action_history')
+      .select('*')
+      .eq('company_id', company_id)
+      .eq('performed_by', performed_by)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    const action = (data as ShiftActionHistory) ?? null
+    return action && action.undone ? action : null
+  },
+
+  async markActionUndone(id: string, redo_payload: ShiftActionRedoPayload): Promise<void> {
     const { error } = await supabase
       .from('shift_action_history')
-      .update({ undone: true })
+      .update({ undone: true, redo_payload })
+      .eq('id', id)
+    if (error) throw new Error(error.message)
+  },
+
+  async markActionRedone(id: string): Promise<void> {
+    const { error } = await supabase
+      .from('shift_action_history')
+      .update({ undone: false })
       .eq('id', id)
     if (error) throw new Error(error.message)
   },

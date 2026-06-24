@@ -24,7 +24,6 @@ export async function POST(
     custom_interval_days,
     created_by,
     assigned_user_id,
-    override_clopening,
   } = body as Record<string, unknown>
 
   if (recurrence_rule !== 'daily' && recurrence_rule !== 'weekly' && recurrence_rule !== 'custom') {
@@ -44,7 +43,6 @@ export async function POST(
       custom_interval_days: typeof custom_interval_days === 'number' ? custom_interval_days : undefined,
       created_by,
       assigned_user_id: typeof assigned_user_id === 'string' && assigned_user_id ? assigned_user_id : null,
-      override_clopening: override_clopening === true,
     })
     return NextResponse.json({ success: true, shifts }, { status: 201 })
   } catch (err) {

@@ -10,6 +10,8 @@ export async function GET(req: NextRequest) {
   const company_id = searchParams.get('company_id')
   const date_from = searchParams.get('date_from')
   const date_to = searchParams.get('date_to')
+  const viewer_role = searchParams.get('viewer_role') ?? undefined
+  const viewer_user_id = searchParams.get('viewer_user_id') ?? undefined
 
   if (!company_id || !date_from || !date_to) {
     return NextResponse.json(
@@ -19,7 +21,10 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const rows = await shiftService.getTimelineShifts(company_id, date_from, date_to)
+    const rows = await shiftService.getTimelineShifts(company_id, date_from, date_to, {
+      role: viewer_role,
+      user_id: viewer_user_id,
+    })
     return NextResponse.json({ success: true, rows })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to fetch shifts'
@@ -48,7 +53,7 @@ export async function POST(req: NextRequest) {
     acceptance_deadline_at,
     assigned_user_id,
     supervisor_employee_id,
-    override_clopening,
+    template_id,
   } =
     body as Record<string, unknown>
 
@@ -76,7 +81,7 @@ export async function POST(req: NextRequest) {
     created_by,
     publication_status: publication_status === 'published' ? 'published' : 'draft',
     acceptance_deadline_at: typeof acceptance_deadline_at === 'string' && acceptance_deadline_at ? acceptance_deadline_at : null,
-    override_clopening: override_clopening === true,
+    template_id: typeof template_id === 'string' && template_id ? template_id : null,
   }
   const assignmentInput = {
     ...input,
