@@ -111,4 +111,8 @@ export const ownerInboxService = {
     await ownerInboxRepository.markMessagesAsRead(userId, otherUserId)
   },
 
+  async deleteConversation(userId: string, otherUserId: string) {
+    await ownerInboxRepository.deleteConversation(userId, otherUserId)
+  },
+
 }

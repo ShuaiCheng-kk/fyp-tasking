@@ -138,14 +138,14 @@ Reference `docs/Use_Cases_List.md` for the UC list. **Every UC must go through t
 
 Modules 10 (Marketing CMS) and 11 (User & Company Admin) are **out of scope** — owned by a separate team. Build order for the remaining 9 modules, derived from data/feature dependencies (earlier modules are depended on by later ones):
 
-1. **Module 9 — Account & Authentication** (UC82–88) — foundation; nothing else works without registration/login/company creation.
-2. **Module 3 — Team / Company** (UC27–40) — departments, members, company profile that every other module references.
-3. **Module 1 — Shift** (UC1–13) — scheduling is the base Task and Attendance sit on.
-4. **Module 2 — Task** (UC14–26) — tasks are assigned on shifts.
-5. **Module 5 — Attendance** (UC59–69) — clock in/out and the approval chain depend on shift assignment existing.
-6. **Module 4 — Recruitment** (UC41–58) — hiring pipeline that feeds Casual Workers, which Shift/Task/Attendance then consume for that role.
-7. **Module 6 — Communication** (UC70–73) — independent; announcements and messages.
-8. **Module 8 — Settings & Billing** (UC77–81) — multi-company switching and subscription management, gated onto features that already exist by this point.
-9. **Module 7 — Report** (UC74–76) — downstream consumer of Shift/Task/Attendance data; build last.
+1. **Module 9 — Account & Authentication** (UC85–91) — foundation; nothing else works without registration/login/company creation.
+2. **Module 3 — Team / Company** (UC29–43) — departments, members, company profile that every other module references.
+3. **Module 1 — Shift** (UC1–14) — scheduling is the base Task and Attendance sit on.
+4. **Module 2 — Task** (UC15–28) — tasks are assigned on shifts.
+5. **Module 5 — Attendance** (UC62–72) — clock in/out and the approval chain depend on shift assignment existing.
+6. **Module 4 — Recruitment** (UC44–61) — hiring pipeline that feeds Casual Workers, which Shift/Task/Attendance then consume for that role.
+7. **Module 6 — Communication** (UC73–76) — independent; announcements and messages.
+8. **Module 8 — Settings & Billing** (UC80–84) — multi-company switching and subscription management, gated onto features that already exist by this point.
+9. **Module 7 — Report** (UC77–79) — downstream consumer of Shift/Task/Attendance data; build last.
 
 **Autonomous execution rule:** When the user names a module to start (e.g. "做 Module 1" / "开始 Module 3"), pull every UC belonging to that module from `docs/Use_Cases_List.md` and run each one through the full workflow in section 8 — back-to-back, without asking the user which UC to do next or how to do it. Only stop and surface work to the user at the review checkpoints in section 8 steps 7–8 (UI/usage review, then the user's manual real-use pass). Iterate on the user's feedback (fix → re-run the full Unit + Integration suite → re-present) until the user signs the module off (e.g. "pass" / "OK" / "没问题"). Once signed off, automatically continue to the next module in the build order above without waiting to be told — the user only needs to speak up to skip ahead, switch to a different module, or pause. This rule applies in any conversation, new or resumed, since this file is loaded at the start of every session.

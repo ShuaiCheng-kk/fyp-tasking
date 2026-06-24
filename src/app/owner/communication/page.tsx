@@ -287,14 +287,16 @@ export default function OwnerCommunicationPage() {
   const [filteredConversations, setFilteredConversations] = useState<Conversation[]>([])
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set())
   const [search, setSearch] = useState('')
+  const [deletingConvId, setDeletingConvId] = useState<string | null>(null)
+  const [confirmDeleteConvId, setConfirmDeleteConvId] = useState<string | null>(null)
 
   // Multi-panel chat state (up to 4 panels)
   const [openPanelIds, setOpenPanelIds] = useState<string[]>([])
   const [panelMessages, setPanelMessages] = useState<Record<string, Message[]>>({})
   const [panelInputs, setPanelInputs] = useState<Record<string, string>>({})
   const [panelSending, setPanelSending] = useState<Record<string, boolean>>({})
-  const [panelAttachFile, setPanelAttachFile] = useState<Record<string, File | null>>({})
-  const [panelAttachPreview, setPanelAttachPreview] = useState<Record<string, string | null>>({})
+  const [panelAttachFiles, setPanelAttachFiles] = useState<Record<string, File[]>>({})
+  const [panelAttachPreviews, setPanelAttachPreviews] = useState<Record<string, (string | null)[]>>({})
   const [panelUploading, setPanelUploading] = useState<Record<string, boolean>>({})
   const [dragOver, setDragOver] = useState<string | null>(null) // panelId being dragged over
   const [draggingPanel, setDraggingPanel] = useState<string | null>(null)
@@ -723,9 +725,33 @@ export default function OwnerCommunicationPage() {
     setPanelMessages(prev => { const n = { ...prev }; delete n[partnerId]; return n })
     setPanelInputs(prev => { const n = { ...prev }; delete n[partnerId]; return n })
     setPanelSending(prev => { const n = { ...prev }; delete n[partnerId]; return n })
-    setPanelAttachFile(prev => { const n = { ...prev }; delete n[partnerId]; return n })
-    setPanelAttachPreview(prev => { const n = { ...prev }; delete n[partnerId]; return n })
+    setPanelAttachFiles(prev => { const n = { ...prev }; delete n[partnerId]; return n })
+    setPanelAttachPreviews(prev => { const n = { ...prev }; delete n[partnerId]; return n })
     setPanelUploading(prev => { const n = { ...prev }; delete n[partnerId]; return n })
+  }
+
+  async function deleteConversation(partnerId: string) {
+    if (!internalUserId) return
+    setDeletingConvId(partnerId)
+    try {
+      const res = await fetch(`/api/inbox/messages/${partnerId}?user_id=${internalUserId}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.error ?? 'Failed to delete conversation')
+      closePanel(partnerId)
+      setConversations(prev => prev.filter(c => c.partnerId !== partnerId))
+      setPinnedIds(prev => {
+        if (!prev.has(partnerId)) return prev
+        const next = new Set(prev)
+        next.delete(partnerId)
+        if (internalUserId) localStorage.setItem(`pinned_convs_${internalUserId}`, JSON.stringify([...next]))
+        return next
+      })
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setDeletingConvId(null)
+      setConfirmDeleteConvId(null)
+    }
   }
 
   function swapPanels(idA: string, idB: string) {
@@ -767,20 +793,34 @@ export default function OwnerCommunicationPage() {
     } finally { setPanelSending(prev => ({ ...prev, [partnerId]: false })) }
   }
 
-  function pickPanelAttachment(partnerId: string, file: File) {
-    setPanelAttachFile(prev => ({ ...prev, [partnerId]: file }))
-    if (file.type.startsWith('image/')) {
+  function pickPanelAttachments(partnerId: string, files: File[]) {
+    setPanelAttachFiles(prev => ({ ...prev, [partnerId]: [...(prev[partnerId] ?? []), ...files] }))
+    setPanelAttachPreviews(prev => ({ ...prev, [partnerId]: [...(prev[partnerId] ?? []), ...files.map(() => null)] }))
+    files.forEach((file, i) => {
+      if (!file.type.startsWith('image/')) return
       const reader = new FileReader()
-      reader.onload = e => setPanelAttachPreview(prev => ({ ...prev, [partnerId]: e.target?.result as string }))
+      reader.onload = e => {
+        const dataUrl = e.target?.result as string
+        setPanelAttachPreviews(prev => {
+          const existing = prev[partnerId] ?? []
+          const baseIndex = existing.length - files.length + i
+          const next = [...existing]
+          next[baseIndex] = dataUrl
+          return { ...prev, [partnerId]: next }
+        })
+      }
       reader.readAsDataURL(file)
-    } else {
-      setPanelAttachPreview(prev => ({ ...prev, [partnerId]: null }))
-    }
+    })
+  }
+
+  function removePanelAttachment(partnerId: string, index: number) {
+    setPanelAttachFiles(prev => ({ ...prev, [partnerId]: (prev[partnerId] ?? []).filter((_, i) => i !== index) }))
+    setPanelAttachPreviews(prev => ({ ...prev, [partnerId]: (prev[partnerId] ?? []).filter((_, i) => i !== index) }))
   }
 
   function clearPanelAttachment(partnerId: string) {
-    setPanelAttachFile(prev => ({ ...prev, [partnerId]: null }))
-    setPanelAttachPreview(prev => ({ ...prev, [partnerId]: null }))
+    setPanelAttachFiles(prev => ({ ...prev, [partnerId]: [] }))
+    setPanelAttachPreviews(prev => ({ ...prev, [partnerId]: [] }))
     const photoEl = panelPhotoRefs.current[partnerId]
     const fileEl = panelFileRefs.current[partnerId]
     if (photoEl) photoEl.value = ''
@@ -788,30 +828,32 @@ export default function OwnerCommunicationPage() {
   }
 
   async function uploadAndSendPanelAttachment(partnerId: string) {
-    const file = panelAttachFile[partnerId]
+    const files = panelAttachFiles[partnerId] ?? []
     const conv = conversations.find(c => c.partnerId === partnerId)
-    if (!file || !conv || !internalUserId || !companyId) return
+    if (files.length === 0 || !conv || !internalUserId || !companyId) return
     setPanelUploading(prev => ({ ...prev, [partnerId]: true }))
     try {
-      const form = new FormData()
-      form.append('file', file)
-      form.append('company_id', companyId)
-      const upRes = await fetch('/api/inbox/upload', { method: 'POST', body: form })
-      const upData = await upRes.json()
-      if (!upData.success) throw new Error(upData.error ?? 'Upload failed')
-      const isImage = file.type.startsWith('image/')
-      const prefix = isImage ? '[image:]' : `[file:${upData.name}]`
-      const content = `${prefix}${upData.url}`
-      const msgRes = await fetch('/api/inbox/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from_user_id: internalUserId, to_user_id: partnerId, company_id: companyId, content }),
-      })
-      const msgData = await msgRes.json()
-      if (msgData.success) {
-        setPanelMessages(prev => ({ ...prev, [partnerId]: [...(prev[partnerId] ?? []), msgData.message] }))
-        fetchConversations()
+      for (const file of files) {
+        const form = new FormData()
+        form.append('file', file)
+        form.append('company_id', companyId)
+        const upRes = await fetch('/api/inbox/upload', { method: 'POST', body: form })
+        const upData = await upRes.json()
+        if (!upData.success) throw new Error(upData.error ?? 'Upload failed')
+        const isImage = file.type.startsWith('image/')
+        const prefix = isImage ? '[image:]' : `[file:${upData.name}]`
+        const content = `${prefix}${upData.url}`
+        const msgRes = await fetch('/api/inbox/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ from_user_id: internalUserId, to_user_id: partnerId, company_id: companyId, content }),
+        })
+        const msgData = await msgRes.json()
+        if (msgData.success) {
+          setPanelMessages(prev => ({ ...prev, [partnerId]: [...(prev[partnerId] ?? []), msgData.message] }))
+        }
       }
+      fetchConversations()
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Upload failed')
     } finally {
@@ -958,7 +1000,7 @@ export default function OwnerCommunicationPage() {
             {([
               { key: 'chat',          label: 'Chat',          badge: unreadMessages  },
               { key: 'announcements', label: 'Announcements', badge: unreadAnnCount  },
-              { key: 'invites',       label: 'Invites',       badge: invites.length },
+              // 'invites' tab hidden from UI; logic kept in place for later reuse elsewhere.
             ] as const).map(tab => {
               const active = activeTab === tab.key
               return (
@@ -1047,47 +1089,58 @@ export default function OwnerCommunicationPage() {
                         : conv.lastMessage.match(/^\[file:(.+?)\]/) ? `📎 ${conv.lastMessage.match(/^\[file:(.+?)\]/)![1]}`
                         : conv.lastMessage
                       return (
-                        <button
+                        <div
                           key={conv.partnerId}
-                          onClick={() => openPanel(conv.partnerId)}
                           className="comm-conv-card"
                           style={{
                             display: 'flex', alignItems: 'center', gap: 10, padding: '10px 10px',
                             background: active ? '#FFF7ED' : 'transparent',
                             border: 'none',
                             borderRadius: 10, cursor: 'pointer', textAlign: 'left', width: '100%', marginBottom: 2,
-                            borderLeft: active ? '3px solid #F97316' : '3px solid transparent',
                             animationDelay: `${i * 0.04}s`,
                           }}
                         >
-                          <Avatar name={conv.partnerName} size={40} role={conv.partnerRole} photoUrl={companyMembers.find(m => m.id === conv.partnerId)?.profile_photo_url ?? null} />
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
-                                <span style={{ fontWeight: conv.unreadCount > 0 ? 800 : 600, fontSize: 13, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  {conv.partnerName}
+                          <button onClick={() => openPanel(conv.partnerId)} style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: 0 }}>
+                            <Avatar name={conv.partnerName} size={40} role={conv.partnerRole} photoUrl={companyMembers.find(m => m.id === conv.partnerId)?.profile_photo_url ?? null} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
+                                  <span style={{ fontWeight: conv.unreadCount > 0 ? 800 : 600, fontSize: 13, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {conv.partnerName}
+                                  </span>
+                                  {isPinned && (
+                                    <Pin size={10} strokeWidth={2.5} style={{ color: '#F97316', flexShrink: 0 }} />
+                                  )}
+                                  {conv.partnerDeleted && (
+                                    <span style={{ background: '#F1F5F9', color: '#6B7280', fontSize: 10, padding: '1px 6px', borderRadius: 999, flexShrink: 0, fontWeight: 700 }}>removed</span>
+                                  )}
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                                <span style={{ fontSize: 12, color: conv.unreadCount > 0 ? '#374151' : '#9CA3AF', fontWeight: conv.unreadCount > 0 ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                                  {previewText}
                                 </span>
-                                {isPinned && (
-                                  <Pin size={10} strokeWidth={2.5} style={{ color: '#F97316', flexShrink: 0 }} />
-                                )}
-                                {conv.partnerDeleted && (
-                                  <span style={{ background: '#F1F5F9', color: '#6B7280', fontSize: 10, padding: '1px 6px', borderRadius: 999, flexShrink: 0, fontWeight: 700 }}>removed</span>
+                                {conv.unreadCount > 0 && (
+                                  <div style={{ minWidth: 18, height: 18, borderRadius: 999, background: '#F97316', color: '#fff', fontSize: 10, fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', flexShrink: 0 }}>
+                                    {conv.unreadCount}
+                                  </div>
                                 )}
                               </div>
-                              <span style={{ fontSize: 10.5, color: '#9CA3AF', flexShrink: 0, fontWeight: 500 }}>{formatTime(conv.lastTime)}</span>
                             </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                              <span style={{ fontSize: 12, color: conv.unreadCount > 0 ? '#374151' : '#9CA3AF', fontWeight: conv.unreadCount > 0 ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                                {previewText}
-                              </span>
-                              {conv.unreadCount > 0 && (
-                                <div style={{ minWidth: 18, height: 18, borderRadius: 999, background: '#F97316', color: '#fff', fontSize: 10, fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', flexShrink: 0 }}>
-                                  {conv.unreadCount}
-                                </div>
-                              )}
-                            </div>
+                          </button>
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0, alignSelf: 'flex-start' }}>
+                            <span style={{ fontSize: 10.5, color: '#9CA3AF', fontWeight: 500 }}>{formatTime(conv.lastTime)}</span>
+                            <button
+                              onClick={() => setConfirmDeleteConvId(conv.partnerId)}
+                              title="Delete conversation"
+                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, background: 'none', border: 'none', borderRadius: 6, cursor: 'pointer', color: '#CBD5E1', transition: 'color 0.15s' }}
+                              onMouseEnter={e => { e.currentTarget.style.color = '#DC2626' }}
+                              onMouseLeave={e => { e.currentTarget.style.color = '#CBD5E1' }}
+                            >
+                              <Trash2 size={13} strokeWidth={2} />
+                            </button>
                           </div>
-                        </button>
+                        </div>
                       )
                     })}
                   </div>
@@ -1126,8 +1179,8 @@ export default function OwnerCommunicationPage() {
                       const msgs = panelMessages[partnerId] ?? []
                       const input = panelInputs[partnerId] ?? ''
                       const sending = panelSending[partnerId] ?? false
-                      const attachFile = panelAttachFile[partnerId] ?? null
-                      const attachPreview = panelAttachPreview[partnerId] ?? null
+                      const attachFiles = panelAttachFiles[partnerId] ?? []
+                      const attachPreviews = panelAttachPreviews[partnerId] ?? []
                       const uploading = panelUploading[partnerId] ?? false
                       const isPinned = pinnedIds.has(partnerId)
                       // 3-panel: slot 0 spans both rows in the left column
@@ -1160,40 +1213,50 @@ export default function OwnerCommunicationPage() {
                             draggable
                             onDragStart={e => { e.dataTransfer.setData('panelId', partnerId); setDraggingPanel(partnerId) }}
                             onDragEnd={() => setDraggingPanel(null)}
-                            style={{ padding: '10px 14px 0', background: '#FFFFFF', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, cursor: openPanelIds.length > 1 ? 'grab' : 'default', userSelect: 'none' }}
+                            style={{ padding: '14px 16px 0', background: '#FFFFFF', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, cursor: openPanelIds.length > 1 ? 'grab' : 'default', userSelect: 'none' }}
                             title={openPanelIds.length > 1 ? 'Drag to swap panels' : undefined}
                           >
-                            <Avatar name={conv.partnerName} size={30} role={conv.partnerRole} photoUrl={companyMembers.find(m => m.id === conv.partnerId)?.profile_photo_url ?? null} />
+                            <Avatar name={conv.partnerName} size={38} role={conv.partnerRole} photoUrl={companyMembers.find(m => m.id === conv.partnerId)?.profile_photo_url ?? null} />
                             <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                                <span style={{ fontWeight: 800, fontSize: 13, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{conv.partnerName}</span>
-                                {conv.partnerDeleted && <span style={{ background: '#F1F5F9', color: '#64748B', fontSize: 9, padding: '1px 5px', borderRadius: 999, fontWeight: 700, flexShrink: 0 }}>removed</span>}
-                                {isPinned && <Pin size={9} strokeWidth={2.5} style={{ color: '#F97316', flexShrink: 0 }} />}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span style={{ fontWeight: 800, fontSize: 15.5, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{conv.partnerName}</span>
+                                {conv.partnerDeleted && <span style={{ background: '#F1F5F9', color: '#64748B', fontSize: 10, padding: '2px 6px', borderRadius: 999, fontWeight: 700, flexShrink: 0 }}>removed</span>}
+                                {isPinned && <Pin size={11} strokeWidth={2.5} style={{ color: '#F97316', flexShrink: 0 }} />}
                               </div>
                             </div>
                             {/* Pin button */}
                             <button
                               onClick={() => togglePin(partnerId)}
                               title={isPinned ? 'Unpin' : 'Pin'}
-                              style={{ flexShrink: 0, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', background: isPinned ? '#FFF7ED' : '#F8FAFC', border: isPinned ? '1.5px solid rgba(249,115,22,0.35)' : '1.5px solid #E2E8F0', borderRadius: 7, cursor: 'pointer', color: isPinned ? '#F97316' : '#94A3B8', transition: 'all 0.15s' }}
+                              style={{ flexShrink: 0, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', background: isPinned ? '#FFF7ED' : '#F8FAFC', border: isPinned ? '1.5px solid rgba(249,115,22,0.35)' : '1.5px solid #E2E8F0', borderRadius: 9, cursor: 'pointer', color: isPinned ? '#F97316' : '#94A3B8', transition: 'all 0.15s' }}
                               onMouseEnter={e => { if (!isPinned) { e.currentTarget.style.background = '#FFF7ED'; e.currentTarget.style.color = '#F97316' } }}
                               onMouseLeave={e => { if (!isPinned) { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.color = '#94A3B8' } }}
                             >
-                              {isPinned ? <PinOff size={11} strokeWidth={2.5} /> : <Pin size={11} strokeWidth={2.5} />}
+                              {isPinned ? <PinOff size={15} strokeWidth={2.5} /> : <Pin size={15} strokeWidth={2.5} />}
+                            </button>
+                            {/* Delete button */}
+                            <button
+                              onClick={() => setConfirmDeleteConvId(partnerId)}
+                              title="Delete conversation"
+                              style={{ flexShrink: 0, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: 9, cursor: 'pointer', color: '#94A3B8', transition: 'all 0.15s' }}
+                              onMouseEnter={e => { e.currentTarget.style.background = '#FEF2F2'; e.currentTarget.style.color = '#DC2626'; e.currentTarget.style.borderColor = 'rgba(220,38,38,0.3)' }}
+                              onMouseLeave={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.color = '#94A3B8'; e.currentTarget.style.borderColor = '#E2E8F0' }}
+                            >
+                              <Trash2 size={15} strokeWidth={2.5} />
                             </button>
                             {/* Close button */}
                             <button
                               onClick={() => closePanel(partnerId)}
                               title="Close"
-                              style={{ flexShrink: 0, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: 7, cursor: 'pointer', color: '#94A3B8', transition: 'all 0.15s' }}
+                              style={{ flexShrink: 0, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: 9, cursor: 'pointer', color: '#94A3B8', transition: 'all 0.15s' }}
                               onMouseEnter={e => { e.currentTarget.style.background = '#FEF2F2'; e.currentTarget.style.color = '#DC2626'; e.currentTarget.style.borderColor = 'rgba(220,38,38,0.3)' }}
                               onMouseLeave={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.color = '#94A3B8'; e.currentTarget.style.borderColor = '#E2E8F0' }}
                             >
-                              <X size={11} strokeWidth={2.5} />
+                              <X size={15} strokeWidth={2.5} />
                             </button>
                           </div>
                           {/* Divider */}
-                          <div style={{ height: 1, background: '#111827', margin: '8px 0 0', flexShrink: 0 }} />
+                          <div style={{ height: 1, background: '#111827', margin: '10px 0 0', flexShrink: 0 }} />
 
                           {/* Messages */}
                           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 7 }}>
@@ -1238,21 +1301,23 @@ export default function OwnerCommunicationPage() {
                             <div ref={el => { panelEndRefs.current[partnerId] = el }} />
                           </div>
 
-                          {/* Attachment preview */}
-                          {attachFile && (
-                            <div style={{ padding: '6px 14px 0', background: '#FFFFFF', flexShrink: 0 }}>
-                              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: 9, padding: '5px 9px', maxWidth: '100%' }}>
-                                {attachPreview ? (
-                                  <img src={attachPreview} alt="preview" style={{ width: 36, height: 36, objectFit: 'cover', borderRadius: 6, flexShrink: 0 }} />
-                                ) : (
-                                  <div style={{ width: 30, height: 30, borderRadius: 7, background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><FileText size={14} color="#3B82F6" /></div>
-                                )}
-                                <div style={{ minWidth: 0 }}>
-                                  <p style={{ margin: 0, fontSize: 11.5, fontWeight: 700, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>{attachFile.name}</p>
-                                  <p style={{ margin: '1px 0 0', fontSize: 10.5, color: '#94A3B8', fontWeight: 500 }}>{(attachFile.size / 1024).toFixed(1)} KB</p>
+                          {/* Attachment previews */}
+                          {attachFiles.length > 0 && (
+                            <div style={{ padding: '6px 14px 0', background: '#FFFFFF', flexShrink: 0, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                              {attachFiles.map((file, i) => (
+                                <div key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: 9, padding: '5px 9px', maxWidth: '100%' }}>
+                                  {attachPreviews[i] ? (
+                                    <img src={attachPreviews[i]!} alt="preview" style={{ width: 36, height: 36, objectFit: 'cover', borderRadius: 6, flexShrink: 0 }} />
+                                  ) : (
+                                    <div style={{ width: 30, height: 30, borderRadius: 7, background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><FileText size={14} color="#3B82F6" /></div>
+                                  )}
+                                  <div style={{ minWidth: 0 }}>
+                                    <p style={{ margin: 0, fontSize: 11.5, fontWeight: 700, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }}>{file.name}</p>
+                                    <p style={{ margin: '1px 0 0', fontSize: 10.5, color: '#94A3B8', fontWeight: 500 }}>{(file.size / 1024).toFixed(1)} KB</p>
+                                  </div>
+                                  <button onClick={() => removePanelAttachment(partnerId, i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', padding: 2, display: 'flex', flexShrink: 0 }}><X size={12} /></button>
                                 </div>
-                                <button onClick={() => clearPanelAttachment(partnerId)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', padding: 2, display: 'flex', flexShrink: 0 }}><X size={12} /></button>
-                              </div>
+                              ))}
                             </div>
                           )}
 
@@ -1260,50 +1325,50 @@ export default function OwnerCommunicationPage() {
                           <div style={{ height: 1, background: '#111827', flexShrink: 0 }} />
 
                           {/* Input bar */}
-                          <div style={{ padding: '8px 12px', background: '#FFFFFF', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                          <div style={{ padding: '12px 14px', background: '#FFFFFF', display: 'flex', alignItems: 'center', gap: 9, flexShrink: 0 }}>
                             {/* Hidden file inputs scoped to this panel */}
                             <input
-                              type="file" accept="image/*" style={{ display: 'none' }}
+                              type="file" accept="image/*" multiple style={{ display: 'none' }}
                               ref={el => { panelPhotoRefs.current[partnerId] = el }}
-                              onChange={e => { const f = e.target.files?.[0]; if (f) pickPanelAttachment(partnerId, f) }}
+                              onChange={e => { const files = Array.from(e.target.files ?? []); if (files.length) pickPanelAttachments(partnerId, files); e.target.value = '' }}
                             />
                             <input
-                              type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.zip" style={{ display: 'none' }}
+                              type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.csv,.zip" multiple style={{ display: 'none' }}
                               ref={el => { panelFileRefs.current[partnerId] = el }}
-                              onChange={e => { const f = e.target.files?.[0]; if (f) pickPanelAttachment(partnerId, f) }}
+                              onChange={e => { const files = Array.from(e.target.files ?? []); if (files.length) pickPanelAttachments(partnerId, files); e.target.value = '' }}
                             />
                             {!conv.partnerDeleted && (
                               <button onClick={() => panelPhotoRefs.current[partnerId]?.click()} title="Send photo"
-                                style={{ flexShrink: 0, width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: 9, cursor: 'pointer', color: '#64748B', transition: 'all 0.15s' }}
+                                style={{ flexShrink: 0, width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: 10, cursor: 'pointer', color: '#64748B', transition: 'all 0.15s' }}
                                 onMouseEnter={e => { e.currentTarget.style.background = '#FFF7ED'; e.currentTarget.style.borderColor = 'rgba(249,115,22,0.35)'; e.currentTarget.style.color = '#F97316' }}
                                 onMouseLeave={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.borderColor = '#E2E8F0'; e.currentTarget.style.color = '#64748B' }}>
-                                <ImagePlus size={14} strokeWidth={2} />
+                                <ImagePlus size={18} strokeWidth={2} />
                               </button>
                             )}
                             {!conv.partnerDeleted && (
                               <button onClick={() => panelFileRefs.current[partnerId]?.click()} title="Send file"
-                                style={{ flexShrink: 0, width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: 9, cursor: 'pointer', color: '#64748B', transition: 'all 0.15s' }}
+                                style={{ flexShrink: 0, width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: 10, cursor: 'pointer', color: '#64748B', transition: 'all 0.15s' }}
                                 onMouseEnter={e => { e.currentTarget.style.background = '#EFF6FF'; e.currentTarget.style.borderColor = 'rgba(59,130,246,0.35)'; e.currentTarget.style.color = '#3B82F6' }}
                                 onMouseLeave={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.borderColor = '#E2E8F0'; e.currentTarget.style.color = '#64748B' }}>
-                                <Paperclip size={13} strokeWidth={2} />
+                                <Paperclip size={17} strokeWidth={2} />
                               </button>
                             )}
                             <input
                               value={input}
                               onChange={e => setPanelInputs(p => ({ ...p, [partnerId]: e.target.value }))}
-                              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !conv.partnerDeleted) { e.preventDefault(); if (attachFile) uploadAndSendPanelAttachment(partnerId); else handleSendMessage(partnerId) } }}
+                              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !conv.partnerDeleted) { e.preventDefault(); if (attachFiles.length > 0) uploadAndSendPanelAttachment(partnerId); else handleSendMessage(partnerId) } }}
                               placeholder={conv.partnerDeleted ? "Account removed" : 'Type a message…'}
                               disabled={conv.partnerDeleted}
                               className="comm-input"
-                              style={{ flex: 1, height: 34, padding: '0 11px', border: '1.5px solid #E2E8F0', borderRadius: 9, fontSize: 12.5, fontWeight: 500, outline: 'none', background: conv.partnerDeleted ? '#F8FAFC' : '#FFFFFF', color: conv.partnerDeleted ? '#94A3B8' : '#0F172A', cursor: conv.partnerDeleted ? 'not-allowed' : undefined, transition: 'border-color 0.15s, box-shadow 0.15s' }}
+                              style={{ flex: 1, height: 42, padding: '0 14px', border: '1.5px solid #E2E8F0', borderRadius: 10, fontSize: 14, fontWeight: 500, outline: 'none', background: conv.partnerDeleted ? '#F8FAFC' : '#FFFFFF', color: conv.partnerDeleted ? '#94A3B8' : '#0F172A', cursor: conv.partnerDeleted ? 'not-allowed' : undefined, transition: 'border-color 0.15s, box-shadow 0.15s' }}
                             />
                             {!conv.partnerDeleted && (
                               <button
-                                onClick={() => { if (attachFile) uploadAndSendPanelAttachment(partnerId); else handleSendMessage(partnerId) }}
-                                disabled={sending || uploading || (!input.trim() && !attachFile)}
-                                style={{ height: 34, padding: '0 12px', background: (sending || uploading || (!input.trim() && !attachFile)) ? '#E5E7EB' : '#F97316', color: (sending || uploading || (!input.trim() && !attachFile)) ? '#9CA3AF' : '#fff', border: 'none', borderRadius: 9, cursor: (sending || uploading || (!input.trim() && !attachFile)) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 5, fontWeight: 700, fontSize: 12, transition: 'background 0.15s', flexShrink: 0 }}
+                                onClick={() => { if (attachFiles.length > 0) uploadAndSendPanelAttachment(partnerId); else handleSendMessage(partnerId) }}
+                                disabled={sending || uploading || (!input.trim() && attachFiles.length === 0)}
+                                style={{ height: 42, padding: '0 16px', background: (sending || uploading || (!input.trim() && attachFiles.length === 0)) ? '#E5E7EB' : '#F97316', color: (sending || uploading || (!input.trim() && attachFiles.length === 0)) ? '#9CA3AF' : '#fff', border: 'none', borderRadius: 10, cursor: (sending || uploading || (!input.trim() && attachFiles.length === 0)) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 14, transition: 'background 0.15s', flexShrink: 0 }}
                               >
-                                {(sending || uploading) ? <Spinner size={12} /> : <Send size={12} />} Send
+                                {(sending || uploading) ? <Spinner size={14} /> : <Send size={14} />} Send
                               </button>
                             )}
                           </div>
@@ -1631,6 +1696,30 @@ export default function OwnerCommunicationPage() {
                   </button>
                 ))}
               </div>
+            </div>
+          </ModalBox>
+        </ModalOverlay>
+      )}
+
+      {/* ── Delete Conversation Confirmation Modal ── */}
+      {confirmDeleteConvId && (
+        <ModalOverlay onClose={() => setConfirmDeleteConvId(null)} maxWidth="400px">
+          <ModalBox>
+            <ModalHeader title="Delete Conversation" icon={<Trash2 size={15} color="#fff" strokeWidth={2.5} />} iconBg="linear-gradient(135deg, #EF4444, #DC2626)" onClose={() => setConfirmDeleteConvId(null)} />
+            <div style={{ padding: '20px 24px 0' }}>
+              <p style={{ fontSize: '0.9375rem', color: '#374151', margin: 0, lineHeight: 1.6 }}>
+                Are you sure you want to delete this entire conversation? This cannot be undone.
+              </p>
+            </div>
+            <div style={{ padding: '20px 24px 20px', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={() => setConfirmDeleteConvId(null)} disabled={deletingConvId === confirmDeleteConvId}
+                style={{ padding: '7px 16px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', cursor: 'pointer' }}>
+                Cancel
+              </button>
+              <button onClick={() => deleteConversation(confirmDeleteConvId)} disabled={deletingConvId === confirmDeleteConvId}
+                style={{ padding: '7px 16px', background: '#DC2626', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+                {deletingConvId === confirmDeleteConvId ? <Spinner size={13} /> : <Trash2 size={13} />} Delete
+              </button>
             </div>
           </ModalBox>
         </ModalOverlay>
