@@ -2,7 +2,7 @@ import { test, expect, APIRequestContext } from '@playwright/test'
 import { createClient } from '@supabase/supabase-js'
 import { seedTestOwnerAndCompany, cleanupTestOwnerAndCompany, TestOwner } from '../helpers/seed'
 
-// Integration tests for Module 2 - Task (UC14-26).
+// Integration tests for Module 2 - Task (UC15-21, UC23-28). UC22 Create Sub Task is not yet covered.
 // Hits route.ts -> service -> repository -> Supabase, keeping AI assignment deterministic through service fallback.
 
 const admin = createClient(
@@ -122,7 +122,7 @@ test.afterAll(async () => {
   await cleanupTestOwnerAndCompany(seeded)
 })
 
-test('UC14 assigns a task on a shift', async ({ request }) => {
+test('UC15 assigns a task on a shift', async ({ request }) => {
   const task = await createTask(request)
   taskId = task.id
 
@@ -132,14 +132,14 @@ test('UC14 assigns a task on a shift', async ({ request }) => {
   expect(body.tasks).toEqual(expect.arrayContaining([expect.objectContaining({ id: taskId, shift_id: shiftId })]))
 })
 
-test('UC15 views the task Kanban board', async ({ request }) => {
+test('UC16 views the task Kanban board', async ({ request }) => {
   const res = await request.get(`/api/task?company_id=${seeded.companyId}&kanban=true`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   expect(body.groups.Assigned).toEqual(expect.arrayContaining([expect.objectContaining({ id: taskId })]))
 })
 
-test('UC16 edits a task', async ({ request }) => {
+test('UC17 edits a task', async ({ request }) => {
   const res = await request.patch('/api/task', {
     data: {
       id: taskId,
@@ -152,7 +152,7 @@ test('UC16 edits a task', async ({ request }) => {
   expect(body.task).toMatchObject({ id: taskId, title: 'Prep closing checklist', percentage_complete: 25 })
 })
 
-test('UC18 duplicates a task', async ({ request }) => {
+test('UC19 duplicates a task', async ({ request }) => {
   const res = await request.post('/api/task', {
     data: { action: 'duplicate', id: taskId, assigned_by: seeded.ownerId },
   })
@@ -161,7 +161,7 @@ test('UC18 duplicates a task', async ({ request }) => {
   expect(body.task).toMatchObject({ title: 'Prep closing checklist (copy)', status: 'Assigned', percentage_complete: 0 })
 })
 
-test('UC19 creates recurring task copies', async ({ request }) => {
+test('UC20 creates recurring task copies', async ({ request }) => {
   const res = await request.post('/api/task', {
     data: {
       action: 'recurring',
@@ -176,7 +176,7 @@ test('UC19 creates recurring task copies', async ({ request }) => {
   expect(body.tasks.map((task: { task_date: string }) => task.task_date)).toEqual(['2026-07-08', '2026-07-15'])
 })
 
-test('UC21 returns tasks in calendar range', async ({ request }) => {
+test('UC23 returns tasks in calendar range', async ({ request }) => {
   const res = await request.get(`/api/task?company_id=${seeded.companyId}&calendar=true&date_from=2026-07-01&date_to=2026-07-08`)
   expect(res.status()).toBe(200)
   const body = await res.json()
@@ -185,7 +185,7 @@ test('UC21 returns tasks in calendar range', async ({ request }) => {
   ]))
 })
 
-test('UC22 generates an AI task assignment suggestion', async ({ request }) => {
+test('UC24 generates an AI task assignment suggestion', async ({ request }) => {
   const res = await request.post('/api/ai/assign', {
     data: {
       company_id: seeded.companyId,
@@ -204,7 +204,7 @@ test('UC22 generates an AI task assignment suggestion', async ({ request }) => {
   expect(body.suggestion.steps.length).toBeGreaterThan(0)
 })
 
-test('UC23 shows a workload rebalancing suggestion', async ({ request }) => {
+test('UC25 shows a workload rebalancing suggestion', async ({ request }) => {
   await createTask(request, { title: 'Extra active task', shift_id: null })
   await createTask(request, { title: 'Lightly loaded manager task', shift_id: null, assigned_user_id: managerB.userId })
 
@@ -218,7 +218,7 @@ test('UC23 shows a workload rebalancing suggestion', async ({ request }) => {
   })
 })
 
-test('UC24 shows a task reassignment suggestion', async ({ request }) => {
+test('UC26 shows a task reassignment suggestion', async ({ request }) => {
   const res = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=reassignment&task_id=${taskId}`)
   expect(res.status()).toBe(200)
   const body = await res.json()
@@ -229,14 +229,14 @@ test('UC24 shows a task reassignment suggestion', async ({ request }) => {
   })
 })
 
-test('UC25 shows stalled task alerts', async ({ request }) => {
+test('UC27 shows stalled task alerts', async ({ request }) => {
   const res = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=stalled&stale_after_days=-1`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   expect(body.alerts).toEqual(expect.arrayContaining([expect.objectContaining({ task_id: taskId })]))
 })
 
-test('UC26 sets task dependencies', async ({ request }) => {
+test('UC28 sets task dependencies', async ({ request }) => {
   const dependency = await createTask(request, { title: 'Dependency task', shift_id: null, assigned_user_id: managerB.userId })
   dependencyTaskId = dependency.id
 
@@ -254,7 +254,7 @@ test('UC26 sets task dependencies', async ({ request }) => {
   ]))
 })
 
-test('UC20 archives a task', async ({ request }) => {
+test('UC21 archives a task', async ({ request }) => {
   const res = await request.patch('/api/task', {
     data: { id: taskId, action: 'archive' },
   })
@@ -263,7 +263,7 @@ test('UC20 archives a task', async ({ request }) => {
   expect(body.task).toMatchObject({ id: taskId, status: 'Complete', percentage_complete: 100 })
 })
 
-test('UC17 deletes a task', async ({ request }) => {
+test('UC18 deletes a task', async ({ request }) => {
   const res = await request.delete(`/api/task?id=${taskId}`)
   expect(res.status()).toBe(200)
   expect(await res.json()).toMatchObject({ success: true })

@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import { createClient } from '@supabase/supabase-js'
 import { seedTestOwnerAndCompany, cleanupTestOwnerAndCompany, TestOwner } from '../helpers/seed'
 
-// Integration tests for Module 1 — Shift Template.
+// Integration tests for Module 1 — Shift (UC4 Create Shift Template).
 // Hits the real route.ts -> service -> repository -> Supabase chain, no UI involved.
 
 const admin = createClient(

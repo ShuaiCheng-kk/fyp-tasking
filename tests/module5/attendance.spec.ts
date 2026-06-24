@@ -112,7 +112,7 @@ test.afterAll(async () => {
   await cleanupTestOwnerAndCompany(seeded)
 })
 
-test('UC59 and UC61 clock in, clock out, and view attendance status', async ({ request }) => {
+test('UC62 and UC64 clock in, clock out, and view attendance status', async ({ request }) => {
   const clockIn = await request.post('/api/casual/attendance', {
     data: {
       action: 'clock_in',
@@ -152,7 +152,7 @@ test('UC59 and UC61 clock in, clock out, and view attendance status', async ({ r
   )
 })
 
-test('UC60 reviews attendance through manager and owner decisions', async ({ request }) => {
+test('UC63 reviews attendance through manager and owner decisions', async ({ request }) => {
   const dashboard = await request.get(`/api/attendance?company_id=${seeded.companyId}`)
   expect(dashboard.status()).toBe(200)
   const dashboardBody = await dashboard.json()
@@ -183,7 +183,7 @@ test('UC60 reviews attendance through manager and owner decisions', async ({ req
   expect(await ownerReview.json()).toMatchObject({ success: true, record: { owner_status: 'approved', status: 'owner_approved' } })
 })
 
-test('UC62, UC63, UC68, and UC69 submit availability and leave requests', async ({ request }) => {
+test('UC65, UC66, UC71, and UC72 submit availability and leave requests', async ({ request }) => {
   const fixed = await request.post('/api/user/fixed-off-days', {
     data: {
       user_id: worker.userId,
@@ -234,7 +234,7 @@ test('UC62, UC63, UC68, and UC69 submit availability and leave requests', async 
   )
 })
 
-test('UC64 and UC65 submit and approve a shift swap request', async ({ request }) => {
+test('UC67 and UC68 submit and approve a shift swap request', async ({ request }) => {
   const submit = await request.post('/api/user/shift-swap-requests', {
     data: {
       company_id: seeded.companyId,
@@ -277,7 +277,7 @@ test('UC64 and UC65 submit and approve a shift swap request', async ({ request }
   expect(assignment!.user_id).toBe(replacement.userId)
 })
 
-test('UC66 and UC67 review timesheets with auto-approval settings', async ({ request }) => {
+test('UC69 and UC70 review timesheets with auto-approval settings', async ({ request }) => {
   const res = await request.post('/api/ai/timesheets', {
     data: {
       company_id: seeded.companyId,

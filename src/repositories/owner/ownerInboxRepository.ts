@@ -34,6 +34,16 @@ export const ownerInboxRepository = {
     if (error) throw error
   },
 
+  async deleteConversation(userId: string, otherUserId: string) {
+    const { error } = await supabase
+      .from('messages')
+      .delete()
+      .or(
+        `and(from_user_id.eq.${userId},to_user_id.eq.${otherUserId}),and(from_user_id.eq.${otherUserId},to_user_id.eq.${userId})`
+      )
+    if (error) throw error
+  },
+
   async insertMessage(fromUserId: string, toUserId: string, companyId: string, content: string, senderName?: string) {
     const { data, error } = await supabase
       .from('messages')

@@ -121,14 +121,16 @@ Reference `docs/Use_Cases_List.md` for the UC list. **Every UC must go through t
 
 1. **Build the backend** for the UC: `route.ts` -> `service.ts` -> `repository.ts` (MVC + Repository, section 4).
 2. **Write and run a Unit Test** for the service-layer logic — Vitest, co-located next to the service file as `xxxService.test.ts` (e.g. `src/services/company/companyService.test.ts`). Mock the repository module it calls, and always mock `@/lib/supabase` (`vi.mock('@/lib/supabase', () => ({ supabase: {}, createClient: () => ({}) }))`) so unit tests need no real env vars or network access. Run with `npm test`.
-3. **Write and run an Integration/API Test** for the route — Playwright `request` fixture (no browser) hitting the real `route.ts` endpoint against the real dev Supabase project, in `tests/api/<feature>.spec.ts`. Use the seeding helper pattern in `tests/helpers/seed.ts` (create a throwaway Owner+Company via the service-role client, clean it up in `afterAll`). Run with `npm run test:api`.
+3. **Write and run an Integration/API Test** for the route — Playwright `request` fixture (no browser) hitting the real `route.ts` endpoint against the real dev Supabase project, in `tests/module<N>/<feature>.spec.ts` (one folder per module, e.g. `tests/module6/communication.spec.ts`). Use the seeding helper pattern in `tests/helpers/seed.ts` (create a throwaway Owner+Company via the service-role client, clean it up in `afterAll`). Run with `npm run test:playwright -- tests/module<N>`.
 4. **If a test fails, fix the implementation (or the test, if the test was wrong) before continuing.** Never move forward with a known-failing test.
-5. **After any fix, re-run the full existing Unit + Integration suite** (`npm test` and `npm run test:api`), not just the one use case you were working on — this is the regression check that catches a fix breaking something else.
+5. **After any fix, re-run the full existing Unit + Integration suite** (`npm test` and `npm run test:playwright`), not just the one use case you were working on — this is the regression check that catches a fix breaking something else.
 6. **Only once Unit + Integration pass, build the UI** for the UC (`page.tsx`, calling the API route only).
 7. **Hand the UI/usage back to the user for review.** If the user finds a problem (logic or UI), fix it, then go back to step 2 and re-run the full Unit + Integration suite again before re-presenting.
 8. **User does a manual real-use pass** once they're satisfied with the review in step 7. Once the user confirms no issues, move to the next UC — no diagram or use-case-description doc needs to be generated per UC; the code itself (per the conventions in section 5) is sufficient to draw the Class Diagram and Sequence Diagram on demand later.
 
-**E2E is the exception — it is NOT required per use case.** Reserve Playwright browser tests (`tests/e2e/<flow>.spec.ts`, `page` fixture, run with `npm run test:e2e`) for the P1 core user journeys (the ones tied to Smart Task Allocation, e.g. job posting -> hire -> schedule -> assign task -> clock in -> attendance approval) once that journey's UI is wired end to end. Add to it incrementally and re-run it as regression whenever related code changes — do not write a new E2E spec for every use case.
+**E2E is the exception — it is NOT required per use case.** Reserve Playwright browser tests (`tests/module<N>/<flow>-ui.spec.ts`, `page` fixture, run with `npm run test:playwright -- tests/module<N>`) for the P1 core user journeys (the ones tied to Smart Task Allocation, e.g. job posting -> hire -> schedule -> assign task -> clock in -> attendance approval) once that journey's UI is wired end to end. Add to it incrementally and re-run it as regression whenever related code changes — do not write a new E2E spec for every use case.
+
+**Test folder structure:** all Playwright specs (both Integration/API and E2E) live under `tests/module<N>/`, grouped by module rather than by test type — e.g. `tests/module1/shift.spec.ts` (API) sits next to `tests/module1/shift-ui.spec.ts` (E2E) if one exists. Shared seeding helpers live in `tests/helpers/`, not under any module folder.
 
 **File-naming rule to avoid the two test runners colliding:** Unit Test files use the `.test.ts` suffix and live under `src/`; Integration and E2E files use the `.spec.ts` suffix and live under `tests/`. Vitest is configured to only look at `src/**/*.test.ts`; Playwright's `testDir` is `./tests`. Keep this split — do not rename across it.
 
@@ -138,14 +140,16 @@ Reference `docs/Use_Cases_List.md` for the UC list. **Every UC must go through t
 
 Modules 10 (Marketing CMS) and 11 (User & Company Admin) are **out of scope** — owned by a separate team. Build order for the remaining 9 modules, derived from data/feature dependencies (earlier modules are depended on by later ones):
 
-1. **Module 9 — Account & Authentication** (UC82–88) — foundation; nothing else works without registration/login/company creation.
-2. **Module 3 — Team / Company** (UC27–40) — departments, members, company profile that every other module references.
-3. **Module 1 — Shift** (UC1–13) — scheduling is the base Task and Attendance sit on.
-4. **Module 2 — Task** (UC14–26) — tasks are assigned on shifts.
-5. **Module 5 — Attendance** (UC59–69) — clock in/out and the approval chain depend on shift assignment existing.
-6. **Module 4 — Recruitment** (UC41–58) — hiring pipeline that feeds Casual Workers, which Shift/Task/Attendance then consume for that role.
-7. **Module 6 — Communication** (UC70–73) — independent; announcements and messages.
-8. **Module 8 — Settings & Billing** (UC77–81) — multi-company switching and subscription management, gated onto features that already exist by this point.
-9. **Module 7 — Report** (UC74–76) — downstream consumer of Shift/Task/Attendance data; build last.
+1. **Module 9 — Account & Authentication** (UC85–91) — foundation; nothing else works without registration/login/company creation.
+2. **Module 3 — Team / Company** (UC29–43) — departments, members, company profile that every other module references.
+3. **Module 1 — Shift** (UC1–14) — scheduling is the base Task and Attendance sit on.
+4. **Module 2 — Task** (UC15–28) — tasks are assigned on shifts.
+5. **Module 5 — Attendance** (UC62–72) — clock in/out and the approval chain depend on shift assignment existing.
+6. **Module 4 — Recruitment** (UC44–61) — hiring pipeline that feeds Casual Workers, which Shift/Task/Attendance then consume for that role.
+7. **Module 6 — Communication** (UC73–76) — independent; announcements and messages.
+8. **Module 8 — Settings & Billing** (UC80–84) — multi-company switching and subscription management, gated onto features that already exist by this point.
+9. **Module 7 — Report** (UC77–79) — downstream consumer of Shift/Task/Attendance data; build last.
 
 **Autonomous execution rule:** When the user names a module to start (e.g. "做 Module 1" / "开始 Module 3"), pull every UC belonging to that module from `docs/Use_Cases_List.md` and run each one through the full workflow in section 8 — back-to-back, without asking the user which UC to do next or how to do it. Only stop and surface work to the user at the review checkpoints in section 8 steps 7–8 (UI/usage review, then the user's manual real-use pass). Iterate on the user's feedback (fix → re-run the full Unit + Integration suite → re-present) until the user signs the module off (e.g. "pass" / "OK" / "没问题"). Once signed off, automatically continue to the next module in the build order above without waiting to be told — the user only needs to speak up to skip ahead, switch to a different module, or pause. This rule applies in any conversation, new or resumed, since this file is loaded at the start of every session.
+
+**A module is not "done" without its tests in the matching folder.** Every time you build or touch UCs for Module N — UI, backend, or a bugfix — the corresponding Integration/API and (if applicable) E2E spec files must exist under `tests/module<N>/` before you consider that UC finished, per section 8 step 3. Do not leave a module's tests scattered in old `tests/api/`/`tests/e2e/`-style locations, do not skip writing the test "for speed," and do not wait for the user to ask for it separately — it is part of building the module, not an optional add-on. If you discover an existing UC in that module has no test (e.g. while reviewing or extending it), backfill it in the same `tests/module<N>/` folder before moving on, even if that UC was supposedly finished in an earlier session.
