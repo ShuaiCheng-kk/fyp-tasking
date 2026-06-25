@@ -13,6 +13,7 @@ vi.mock('@/repositories/owner/taskRepository', () => ({
     getTasksByShiftForCompany: vi.fn(),
     getSubTasks: vi.fn(),
     getTaskById: vi.fn(),
+    getTasksByRecurrenceGroupId: vi.fn(),
     getUserById: vi.fn(),
     getManagerDepartmentIds: vi.fn(),
     getEmployeeDepartmentIds: vi.fn(),
@@ -38,6 +39,7 @@ const baseTask: Task = {
   company_id: 'company-1',
   department_id: 'dept-1',
   parent_task_id: null,
+  sequence_order: null,
   title: 'Stock shelves',
   description: null,
   assigned_user_id: 'manager-1',
@@ -47,6 +49,8 @@ const baseTask: Task = {
   priority: 'Medium',
   due_at: '2026-06-25T17:00:00.000Z',
   task_date: '2026-06-25',
+  recurrence_group_id: null,
+  source_task_id: null,
   created_at: '2026-06-20T00:00:00.000Z',
   updated_at: '2026-06-20T00:00:00.000Z',
 }
@@ -173,9 +177,39 @@ describe('taskService — Task (UC14-26)', () => {
     })
 
     it('deletes sub-tasks before deleting the task', async () => {
+      vi.mocked(taskRepository.getTaskById).mockResolvedValue(baseTask)
       await taskService.deleteTask('task-1')
       expect(taskRepository.deleteSubTasksByParent).toHaveBeenCalledWith('task-1')
       expect(taskRepository.deleteTask).toHaveBeenCalledWith('task-1')
+    })
+
+    it('cascades to every sibling occurrence when deleting the original of a recurring series', async () => {
+      const original = { ...baseTask, id: 'task-1', recurrence_group_id: 'group-1', source_task_id: null }
+      const sibling1 = { ...baseTask, id: 'task-2', recurrence_group_id: 'group-1', source_task_id: 'task-1' }
+      const sibling2 = { ...baseTask, id: 'task-3', recurrence_group_id: 'group-1', source_task_id: 'task-1' }
+      vi.mocked(taskRepository.getTaskById).mockResolvedValue(original)
+      vi.mocked(taskRepository.getTasksByRecurrenceGroupId).mockResolvedValue([original, sibling1, sibling2])
+
+      await taskService.deleteTask('task-1')
+
+      expect(taskRepository.getTasksByRecurrenceGroupId).toHaveBeenCalledWith('group-1')
+      for (const id of ['task-1', 'task-2', 'task-3']) {
+        expect(taskRepository.deleteSubTasksByParent).toHaveBeenCalledWith(id)
+        expect(taskRepository.deleteTask).toHaveBeenCalledWith(id)
+      }
+    })
+
+    it('only deletes the one occurrence when deleting a sibling (not the original)', async () => {
+      const sibling = { ...baseTask, id: 'task-2', recurrence_group_id: 'group-1', source_task_id: 'task-1' }
+      vi.mocked(taskRepository.getTaskById).mockResolvedValue(sibling)
+
+      await taskService.deleteTask('task-2')
+
+      expect(taskRepository.getTasksByRecurrenceGroupId).not.toHaveBeenCalled()
+      expect(taskRepository.deleteSubTasksByParent).toHaveBeenCalledTimes(1)
+      expect(taskRepository.deleteSubTasksByParent).toHaveBeenCalledWith('task-2')
+      expect(taskRepository.deleteTask).toHaveBeenCalledTimes(1)
+      expect(taskRepository.deleteTask).toHaveBeenCalledWith('task-2')
     })
   })
 
@@ -234,6 +268,210 @@ describe('taskService — Task (UC14-26)', () => {
       expect(result).toHaveLength(2)
       expect(result.map(t => t.task_date)).toEqual(['2026-07-02', '2026-07-09'])
     })
+
+    it('copies the sub-task checklist onto every occurrence, shifted to that occurrence\'s date', async () => {
+      vi.mocked(taskRepository.getTaskById).mockResolvedValue(baseTask)
+      vi.mocked(taskRepository.getSubTasks).mockResolvedValue([
+        { ...baseTask, id: 'sub-1', parent_task_id: 'task-1', sequence_order: 0, title: 'Unlock doors', due_at: null, task_date: '2026-06-25' },
+        { ...baseTask, id: 'sub-2', parent_task_id: 'task-1', sequence_order: 1, title: 'Turn on lights', due_at: '2026-06-25T13:00:00.000Z', task_date: '2026-06-25' },
+      ])
+      let callCount = 0
+      vi.mocked(taskRepository.createTask).mockImplementation(async (input) => ({
+        ...baseTask, id: `created-${++callCount}`, parent_task_id: input.parent_task_id ?? null,
+        title: input.title, due_at: input.due_at ?? null, task_date: input.task_date ?? null,
+      }))
+
+      const result = await taskService.createRecurringTasks('task-1', {
+        recurrence_rule: 'daily', recurrence_end_date: '2026-06-26',
+      })
+
+      expect(result).toHaveLength(1) // only main-task copies are returned, sub-task copies are a side effect
+      expect(taskRepository.createTask).toHaveBeenCalledTimes(3) // 1 main copy + 2 sub-task copies
+      const subTaskCalls = vi.mocked(taskRepository.createTask).mock.calls.filter(([input]) => input.parent_task_id === result[0].id)
+      expect(subTaskCalls).toHaveLength(2)
+      expect(subTaskCalls.map(([input]) => input.title).sort()).toEqual(['Turn on lights', 'Unlock doors'])
+      expect(subTaskCalls.map(([input]) => input.task_date)).toEqual(['2026-06-26', '2026-06-26'])
+    })
+
+    it('preserves the original deadline\'s local wall-clock time on the new date (UTC+8 2AM stays 2AM, not the next day)', async () => {
+      vi.mocked(taskRepository.getTaskById).mockResolvedValue({
+        ...baseTask, task_date: '2026-06-26', due_at: '2026-06-25T18:00:00.000Z', // 2026-06-26T02:00 UTC+8
+      })
+      vi.mocked(taskRepository.getSubTasks).mockResolvedValue([])
+      vi.mocked(taskRepository.createTask).mockImplementation(async (input) => ({
+        ...baseTask, id: 'copy-1', due_at: input.due_at ?? null, task_date: input.task_date ?? null,
+      }))
+      const originalTZ = process.env.TZ
+      process.env.TZ = 'Asia/Singapore'
+
+      const result = await taskService.createRecurringTasks('task-1', {
+        recurrence_rule: 'daily', recurrence_end_date: '2026-06-27',
+      })
+
+      process.env.TZ = originalTZ
+      expect(result[0].task_date).toBe('2026-06-27')
+      expect(result[0].due_at).toBe('2026-06-26T18:00:00.000Z') // still 2AM local on the 27th, not the 28th
+    })
+
+    it('rejects editing the recurrence from a sibling occurrence, only the original may', async () => {
+      vi.mocked(taskRepository.getTaskById).mockResolvedValue({
+        ...baseTask, id: 'task-2', recurrence_group_id: 'group-1', source_task_id: 'task-1',
+      })
+      await expect(taskService.createRecurringTasks('task-2', {
+        recurrence_rule: 'daily', recurrence_end_date: '2026-06-30',
+      })).rejects.toThrow('Only the original task in a recurring series can have its recurrence edited')
+    })
+
+    it('tags the original and every created copy with a shared recurrence_group_id and source_task_id', async () => {
+      vi.mocked(taskRepository.getTaskById).mockResolvedValue(baseTask)
+      vi.mocked(taskRepository.getSubTasks).mockResolvedValue([])
+      vi.mocked(taskRepository.createTask).mockImplementation(async (input) => ({
+        ...baseTask, id: `copy-${input.task_date}`, task_date: input.task_date ?? null,
+        recurrence_group_id: input.recurrence_group_id ?? null, source_task_id: input.source_task_id ?? null,
+      }))
+
+      const result = await taskService.createRecurringTasks('task-1', {
+        recurrence_rule: 'daily', recurrence_end_date: '2026-06-27',
+      })
+
+      expect(taskRepository.updateTask).toHaveBeenCalledWith('task-1', { recurrence_group_id: expect.any(String) })
+      const groupId = vi.mocked(taskRepository.updateTask).mock.calls[0][1].recurrence_group_id
+      expect(result.every(t => t.recurrence_group_id === groupId)).toBe(true)
+      expect(result.every(t => t.source_task_id === 'task-1')).toBe(true)
+    })
+
+    it('replaces previously generated occurrences when recurrence is re-run on the original', async () => {
+      const original = { ...baseTask, id: 'task-1', recurrence_group_id: 'group-1', source_task_id: null }
+      const oldSibling = { ...baseTask, id: 'old-copy', recurrence_group_id: 'group-1', source_task_id: 'task-1' }
+      vi.mocked(taskRepository.getTaskById).mockResolvedValue(original)
+      vi.mocked(taskRepository.getTasksByRecurrenceGroupId).mockResolvedValue([original, oldSibling])
+      vi.mocked(taskRepository.getSubTasks).mockResolvedValue([])
+      vi.mocked(taskRepository.createTask).mockImplementation(async (input) => ({ ...baseTask, id: `copy-${input.task_date}` }))
+
+      await taskService.createRecurringTasks('task-1', {
+        recurrence_rule: 'daily', recurrence_end_date: '2026-06-27',
+      })
+
+      expect(taskRepository.deleteSubTasksByParent).toHaveBeenCalledWith('old-copy')
+      expect(taskRepository.deleteTask).toHaveBeenCalledWith('old-copy')
+    })
+
+    describe('deadline_rule', () => {
+      beforeEach(() => {
+        vi.mocked(taskRepository.getSubTasks).mockResolvedValue([])
+        vi.mocked(taskRepository.createTask).mockImplementation(async (input) => ({
+          ...baseTask, id: `copy-${input.task_date}`, task_date: input.task_date ?? null, due_at: input.due_at ?? null,
+        }))
+      })
+
+      it('same_day: every occurrence is due the same day at the given time, including the original', async () => {
+        vi.mocked(taskRepository.getTaskById).mockResolvedValue({ ...baseTask, task_date: '2026-06-26' })
+
+        const result = await taskService.createRecurringTasks('task-1', {
+          recurrence_rule: 'daily', recurrence_end_date: '2026-06-28',
+          deadline_rule: { type: 'same_day', time: '21:00' },
+        })
+
+        expect(taskRepository.updateTask).toHaveBeenCalledWith('task-1', expect.objectContaining({
+          due_at: new Date('2026-06-26T21:00:00').toISOString(),
+        }))
+        expect(result.map(t => t.due_at)).toEqual([
+          new Date('2026-06-27T21:00:00').toISOString(),
+          new Date('2026-06-28T21:00:00').toISOString(),
+        ])
+      })
+
+      it('fixed_day: "repeat every Monday, due every Friday" lands deadline in the same week', async () => {
+        // 2026-06-22 is a Monday
+        vi.mocked(taskRepository.getTaskById).mockResolvedValue({ ...baseTask, task_date: '2026-06-22' })
+
+        const result = await taskService.createRecurringTasks('task-1', {
+          recurrence_rule: 'weekly', recurrence_end_date: '2026-06-29',
+          deadline_rule: { type: 'fixed_day', weekday: 5, time: '17:00' }, // Friday
+        })
+
+        expect(taskRepository.updateTask).toHaveBeenCalledWith('task-1', expect.objectContaining({
+          due_at: new Date('2026-06-26T17:00:00').toISOString(), // Friday of that same week
+        }))
+        expect(result.map(t => t.due_at)).toEqual([
+          new Date('2026-07-03T17:00:00').toISOString(),
+        ])
+      })
+
+      it('fixed_day: wraps to the following week when the occurrence starts after the deadline weekday', async () => {
+        // 2026-06-27 is a Saturday — later in the week than Friday (weekday 5)
+        vi.mocked(taskRepository.getTaskById).mockResolvedValue({ ...baseTask, task_date: '2026-06-27' })
+
+        await taskService.createRecurringTasks('task-1', {
+          recurrence_rule: 'weekly', recurrence_end_date: '2026-07-11',
+          deadline_rule: { type: 'fixed_day', weekday: 5, time: '17:00' },
+        })
+
+        expect(taskRepository.updateTask).toHaveBeenCalledWith('task-1', expect.objectContaining({
+          due_at: new Date('2026-07-03T17:00:00').toISOString(), // next Friday, not the one already passed
+        }))
+      })
+
+      it('fixed_day is rejected outside weekly recurrence', async () => {
+        vi.mocked(taskRepository.getTaskById).mockResolvedValue({ ...baseTask, task_date: '2026-06-26' })
+
+        await expect(taskService.createRecurringTasks('task-1', {
+          recurrence_rule: 'daily', recurrence_end_date: '2026-06-28',
+          deadline_rule: { type: 'fixed_day', weekday: 5, time: '17:00' },
+        })).rejects.toThrow('Fixed day deadlines are only available for weekly recurrence')
+      })
+
+      it('relative: due within X days after the occurrence is generated', async () => {
+        vi.mocked(taskRepository.getTaskById).mockResolvedValue({ ...baseTask, task_date: '2026-06-01' })
+
+        const result = await taskService.createRecurringTasks('task-1', {
+          recurrence_rule: 'custom', custom_interval_days: 31, recurrence_end_date: '2026-07-02',
+          deadline_rule: { type: 'relative', offset_amount: 3, offset_unit: 'days' },
+        })
+
+        expect(taskRepository.updateTask).toHaveBeenCalledWith('task-1', expect.objectContaining({
+          due_at: new Date('2026-06-04T00:00:00').toISOString(),
+        }))
+        expect(result.map(t => t.due_at)).toEqual([
+          new Date('2026-07-05T00:00:00').toISOString(),
+        ])
+      })
+
+      it('relative: due within X hours after the occurrence is generated', async () => {
+        vi.mocked(taskRepository.getTaskById).mockResolvedValue({ ...baseTask, task_date: '2026-06-26' })
+
+        await taskService.createRecurringTasks('task-1', {
+          recurrence_rule: 'daily', recurrence_end_date: '2026-06-27',
+          deadline_rule: { type: 'relative', offset_amount: 5, offset_unit: 'hours' },
+        })
+
+        expect(taskRepository.updateTask).toHaveBeenCalledWith('task-1', expect.objectContaining({
+          due_at: new Date('2026-06-26T05:00:00').toISOString(),
+        }))
+      })
+
+      it('rejects relative without offset_amount/offset_unit', async () => {
+        vi.mocked(taskRepository.getTaskById).mockResolvedValue({ ...baseTask, task_date: '2026-06-26' })
+
+        await expect(taskService.createRecurringTasks('task-1', {
+          recurrence_rule: 'daily', recurrence_end_date: '2026-06-28',
+          deadline_rule: { type: 'relative' },
+        })).rejects.toThrow('deadline_rule.offset_amount and offset_unit are required for relative')
+      })
+
+      it('without deadline_rule, behavior is unchanged: moveIsoDate shifts the original due_at', async () => {
+        vi.mocked(taskRepository.getTaskById).mockResolvedValue({
+          ...baseTask, task_date: '2026-06-26', due_at: '2026-06-26T13:00:00.000Z',
+        })
+
+        const result = await taskService.createRecurringTasks('task-1', {
+          recurrence_rule: 'daily', recurrence_end_date: '2026-06-27',
+        })
+
+        expect(taskRepository.updateTask).toHaveBeenCalledWith('task-1', { recurrence_group_id: expect.any(String) })
+        expect(result[0].due_at).toBe('2026-06-27T13:00:00.000Z')
+      })
+    })
   })
 
   describe('archiveTask (UC20)', () => {
@@ -275,39 +513,89 @@ describe('taskService — Task (UC14-26)', () => {
     })
   })
 
-  describe('setTaskDependencies (UC26)', () => {
-    it('requires an id', async () => {
-      await expect(taskService.setTaskDependencies('', ['task-2'])).rejects.toThrow('Task id is required')
+  describe('assignTaskWithSubTasks (UC22)', () => {
+    it('creates the main task without sequence_order when there is only one sub-task', async () => {
+      vi.mocked(taskRepository.createTask).mockImplementation(async input => ({ ...baseTask, ...input, id: input.parent_task_id ? 'sub-1' : 'main-1' }))
+
+      await taskService.assignTaskWithSubTasks(
+        { company_id: 'company-1', department_id: 'dept-1', title: 'Main task' },
+        [{ title: 'Only sub-task' }],
+      )
+
+      expect(taskRepository.createTask).toHaveBeenCalledTimes(2)
+      expect(taskRepository.createTask).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        title: 'Only sub-task', parent_task_id: 'main-1', sequence_order: null,
+      }))
     })
 
-    it('rejects a non-array dependency_ids', async () => {
-      await expect(taskService.setTaskDependencies('task-1', 'task-2' as any))
-        .rejects.toThrow('dependency_ids must be an array')
+    it('assigns 0-based sequence_order to sub-tasks when there are 2 or more', async () => {
+      vi.mocked(taskRepository.createTask).mockImplementation(async input => ({ ...baseTask, ...input, id: input.parent_task_id ? `sub-${input.title}` : 'main-1' }))
+
+      await taskService.assignTaskWithSubTasks(
+        { company_id: 'company-1', department_id: 'dept-1', title: 'Main task' },
+        [{ title: 'First' }, { title: 'Second' }],
+      )
+
+      expect(taskRepository.createTask).toHaveBeenCalledTimes(3)
+      expect(taskRepository.createTask).toHaveBeenNthCalledWith(2, expect.objectContaining({ title: 'First', sequence_order: 0 }))
+      expect(taskRepository.createTask).toHaveBeenNthCalledWith(3, expect.objectContaining({ title: 'Second', sequence_order: 1 }))
     })
 
-    it('rejects a task depending on itself', async () => {
-      vi.mocked(taskRepository.getTaskById).mockResolvedValue(baseTask)
-      await expect(taskService.setTaskDependencies('task-1', ['task-1']))
-        .rejects.toThrow('Task cannot depend on itself')
+    it('skips blank sub-task titles', async () => {
+      vi.mocked(taskRepository.createTask).mockResolvedValue({ ...baseTask, id: 'main-1' })
+
+      await taskService.assignTaskWithSubTasks(
+        { company_id: 'company-1', department_id: 'dept-1', title: 'Main task' },
+        [{ title: '   ' }],
+      )
+
+      expect(taskRepository.createTask).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('reorderSubTasks (UC28)', () => {
+    it('requires a parent task id', async () => {
+      await expect(taskService.reorderSubTasks('', ['sub-1'])).rejects.toThrow('Task id is required')
     })
 
-    it('rejects a dependency from a different company', async () => {
-      vi.mocked(taskRepository.getTaskById).mockImplementation(async (id: string) =>
-        id === 'task-1' ? baseTask : { ...baseTask, id: 'task-2', company_id: 'company-2' })
-
-      await expect(taskService.setTaskDependencies('task-1', ['task-2']))
-        .rejects.toThrow('Dependency must belong to the same company')
+    it('rejects a non-array sub_task_ids', async () => {
+      await expect(taskService.reorderSubTasks('task-1', 'sub-1' as any))
+        .rejects.toThrow('sub_task_ids must be an array')
     })
 
-    it('sets parent_task_id on each dependency', async () => {
-      vi.mocked(taskRepository.getTaskById).mockImplementation(async (id: string) =>
-        id === 'task-1' ? baseTask : { ...baseTask, id: 'task-2', company_id: 'company-1' })
-      vi.mocked(taskRepository.updateTask).mockResolvedValue({ ...baseTask, id: 'task-2', parent_task_id: 'task-1' })
+    it('rejects a sub_task_ids list that does not match the existing sub-tasks', async () => {
+      vi.mocked(taskRepository.getSubTasks).mockResolvedValue([
+        { ...baseTask, id: 'sub-1', parent_task_id: 'task-1' },
+        { ...baseTask, id: 'sub-2', parent_task_id: 'task-1' },
+      ])
 
-      const result = await taskService.setTaskDependencies('task-1', ['task-2'])
+      await expect(taskService.reorderSubTasks('task-1', ['sub-1']))
+        .rejects.toThrow('sub_task_ids must match the parent task\'s existing sub-tasks')
+    })
 
-      expect(taskRepository.updateTask).toHaveBeenCalledWith('task-2', { parent_task_id: 'task-1' })
-      expect(result).toHaveLength(1)
+    it('clears sequence_order when reordered down to a single sub-task', async () => {
+      vi.mocked(taskRepository.getSubTasks).mockResolvedValue([
+        { ...baseTask, id: 'sub-1', parent_task_id: 'task-1' },
+      ])
+      vi.mocked(taskRepository.updateTask).mockResolvedValue({ ...baseTask, id: 'sub-1', sequence_order: null })
+
+      await taskService.reorderSubTasks('task-1', ['sub-1'])
+
+      expect(taskRepository.updateTask).toHaveBeenCalledWith('sub-1', { sequence_order: null })
+    })
+
+    it('assigns 0-based sequence_order in the given order', async () => {
+      vi.mocked(taskRepository.getSubTasks).mockResolvedValue([
+        { ...baseTask, id: 'sub-1', parent_task_id: 'task-1' },
+        { ...baseTask, id: 'sub-2', parent_task_id: 'task-1' },
+      ])
+      vi.mocked(taskRepository.updateTask).mockImplementation(async (id, input) => ({ ...baseTask, id, ...input }))
+
+      const result = await taskService.reorderSubTasks('task-1', ['sub-2', 'sub-1'])
+
+      expect(taskRepository.updateTask).toHaveBeenNthCalledWith(1, 'sub-2', { sequence_order: 0 })
+      expect(taskRepository.updateTask).toHaveBeenNthCalledWith(2, 'sub-1', { sequence_order: 1 })
+      expect(result).toHaveLength(2)
     })
   })
 

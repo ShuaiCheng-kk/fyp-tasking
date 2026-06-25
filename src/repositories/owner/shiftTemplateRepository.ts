@@ -46,4 +46,15 @@ export const shiftTemplateRepository = {
     if (error) throw new Error(error.message)
   },
 
+  async updateTemplate(id: string, fields: Partial<Pick<ShiftTemplateInput, 'name' | 'start_time' | 'end_time'>>): Promise<ShiftTemplate> {
+    const { data, error } = await supabase
+      .from('shift_templates')
+      .update(fields)
+      .eq('id', id)
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data as ShiftTemplate
+  },
+
 }

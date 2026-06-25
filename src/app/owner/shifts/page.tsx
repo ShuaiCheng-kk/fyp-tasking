@@ -871,6 +871,7 @@ export default function OwnerShiftsPage() {
   const [aiShiftCreateError, setAiShiftCreateError] = useState('')
   const [aiResultWeekOffset, setAiResultWeekOffset] = useState(0)
   const [aiStaffAvailability, setAiStaffAvailability] = useState<Map<string, { fixedOffWeekdays: Set<number>; approvedLeaveDates: Set<string> }>>(new Map())
+  const [aiShiftKnownRows, setAiShiftKnownRows] = useState<Map<string, { name: string; deptId: string; deptName: string; isUnassigned: boolean }>>(new Map())
 
   const [bulkEditModalOpen, setBulkEditModalOpen] = useState(false)
   const [bulkEditDateFrom, setBulkEditDateFrom] = useState('')
@@ -890,6 +891,12 @@ export default function OwnerShiftsPage() {
   const [templateSaveLoading, setTemplateSaveLoading] = useState(false)
   const [templateSaveError, setTemplateSaveError] = useState('')
   const [templateDeleteLoadingId, setTemplateDeleteLoadingId] = useState<string | null>(null)
+  const [templateEditId, setTemplateEditId] = useState<string | null>(null)
+  const [templateEditName, setTemplateEditName] = useState('')
+  const [templateEditStartTime, setTemplateEditStartTime] = useState('')
+  const [templateEditEndTime, setTemplateEditEndTime] = useState('')
+  const [templateEditLoading, setTemplateEditLoading] = useState(false)
+  const [templateEditError, setTemplateEditError] = useState('')
   const [expandedBatchCells, setExpandedBatchCells] = useState<Set<string>>(new Set())
   const [editSelectedTemplateId, setEditSelectedTemplateId] = useState('')
   const [duplicateSelectedTemplateId, setDuplicateSelectedTemplateId] = useState('')
@@ -1293,7 +1300,7 @@ export default function OwnerShiftsPage() {
   const activeDeptIds = useMemo(() => {
     const ids = new Set<string>()
     for (const row of timelineRows) {
-      if (row.user_id && row.shifts.length > 0) ids.add(row.department_id)
+      if (row.user_id && row.shifts.some(shift => shift.publication_status !== 'draft')) ids.add(row.department_id)
     }
     return ids
   }, [timelineRows])
@@ -1601,6 +1608,7 @@ export default function OwnerShiftsPage() {
     setAiDraggingSlot(null)
     setAiDragOverCell(null)
     setAiStaffAvailability(new Map())
+    setAiShiftKnownRows(new Map())
     setAiShiftModal(true)
   }
 
@@ -1657,6 +1665,7 @@ export default function OwnerShiftsPage() {
     setAiDraggingSlot(null)
     setAiDragOverCell(null)
     setAiStaffAvailability(new Map())
+    setAiShiftKnownRows(new Map())
     aiGenerateAbortRef.current?.abort()
     const controller = new AbortController()
     aiGenerateAbortRef.current = controller
@@ -1727,6 +1736,23 @@ export default function OwnerShiftsPage() {
 
       if (streamError) throw new Error(streamError)
       setAiShiftSuggestions(received)
+      setAiShiftKnownRows(() => {
+        const knownRows = new Map<string, { name: string; deptId: string; deptName: string; isUnassigned: boolean }>()
+        for (const block of received) {
+          for (const slot of block.slots) {
+            const rowKey = slot.assigned_user_id ?? `unassigned_${block.department_id}`
+            if (!knownRows.has(rowKey)) {
+              knownRows.set(rowKey, {
+                name: slot.assigned_user_name ?? 'Unassigned',
+                deptId: block.department_id,
+                deptName: block.department_name,
+                isUnassigned: !slot.assigned_user_id,
+              })
+            }
+          }
+        }
+        return knownRows
+      })
       setAiShiftSelected(new Set(received.flatMap(b => b.slots.map((_, slotIndex) => aiSlotSelectionKey(b.key, slotIndex)))))
       setAiShiftNotice(doneResult?.notice ?? `AI generated ${received.length} schedule block${received.length === 1 ? '' : 's'} for Owner review.`)
       stopAiShiftProgress(true)
@@ -2746,6 +2772,52 @@ export default function OwnerShiftsPage() {
       setTemplateSaveError(err instanceof Error ? err.message : 'Failed to save template')
     } finally {
       setTemplateSaveLoading(false)
+    }
+  }
+
+  const startEditTemplate = (template: ShiftTemplate) => {
+    setTemplateEditId(template.id)
+    setTemplateEditName(template.name)
+    setTemplateEditStartTime(template.start_time.slice(0, 5))
+    setTemplateEditEndTime(template.end_time.slice(0, 5))
+    setTemplateEditError('')
+  }
+
+  const cancelEditTemplate = () => {
+    setTemplateEditId(null)
+    setTemplateEditError('')
+  }
+
+  const submitEditTemplate = async () => {
+    if (!templateEditId) return
+    if (!templateEditName.trim()) {
+      setTemplateEditError('Please name this template.')
+      return
+    }
+    setTemplateEditLoading(true)
+    setTemplateEditError('')
+    try {
+      const res = await fetch(`/api/shift-template/${templateEditId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: templateEditName.trim(),
+          start_time: templateEditStartTime,
+          end_time: templateEditEndTime,
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to update template')
+      setTemplateEditId(null)
+      if (companyId) await fetchShiftTemplates(companyId)
+      setErrorToast(null)
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+      setSuccessToast('Shift template updated')
+      toastTimerRef.current = setTimeout(() => setSuccessToast(null), 3000)
+    } catch (err) {
+      setTemplateEditError(err instanceof Error ? err.message : 'Failed to update template')
+    } finally {
+      setTemplateEditLoading(false)
     }
   }
 
@@ -4059,6 +4131,20 @@ export default function OwnerShiftsPage() {
 
                       type PersonRow = { key: string; name: string; deptId: string; deptName: string; isUnassigned: boolean; photoUrl: string | null; role: string | null }
                       const rowMap = new Map<string, PersonRow>()
+                      // Seed rows from every person seen since generation started, not just current slots —
+                      // otherwise dragging someone's last shift away makes them disappear with no way to drag one back.
+                      for (const [rowKey, known] of aiShiftKnownRows) {
+                        const member = known.isUnassigned ? undefined : membersById.get(rowKey)
+                        rowMap.set(rowKey, {
+                          key: rowKey,
+                          name: known.name,
+                          deptId: known.deptId,
+                          deptName: known.deptName,
+                          isUnassigned: known.isUnassigned,
+                          photoUrl: member?.profile_photo_url ?? null,
+                          role: member?.role ?? null,
+                        })
+                      }
                       for (const block of aiShiftSuggestions) {
                         for (const slot of block.slots) {
                           const rowKey = slot.assigned_user_id ?? `unassigned_${block.department_id}`
@@ -4924,7 +5010,7 @@ export default function OwnerShiftsPage() {
               </div>
               <button
                 type="button"
-                onClick={() => setTemplateSaveOpen(false)}
+                onClick={() => { setTemplateSaveOpen(false); cancelEditTemplate() }}
                 disabled={templateSaveLoading}
                 style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8, flexShrink: 0 }}
               >
@@ -4956,26 +5042,71 @@ export default function OwnerShiftsPage() {
                 <div>
                   <span style={{ display: 'block', fontWeight: 600, fontSize: '0.8125rem', color: '#374151', marginBottom: 6 }}>Existing templates</span>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {shiftTemplates.map(t => (
-                      <div key={t.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '7px 10px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8 }}>
-                        <span style={{ fontSize: 12.5, color: TEXT_DARK }}>{t.name} · {formatShiftHour(t.start_time)}–{formatShiftHour(t.end_time)}</span>
-                        <button
-                          type="button"
-                          onClick={() => deleteTemplate(t.id)}
-                          disabled={templateDeleteLoadingId === t.id}
-                          style={{ border: 'none', background: 'transparent', color: '#DC2626', cursor: 'pointer', display: 'flex', padding: 4 }}
-                        >
-                          {templateDeleteLoadingId === t.id ? <Spinner size={12} /> : <Trash2 size={13} />}
-                        </button>
-                      </div>
-                    ))}
+                    {shiftTemplates.map(t => {
+                      const isEditingThis = templateEditId === t.id
+                      if (isEditingThis) {
+                        return (
+                          <div key={t.id} style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '10px', border: `1.5px solid #F97316`, borderRadius: 8, background: '#FFF7ED' }}>
+                            <input
+                              type="text"
+                              value={templateEditName}
+                              onChange={e => setTemplateEditName(e.target.value)}
+                              placeholder="e.g. Morning Shift"
+                              style={{ width: '100%', padding: '7px 10px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 7, fontSize: 12.5, color: TEXT_DARK, boxSizing: 'border-box', fontFamily: 'inherit' }}
+                            />
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                              <TimePicker compact value={templateEditStartTime} onChange={v => { setTemplateEditStartTime(v); setTemplateEditEndTime(prev => bumpEndTime(v, prev)) }} />
+                              <TimePicker compact value={templateEditEndTime} onChange={setTemplateEditEndTime} minTime={templateEditStartTime} />
+                            </div>
+                            {templateEditError && <div style={{ ...errorBoxStyle, fontSize: 11.5, padding: '6px 8px' }}>{templateEditError}</div>}
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
+                              <button type="button" onClick={cancelEditTemplate} disabled={templateEditLoading} style={{ ...secondaryButtonStyle, height: 28, padding: '0 12px', fontSize: 12 }}>Cancel</button>
+                              <button
+                                type="button"
+                                onClick={submitEditTemplate}
+                                disabled={templateEditLoading}
+                                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5, border: 0, borderRadius: 7, background: templateEditLoading ? '#FDA060' : '#F97316', color: '#FFFFFF', height: 28, padding: '0 12px', fontSize: 12, fontWeight: 700, cursor: templateEditLoading ? 'not-allowed' : 'pointer', opacity: templateEditLoading ? 0.65 : 1 }}
+                              >
+                                {templateEditLoading ? <Spinner size={11} /> : <Check size={12} />} Save
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      }
+                      return (
+                        <div key={t.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '7px 10px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8 }}>
+                          <span style={{ fontSize: 12.5, color: TEXT_DARK }}>{t.name} · {formatShiftHour(t.start_time)}–{formatShiftHour(t.end_time)}</span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                            <button
+                              type="button"
+                              onClick={() => startEditTemplate(t)}
+                              title="Edit template"
+                              aria-label="Edit template"
+                              style={{ border: 'none', background: 'transparent', color: '#6B7280', cursor: 'pointer', display: 'flex', padding: 4 }}
+                            >
+                              <Pencil size={13} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => deleteTemplate(t.id)}
+                              disabled={templateDeleteLoadingId === t.id}
+                              title="Delete template"
+                              aria-label="Delete template"
+                              style={{ border: 'none', background: 'transparent', color: '#DC2626', cursor: 'pointer', display: 'flex', padding: 4 }}
+                            >
+                              {templateDeleteLoadingId === t.id ? <Spinner size={12} /> : <Trash2 size={13} />}
+                            </button>
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
               )}
               {templateSaveError && <div style={errorBoxStyle}>{templateSaveError}</div>}
             </div>
             <div style={{ padding: '18px 24px 24px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, borderTop: '1px solid #F3F4F6' }}>
-              <button type="button" onClick={() => setTemplateSaveOpen(false)} disabled={templateSaveLoading} style={{ ...secondaryButtonStyle, height: 36 }}>Cancel</button>
+              <button type="button" onClick={() => { setTemplateSaveOpen(false); cancelEditTemplate() }} disabled={templateSaveLoading} style={{ ...secondaryButtonStyle, height: 36 }}>Cancel</button>
               <button type="button" onClick={submitSaveTemplate} disabled={templateSaveLoading} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: templateSaveLoading ? '#FDA060' : '#F97316', color: '#FFFFFF', height: 36, padding: '0 18px', fontSize: 13, fontWeight: 700, cursor: templateSaveLoading ? 'not-allowed' : 'pointer', opacity: templateSaveLoading ? 0.65 : 1 }}>
                 {templateSaveLoading ? <Spinner size={13} /> : <Check size={14} />} Save
               </button>

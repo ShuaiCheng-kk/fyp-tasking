@@ -2,7 +2,7 @@ import { test, expect, APIRequestContext } from '@playwright/test'
 import { createClient } from '@supabase/supabase-js'
 import { seedTestOwnerAndCompany, cleanupTestOwnerAndCompany, TestOwner } from '../helpers/seed'
 
-// Integration tests for Module 2 - Task (UC15-21, UC23-28). UC22 Create Sub Task is not yet covered.
+// Integration tests for Module 2 - Task (UC15-28).
 // Hits route.ts -> service -> repository -> Supabase, keeping AI assignment deterministic through service fallback.
 
 const admin = createClient(
@@ -21,7 +21,7 @@ let seeded: TestOwner
 let departmentId: string
 let shiftId: string
 let taskId: string
-let dependencyTaskId: string
+let existingSubTaskId: string
 let managerA: SeededMember
 let managerB: SeededMember
 
@@ -236,22 +236,73 @@ test('UC27 shows stalled task alerts', async ({ request }) => {
   expect(body.alerts).toEqual(expect.arrayContaining([expect.objectContaining({ task_id: taskId })]))
 })
 
-test('UC28 sets task dependencies', async ({ request }) => {
-  const dependency = await createTask(request, { title: 'Dependency task', shift_id: null, assigned_user_id: managerB.userId })
-  dependencyTaskId = dependency.id
+test('UC22 creates a sub-task under a parent task', async ({ request }) => {
+  const res = await request.post('/api/task', {
+    data: {
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      parent_task_id: taskId,
+      title: 'Wipe down counters',
+      assigned_by: seeded.ownerId,
+    },
+  })
+  expect(res.status()).toBe(201)
+  const body = await res.json()
+  expect(body.task).toMatchObject({ parent_task_id: taskId, sequence_order: null })
+  existingSubTaskId = body.task.id
+})
+
+test('UC22 creates a main task together with its sub-tasks in one request', async ({ request }) => {
+  const res = await request.post('/api/task', {
+    data: {
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      title: 'Open the store',
+      assigned_by: seeded.ownerId,
+      task_date: '2026-07-02',
+      sub_tasks: [{ title: 'Unlock doors' }, { title: 'Turn on lights' }],
+    },
+  })
+  expect(res.status()).toBe(201)
+  const body = await res.json()
+  const mainTaskId = body.task.id
+
+  const kanban = await request.get(`/api/task?company_id=${seeded.companyId}&kanban=true`)
+  const kanbanBody = await kanban.json()
+  const allTasks = [...kanbanBody.groups.Assigned, ...kanbanBody.groups['In Progress'], ...kanbanBody.groups.Review, ...kanbanBody.groups.Complete]
+  const subTasks = allTasks.filter((t: { parent_task_id: string | null }) => t.parent_task_id === mainTaskId)
+  expect(subTasks).toHaveLength(2)
+  expect(subTasks.map((t: { title: string }) => t.title).sort()).toEqual(['Turn on lights', 'Unlock doors'])
+  expect(subTasks.every((t: { sequence_order: number | null }) => t.sequence_order === 0 || t.sequence_order === 1)).toBe(true)
+
+  await admin.from('tasks').delete().eq('id', mainTaskId)
+})
+
+test('UC28 reorders sub-tasks to set their execution dependency', async ({ request }) => {
+  // taskId already has "Wipe down counters" from the UC22 sub-task test above —
+  // reorder_subtasks requires the full existing set, so it's included here too.
+  const subA = await createTask(request, { title: 'Sub A', shift_id: null, parent_task_id: taskId })
+  const subB = await createTask(request, { title: 'Sub B', shift_id: null, parent_task_id: taskId })
 
   const res = await request.patch('/api/task', {
     data: {
       id: taskId,
-      action: 'dependencies',
-      dependency_ids: [dependencyTaskId],
+      action: 'reorder_subtasks',
+      sub_task_ids: [subB.id, subA.id, existingSubTaskId],
     },
   })
   expect(res.status()).toBe(200)
   const body = await res.json()
-  expect(body.dependencies).toEqual(expect.arrayContaining([
-    expect.objectContaining({ id: dependencyTaskId, parent_task_id: taskId }),
+  expect(body.subTasks).toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: subB.id, sequence_order: 0 }),
+    expect.objectContaining({ id: subA.id, sequence_order: 1 }),
+    expect.objectContaining({ id: existingSubTaskId, sequence_order: 2 }),
   ]))
+
+  const rejected = await request.patch('/api/task', {
+    data: { id: taskId, action: 'reorder_subtasks', sub_task_ids: [subA.id] },
+  })
+  expect(rejected.status()).toBe(400)
 })
 
 test('UC21 archives a task', async ({ request }) => {
@@ -261,6 +312,163 @@ test('UC21 archives a task', async ({ request }) => {
   expect(res.status()).toBe(200)
   const body = await res.json()
   expect(body.task).toMatchObject({ id: taskId, status: 'Complete', percentage_complete: 100 })
+})
+
+test('deleting a main task also deletes its sub-tasks', async ({ request }) => {
+  const main = await createTask(request, { title: 'Main task with sub-tasks', shift_id: null })
+  const sub1 = await createTask(request, { title: 'Sub 1', shift_id: null, parent_task_id: main.id })
+  const sub2 = await createTask(request, { title: 'Sub 2', shift_id: null, parent_task_id: main.id })
+
+  const res = await request.delete(`/api/task?id=${main.id}`)
+  expect(res.status()).toBe(200)
+
+  const list = await request.get(`/api/task?company_id=${seeded.companyId}`)
+  const body = await list.json()
+  const remainingIds = body.tasks.map((t: { id: string }) => t.id)
+  expect(remainingIds).not.toContain(main.id)
+  expect(remainingIds).not.toContain(sub1.id)
+  expect(remainingIds).not.toContain(sub2.id)
+})
+
+test('deleting the original of a recurring series deletes every sibling occurrence', async ({ request }) => {
+  const original = await createTask(request, { title: 'Recurring original', shift_id: null, task_date: '2026-08-01', due_at: '2026-08-01T18:00:00.000Z' })
+
+  const recurRes = await request.post('/api/task', {
+    data: {
+      action: 'recurring',
+      id: original.id,
+      recurrence_rule: 'daily',
+      recurrence_end_date: '2026-08-03',
+      assigned_by: seeded.ownerId,
+    },
+  })
+  expect(recurRes.status()).toBe(201)
+  const recurBody = await recurRes.json()
+  const siblingIds = recurBody.tasks.map((t: { id: string }) => t.id)
+  expect(siblingIds).toHaveLength(2)
+
+  const res = await request.delete(`/api/task?id=${original.id}`)
+  expect(res.status()).toBe(200)
+
+  const list = await request.get(`/api/task?company_id=${seeded.companyId}`)
+  const body = await list.json()
+  const remainingIds = body.tasks.map((t: { id: string }) => t.id)
+  expect(remainingIds).not.toContain(original.id)
+  for (const siblingId of siblingIds) expect(remainingIds).not.toContain(siblingId)
+})
+
+test('deleting a sibling occurrence only removes that one occurrence', async ({ request }) => {
+  const original = await createTask(request, { title: 'Recurring original 2', shift_id: null, task_date: '2026-08-10', due_at: '2026-08-10T18:00:00.000Z' })
+
+  const recurRes = await request.post('/api/task', {
+    data: {
+      action: 'recurring',
+      id: original.id,
+      recurrence_rule: 'daily',
+      recurrence_end_date: '2026-08-12',
+      assigned_by: seeded.ownerId,
+    },
+  })
+  const recurBody = await recurRes.json()
+  const siblingIds = recurBody.tasks.map((t: { id: string }) => t.id)
+  expect(siblingIds).toHaveLength(2)
+
+  const res = await request.delete(`/api/task?id=${siblingIds[0]}`)
+  expect(res.status()).toBe(200)
+
+  const list = await request.get(`/api/task?company_id=${seeded.companyId}`)
+  const body = await list.json()
+  const remainingIds = body.tasks.map((t: { id: string }) => t.id)
+  expect(remainingIds).toContain(original.id)
+  expect(remainingIds).not.toContain(siblingIds[0])
+  expect(remainingIds).toContain(siblingIds[1])
+})
+
+test('recurring with deadline_rule same_day: every occurrence is due the same day at the given time', async ({ request }) => {
+  const original = await createTask(request, { title: 'Daily cleaning', shift_id: null, task_date: '2026-09-01', due_at: null })
+
+  const recurRes = await request.post('/api/task', {
+    data: {
+      action: 'recurring',
+      id: original.id,
+      recurrence_rule: 'daily',
+      recurrence_end_date: '2026-09-02',
+      assigned_by: seeded.ownerId,
+      deadline_rule: { type: 'same_day', time: '21:00' },
+    },
+  })
+  expect(recurRes.status()).toBe(201)
+  const recurBody = await recurRes.json()
+  expect(new Date(recurBody.tasks[0].due_at).getTime()).toBe(new Date('2026-09-02T21:00:00').getTime())
+
+  const list = await request.get(`/api/task?company_id=${seeded.companyId}`)
+  const body = await list.json()
+  const updatedOriginal = body.tasks.find((t: { id: string }) => t.id === original.id)
+  expect(new Date(updatedOriginal.due_at).getTime()).toBe(new Date('2026-09-01T21:00:00').getTime())
+})
+
+test('recurring with deadline_rule fixed_day: weekly recurrence due every chosen weekday', async ({ request }) => {
+  // 2026-09-07 is a Monday
+  const original = await createTask(request, { title: 'Weekly report', shift_id: null, task_date: '2026-09-07', due_at: null })
+
+  const recurRes = await request.post('/api/task', {
+    data: {
+      action: 'recurring',
+      id: original.id,
+      recurrence_rule: 'weekly',
+      recurrence_end_date: '2026-09-14',
+      assigned_by: seeded.ownerId,
+      deadline_rule: { type: 'fixed_day', weekday: 5, time: '17:00' }, // Friday
+    },
+  })
+  expect(recurRes.status()).toBe(201)
+  const recurBody = await recurRes.json()
+  expect(new Date(recurBody.tasks[0].due_at).getTime()).toBe(new Date('2026-09-18T17:00:00').getTime())
+
+  const list = await request.get(`/api/task?company_id=${seeded.companyId}`)
+  const body = await list.json()
+  const updatedOriginal = body.tasks.find((t: { id: string }) => t.id === original.id)
+  expect(new Date(updatedOriginal.due_at).getTime()).toBe(new Date('2026-09-11T17:00:00').getTime())
+})
+
+test('recurring with deadline_rule fixed_day is rejected outside weekly recurrence', async ({ request }) => {
+  const original = await createTask(request, { title: 'Should reject', shift_id: null, task_date: '2026-09-07', due_at: null })
+
+  const recurRes = await request.post('/api/task', {
+    data: {
+      action: 'recurring',
+      id: original.id,
+      recurrence_rule: 'daily',
+      recurrence_end_date: '2026-09-09',
+      assigned_by: seeded.ownerId,
+      deadline_rule: { type: 'fixed_day', weekday: 5, time: '17:00' },
+    },
+  })
+  expect(recurRes.status()).toBe(400)
+})
+
+test('recurring with deadline_rule relative: due within X days after the occurrence is generated', async ({ request }) => {
+  const original = await createTask(request, { title: 'Monthly stock order', shift_id: null, task_date: '2026-09-01', due_at: null })
+
+  const recurRes = await request.post('/api/task', {
+    data: {
+      action: 'recurring',
+      id: original.id,
+      recurrence_rule: 'custom',
+      custom_interval_days: 30,
+      recurrence_end_date: '2026-10-02',
+      assigned_by: seeded.ownerId,
+      deadline_rule: { type: 'relative', offset_amount: 3, offset_unit: 'days' },
+    },
+  })
+  expect(recurRes.status()).toBe(201)
+  const recurBody = await recurRes.json()
+  expect(new Date(recurBody.tasks[0].due_at).getTime()).toBe(new Date('2026-10-04T00:00:00').getTime())
+
+  const list = await request.get(`/api/task?company_id=${seeded.companyId}`)
+  const body = await list.json()
+  const updatedOriginal = body.tasks.find((t: { id: string }) => t.id === original.id)
+  expect(new Date(updatedOriginal.due_at).getTime()).toBe(new Date('2026-09-04T00:00:00').getTime())
 })
 
 test('UC18 deletes a task', async ({ request }) => {

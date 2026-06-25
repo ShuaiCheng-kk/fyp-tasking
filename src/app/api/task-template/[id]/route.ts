@@ -2,7 +2,7 @@
 // RULE: Only handles request/response. No business logic. No DB access.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { shiftTemplateService } from '@/services/owner/shiftTemplateService'
+import { taskTemplateService } from '@/services/owner/taskTemplateService'
 
 export async function DELETE(
   req: NextRequest,
@@ -12,10 +12,10 @@ export async function DELETE(
   if (!id) return NextResponse.json({ success: false, message: 'id is required' }, { status: 400 })
 
   try {
-    await shiftTemplateService.deleteTemplate(id)
+    await taskTemplateService.deleteTemplate(id)
     return NextResponse.json({ success: true })
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Failed to delete shift template'
+    const message = err instanceof Error ? err.message : 'Failed to delete task template'
     return NextResponse.json({ success: false, message }, { status: 400 })
   }
 }
@@ -29,14 +29,15 @@ export async function PATCH(
 
   try {
     const body = await req.json()
-    const template = await shiftTemplateService.updateTemplate(id, {
+    const template = await taskTemplateService.updateTemplate(id, {
       name: body.name,
-      start_time: body.start_time,
-      end_time: body.end_time,
+      title: body.title,
+      description: body.description,
+      priority: body.priority,
     })
     return NextResponse.json({ success: true, template })
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Failed to update shift template'
+    const message = err instanceof Error ? err.message : 'Failed to update task template'
     return NextResponse.json({ success: false, message }, { status: 400 })
   }
 }
