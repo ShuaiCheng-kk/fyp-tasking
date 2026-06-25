@@ -7,7 +7,7 @@ import {
   Plus, X, ChevronDown, Calendar, AlertCircle,
   CheckCircle, Clock, Eye, Layers, Users,
   Crown, UserCog, UserRound, Pencil, Trash2, CalendarDays, ChevronLeft, ChevronRight,
-  Sparkles, Check, Archive, Repeat, Copy, GitBranch, Bell, ArrowRightLeft,
+  Sparkles, Check, Archive, Repeat, Copy, GitBranch, Bell, ArrowRightLeft, LayoutTemplate, AlertTriangle,
 } from 'lucide-react'
 import { AiAssignSuggestion } from '@/types/AI'
 import { createBrowserClient } from '@supabase/ssr'
@@ -15,6 +15,7 @@ import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import { Task, TaskInput, KanbanGroup, TaskReassignmentSuggestion, TaskWorkloadSuggestion, StalledTaskAlert } from '@/types/Task'
+import { TaskTemplate } from '@/types/TaskTemplate'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 
 // ─── Date picker constants ────────────────────────────────────────────────────
@@ -36,25 +37,17 @@ function formatDeadlineDisplay(value: string | null | undefined): string {
   return `${dayMonth}, ${time}`
 }
 
-function formatDeadlineInputDisplay(dateValue: string, timeValue: string): string {
-  if (!dateValue) return 'Select deadline'
-  if (!timeValue) {
-    const dayMonth = new Date(`${dateValue}T00:00:00`).toLocaleDateString('en-US', { day: 'numeric', month: 'long' })
-    return `${dayMonth}, select time`
-  }
-  return formatDeadlineDisplay(`${dateValue}T${timeValue}:00`)
-}
-
 
 // ─── Task Date Picker ──────────────────────────────────────────────────────────
 
-function TaskDatePicker({ value, onChange, taskDates, minDate, accentColor, fullWidth }: {
+function TaskDatePicker({ value, onChange, taskDates, minDate, accentColor, fullWidth, compact }: {
   value: string
   onChange: (date: string) => void
   taskDates: Set<string>
   minDate: string
   accentColor: string
   fullWidth?: boolean
+  compact?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState({ top: 0, left: 0, width: 292 })
@@ -145,9 +138,9 @@ function TaskDatePicker({ value, onChange, taskDates, minDate, accentColor, full
       <button ref={triggerRef} type="button" onClick={handleOpen}
         style={fullWidth ? {
           width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '10px 12px', border: `1.5px solid ${open ? '#F97316' : '#E5E7EB'}`, borderRadius: 8,
-          background: '#FFFFFF', cursor: 'pointer', fontSize: '0.9375rem', color: '#111827', fontWeight: 500,
-          outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s',
+          padding: compact ? '6px 10px' : '9px 12px', border: `1.5px solid ${open ? '#F97316' : '#E5E7EB'}`, borderRadius: 8,
+          background: '#FFFFFF', cursor: 'pointer', fontSize: compact ? 12 : '0.8125rem', color: '#111827', fontWeight: 500,
+          outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s', minHeight: compact ? 32 : 40,
         } : { display: 'inline-flex', alignItems: 'center', gap: 6, height: 38, padding: '0 12px', border: `1px solid ${TASK_BORDER}`, borderRadius: 9, background: '#FFFFFF', cursor: 'pointer', fontSize: 13, fontWeight: 500, color: TASK_TEXT, minWidth: 140, boxSizing: 'border-box', fontFamily: 'var(--font-body), system-ui, sans-serif' }}
       >
         {fullWidth ? (
@@ -167,6 +160,71 @@ function TaskDatePicker({ value, onChange, taskDates, minDate, accentColor, full
       </button>
       {typeof document !== 'undefined' && createPortal(popover, document.body)}
     </>
+  )
+}
+
+function InlineTaskDateCalendar({ value, onChange, minDate, accentColor }: {
+  value: string
+  onChange: (date: string) => void
+  minDate: string
+  accentColor: string
+}) {
+  const [viewMonth, setViewMonth] = useState((value || minDate).slice(0, 7))
+  const todayStr = formatDateKey(new Date())
+  const minMonth = minDate.slice(0, 7)
+  const [cy, cm] = viewMonth.split('-').map(Number)
+  const firstDay = new Date(cy, cm - 1, 1).getDay()
+  const daysInMonth = new Date(cy, cm, 0).getDate()
+  const monthLabel = new Date(cy, cm - 1, 1).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+  const cells: (string | null)[] = []
+  for (let i = 0; i < firstDay; i++) cells.push(null)
+  for (let d = 1; d <= daysInMonth; d++) cells.push(`${cy}-${String(cm).padStart(2, '0')}-${String(d).padStart(2, '0')}`)
+
+  const canGoPrev = viewMonth > minMonth
+  const goPrev = () => {
+    const d = new Date(cy, cm - 2, 1)
+    const nm = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    if (nm < minMonth) return
+    setViewMonth(nm)
+  }
+  const goNext = () => {
+    const d = new Date(cy, cm, 1)
+    setViewMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
+  }
+
+  return (
+    <div style={{ border: '1.5px solid #E5E7EB', borderRadius: 10, padding: '8px 10px', background: '#FFFFFF' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+        <button type="button" onClick={goPrev} disabled={!canGoPrev} style={{ width: 22, height: 22, border: '1px solid #E5E7EB', borderRadius: 6, background: '#FFFFFF', cursor: canGoPrev ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', color: canGoPrev ? '#64748B' : '#D1D5DB' }}><ChevronLeft size={12} /></button>
+        <span style={{ fontSize: 12, fontWeight: 800, color: TASK_TEXT }}>{monthLabel}</span>
+        <button type="button" onClick={goNext} style={{ width: 22, height: 22, border: '1px solid #E5E7EB', borderRadius: 6, background: '#FFFFFF', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748B' }}><ChevronRight size={12} /></button>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', marginBottom: 2 }}>
+        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
+          <div key={`${d}-${i}`} style={{ height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: '#9CA3AF' }}>{d}</div>
+        ))}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 1 }}>
+        {cells.map((date, i) => {
+          if (!date) return <div key={`e-${i}`} style={{ height: 24 }} />
+          if (date < minDate) {
+            return <div key={date} style={{ height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: '#D1D5DB' }}>{parseInt(date.split('-')[2])}</div>
+          }
+          const isSel = date === value
+          const isToday = date === todayStr
+          return (
+            <button
+              key={date}
+              type="button"
+              onClick={() => onChange(date)}
+              style={{ height: 24, border: isToday && !isSel ? `1.5px solid ${accentColor}` : 'none', borderRadius: 6, background: isSel ? accentColor : 'transparent', color: isSel ? '#FFFFFF' : isToday ? accentColor : TASK_TEXT, fontSize: 11, fontWeight: isSel || isToday ? 800 : 600, cursor: 'pointer', padding: 0 }}
+            >
+              {parseInt(date.split('-')[2])}
+            </button>
+          )
+        })}
+      </div>
+    </div>
   )
 }
 
@@ -199,12 +257,26 @@ type DeptTaskStats = {
 
 type PriorityLevel = 'Low' | 'Medium' | 'High' | 'Urgent'
 type TaskRecurrenceRule = 'daily' | 'weekly' | 'custom'
+type TaskDeadlineRuleType = 'same_day' | 'fixed_day' | 'relative'
 const PRIORITY_COLORS: Record<string, { bg: string; text: string }> = {
   Low:    { bg: '#F1F5F9', text: '#475569' },
   Medium: { bg: '#DBEAFE', text: '#1D4ED8' },
   High:   { bg: '#FFEDD5', text: '#C2410C' },
   Urgent: { bg: '#FEE2E2', text: '#B91C1C' },
 }
+
+const WEEKDAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
+const TIME_OPTIONS: { value: string; label: string }[] = (() => {
+  const res: { value: string; label: string }[] = []
+  for (let h = 0; h < 24; h++) {
+    for (const m of [0, 30]) {
+      const dh = h === 0 ? 12 : h > 12 ? h - 12 : h
+      const ampm = h < 12 ? 'AM' : 'PM'
+      res.push({ value: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`, label: `${dh}:${String(m).padStart(2, '0')} ${ampm}` })
+    }
+  }
+  return res
+})()
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string; colBg: string; icon: React.ReactNode }> = {
   'Assigned':    { label: 'Assigned',    color: '#475569', bg: '#E2E8F0', colBg: '#F4F4F5', icon: <Layers size={13} /> },
@@ -277,15 +349,56 @@ const PRIORITY_ORDER: Record<string, number> = { Urgent: 0, High: 1, Medium: 2, 
 // ─── Modal helpers ────────────────────────────────────────────────────────────
 
 const modalInputStyle: React.CSSProperties = {
-  width: '100%', padding: '10px 12px', border: '1.5px solid #E5E7EB',
-  borderRadius: '8px', fontSize: '0.9375rem', color: '#111827',
-  outline: 'none', boxSizing: 'border-box', background: '#FFFFFF',
+  width: '100%', padding: '9px 12px', border: '1.5px solid #E5E7EB',
+  borderRadius: '8px', fontSize: '0.8125rem', color: '#111827',
+  outline: 'none', boxSizing: 'border-box', background: '#FFFFFF', minHeight: 40,
 }
 const modalLabelStyle: React.CSSProperties = {
-  display: 'block', fontWeight: 600, fontSize: '0.875rem', color: '#374151', marginBottom: '8px',
+  display: 'block', fontWeight: 600, fontSize: '0.8125rem', color: '#374151', marginBottom: '6px',
 }
 const modalSelectStyle: React.CSSProperties = {
   ...modalInputStyle, paddingRight: 36, appearance: 'none', cursor: 'pointer',
+}
+
+// ─── Description textarea: Tab → bullet point, "1." + space → numbered list ──
+
+function handleDescriptionKeyDown(
+  e: React.KeyboardEvent<HTMLTextAreaElement>,
+  value: string,
+  onChange: (v: string) => void,
+) {
+  const el = e.currentTarget
+  const start = el.selectionStart
+  const end = el.selectionEnd
+  const lineStart = value.lastIndexOf('\n', start - 1) + 1
+
+  // Mutate the native textarea synchronously (value + caret) before calling onChange — React's
+  // re-render lags one tick behind, and fast typing right after this keystroke would otherwise
+  // land at the stale caret position and corrupt the text.
+  if (e.key === 'Tab') {
+    e.preventDefault()
+    const line = value.slice(lineStart, start)
+    if (/^(-|\d+\.)\s/.test(line)) return // already a list line, don't double up
+    const next = value.slice(0, lineStart) + '- ' + value.slice(lineStart)
+    const caret = start + 2 + (end - start)
+    el.value = next
+    el.selectionStart = el.selectionEnd = caret
+    onChange(next)
+    return
+  }
+
+  if (e.key === ' ') {
+    const line = value.slice(lineStart, start)
+    if (/^\d+$/.test(line)) {
+      // digits-only at the start of a line + space → numbered list marker, e.g. "1" + space becomes "1. "
+      e.preventDefault()
+      const next = value.slice(0, start) + '. ' + value.slice(end)
+      const caret = start + 2
+      el.value = next
+      el.selectionStart = el.selectionEnd = caret
+      onChange(next)
+    }
+  }
 }
 
 function InlineError({ message }: { message: string }) {
@@ -299,12 +412,13 @@ function InlineError({ message }: { message: string }) {
 
 // ─── Custom Dropdown Field ────────────────────────────────────────────────────
 
-function DropdownField({ value, options, onChange, placeholder, disabled = false }: {
+function DropdownField({ value, options, onChange, placeholder, disabled = false, badgeColors }: {
   value: string
   options: { value: string; label: string }[]
   onChange: (v: string) => void
   placeholder?: string
   disabled?: boolean
+  badgeColors?: Record<string, { bg: string; text: string }>
 }) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState({ top: 0, left: 0, width: 0 })
@@ -340,15 +454,21 @@ function DropdownField({ value, options, onChange, placeholder, disabled = false
         onClick={handleOpen}
         style={{
           width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '10px 12px', border: `1.5px solid ${open ? '#F97316' : '#E5E7EB'}`, borderRadius: 8,
+          padding: '9px 12px', border: `1.5px solid ${open ? '#F97316' : '#E5E7EB'}`, borderRadius: 8,
           background: disabled ? '#F9FAFB' : '#FFFFFF', cursor: canOpen ? 'pointer' : 'default',
-          fontSize: '0.9375rem', color: selected ? '#111827' : '#9CA3AF',
+          fontSize: '0.8125rem', color: selected ? '#111827' : '#9CA3AF',
           fontWeight: selected ? 500 : 400, outline: 'none', boxSizing: 'border-box',
-          transition: 'border-color 0.15s',
+          transition: 'border-color 0.15s', minHeight: 40,
         }}>
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {selected?.label ?? placeholder ?? 'Select...'}
-        </span>
+        {selected && badgeColors?.[selected.value] ? (
+          <span style={{ height: 26, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 800, padding: '0 10px', borderRadius: '99px', background: badgeColors[selected.value].bg, color: badgeColors[selected.value].text, letterSpacing: '0.01em', lineHeight: 1, alignSelf: 'center' }}>
+            {selected.label}
+          </span>
+        ) : (
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {selected?.label ?? placeholder ?? 'Select...'}
+          </span>
+        )}
         <ChevronDown size={13} style={{ color: '#9CA3AF', flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
       </button>
       {open && (
@@ -360,18 +480,25 @@ function DropdownField({ value, options, onChange, placeholder, disabled = false
         }}>
           {options.map(opt => {
             const isSel = opt.value === value
+            const badge = badgeColors?.[opt.value]
             return (
               <button key={opt.value} type="button"
                 onClick={() => { onChange(opt.value); setOpen(false) }}
                 style={{
-                  display: 'block', width: '100%', padding: '8px 14px', textAlign: 'left',
+                  display: 'flex', alignItems: 'center', width: '100%', padding: '8px 14px', textAlign: 'left',
                   border: 'none', background: isSel ? '#FFF7ED' : 'transparent',
                   color: isSel ? '#EA580C' : '#374151', fontWeight: isSel ? 700 : 400,
                   fontSize: 13, cursor: 'pointer',
                 }}
                 onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = '#F9FAFB' }}
                 onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = 'transparent' }}
-              >{opt.label}</button>
+              >
+                {badge ? (
+                  <span style={{ fontSize: '0.7rem', fontWeight: 800, padding: '3px 9px', borderRadius: '99px', background: badge.bg, color: badge.text, letterSpacing: '0.01em' }}>
+                    {opt.label}
+                  </span>
+                ) : opt.label}
+              </button>
             )
           })}
         </div>
@@ -380,20 +507,30 @@ function DropdownField({ value, options, onChange, placeholder, disabled = false
   )
 }
 
-// ─── Deadline Date+Time Picker (combined, single field) ──────────────────────
+// ─── Deadline Picker (single field, sequential date → time selection) ────────
 
-function DeadlineDateTimePicker({ dateValue, timeValue, onChange, minDate }: {
+function DeadlinePicker({ dateValue, timeValue, onChange, minDate }: {
   dateValue: string
   timeValue: string
   onChange: (date: string, time: string) => void
   minDate: string
 }) {
   const [open, setOpen] = useState(false)
-  const [pos, setPos] = useState({ top: 0, left: 0, width: 320 })
+  const [step, setStep] = useState<'date' | 'time'>('date')
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 220 })
   const [viewMonth, setViewMonth] = useState((dateValue || minDate).slice(0, 7))
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
+
+  const hNum = timeValue ? parseInt(timeValue.split(':')[0]) : -1
+  const mNum = timeValue ? parseInt(timeValue.split(':')[1]) : 0
+  const derivedAmpm: 'AM' | 'PM' = hNum >= 12 ? 'PM' : 'AM'
+  const [meridiem, setMeridiem] = useState<'AM' | 'PM'>(derivedAmpm)
+
+  useEffect(() => {
+    if (timeValue) setMeridiem(parseInt(timeValue.split(':')[0]) >= 12 ? 'PM' : 'AM')
+  }, [timeValue])
 
   useEffect(() => {
     if (!open) return
@@ -406,24 +543,53 @@ function DeadlineDateTimePicker({ dateValue, timeValue, onChange, minDate }: {
   }, [open])
 
   useEffect(() => {
-    if (open && listRef.current) {
+    if (step === 'time' && listRef.current) {
       const sel = listRef.current.querySelector('[data-selected="true"]') as HTMLElement | null
       if (sel) sel.scrollIntoView({ block: 'center' })
     }
-  }, [open])
+  }, [step, meridiem])
 
   const handleOpen = () => {
     if (triggerRef.current) {
       const r = triggerRef.current.getBoundingClientRect()
-      const POPOVER_H = 280
+      const nextStep = dateValue ? 'time' : 'date'
+      const POPOVER_H = nextStep === 'date' ? 320 : 280
       const fitsBelow = r.bottom + POPOVER_H + 8 <= window.innerHeight
       setViewMonth((dateValue || minDate).slice(0, 7))
-      setPos({ top: fitsBelow ? r.bottom + 6 : r.top - POPOVER_H - 6, left: r.left, width: Math.max(r.width, 300) })
+      setStep(nextStep)
+      setPos({ top: fitsBelow ? r.bottom + 6 : r.top - POPOVER_H - 6, left: r.left, width: nextStep === 'date' ? Math.max(r.width, 292) : 220 })
     }
     setOpen(o => !o)
   }
 
+  const roundedDeadlineTimeForToday = () => {
+    const now = new Date()
+    const totalMinutes = now.getHours() * 60 + now.getMinutes()
+    const roundedMinutes = Math.ceil(totalMinutes / 30) * 30
+    if (roundedMinutes >= 24 * 60) return ''
+    const h = Math.floor(roundedMinutes / 60)
+    const m = roundedMinutes % 60
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+  }
+
+  const times = useMemo(() => {
+    const res: { value: string; label: string }[] = []
+    const startH = meridiem === 'AM' ? 0 : 12
+    const endH = meridiem === 'AM' ? 12 : 24
+    for (let h = startH; h < endH; h++) {
+      for (const m of [0, 30]) {
+        const dh = h === 0 ? 12 : h > 12 ? h - 12 : h
+        res.push({ value: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`, label: `${dh}:${String(m).padStart(2, '0')}` })
+      }
+    }
+    return res
+  }, [meridiem])
+
   const todayStr = formatDateKey(new Date())
+  const earliestTimeForSelectedDate = dateValue === todayStr ? roundedDeadlineTimeForToday() : ''
+  const availableTimes = earliestTimeForSelectedDate
+    ? times.filter(t => t.value >= earliestTimeForSelectedDate)
+    : times
   const minMonth = minDate.slice(0, 7)
   const [cy, cm] = viewMonth.split('-').map(Number)
   const firstDay = new Date(cy, cm - 1, 1).getDay()
@@ -436,81 +602,124 @@ function DeadlineDateTimePicker({ dateValue, timeValue, onChange, minDate }: {
   const goPrev = () => { const d = new Date(cy, cm - 2, 1); const nm = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; if (nm < minMonth) return; setViewMonth(nm) }
   const goNext = () => { const d = new Date(cy, cm, 1); setViewMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`) }
 
-  const times = useMemo(() => {
-    const res: { value: string; label: string }[] = []
-    for (let mins = 0; mins < 24 * 60; mins += 30) {
-      const h = Math.floor(mins / 60)
-      const m = mins % 60
-      const dh = h === 0 ? 12 : h > 12 ? h - 12 : h
-      const ampm = h < 12 ? 'AM' : 'PM'
-      res.push({ value: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`, label: `${dh}:${String(m).padStart(2, '0')} ${ampm}` })
-    }
-    return res
-  }, [])
-
-  const hNum = timeValue ? parseInt(timeValue.split(':')[0]) : -1
-  const mNum = timeValue ? parseInt(timeValue.split(':')[1]) : 0
-  const timeLabel = timeValue
-    ? `${hNum === 0 ? 12 : hNum > 12 ? hNum - 12 : hNum}:${String(mNum).padStart(2, '0')} ${hNum < 12 ? 'AM' : 'PM'}`
-    : null
   const dateLabel = dateValue
     ? new Date(`${dateValue}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
     : null
-  const displayLabel = dateLabel && timeLabel ? `${dateLabel} | ${timeLabel}` : dateLabel ? `${dateLabel} | select time` : 'Select deadline'
+  const displayDateLabel = dateValue
+    ? new Date(`${dateValue}T00:00:00`).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })
+    : null
+  const timeLabel = timeValue
+    ? `${hNum === 0 ? 12 : hNum > 12 ? hNum - 12 : hNum}:${String(mNum).padStart(2, '0')} ${derivedAmpm}`
+    : null
+  const displayLabel = displayDateLabel && timeLabel ? `${displayDateLabel}, ${timeLabel}` : displayDateLabel ? `${displayDateLabel}, select time` : 'Select deadline'
 
-  const popover = open ? (
-    <div ref={popoverRef} style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 9999, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 16, boxShadow: '0 8px 32px rgba(15,23,42,0.14)', padding: '14px 14px', width: pos.width, display: 'flex', gap: 12 }}>
-      {/* Calendar */}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-          <button type="button" onClick={goPrev} disabled={!canGoPrev} style={{ width: 22, height: 22, border: '1px solid #E2E8F0', borderRadius: 6, background: '#FFFFFF', cursor: canGoPrev ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', color: canGoPrev ? '#64748B' : '#D1D5DB' }}><ChevronLeft size={12} /></button>
-          <span style={{ fontSize: 12, fontWeight: 700, color: '#0F172A' }}>{monthLabel}</span>
-          <button type="button" onClick={goNext} style={{ width: 22, height: 22, border: '1px solid #E2E8F0', borderRadius: 6, background: '#FFFFFF', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748B' }}><ChevronRight size={12} /></button>
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', marginBottom: 2 }}>
-          {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
-            <div key={i} style={{ fontSize: 10, fontWeight: 600, color: '#9CA3AF', textAlign: 'center', height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{d}</div>
-          ))}
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 1 }}>
-          {cells.map((date, i) => {
-            if (!date) return <div key={`e-${i}`} style={{ height: 26 }} />
-            if (date < minDate) {
-              return (
-                <div key={date} style={{ height: 26, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: '#D1D5DB', userSelect: 'none' }}>
-                  {parseInt(date.split('-')[2])}
-                </div>
-              )
-            }
-            const isSel = date === dateValue
-            const isToday = date === todayStr
-            return (
-              <button key={date} type="button" onClick={() => onChange(date, timeValue)}
-                style={{ height: 26, width: '100%', border: isToday && !isSel ? '2px solid #F97316' : 'none', borderRadius: 6, background: isSel ? '#F97316' : 'transparent', color: isSel ? '#FFFFFF' : isToday ? '#F97316' : '#0F172A', fontWeight: isSel || isToday ? 700 : 400, fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}
-                onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = '#F8FAFC' }}
-                onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = 'transparent' }}
-              >{parseInt(date.split('-')[2])}</button>
-            )
-          })}
-        </div>
+  const datePanel = (
+    <div style={{ padding: '14px 16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <button type="button" onClick={goPrev} disabled={!canGoPrev} style={{ width: 26, height: 26, border: `1px solid ${TASK_BORDER}`, borderRadius: 7, background: '#FFFFFF', cursor: canGoPrev ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', color: canGoPrev ? '#64748B' : '#D1D5DB' }}><ChevronLeft size={13} /></button>
+        <span style={{ fontSize: 13, fontWeight: 700, color: TASK_TEXT }}>{monthLabel}</span>
+        <button type="button" onClick={goNext} style={{ width: 26, height: 26, border: `1px solid ${TASK_BORDER}`, borderRadius: 7, background: '#FFFFFF', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748B' }}><ChevronRight size={13} /></button>
       </div>
-      {/* Time list */}
-      <div style={{ width: 100, flexShrink: 0, borderLeft: '1px solid #F1F5F9', paddingLeft: 10, display: 'flex', flexDirection: 'column' }}>
-        <p style={{ margin: '0 0 6px', fontSize: 10, fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Time</p>
-        <div ref={listRef} style={{ flex: 1, maxHeight: 210, overflowY: 'auto' }}>
-          {times.map(t => {
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', marginBottom: 4 }}>
+        {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(d => (
+          <div key={d} style={{ fontSize: 11, fontWeight: 600, color: '#9CA3AF', textAlign: 'center', height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{d}</div>
+        ))}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
+        {cells.map((date, i) => {
+          if (!date) return <div key={`e-${i}`} style={{ height: 36 }} />
+          if (date < minDate) {
+            return (
+              <div key={date} style={{ height: 36, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, color: '#D1D5DB', userSelect: 'none' }}>
+                {parseInt(date.split('-')[2])}
+              </div>
+            )
+          }
+          const isSel = date === dateValue
+          const isToday = date === todayStr
+          return (
+            <button key={date} type="button" onClick={() => {
+              const minTime = date === todayStr ? roundedDeadlineTimeForToday() : ''
+              const nextTime = minTime && (!timeValue || timeValue < minTime) ? minTime : timeValue
+              if (nextTime) setMeridiem(parseInt(nextTime.split(':')[0]) >= 12 ? 'PM' : 'AM')
+              onChange(date, nextTime)
+              setStep('time')
+              setPos(current => ({ ...current, width: 220 }))
+            }}
+              style={{ height: 36, width: '100%', border: isToday && !isSel ? '2px solid #F97316' : 'none', borderRadius: 8, background: isSel ? '#F97316' : 'transparent', color: isSel ? '#FFFFFF' : isToday ? '#F97316' : TASK_TEXT, fontWeight: isSel || isToday ? 700 : 400, fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}
+              onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = '#F8FAFC' }}
+              onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = 'transparent' }}
+            >{parseInt(date.split('-')[2])}</button>
+          )
+        })}
+      </div>
+    </div>
+  )
+
+  const timePanel = (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 12px', borderBottom: '1px solid #F1F5F9' }}>
+        <button type="button" onClick={() => setStep('date')} style={{ border: 'none', background: 'transparent', color: '#64748B', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 600, padding: 0 }}>
+          <ChevronLeft size={13} /> {dateLabel}
+        </button>
+      </div>
+      <div style={{ display: 'flex' }}>
+        <div ref={listRef} style={{ flex: 1, maxHeight: 168, overflowY: 'auto', padding: '4px 0' }}>
+          {availableTimes.map(t => {
             const isSel = t.value === timeValue
             return (
               <button key={t.value} type="button" data-selected={isSel ? 'true' : 'false'}
-                onClick={() => onChange(dateValue || minDate, t.value)}
-                style={{ display: 'block', width: '100%', padding: '6px 8px', textAlign: 'left', border: 'none', borderRadius: 6, background: isSel ? '#FFF7ED' : 'transparent', color: isSel ? '#EA580C' : '#374151', fontWeight: isSel ? 700 : 400, fontSize: 12, cursor: 'pointer' }}
+                onClick={() => { onChange(dateValue, t.value); setOpen(false) }}
+                style={{ display: 'block', width: '100%', padding: '7px 16px', textAlign: 'left', border: 'none', background: isSel ? '#FFF7ED' : 'transparent', color: isSel ? '#EA580C' : '#0F172A', fontWeight: isSel ? 700 : 400, fontSize: 13, cursor: 'pointer' }}
                 onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = '#F9FAFB' }}
                 onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = 'transparent' }}
               >{t.label}</button>
             )
           })}
+          {availableTimes.length === 0 && (
+            <div style={{ padding: '12px 16px', color: '#9CA3AF', fontSize: 12, fontWeight: 600 }}>
+              No available time today
+            </div>
+          )}
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 6, padding: 8, borderLeft: '1px solid #E2E8F0' }}>
+          {(['AM', 'PM'] as const).map(mp => (
+            <button key={mp} type="button"
+              onClick={() => {
+                const periodAvailable = !earliestTimeForSelectedDate || (mp === 'AM' ? earliestTimeForSelectedDate < '12:00' : earliestTimeForSelectedDate <= '23:30')
+                if (!periodAvailable) return
+                if (!timeValue) { setMeridiem(mp); return }
+                const [ch, cm] = timeValue.split(':').map(Number)
+                let newH = ch
+                if (mp === 'AM' && ch >= 12) newH = ch - 12
+                if (mp === 'PM' && ch < 12) newH = ch + 12
+                const nextTime = `${String(newH).padStart(2, '0')}:${String(cm).padStart(2, '0')}`
+                if (earliestTimeForSelectedDate && nextTime < earliestTimeForSelectedDate) return
+                onChange(dateValue, nextTime)
+                setMeridiem(mp)
+              }}
+              style={{
+                borderRadius: 7,
+                border: 'none',
+                background: meridiem === mp ? '#F97316' : '#F1F5F9',
+                color: meridiem === mp ? '#FFFFFF' : '#0F172A',
+                fontWeight: 600,
+                fontSize: 12,
+                padding: '7px 10px',
+                cursor: (!earliestTimeForSelectedDate || (mp === 'AM' ? earliestTimeForSelectedDate < '12:00' : earliestTimeForSelectedDate <= '23:30')) ? 'pointer' : 'not-allowed',
+                lineHeight: 1,
+                opacity: (!earliestTimeForSelectedDate || (mp === 'AM' ? earliestTimeForSelectedDate < '12:00' : earliestTimeForSelectedDate <= '23:30')) ? 1 : 0.45,
+              }}
+            >{mp}</button>
+          ))}
         </div>
       </div>
+    </div>
+  )
+
+  const popover = open ? (
+    <div ref={popoverRef} style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 9999, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 16, boxShadow: '0 8px 32px rgba(15,23,42,0.14)', overflow: 'hidden', width: pos.width }}>
+      {step === 'date' ? datePanel : timePanel}
     </div>
   ) : null
 
@@ -519,14 +728,14 @@ function DeadlineDateTimePicker({ dateValue, timeValue, onChange, minDate }: {
       <button ref={triggerRef} type="button" onClick={handleOpen}
         style={{
           width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '10px 12px', border: `1.5px solid ${open ? '#F97316' : '#E5E7EB'}`, borderRadius: 8,
-          background: '#FFFFFF', cursor: 'pointer', fontSize: '0.9375rem',
+          padding: '9px 12px', border: `1.5px solid ${open ? '#F97316' : '#E5E7EB'}`, borderRadius: 8,
+          background: '#FFFFFF', cursor: 'pointer', fontSize: '0.8125rem',
           color: dateValue ? '#111827' : '#9CA3AF', fontWeight: dateValue ? 500 : 400,
-          outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s',
+          outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s', minHeight: 40,
         }}>
         <span style={{ display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           <CalendarDays size={14} color="#9CA3AF" style={{ flexShrink: 0 }} />
-          {formatDeadlineInputDisplay(dateValue, timeValue)}
+          {displayLabel}
         </span>
         <ChevronDown size={13} style={{ color: '#9CA3AF', flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
       </button>
@@ -535,10 +744,132 @@ function DeadlineDateTimePicker({ dateValue, timeValue, onChange, minDate }: {
   )
 }
 
+// ─── Sub-task Order List (drag to reorder; shows step numbers + "do in order" connector once 2+) ──
+
+function SubTaskOrderList({ items, onReorder, onRemove, onRename, disabled }: {
+  items: { id: string; title: string }[]
+  onReorder: (orderedIds: string[]) => void
+  onRemove?: (id: string) => void
+  onRename?: (id: string, title: string) => void
+  disabled?: boolean
+}) {
+  const [draggingId, setDraggingId] = useState<string | null>(null)
+  const [dragOverId, setDragOverId] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editingTitle, setEditingTitle] = useState('')
+  const ordered = items.length >= 2
+
+  const saveRename = () => {
+    if (!editingId) return
+    const title = editingTitle.trim()
+    if (title) onRename?.(editingId, title)
+    setEditingId(null)
+    setEditingTitle('')
+  }
+
+  const moveItem = (sourceId: string, targetId: string) => {
+    if (sourceId === targetId) return
+    const sourceIdx = items.findIndex(i => i.id === sourceId)
+    const targetIdx = items.findIndex(i => i.id === targetId)
+    if (sourceIdx === -1 || targetIdx === -1) return
+    const next = [...items.map(i => i.id)]
+    next.splice(sourceIdx, 1)
+    next.splice(targetIdx, 0, sourceId)
+    onReorder(next)
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column' }}>
+      {items.map((item, idx) => {
+        const isDragging = draggingId === item.id
+        const isDragOver = dragOverId === item.id
+        const isLast = idx === items.length - 1
+        return (
+          <div key={item.id}>
+            <div
+              draggable={!disabled}
+              onDragStart={event => {
+                if (editingId) { event.preventDefault(); return }
+                const target = event.target as HTMLElement | null
+                if (target?.closest('button')) { event.preventDefault(); return }
+                event.dataTransfer.effectAllowed = 'move'
+                event.dataTransfer.setData('text/plain', item.id)
+                setDraggingId(item.id)
+              }}
+              onDragEnd={() => { setDraggingId(null); setDragOverId(null) }}
+              onDragOver={event => {
+                event.preventDefault()
+                if (draggingId && draggingId !== item.id) setDragOverId(item.id)
+              }}
+              onDragLeave={event => {
+                if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+                setDragOverId(current => current === item.id ? null : current)
+              }}
+              onDrop={event => {
+                event.preventDefault()
+                const sourceId = event.dataTransfer.getData('text/plain')
+                if (sourceId) moveItem(sourceId, item.id)
+                setDraggingId(null); setDragOverId(null)
+              }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px',
+                border: `1px solid ${isDragOver ? '#F97316' : '#E5E7EB'}`, borderRadius: 9,
+                background: '#FFFFFF', cursor: disabled ? 'default' : isDragging ? 'grabbing' : 'grab',
+                opacity: isDragging ? 0.6 : 1,
+                outline: isDragOver ? '2px dashed #F97316' : 'none', outlineOffset: 2,
+                transition: 'border-color 0.15s, opacity 0.15s',
+              }}
+            >
+              {ordered ? (
+                <span style={{ width: 20, height: 20, borderRadius: '50%', background: '#FFF3E8', color: '#EA580C', fontSize: 11, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  {idx + 1}
+                </span>
+              ) : (
+                <GitBranch size={13} color="#9CA3AF" style={{ flexShrink: 0 }} />
+              )}
+              {editingId === item.id ? (
+                <input
+                  autoFocus
+                  value={editingTitle}
+                  onChange={event => setEditingTitle(event.target.value)}
+                  onBlur={saveRename}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter') saveRename()
+                    if (event.key === 'Escape') { setEditingId(null); setEditingTitle('') }
+                  }}
+                  style={{ ...modalInputStyle, flex: 1, minHeight: 30, padding: '5px 8px', fontSize: 13 }}
+                />
+              ) : (
+                <span
+                  onDoubleClick={() => { if (!disabled && onRename) { setEditingId(item.id); setEditingTitle(item.title) } }}
+                  title={onRename ? 'Double-click to edit' : undefined}
+                  style={{ flex: 1, fontSize: 13, color: '#111827', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: onRename && !disabled ? 'text' : undefined }}
+                >
+                  {item.title}
+                </span>
+              )}
+              {onRemove && (
+                <button type="button" onClick={() => onRemove(item.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', color: '#9CA3AF', borderRadius: 6, flexShrink: 0 }}>
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+            {ordered && !isLast && (
+              <div style={{ display: 'flex', alignItems: 'center', padding: '3px 0 3px 19px', color: '#CBD5E1' }}>
+                <div style={{ width: 1, height: 12, background: '#E2E8F0' }} />
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 // ─── Task Card ────────────────────────────────────────────────────────────────
 
 function TaskCard({
-  task, members, shiftOptions, departments, showDept, onClick, onEdit,
+  task, members, shiftOptions, departments, showDept, onClick, onEdit, subTaskCount, expanded,
 }: {
   task: Task
   members: Member[]
@@ -547,6 +878,8 @@ function TaskCard({
   showDept: boolean
   onClick: () => void
   onEdit: () => void
+  subTaskCount?: number
+  expanded?: boolean
 }) {
   const assignee = members.find(m => m.id === task.assigned_user_id)
   const shift = task.shift_id ? shiftOptions.find(s => s.id === task.shift_id) : null
@@ -581,6 +914,13 @@ function TaskCard({
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.65rem', fontWeight: 700, padding: '2px 7px', borderRadius: '99px', background: deptCardBg(dept.id), color: deptColor(dept.id) }}>
               <span style={{ width: 5, height: 5, borderRadius: '50%', background: deptColor(dept.id), flexShrink: 0 }} />
               {dept.name}
+            </span>
+          )}
+          {!!subTaskCount && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.65rem', fontWeight: 700, padding: '2px 7px', borderRadius: '99px', background: '#F1F5F9', color: '#475569' }}>
+              <GitBranch size={10} />
+              {subTaskCount}
+              <ChevronDown size={10} style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
             </span>
           )}
         </div>
@@ -670,6 +1010,14 @@ export default function OwnerTasksPage() {
   const [kanban,        setKanban]        = useState<KanbanGroup | null>(null)
   const [kanbanLoading, setKanbanLoading] = useState(false)
   const [taskDate,      setTaskDate]      = useState(() => formatDateKey(new Date()))
+  const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set())
+  const toggleTaskExpanded = (id: string) => {
+    setExpandedTaskIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
 
   // Task detail/edit panel
   const [selectedTask,  setSelectedTask]  = useState<Task | null>(null)
@@ -697,7 +1045,8 @@ export default function OwnerTasksPage() {
   const [taskActionLoading, setTaskActionLoading] = useState('')
   const [recurrenceRule, setRecurrenceRule] = useState<TaskRecurrenceRule>('weekly')
   const [recurrenceEndDate, setRecurrenceEndDate] = useState('')
-  const [dependencyIds, setDependencyIds] = useState<string[]>([])
+  const [panelSubTaskOrder, setPanelSubTaskOrder] = useState<string[]>([])
+  const [subTaskReorderLoading, setSubTaskReorderLoading] = useState(false)
   const [reassignmentSuggestion, setReassignmentSuggestion] = useState<TaskReassignmentSuggestion | null>(null)
   const [workloadSuggestion, setWorkloadSuggestion] = useState<TaskWorkloadSuggestion | null>(null)
   const [stalledAlerts, setStalledAlerts] = useState<StalledTaskAlert[]>([])
@@ -738,6 +1087,27 @@ export default function OwnerTasksPage() {
   const [newDeadlineTime,   setNewDeadlineTime]   = useState('')
   const [newLoading,      setNewLoading]      = useState(false)
   const [newError,        setNewError]        = useState('')
+  const [newTemplateId,   setNewTemplateId]   = useState('')
+  const [newSubTaskEnabled, setNewSubTaskEnabled] = useState(false)
+  const [newSubTasks,      setNewSubTasks]      = useState<{ id: string; title: string }[]>([])
+  const [newSubTaskDraft,  setNewSubTaskDraft]  = useState('')
+  const [newRecurringEnabled, setNewRecurringEnabled] = useState(false)
+  const [newRecurrenceRule, setNewRecurrenceRule] = useState<TaskRecurrenceRule | ''>('')
+  const [newRecurrenceEndDate, setNewRecurrenceEndDate] = useState('')
+  const [newCustomIntervalDays, setNewCustomIntervalDays] = useState(14)
+  const [newDeadlineRuleType, setNewDeadlineRuleType] = useState<TaskDeadlineRuleType | ''>('')
+  const [newDeadlineRuleTime, setNewDeadlineRuleTime] = useState('')
+  const [newDeadlineRuleWeekday, setNewDeadlineRuleWeekday] = useState<number | null>(null)
+  const [newDeadlineRuleOffsetAmount, setNewDeadlineRuleOffsetAmount] = useState(1)
+  const [newDeadlineRuleOffsetUnit, setNewDeadlineRuleOffsetUnit] = useState<'hours' | 'days'>('days')
+  const [draggingSubTaskId, setDraggingSubTaskId] = useState<string | null>(null)
+  const [dragOverSubTaskId, setDragOverSubTaskId] = useState<string | null>(null)
+
+  // Fixed-day deadlines only make sense against weekly recurrence — drop the selection if the
+  // user switches the recurrence rule away from weekly while it's active.
+  useEffect(() => {
+    if (newDeadlineRuleType === 'fixed_day' && newRecurrenceRule !== 'weekly') setNewDeadlineRuleType('')
+  }, [newRecurrenceRule, newDeadlineRuleType])
 
   // AI Assign state (merged breakdown + department/manager/deadline suggestion)
   const [aiModal,          setAiModal]          = useState(false)
@@ -754,6 +1124,24 @@ export default function OwnerTasksPage() {
   const [aiDueDate,        setAiDueDate]        = useState('')
   const [aiDueTime,        setAiDueTime]        = useState('')
   const [aiCreateLoading,  setAiCreateLoading]  = useState(false)
+
+  // Task Template management modal
+  const [taskTemplates,        setTaskTemplates]        = useState<TaskTemplate[]>([])
+  const [templateModalOpen,    setTemplateModalOpen]    = useState(false)
+  const [templateFormMode,     setTemplateFormMode]     = useState<'list' | 'create' | 'edit'>('list')
+  const [templateFormId,       setTemplateFormId]       = useState('')
+  const [templateFormName,     setTemplateFormName]     = useState('')
+  const [templateFormTitle,    setTemplateFormTitle]    = useState('')
+  const [templateFormDesc,     setTemplateFormDesc]     = useState('')
+  const [templateFormPriority, setTemplateFormPriority] = useState('')
+  const [templateLoading,      setTemplateLoading]      = useState(false)
+  const [templateError,        setTemplateError]        = useState('')
+  const [deleteTemplateModal,  setDeleteTemplateModal]  = useState<TaskTemplate | null>(null)
+  const [deleteTemplateLoading, setDeleteTemplateLoading] = useState(false)
+  const [archiveModalOpen,     setArchiveModalOpen]     = useState(false)
+  const [archivedTasks,        setArchivedTasks]        = useState<Task[]>([])
+  const [archiveListLoading,   setArchiveListLoading]   = useState(false)
+  const [archiveListError,     setArchiveListError]     = useState('')
 
   // Toast
   const [taskToast, setTaskToast] = useState('')
@@ -886,6 +1274,20 @@ export default function OwnerTasksPage() {
     }).catch(() => {})
   }, [companyId])
 
+  // ── Fetch task templates ────────────────────────────────────────────────────
+
+  const fetchTaskTemplates = useCallback(async (cid: string) => {
+    if (!cid) return
+    const res = await fetch(`/api/task-template?company_id=${cid}`)
+    const data = await res.json()
+    setTaskTemplates(data.success ? data.templates ?? [] : [])
+  }, [])
+
+  useEffect(() => {
+    if (!companyId) return
+    fetchTaskTemplates(companyId)
+  }, [companyId, fetchTaskTemplates])
+
   // ── Fetch kanban ───────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -961,8 +1363,11 @@ export default function OwnerTasksPage() {
   // ── Open task panel ────────────────────────────────────────────────────────
 
   const openTask = (task: Task, viewOnly = false) => {
-    const existingDependencies = kanban
-      ? COLUMNS.flatMap(col => kanban[col]).filter(row => row.parent_task_id === task.id).map(row => row.id)
+    const existingSubTaskIds = kanban
+      ? COLUMNS.flatMap(col => kanban[col])
+          .filter(row => row.parent_task_id === task.id)
+          .sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0))
+          .map(row => row.id)
       : []
     setTaskViewMode(viewOnly)
     setSelectedTask(task)
@@ -983,7 +1388,7 @@ export default function OwnerTasksPage() {
     setTaskActionLoading('')
     setRecurrenceRule('weekly')
     setRecurrenceEndDate(formatDateKey(addDays(new Date(`${kanbanDateKey(task)}T00:00:00`), 28)))
-    setDependencyIds(existingDependencies)
+    setPanelSubTaskOrder(existingSubTaskIds)
     setReassignmentSuggestion(null)
   }
 
@@ -1034,11 +1439,11 @@ export default function OwnerTasksPage() {
     if (!selectedTask) return
     setDeleteLoading(true)
     const taskId = selectedTask.id
-    // Optimistic: remove task from kanban immediately
+    // Optimistic: remove the task and any sub-tasks nested under it (the backend cascades this too).
     setKanban(prev => {
       if (!prev) return prev
       const next = { ...prev } as KanbanGroup
-      for (const col of COLUMNS) next[col] = (prev[col] ?? []).filter(t => t.id !== taskId)
+      for (const col of COLUMNS) next[col] = (prev[col] ?? []).filter(t => t.id !== taskId && t.parent_task_id !== taskId)
       return next
     })
     closePanel()
@@ -1058,7 +1463,7 @@ export default function OwnerTasksPage() {
     setKanban(prev => {
       if (!prev) return prev
       const next = { ...prev } as KanbanGroup
-      for (const col of COLUMNS) next[col] = (prev[col] ?? []).filter(t => t.id !== taskId)
+      for (const col of COLUMNS) next[col] = (prev[col] ?? []).filter(t => t.id !== taskId && t.parent_task_id !== taskId)
       return next
     })
     setDeleteTaskModal(null)
@@ -1129,21 +1534,22 @@ export default function OwnerTasksPage() {
     finally { setTaskActionLoading('') }
   }
 
-  const handleSaveDependencies = async () => {
+  // UC28 Set Task Dependencies — drag-reorder of the panel's sub-tasks; saves immediately on drop.
+  const handleReorderSubTasks = async (orderedIds: string[]) => {
     if (!selectedTask) return
-    setTaskActionLoading('dependencies'); setPanelError('')
+    setPanelSubTaskOrder(orderedIds)
+    setSubTaskReorderLoading(true); setPanelError('')
     try {
       const res = await fetch('/api/task', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'dependencies', id: selectedTask.id, dependency_ids: dependencyIds }),
+        body: JSON.stringify({ action: 'reorder_subtasks', id: selectedTask.id, sub_task_ids: orderedIds }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
       await fetchKanban(companyId)
-      showTaskToast('Task dependencies updated.')
-    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to update dependencies') }
-    finally { setTaskActionLoading('') }
+    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to reorder sub-tasks') }
+    finally { setSubTaskReorderLoading(false) }
   }
 
   const handleFetchReassignmentSuggestion = async () => {
@@ -1220,10 +1626,19 @@ export default function OwnerTasksPage() {
   }
 
   const handleCreateTask = async () => {
-    if (!newTitle.trim() || !newDeptId || !newPriority || !newStartDate || !newDeadlineDate || !newDeadlineTime) { setNewError('Title, department, priority, start date, and deadline are required'); return }
+    if (!newTitle.trim() || !newDeptId || !newPriority || !newStartDate) { setNewError('Title, department, priority, and start date are required'); return }
+    if (!newRecurringEnabled && (!newDeadlineDate || !newDeadlineTime)) { setNewError('Deadline is required'); return }
+    if (newRecurringEnabled && !newRecurrenceRule) { setNewError('Choose how often this task repeats'); return }
+    if (newRecurringEnabled && !newRecurrenceEndDate) { setNewError('Repeat until date is required for recurring tasks'); return }
+    if (newRecurringEnabled && newRecurrenceEndDate <= newStartDate) { setNewError('Repeat until date must be after the start date'); return }
+    if (newRecurringEnabled && newRecurrenceRule === 'custom' && newCustomIntervalDays < 1) { setNewError('Repeat every days must be at least 1'); return }
+    if (newRecurringEnabled && !newDeadlineRuleType) { setNewError('Choose a deadline rule for the recurring task'); return }
+    if (newRecurringEnabled && (newDeadlineRuleType === 'same_day' || newDeadlineRuleType === 'fixed_day') && !newDeadlineRuleTime) { setNewError('Deadline time is required'); return }
+    if (newRecurringEnabled && newDeadlineRuleType === 'fixed_day' && newDeadlineRuleWeekday === null) { setNewError('Choose a deadline weekday'); return }
+    if (newRecurringEnabled && newDeadlineRuleType === 'relative' && newDeadlineRuleOffsetAmount < 1) { setNewError('Deadline offset must be at least 1'); return }
     setNewLoading(true); setNewError('')
     try {
-      const input: Partial<TaskInput> & { company_id: string; department_id: string; title: string } = {
+      const input: Partial<TaskInput> & { company_id: string; department_id: string; title: string; sub_tasks?: { title: string }[] } = {
         company_id: companyId,
         department_id: newDeptId,
         title: newTitle.trim(),
@@ -1232,10 +1647,11 @@ export default function OwnerTasksPage() {
         assigned_by: internalUserId || null,
         shift_id: newShiftId || null,
         priority: newPriority || null,
-        due_at: newDeadlineDate && newDeadlineTime ? new Date(`${newDeadlineDate}T${newDeadlineTime}:00`).toISOString() : null,
+        due_at: newRecurringEnabled ? null : new Date(`${newDeadlineDate}T${newDeadlineTime}:00`).toISOString(),
         task_date: newStartDate,
         status: 'Assigned',
         percentage_complete: 0,
+        ...(newSubTaskEnabled && newSubTasks.length > 0 ? { sub_tasks: newSubTasks.map(s => ({ title: s.title })) } : {}),
       }
       const res = await fetch('/api/task', {
         method: 'POST',
@@ -1244,27 +1660,40 @@ export default function OwnerTasksPage() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
+      if (newRecurringEnabled) {
+        const taskId = data.task?.id
+        if (!taskId) throw new Error('Task created, but recurring setup could not find the new task')
+        const deadlineRule = newDeadlineRuleType === 'same_day'
+          ? { type: 'same_day' as const, time: newDeadlineRuleTime }
+          : newDeadlineRuleType === 'fixed_day'
+            ? { type: 'fixed_day' as const, time: newDeadlineRuleTime, weekday: newDeadlineRuleWeekday! }
+            : { type: 'relative' as const, offset_amount: newDeadlineRuleOffsetAmount, offset_unit: newDeadlineRuleOffsetUnit }
+        const recurringRes = await fetch('/api/task', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'recurring',
+            id: taskId,
+            recurrence_rule: newRecurrenceRule,
+            recurrence_end_date: newRecurrenceEndDate,
+            custom_interval_days: newRecurrenceRule === 'custom' ? newCustomIntervalDays : undefined,
+            assigned_by: internalUserId || undefined,
+            deadline_rule: deadlineRule,
+          }),
+        })
+        const recurringData = await recurringRes.json()
+        if (!recurringData.success) throw new Error(recurringData.message)
+      }
       setNewTaskModal(false)
-      setNewTitle(''); setNewDescription(''); setNewDeptId(''); setNewAssigneeId(''); setNewShiftId(''); setNewStartDate(''); setNewPriority(''); setNewDeadlineDate(''); setNewDeadlineTime('')
+      setNewTitle(''); setNewDescription(''); setNewDeptId(''); setNewAssigneeId(''); setNewShiftId(''); setNewStartDate(''); setNewPriority(''); setNewDeadlineDate(''); setNewDeadlineTime(''); setNewTemplateId('')
+      setNewSubTaskEnabled(false); setNewSubTasks([]); setNewSubTaskDraft('')
+      setNewRecurringEnabled(false); setNewRecurrenceRule(''); setNewRecurrenceEndDate(''); setNewCustomIntervalDays(14)
+      setNewDeadlineRuleType(''); setNewDeadlineRuleTime(''); setNewDeadlineRuleWeekday(null); setNewDeadlineRuleOffsetAmount(1); setNewDeadlineRuleOffsetUnit('days')
       setTaskDate(taskDate)
       fetchKanban(companyId)
-      showTaskToast('Task created successfully.')
+      showTaskToast(newRecurringEnabled ? 'Recurring task created successfully.' : 'Task created successfully.')
     } catch (err) { setNewError(err instanceof Error ? err.message : 'Failed to create task') }
     finally { setNewLoading(false) }
-  }
-
-  const openNewTask = () => {
-    setNewDeptId(selectedDeptId || '')
-    setNewAssigneeId('')
-    setNewShiftId('')
-    setNewStartDate(taskDate)
-    setNewTitle('')
-    setNewDescription('')
-    setNewPriority('')
-    setNewDeadlineDate('')
-    setNewDeadlineTime('')
-    setNewError('')
-    setNewTaskModal(true)
   }
 
   const openAiAssign = () => {
@@ -1282,14 +1711,114 @@ export default function OwnerTasksPage() {
     setAiError('')
   }
 
-  // Open new task modal pre-filled with dept + assignee
+  // Open new task modal pre-filled with dept + assignee.
+  // Kanban tab: pre-fill with the selected day, clamped to today (a task can't start in the past).
+  // Calendar tab shows a whole week, not one day, so the user must pick the start date themselves — leave it blank.
   const openNewTaskFor = (memberId: string, deptId: string) => {
     setNewDeptId(deptId)
     setNewAssigneeId(memberId)
     setNewShiftId('')
-    setNewStartDate(taskDate)
-    setNewTitle(''); setNewDescription(''); setNewPriority(''); setNewDeadlineDate(''); setNewDeadlineTime(''); setNewError('')
+    setNewStartDate(boardViewMode === 'kanban' && taskDate > todayTaskDate ? taskDate : todayTaskDate)
+    setNewTitle(''); setNewDescription(''); setNewPriority(''); setNewDeadlineDate(''); setNewDeadlineTime(''); setNewError(''); setNewTemplateId('')
+    setNewSubTaskEnabled(false); setNewSubTasks([]); setNewSubTaskDraft('')
+    setNewRecurringEnabled(false); setNewRecurrenceRule(''); setNewRecurrenceEndDate(''); setNewCustomIntervalDays(14)
+    setNewDeadlineRuleType(''); setNewDeadlineRuleTime(''); setNewDeadlineRuleWeekday(null); setNewDeadlineRuleOffsetAmount(1); setNewDeadlineRuleOffsetUnit('days')
     setNewTaskModal(true)
+  }
+
+  // ── Task Template CRUD ──────────────────────────────────────────────────────
+
+  const openCreateTemplate = () => {
+    setTemplateFormMode('create')
+    setTemplateFormId('')
+    setTemplateFormName('')
+    setTemplateFormTitle('')
+    setTemplateFormDesc('')
+    setTemplateFormPriority('')
+    setTemplateError('')
+  }
+
+  const openArchiveModal = async () => {
+    if (!companyId) return
+    setArchiveModalOpen(true)
+    setArchiveListLoading(true)
+    setArchiveListError('')
+    try {
+      const res = await fetch(`/api/task?company_id=${companyId}&status=Complete`)
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      setArchivedTasks(data.tasks ?? [])
+    } catch (err) {
+      setArchiveListError(err instanceof Error ? err.message : 'Failed to load archived tasks')
+      setArchivedTasks([])
+    } finally {
+      setArchiveListLoading(false)
+    }
+  }
+
+  const openEditTemplate = (template: TaskTemplate) => {
+    setTemplateFormMode('edit')
+    setTemplateFormId(template.id)
+    setTemplateFormName(template.name)
+    setTemplateFormTitle(template.title)
+    setTemplateFormDesc(template.description ?? '')
+    setTemplateFormPriority(template.priority ?? '')
+    setTemplateError('')
+  }
+
+  const handleSaveTemplate = async () => {
+    if (!templateFormName.trim() || !templateFormTitle.trim()) {
+      setTemplateError('Name and task title are required.')
+      return
+    }
+    setTemplateLoading(true)
+    setTemplateError('')
+    try {
+      const isEdit = templateFormMode === 'edit'
+      const res = await fetch(isEdit ? `/api/task-template/${templateFormId}` : '/api/task-template', {
+        method: isEdit ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(isEdit ? {
+          name: templateFormName.trim(),
+          title: templateFormTitle.trim(),
+          description: templateFormDesc.trim() || null,
+          priority: templateFormPriority || null,
+        } : {
+          company_id: companyId,
+          name: templateFormName.trim(),
+          title: templateFormTitle.trim(),
+          description: templateFormDesc.trim() || null,
+          priority: templateFormPriority || null,
+          created_by: internalUserId || undefined,
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to save template')
+      await fetchTaskTemplates(companyId)
+      setTemplateFormMode('list')
+      showTaskToast(isEdit ? 'Template updated.' : 'Template created.')
+    } catch (err) {
+      setTemplateError(err instanceof Error ? err.message : 'Failed to save template')
+    } finally {
+      setTemplateLoading(false)
+    }
+  }
+
+  const handleDeleteTemplate = async () => {
+    if (!deleteTemplateModal) return
+    setDeleteTemplateLoading(true)
+    try {
+      const res = await fetch(`/api/task-template/${deleteTemplateModal.id}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to delete template')
+      await fetchTaskTemplates(companyId)
+      setDeleteTemplateModal(null)
+      showTaskToast('Template deleted.')
+    } catch (err) {
+      setTemplateError(err instanceof Error ? err.message : 'Failed to delete template')
+    } finally {
+      setDeleteTemplateLoading(false)
+    }
   }
 
   // ── Department CRUD ────────────────────────────────────────────────────────
@@ -1376,11 +1905,10 @@ export default function OwnerTasksPage() {
     hasAutoSelectedTaskDateRef.current = true
   }, [datesWithTasks, taskDate])
 
-  const minTaskDate = useMemo(() => {
-    const d = addDays(new Date(), -7)
-    const dow = (d.getDay() + 6) % 7
-    return formatDateKey(addDays(d, -dow))
-  }, [])
+  // Floor for the Start Date field itself — a task can't start in the past. Board navigation (Kanban day / Calendar week) is unrestricted, like the Shifts page.
+  const todayTaskDate = useMemo(() => formatDateKey(new Date()), [])
+  // Effectively-unrestricted floor for the Kanban day picker, since the picker component requires a minDate prop
+  const boardNavMinDate = '1970-01-01'
 
   // ── Filtered tasks per column ──────────────────────────────────────────────
 
@@ -1606,21 +2134,70 @@ export default function OwnerTasksPage() {
   }
 
   const assignableMembers = members.filter(m => m.role === 'Manager')
-  const newTaskDeptMembers = newDeptId ? assignableMembers.filter(m => m.department_id === newDeptId) : assignableMembers
   const deptDropdownOptions = departments.map(d => ({ value: d.id, label: d.name }))
-  const assigneeDropdownOptions = newTaskDeptMembers.map(m => ({ value: m.id, label: m.full_name }))
+  const newAssigneeMember = members.find(m => m.id === newAssigneeId) ?? null
   const priorityDropdownOptions: { value: string; label: string }[] =
     (['Low', 'Medium', 'High', 'Urgent'] as PriorityLevel[]).map(p => ({ value: p, label: p }))
-  const isNewTaskValid = newTitle.trim() !== '' && newDeptId !== '' && newPriority !== '' && newStartDate !== '' && newDeadlineDate !== '' && newDeadlineTime !== ''
+  const templateDropdownOptions = taskTemplates.map(t => ({ value: t.id, label: t.name }))
+  const newRecurringPreviewDates: string[] = (() => {
+    if (!newRecurringEnabled || !newRecurrenceRule || !newStartDate || !newRecurrenceEndDate) return []
+    const intervalDays = newRecurrenceRule === 'daily'
+      ? 1
+      : newRecurrenceRule === 'weekly'
+        ? 7
+        : newCustomIntervalDays
+    if (!intervalDays || intervalDays < 1) return []
+    const dates: string[] = []
+    let next = addDays(new Date(`${newStartDate}T00:00:00`), intervalDays)
+    while (formatDateKey(next) <= newRecurrenceEndDate && dates.length < 60) {
+      dates.push(formatDateKey(next))
+      next = addDays(next, intervalDays)
+    }
+    return dates
+  })()
+
+  // Preview-only mirror of taskService's computeDeadlineFromRule — purely a UI hint, the server
+  // remains the source of truth for what's actually persisted.
+  const previewDeadlineFor = (taskDate: string): string | null => {
+    if (!isNewDeadlineRuleValid) return null
+    if (newDeadlineRuleType === 'same_day') {
+      return new Date(`${taskDate}T${newDeadlineRuleTime}:00`).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    }
+    if (newDeadlineRuleType === 'fixed_day') {
+      const d = new Date(`${taskDate}T00:00:00`)
+      d.setDate(d.getDate() + (((newDeadlineRuleWeekday ?? 0) - d.getDay() + 7) % 7))
+      return new Date(`${formatDateKey(d)}T${newDeadlineRuleTime}:00`).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    }
+    const base = new Date(`${taskDate}T00:00:00`)
+    if (newDeadlineRuleOffsetUnit === 'hours') base.setHours(base.getHours() + newDeadlineRuleOffsetAmount)
+    else base.setDate(base.getDate() + newDeadlineRuleOffsetAmount)
+    return base.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  }
+  const isNewDeadlineRuleValid = newDeadlineRuleType !== '' && (
+    newDeadlineRuleType === 'same_day' ? newDeadlineRuleTime !== '' :
+    newDeadlineRuleType === 'fixed_day' ? newDeadlineRuleTime !== '' && newDeadlineRuleWeekday !== null :
+    newDeadlineRuleOffsetAmount >= 1
+  )
+  const isNewTaskValid = newTitle.trim() !== '' && newDeptId !== '' && newPriority !== '' && newStartDate !== ''
+    && (newRecurringEnabled ? (newRecurrenceRule !== '' && newRecurrenceEndDate !== '' && newRecurrenceEndDate > newStartDate && (newRecurrenceRule !== 'custom' || newCustomIntervalDays >= 1) && isNewDeadlineRuleValid) : (newDeadlineDate !== '' && newDeadlineTime !== ''))
   const editTaskDeptMembers = editDeptId ? assignableMembers.filter(m => m.department_id === editDeptId) : assignableMembers
   const editAssigneeDropdownOptions = editTaskDeptMembers.map(m => ({ value: m.id, label: m.full_name }))
   const isEditTaskValid = editTitle.trim() !== '' && editDeptId !== '' && editStartDate !== '' && editPriority !== '' && editDueAt !== '' && editDeadlineTime !== ''
-  const selectedSubTasks = selectedTask && kanban
+  const selectedSubTasksUnordered = selectedTask && kanban
     ? COLUMNS.flatMap(col => kanban[col]).filter(task => task.parent_task_id === selectedTask.id)
     : []
-  const dependencyTaskOptions = selectedTask && kanban
-    ? COLUMNS.flatMap(col => kanban[col]).filter(task => task.id !== selectedTask.id && task.parent_task_id !== selectedTask.id)
-    : []
+  // Reflects panelSubTaskOrder optimistically while a drag-reorder save is in flight;
+  // falls back to server order whenever the sub-task set itself changed (e.g. one was just added).
+  const selectedSubTaskIdsKey = selectedSubTasksUnordered.map(t => t.id).sort().join(',')
+  const selectedSubTasks = panelSubTaskOrder.length === selectedSubTasksUnordered.length && panelSubTaskOrder.every(id => selectedSubTasksUnordered.some(t => t.id === id))
+    ? panelSubTaskOrder.map(id => selectedSubTasksUnordered.find(t => t.id === id)).filter((t): t is Task => !!t)
+    : [...selectedSubTasksUnordered].sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0))
+
+  useEffect(() => {
+    if (!selectedTask) return
+    setPanelSubTaskOrder([...selectedSubTasksUnordered].sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0)).map(t => t.id))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTask?.id, selectedSubTaskIdsKey])
   const recommendedAssigneeName = reassignmentSuggestion?.recommended_assignee_id
     ? members.find(m => m.id === reassignmentSuggestion.recommended_assignee_id)?.full_name ?? 'Unknown'
     : ''
@@ -1641,6 +2218,14 @@ export default function OwnerTasksPage() {
     const orderedIds = saved.length > 0 ? [...saved, ...remaining] : departments.map(d => d.id)
     return orderedIds.map(id => byId.get(id)!).filter(Boolean)
   }, [departments, departmentOrder])
+
+  const activeDeptIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const shift of shiftOptions) {
+      if (shift.user_id && shift.publication_status !== 'draft') ids.add(shift.department_id)
+    }
+    return ids
+  }, [shiftOptions])
 
   const moveDepartment = useCallback((sourceId: string, targetId: string) => {
     if (!sourceId || !targetId || sourceId === targetId) return
@@ -1916,41 +2501,6 @@ export default function OwnerTasksPage() {
           </div>
         </div>
 
-        {/* Content — single card like Shifts/Communication */}
-        <div style={{ padding: '0 28px 16px', flexShrink: 0 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 12 }}>
-            <div style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#FFFFFF', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-              <span style={{ width: 34, height: 34, borderRadius: 10, background: '#EEF2FF', color: '#4F46E5', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <ArrowRightLeft size={16} />
-              </span>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Workload suggestion</p>
-                <p style={{ margin: '3px 0 0', color: '#0F172A', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {workloadSuggestion?.message ?? 'No workload suggestion loaded yet.'}
-                </p>
-              </div>
-              <button type="button" onClick={() => void refreshTaskInsights('workload')} disabled={insightLoading === 'workload'} style={{ height: 32, border: '1px solid #E2E8F0', borderRadius: 8, background: '#FFFFFF', color: '#334155', padding: '0 10px', fontSize: 12, fontWeight: 700, cursor: insightLoading === 'workload' ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                {insightLoading === 'workload' ? <Spinner size={12} dark /> : null} Refresh
-              </button>
-            </div>
-            <div style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#FFFFFF', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-              <span style={{ width: 34, height: 34, borderRadius: 10, background: stalledAlerts.length > 0 ? '#FEF2F2' : '#F0FDF4', color: stalledAlerts.length > 0 ? '#DC2626' : '#16A34A', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <Bell size={16} />
-              </span>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <p style={{ margin: 0, fontSize: 12, fontWeight: 800, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Stalled tasks</p>
-                <p style={{ margin: '3px 0 0', color: '#0F172A', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {stalledAlerts.length > 0 ? `${stalledAlerts.length} task${stalledAlerts.length === 1 ? '' : 's'} need attention: ${stalledAlerts[0].title}` : 'No stalled tasks found.'}
-                </p>
-              </div>
-              <button type="button" onClick={() => void refreshTaskInsights('stalled')} disabled={insightLoading === 'stalled'} style={{ height: 32, border: '1px solid #E2E8F0', borderRadius: 8, background: '#FFFFFF', color: '#334155', padding: '0 10px', fontSize: 12, fontWeight: 700, cursor: insightLoading === 'stalled' ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                {insightLoading === 'stalled' ? <Spinner size={12} dark /> : null} Refresh
-              </button>
-            </div>
-          </div>
-          {insightError && <div style={{ marginTop: 8, color: '#DC2626', fontSize: 12, fontWeight: 700 }}>{insightError}</div>}
-        </div>
-
         <div style={{ padding: '0 28px 28px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           {!initialReady || kanbanLoading ? (
             <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flex: 1 }}>
@@ -1960,7 +2510,77 @@ export default function OwnerTasksPage() {
             <div style={{ display: 'flex', gap: 16, alignItems: 'stretch', flex: 1, minHeight: 0 }}>
 
               {/* ── DEPARTMENT PANEL ───────────────────────────────────────── */}
-              <section className="task-dept-panel" style={{ width: 326, flexShrink: 0, alignSelf: 'flex-start', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'visible' }}>
+              <div style={{ width: 326, flexShrink: 0, alignSelf: 'flex-start', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <section style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px', borderBottom: '1px solid #F3F4F6' }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <Bell size={15} style={{ color: '#F97316' }} />
+                    </div>
+                    <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A' }}>Notification</span>
+                  </div>
+                  <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    {(() => {
+                      const hasIssue = workloadSuggestion?.type === 'rebalance'
+                      const overloadedName = members.find(m => m.id === workloadSuggestion?.overloaded_user_id)?.full_name ?? 'a member'
+                      const recommendedName = members.find(m => m.id === workloadSuggestion?.recommended_user_id)?.full_name ?? 'another member'
+                      return (
+                        <div style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#F9FAFB', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <span style={{ width: 28, height: 28, borderRadius: 9, background: '#EEF2FF', color: '#4F46E5', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            <ArrowRightLeft size={14} />
+                          </span>
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: TASK_TEXT }}>Workload Suggestion</p>
+                            {hasIssue && (
+                              <p style={{ margin: '3px 0 0', color: '#64748B', fontSize: 12, fontWeight: 600, lineHeight: 1.35 }}>
+                                {`Move one active task from ${overloadedName} to ${recommendedName}.`}
+                              </p>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void refreshTaskInsights('workload')}
+                            disabled={insightLoading === 'workload'}
+                            title="Refresh"
+                            style={{ width: 30, height: 30, border: 'none', borderRadius: 999, background: hasIssue ? '#FEF3C7' : '#DCFCE7', color: hasIssue ? '#D97706' : '#16A34A', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: insightLoading === 'workload' ? 'default' : 'pointer' }}
+                          >
+                            {insightLoading === 'workload' ? <Spinner size={12} dark /> : hasIssue ? <AlertTriangle size={15} /> : <Check size={15} strokeWidth={3} />}
+                          </button>
+                        </div>
+                      )
+                    })()}
+
+                    {(() => {
+                      const hasIssue = stalledAlerts.length > 0
+                      return (
+                        <div style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#F9FAFB', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <span style={{ width: 28, height: 28, borderRadius: 9, background: hasIssue ? '#FEF2F2' : '#F0FDF4', color: hasIssue ? '#DC2626' : '#16A34A', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            <Bell size={14} />
+                          </span>
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: TASK_TEXT }}>Stalled Tasks</p>
+                            {hasIssue && (
+                              <p style={{ margin: '3px 0 0', color: '#64748B', fontSize: 12, fontWeight: 600, lineHeight: 1.35 }}>
+                                {`${stalledAlerts.length} task${stalledAlerts.length === 1 ? '' : 's'} need attention: ${stalledAlerts[0].title}`}
+                              </p>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => void refreshTaskInsights('stalled')}
+                            disabled={insightLoading === 'stalled'}
+                            title="Refresh"
+                            style={{ width: 30, height: 30, border: 'none', borderRadius: 999, background: hasIssue ? '#FEF3C7' : '#DCFCE7', color: hasIssue ? '#D97706' : '#16A34A', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: insightLoading === 'stalled' ? 'default' : 'pointer' }}
+                          >
+                            {insightLoading === 'stalled' ? <Spinner size={12} dark /> : hasIssue ? <AlertTriangle size={15} /> : <Check size={15} strokeWidth={3} />}
+                          </button>
+                        </div>
+                      )
+                    })()}
+                    {insightError && <div style={{ color: '#DC2626', fontSize: 12, fontWeight: 700 }}>{insightError}</div>}
+                  </div>
+                </section>
+
+              <section className="task-dept-panel" style={{ width: '100%', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'visible' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 18px', borderBottom: '1px solid #F3F4F6' }}>
                   {selectedDept ? (
                     <>
@@ -2059,7 +2679,10 @@ export default function OwnerTasksPage() {
                                 >
                                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 12 }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: deptColor(d.id), flexShrink: 0 }} />
+                                      <span
+                                        className={activeDeptIds.has(d.id) ? 'dept-dot-active' : undefined}
+                                        style={{ width: 8, height: 8, borderRadius: '50%', background: deptColor(d.id), flexShrink: 0, display: 'inline-block' }}
+                                      />
                                       <h3 style={{ margin: 0, fontWeight: 700, fontSize: '0.9375rem', color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.name}</h3>
                                     </div>
                                     <span
@@ -2185,6 +2808,7 @@ export default function OwnerTasksPage() {
                   })()}
                 </div>
               </section>
+              </div>
 
               {/* ── BOARD PANEL ────────────────────────────────────────────── */}
               <section className="task-board-panel" style={{ flex: 1, minWidth: 0, minHeight: 0, alignSelf: 'stretch', display: 'flex', flexDirection: 'column', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'hidden' }}>
@@ -2200,54 +2824,26 @@ export default function OwnerTasksPage() {
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                     <button
                       type="button"
-                      onClick={openAiAssign}
-                      disabled={!companyId || departments.length === 0}
-                      style={{
-                        height: 38,
-                        border: '1px solid #DDD6FE',
-                        borderRadius: 9,
-                        background: companyId && departments.length > 0 ? '#F5F3FF' : '#F8FAFC',
-                        color: companyId && departments.length > 0 ? '#6D28D9' : '#94A3B8',
-                        padding: '0 14px',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 7,
-                        fontSize: 13,
-                        fontWeight: 800,
-                        cursor: companyId && departments.length > 0 ? 'pointer' : 'not-allowed',
-                      }}
+                      onClick={openArchiveModal}
+                      disabled={!companyId}
+                      style={{ height: 38, padding: '0 14px', border: `1px solid ${TASK_BORDER}`, borderRadius: 8, background: '#FFFFFF', color: companyId ? TASK_TEXT : '#94A3B8', fontSize: 13, fontWeight: 700, cursor: companyId ? 'pointer' : 'not-allowed', display: 'inline-flex', alignItems: 'center', gap: 7 }}
                     >
-                      <Sparkles size={15} strokeWidth={2.5} /> AI Assign
+                      <Archive size={15} /> Archive
                     </button>
                     <button
                       type="button"
-                      onClick={openNewTask}
-                      disabled={!companyId || departments.length === 0}
-                      style={{
-                        height: 38,
-                        border: 'none',
-                        borderRadius: 9,
-                        background: companyId && departments.length > 0 ? '#F97316' : '#E5E7EB',
-                        color: companyId && departments.length > 0 ? '#FFFFFF' : '#94A3B8',
-                        padding: '0 14px',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: 7,
-                        fontSize: 13,
-                        fontWeight: 800,
-                        cursor: companyId && departments.length > 0 ? 'pointer' : 'not-allowed',
-                        boxShadow: companyId && departments.length > 0 ? '0 8px 18px rgba(249,115,22,0.2)' : 'none',
-                      }}
+                      onClick={() => { setTemplateModalOpen(true); setTemplateFormMode('list'); setTemplateError('') }}
+                      disabled={!companyId}
+                      style={{ height: 38, padding: '0 14px', border: `1px solid ${TASK_BORDER}`, borderRadius: 8, background: '#FFFFFF', color: companyId ? TASK_TEXT : '#94A3B8', fontSize: 13, fontWeight: 700, cursor: companyId ? 'pointer' : 'not-allowed', display: 'inline-flex', alignItems: 'center', gap: 7 }}
                     >
-                      <Plus size={15} strokeWidth={2.5} /> New Task
+                      <LayoutTemplate size={15} /> Template
                     </button>
                     {boardViewMode === 'calendar' ? (
                       <>
                         <button
                           type="button"
                           onClick={() => setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), -7)))}
-                          disabled={taskDate <= minTaskDate}
-                          style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${TASK_BORDER}`, background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: taskDate <= minTaskDate ? 'default' : 'pointer', color: TASK_TEXT, opacity: taskDate <= minTaskDate ? 0.3 : 1 }}
+                          style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${TASK_BORDER}`, background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: 'pointer', color: TASK_TEXT }}
                         ><ChevronLeft size={16} /></button>
                         <span style={{ height: 38, minWidth: 188, padding: '0 12px', border: `1px solid ${TASK_BORDER}`, borderRadius: 9, background: '#FFFFFF', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: TASK_TEXT, fontSize: 13, fontWeight: 500, fontFamily: 'var(--font-body), system-ui, sans-serif' }}>
                           <CalendarDays size={14} color="#64748B" />{calendarWeekLabel}
@@ -2269,10 +2865,9 @@ export default function OwnerTasksPage() {
                         <button
                           type="button"
                           onClick={() => setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), -1)))}
-                          disabled={taskDate <= minTaskDate}
-                          style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${TASK_BORDER}`, background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: taskDate <= minTaskDate ? 'default' : 'pointer', color: TASK_TEXT, opacity: taskDate <= minTaskDate ? 0.3 : 1 }}
+                          style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${TASK_BORDER}`, background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: 'pointer', color: TASK_TEXT }}
                         ><ChevronLeft size={16} /></button>
-                        <TaskDatePicker value={taskDate} onChange={setTaskDate} taskDates={datesWithTasks} minDate={minTaskDate} accentColor={TASK_ORANGE} />
+                        <TaskDatePicker value={taskDate} onChange={setTaskDate} taskDates={datesWithTasks} minDate={boardNavMinDate} accentColor={TASK_ORANGE} />
                         <button
                           type="button"
                           onClick={() => setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), 1)))}
@@ -2288,6 +2883,15 @@ export default function OwnerTasksPage() {
                     {COLUMNS.map((col, colIdx) => {
                       const cfg = STATUS_CONFIG[col]
                       const tasks = filteredTasks(col)
+                      const topLevelTasks = tasks.filter(t => !t.parent_task_id)
+                      const subTasksByParent = new Map<string, Task[]>()
+                      for (const t of tasks) {
+                        if (!t.parent_task_id) continue
+                        const arr = subTasksByParent.get(t.parent_task_id) ?? []
+                        arr.push(t)
+                        subTasksByParent.set(t.parent_task_id, arr)
+                      }
+                      for (const arr of subTasksByParent.values()) arr.sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0))
                       return (
                         <Fragment key={col}>
                         {colIdx > 0 && (
@@ -2303,28 +2907,60 @@ export default function OwnerTasksPage() {
                           <div style={{ padding: '11px 14px 10px', display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0, borderBottom: '1px solid #ECEEF1' }}>
                             <div style={{ color: cfg.color, display: 'flex', alignItems: 'center' }}>{cfg.icon}</div>
                             <span style={{ fontWeight: 700, fontSize: '0.8125rem', color: cfg.color, flex: 1 }}>{cfg.label}</span>
-                            <span style={{ fontSize: '0.72rem', fontWeight: 700, background: cfg.bg, color: cfg.color, padding: '2px 8px', borderRadius: '99px' }}>{tasks.length}</span>
+                            <span style={{ fontSize: '0.72rem', fontWeight: 700, background: cfg.bg, color: cfg.color, padding: '2px 8px', borderRadius: '99px' }}>{topLevelTasks.length}</span>
                           </div>
                           {/* Scrollable card area */}
                           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '10px 18px 12px', display: 'flex', flexDirection: 'column' }}>
-                            {tasks.length === 0 ? (
+                            {topLevelTasks.length === 0 ? (
                               <div style={{ flex: 1, minHeight: 164, margin: '8px 0', padding: '32px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', animation: 'fadeSlideUp 0.3s ease both', animationDelay: `${0.1 + colIdx * 0.05}s` }}>
                                 {{ Assigned: <Layers size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />, 'In Progress': <Clock size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />, Review: <Eye size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />, Complete: <CheckCircle size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} /> }[col]}
                                 <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No {cfg.label.toLowerCase()} tasks</p>
                               </div>
                             ) : (
-                              tasks.map(task => (
-                                <TaskCard
-                                  key={task.id}
-                                  task={task}
-                                  members={members}
-                                  shiftOptions={shiftOptions}
-                                  departments={departments}
-                                  showDept={selectedDeptId === ''}
-                                  onClick={() => openTask(task, true)}
-                                  onEdit={() => openTask(task, false)}
-                                />
-                              ))
+                              topLevelTasks.map(task => {
+                                const subTasks = subTasksByParent.get(task.id) ?? []
+                                const isExpanded = expandedTaskIds.has(task.id)
+                                return (
+                                  <div key={task.id}>
+                                    <TaskCard
+                                      task={task}
+                                      members={members}
+                                      shiftOptions={shiftOptions}
+                                      departments={departments}
+                                      showDept={selectedDeptId === ''}
+                                      onClick={subTasks.length > 0 ? () => toggleTaskExpanded(task.id) : () => openTask(task, true)}
+                                      onEdit={() => openTask(task, false)}
+                                      subTaskCount={subTasks.length}
+                                      expanded={isExpanded}
+                                    />
+                                    {isExpanded && subTasks.length > 0 && (
+                                      <div style={{ marginTop: -6, marginBottom: 14, paddingLeft: 6 }}>
+                                        {subTasks.map((sub, idx) => (
+                                          <div key={sub.id} style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
+                                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+                                              <span style={{ width: 18, height: 18, marginTop: 14, borderRadius: '50%', background: '#FFF3E8', color: '#EA580C', fontSize: 10, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                                {idx + 1}
+                                              </span>
+                                              {idx < subTasks.length - 1 && <div style={{ width: 1, flex: 1, background: '#E2E8F0' }} />}
+                                            </div>
+                                            <div style={{ flex: 1, minWidth: 0 }}>
+                                              <TaskCard
+                                                task={sub}
+                                                members={members}
+                                                shiftOptions={shiftOptions}
+                                                departments={departments}
+                                                showDept={selectedDeptId === ''}
+                                                onClick={() => openTask(sub, true)}
+                                                onEdit={() => openTask(sub, false)}
+                                              />
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                )
+                              })
                             )}
                           </div>
                         </div>
@@ -2494,7 +3130,7 @@ export default function OwnerTasksPage() {
               {/* Description */}
               <div>
                 <label style={modalLabelStyle}>Description</label>
-                <textarea value={editDescription} onChange={e => setEditDescription(e.target.value)} rows={2} style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }} />
+                <textarea value={editDescription} onChange={e => setEditDescription(e.target.value)} onKeyDown={e => handleDescriptionKeyDown(e, editDescription, setEditDescription)} rows={2} style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }} />
               </div>
 
               {/* Department + Assign To */}
@@ -2530,7 +3166,7 @@ export default function OwnerTasksPage() {
                     value={editStartDate || formatDateKey(new Date())}
                     onChange={setEditStartDate}
                     taskDates={datesWithTasks}
-                    minDate={minTaskDate}
+                    minDate={todayTaskDate}
                     accentColor={TASK_ORANGE}
                     fullWidth
                   />
@@ -2542,6 +3178,7 @@ export default function OwnerTasksPage() {
                     options={priorityDropdownOptions}
                     onChange={v => setEditPriority(v)}
                     placeholder="Select priority"
+                    badgeColors={PRIORITY_COLORS}
                   />
                 </div>
               </div>
@@ -2549,7 +3186,7 @@ export default function OwnerTasksPage() {
               {/* Deadline */}
               <div>
                 <label style={modalLabelStyle}>Deadline</label>
-                <DeadlineDateTimePicker
+                <DeadlinePicker
                   dateValue={editDueAt}
                   timeValue={editDeadlineTime}
                   onChange={(date, time) => { setEditDueAt(date); setEditDeadlineTime(time) }}
@@ -2604,7 +3241,7 @@ export default function OwnerTasksPage() {
                     </div>
                     <div>
                       <label style={{ ...modalLabelStyle, fontSize: 12, marginBottom: 6 }}>End date</label>
-                      <TaskDatePicker value={recurrenceEndDate || editStartDate || formatDateKey(new Date())} onChange={setRecurrenceEndDate} taskDates={datesWithTasks} minDate={editStartDate || minTaskDate} accentColor={TASK_ORANGE} fullWidth />
+                      <TaskDatePicker value={recurrenceEndDate || editStartDate || formatDateKey(new Date())} onChange={setRecurrenceEndDate} taskDates={datesWithTasks} minDate={editStartDate || todayTaskDate} accentColor={TASK_ORANGE} fullWidth />
                     </div>
                     <button type="button" onClick={handleCreateRecurringTasks} disabled={taskActionLoading === 'recurring' || !recurrenceEndDate} style={{ height: 40, border: 0, borderRadius: 8, background: '#0F172A', color: '#FFFFFF', fontSize: 12, fontWeight: 800, padding: '0 12px', cursor: taskActionLoading === 'recurring' ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                       {taskActionLoading === 'recurring' ? <Spinner size={12} /> : null} Create
@@ -2613,37 +3250,34 @@ export default function OwnerTasksPage() {
                 </div>
 
                 <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                     <GitBranch size={14} color="#475569" />
-                    <span style={{ fontSize: 13, fontWeight: 800, color: '#0F172A' }}>Task dependencies</span>
+                    <span style={{ fontSize: 13, fontWeight: 800, color: '#0F172A' }}>Sub-tasks</span>
+                    {subTaskReorderLoading && <Spinner size={12} dark />}
                   </div>
+
                   {selectedSubTasks.length > 0 && (
-                    <p style={{ margin: '0 0 8px', color: '#64748B', fontSize: 12 }}>
-                      Current dependencies: {selectedSubTasks.map(task => task.title).join(', ')}
-                    </p>
-                  )}
-                  {dependencyTaskOptions.length === 0 ? (
-                    <p style={{ margin: 0, color: '#94A3B8', fontSize: 12 }}>Create another task before setting dependencies.</p>
-                  ) : (
-                    <div style={{ maxHeight: 120, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {dependencyTaskOptions.slice(0, 8).map(task => {
-                        const checked = dependencyIds.includes(task.id)
-                        return (
-                          <label key={task.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#334155', cursor: 'pointer' }}>
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              onChange={event => setDependencyIds(prev => event.target.checked ? [...prev, task.id] : prev.filter(id => id !== task.id))}
-                            />
-                            <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.title}</span>
-                          </label>
-                        )
-                      })}
+                    <div style={{ marginBottom: 10 }}>
+                      <SubTaskOrderList
+                        items={selectedSubTasks.map(t => ({ id: t.id, title: t.title }))}
+                        onReorder={handleReorderSubTasks}
+                        disabled={subTaskReorderLoading}
+                      />
                     </div>
                   )}
-                  <button type="button" onClick={handleSaveDependencies} disabled={taskActionLoading === 'dependencies'} style={{ marginTop: 10, height: 32, border: '1px solid #E2E8F0', borderRadius: 8, background: '#FFFFFF', color: '#334155', fontSize: 12, fontWeight: 800, padding: '0 10px', cursor: taskActionLoading === 'dependencies' ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                    {taskActionLoading === 'dependencies' ? <Spinner size={12} dark /> : null} Save dependencies
-                  </button>
+
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input
+                      value={subTaskTitle}
+                      onChange={e => setSubTaskTitle(e.target.value)}
+                      placeholder="Sub-task title..."
+                      style={{ ...modalInputStyle, flex: 1, padding: '8px 10px', fontSize: 13 }}
+                      onKeyDown={e => { if (e.key === 'Enter') handleCreateSubTask() }}
+                    />
+                    <button type="button" onClick={handleCreateSubTask} disabled={subTaskLoading || !subTaskTitle.trim()} style={{ flexShrink: 0, height: 36, padding: '0 12px', border: 0, borderRadius: 8, background: subTaskTitle.trim() ? 'linear-gradient(135deg, #F97316, #EA580C)' : '#E5E7EB', color: subTaskTitle.trim() ? '#FFFFFF' : '#9CA3AF', fontWeight: 700, fontSize: 12, cursor: subTaskTitle.trim() ? 'pointer' : 'not-allowed', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      {subTaskLoading ? <Spinner size={12} /> : <Plus size={13} strokeWidth={2.5} />}
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -2702,7 +3336,9 @@ export default function OwnerTasksPage() {
                 <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <AlertCircle size={15} color="#fff" strokeWidth={2.5} />
                 </div>
-                <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>New Task</h2>
+                <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+                  {newAssigneeMember ? `Assign Task to ${newAssigneeMember.full_name}` : 'New Task'}
+                </h2>
               </div>
               <button onClick={() => setNewTaskModal(false)} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
                 onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
@@ -2715,56 +3351,31 @@ export default function OwnerTasksPage() {
             {/* Body */}
             <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
 
-              {/* Title */}
-              <div>
-                <label style={modalLabelStyle}>Title</label>
-                <input autoFocus value={newTitle} onChange={e => setNewTitle(e.target.value)} placeholder="Task title..." style={modalInputStyle} onKeyDown={e => { if (e.key === 'Enter') handleCreateTask() }} />
-              </div>
-
-              {/* Description */}
-              <div>
-                <label style={modalLabelStyle}>Description</label>
-                <textarea value={newDescription} onChange={e => setNewDescription(e.target.value)} rows={2} placeholder="Add more context..." style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }} />
-              </div>
-
-              {/* Department + Assign To */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              {/* Use Template */}
+              {templateDropdownOptions.length > 0 && (
                 <div>
-                  <label style={modalLabelStyle}>Department</label>
+                  <label style={modalLabelStyle}>Use Template</label>
                   <DropdownField
-                    value={newDeptId}
-                    options={deptDropdownOptions}
-                    onChange={v => { setNewDeptId(v); setNewAssigneeId(''); setNewShiftId(''); setNewDeadlineDate(''); setNewDeadlineTime('') }}
-                    placeholder="Select department"
+                    value={newTemplateId}
+                    options={templateDropdownOptions}
+                    onChange={v => {
+                      setNewTemplateId(v)
+                      const template = taskTemplates.find(t => t.id === v)
+                      if (!template) return
+                      setNewTitle(template.title)
+                      setNewDescription(template.description ?? '')
+                      setNewPriority(template.priority ?? '')
+                    }}
+                    placeholder="Use a template…"
                   />
                 </div>
-                <div>
-                  <label style={modalLabelStyle}>Assign To</label>
-                  <DropdownField
-                    value={newAssigneeId}
-                    options={assigneeDropdownOptions}
-                    onChange={v => setNewAssigneeId(v)}
-                    placeholder="Unassigned"
-                    disabled={!newDeptId}
-                  />
-                </div>
-              </div>
+              )}
 
-              {/* Divider */}
-              <div style={{ borderTop: '1px dashed #E5E7EB' }} />
-
-              {/* Start Date + Priority */}
+              {/* Title + Priority */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                 <div>
-                  <label style={modalLabelStyle}>Start Date</label>
-                  <TaskDatePicker
-                    value={newStartDate || formatDateKey(new Date())}
-                    onChange={setNewStartDate}
-                    taskDates={datesWithTasks}
-                    minDate={minTaskDate}
-                    accentColor={TASK_ORANGE}
-                    fullWidth
-                  />
+                  <label style={modalLabelStyle}>Title</label>
+                  <input autoFocus value={newTitle} onChange={e => setNewTitle(e.target.value)} placeholder="Task title..." style={modalInputStyle} onKeyDown={e => { if (e.key === 'Enter') handleCreateTask() }} />
                 </div>
                 <div>
                   <label style={modalLabelStyle}>Priority</label>
@@ -2773,19 +3384,290 @@ export default function OwnerTasksPage() {
                     options={priorityDropdownOptions}
                     onChange={v => setNewPriority(v)}
                     placeholder="Select priority"
+                    badgeColors={PRIORITY_COLORS}
                   />
                 </div>
               </div>
 
-              {/* Deadline */}
+              {/* Description */}
               <div>
-                <label style={modalLabelStyle}>Deadline</label>
-                <DeadlineDateTimePicker
-                  dateValue={newDeadlineDate}
-                  timeValue={newDeadlineTime}
-                  onChange={(date, time) => { setNewDeadlineDate(date); setNewDeadlineTime(time) }}
-                  minDate={newStartDate || formatDateKey(new Date())}
-                />
+                <label style={modalLabelStyle}>Description</label>
+                <textarea value={newDescription} onChange={e => setNewDescription(e.target.value)} onKeyDown={e => handleDescriptionKeyDown(e, newDescription, setNewDescription)} rows={2} placeholder="Add more context..." style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }} />
+              </div>
+
+              {/* Divider */}
+              <div style={{ borderTop: '1px dashed #E5E7EB' }} />
+
+              {/* Start Date + Deadline (Deadline replaced by the Deadline Rule picker below once Recurring is on) */}
+              <div style={newRecurringEnabled ? undefined : { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div>
+                  <label style={modalLabelStyle}>Start Date</label>
+                  <TaskDatePicker
+                    value={newStartDate || formatDateKey(new Date())}
+                    onChange={setNewStartDate}
+                    taskDates={datesWithTasks}
+                    minDate={todayTaskDate}
+                    accentColor={TASK_ORANGE}
+                    fullWidth
+                  />
+                </div>
+                {!newRecurringEnabled && (
+                  <div>
+                    <label style={modalLabelStyle}>Deadline</label>
+                    <DeadlinePicker
+                      dateValue={newDeadlineDate}
+                      timeValue={newDeadlineTime}
+                      onChange={(date, time) => { setNewDeadlineDate(date); setNewDeadlineTime(time) }}
+                      minDate={newStartDate || formatDateKey(new Date())}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Divider */}
+              <div style={{ borderTop: '1px dashed #E5E7EB' }} />
+
+              {/* Sub Task + Recurring toggles */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
+                      <GitBranch size={13} color={TASK_ORANGE} /> Sub Task
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={newSubTaskEnabled}
+                      onChange={e => setNewSubTaskEnabled(e.target.checked)}
+                      style={{ width: 16, height: 16, accentColor: TASK_ORANGE, cursor: 'pointer' }}
+                    />
+                  </label>
+
+                  {newSubTaskEnabled && (
+                    <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {newSubTasks.length > 0 && (
+                        <SubTaskOrderList
+                          items={newSubTasks}
+                          onReorder={orderedIds => setNewSubTasks(prev => orderedIds.map(id => prev.find(s => s.id === id)!))}
+                          onRemove={id => setNewSubTasks(prev => prev.filter(s => s.id !== id))}
+                          onRename={(id, title) => setNewSubTasks(prev => prev.map(s => s.id === id ? { ...s, title } : s))}
+                        />
+                      )}
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <input
+                          value={newSubTaskDraft}
+                          onChange={e => setNewSubTaskDraft(e.target.value)}
+                          placeholder="Sub-task title..."
+                          style={{ ...modalInputStyle, flex: 1, minWidth: 0, minHeight: 32, padding: '6px 10px', fontSize: 12 }}
+                          onKeyDown={e => {
+                            if (e.key !== 'Enter' || !newSubTaskDraft.trim()) return
+                            e.preventDefault()
+                            setNewSubTasks(prev => [...prev, { id: crypto.randomUUID(), title: newSubTaskDraft.trim() }])
+                            setNewSubTaskDraft('')
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!newSubTaskDraft.trim()) return
+                            setNewSubTasks(prev => [...prev, { id: crypto.randomUUID(), title: newSubTaskDraft.trim() }])
+                            setNewSubTaskDraft('')
+                          }}
+                          disabled={!newSubTaskDraft.trim()}
+                          style={{ flexShrink: 0, width: 32, height: 30, padding: 0, border: 'none', borderRadius: 7, background: newSubTaskDraft.trim() ? 'linear-gradient(135deg, #F97316, #EA580C)' : '#E5E7EB', color: newSubTaskDraft.trim() ? '#FFFFFF' : '#9CA3AF', fontWeight: 700, fontSize: 12, cursor: newSubTaskDraft.trim() ? 'pointer' : 'not-allowed', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                        >
+                          <Plus size={14} strokeWidth={2.5} />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
+                      <Repeat size={13} color={TASK_ORANGE} /> Recurring
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={newRecurringEnabled}
+                      onChange={e => setNewRecurringEnabled(e.target.checked)}
+                      style={{ width: 16, height: 16, accentColor: TASK_ORANGE, cursor: 'pointer' }}
+                    />
+                  </label>
+
+                  {newRecurringEnabled && (
+                    <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+                        {([
+                          ['daily', 'Daily'],
+                          ['weekly', 'Weekly'],
+                          ['custom', 'Custom'],
+                        ] as const).map(([rule, label]) => {
+                          const active = newRecurrenceRule === rule
+                          return (
+                            <button
+                              key={rule}
+                              type="button"
+                              onClick={() => setNewRecurrenceRule(rule)}
+                              style={{ width: 92, height: 30, border: active ? `1.5px solid ${TASK_ORANGE}` : '1.5px solid #E5E7EB', background: active ? '#FFF7ED' : '#FFFFFF', color: active ? TASK_ORANGE : '#374151', borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                            >
+                              {label}
+                            </button>
+                          )
+                        })}
+                      </div>
+                      {newRecurrenceRule && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
+                        <div>
+                          <label style={{ ...modalLabelStyle, fontSize: '0.75rem' }}>Repeat until</label>
+                          <InlineTaskDateCalendar
+                            value={newRecurrenceEndDate || newStartDate || formatDateKey(new Date())}
+                            onChange={setNewRecurrenceEndDate}
+                            minDate={newStartDate || todayTaskDate}
+                            accentColor={TASK_ORANGE}
+                          />
+                        </div>
+                        {newRecurrenceRule === 'custom' && (
+                          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Repeat every (days)</span>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              value={newCustomIntervalDays || ''}
+                              onChange={e => {
+                                const digits = e.target.value.replace(/\D/g, '')
+                                setNewCustomIntervalDays(digits === '' ? 0 : Number(digits))
+                              }}
+                              onBlur={() => setNewCustomIntervalDays(prev => Math.min(31, Math.max(1, prev || 1)))}
+                              style={{ ...modalInputStyle, minHeight: 32, padding: '6px 10px', fontSize: 12 }}
+                            />
+                          </label>
+                        )}
+                      </div>
+                      )}
+                      {newRecurrenceRule && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0, borderTop: '1px dashed #E5E7EB', paddingTop: 12 }}>
+                          <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Deadline rule</span>
+                          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+                            {([
+                              ['same_day', 'Same day'],
+                              ['fixed_day', 'Fixed day'],
+                              ['relative', 'Relative'],
+                            ] as const).map(([type, label]) => {
+                              const disabled = type === 'fixed_day' && newRecurrenceRule !== 'weekly'
+                              const active = newDeadlineRuleType === type
+                              return (
+                                <button
+                                  key={type}
+                                  type="button"
+                                  disabled={disabled}
+                                  onClick={() => setNewDeadlineRuleType(type)}
+                                  title={disabled ? 'Fixed day deadlines are only available for weekly recurrence' : undefined}
+                                  style={{ width: 92, height: 30, border: active ? `1.5px solid ${TASK_ORANGE}` : '1.5px solid #E5E7EB', background: disabled ? '#F9FAFB' : active ? '#FFF7ED' : '#FFFFFF', color: disabled ? '#CBD5E1' : active ? TASK_ORANGE : '#374151', borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: disabled ? 'not-allowed' : 'pointer' }}
+                                >
+                                  {label}
+                                </button>
+                              )
+                            })}
+                          </div>
+
+                          {newDeadlineRuleType === 'same_day' && (
+                            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Due at</span>
+                              <DropdownField
+                                value={newDeadlineRuleTime}
+                                options={TIME_OPTIONS}
+                                onChange={setNewDeadlineRuleTime}
+                                placeholder="Select time"
+                              />
+                            </label>
+                          )}
+
+                          {newDeadlineRuleType === 'fixed_day' && (
+                            <>
+                              <div>
+                                <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151', marginBottom: 6 }}>Due every</span>
+                                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                  {WEEKDAY_LABELS.map((label, weekday) => {
+                                    const active = newDeadlineRuleWeekday === weekday
+                                    return (
+                                      <button
+                                        key={weekday}
+                                        type="button"
+                                        onClick={() => setNewDeadlineRuleWeekday(weekday)}
+                                        style={{ width: 34, height: 30, border: active ? `1.5px solid ${TASK_ORANGE}` : '1.5px solid #E5E7EB', background: active ? '#FFF7ED' : '#FFFFFF', color: active ? TASK_ORANGE : '#374151', borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                                      >
+                                        {label}
+                                      </button>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>At</span>
+                                <DropdownField
+                                  value={newDeadlineRuleTime}
+                                  options={TIME_OPTIONS}
+                                  onChange={setNewDeadlineRuleTime}
+                                  placeholder="Select time"
+                                />
+                              </label>
+                            </>
+                          )}
+
+                          {newDeadlineRuleType === 'relative' && (
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Due within</span>
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  value={newDeadlineRuleOffsetAmount || ''}
+                                  onChange={e => {
+                                    const digits = e.target.value.replace(/\D/g, '')
+                                    setNewDeadlineRuleOffsetAmount(digits === '' ? 0 : Number(digits))
+                                  }}
+                                  onBlur={() => setNewDeadlineRuleOffsetAmount(prev => Math.max(1, prev || 1))}
+                                  style={{ ...modalInputStyle, minHeight: 32, padding: '6px 10px', fontSize: 12 }}
+                                />
+                              </label>
+                              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Unit</span>
+                                <DropdownField
+                                  value={newDeadlineRuleOffsetUnit}
+                                  options={[{ value: 'days', label: 'Days' }, { value: 'hours', label: 'Hours' }]}
+                                  onChange={v => setNewDeadlineRuleOffsetUnit(v as 'hours' | 'days')}
+                                />
+                              </label>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {newRecurringPreviewDates.length > 0 && (
+                        <div style={{ gridColumn: '1 / -1', border: '1px solid #E5E7EB', borderRadius: 10, padding: '8px 10px', background: '#F9FAFB' }}>
+                          <p style={{ margin: '0 0 7px', fontSize: 11, fontWeight: 700, color: '#374151' }}>Preview</p>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                            {newRecurringPreviewDates.slice(0, 6).map(date => {
+                              const deadlinePreview = previewDeadlineFor(date)
+                              return (
+                                <span key={date} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '5px 7px', border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', color: '#374151', fontSize: 11, fontWeight: 600 }}>
+                                  <Repeat size={10} color={TASK_ORANGE} />
+                                  {new Date(`${date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                  {deadlinePreview && <span style={{ color: '#9CA3AF', fontWeight: 500 }}>· due {deadlinePreview}</span>}
+                                </span>
+                              )
+                            })}
+                            {newRecurringPreviewDates.length > 6 && (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', padding: '5px 7px', borderRadius: 8, background: '#FFF7ED', color: TASK_ORANGE, fontSize: 11, fontWeight: 700 }}>
+                                +{newRecurringPreviewDates.length - 6} more
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
 
             </div>
@@ -2802,6 +3684,210 @@ export default function OwnerTasksPage() {
               >
                 {newLoading ? <Spinner size={13} /> : <Check size={13} />} Create Task
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════ ARCHIVED TASKS MODAL ═══════════════ */}
+      {archiveModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: 480, maxHeight: '88vh', overflowY: 'auto', background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
+            <div style={{ padding: '18px 20px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Archive size={15} color="#fff" strokeWidth={2.5} />
+                </div>
+                <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>Archived Tasks</h2>
+              </div>
+              <button onClick={() => setArchiveModalOpen(false)} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+                onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {archiveListLoading ? (
+                <div style={{ display: 'flex', justifyContent: 'center', padding: 18 }}><Spinner size={16} dark /></div>
+              ) : archiveListError ? (
+                <InlineError message={archiveListError} />
+              ) : archivedTasks.length === 0 ? (
+                <div style={{ height: 180, borderRadius: 12, background: '#F8FAFC', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 8, fontWeight: 600, fontSize: 13 }}>
+                  <Archive size={26} strokeWidth={1.5} />
+                  No archived tasks yet
+                </div>
+              ) : (
+                archivedTasks.map(task => {
+                  const priorityStyle = task.priority ? PRIORITY_COLORS[task.priority] : null
+                  const assigneeName = task.assigned_user_id ? members.find(m => m.id === task.assigned_user_id)?.full_name : ''
+                  const deptName = departments.find(d => d.id === task.department_id)?.name ?? 'Unknown department'
+                  const archivedDate = task.updated_at ?? task.created_at
+                  return (
+                    <div key={task.id} style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: '12px 14px', background: '#FFFFFF' }}>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+                        <div style={{ minWidth: 0, flex: 1 }}>
+                          <p style={{ margin: 0, fontSize: 14, fontWeight: 800, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.title}</p>
+                          <p style={{ margin: '5px 0 0', fontSize: 12, fontWeight: 600, color: '#64748B' }}>
+                            {deptName}{assigneeName ? ` | ${assigneeName}` : ''}
+                          </p>
+                        </div>
+                        {priorityStyle && (
+                          <span style={{ flexShrink: 0, fontSize: '0.65rem', fontWeight: 800, padding: '2px 7px', borderRadius: '99px', background: priorityStyle.bg, color: priorityStyle.text, letterSpacing: '0.01em' }}>
+                            {task.priority}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, color: '#94A3B8', fontSize: 11, fontWeight: 600 }}>
+                        <span>{task.task_date ? new Date(`${task.task_date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'No start date'}</span>
+                        <span>Archived {new Date(archivedDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════ TASK TEMPLATE MODAL ═══════════════ */}
+      {templateModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: 440, maxHeight: '88vh', overflowY: 'auto', background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
+
+            {/* Header */}
+            <div style={{ padding: '18px 20px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <LayoutTemplate size={15} color="#fff" strokeWidth={2.5} />
+                </div>
+                <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+                  {templateFormMode === 'list' ? 'Task Templates' : templateFormMode === 'edit' ? 'Edit Template' : 'New Template'}
+                </h2>
+              </div>
+              <button onClick={() => setTemplateModalOpen(false)} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+                onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {templateFormMode === 'list' ? (
+                <>
+                  {taskTemplates.length === 0 ? (
+                    <div style={{ height: 180, borderRadius: 12, background: '#F8FAFC', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 8, fontWeight: 600, fontSize: 13 }}>
+                      <LayoutTemplate size={26} strokeWidth={1.5} />
+                      No task templates yet
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {taskTemplates.map(t => {
+                        const priorityStyle = t.priority ? PRIORITY_COLORS[t.priority] : null
+                        return (
+                          <div key={t.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '12px 14px', border: '1px solid #E5E7EB', borderRadius: 10 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
+                              {priorityStyle && (
+                                <span style={{ flexShrink: 0, fontSize: '0.65rem', fontWeight: 800, padding: '2px 7px', borderRadius: '99px', background: priorityStyle.bg, color: priorityStyle.text, letterSpacing: '0.01em' }}>
+                                  {t.priority}
+                                </span>
+                              )}
+                              <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: '#111827', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.name}</p>
+                            </div>
+                            <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                              <button type="button" onClick={() => openEditTemplate(t)} style={{ border: 'none', background: 'transparent', color: '#6B7280', cursor: 'pointer', display: 'flex', padding: 6, borderRadius: 6 }} title="Edit">
+                                <Pencil size={14} />
+                              </button>
+                              <button type="button" onClick={() => setDeleteTemplateModal(t)} style={{ border: 'none', background: 'transparent', color: '#DC2626', cursor: 'pointer', display: 'flex', padding: 6, borderRadius: 6 }} title="Delete">
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={openCreateTemplate}
+                    style={{ alignSelf: 'center', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 'none', borderRadius: 10, background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                  >
+                    <Plus size={15} strokeWidth={2.5} /> New Template
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <label style={modalLabelStyle}>Name</label>
+                    <input autoFocus value={templateFormName} onChange={e => setTemplateFormName(e.target.value)} placeholder="e.g. Daily Cleaning Checklist" style={modalInputStyle} />
+                  </div>
+                  <div>
+                    <label style={modalLabelStyle}>Task Title</label>
+                    <input value={templateFormTitle} onChange={e => setTemplateFormTitle(e.target.value)} placeholder="Task title this template creates..." style={modalInputStyle} />
+                  </div>
+                  <div>
+                    <label style={modalLabelStyle}>Description</label>
+                    <textarea value={templateFormDesc} onChange={e => setTemplateFormDesc(e.target.value)} onKeyDown={e => handleDescriptionKeyDown(e, templateFormDesc, setTemplateFormDesc)} rows={2} placeholder="Add more context..." style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }} />
+                  </div>
+                  <div>
+                    <label style={modalLabelStyle}>Priority</label>
+                    <DropdownField
+                      value={templateFormPriority}
+                      options={priorityDropdownOptions}
+                      onChange={setTemplateFormPriority}
+                      placeholder="Select priority"
+                      badgeColors={PRIORITY_COLORS}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+
+            <InlineError message={templateError} />
+
+            {/* Footer */}
+            <div style={{ padding: '0 20px 18px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              {templateFormMode !== 'list' && (
+                <button
+                  type="button"
+                  onClick={() => { setTemplateFormMode('list'); setTemplateError('') }}
+                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: `1px solid ${TASK_BORDER}`, borderRadius: 10, background: '#FFFFFF', color: TASK_TEXT, height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                >
+                  Cancel
+                </button>
+              )}
+              {templateFormMode !== 'list' && (
+                <button
+                  type="button"
+                  onClick={handleSaveTemplate}
+                  disabled={templateLoading || !templateFormName.trim() || !templateFormTitle.trim()}
+                  style={{ padding: '7px 18px', background: (!templateFormName.trim() || !templateFormTitle.trim()) ? '#E5E7EB' : templateLoading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: (!templateFormName.trim() || !templateFormTitle.trim()) ? '#9CA3AF' : '#FFFFFF', cursor: templateLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: templateLoading ? 0.65 : 1 }}
+                >
+                  {templateLoading ? <Spinner size={13} /> : <Check size={13} />} {templateFormMode === 'edit' ? 'Save Changes' : 'Create Template'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════ DELETE TASK TEMPLATE MODAL ═══════════════ */}
+      {deleteTemplateModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'grid', placeItems: 'center', padding: 18, zIndex: 110, animation: 'overlayFadeIn 0.18s ease-out' }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: 'min(420px, 100%)', background: '#FFFFFF', borderRadius: 16, border: '1px solid #E2E8F0', boxShadow: '0 24px 70px rgba(15,23,42,0.32)', padding: 16, animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 16 }}>
+              <h2 style={{ margin: 0, color: TASK_TEXT, fontSize: 16, fontWeight: 700 }}>Delete Template</h2>
+              <button type="button" onClick={() => setDeleteTemplateModal(null)} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, border: `1px solid ${TASK_BORDER}`, borderRadius: 9, background: '#FFFFFF', cursor: 'pointer', color: TASK_TEXT }}><X size={16} /></button>
+            </div>
+            <p style={{ color: '#64748B', marginTop: 0, fontSize: 13 }}>Are you sure you want to delete <strong style={{ color: TASK_TEXT }}>{deleteTemplateModal.name}</strong>?</p>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
+              <button type="button" onClick={() => setDeleteTemplateModal(null)} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: `1px solid ${TASK_BORDER}`, borderRadius: 10, background: '#FFFFFF', color: TASK_TEXT, height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Cancel</button>
+              <button type="button" onClick={handleDeleteTemplate} disabled={deleteTemplateLoading} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: '#DC2626', color: '#FFFFFF', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: deleteTemplateLoading ? 'default' : 'pointer', opacity: deleteTemplateLoading ? 0.65 : 1 }}>{deleteTemplateLoading ? null : <Trash2 size={16} />} Delete</button>
             </div>
           </div>
         </div>
@@ -3008,6 +4094,7 @@ export default function OwnerTasksPage() {
                       <textarea
                         value={aiDescription}
                         onChange={e => setAiDescription(e.target.value)}
+                        onKeyDown={e => handleDescriptionKeyDown(e, aiDescription, setAiDescription)}
                         rows={3}
                         placeholder="Add context to help AI break this down accurately..."
                         style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
@@ -3023,6 +4110,7 @@ export default function OwnerTasksPage() {
                           options={priorityDropdownOptions}
                           onChange={setAiPriority}
                           placeholder="Select priority"
+                          badgeColors={PRIORITY_COLORS}
                         />
                       </div>
                       <div>
@@ -3123,26 +4211,27 @@ export default function OwnerTasksPage() {
                     {/* Divider */}
                     <div style={{ borderTop: '1px dashed #E5E7EB' }} />
 
-                    {/* Priority + Deadline */}
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                      <div>
-                        <label style={modalLabelStyle}>Priority</label>
-                        <DropdownField
-                          value={aiPriority}
-                          options={priorityDropdownOptions}
-                          onChange={setAiPriority}
-                          placeholder="Select priority"
-                        />
-                      </div>
-                      <div>
-                        <label style={modalLabelStyle}>Deadline <span style={{ fontSize: 11, fontWeight: 400, color: '#7C3AED' }}>| AI suggested</span></label>
-                        <DeadlineDateTimePicker
-                          dateValue={aiDueDate}
-                          timeValue={aiDueTime}
-                          onChange={(date, time) => { setAiDueDate(date); setAiDueTime(time) }}
-                          minDate={formatDateKey(new Date())}
-                        />
-                      </div>
+                    {/* Priority */}
+                    <div>
+                      <label style={modalLabelStyle}>Priority</label>
+                      <DropdownField
+                        value={aiPriority}
+                        options={priorityDropdownOptions}
+                        onChange={setAiPriority}
+                        placeholder="Select priority"
+                        badgeColors={PRIORITY_COLORS}
+                      />
+                    </div>
+
+                    {/* Deadline */}
+                    <div>
+                      <label style={modalLabelStyle}>Deadline <span style={{ fontSize: 11, fontWeight: 400, color: '#7C3AED' }}>| AI suggested</span></label>
+                      <DeadlinePicker
+                        dateValue={aiDueDate}
+                        timeValue={aiDueTime}
+                        onChange={(date, time) => { setAiDueDate(date); setAiDueTime(time) }}
+                        minDate={formatDateKey(new Date())}
+                      />
                     </div>
 
                     <InlineError message={aiError} />

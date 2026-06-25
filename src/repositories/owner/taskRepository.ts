@@ -16,6 +16,7 @@ export const taskRepository = {
         company_id: input.company_id,
         department_id: input.department_id,
         parent_task_id: input.parent_task_id ?? null,
+        sequence_order: input.sequence_order ?? null,
         title: input.title,
         description: input.description ?? null,
         assigned_user_id: input.assigned_user_id ?? null,
@@ -25,6 +26,8 @@ export const taskRepository = {
         priority: input.priority ?? null,
         due_at: input.due_at ?? null,
         task_date: input.task_date ?? null,
+        recurrence_group_id: input.recurrence_group_id ?? null,
+        source_task_id: input.source_task_id ?? null,
       })
       .select()
       .single()
@@ -35,7 +38,7 @@ export const taskRepository = {
   async getTasksByCompany(company_id: string): Promise<Task[]> {
     const { data, error } = await supabase
       .from('tasks')
-      .select('id, shift_id, company_id, department_id, parent_task_id, title, description, assigned_user_id, assigned_by, status, percentage_complete, priority, due_at, task_date, created_at, updated_at, shifts(shift_date)')
+      .select('id, shift_id, company_id, department_id, parent_task_id, sequence_order, title, description, assigned_user_id, assigned_by, status, percentage_complete, priority, due_at, task_date, recurrence_group_id, source_task_id, created_at, updated_at, shifts(shift_date)')
       .eq('company_id', company_id)
       .order('created_at', { ascending: false })
     if (error) throw new Error(error.message)
@@ -71,6 +74,7 @@ export const taskRepository = {
       .from('tasks')
       .select('*')
       .eq('parent_task_id', parent_task_id)
+      .order('sequence_order', { ascending: true, nullsFirst: true })
       .order('created_at', { ascending: true })
     if (error) throw new Error(error.message)
     return (data ?? []) as Task[]
@@ -84,6 +88,16 @@ export const taskRepository = {
       .single()
     if (error) throw new Error(error.message)
     return data as Task
+  },
+
+  async getTasksByRecurrenceGroupId(recurrence_group_id: string): Promise<Task[]> {
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('*')
+      .eq('recurrence_group_id', recurrence_group_id)
+      .order('task_date', { ascending: true })
+    if (error) throw new Error(error.message)
+    return (data ?? []) as Task[]
   },
 
   async getUserById(id: string): Promise<User | null> {

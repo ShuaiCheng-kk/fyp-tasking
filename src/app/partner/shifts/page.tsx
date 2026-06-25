@@ -855,7 +855,7 @@ export default function OwnerShiftsPage() {
   const activeDeptIds = useMemo(() => {
     const ids = new Set<string>()
     for (const row of timelineRows) {
-      if (row.user_id && row.shifts.length > 0) ids.add(row.department_id)
+      if (row.user_id && row.shifts.some(shift => shift.publication_status !== 'draft')) ids.add(row.department_id)
     }
     return ids
   }, [timelineRows])

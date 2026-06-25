@@ -5,11 +5,13 @@ import { taskRepository } from '@/repositories/owner/taskRepository'
 import {
   Task,
   TaskInput,
+  SubTaskInput,
   TaskStats,
   DepartmentTaskStats,
   KanbanGroup,
   TaskCalendarItem,
   TaskRecurrenceInput,
+  TaskDeadlineRule,
   TaskReassignmentSuggestion,
   TaskWorkloadSuggestion,
   StalledTaskAlert,
@@ -41,6 +43,36 @@ export const taskService = {
     return taskRepository.createTask(input)
   },
 
+  // UC22 Create Sub Task / UC28 Set Task Dependencies — sub_tasks are created under the
+  // main task; sequence_order is only set (0-based) when there are 2+ sub-tasks, since a
+  // single sub-task has nothing to be sequenced against.
+  async assignTaskWithSubTasks(input: TaskInput, subTasks: SubTaskInput[]): Promise<Task> {
+    const mainTask = await this.assignTask(input)
+    const titles = subTasks.map(s => s.title?.trim()).filter((t): t is string => !!t)
+    if (titles.length === 0) return mainTask
+
+    const ordered = titles.length >= 2
+    for (let i = 0; i < subTasks.length; i++) {
+      const title = subTasks[i].title?.trim()
+      if (!title) continue
+      await taskRepository.createTask({
+        shift_id: mainTask.shift_id,
+        company_id: mainTask.company_id,
+        department_id: mainTask.department_id,
+        parent_task_id: mainTask.id,
+        sequence_order: ordered ? i : null,
+        title,
+        description: subTasks[i].description ?? null,
+        assigned_user_id: mainTask.assigned_user_id,
+        assigned_by: mainTask.assigned_by,
+        status: 'Assigned',
+        percentage_complete: 0,
+        task_date: mainTask.task_date,
+      })
+    }
+    return mainTask
+  },
+
   async editTask(id: string, input: Partial<TaskInput>): Promise<Task> {
     if (!id) throw new Error('Task id is required')
     const existing = await taskRepository.getTaskById(id)
@@ -64,8 +96,20 @@ export const taskService = {
 
   async deleteTask(id: string): Promise<void> {
     if (!id) throw new Error('Task id is required')
-    await taskRepository.deleteSubTasksByParent(id)
-    return taskRepository.deleteTask(id)
+    const task = await taskRepository.getTaskById(id)
+
+    // Deleting the original of a recurring series takes the whole series with it — mirrors
+    // recurring Shift deletion. Deleting a sibling occurrence only removes that one occurrence.
+    const isRecurrenceOriginal = task.recurrence_group_id && task.source_task_id === null
+    const siblings = isRecurrenceOriginal
+      ? (await taskRepository.getTasksByRecurrenceGroupId(task.recurrence_group_id!)).filter(t => t.id !== id)
+      : []
+    const tasksToDelete = [task, ...siblings]
+
+    for (const t of tasksToDelete) {
+      await taskRepository.deleteSubTasksByParent(t.id)
+      await taskRepository.deleteTask(t.id)
+    }
   },
 
   async duplicateTask(id: string, assigned_by?: string): Promise<Task> {
@@ -93,6 +137,7 @@ export const taskService = {
         company_id: subTask.company_id,
         department_id: subTask.department_id,
         parent_task_id: duplicated.id,
+        sequence_order: subTask.sequence_order,
         title: subTask.title,
         description: subTask.description,
         assigned_user_id: subTask.assigned_user_id,
@@ -114,6 +159,27 @@ export const taskService = {
       throw new Error('recurrence_rule must be daily, weekly, or custom')
     }
     if (!input.recurrence_end_date) throw new Error('recurrence_end_date is required')
+    if (original.source_task_id !== null) {
+      throw new Error('Only the original task in a recurring series can have its recurrence edited')
+    }
+    const deadlineRule = input.deadline_rule
+    if (deadlineRule) {
+      if (!['same_day', 'fixed_day', 'relative'].includes(deadlineRule.type)) {
+        throw new Error('deadline_rule.type must be same_day, fixed_day, or relative')
+      }
+      if (deadlineRule.type === 'fixed_day' && input.recurrence_rule !== 'weekly') {
+        throw new Error('Fixed day deadlines are only available for weekly recurrence')
+      }
+      if ((deadlineRule.type === 'same_day' || deadlineRule.type === 'fixed_day') && !deadlineRule.time) {
+        throw new Error('deadline_rule.time is required for same_day and fixed_day')
+      }
+      if (deadlineRule.type === 'fixed_day' && (deadlineRule.weekday === undefined || deadlineRule.weekday < 0 || deadlineRule.weekday > 6)) {
+        throw new Error('deadline_rule.weekday must be between 0 and 6 for fixed_day')
+      }
+      if (deadlineRule.type === 'relative' && (!deadlineRule.offset_amount || deadlineRule.offset_amount < 1 || !deadlineRule.offset_unit)) {
+        throw new Error('deadline_rule.offset_amount and offset_unit are required for relative')
+      }
+    }
 
     const baseDate = original.task_date ?? original.due_at?.slice(0, 10)
     if (!baseDate) throw new Error('Task needs task_date or due_at before recurrence can be created')
@@ -125,13 +191,34 @@ export const taskService = {
       ? 1
       : input.recurrence_rule === 'weekly'
         ? 7
-        : 14
+        : Math.min(31, Math.max(1, input.custom_interval_days || 14))
+
+    // Re-running recurrence on an already-recurring original (e.g. weekly -> daily) replaces its
+    // previously generated occurrences rather than layering new ones alongside them.
+    if (original.recurrence_group_id) {
+      const siblings = (await taskRepository.getTasksByRecurrenceGroupId(original.recurrence_group_id))
+        .filter(t => t.id !== id)
+      for (const sibling of siblings) {
+        await taskRepository.deleteSubTasksByParent(sibling.id)
+        await taskRepository.deleteTask(sibling.id)
+      }
+    }
+
+    const recurrenceGroupId = original.recurrence_group_id ?? crypto.randomUUID()
+    await taskRepository.updateTask(id, {
+      recurrence_group_id: recurrenceGroupId,
+      ...(deadlineRule ? { due_at: computeDeadlineFromRule(baseDate, deadlineRule) } : {}),
+    })
+
+    const subTasks = (await taskRepository.getSubTasks(original.id)) ?? []
     const created: Task[] = []
     let nextDate = addDays(baseDate, intervalDays)
 
     while (nextDate <= input.recurrence_end_date) {
-      const due_at = original.due_at ? moveIsoDate(original.due_at, nextDate) : null
-      created.push(await taskRepository.createTask({
+      const due_at = deadlineRule
+        ? computeDeadlineFromRule(nextDate, deadlineRule)
+        : original.due_at ? moveIsoDate(original.due_at, nextDate) : null
+      const copy = await taskRepository.createTask({
         shift_id: original.shift_id,
         company_id: original.company_id,
         department_id: original.department_id,
@@ -145,7 +232,31 @@ export const taskService = {
         priority: original.priority,
         due_at,
         task_date: nextDate,
-      }))
+        recurrence_group_id: recurrenceGroupId,
+        source_task_id: original.id,
+      })
+      created.push(copy)
+
+      // Each occurrence gets its own copy of the original's sub-task checklist, shifted to the same date.
+      for (const subTask of subTasks) {
+        await taskRepository.createTask({
+          shift_id: subTask.shift_id,
+          company_id: subTask.company_id,
+          department_id: subTask.department_id,
+          parent_task_id: copy.id,
+          sequence_order: subTask.sequence_order,
+          title: subTask.title,
+          description: subTask.description,
+          assigned_user_id: subTask.assigned_user_id,
+          assigned_by: input.assigned_by ?? subTask.assigned_by,
+          status: 'Assigned',
+          percentage_complete: 0,
+          priority: subTask.priority,
+          due_at: subTask.due_at ? moveIsoDate(subTask.due_at, nextDate) : null,
+          task_date: subTask.task_date ? nextDate : null,
+        })
+      }
+
       nextDate = addDays(nextDate, intervalDays)
     }
 
@@ -157,19 +268,22 @@ export const taskService = {
     return taskRepository.updateTask(id, { status: 'Complete', percentage_complete: 100 })
   },
 
-  async setTaskDependencies(id: string, dependency_ids: string[]): Promise<Task[]> {
-    if (!id) throw new Error('Task id is required')
-    if (!Array.isArray(dependency_ids)) throw new Error('dependency_ids must be an array')
-    const parent = await taskRepository.getTaskById(id)
-    const updated: Task[] = []
-
-    for (const dependencyId of dependency_ids) {
-      if (dependencyId === id) throw new Error('Task cannot depend on itself')
-      const dependency = await taskRepository.getTaskById(dependencyId)
-      if (dependency.company_id !== parent.company_id) throw new Error('Dependency must belong to the same company')
-      updated.push(await taskRepository.updateTask(dependencyId, { parent_task_id: parent.id }))
+  // UC28 Set Task Dependencies — reorders the sub-tasks of a parent task so each one must
+  // be completed before the next starts. sub_task_ids must be the full, reordered set of
+  // the parent's existing sub-tasks (drag-to-reorder result from the UI).
+  async reorderSubTasks(parentTaskId: string, subTaskIds: string[]): Promise<Task[]> {
+    if (!parentTaskId) throw new Error('Task id is required')
+    if (!Array.isArray(subTaskIds)) throw new Error('sub_task_ids must be an array')
+    const existing = await taskRepository.getSubTasks(parentTaskId)
+    const existingIds = new Set(existing.map(t => t.id))
+    if (subTaskIds.length !== existing.length || !subTaskIds.every(id => existingIds.has(id))) {
+      throw new Error('sub_task_ids must match the parent task\'s existing sub-tasks')
     }
 
+    const updated: Task[] = []
+    for (let i = 0; i < subTaskIds.length; i++) {
+      updated.push(await taskRepository.updateTask(subTaskIds[i], { sequence_order: subTaskIds.length >= 2 ? i : null }))
+    }
     return updated
   },
 
@@ -325,11 +439,43 @@ function addDays(date: string, days: number): string {
   return next.toISOString().slice(0, 10)
 }
 
+// Preserves the original deadline's local wall-clock time on the new calendar date — mirrors how
+// the client builds due_at (`new Date(`${date}T${time}:00`).toISOString()`, i.e. local-time parse).
+// Re-anchoring via UTC hours instead would shift the local calendar day for early-morning deadlines
+// in timezones ahead of UTC (e.g. a 2AM UTC+8 deadline is 6PM UTC the previous day).
 function moveIsoDate(iso: string, date: string): string {
   const original = new Date(iso)
-  const next = new Date(`${date}T00:00:00.000Z`)
-  next.setUTCHours(original.getUTCHours(), original.getUTCMinutes(), original.getUTCSeconds(), original.getUTCMilliseconds())
-  return next.toISOString()
+  const hh = String(original.getHours()).padStart(2, '0')
+  const mm = String(original.getMinutes()).padStart(2, '0')
+  const ss = String(original.getSeconds()).padStart(2, '0')
+  return new Date(`${date}T${hh}:${mm}:${ss}`).toISOString()
+}
+
+function formatDateKey(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+// Computes a recurring occurrence's deadline from its own start date per the chosen rule. Every
+// intermediate Date is built from a local-time string (no Z/UTC* accessors) for the same reason
+// moveIsoDate above is — re-anchoring via UTC components shifts the local calendar day for
+// early-morning deadlines in timezones ahead of UTC.
+function computeDeadlineFromRule(taskDate: string, rule: TaskDeadlineRule): string {
+  if (rule.type === 'same_day') {
+    return new Date(`${taskDate}T${rule.time}:00`).toISOString()
+  }
+  if (rule.type === 'fixed_day') {
+    const d = new Date(`${taskDate}T00:00:00`)
+    d.setDate(d.getDate() + ((rule.weekday! - d.getDay() + 7) % 7))
+    return new Date(`${formatDateKey(d)}T${rule.time}:00`).toISOString()
+  }
+  // relative
+  const base = new Date(`${taskDate}T00:00:00`)
+  if (rule.offset_unit === 'hours') base.setHours(base.getHours() + (rule.offset_amount ?? 0))
+  else base.setDate(base.getDate() + (rule.offset_amount ?? 0))
+  return base.toISOString()
 }
 
 async function validateTaskAssignment(input: TaskInput): Promise<void> {

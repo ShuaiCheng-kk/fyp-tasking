@@ -11,6 +11,7 @@ vi.mock('@/repositories/owner/shiftTemplateRepository', () => ({
     getTemplatesByCompany: vi.fn(),
     getTemplateById: vi.fn(),
     deleteTemplate: vi.fn(),
+    updateTemplate: vi.fn(),
   },
 }))
 
@@ -104,6 +105,62 @@ describe('shiftTemplateService — Shift Template', () => {
       vi.mocked(shiftTemplateRepository.getTemplateById).mockResolvedValue(null)
 
       await expect(shiftTemplateService.deleteTemplate('missing')).rejects.toThrow('Template not found')
+    })
+  })
+
+  describe('updateTemplate', () => {
+    it('updates name and times for an existing template', async () => {
+      vi.mocked(shiftTemplateRepository.getTemplateById).mockResolvedValue(baseTemplate)
+      vi.mocked(shiftTemplateRepository.updateTemplate).mockResolvedValue({
+        ...baseTemplate,
+        name: 'Late Shift',
+        start_time: '12:00',
+        end_time: '20:00',
+      })
+
+      const result = await shiftTemplateService.updateTemplate('template-1', {
+        name: 'Late Shift',
+        start_time: '12:00',
+        end_time: '20:00',
+      })
+
+      expect(shiftTemplateRepository.updateTemplate).toHaveBeenCalledWith('template-1', {
+        name: 'Late Shift',
+        start_time: '12:00',
+        end_time: '20:00',
+      })
+      expect(result.name).toBe('Late Shift')
+    })
+
+    it('falls back to existing values for fields not provided', async () => {
+      vi.mocked(shiftTemplateRepository.getTemplateById).mockResolvedValue(baseTemplate)
+      vi.mocked(shiftTemplateRepository.updateTemplate).mockResolvedValue(baseTemplate)
+
+      await shiftTemplateService.updateTemplate('template-1', { name: 'Renamed' })
+
+      expect(shiftTemplateRepository.updateTemplate).toHaveBeenCalledWith('template-1', {
+        name: 'Renamed',
+        start_time: baseTemplate.start_time,
+        end_time: baseTemplate.end_time,
+      })
+    })
+
+    it('throws when the template does not exist', async () => {
+      vi.mocked(shiftTemplateRepository.getTemplateById).mockResolvedValue(null)
+
+      await expect(shiftTemplateService.updateTemplate('missing', { name: 'X' })).rejects.toThrow('Template not found')
+    })
+
+    it('throws when name is blank', async () => {
+      vi.mocked(shiftTemplateRepository.getTemplateById).mockResolvedValue(baseTemplate)
+
+      await expect(shiftTemplateService.updateTemplate('template-1', { name: '   ' })).rejects.toThrow('Please name this template.')
+    })
+
+    it('rejects when start_time is not before end_time', async () => {
+      vi.mocked(shiftTemplateRepository.getTemplateById).mockResolvedValue(baseTemplate)
+
+      await expect(shiftTemplateService.updateTemplate('template-1', { start_time: '18:00', end_time: '09:00' })).rejects.toThrow('start_time must be before end_time')
     })
   })
 })

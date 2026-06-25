@@ -3,7 +3,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { taskService } from '@/services/owner/taskService'
-import { TaskInput } from '@/types/Task'
+import { TaskInput, TaskRecurrenceInput } from '@/types/Task'
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
@@ -97,7 +97,9 @@ export async function POST(req: NextRequest) {
       const tasks = await taskService.createRecurringTasks(b.id, {
         recurrence_rule: b.recurrence_rule as 'daily' | 'weekly' | 'custom',
         recurrence_end_date: String(b.recurrence_end_date ?? ''),
+        custom_interval_days: typeof b.custom_interval_days === 'number' ? b.custom_interval_days : undefined,
         assigned_by: b.assigned_by as string | undefined,
+        deadline_rule: b.deadline_rule as TaskRecurrenceInput['deadline_rule'],
       })
       return NextResponse.json({ success: true, tasks }, { status: 201 })
     } catch (err) {
@@ -129,8 +131,14 @@ export async function POST(req: NextRequest) {
     task_date: (b.task_date as string) ?? null,
   }
 
+  const subTasks = Array.isArray(b.sub_tasks)
+    ? b.sub_tasks.filter((s): s is { title: string; description?: string } => !!s && typeof s.title === 'string')
+    : null
+
   try {
-    const task = await taskService.assignTask(input)
+    const task = subTasks
+      ? await taskService.assignTaskWithSubTasks(input, subTasks)
+      : await taskService.assignTask(input)
     return NextResponse.json({ success: true, task }, { status: 201 })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to create task'
@@ -160,15 +168,15 @@ export async function PATCH(req: NextRequest) {
     }
   }
 
-  if (b.action === 'dependencies') {
+  if (b.action === 'reorder_subtasks') {
     try {
-      const dependencies = await taskService.setTaskDependencies(
+      const subTasks = await taskService.reorderSubTasks(
         b.id,
-        Array.isArray(b.dependency_ids) ? b.dependency_ids.map(String) : [],
+        Array.isArray(b.sub_task_ids) ? b.sub_task_ids.map(String) : [],
       )
-      return NextResponse.json({ success: true, dependencies })
+      return NextResponse.json({ success: true, subTasks })
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to set task dependencies'
+      const message = err instanceof Error ? err.message : 'Failed to reorder sub-tasks'
       return NextResponse.json({ success: false, message }, { status: 400 })
     }
   }

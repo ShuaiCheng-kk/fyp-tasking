@@ -28,4 +28,16 @@ export const shiftTemplateService = {
     await shiftTemplateRepository.deleteTemplate(id)
   },
 
+  async updateTemplate(id: string, fields: Partial<Pick<ShiftTemplateInput, 'name' | 'start_time' | 'end_time'>>): Promise<ShiftTemplate> {
+    if (!id) throw new Error('Template id is required')
+    const existing = await shiftTemplateRepository.getTemplateById(id)
+    if (!existing) throw new Error('Template not found')
+    const name = fields.name !== undefined ? fields.name.trim() : existing.name
+    if (!name) throw new Error('Please name this template.')
+    const start_time = fields.start_time ?? existing.start_time
+    const end_time = fields.end_time ?? existing.end_time
+    if (start_time >= end_time) throw new Error('start_time must be before end_time')
+    return shiftTemplateRepository.updateTemplate(id, { name, start_time, end_time })
+  },
+
 }
