@@ -40,6 +40,14 @@ export const taskService = {
         throw new Error('percentage_complete must be between 0 and 100')
       }
     }
+    // Adding a sub-task to an existing task is an operation on that task, so only the
+    // person who originally assigned the parent may add to it.
+    if (input.parent_task_id) {
+      const parent = await taskRepository.getTaskById(input.parent_task_id)
+      if (!input.assigned_by || parent.assigned_by !== input.assigned_by) {
+        throw new Error('Only the user who assigned this task can perform this action')
+      }
+    }
     return taskRepository.createTask(input)
   },
 
@@ -73,9 +81,9 @@ export const taskService = {
     return mainTask
   },
 
-  async editTask(id: string, input: Partial<TaskInput>): Promise<Task> {
+  async editTask(id: string, input: Partial<TaskInput>, actingUserId?: string | null): Promise<Task> {
     if (!id) throw new Error('Task id is required')
-    const existing = await taskRepository.getTaskById(id)
+    const existing = await assertIsTaskOwner(id, actingUserId)
     await validateTaskAssignment({
       ...existing,
       ...input,
@@ -94,9 +102,9 @@ export const taskService = {
     return taskRepository.updateTask(id, input)
   },
 
-  async deleteTask(id: string): Promise<void> {
+  async deleteTask(id: string, actingUserId?: string | null): Promise<void> {
     if (!id) throw new Error('Task id is required')
-    const task = await taskRepository.getTaskById(id)
+    const task = await assertIsTaskOwner(id, actingUserId)
 
     // Deleting the original of a recurring series takes the whole series with it — mirrors
     // recurring Shift deletion. Deleting a sibling occurrence only removes that one occurrence.
@@ -113,7 +121,7 @@ export const taskService = {
   },
 
   async duplicateTask(id: string, assigned_by?: string): Promise<Task> {
-    const original = await taskRepository.getTaskById(id)
+    const original = await assertIsTaskOwner(id, assigned_by)
     const duplicated = await taskRepository.createTask({
       shift_id: original.shift_id,
       company_id: original.company_id,
@@ -154,7 +162,7 @@ export const taskService = {
   },
 
   async createRecurringTasks(id: string, input: TaskRecurrenceInput): Promise<Task[]> {
-    const original = await taskRepository.getTaskById(id)
+    const original = await assertIsTaskOwner(id, input.assigned_by)
     if (!['daily', 'weekly', 'custom'].includes(input.recurrence_rule)) {
       throw new Error('recurrence_rule must be daily, weekly, or custom')
     }
@@ -263,17 +271,62 @@ export const taskService = {
     return created
   },
 
-  async archiveTask(id: string): Promise<Task> {
+  async archiveTask(id: string, actingUserId?: string | null): Promise<Task> {
     if (!id) throw new Error('Task id is required')
-    return taskRepository.updateTask(id, { status: 'Complete', percentage_complete: 100 })
+    const task = await assertIsTaskOwner(id, actingUserId)
+    // Archiving hides the task from the board — it does not change its status, so an archived
+    // task that gets restored picks up exactly where it was instead of resetting to Complete/Assigned.
+    const isRecurrenceOriginal = task.recurrence_group_id && task.source_task_id === null
+    const siblings = isRecurrenceOriginal
+      ? (await taskRepository.getTasksByRecurrenceGroupId(task.recurrence_group_id!)).filter(t => t.id !== id)
+      : []
+    const tasksToArchive = [task, ...siblings]
+
+    let archivedTask = task
+    for (const t of tasksToArchive) {
+      const subTasks = await taskRepository.getSubTasks(t.id)
+      for (const subTask of subTasks) {
+        await taskRepository.updateTask(subTask.id, { is_archived: true })
+      }
+      const updated = await taskRepository.updateTask(t.id, { is_archived: true })
+      if (t.id === id) archivedTask = updated
+    }
+    return archivedTask
+  },
+
+  async unarchiveTask(id: string, actingUserId?: string | null): Promise<Task> {
+    if (!id) throw new Error('Task id is required')
+    const task = await assertIsTaskOwner(id, actingUserId)
+    const isRecurrenceOriginal = task.recurrence_group_id && task.source_task_id === null
+    const siblings = isRecurrenceOriginal
+      ? (await taskRepository.getTasksByRecurrenceGroupId(task.recurrence_group_id!)).filter(t => t.id !== id)
+      : []
+    const tasksToUnarchive = [task, ...siblings]
+
+    let unarchivedTask = task
+    for (const t of tasksToUnarchive) {
+      const subTasks = await taskRepository.getSubTasks(t.id)
+      for (const subTask of subTasks) {
+        await taskRepository.updateTask(subTask.id, { is_archived: false })
+      }
+      const updated = await taskRepository.updateTask(t.id, { is_archived: false })
+      if (t.id === id) unarchivedTask = updated
+    }
+    return unarchivedTask
+  },
+
+  async getArchivedTasks(company_id: string): Promise<Task[]> {
+    if (!company_id) throw new Error('company_id is required')
+    return taskRepository.getArchivedTasksByCompany(company_id)
   },
 
   // UC28 Set Task Dependencies — reorders the sub-tasks of a parent task so each one must
   // be completed before the next starts. sub_task_ids must be the full, reordered set of
   // the parent's existing sub-tasks (drag-to-reorder result from the UI).
-  async reorderSubTasks(parentTaskId: string, subTaskIds: string[]): Promise<Task[]> {
+  async reorderSubTasks(parentTaskId: string, subTaskIds: string[], actingUserId?: string | null): Promise<Task[]> {
     if (!parentTaskId) throw new Error('Task id is required')
     if (!Array.isArray(subTaskIds)) throw new Error('sub_task_ids must be an array')
+    await assertIsTaskOwner(parentTaskId, actingUserId)
     const existing = await taskRepository.getSubTasks(parentTaskId)
     const existingIds = new Set(existing.map(t => t.id))
     if (subTaskIds.length !== existing.length || !subTaskIds.every(id => existingIds.has(id))) {
@@ -370,8 +423,10 @@ export const taskService = {
     return events.slice(0, 20)
   },
 
-  async getWorkloadRebalancingSuggestion(company_id: string): Promise<TaskWorkloadSuggestion> {
-    const activeTasks = (await taskRepository.getTasksByCompany(company_id)).filter(task => task.status !== 'Complete' && task.assigned_user_id)
+  async getWorkloadRebalancingSuggestion(company_id: string, department_id?: string): Promise<TaskWorkloadSuggestion> {
+    const activeTasks = (await taskRepository.getTasksByCompany(company_id))
+      .filter(task => task.status !== 'Complete' && task.assigned_user_id)
+      .filter(task => !department_id || task.department_id === department_id)
     const counts = new Map<string, number>()
     for (const task of activeTasks) {
       counts.set(task.assigned_user_id!, (counts.get(task.assigned_user_id!) ?? 0) + 1)
@@ -409,10 +464,11 @@ export const taskService = {
     }
   },
 
-  async getStalledTaskAlerts(company_id: string, stale_after_days = 3): Promise<StalledTaskAlert[]> {
+  async getStalledTaskAlerts(company_id: string, stale_after_days = 3, department_id?: string): Promise<StalledTaskAlert[]> {
     const cutoffMs = Date.now() - stale_after_days * 24 * 60 * 60 * 1000
     return (await taskRepository.getTasksByCompany(company_id))
       .filter(task => task.status !== 'Complete')
+      .filter(task => !department_id || task.department_id === department_id)
       .map(task => {
         const updatedAt = new Date(task.updated_at ?? task.created_at).getTime()
         return {
@@ -431,6 +487,17 @@ export const taskService = {
       }))
   },
 
+}
+
+// Only the user who originally assigned a task may edit, delete, archive, duplicate, extend its
+// recurrence, reorder its sub-tasks, or add new sub-tasks to it. Everyone else (including the
+// assignee) has view-only access.
+async function assertIsTaskOwner(taskId: string, actingUserId?: string | null): Promise<Task> {
+  const task = await taskRepository.getTaskById(taskId)
+  if (!actingUserId || task.assigned_by !== actingUserId) {
+    throw new Error('Only the user who assigned this task can perform this action')
+  }
+  return task
 }
 
 function addDays(date: string, days: number): string {

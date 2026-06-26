@@ -16,6 +16,7 @@ export async function GET(req: NextRequest) {
   const dept_stats = searchParams.get('dept_stats') === 'true'
   const activity_feed = searchParams.get('activity_feed') === 'true'
   const calendar = searchParams.get('calendar') === 'true'
+  const archived = searchParams.get('archived') === 'true'
   const suggestion = searchParams.get('suggestion')
   const task_id = searchParams.get('task_id') ?? undefined
   const date_from = searchParams.get('date_from') ?? undefined
@@ -46,8 +47,12 @@ export async function GET(req: NextRequest) {
       const tasks = await taskService.getCalendarTasks(company_id, date_from ?? '', date_to ?? '')
       return NextResponse.json({ success: true, tasks })
     }
+    if (archived) {
+      const tasks = await taskService.getArchivedTasks(company_id)
+      return NextResponse.json({ success: true, tasks })
+    }
     if (suggestion === 'workload') {
-      const workloadSuggestion = await taskService.getWorkloadRebalancingSuggestion(company_id)
+      const workloadSuggestion = await taskService.getWorkloadRebalancingSuggestion(company_id, department_id)
       return NextResponse.json({ success: true, suggestion: workloadSuggestion })
     }
     if (suggestion === 'reassignment' && task_id) {
@@ -56,7 +61,7 @@ export async function GET(req: NextRequest) {
     }
     if (suggestion === 'stalled') {
       const staleAfterDays = Number(searchParams.get('stale_after_days') ?? 3)
-      const alerts = await taskService.getStalledTaskAlerts(company_id, staleAfterDays)
+      const alerts = await taskService.getStalledTaskAlerts(company_id, staleAfterDays, department_id)
       return NextResponse.json({ success: true, alerts })
     }
     if (shift_id) {
@@ -160,10 +165,20 @@ export async function PATCH(req: NextRequest) {
 
   if (b.action === 'archive') {
     try {
-      const task = await taskService.archiveTask(b.id)
+      const task = await taskService.archiveTask(b.id, b.assigned_by as string | undefined)
       return NextResponse.json({ success: true, task })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to archive task'
+      return NextResponse.json({ success: false, message }, { status: 400 })
+    }
+  }
+
+  if (b.action === 'unarchive') {
+    try {
+      const task = await taskService.unarchiveTask(b.id, b.assigned_by as string | undefined)
+      return NextResponse.json({ success: true, task })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to unarchive task'
       return NextResponse.json({ success: false, message }, { status: 400 })
     }
   }
@@ -173,6 +188,7 @@ export async function PATCH(req: NextRequest) {
       const subTasks = await taskService.reorderSubTasks(
         b.id,
         Array.isArray(b.sub_task_ids) ? b.sub_task_ids.map(String) : [],
+        b.assigned_by as string | undefined,
       )
       return NextResponse.json({ success: true, subTasks })
     } catch (err) {
@@ -196,9 +212,9 @@ export async function PATCH(req: NextRequest) {
     }
   }
 
-  const { id, ...rest } = b
+  const { id, assigned_by, ...rest } = b
   try {
-    const task = await taskService.editTask(id as string, rest as Partial<TaskInput>)
+    const task = await taskService.editTask(id as string, rest as Partial<TaskInput>, assigned_by as string | undefined)
     return NextResponse.json({ success: true, task })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to update task'
@@ -209,11 +225,12 @@ export async function PATCH(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const id = searchParams.get('id')
+  const assigned_by = searchParams.get('assigned_by') ?? undefined
   if (!id) {
     return NextResponse.json({ success: false, message: 'id is required' }, { status: 400 })
   }
   try {
-    await taskService.deleteTask(id)
+    await taskService.deleteTask(id, assigned_by)
     return NextResponse.json({ success: true })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to delete task'

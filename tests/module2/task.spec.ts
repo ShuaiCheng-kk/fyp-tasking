@@ -143,6 +143,7 @@ test('UC17 edits a task', async ({ request }) => {
   const res = await request.patch('/api/task', {
     data: {
       id: taskId,
+      assigned_by: seeded.ownerId,
       title: 'Prep closing checklist',
       percentage_complete: 25,
     },
@@ -236,6 +237,39 @@ test('UC27 shows stalled task alerts', async ({ request }) => {
   expect(body.alerts).toEqual(expect.arrayContaining([expect.objectContaining({ task_id: taskId })]))
 })
 
+test('workload and stalled insights scope to a single department when department_id is passed', async ({ request }) => {
+  const { data: otherDept, error: otherDeptError } = await admin
+    .from('departments')
+    .insert({ company_id: seeded.companyId, name: 'Other Department' })
+    .select('id')
+    .single()
+  if (otherDeptError || !otherDept) throw new Error(`Failed to create other department: ${otherDeptError?.message}`)
+
+  const otherDeptTask = await createTask(request, {
+    title: 'Other department balanced task',
+    shift_id: null,
+    department_id: otherDept.id,
+  })
+
+  const workloadOther = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=workload&department_id=${otherDept.id}`)
+  expect(workloadOther.status()).toBe(200)
+  const workloadOtherBody = await workloadOther.json()
+  expect(workloadOtherBody.suggestion.type).toBe('balanced')
+
+  const workloadOriginal = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=workload&department_id=${departmentId}`)
+  expect(workloadOriginal.status()).toBe(200)
+  const workloadOriginalBody = await workloadOriginal.json()
+  expect(workloadOriginalBody.suggestion.type).toBe('rebalance')
+
+  const stalledOther = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=stalled&stale_after_days=-1&department_id=${otherDept.id}`)
+  expect(stalledOther.status()).toBe(200)
+  const stalledOtherBody = await stalledOther.json()
+  expect(stalledOtherBody.alerts).toEqual([expect.objectContaining({ task_id: otherDeptTask.id })])
+
+  await admin.from('tasks').delete().eq('id', otherDeptTask.id)
+  await admin.from('departments').delete().eq('id', otherDept.id)
+})
+
 test('UC22 creates a sub-task under a parent task', async ({ request }) => {
   const res = await request.post('/api/task', {
     data: {
@@ -289,6 +323,7 @@ test('UC28 reorders sub-tasks to set their execution dependency', async ({ reque
       id: taskId,
       action: 'reorder_subtasks',
       sub_task_ids: [subB.id, subA.id, existingSubTaskId],
+      assigned_by: seeded.ownerId,
     },
   })
   expect(res.status()).toBe(200)
@@ -300,18 +335,49 @@ test('UC28 reorders sub-tasks to set their execution dependency', async ({ reque
   ]))
 
   const rejected = await request.patch('/api/task', {
-    data: { id: taskId, action: 'reorder_subtasks', sub_task_ids: [subA.id] },
+    data: { id: taskId, action: 'reorder_subtasks', sub_task_ids: [subA.id], assigned_by: seeded.ownerId },
   })
   expect(rejected.status()).toBe(400)
 })
 
-test('UC21 archives a task', async ({ request }) => {
+test('UC21 archives a task without changing its status, and hides it from the Kanban board', async ({ request }) => {
+  const before = await request.get(`/api/task?company_id=${seeded.companyId}&kanban=true`)
+  const beforeBody = await before.json()
+  const statusBeforeArchive = (Object.values(beforeBody.groups).flat() as { id: string; status: string }[])
+    .find(t => t.id === taskId)?.status
+
   const res = await request.patch('/api/task', {
-    data: { id: taskId, action: 'archive' },
+    data: { id: taskId, action: 'archive', assigned_by: seeded.ownerId },
   })
   expect(res.status()).toBe(200)
   const body = await res.json()
-  expect(body.task).toMatchObject({ id: taskId, status: 'Complete', percentage_complete: 100 })
+  expect(body.task).toMatchObject({ id: taskId, is_archived: true, status: statusBeforeArchive })
+
+  const kanban = await request.get(`/api/task?company_id=${seeded.companyId}&kanban=true`)
+  const kanbanBody = await kanban.json()
+  const allKanbanIds = (Object.values(kanbanBody.groups).flat() as { id: string }[]).map(t => t.id)
+  expect(allKanbanIds).not.toContain(taskId)
+})
+
+test('lists the archived task via the archived=true filter', async ({ request }) => {
+  const res = await request.get(`/api/task?company_id=${seeded.companyId}&archived=true`)
+  expect(res.status()).toBe(200)
+  const body = await res.json()
+  expect(body.tasks).toEqual(expect.arrayContaining([expect.objectContaining({ id: taskId, is_archived: true })]))
+})
+
+test('unarchives a task without changing its status, restoring it to the Kanban board', async ({ request }) => {
+  const res = await request.patch('/api/task', {
+    data: { id: taskId, action: 'unarchive', assigned_by: seeded.ownerId },
+  })
+  expect(res.status()).toBe(200)
+  const body = await res.json()
+  expect(body.task).toMatchObject({ id: taskId, is_archived: false })
+
+  const kanban = await request.get(`/api/task?company_id=${seeded.companyId}&kanban=true`)
+  const kanbanBody = await kanban.json()
+  const allKanbanIds = (Object.values(kanbanBody.groups).flat() as { id: string }[]).map(t => t.id)
+  expect(allKanbanIds).toContain(taskId)
 })
 
 test('deleting a main task also deletes its sub-tasks', async ({ request }) => {
@@ -319,7 +385,7 @@ test('deleting a main task also deletes its sub-tasks', async ({ request }) => {
   const sub1 = await createTask(request, { title: 'Sub 1', shift_id: null, parent_task_id: main.id })
   const sub2 = await createTask(request, { title: 'Sub 2', shift_id: null, parent_task_id: main.id })
 
-  const res = await request.delete(`/api/task?id=${main.id}`)
+  const res = await request.delete(`/api/task?id=${main.id}&assigned_by=${seeded.ownerId}`)
   expect(res.status()).toBe(200)
 
   const list = await request.get(`/api/task?company_id=${seeded.companyId}`)
@@ -347,7 +413,7 @@ test('deleting the original of a recurring series deletes every sibling occurren
   const siblingIds = recurBody.tasks.map((t: { id: string }) => t.id)
   expect(siblingIds).toHaveLength(2)
 
-  const res = await request.delete(`/api/task?id=${original.id}`)
+  const res = await request.delete(`/api/task?id=${original.id}&assigned_by=${seeded.ownerId}`)
   expect(res.status()).toBe(200)
 
   const list = await request.get(`/api/task?company_id=${seeded.companyId}`)
@@ -373,7 +439,7 @@ test('deleting a sibling occurrence only removes that one occurrence', async ({ 
   const siblingIds = recurBody.tasks.map((t: { id: string }) => t.id)
   expect(siblingIds).toHaveLength(2)
 
-  const res = await request.delete(`/api/task?id=${siblingIds[0]}`)
+  const res = await request.delete(`/api/task?id=${siblingIds[0]}&assigned_by=${seeded.ownerId}`)
   expect(res.status()).toBe(200)
 
   const list = await request.get(`/api/task?company_id=${seeded.companyId}`)
@@ -472,11 +538,56 @@ test('recurring with deadline_rule relative: due within X days after the occurre
 })
 
 test('UC18 deletes a task', async ({ request }) => {
-  const res = await request.delete(`/api/task?id=${taskId}`)
+  const res = await request.delete(`/api/task?id=${taskId}&assigned_by=${seeded.ownerId}`)
   expect(res.status()).toBe(200)
   expect(await res.json()).toMatchObject({ success: true })
 
   const list = await request.get(`/api/task?company_id=${seeded.companyId}`)
   const body = await list.json()
   expect(body.tasks.some((task: { id: string }) => task.id === taskId)).toBe(false)
+})
+
+test('only the user who assigned a task may edit, archive, duplicate, recur, reorder its sub-tasks, or delete it', async ({ request }) => {
+  const task = await createTask(request, { title: 'Ownership-locked task', shift_id: null })
+
+  const editRes = await request.patch('/api/task', {
+    data: { id: task.id, assigned_by: managerB.userId, title: 'Hijacked title' },
+  })
+  expect(editRes.status()).toBe(400)
+
+  const archiveRes = await request.patch('/api/task', {
+    data: { id: task.id, action: 'archive', assigned_by: managerB.userId },
+  })
+  expect(archiveRes.status()).toBe(400)
+
+  const duplicateRes = await request.post('/api/task', {
+    data: { action: 'duplicate', id: task.id, assigned_by: managerB.userId },
+  })
+  expect(duplicateRes.status()).toBe(400)
+
+  const recurringRes = await request.post('/api/task', {
+    data: { action: 'recurring', id: task.id, recurrence_rule: 'daily', recurrence_end_date: '2026-07-10', assigned_by: managerB.userId },
+  })
+  expect(recurringRes.status()).toBe(400)
+
+  const reorderRes = await request.patch('/api/task', {
+    data: { id: task.id, action: 'reorder_subtasks', sub_task_ids: [], assigned_by: managerB.userId },
+  })
+  expect(reorderRes.status()).toBe(400)
+
+  const subTaskRes = await request.post('/api/task', {
+    data: { company_id: seeded.companyId, department_id: departmentId, parent_task_id: task.id, title: 'Sneaky sub-task', assigned_by: managerB.userId },
+  })
+  expect(subTaskRes.status()).toBe(400)
+
+  const deleteRes = await request.delete(`/api/task?id=${task.id}&assigned_by=${managerB.userId}`)
+  expect(deleteRes.status()).toBe(500)
+
+  // The rightful assigner can still operate on it.
+  const ownerEditRes = await request.patch('/api/task', {
+    data: { id: task.id, assigned_by: seeded.ownerId, title: 'Legit edit' },
+  })
+  expect(ownerEditRes.status()).toBe(200)
+
+  await admin.from('tasks').delete().eq('id', task.id)
 })
