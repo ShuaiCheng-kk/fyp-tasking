@@ -1,4 +1,4 @@
-export type MarketingContentBlockType = 'text' | 'textarea' | 'list'
+export type MarketingContentBlockType = 'text' | 'textarea' | 'list' | 'image'
 
 export interface MarketingContentBlock {
   id: string

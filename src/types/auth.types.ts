@@ -6,7 +6,7 @@ export interface User {
   phone_number: string | null
   date_of_birth: string | null
   profile_photo_url: string | null
-  role: 'Owner' | 'Partner' | 'Manager' | 'Employee' | 'Casual Worker' | 'Guest User'
+  role: 'Owner' | 'Partner' | 'Manager' | 'Employee' | 'Casual Worker' | 'Guest User' | 'Marketing Admin' | 'User Admin'
   company_id: string | null
   created_at: string
   payment_method: string | null
