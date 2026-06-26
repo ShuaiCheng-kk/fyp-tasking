@@ -16,6 +16,7 @@ export interface Task {
   task_date: string | null
   recurrence_group_id: string | null
   source_task_id: string | null
+  is_archived: boolean
   created_at: string
   updated_at?: string
   shift_date?: string | null
@@ -38,6 +39,7 @@ export interface TaskInput {
   task_date?: string | null
   recurrence_group_id?: string | null
   source_task_id?: string | null
+  is_archived?: boolean
 }
 
 export interface SubTaskInput {

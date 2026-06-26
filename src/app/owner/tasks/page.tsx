@@ -7,7 +7,7 @@ import {
   Plus, X, ChevronDown, Calendar, AlertCircle,
   CheckCircle, Clock, Eye, Layers, Users,
   Crown, UserCog, UserRound, Pencil, Trash2, CalendarDays, ChevronLeft, ChevronRight,
-  Sparkles, Check, Archive, Repeat, Copy, GitBranch, Bell, ArrowRightLeft, LayoutTemplate, AlertTriangle,
+  Sparkles, Check, Archive, ArchiveRestore, Repeat, Copy, GitBranch, Bell, ArrowRightLeft, LayoutTemplate, AlertTriangle,
 } from 'lucide-react'
 import { AiAssignSuggestion } from '@/types/AI'
 import { createBrowserClient } from '@supabase/ssr'
@@ -163,67 +163,108 @@ function TaskDatePicker({ value, onChange, taskDates, minDate, accentColor, full
   )
 }
 
-function InlineTaskDateCalendar({ value, onChange, minDate, accentColor }: {
+// ─── Compact Date Picker (single field, popover calendar — for date-only pickers like "Repeat until") ──
+
+function CompactDatePicker({ value, onChange, minDate, accentColor, placeholder = 'Select date' }: {
   value: string
   onChange: (date: string) => void
   minDate: string
   accentColor: string
+  placeholder?: string
 }) {
+  const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 220 })
   const [viewMonth, setViewMonth] = useState((value || minDate).slice(0, 7))
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const popoverRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (triggerRef.current?.contains(e.target as Node) || popoverRef.current?.contains(e.target as Node)) return
+      setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  const handleOpen = () => {
+    if (triggerRef.current) {
+      const r = triggerRef.current.getBoundingClientRect()
+      const POPOVER_H = 300
+      const fitsBelow = r.bottom + POPOVER_H + 8 <= window.innerHeight
+      setViewMonth((value || minDate).slice(0, 7))
+      setPos({ top: fitsBelow ? r.bottom + 6 : r.top - POPOVER_H - 6, left: r.left, width: Math.max(r.width, 240) })
+    }
+    setOpen(o => !o)
+  }
+
   const todayStr = formatDateKey(new Date())
   const minMonth = minDate.slice(0, 7)
   const [cy, cm] = viewMonth.split('-').map(Number)
   const firstDay = new Date(cy, cm - 1, 1).getDay()
   const daysInMonth = new Date(cy, cm, 0).getDate()
-  const monthLabel = new Date(cy, cm - 1, 1).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+  const monthLabel = new Date(cy, cm - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
   const cells: (string | null)[] = []
   for (let i = 0; i < firstDay; i++) cells.push(null)
   for (let d = 1; d <= daysInMonth; d++) cells.push(`${cy}-${String(cm).padStart(2, '0')}-${String(d).padStart(2, '0')}`)
-
   const canGoPrev = viewMonth > minMonth
-  const goPrev = () => {
-    const d = new Date(cy, cm - 2, 1)
-    const nm = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-    if (nm < minMonth) return
-    setViewMonth(nm)
-  }
-  const goNext = () => {
-    const d = new Date(cy, cm, 1)
-    setViewMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
-  }
+  const goPrev = () => { const d = new Date(cy, cm - 2, 1); const nm = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; if (nm < minMonth) return; setViewMonth(nm) }
+  const goNext = () => { const d = new Date(cy, cm, 1); setViewMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`) }
 
-  return (
-    <div style={{ border: '1.5px solid #E5E7EB', borderRadius: 10, padding: '8px 10px', background: '#FFFFFF' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-        <button type="button" onClick={goPrev} disabled={!canGoPrev} style={{ width: 22, height: 22, border: '1px solid #E5E7EB', borderRadius: 6, background: '#FFFFFF', cursor: canGoPrev ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', color: canGoPrev ? '#64748B' : '#D1D5DB' }}><ChevronLeft size={12} /></button>
-        <span style={{ fontSize: 12, fontWeight: 800, color: TASK_TEXT }}>{monthLabel}</span>
-        <button type="button" onClick={goNext} style={{ width: 22, height: 22, border: '1px solid #E5E7EB', borderRadius: 6, background: '#FFFFFF', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748B' }}><ChevronRight size={12} /></button>
+  const displayLabel = value
+    ? new Date(`${value}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    : placeholder
+
+  const popover = open ? (
+    <div ref={popoverRef} style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 9999, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 16, boxShadow: '0 8px 32px rgba(15,23,42,0.14)', overflow: 'hidden', width: pos.width, padding: '14px 16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <button type="button" onClick={goPrev} disabled={!canGoPrev} style={{ width: 26, height: 26, border: '1px solid #E5E7EB', borderRadius: 7, background: '#FFFFFF', cursor: canGoPrev ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', color: canGoPrev ? '#64748B' : '#D1D5DB' }}><ChevronLeft size={13} /></button>
+        <span style={{ fontSize: 13, fontWeight: 700, color: '#0F172A' }}>{monthLabel}</span>
+        <button type="button" onClick={goNext} style={{ width: 26, height: 26, border: '1px solid #E5E7EB', borderRadius: 7, background: '#FFFFFF', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748B' }}><ChevronRight size={13} /></button>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', marginBottom: 2 }}>
-        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
-          <div key={`${d}-${i}`} style={{ height: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: '#9CA3AF' }}>{d}</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', marginBottom: 4 }}>
+        {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map(d => (
+          <div key={d} style={{ fontSize: 11, fontWeight: 600, color: '#9CA3AF', textAlign: 'center', height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{d}</div>
         ))}
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 1 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2 }}>
         {cells.map((date, i) => {
-          if (!date) return <div key={`e-${i}`} style={{ height: 24 }} />
+          if (!date) return <div key={`e-${i}`} style={{ height: 32 }} />
           if (date < minDate) {
-            return <div key={date} style={{ height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, color: '#D1D5DB' }}>{parseInt(date.split('-')[2])}</div>
+            return <div key={date} style={{ height: 32, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: '#D1D5DB', userSelect: 'none' }}>{parseInt(date.split('-')[2])}</div>
           }
           const isSel = date === value
           const isToday = date === todayStr
           return (
-            <button
-              key={date}
-              type="button"
-              onClick={() => onChange(date)}
-              style={{ height: 24, border: isToday && !isSel ? `1.5px solid ${accentColor}` : 'none', borderRadius: 6, background: isSel ? accentColor : 'transparent', color: isSel ? '#FFFFFF' : isToday ? accentColor : TASK_TEXT, fontSize: 11, fontWeight: isSel || isToday ? 800 : 600, cursor: 'pointer', padding: 0 }}
-            >
-              {parseInt(date.split('-')[2])}
-            </button>
+            <button key={date} type="button" onClick={() => { onChange(date); setOpen(false) }}
+              style={{ height: 32, width: '100%', border: isToday && !isSel ? `1.5px solid ${accentColor}` : 'none', borderRadius: 8, background: isSel ? accentColor : 'transparent', color: isSel ? '#FFFFFF' : isToday ? accentColor : '#0F172A', fontWeight: isSel || isToday ? 700 : 400, fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}
+              onMouseEnter={e => { if (!isSel) e.currentTarget.style.background = '#F8FAFC' }}
+              onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = 'transparent' }}
+            >{parseInt(date.split('-')[2])}</button>
           )
         })}
       </div>
+    </div>
+  ) : null
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button ref={triggerRef} type="button" onClick={handleOpen}
+        style={{
+          width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '9px 12px', border: `1.5px solid ${open ? accentColor : '#E5E7EB'}`, borderRadius: 8,
+          background: '#FFFFFF', cursor: 'pointer', fontSize: '0.8125rem',
+          color: value ? '#111827' : '#9CA3AF', fontWeight: value ? 500 : 400,
+          outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s', minHeight: 40,
+        }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          <CalendarDays size={14} color="#9CA3AF" style={{ flexShrink: 0 }} />
+          {displayLabel}
+        </span>
+        <ChevronDown size={13} style={{ color: '#9CA3AF', flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+      </button>
+      {typeof document !== 'undefined' && createPortal(popover, document.body)}
     </div>
   )
 }
@@ -461,7 +502,7 @@ function DropdownField({ value, options, onChange, placeholder, disabled = false
           transition: 'border-color 0.15s', minHeight: 40,
         }}>
         {selected && badgeColors?.[selected.value] ? (
-          <span style={{ height: 26, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 800, padding: '0 10px', borderRadius: '99px', background: badgeColors[selected.value].bg, color: badgeColors[selected.value].text, letterSpacing: '0.01em', lineHeight: 1, alignSelf: 'center' }}>
+          <span style={{ height: 20, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 800, padding: '0 10px', borderRadius: '99px', background: badgeColors[selected.value].bg, color: badgeColors[selected.value].text, letterSpacing: '0.01em', lineHeight: 1, alignSelf: 'center' }}>
             {selected.label}
           </span>
         ) : (
@@ -869,7 +910,7 @@ function SubTaskOrderList({ items, onReorder, onRemove, onRename, disabled }: {
 // ─── Task Card ────────────────────────────────────────────────────────────────
 
 function TaskCard({
-  task, members, shiftOptions, departments, showDept, onClick, onEdit, subTaskCount, expanded,
+  task, members, shiftOptions, departments, showDept, onClick, onEdit, subTaskCount, expanded, onToggleExpand, clickable = true, isOwner = true,
 }: {
   task: Task
   members: Member[]
@@ -880,31 +921,55 @@ function TaskCard({
   onEdit: () => void
   subTaskCount?: number
   expanded?: boolean
+  onToggleExpand?: () => void
+  clickable?: boolean
+  isOwner?: boolean
 }) {
   const assignee = members.find(m => m.id === task.assigned_user_id)
   const shift = task.shift_id ? shiftOptions.find(s => s.id === task.shift_id) : null
   const priority = task.priority ? PRIORITY_COLORS[task.priority] : null
   const overdue = task.due_at && task.status !== 'Complete' && isDueOverdue(task.due_at)
   const dept = showDept ? departments.find(d => d.id === task.department_id) : null
+  const showStack = !!subTaskCount && !expanded
+  const hasTopRowBadges = !!(priority && task.priority) || !!dept || !!subTaskCount
 
   return (
-    <div
-      onClick={onClick}
-      className="task-card"
-      style={{
-        background: '#FFFFFF',
-        border: '1px solid #E5E7EB',
-        borderLeft: '1px solid #E5E7EB',
-        borderRadius: '10px',
-        padding: '16px 16px',
-        cursor: 'pointer',
-        position: 'relative',
-        marginBottom: 14,
-      }}
-    >
-      {/* Top row: priority badge + edit pencil */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+    <div style={{ position: 'relative', marginBottom: showStack ? 22 : 14 }}>
+      {showStack && (
+        <>
+          <div style={{ position: 'absolute', left: 12, right: 12, bottom: -8, height: 14, background: '#EEF1F5', border: '1px solid #E2E8F0', borderRadius: 10, zIndex: 0 }} />
+          <div style={{ position: 'absolute', left: 6, right: 6, bottom: -4, height: 14, background: '#F7F9FB', border: '1px solid #E5E7EB', borderRadius: 10, zIndex: 1 }} />
+        </>
+      )}
+      <div
+        onClick={clickable ? onClick : undefined}
+        className="task-card"
+        style={{
+          background: '#FFFFFF',
+          border: '1px solid #E5E7EB',
+          borderLeft: '1px solid #E5E7EB',
+          borderRadius: '10px',
+          padding: '16px 16px',
+          cursor: clickable ? 'pointer' : 'default',
+          position: 'relative',
+          zIndex: 2,
+        }}
+      >
+      {/* Edit pencil: absolutely positioned so it never reserves flow height when there are no badges */}
+      {clickable && isOwner && (
+        <button
+          onClick={e => { e.stopPropagation(); onEdit() }}
+          style={{ position: 'absolute', top: 12, right: 12, background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', alignItems: 'center', color: '#9CA3AF', borderRadius: 6, flexShrink: 0, zIndex: 1 }}
+          onMouseEnter={e => { e.currentTarget.style.background = '#E5E7EB'; (e.currentTarget as HTMLButtonElement).style.color = '#F97316' }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'none'; (e.currentTarget as HTMLButtonElement).style.color = '#9CA3AF' }}
+        >
+          <Pencil size={13} />
+        </button>
+      )}
+
+      {/* Top row: priority / department / sub-task badges */}
+      {hasTopRowBadges && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12, paddingRight: 24 }}>
           {priority && task.priority && (
             <span style={{ fontSize: '0.65rem', fontWeight: 800, padding: '2px 7px', borderRadius: '99px', background: priority.bg, color: priority.text, letterSpacing: '0.01em' }}>
               {task.priority}
@@ -917,25 +982,21 @@ function TaskCard({
             </span>
           )}
           {!!subTaskCount && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.65rem', fontWeight: 700, padding: '2px 7px', borderRadius: '99px', background: '#F1F5F9', color: '#475569' }}>
+            <button
+              type="button"
+              onClick={e => { e.stopPropagation(); onToggleExpand?.() }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.65rem', fontWeight: 700, padding: '2px 7px', borderRadius: '99px', background: '#F1F5F9', color: '#475569', border: 'none', cursor: 'pointer' }}
+            >
               <GitBranch size={10} />
               {subTaskCount}
               <ChevronDown size={10} style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
-            </span>
+            </button>
           )}
         </div>
-        <button
-          onClick={e => { e.stopPropagation(); onEdit() }}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', alignItems: 'center', color: '#9CA3AF', borderRadius: 6, flexShrink: 0 }}
-          onMouseEnter={e => { e.currentTarget.style.background = '#E5E7EB'; (e.currentTarget as HTMLButtonElement).style.color = '#F97316' }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'none'; (e.currentTarget as HTMLButtonElement).style.color = '#9CA3AF' }}
-        >
-          <Pencil size={13} />
-        </button>
-      </div>
+      )}
 
       {/* Title */}
-      <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: '0 0 16px', lineHeight: 1.4 }}>
+      <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: '0 0 16px', lineHeight: 1.4, paddingRight: !clickable || !isOwner || hasTopRowBadges ? 0 : 24 }}>
         {task.title}
       </p>
 
@@ -957,12 +1018,13 @@ function TaskCard({
         )}
         {task.due_at && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-            {overdue && <AlertCircle size={11} color="#EF4444" />}
+            {overdue ? <AlertCircle size={11} color="#EF4444" /> : <Clock size={11} color="#9CA3AF" />}
             <span style={{ fontSize: '0.7rem', fontWeight: 600, color: overdue ? '#EF4444' : '#9CA3AF', whiteSpace: 'nowrap' }}>
               {formatDeadlineDisplay(task.due_at)}
             </span>
           </div>
         )}
+      </div>
       </div>
     </div>
   )
@@ -1019,6 +1081,25 @@ export default function OwnerTasksPage() {
     })
   }
 
+  // Cards flagged here play a fade/scale-out transition (see .task-card-removing) before
+  // removeTasksFromKanban actually drops them from state — otherwise a deleted card just
+  // disappears on the next render with no exit animation.
+  const [removingTaskIds, setRemovingTaskIds] = useState<Set<string>>(new Set())
+  const TASK_REMOVE_ANIM_MS = 220
+  const removeTasksFromKanban = (taskId: string) => {
+    setKanban(prev => {
+      if (!prev) return prev
+      const next = { ...prev } as KanbanGroup
+      for (const col of COLUMNS) next[col] = (prev[col] ?? []).filter(t => t.id !== taskId && t.parent_task_id !== taskId)
+      return next
+    })
+    setRemovingTaskIds(prev => { const next = new Set(prev); next.delete(taskId); return next })
+  }
+  const playDeleteAnimation = (taskId: string) => new Promise<void>(resolve => {
+    setRemovingTaskIds(prev => new Set(prev).add(taskId))
+    setTimeout(resolve, TASK_REMOVE_ANIM_MS)
+  })
+
   // Task detail/edit panel
   const [selectedTask,  setSelectedTask]  = useState<Task | null>(null)
   const [editLoading,   setEditLoading]   = useState(false)
@@ -1041,6 +1122,10 @@ export default function OwnerTasksPage() {
   const [deleteTaskError, setDeleteTaskError] = useState('')
   const [subTaskTitle,    setSubTaskTitle]    = useState('')
   const [subTaskLoading,  setSubTaskLoading]  = useState(false)
+  const [editSubTaskEnabled, setEditSubTaskEnabled] = useState(false)
+  const [editSubTaskCollapsed, setEditSubTaskCollapsed] = useState(false)
+  const [editRecurringEnabled, setEditRecurringEnabled] = useState(false)
+  const [editRecurringCollapsed, setEditRecurringCollapsed] = useState(false)
   const [taskViewMode,    setTaskViewMode]    = useState(false)
   const [taskActionLoading, setTaskActionLoading] = useState('')
   const [recurrenceRule, setRecurrenceRule] = useState<TaskRecurrenceRule>('weekly')
@@ -1090,11 +1175,14 @@ export default function OwnerTasksPage() {
   const [newTemplateId,   setNewTemplateId]   = useState('')
   const [newSubTaskEnabled, setNewSubTaskEnabled] = useState(false)
   const [newSubTasks,      setNewSubTasks]      = useState<{ id: string; title: string }[]>([])
+  const [newSubTaskCollapsed, setNewSubTaskCollapsed] = useState(false)
   const [newSubTaskDraft,  setNewSubTaskDraft]  = useState('')
   const [newRecurringEnabled, setNewRecurringEnabled] = useState(false)
+  const [newRecurringCollapsed, setNewRecurringCollapsed] = useState(false)
   const [newRecurrenceRule, setNewRecurrenceRule] = useState<TaskRecurrenceRule | ''>('')
   const [newRecurrenceEndDate, setNewRecurrenceEndDate] = useState('')
   const [newCustomIntervalDays, setNewCustomIntervalDays] = useState(14)
+  const [newCustomIntervalTouched, setNewCustomIntervalTouched] = useState(false)
   const [newDeadlineRuleType, setNewDeadlineRuleType] = useState<TaskDeadlineRuleType | ''>('')
   const [newDeadlineRuleTime, setNewDeadlineRuleTime] = useState('')
   const [newDeadlineRuleWeekday, setNewDeadlineRuleWeekday] = useState<number | null>(null)
@@ -1108,6 +1196,10 @@ export default function OwnerTasksPage() {
   useEffect(() => {
     if (newDeadlineRuleType === 'fixed_day' && newRecurrenceRule !== 'weekly') setNewDeadlineRuleType('')
   }, [newRecurrenceRule, newDeadlineRuleType])
+
+  useEffect(() => {
+    if (newRecurrenceRule !== 'custom') setNewCustomIntervalTouched(false)
+  }, [newRecurrenceRule])
 
   // AI Assign state (merged breakdown + department/manager/deadline suggestion)
   const [aiModal,          setAiModal]          = useState(false)
@@ -1142,6 +1234,18 @@ export default function OwnerTasksPage() {
   const [archivedTasks,        setArchivedTasks]        = useState<Task[]>([])
   const [archiveListLoading,   setArchiveListLoading]   = useState(false)
   const [archiveListError,     setArchiveListError]     = useState('')
+  const [unarchiveLoadingId,   setUnarchiveLoadingId]   = useState('')
+  const [archiveDeleteLoadingId, setArchiveDeleteLoadingId] = useState('')
+  const [selectedArchivedTask, setSelectedArchivedTask] = useState<Task | null>(null)
+  const [expandedArchivedTaskIds, setExpandedArchivedTaskIds] = useState<Set<string>>(new Set())
+  const toggleArchivedTaskExpanded = (id: string) => {
+    setExpandedArchivedTaskIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
 
   // Toast
   const [taskToast, setTaskToast] = useState('')
@@ -1154,6 +1258,7 @@ export default function OwnerTasksPage() {
 
   const panelRef = useRef<HTMLDivElement>(null)
   const hasAutoSelectedTaskDateRef = useRef(false)
+  const [panelClosing, setPanelClosing] = useState(false)
 
   const canManageDepartments = userRole === 'Owner' || userRole === 'Partner'
 
@@ -1324,8 +1429,6 @@ export default function OwnerTasksPage() {
       .sort((a, b) => a.start_time.localeCompare(b.start_time))[0] ?? null
     if (shiftOnViewedDate) {
       setNewShiftId(shiftOnViewedDate.id)
-      setNewDeadlineDate(shiftOnViewedDate.shift_date)
-      setNewDeadlineTime(shiftOnViewedDate.end_time.slice(0, 5))
     } else {
       setNewShiftId('')
     }
@@ -1369,7 +1472,10 @@ export default function OwnerTasksPage() {
           .sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0))
           .map(row => row.id)
       : []
-    setTaskViewMode(viewOnly)
+    // Only the user who assigned this task may edit it — everyone else always gets the
+    // read-only Details view, regardless of which entry point (pencil, calendar bar, etc.) was used.
+    const isTaskOwner = !!internalUserId && task.assigned_by === internalUserId
+    setTaskViewMode(viewOnly || !isTaskOwner)
     setSelectedTask(task)
     setEditTitle(task.title)
     setEditDescription(task.description ?? '')
@@ -1389,6 +1495,10 @@ export default function OwnerTasksPage() {
     setRecurrenceRule('weekly')
     setRecurrenceEndDate(formatDateKey(addDays(new Date(`${kanbanDateKey(task)}T00:00:00`), 28)))
     setPanelSubTaskOrder(existingSubTaskIds)
+    setEditSubTaskEnabled(existingSubTaskIds.length > 0)
+    setEditSubTaskCollapsed(false)
+    setEditRecurringEnabled(!!task.recurrence_group_id)
+    setEditRecurringCollapsed(false)
     setReassignmentSuggestion(null)
   }
 
@@ -1406,6 +1516,7 @@ export default function OwnerTasksPage() {
       const due_at = new Date(`${editDueAt}T${editDeadlineTime}:00`).toISOString()
       const payload = {
         id: selectedTask.id,
+        assigned_by: internalUserId || undefined,
         company_id: selectedTask.company_id,
         department_id: editDeptId,
         title: editTitle.trim(),
@@ -1439,16 +1550,15 @@ export default function OwnerTasksPage() {
     if (!selectedTask) return
     setDeleteLoading(true)
     const taskId = selectedTask.id
-    // Optimistic: remove the task and any sub-tasks nested under it (the backend cascades this too).
-    setKanban(prev => {
-      if (!prev) return prev
-      const next = { ...prev } as KanbanGroup
-      for (const col of COLUMNS) next[col] = (prev[col] ?? []).filter(t => t.id !== taskId && t.parent_task_id !== taskId)
-      return next
-    })
-    closePanel()
+    // Play the card's exit transition and the modal's close transition together, then apply
+    // the optimistic removal once both have actually finished (the backend cascades sub-tasks too).
+    await Promise.all([playDeleteAnimation(taskId), new Promise<void>(resolve => {
+      setPanelClosing(true)
+      setTimeout(() => { closePanel(); setPanelClosing(false); resolve() }, 220)
+    })])
+    removeTasksFromKanban(taskId)
     try {
-      const res = await fetch(`/api/task?id=${taskId}`, { method: 'DELETE' })
+      const res = await fetch(`/api/task?id=${taskId}&assigned_by=${encodeURIComponent(internalUserId)}`, { method: 'DELETE' })
       const data = await res.json()
       if (!data.success) fetchKanban(companyId, true)
       else showTaskToast('Task deleted successfully.')
@@ -1468,7 +1578,7 @@ export default function OwnerTasksPage() {
     })
     setDeleteTaskModal(null)
     try {
-      const res = await fetch(`/api/task?id=${taskId}`, { method: 'DELETE' })
+      const res = await fetch(`/api/task?id=${taskId}&assigned_by=${encodeURIComponent(internalUserId)}`, { method: 'DELETE' })
       const data = await res.json()
       if (!data.success) { fetchKanban(companyId, true); setDeleteTaskError(data.message ?? 'Failed to delete') }
       else showTaskToast('Task deleted successfully.')
@@ -1488,6 +1598,7 @@ export default function OwnerTasksPage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
       await fetchKanban(companyId)
+      closePanel()
       showTaskToast('Task duplicated.')
     } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to duplicate task') }
     finally { setTaskActionLoading('') }
@@ -1500,7 +1611,7 @@ export default function OwnerTasksPage() {
       const res = await fetch('/api/task', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'archive', id: selectedTask.id }),
+        body: JSON.stringify({ action: 'archive', id: selectedTask.id, assigned_by: internalUserId || undefined }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
@@ -1509,6 +1620,44 @@ export default function OwnerTasksPage() {
       showTaskToast('Task archived.')
     } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to archive task') }
     finally { setTaskActionLoading('') }
+  }
+
+  const handleUnarchiveTask = async (taskId: string) => {
+    setUnarchiveLoadingId(taskId)
+    try {
+      const res = await fetch('/api/task', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'unarchive', id: taskId, assigned_by: internalUserId || undefined }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      setArchivedTasks(prev => prev.filter(t => t.id !== taskId))
+      setSelectedArchivedTask(prev => prev?.id === taskId ? null : prev)
+      await fetchKanban(companyId)
+      showTaskToast('Task unarchived.')
+    } catch (err) {
+      setArchiveListError(err instanceof Error ? err.message : 'Failed to unarchive task')
+    } finally {
+      setUnarchiveLoadingId('')
+    }
+  }
+
+  const handleDeleteArchivedTask = async (taskId: string) => {
+    setArchiveDeleteLoadingId(taskId)
+    setArchiveListError('')
+    try {
+      const res = await fetch(`/api/task?id=${taskId}&assigned_by=${encodeURIComponent(internalUserId)}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      setArchivedTasks(prev => prev.filter(t => t.id !== taskId))
+      setSelectedArchivedTask(prev => prev?.id === taskId ? null : prev)
+      showTaskToast('Task deleted successfully.')
+    } catch (err) {
+      setArchiveListError(err instanceof Error ? err.message : 'Failed to delete task')
+    } finally {
+      setArchiveDeleteLoadingId('')
+    }
   }
 
   const handleCreateRecurringTasks = async () => {
@@ -1528,6 +1677,7 @@ export default function OwnerTasksPage() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
+      setEditRecurringEnabled(true)
       await fetchKanban(companyId)
       showTaskToast(`${data.tasks?.length ?? 0} recurring task${data.tasks?.length === 1 ? '' : 's'} created.`)
     } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to create recurring tasks') }
@@ -1543,12 +1693,57 @@ export default function OwnerTasksPage() {
       const res = await fetch('/api/task', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'reorder_subtasks', id: selectedTask.id, sub_task_ids: orderedIds }),
+        body: JSON.stringify({ action: 'reorder_subtasks', id: selectedTask.id, sub_task_ids: orderedIds, assigned_by: internalUserId || undefined }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
       await fetchKanban(companyId)
     } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to reorder sub-tasks') }
+    finally { setSubTaskReorderLoading(false) }
+  }
+
+  const handleRenameSubTask = async (subTaskId: string, title: string) => {
+    const subTask = selectedSubTasks.find(t => t.id === subTaskId)
+    if (!subTask || !title.trim()) return
+    setSubTaskReorderLoading(true); setPanelError('')
+    try {
+      const res = await fetch('/api/task', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: subTask.id,
+          assigned_by: internalUserId || undefined,
+          company_id: subTask.company_id,
+          department_id: subTask.department_id,
+          title: title.trim(),
+          description: subTask.description,
+          priority: subTask.priority,
+          due_at: subTask.due_at,
+          task_date: subTask.task_date,
+          assigned_user_id: subTask.assigned_user_id,
+          shift_id: subTask.shift_id,
+          status: subTask.status,
+          percentage_complete: subTask.percentage_complete,
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      await fetchKanban(companyId)
+      showTaskToast('Sub-task updated successfully.')
+    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to update sub-task') }
+    finally { setSubTaskReorderLoading(false) }
+  }
+
+  const handleRemoveSubTask = async (subTaskId: string) => {
+    setSubTaskReorderLoading(true); setPanelError('')
+    setPanelSubTaskOrder(prev => prev.filter(id => id !== subTaskId))
+    try {
+      const res = await fetch(`/api/task?id=${subTaskId}&assigned_by=${encodeURIComponent(internalUserId)}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      await fetchKanban(companyId)
+      showTaskToast('Sub-task deleted successfully.')
+    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to delete sub-task'); await fetchKanban(companyId, true) }
     finally { setSubTaskReorderLoading(false) }
   }
 
@@ -1575,9 +1770,10 @@ export default function OwnerTasksPage() {
     if (!companyId) return
     setInsightLoading(kind); setInsightError('')
     try {
+      const deptParam = selectedDeptId ? `&department_id=${selectedDeptId}` : ''
       const query = kind === 'workload'
-        ? `/api/task?company_id=${companyId}&suggestion=workload`
-        : `/api/task?company_id=${companyId}&suggestion=stalled&stale_after_days=3`
+        ? `/api/task?company_id=${companyId}&suggestion=workload${deptParam}`
+        : `/api/task?company_id=${companyId}&suggestion=stalled&stale_after_days=3${deptParam}`
       const res = await fetch(query)
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
@@ -1585,7 +1781,7 @@ export default function OwnerTasksPage() {
       else setStalledAlerts(data.alerts ?? [])
     } catch (err) { setInsightError(err instanceof Error ? err.message : 'Failed to refresh task insight') }
     finally { setInsightLoading('') }
-  }, [companyId])
+  }, [companyId, selectedDeptId])
 
   // ── Create task ────────────────────────────────────────────────────────────
 
@@ -1593,7 +1789,7 @@ export default function OwnerTasksPage() {
     if (!companyId) return
     void refreshTaskInsights('workload')
     void refreshTaskInsights('stalled')
-  }, [companyId, refreshTaskInsights])
+  }, [companyId, selectedDeptId, refreshTaskInsights])
 
   const handleCreateSubTask = async () => {
     if (!selectedTask || !subTaskTitle.trim()) return
@@ -1619,6 +1815,7 @@ export default function OwnerTasksPage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
       setSubTaskTitle('')
+      setEditSubTaskEnabled(true)
       fetchKanban(companyId)
       showTaskToast('Sub-task created successfully.')
     } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to create sub-task') }
@@ -1686,8 +1883,8 @@ export default function OwnerTasksPage() {
       }
       setNewTaskModal(false)
       setNewTitle(''); setNewDescription(''); setNewDeptId(''); setNewAssigneeId(''); setNewShiftId(''); setNewStartDate(''); setNewPriority(''); setNewDeadlineDate(''); setNewDeadlineTime(''); setNewTemplateId('')
-      setNewSubTaskEnabled(false); setNewSubTasks([]); setNewSubTaskDraft('')
-      setNewRecurringEnabled(false); setNewRecurrenceRule(''); setNewRecurrenceEndDate(''); setNewCustomIntervalDays(14)
+      setNewSubTaskEnabled(false); setNewSubTasks([]); setNewSubTaskDraft(''); setNewSubTaskCollapsed(false)
+      setNewRecurringEnabled(false); setNewRecurringCollapsed(false); setNewRecurrenceRule(''); setNewRecurrenceEndDate(''); setNewCustomIntervalDays(14); setNewCustomIntervalTouched(false)
       setNewDeadlineRuleType(''); setNewDeadlineRuleTime(''); setNewDeadlineRuleWeekday(null); setNewDeadlineRuleOffsetAmount(1); setNewDeadlineRuleOffsetUnit('days')
       setTaskDate(taskDate)
       fetchKanban(companyId)
@@ -1720,8 +1917,8 @@ export default function OwnerTasksPage() {
     setNewShiftId('')
     setNewStartDate(boardViewMode === 'kanban' && taskDate > todayTaskDate ? taskDate : todayTaskDate)
     setNewTitle(''); setNewDescription(''); setNewPriority(''); setNewDeadlineDate(''); setNewDeadlineTime(''); setNewError(''); setNewTemplateId('')
-    setNewSubTaskEnabled(false); setNewSubTasks([]); setNewSubTaskDraft('')
-    setNewRecurringEnabled(false); setNewRecurrenceRule(''); setNewRecurrenceEndDate(''); setNewCustomIntervalDays(14)
+    setNewSubTaskEnabled(false); setNewSubTasks([]); setNewSubTaskDraft(''); setNewSubTaskCollapsed(false)
+    setNewRecurringEnabled(false); setNewRecurringCollapsed(false); setNewRecurrenceRule(''); setNewRecurrenceEndDate(''); setNewCustomIntervalDays(14); setNewCustomIntervalTouched(false)
     setNewDeadlineRuleType(''); setNewDeadlineRuleTime(''); setNewDeadlineRuleWeekday(null); setNewDeadlineRuleOffsetAmount(1); setNewDeadlineRuleOffsetUnit('days')
     setNewTaskModal(true)
   }
@@ -1743,14 +1940,18 @@ export default function OwnerTasksPage() {
     setArchiveModalOpen(true)
     setArchiveListLoading(true)
     setArchiveListError('')
+    setSelectedArchivedTask(null)
     try {
-      const res = await fetch(`/api/task?company_id=${companyId}&status=Complete`)
+      const res = await fetch(`/api/task?company_id=${companyId}&archived=true`)
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
-      setArchivedTasks(data.tasks ?? [])
+      const tasks = data.tasks ?? []
+      setArchivedTasks(tasks)
+      setSelectedArchivedTask(null)
     } catch (err) {
       setArchiveListError(err instanceof Error ? err.message : 'Failed to load archived tasks')
       setArchivedTasks([])
+      setSelectedArchivedTask(null)
     } finally {
       setArchiveListLoading(false)
     }
@@ -1946,14 +2147,33 @@ export default function OwnerTasksPage() {
   }, [calendarWeekDates])
 
   const taskCalendarItems = useMemo(() => {
+    const subTasksByParent = new Map<string, Task[]>()
+    for (const t of allVisibleTasks) {
+      if (!t.parent_task_id) continue
+      const arr = subTasksByParent.get(t.parent_task_id) ?? []
+      arr.push(t)
+      subTasksByParent.set(t.parent_task_id, arr)
+    }
+    for (const arr of subTasksByParent.values()) arr.sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0))
+    const subTaskIndexById = new Map<string, number>()
+    for (const arr of subTasksByParent.values()) arr.forEach((t, idx) => subTaskIndexById.set(t.id, idx + 1))
+
+    // Sub-tasks only render once their parent is expanded — collapsed by default, same as Kanban.
+    const visibleTasks = allVisibleTasks.filter(t => !t.parent_task_id || expandedTaskIds.has(t.parent_task_id))
     // Bar spans from the task's assigned start date (task_date, set when assigning) to its deadline date
-    return allVisibleTasks.flatMap(task => {
+    return visibleTasks.flatMap(task => {
       const startDate = kanbanDateKey(task)
       const endDate = task.due_at ? formatDateKey(new Date(task.due_at)) : startDate
       if (endDate < calendarWeekDates[0] || startDate > calendarWeekDates[6]) return []
-      return [{ task, startDate: startDate < endDate ? startDate : endDate, endDate: endDate > startDate ? endDate : startDate }]
+      return [{
+        task,
+        startDate: startDate < endDate ? startDate : endDate,
+        endDate: endDate > startDate ? endDate : startDate,
+        subTaskCount: task.parent_task_id ? 0 : (subTasksByParent.get(task.id)?.length ?? 0),
+        subTaskIndex: task.parent_task_id ? subTaskIndexById.get(task.id) ?? null : null,
+      }]
     }).sort((a, b) => (PRIORITY_ORDER[a.task.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.task.priority ?? ''] ?? 4) || a.startDate.localeCompare(b.startDate))
-  }, [allVisibleTasks, calendarWeekDates])
+  }, [allVisibleTasks, calendarWeekDates, expandedTaskIds])
 
   const renderTaskCalendarView = () => {
     const todayStr = formatDateKey(new Date())
@@ -2106,7 +2326,22 @@ export default function OwnerTasksPage() {
                               <ChevronLeft size={13} color="#FFFFFF" strokeWidth={3} style={{ flexShrink: 0 }} />
                             </span>
                           )}
+                          {item.subTaskIndex !== null && (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: '50%', background: 'rgba(255,255,255,0.3)', color: '#FFFFFF', fontSize: 9, fontWeight: 800, flexShrink: 0, marginRight: 5 }}>
+                              {item.subTaskIndex}
+                            </span>
+                          )}
                           <span style={{ fontSize: 12, fontWeight: 700, color: '#FFFFFF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.task.title}</span>
+                          {item.subTaskCount > 0 && (
+                            <span
+                              role="button"
+                              aria-label={expandedTaskIds.has(item.task.id) ? 'Collapse sub-tasks' : 'Expand sub-tasks'}
+                              onClick={e => { e.stopPropagation(); toggleTaskExpanded(item.task.id) }}
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: 6, flexShrink: 0, padding: '2px 6px', borderRadius: 999, background: 'rgba(255,255,255,0.25)', cursor: 'pointer' }}
+                            >
+                              <ChevronDown size={11} color="#FFFFFF" strokeWidth={3} style={{ transform: expandedTaskIds.has(item.task.id) ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+                            </span>
+                          )}
                           {truncatedEnd && (
                             <span
                               role="button"
@@ -2192,6 +2427,10 @@ export default function OwnerTasksPage() {
   const selectedSubTasks = panelSubTaskOrder.length === selectedSubTasksUnordered.length && panelSubTaskOrder.every(id => selectedSubTasksUnordered.some(t => t.id === id))
     ? panelSubTaskOrder.map(id => selectedSubTasksUnordered.find(t => t.id === id)).filter((t): t is Task => !!t)
     : [...selectedSubTasksUnordered].sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0))
+  const visibleArchivedTasks = useMemo(
+    () => archivedTasks.filter(t => !t.parent_task_id && !t.source_task_id),
+    [archivedTasks],
+  )
 
   useEffect(() => {
     if (!selectedTask) return
@@ -2332,8 +2571,15 @@ export default function OwnerTasksPage() {
           40%      { transform: translateY(-3px); }
           70%      { transform: translateY(-1px); }
         }
-        @keyframes overlayFadeIn { from { opacity: 0 } to { opacity: 1 } }
-        @keyframes modalSlideIn  { from { opacity: 0; transform: scale(0.97) translateY(8px) } to { opacity: 1; transform: scale(1) translateY(0) } }
+        @keyframes overlayFadeIn  { from { opacity: 0 } to { opacity: 1 } }
+        @keyframes overlayFadeOut { from { opacity: 1 } to { opacity: 0 } }
+        @keyframes modalSlideIn   { from { opacity: 0; transform: scale(0.97) translateY(8px) } to { opacity: 1; transform: scale(1) translateY(0) } }
+        @keyframes modalSlideOut  { from { opacity: 1; transform: scale(1) translateY(0) } to { opacity: 0; transform: scale(0.97) translateY(8px) } }
+        @keyframes taskCardRemove {
+          from { opacity: 1; transform: scale(1); max-height: 200px; margin-bottom: 14px; }
+          to   { opacity: 0; transform: scale(0.92); max-height: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; }
+        }
+        .task-card-removing { overflow: hidden; animation: taskCardRemove 0.22s ease forwards; }
 
         /* Kanban task cards */
         .task-card {
@@ -2617,6 +2863,7 @@ export default function OwnerTasksPage() {
                       // ── Department cards grid (draggable to reorder) ──
                       // Kanban tab: tasks due on the selected day. Calendar tab: tasks overlapping the visible week.
                       const dayTasks = COLUMNS.flatMap(col => (kanban?.[col] ?? [])).filter(t => {
+                        if (t.parent_task_id) return false
                         if (boardViewMode === 'calendar') {
                           const startDate = kanbanDateKey(t)
                           const endDate = t.due_at ? formatDateKey(new Date(t.due_at)) : startDate
@@ -2739,6 +2986,7 @@ export default function OwnerTasksPage() {
                     // Count tasks due on the selected date only, so the panel matches what's visible in the Kanban
                     const dateTaskCountByUser = COLUMNS
                       .flatMap(col => filteredTasks(col))
+                      .filter(t => !t.parent_task_id)
                       .reduce<Record<string, number>>((acc, t) => {
                         if (t.assigned_user_id) acc[t.assigned_user_id] = (acc[t.assigned_user_id] ?? 0) + 1
                         return acc
@@ -2921,27 +3169,34 @@ export default function OwnerTasksPage() {
                                 const subTasks = subTasksByParent.get(task.id) ?? []
                                 const isExpanded = expandedTaskIds.has(task.id)
                                 return (
-                                  <div key={task.id}>
+                                  <div key={task.id} className={removingTaskIds.has(task.id) ? 'task-card-removing' : undefined}>
                                     <TaskCard
                                       task={task}
                                       members={members}
                                       shiftOptions={shiftOptions}
                                       departments={departments}
                                       showDept={selectedDeptId === ''}
-                                      onClick={subTasks.length > 0 ? () => toggleTaskExpanded(task.id) : () => openTask(task, true)}
+                                      onClick={() => openTask(task, true)}
                                       onEdit={() => openTask(task, false)}
                                       subTaskCount={subTasks.length}
                                       expanded={isExpanded}
+                                      onToggleExpand={() => toggleTaskExpanded(task.id)}
+                                      isOwner={!!internalUserId && task.assigned_by === internalUserId}
                                     />
                                     {isExpanded && subTasks.length > 0 && (
                                       <div style={{ marginTop: -6, marginBottom: 14, paddingLeft: 6 }}>
                                         {subTasks.map((sub, idx) => (
                                           <div key={sub.id} style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
                                             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
-                                              <span style={{ width: 18, height: 18, marginTop: 14, borderRadius: '50%', background: '#FFF3E8', color: '#EA580C', fontSize: 10, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                              <span style={{ width: 26, height: 26, marginTop: 14, borderRadius: '50%', background: '#FFF3E8', color: '#EA580C', fontSize: 13, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                                                 {idx + 1}
                                               </span>
-                                              {idx < subTasks.length - 1 && <div style={{ width: 1, flex: 1, background: '#E2E8F0' }} />}
+                                              {idx < subTasks.length - 1 && (
+                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1 }}>
+                                                  <div style={{ width: 1, flex: 1, background: '#E2E8F0' }} />
+                                                  <ChevronDown size={12} color="#CBD5E1" style={{ marginTop: -2, flexShrink: 0 }} />
+                                                </div>
+                                              )}
                                             </div>
                                             <div style={{ flex: 1, minWidth: 0 }}>
                                               <TaskCard
@@ -2950,8 +3205,9 @@ export default function OwnerTasksPage() {
                                                 shiftOptions={shiftOptions}
                                                 departments={departments}
                                                 showDept={selectedDeptId === ''}
-                                                onClick={() => openTask(sub, true)}
+                                                onClick={() => {}}
                                                 onEdit={() => openTask(sub, false)}
+                                                clickable={false}
                                               />
                                             </div>
                                           </div>
@@ -2978,18 +3234,6 @@ export default function OwnerTasksPage() {
 
       {/* ═══════════════ TASK DETAIL PANEL ═══════════════ */}
       {selectedTask && taskViewMode && (() => {
-        const viewAssigneeName = selectedTask.assigned_user_id
-          ? (members.find(m => m.id === selectedTask.assigned_user_id)?.full_name ?? 'Unknown')
-          : null
-        const viewDept = departments.find(d => d.id === selectedTask.department_id)
-        const viewPriorityStyle = selectedTask.priority ? PRIORITY_COLORS[selectedTask.priority as keyof typeof PRIORITY_COLORS] : null
-        const viewStartDate = new Date(`${kanbanDateKey(selectedTask)}T00:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
-        const viewDeadline = selectedTask.due_at
-          ? (() => {
-              const d = new Date(selectedTask.due_at)
-              return d.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-            })()
-          : null
         const viewFieldValue: React.CSSProperties = {
           padding: '10px 12px',
           border: '1.5px solid #E5E7EB',
@@ -3003,12 +3247,14 @@ export default function OwnerTasksPage() {
           boxSizing: 'border-box',
         }
         const viewEmpty: React.CSSProperties = { ...viewFieldValue, color: '#9CA3AF', fontStyle: 'italic' }
+        const isOwner = !!internalUserId && selectedTask.assigned_by === internalUserId
         return (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: `${panelClosing ? 'overlayFadeOut' : 'overlayFadeIn'} 0.18s ease-out` }}>
             <div
               ref={panelRef}
               onClick={e => e.stopPropagation()}
-              style={{ width: 440, background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}
+              data-testid="task-details-panel"
+              style={{ width: 440, background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: `${panelClosing ? 'modalSlideOut' : 'modalSlideIn'} 0.22s cubic-bezier(0.16,1,0.3,1)` }}
             >
               {/* Header */}
               <div style={{ padding: '18px 20px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -3016,7 +3262,7 @@ export default function OwnerTasksPage() {
                   <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <Eye size={15} color="#fff" strokeWidth={2.5} />
                   </div>
-                  <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>Task Details</h2>
+                  <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>{selectedTask.title}&rsquo;s Details</h2>
                 </div>
                 <button onClick={closePanel} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
                   onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
@@ -3029,12 +3275,6 @@ export default function OwnerTasksPage() {
               {/* Body */}
               <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 'calc(90vh - 130px)', overflowY: 'auto' }}>
 
-                {/* Title */}
-                <div>
-                  <label style={modalLabelStyle}>Title</label>
-                  <div style={viewFieldValue}>{selectedTask.title}</div>
-                </div>
-
                 {/* Description */}
                 <div>
                   <label style={modalLabelStyle}>Description</label>
@@ -3044,51 +3284,31 @@ export default function OwnerTasksPage() {
                   }
                 </div>
 
-                {/* Department + Assign To */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                  <div>
-                    <label style={modalLabelStyle}>Department</label>
-                    <div style={viewDept ? viewFieldValue : viewEmpty}>{viewDept?.name ?? 'Unknown'}</div>
-                  </div>
-                  <div>
-                    <label style={modalLabelStyle}>Assigned To</label>
-                    {viewAssigneeName
-                      ? <div style={viewFieldValue}>{viewAssigneeName}</div>
-                      : <div style={viewEmpty}>Unassigned</div>
-                    }
-                  </div>
-                </div>
-
-                {/* Divider */}
-                <div style={{ borderTop: '1px dashed #E5E7EB' }} />
-
-                {/* Start Date + Priority */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                  <div>
-                    <label style={modalLabelStyle}>Start Date</label>
-                    <div style={viewFieldValue}>{viewStartDate}</div>
-                  </div>
-                  <div>
-                    <label style={modalLabelStyle}>Priority</label>
-                    {viewPriorityStyle
-                      ? <div style={{ ...viewFieldValue, background: viewPriorityStyle.bg, justifyContent: 'center' }}>
-                          <span style={{ color: '#111827', fontWeight: 700, fontSize: '0.85rem' }}>{selectedTask.priority}</span>
-                        </div>
-                      : <div style={viewEmpty}>None</div>
-                    }
-                  </div>
-                </div>
-
-                {/* Deadline */}
+                {/* Assigned Time */}
                 <div>
-                  <label style={modalLabelStyle}>Deadline</label>
-                  {viewDeadline
-                    ? <div style={viewFieldValue}>{viewDeadline}</div>
-                    : <div style={viewEmpty}>No deadline set</div>
-                  }
+                  <label style={modalLabelStyle}>Assigned Time</label>
+                  <div style={viewFieldValue}>
+                    {new Date(selectedTask.created_at).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                  </div>
                 </div>
 
+                <InlineError message={panelError} />
               </div>
+
+              {/* Footer — only the user who assigned this task may operate on it */}
+              {isOwner && (
+                <div style={{ padding: '0 20px 18px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                  <button type="button" onClick={handleDuplicateTask} disabled={taskActionLoading === 'duplicate'} style={{ height: 36, border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', color: '#334155', fontSize: 12, fontWeight: 700, cursor: taskActionLoading ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                    {taskActionLoading === 'duplicate' ? <Spinner size={12} dark /> : <Copy size={13} />} Duplicate
+                  </button>
+                  <button type="button" onClick={handleArchiveTask} disabled={taskActionLoading === 'archive'} style={{ height: 36, border: '1px solid #FED7AA', borderRadius: 8, background: '#FFF7ED', color: '#C2410C', fontSize: 12, fontWeight: 700, cursor: taskActionLoading ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                    {taskActionLoading === 'archive' ? <Spinner size={12} dark /> : <Archive size={13} />} Archive
+                  </button>
+                  <button type="button" onClick={handleDeleteTask} disabled={deleteLoading} style={{ height: 36, border: 'none', borderRadius: 8, background: deleteLoading ? '#F3A8A8' : 'linear-gradient(135deg, #EF4444, #DC2626)', color: '#FFFFFF', fontSize: 12, fontWeight: 700, cursor: deleteLoading ? 'not-allowed' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, opacity: deleteLoading ? 0.7 : 1 }}>
+                    {deleteLoading ? <Spinner size={12} /> : <Trash2 size={13} />} Delete
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )
@@ -3121,16 +3341,28 @@ export default function OwnerTasksPage() {
             {/* Body */}
             <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 'calc(90vh - 140px)', overflowY: 'auto' }}>
 
-              {/* Title */}
-              <div>
-                <label style={modalLabelStyle}>Title</label>
-                <input autoFocus value={editTitle} onChange={e => setEditTitle(e.target.value)} style={modalInputStyle} onKeyDown={e => { if (e.key === 'Enter') handleSaveTask() }} />
+              {/* Title + Priority */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div>
+                  <label style={modalLabelStyle}>Title</label>
+                  <input autoFocus value={editTitle} onChange={e => setEditTitle(e.target.value)} placeholder="Task title..." style={modalInputStyle} onKeyDown={e => { if (e.key === 'Enter') handleSaveTask() }} />
+                </div>
+                <div>
+                  <label style={modalLabelStyle}>Priority</label>
+                  <DropdownField
+                    value={editPriority}
+                    options={priorityDropdownOptions}
+                    onChange={v => setEditPriority(v)}
+                    placeholder="Select priority"
+                    badgeColors={PRIORITY_COLORS}
+                  />
+                </div>
               </div>
 
               {/* Description */}
               <div>
                 <label style={modalLabelStyle}>Description</label>
-                <textarea value={editDescription} onChange={e => setEditDescription(e.target.value)} onKeyDown={e => handleDescriptionKeyDown(e, editDescription, setEditDescription)} rows={2} style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }} />
+                <textarea value={editDescription} onChange={e => setEditDescription(e.target.value)} onKeyDown={e => handleDescriptionKeyDown(e, editDescription, setEditDescription)} rows={2} placeholder="Add more context..." style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }} />
               </div>
 
               {/* Department + Assign To */}
@@ -3158,7 +3390,7 @@ export default function OwnerTasksPage() {
               {/* Divider */}
               <div style={{ borderTop: '1px dashed #E5E7EB' }} />
 
-              {/* Start Date + Priority */}
+              {/* Start Date + Deadline */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                 <div>
                   <label style={modalLabelStyle}>Start Date</label>
@@ -3172,112 +3404,123 @@ export default function OwnerTasksPage() {
                   />
                 </div>
                 <div>
-                  <label style={modalLabelStyle}>Priority</label>
-                  <DropdownField
-                    value={editPriority}
-                    options={priorityDropdownOptions}
-                    onChange={v => setEditPriority(v)}
-                    placeholder="Select priority"
-                    badgeColors={PRIORITY_COLORS}
+                  <label style={modalLabelStyle}>Deadline</label>
+                  <DeadlinePicker
+                    dateValue={editDueAt}
+                    timeValue={editDeadlineTime}
+                    onChange={(date, time) => { setEditDueAt(date); setEditDeadlineTime(time) }}
+                    minDate={editStartDate || formatDateKey(new Date())}
                   />
                 </div>
               </div>
 
-              {/* Deadline */}
-              <div>
-                <label style={modalLabelStyle}>Deadline</label>
-                <DeadlinePicker
-                  dateValue={editDueAt}
-                  timeValue={editDeadlineTime}
-                  onChange={(date, time) => { setEditDueAt(date); setEditDeadlineTime(time) }}
-                  minDate={editStartDate || formatDateKey(new Date())}
-                />
-              </div>
+              {/* Divider */}
+              <div style={{ borderTop: '1px dashed #E5E7EB' }} />
 
-              <div style={{ borderTop: '1px dashed #E5E7EB', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-                  <button type="button" onClick={handleDuplicateTask} disabled={taskActionLoading === 'duplicate'} style={{ height: 36, border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', color: '#334155', fontSize: 12, fontWeight: 700, cursor: taskActionLoading ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                    {taskActionLoading === 'duplicate' ? <Spinner size={12} dark /> : <Copy size={13} />} Duplicate
-                  </button>
-                  <button type="button" onClick={handleArchiveTask} disabled={taskActionLoading === 'archive'} style={{ height: 36, border: '1px solid #FED7AA', borderRadius: 8, background: '#FFF7ED', color: '#C2410C', fontSize: 12, fontWeight: 700, cursor: taskActionLoading ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                    {taskActionLoading === 'archive' ? <Spinner size={12} dark /> : <Archive size={13} />} Archive
-                  </button>
-                  <button type="button" onClick={handleFetchReassignmentSuggestion} disabled={taskActionLoading === 'reassignment'} style={{ height: 36, border: '1px solid #DDD6FE', borderRadius: 8, background: '#F5F3FF', color: '#6D28D9', fontSize: 12, fontWeight: 700, cursor: taskActionLoading ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                    {taskActionLoading === 'reassignment' ? <Spinner size={12} dark /> : <ArrowRightLeft size={13} />} Suggest
-                  </button>
-                </div>
-
-                {reassignmentSuggestion && (
-                  <div style={{ border: '1px solid #DDD6FE', background: '#F5F3FF', borderRadius: 10, padding: 10 }}>
-                    <p style={{ margin: '0 0 4px', fontSize: 12, fontWeight: 800, color: '#5B21B6' }}>Reassignment suggestion</p>
-                    <p style={{ margin: 0, fontSize: 12, color: '#4C1D95', lineHeight: 1.45 }}>
-                      {recommendedAssigneeName ? `Move from ${currentAssigneeName} to ${recommendedAssigneeName}.` : reassignmentSuggestion.reason}
-                    </p>
-                    {reassignmentSuggestion.recommended_assignee_id && (
-                      <button type="button" onClick={handleApplyReassignment} style={{ marginTop: 8, height: 30, border: 0, borderRadius: 8, background: '#7C3AED', color: '#FFFFFF', fontSize: 12, fontWeight: 700, padding: '0 10px', cursor: 'pointer' }}>
-                        Use suggested assignee
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flex: 1 }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
+                        <GitBranch size={13} color={TASK_ORANGE} /> Sub Task
+                        {selectedSubTasks.length > 0 && (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 18, height: 18, padding: '0 5px', borderRadius: 9, background: '#FFF3E8', color: '#EA580C', fontSize: 11, fontWeight: 800 }}>
+                            {selectedSubTasks.length}
+                          </span>
+                        )}
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={editSubTaskEnabled}
+                        onChange={e => setEditSubTaskEnabled(e.target.checked)}
+                        style={{ width: 16, height: 16, accentColor: TASK_ORANGE, cursor: 'pointer', marginLeft: 'auto' }}
+                      />
+                    </label>
+                    {editSubTaskEnabled && selectedSubTasks.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setEditSubTaskCollapsed(prev => !prev)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, marginLeft: 6, display: 'flex', color: '#9CA3AF', borderRadius: 6, flexShrink: 0 }}
+                      >
+                        <ChevronDown size={14} style={{ transform: editSubTaskCollapsed ? 'none' : 'rotate(180deg)', transition: 'transform 0.15s' }} />
                       </button>
                     )}
                   </div>
-                )}
+
+                  {editSubTaskEnabled && !(editSubTaskCollapsed && selectedSubTasks.length > 0) && (
+                    <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {selectedSubTasks.length > 0 && (
+                        <div>
+                          <SubTaskOrderList
+                            items={selectedSubTasks.map(t => ({ id: t.id, title: t.title }))}
+                            onReorder={handleReorderSubTasks}
+                            onRemove={handleRemoveSubTask}
+                            onRename={handleRenameSubTask}
+                            disabled={subTaskReorderLoading}
+                          />
+                        </div>
+                      )}
+
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <input
+                          value={subTaskTitle}
+                          onChange={e => setSubTaskTitle(e.target.value)}
+                          placeholder="Sub-task title..."
+                          style={{ ...modalInputStyle, flex: 1, minWidth: 0, minHeight: 32, padding: '6px 10px', fontSize: 12 }}
+                          onKeyDown={e => { if (e.key === 'Enter') handleCreateSubTask() }}
+                        />
+                        <button type="button" onClick={handleCreateSubTask} disabled={subTaskLoading || !subTaskTitle.trim()} style={{ flexShrink: 0, width: 32, height: 30, padding: 0, border: 0, borderRadius: 7, background: subTaskTitle.trim() ? 'linear-gradient(135deg, #F97316, #EA580C)' : '#E5E7EB', color: subTaskTitle.trim() ? '#FFFFFF' : '#9CA3AF', fontWeight: 700, fontSize: 12, cursor: subTaskTitle.trim() ? 'pointer' : 'not-allowed', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                          {subTaskLoading ? <Spinner size={12} /> : <Plus size={14} strokeWidth={2.5} />}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
 
                 <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                    <Repeat size={14} color="#475569" />
-                    <span style={{ fontSize: 13, fontWeight: 800, color: '#0F172A' }}>Recurring task</span>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flex: 1 }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
+                        <Repeat size={13} color={TASK_ORANGE} /> Recurring
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={editRecurringEnabled}
+                        onChange={e => setEditRecurringEnabled(e.target.checked)}
+                        style={{ width: 16, height: 16, accentColor: TASK_ORANGE, cursor: 'pointer', marginLeft: 'auto' }}
+                      />
+                    </label>
+                    {editRecurringEnabled && (
+                      <button
+                        type="button"
+                        onClick={() => setEditRecurringCollapsed(prev => !prev)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, marginLeft: 6, display: 'flex', color: '#9CA3AF', borderRadius: 6, flexShrink: 0 }}
+                      >
+                        <ChevronDown size={14} style={{ transform: editRecurringCollapsed ? 'none' : 'rotate(180deg)', transition: 'transform 0.15s' }} />
+                      </button>
+                    )}
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 8, alignItems: 'end' }}>
+                  {editRecurringEnabled && !editRecurringCollapsed && <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 8, alignItems: 'end' }}>
                     <div>
-                      <label style={{ ...modalLabelStyle, fontSize: 12, marginBottom: 6 }}>Rule</label>
+                      <label style={{ ...modalLabelStyle, fontSize: 12, marginBottom: 6 }}>Repeats</label>
                       <DropdownField
                         value={recurrenceRule}
                         options={[
                           { value: 'daily', label: 'Daily' },
                           { value: 'weekly', label: 'Weekly' },
-                          { value: 'custom', label: 'Every 14 days' },
+                          { value: 'custom', label: 'Custom' },
                         ]}
                         onChange={v => setRecurrenceRule(v as TaskRecurrenceRule)}
                       />
                     </div>
                     <div>
-                      <label style={{ ...modalLabelStyle, fontSize: 12, marginBottom: 6 }}>End date</label>
+                      <label style={{ ...modalLabelStyle, fontSize: 12, marginBottom: 6 }}>Repeat until</label>
                       <TaskDatePicker value={recurrenceEndDate || editStartDate || formatDateKey(new Date())} onChange={setRecurrenceEndDate} taskDates={datesWithTasks} minDate={editStartDate || todayTaskDate} accentColor={TASK_ORANGE} fullWidth />
                     </div>
-                    <button type="button" onClick={handleCreateRecurringTasks} disabled={taskActionLoading === 'recurring' || !recurrenceEndDate} style={{ height: 40, border: 0, borderRadius: 8, background: '#0F172A', color: '#FFFFFF', fontSize: 12, fontWeight: 800, padding: '0 12px', cursor: taskActionLoading === 'recurring' ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <button type="button" onClick={handleCreateRecurringTasks} disabled={taskActionLoading === 'recurring' || !recurrenceEndDate} style={{ height: 30, border: 0, borderRadius: 7, background: '#0F172A', color: '#FFFFFF', fontSize: 12, fontWeight: 800, padding: '0 12px', cursor: taskActionLoading === 'recurring' ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                       {taskActionLoading === 'recurring' ? <Spinner size={12} /> : null} Create
                     </button>
-                  </div>
-                </div>
-
-                <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                    <GitBranch size={14} color="#475569" />
-                    <span style={{ fontSize: 13, fontWeight: 800, color: '#0F172A' }}>Sub-tasks</span>
-                    {subTaskReorderLoading && <Spinner size={12} dark />}
-                  </div>
-
-                  {selectedSubTasks.length > 0 && (
-                    <div style={{ marginBottom: 10 }}>
-                      <SubTaskOrderList
-                        items={selectedSubTasks.map(t => ({ id: t.id, title: t.title }))}
-                        onReorder={handleReorderSubTasks}
-                        disabled={subTaskReorderLoading}
-                      />
-                    </div>
-                  )}
-
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <input
-                      value={subTaskTitle}
-                      onChange={e => setSubTaskTitle(e.target.value)}
-                      placeholder="Sub-task title..."
-                      style={{ ...modalInputStyle, flex: 1, padding: '8px 10px', fontSize: 13 }}
-                      onKeyDown={e => { if (e.key === 'Enter') handleCreateSubTask() }}
-                    />
-                    <button type="button" onClick={handleCreateSubTask} disabled={subTaskLoading || !subTaskTitle.trim()} style={{ flexShrink: 0, height: 36, padding: '0 12px', border: 0, borderRadius: 8, background: subTaskTitle.trim() ? 'linear-gradient(135deg, #F97316, #EA580C)' : '#E5E7EB', color: subTaskTitle.trim() ? '#FFFFFF' : '#9CA3AF', fontWeight: 700, fontSize: 12, cursor: subTaskTitle.trim() ? 'pointer' : 'not-allowed', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                      {subTaskLoading ? <Spinner size={12} /> : <Plus size={13} strokeWidth={2.5} />}
-                    </button>
-                  </div>
+                  </div>}
                 </div>
               </div>
 
@@ -3286,14 +3529,6 @@ export default function OwnerTasksPage() {
 
             {/* Footer */}
             <div style={{ padding: '0 20px 18px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
-              <button
-                type="button"
-                onClick={handleDeleteTask}
-                disabled={deleteLoading}
-                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: 'none', borderRadius: 8, background: deleteLoading ? '#F3A8A8' : 'linear-gradient(135deg, #EF4444, #DC2626)', color: '#FFFFFF', height: 34, padding: '0 14px', fontSize: '0.8125rem', fontWeight: 600, cursor: deleteLoading ? 'not-allowed' : 'pointer', opacity: deleteLoading ? 0.7 : 1, marginRight: 'auto' }}
-              >
-                {deleteLoading ? <Spinner size={13} /> : <Trash2 size={13} />} Delete
-              </button>
               <button
                 type="button"
                 onClick={handleSaveTask}
@@ -3430,19 +3665,35 @@ export default function OwnerTasksPage() {
               {/* Sub Task + Recurring toggles */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                 <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
-                  <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
-                      <GitBranch size={13} color={TASK_ORANGE} /> Sub Task
-                    </span>
-                    <input
-                      type="checkbox"
-                      checked={newSubTaskEnabled}
-                      onChange={e => setNewSubTaskEnabled(e.target.checked)}
-                      style={{ width: 16, height: 16, accentColor: TASK_ORANGE, cursor: 'pointer' }}
-                    />
-                  </label>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flex: 1 }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
+                        <GitBranch size={13} color={TASK_ORANGE} /> Sub Task
+                        {newSubTasks.length > 0 && (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 18, height: 18, padding: '0 5px', borderRadius: 9, background: '#FFF3E8', color: '#EA580C', fontSize: 11, fontWeight: 800 }}>
+                            {newSubTasks.length}
+                          </span>
+                        )}
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={newSubTaskEnabled}
+                        onChange={e => setNewSubTaskEnabled(e.target.checked)}
+                        style={{ width: 16, height: 16, accentColor: TASK_ORANGE, cursor: 'pointer', marginLeft: 'auto' }}
+                      />
+                    </label>
+                    {newSubTaskEnabled && newSubTasks.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setNewSubTaskCollapsed(prev => !prev)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, marginLeft: 6, display: 'flex', color: '#9CA3AF', borderRadius: 6, flexShrink: 0 }}
+                      >
+                        <ChevronDown size={14} style={{ transform: newSubTaskCollapsed ? 'none' : 'rotate(180deg)', transition: 'transform 0.15s' }} />
+                      </button>
+                    )}
+                  </div>
 
-                  {newSubTaskEnabled && (
+                  {newSubTaskEnabled && !(newSubTaskCollapsed && newSubTasks.length > 0) && (
                     <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
                       {newSubTasks.length > 0 && (
                         <SubTaskOrderList
@@ -3483,126 +3734,102 @@ export default function OwnerTasksPage() {
                 </div>
 
                 <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
-                  <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
-                      <Repeat size={13} color={TASK_ORANGE} /> Recurring
-                    </span>
-                    <input
-                      type="checkbox"
-                      checked={newRecurringEnabled}
-                      onChange={e => setNewRecurringEnabled(e.target.checked)}
-                      style={{ width: 16, height: 16, accentColor: TASK_ORANGE, cursor: 'pointer' }}
-                    />
-                  </label>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flex: 1 }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
+                        <Repeat size={13} color={TASK_ORANGE} /> Recurring
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={newRecurringEnabled}
+                        onChange={e => setNewRecurringEnabled(e.target.checked)}
+                        style={{ width: 16, height: 16, accentColor: TASK_ORANGE, cursor: 'pointer', marginLeft: 'auto' }}
+                      />
+                    </label>
+                    {newRecurringEnabled && (
+                      <button
+                        type="button"
+                        onClick={() => setNewRecurringCollapsed(prev => !prev)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, marginLeft: 6, display: 'flex', color: '#9CA3AF', borderRadius: 6, flexShrink: 0 }}
+                      >
+                        <ChevronDown size={14} style={{ transform: newRecurringCollapsed ? 'none' : 'rotate(180deg)', transition: 'transform 0.15s' }} />
+                      </button>
+                    )}
+                  </div>
 
-                  {newRecurringEnabled && (
-                    <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
-                        {([
-                          ['daily', 'Daily'],
-                          ['weekly', 'Weekly'],
-                          ['custom', 'Custom'],
-                        ] as const).map(([rule, label]) => {
-                          const active = newRecurrenceRule === rule
-                          return (
-                            <button
-                              key={rule}
-                              type="button"
-                              onClick={() => setNewRecurrenceRule(rule)}
-                              style={{ width: 92, height: 30, border: active ? `1.5px solid ${TASK_ORANGE}` : '1.5px solid #E5E7EB', background: active ? '#FFF7ED' : '#FFFFFF', color: active ? TASK_ORANGE : '#374151', borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
-                            >
-                              {label}
-                            </button>
-                          )
-                        })}
-                      </div>
-                      {newRecurrenceRule && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
-                        <div>
-                          <label style={{ ...modalLabelStyle, fontSize: '0.75rem' }}>Repeat until</label>
-                          <InlineTaskDateCalendar
-                            value={newRecurrenceEndDate || newStartDate || formatDateKey(new Date())}
+                  {newRecurringEnabled && !newRecurringCollapsed && (
+                    <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Repeats</span>
+                          <DropdownField
+                            value={newRecurrenceRule}
+                            options={[
+                              { value: 'daily', label: 'Daily' },
+                              { value: 'weekly', label: 'Weekly' },
+                              { value: 'custom', label: 'Custom' },
+                            ]}
+                            onChange={v => setNewRecurrenceRule(v as TaskRecurrenceRule)}
+                            placeholder="Select frequency"
+                          />
+                        </label>
+                        <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Repeat until</span>
+                          <CompactDatePicker
+                            value={newRecurrenceEndDate}
                             onChange={setNewRecurrenceEndDate}
                             minDate={newStartDate || todayTaskDate}
                             accentColor={TASK_ORANGE}
                           />
-                        </div>
-                        {newRecurrenceRule === 'custom' && (
-                          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                            <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Repeat every (days)</span>
-                            <input
-                              type="text"
-                              inputMode="numeric"
-                              value={newCustomIntervalDays || ''}
-                              onChange={e => {
-                                const digits = e.target.value.replace(/\D/g, '')
-                                setNewCustomIntervalDays(digits === '' ? 0 : Number(digits))
-                              }}
-                              onBlur={() => setNewCustomIntervalDays(prev => Math.min(31, Math.max(1, prev || 1)))}
-                              style={{ ...modalInputStyle, minHeight: 32, padding: '6px 10px', fontSize: 12 }}
-                            />
-                          </label>
-                        )}
+                        </label>
                       </div>
+                      {newRecurrenceRule === 'custom' && newRecurrenceEndDate && (
+                        <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Repeat every (days)</span>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={newCustomIntervalDays || ''}
+                            onChange={e => {
+                              const digits = e.target.value.replace(/\D/g, '')
+                              setNewCustomIntervalDays(digits === '' ? 0 : Number(digits))
+                              setNewCustomIntervalTouched(true)
+                            }}
+                            onBlur={() => setNewCustomIntervalDays(prev => Math.min(31, Math.max(1, prev || 1)))}
+                            style={{ ...modalInputStyle, minHeight: 40, padding: '9px 12px', fontSize: '0.8125rem' }}
+                          />
+                        </label>
                       )}
-                      {newRecurrenceRule && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0, borderTop: '1px dashed #E5E7EB', paddingTop: 12 }}>
-                          <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Deadline rule</span>
-                          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
-                            {([
-                              ['same_day', 'Same day'],
-                              ['fixed_day', 'Fixed day'],
-                              ['relative', 'Relative'],
-                            ] as const).map(([type, label]) => {
-                              const disabled = type === 'fixed_day' && newRecurrenceRule !== 'weekly'
-                              const active = newDeadlineRuleType === type
-                              return (
-                                <button
-                                  key={type}
-                                  type="button"
-                                  disabled={disabled}
-                                  onClick={() => setNewDeadlineRuleType(type)}
-                                  title={disabled ? 'Fixed day deadlines are only available for weekly recurrence' : undefined}
-                                  style={{ width: 92, height: 30, border: active ? `1.5px solid ${TASK_ORANGE}` : '1.5px solid #E5E7EB', background: disabled ? '#F9FAFB' : active ? '#FFF7ED' : '#FFFFFF', color: disabled ? '#CBD5E1' : active ? TASK_ORANGE : '#374151', borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: disabled ? 'not-allowed' : 'pointer' }}
-                                >
-                                  {label}
-                                </button>
-                              )
-                            })}
-                          </div>
-
-                          {newDeadlineRuleType === 'same_day' && (
+                      {newRecurrenceRule && newRecurrenceEndDate && (newRecurrenceRule !== 'custom' || newCustomIntervalTouched) && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0, borderTop: '1px dashed #E5E7EB', paddingTop: 10 }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                             <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                              <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Due at</span>
+                              <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Deadline rule</span>
                               <DropdownField
-                                value={newDeadlineRuleTime}
-                                options={TIME_OPTIONS}
-                                onChange={setNewDeadlineRuleTime}
-                                placeholder="Select time"
+                                value={newDeadlineRuleType}
+                                options={[
+                                  { value: 'same_day', label: 'Same day' },
+                                  ...(newRecurrenceRule === 'weekly' ? [{ value: 'fixed_day', label: 'Fixed day' }] : []),
+                                  { value: 'relative', label: 'Relative' },
+                                ]}
+                                onChange={v => setNewDeadlineRuleType(v as TaskDeadlineRuleType)}
+                                placeholder="Select deadline rule"
                               />
                             </label>
-                          )}
 
-                          {newDeadlineRuleType === 'fixed_day' && (
-                            <>
-                              <div>
-                                <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151', marginBottom: 6 }}>Due every</span>
-                                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                                  {WEEKDAY_LABELS.map((label, weekday) => {
-                                    const active = newDeadlineRuleWeekday === weekday
-                                    return (
-                                      <button
-                                        key={weekday}
-                                        type="button"
-                                        onClick={() => setNewDeadlineRuleWeekday(weekday)}
-                                        style={{ width: 34, height: 30, border: active ? `1.5px solid ${TASK_ORANGE}` : '1.5px solid #E5E7EB', background: active ? '#FFF7ED' : '#FFFFFF', color: active ? TASK_ORANGE : '#374151', borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
-                                      >
-                                        {label}
-                                      </button>
-                                    )
-                                  })}
-                                </div>
-                              </div>
+                            {newDeadlineRuleType === 'same_day' && (
+                              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Due at</span>
+                                <DropdownField
+                                  value={newDeadlineRuleTime}
+                                  options={TIME_OPTIONS}
+                                  onChange={setNewDeadlineRuleTime}
+                                  placeholder="Select time"
+                                />
+                              </label>
+                            )}
+
+                            {newDeadlineRuleType === 'fixed_day' && (
                               <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                                 <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>At</span>
                                 <DropdownField
@@ -3612,11 +3839,9 @@ export default function OwnerTasksPage() {
                                   placeholder="Select time"
                                 />
                               </label>
-                            </>
-                          )}
+                            )}
 
-                          {newDeadlineRuleType === 'relative' && (
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                            {newDeadlineRuleType === 'relative' && (
                               <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                                 <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Due within</span>
                                 <input
@@ -3628,46 +3853,77 @@ export default function OwnerTasksPage() {
                                     setNewDeadlineRuleOffsetAmount(digits === '' ? 0 : Number(digits))
                                   }}
                                   onBlur={() => setNewDeadlineRuleOffsetAmount(prev => Math.max(1, prev || 1))}
-                                  style={{ ...modalInputStyle, minHeight: 32, padding: '6px 10px', fontSize: 12 }}
+                                  style={{ ...modalInputStyle, minHeight: 40, padding: '9px 12px', fontSize: '0.8125rem' }}
                                 />
                               </label>
-                              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                                <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Unit</span>
-                                <DropdownField
-                                  value={newDeadlineRuleOffsetUnit}
-                                  options={[{ value: 'days', label: 'Days' }, { value: 'hours', label: 'Hours' }]}
-                                  onChange={v => setNewDeadlineRuleOffsetUnit(v as 'hours' | 'days')}
-                                />
-                              </label>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      {newRecurringPreviewDates.length > 0 && (
-                        <div style={{ gridColumn: '1 / -1', border: '1px solid #E5E7EB', borderRadius: 10, padding: '8px 10px', background: '#F9FAFB' }}>
-                          <p style={{ margin: '0 0 7px', fontSize: 11, fontWeight: 700, color: '#374151' }}>Preview</p>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                            {newRecurringPreviewDates.slice(0, 6).map(date => {
-                              const deadlinePreview = previewDeadlineFor(date)
-                              return (
-                                <span key={date} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '5px 7px', border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', color: '#374151', fontSize: 11, fontWeight: 600 }}>
-                                  <Repeat size={10} color={TASK_ORANGE} />
-                                  {new Date(`${date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                                  {deadlinePreview && <span style={{ color: '#9CA3AF', fontWeight: 500 }}>· due {deadlinePreview}</span>}
-                                </span>
-                              )
-                            })}
-                            {newRecurringPreviewDates.length > 6 && (
-                              <span style={{ display: 'inline-flex', alignItems: 'center', padding: '5px 7px', borderRadius: 8, background: '#FFF7ED', color: TASK_ORANGE, fontSize: 11, fontWeight: 700 }}>
-                                +{newRecurringPreviewDates.length - 6} more
-                              </span>
                             )}
                           </div>
+
+                          {newDeadlineRuleType === 'fixed_day' && (
+                            <div>
+                              <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151', marginBottom: 6 }}>Due every</span>
+                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                {WEEKDAY_LABELS.map((label, weekday) => {
+                                  const active = newDeadlineRuleWeekday === weekday
+                                  return (
+                                    <button
+                                      key={weekday}
+                                      type="button"
+                                      onClick={() => setNewDeadlineRuleWeekday(weekday)}
+                                      style={{ width: 34, height: 30, border: active ? `1.5px solid ${TASK_ORANGE}` : '1.5px solid #E5E7EB', background: active ? '#FFF7ED' : '#FFFFFF', color: active ? TASK_ORANGE : '#374151', borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                                    >
+                                      {label}
+                                    </button>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          )}
+
+                          {newDeadlineRuleType === 'relative' && (
+                            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Unit</span>
+                              <DropdownField
+                                value={newDeadlineRuleOffsetUnit}
+                                options={[{ value: 'days', label: 'Days' }, { value: 'hours', label: 'Hours' }]}
+                                onChange={v => setNewDeadlineRuleOffsetUnit(v as 'hours' | 'days')}
+                              />
+                            </label>
+                          )}
                         </div>
                       )}
                     </div>
                   )}
                 </div>
+
+                {newRecurringEnabled && newRecurringPreviewDates.length > 0 && (
+                  <div>
+                    <p style={{ margin: '0 0 10px', fontWeight: 600, fontSize: '0.875rem', color: '#374151' }}>Preview</p>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+                      {[newStartDate, ...newRecurringPreviewDates].map((date, idx) => {
+                        const isOriginal = idx === 0
+                        const deadlinePreview = isOriginal
+                          ? (newDeadlineRuleType ? previewDeadlineFor(date) : null)
+                          : previewDeadlineFor(date)
+                        const d = new Date(`${date}T00:00:00`)
+                        const dateLabel = `${d.toLocaleDateString('en-US', { weekday: 'short' })}, ${d.toLocaleDateString('en-US', { month: 'long' })} ${d.getDate()}`
+                        return (
+                          <div key={date} style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: '9px 10px', background: '#FFFFFF' }}>
+                            <p style={{ margin: '0 0 7px', fontSize: 11, fontWeight: 600, color: TASK_TEXT }}>{dateLabel}</p>
+                            {deadlinePreview && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', fontSize: 11, fontWeight: 600, color: TASK_TEXT }}>
+                                <Clock size={11} color="#9CA3AF" /> {deadlinePreview}
+                              </div>
+                            )}
+                            <p style={{ margin: '6px 0 0', fontSize: 10.5, color: isOriginal ? TASK_ORANGE : '#B45309', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 3 }}>
+                              {isOriginal ? <><GitBranch size={10} /> Main Task</> : <><Repeat size={10} /> Auto-generated</>}
+                            </p>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
 
             </div>
@@ -3692,7 +3948,7 @@ export default function OwnerTasksPage() {
       {/* ═══════════════ ARCHIVED TASKS MODAL ═══════════════ */}
       {archiveModalOpen && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: 480, maxHeight: '88vh', overflowY: 'auto', background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: 460, maxWidth: 'calc(100vw - 48px)', maxHeight: '88vh', overflowY: 'auto', background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
             <div style={{ padding: '18px 20px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -3713,44 +3969,214 @@ export default function OwnerTasksPage() {
                 <div style={{ display: 'flex', justifyContent: 'center', padding: 18 }}><Spinner size={16} dark /></div>
               ) : archiveListError ? (
                 <InlineError message={archiveListError} />
-              ) : archivedTasks.length === 0 ? (
+              ) : visibleArchivedTasks.length === 0 ? (
                 <div style={{ height: 180, borderRadius: 12, background: '#F8FAFC', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 8, fontWeight: 600, fontSize: 13 }}>
                   <Archive size={26} strokeWidth={1.5} />
                   No archived tasks yet
                 </div>
               ) : (
-                archivedTasks.map(task => {
-                  const priorityStyle = task.priority ? PRIORITY_COLORS[task.priority] : null
-                  const assigneeName = task.assigned_user_id ? members.find(m => m.id === task.assigned_user_id)?.full_name : ''
-                  const deptName = departments.find(d => d.id === task.department_id)?.name ?? 'Unknown department'
-                  const archivedDate = task.updated_at ?? task.created_at
-                  return (
-                    <div key={task.id} style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: '12px 14px', background: '#FFFFFF' }}>
-                      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
-                        <div style={{ minWidth: 0, flex: 1 }}>
-                          <p style={{ margin: 0, fontSize: 14, fontWeight: 800, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.title}</p>
-                          <p style={{ margin: '5px 0 0', fontSize: 12, fontWeight: 600, color: '#64748B' }}>
-                            {deptName}{assigneeName ? ` | ${assigneeName}` : ''}
-                          </p>
-                        </div>
-                        {priorityStyle && (
-                          <span style={{ flexShrink: 0, fontSize: '0.65rem', fontWeight: 800, padding: '2px 7px', borderRadius: '99px', background: priorityStyle.bg, color: priorityStyle.text, letterSpacing: '0.01em' }}>
-                            {task.priority}
-                          </span>
-                        )}
-                      </div>
-                      <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, color: '#94A3B8', fontSize: 11, fontWeight: 600 }}>
-                        <span>{task.task_date ? new Date(`${task.task_date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'No start date'}</span>
-                        <span>Archived {new Date(archivedDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
-                      </div>
-                    </div>
-                  )
-                })
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
+                    {visibleArchivedTasks.map(task => {
+                      const assignee = task.assigned_user_id ? members.find(m => m.id === task.assigned_user_id) : null
+                      const priorityStyle = task.priority ? PRIORITY_COLORS[task.priority] : null
+                      const dept = departments.find(d => d.id === task.department_id)
+                      const overdue = task.due_at && task.status !== 'Complete' && isDueOverdue(task.due_at)
+                      const busy = unarchiveLoadingId === task.id || archiveDeleteLoadingId === task.id
+                      const subTasks = archivedTasks
+                        .filter(t => t.parent_task_id === task.id)
+                        .sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0))
+                      const isExpanded = expandedArchivedTaskIds.has(task.id)
+                      const hasBadges = !!(priorityStyle && task.priority) || !!dept || subTasks.length > 0
+                      return (
+                        <Fragment key={task.id}>
+                          <div
+                            onClick={() => setSelectedArchivedTask(task)}
+                            className="task-card"
+                            style={{
+                              background: '#FFFFFF',
+                              border: '1px solid #E5E7EB',
+                              borderRadius: 10,
+                              padding: '16px 16px',
+                              cursor: 'pointer',
+                              position: 'relative',
+                              textAlign: 'left',
+                              minHeight: 112,
+                            }}
+                          >
+                            <div style={{ position: 'absolute', top: 12, right: 12, display: 'flex', alignItems: 'center', gap: 4, zIndex: 1 }}>
+                              <button
+                                type="button"
+                                onClick={event => { event.stopPropagation(); handleUnarchiveTask(task.id) }}
+                                disabled={busy}
+                                title="Unarchive"
+                                style={{ width: 24, height: 24, border: 'none', borderRadius: 6, background: 'transparent', color: '#16A34A', cursor: busy ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, opacity: busy ? 0.55 : 1 }}
+                                onMouseEnter={e => { if (!busy) e.currentTarget.style.background = '#DCFCE7' }}
+                                onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                              >
+                                {unarchiveLoadingId === task.id ? <Spinner size={12} dark /> : <ArchiveRestore size={14} />}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={event => { event.stopPropagation(); handleDeleteArchivedTask(task.id) }}
+                                disabled={busy}
+                                title="Delete"
+                                style={{ width: 24, height: 24, border: 'none', borderRadius: 6, background: 'transparent', color: '#DC2626', cursor: busy ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, opacity: busy ? 0.55 : 1 }}
+                                onMouseEnter={e => { if (!busy) e.currentTarget.style.background = '#FEE2E2' }}
+                                onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                              >
+                                {archiveDeleteLoadingId === task.id ? <Spinner size={12} dark /> : <Trash2 size={14} />}
+                              </button>
+                            </div>
+                            {hasBadges && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12, paddingRight: 58 }}>
+                                {priorityStyle && task.priority && (
+                                  <span style={{ fontSize: '0.65rem', fontWeight: 800, padding: '2px 7px', borderRadius: '99px', background: priorityStyle.bg, color: priorityStyle.text, letterSpacing: '0.01em' }}>
+                                    {task.priority}
+                                  </span>
+                                )}
+                                {dept && (
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.65rem', fontWeight: 700, padding: '2px 7px', borderRadius: '99px', background: deptCardBg(dept.id), color: deptColor(dept.id), minWidth: 0 }}>
+                                    <span style={{ width: 5, height: 5, borderRadius: '50%', background: deptColor(dept.id), flexShrink: 0 }} />
+                                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dept.name}</span>
+                                  </span>
+                                )}
+                                {subTasks.length > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={event => { event.stopPropagation(); toggleArchivedTaskExpanded(task.id) }}
+                                    style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.65rem', fontWeight: 700, padding: '2px 7px', borderRadius: '99px', background: '#F1F5F9', color: '#475569', border: 'none', cursor: 'pointer' }}
+                                  >
+                                    <GitBranch size={10} />
+                                    {subTasks.length}
+                                    <ChevronDown size={10} style={{ transform: isExpanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                            <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: '0 0 12px', lineHeight: 1.4, paddingRight: 58, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                              {task.title}
+                            </p>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                              {assignee ? (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                                  <div className="task-card-icon" style={{ width: 18, height: 18, borderRadius: '50%', background: assignee.profile_photo_url ? 'transparent' : '#FFF3E8', border: '1.5px solid #F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
+                                    {assignee.profile_photo_url
+                                      ? <img src={assignee.profile_photo_url} alt={assignee.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                      : <UserCog size={10} color="#F97316" strokeWidth={2} />}
+                                  </div>
+                                  <span style={{ fontSize: '0.7rem', color: '#374151', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {assignee.full_name}
+                                  </span>
+                                </div>
+                              ) : (
+                                <span style={{ fontSize: '0.75rem', color: '#CBD5E1', fontStyle: 'italic' }}>No assignee</span>
+                              )}
+                              {task.due_at && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                                  {overdue ? <AlertCircle size={11} color="#EF4444" /> : <Clock size={11} color="#9CA3AF" />}
+                                  <span style={{ fontSize: '0.7rem', fontWeight: 600, color: overdue ? '#EF4444' : '#9CA3AF', whiteSpace: 'nowrap' }}>
+                                    {formatDeadlineDisplay(task.due_at)}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          {isExpanded && subTasks.length > 0 && (
+                            <div style={{ marginTop: -4, marginBottom: 2, paddingLeft: 6 }}>
+                              {subTasks.map((sub, idx) => (
+                                <div key={sub.id} style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
+                                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+                                    <span style={{ width: 26, height: 26, marginTop: 14, borderRadius: '50%', background: '#FFF3E8', color: '#EA580C', fontSize: 13, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                      {idx + 1}
+                                    </span>
+                                    {idx < subTasks.length - 1 && (
+                                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1 }}>
+                                        <div style={{ width: 1, flex: 1, background: '#E2E8F0' }} />
+                                        <ChevronDown size={12} color="#CBD5E1" style={{ marginTop: -2, flexShrink: 0 }} />
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <TaskCard
+                                      task={sub}
+                                      members={members}
+                                      shiftOptions={shiftOptions}
+                                      departments={departments}
+                                      showDept
+                                      onClick={() => {}}
+                                      onEdit={() => {}}
+                                      clickable={false}
+                                    />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </Fragment>
+                      )
+                    })}
+                  </div>
+                </>
               )}
             </div>
           </div>
         </div>
       )}
+
+      {archiveModalOpen && selectedArchivedTask && (() => {
+        const task = selectedArchivedTask
+        const viewFieldValue: React.CSSProperties = {
+          padding: '10px 12px',
+          border: '1.5px solid #E5E7EB',
+          borderRadius: 8,
+          background: '#FFFFFF',
+          fontSize: '0.9375rem',
+          color: '#111827',
+          minHeight: 40,
+          display: 'flex',
+          alignItems: 'center',
+          boxSizing: 'border-box',
+        }
+        const viewEmpty: React.CSSProperties = { ...viewFieldValue, color: '#9CA3AF', fontStyle: 'italic' }
+        return (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.28)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 120, animation: 'overlayFadeIn 0.18s ease-out' }}>
+            <div onClick={e => e.stopPropagation()} style={{ width: 440, background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
+              <div style={{ padding: '18px 20px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                  <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <Eye size={15} color="#fff" strokeWidth={2.5} />
+                  </div>
+                  <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif", whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.title}&rsquo;s Details</h2>
+                </div>
+                <button onClick={() => setSelectedArchivedTask(null)} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8, flexShrink: 0 }}
+                  onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+                  onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 'calc(90vh - 130px)', overflowY: 'auto' }}>
+                <div>
+                  <label style={modalLabelStyle}>Description</label>
+                  {task.description
+                    ? <div style={{ ...viewFieldValue, alignItems: 'flex-start', whiteSpace: 'pre-wrap', lineHeight: 1.55 }}>{task.description}</div>
+                    : <div style={viewEmpty}>No description</div>
+                  }
+                </div>
+
+                <div>
+                  <label style={modalLabelStyle}>Assigned Time</label>
+                  <div style={viewFieldValue}>
+                    {new Date(task.created_at).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* ═══════════════ TASK TEMPLATE MODAL ═══════════════ */}
       {templateModalOpen && (
@@ -3815,7 +4241,7 @@ export default function OwnerTasksPage() {
                   <button
                     type="button"
                     onClick={openCreateTemplate}
-                    style={{ alignSelf: 'center', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 'none', borderRadius: 10, background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                    style={{ alignSelf: 'center', marginTop: 10, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 'none', borderRadius: 10, background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
                   >
                     <Plus size={15} strokeWidth={2.5} /> New Template
                   </button>

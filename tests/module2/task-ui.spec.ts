@@ -165,19 +165,27 @@ test('owner can use the Module 2 task UI end to end', async ({ page }) => {
   await page.getByRole('button', { name: 'Create Task' }).click()
   await expect(page.getByText('UI created task')).toBeVisible({ timeout: 15000 })
 
-  const createdCard = page.locator('.task-card').filter({ hasText: 'UI created task' })
+  // Duplicate/Archive/Delete live in the read-only Details panel (opened via the card body),
+  // not the Edit Task form (opened via the pencil icon) — only the assigner sees those actions.
+  // Exact-match the title so this locator stays unique once "UI created task (copy)" exists too.
+  const createdCard = page.locator('.task-card').filter({ has: page.getByText('UI created task', { exact: true }) })
+  await createdCard.click()
+  await page.getByTestId('task-details-panel').getByRole('button', { name: 'Duplicate' }).click()
+  await expect(page.getByText('Task duplicated.')).toBeVisible() // duplicating closes the Details panel automatically
+
   await createdCard.getByRole('button').first().click()
   await expect(page.getByRole('heading', { name: 'Edit Task' })).toBeVisible()
   await page.getByRole('textbox').first().fill('UI edited task')
-  await page.getByRole('button', { name: 'Duplicate' }).click()
-  await expect(page.getByText('Task duplicated.')).toBeVisible()
   await page.getByRole('button', { name: 'Save Changes' }).click()
   await expect(page.getByText('UI edited task')).toBeVisible()
 
   const editedCard = page.locator('.task-card').filter({ hasText: 'UI edited task' }).first()
-  await editedCard.getByRole('button').first().click()
-  await page.getByTestId('task-detail-panel').getByRole('button', { name: 'Archive' }).click()
+  await editedCard.click()
+  await page.getByTestId('task-details-panel').getByRole('button', { name: 'Archive' }).click()
   await expect(page.getByText('Task archived.')).toBeVisible()
+  // Archiving auto-opens the Archived Tasks list — close it before continuing.
+  await expect(page.getByRole('heading', { name: 'Archived Tasks' })).toBeVisible()
+  await page.getByRole('heading', { name: 'Archived Tasks' }).locator('../..').getByRole('button').click()
 
   await page.getByRole('button', { name: 'Calendar' }).click()
   await expect(page.getByText('Module 2 UI Manager A').first()).toBeVisible()

@@ -4864,10 +4864,10 @@ export default function OwnerShiftsPage() {
                                   <p style={{ margin: '0 0 7px', fontSize: 11, fontWeight: 600, color: TEXT_DARK, paddingRight: 14 }}>{previewDateLabel(date)}</p>
                                   {batchSplitEnabled && isSingleCellRepeatEligible ? (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#FFFFFF', fontSize: 12, fontWeight: 600, color: TEXT_DARK }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#FFFFFF', fontSize: 11, fontWeight: 600, color: TEXT_DARK }}>
                                         {formatShiftHour(cell.start_time)} – {formatShiftHour(batchSplitBlock1End)}
                                       </div>
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#FFFFFF', fontSize: 12, fontWeight: 600, color: TEXT_DARK }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#FFFFFF', fontSize: 11, fontWeight: 600, color: TEXT_DARK }}>
                                         {formatShiftHour(batchSplitBlock2Start)} – {formatShiftHour(cell.end_time)}
                                       </div>
                                     </div>
@@ -4938,15 +4938,15 @@ export default function OwnerShiftsPage() {
                                   <p style={{ margin: '0 0 7px', fontSize: 11, fontWeight: 600, color: TEXT_DARK }}>{previewDateLabel(date)}</p>
                                   {batchSplitEnabled ? (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#FFFFFF', fontSize: 12, fontWeight: 600, color: TEXT_DARK }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#FFFFFF', fontSize: 11, fontWeight: 600, color: TEXT_DARK }}>
                                         {formatShiftHour(cell?.start_time ?? defaultStartTime)} – {formatShiftHour(batchSplitBlock1End)}
                                       </div>
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#FFFFFF', fontSize: 12, fontWeight: 600, color: TEXT_DARK }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#FFFFFF', fontSize: 11, fontWeight: 600, color: TEXT_DARK }}>
                                         {formatShiftHour(batchSplitBlock2Start)} – {formatShiftHour(cell?.end_time ?? defaultEndTime)}
                                       </div>
                                     </div>
                                   ) : (
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#FFFFFF', fontSize: 12, fontWeight: 600, color: TEXT_DARK }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#FFFFFF', fontSize: 11, fontWeight: 600, color: TEXT_DARK }}>
                                       {formatShiftHour(cell?.start_time ?? defaultStartTime)} – {formatShiftHour(cell?.end_time ?? defaultEndTime)}
                                     </div>
                                   )}

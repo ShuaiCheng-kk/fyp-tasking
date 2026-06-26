@@ -38,9 +38,24 @@ export const taskRepository = {
   async getTasksByCompany(company_id: string): Promise<Task[]> {
     const { data, error } = await supabase
       .from('tasks')
-      .select('id, shift_id, company_id, department_id, parent_task_id, sequence_order, title, description, assigned_user_id, assigned_by, status, percentage_complete, priority, due_at, task_date, recurrence_group_id, source_task_id, created_at, updated_at, shifts(shift_date)')
+      .select('id, shift_id, company_id, department_id, parent_task_id, sequence_order, title, description, assigned_user_id, assigned_by, status, percentage_complete, priority, due_at, task_date, recurrence_group_id, source_task_id, is_archived, created_at, updated_at, shifts(shift_date)')
       .eq('company_id', company_id)
+      .eq('is_archived', false)
       .order('created_at', { ascending: false })
+    if (error) throw new Error(error.message)
+    return ((data ?? []) as unknown as (Task & { shifts: { shift_date: string }[] | null })[]).map(row => ({
+      ...row,
+      shift_date: row.shifts && row.shifts.length > 0 ? row.shifts[0].shift_date : null,
+    }))
+  },
+
+  async getArchivedTasksByCompany(company_id: string): Promise<Task[]> {
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('id, shift_id, company_id, department_id, parent_task_id, sequence_order, title, description, assigned_user_id, assigned_by, status, percentage_complete, priority, due_at, task_date, recurrence_group_id, source_task_id, is_archived, created_at, updated_at, shifts(shift_date)')
+      .eq('company_id', company_id)
+      .eq('is_archived', true)
+      .order('updated_at', { ascending: false })
     if (error) throw new Error(error.message)
     return ((data ?? []) as unknown as (Task & { shifts: { shift_date: string }[] | null })[]).map(row => ({
       ...row,
@@ -64,6 +79,7 @@ export const taskRepository = {
       .select('*')
       .eq('company_id', company_id)
       .eq('shift_id', shift_id)
+      .eq('is_archived', false)
       .order('created_at', { ascending: true })
     if (error) throw new Error(error.message)
     return (data ?? []) as Task[]
@@ -167,6 +183,7 @@ export const taskRepository = {
       .from('tasks')
       .select('id, title, status, priority, percentage_complete, assigned_user_id, created_at, shift_id, due_at, shifts(shift_date)')
       .eq('company_id', company_id)
+      .eq('is_archived', false)
     if (error) throw new Error(error.message)
     const allRows = (data ?? []) as unknown as { id: string; title: string; status: string; priority: string | null; percentage_complete: number; assigned_user_id: string | null; created_at: string; shift_id: string | null; due_at: string | null; shifts: { shift_date: string }[] | null }[]
     const rows = allRows.filter(r => {
@@ -207,6 +224,7 @@ export const taskRepository = {
       .from('tasks')
       .select('department_id, status')
       .eq('company_id', company_id)
+      .eq('is_archived', false)
     if (taskErr) throw new Error(taskErr.message)
 
     const deptIds = [...new Set((tasks ?? []).map((t: { department_id: string }) => t.department_id))]
@@ -247,6 +265,7 @@ export const taskRepository = {
       .from('tasks')
       .select('id, title, status, updated_at, department_id, assigned_user_id')
       .eq('company_id', company_id)
+      .eq('is_archived', false)
       .neq('status', 'Assigned')
       .gte('updated_at', todayStart.toISOString())
       .lte('updated_at', todayEnd.toISOString())
@@ -283,6 +302,7 @@ export const taskRepository = {
       .from('tasks')
       .select('*')
       .eq('company_id', company_id)
+      .eq('is_archived', false)
     if (filters.status) query = query.eq('status', filters.status)
     if (filters.department_id) query = query.eq('department_id', filters.department_id)
     const { data, error } = await query.order('created_at', { ascending: false })
@@ -296,6 +316,7 @@ export const taskRepository = {
       .from('tasks')
       .select('assigned_user_id, priority, due_at')
       .in('assigned_user_id', user_ids)
+      .eq('is_archived', false)
       .neq('status', 'Complete')
     if (error) throw new Error(error.message)
     return (data ?? []) as { assigned_user_id: string; priority: string | null; due_at: string | null }[]
