@@ -1,0 +1,187 @@
+'use client'
+
+import { useState, useEffect } from 'react'
+import AdminSidebar from '@/components/AdminSidebar'
+import { createBrowserClient } from '@supabase/ssr'
+import { Check, Eye, EyeOff } from 'lucide-react'
+
+const ORANGE = '#F97316'
+const TEXT = '#1C1917'
+const BORDER = '#E2E8F0'
+const MUTED = '#94A3B8'
+
+export default function AdminSettingsPage() {
+  const [fullName, setFullName] = useState('')
+  const [email, setEmail] = useState('')
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [showCurrent, setShowCurrent] = useState(false)
+  const [showNew, setShowNew] = useState(false)
+  const [showConfirm, setShowConfirm] = useState(false)
+  const [notice, setNotice] = useState('')
+  const [error, setError] = useState('')
+  const [savingProfile, setSavingProfile] = useState(false)
+  const [savingPassword, setSavingPassword] = useState(false)
+
+  useEffect(() => {
+    const authUid = localStorage.getItem('tasking_user_id')
+    if (!authUid) return
+    fetch(`/api/user/me?user_id=${authUid}`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.success) {
+          setFullName(d.user.full_name ?? '')
+          setEmail(d.user.email_address ?? '')
+        }
+      })
+  }, [])
+
+  const showNotice = (msg: string) => {
+    setNotice(msg)
+    setTimeout(() => setNotice(''), 3500)
+  }
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setSavingProfile(true)
+    setError('')
+    try {
+      const authUid = localStorage.getItem('tasking_user_id')
+      const res = await fetch('/api/user/update-profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: authUid, full_name: fullName }),
+      })
+      const data = await res.json()
+      if (data.success) showNotice('Profile updated')
+      else setError(data.error ?? 'Failed to update profile')
+    } catch {
+      setError('Something went wrong')
+    } finally {
+      setSavingProfile(false)
+    }
+  }
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    if (newPassword !== confirmPassword) { setError('New passwords do not match'); return }
+    if (newPassword.length < 8) { setError('Password must be at least 8 characters'); return }
+    setSavingPassword(true)
+    try {
+      const supabase = createBrowserClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      )
+      const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password: currentPassword })
+      if (signInErr) { setError('Current password is incorrect'); setSavingPassword(false); return }
+      const { error: updateErr } = await supabase.auth.updateUser({ password: newPassword })
+      if (updateErr) { setError(updateErr.message); setSavingPassword(false); return }
+      setCurrentPassword('')
+      setNewPassword('')
+      setConfirmPassword('')
+      showNotice('Password changed successfully')
+    } catch {
+      setError('Something went wrong')
+    } finally {
+      setSavingPassword(false)
+    }
+  }
+
+  const inputStyle: React.CSSProperties = {
+    width: '100%', boxSizing: 'border-box',
+    border: `1.5px solid ${BORDER}`, borderRadius: 10,
+    padding: '11px 14px', fontSize: 14, color: TEXT,
+    background: '#FFFFFF', outline: 'none',
+  }
+
+  const labelStyle: React.CSSProperties = {
+    display: 'block', fontSize: 13, fontWeight: 700, color: TEXT, marginBottom: 6,
+  }
+
+  const cardStyle: React.CSSProperties = {
+    background: '#FFFFFF', border: `1px solid ${BORDER}`, borderRadius: 16,
+    padding: '28px 32px',
+  }
+
+  return (
+    <main style={{ display: 'flex', minHeight: '100vh', background: '#F8FAFC', fontFamily: 'var(--font-body)' }}>
+      <AdminSidebar />
+      <section style={{ marginLeft: 64, padding: '36px 40px', flex: 1 }}>
+        <header style={{ marginBottom: 28 }}>
+          <p style={{ margin: '0 0 6px', color: ORANGE, fontSize: 11, letterSpacing: 1.4, fontWeight: 900, textTransform: 'uppercase' }}>Marketing Admin</p>
+          <h1 style={{ margin: 0, fontSize: 28, fontWeight: 900, color: TEXT, fontFamily: 'var(--font-heading)' }}>Settings</h1>
+        </header>
+
+        {notice && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20, background: '#ECFDF5', border: '1px solid #BBF7D0', color: '#047857', borderRadius: 10, padding: '12px 16px', fontSize: 13, fontWeight: 700, maxWidth: 520 }}>
+            <Check size={15} /> {notice}
+          </div>
+        )}
+        {error && (
+          <div style={{ marginBottom: 20, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 10, padding: '12px 16px', fontSize: 13, fontWeight: 700, maxWidth: 520 }}>
+            {error}
+          </div>
+        )}
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, alignItems: 'stretch' }}>
+          {/* Profile */}
+          <div style={{ ...cardStyle, marginBottom: 0, maxWidth: 'none', display: 'flex', flexDirection: 'column' }}>
+            <h2 style={{ margin: '0 0 20px', fontSize: 16, fontWeight: 800, color: TEXT }}>Profile</h2>
+            <form onSubmit={handleSaveProfile} style={{ display: 'flex', flexDirection: 'column', gap: 16, flex: 1 }}>
+              <div>
+                <label style={labelStyle}>Full name</label>
+                <input style={inputStyle} value={fullName} onChange={e => setFullName(e.target.value)} placeholder="Your name" />
+              </div>
+              <div>
+                <label style={labelStyle}>Email</label>
+                <input style={{ ...inputStyle, background: '#F8FAFC', color: MUTED }} value={email} disabled />
+                <p style={{ margin: '5px 0 0', fontSize: 11, color: MUTED }}>Email cannot be changed here</p>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 'auto' }}>
+                <button type="submit" disabled={savingProfile} style={{ background: ORANGE, color: '#fff', border: 'none', borderRadius: 10, padding: '10px 22px', fontSize: 13, fontWeight: 800, cursor: savingProfile ? 'default' : 'pointer', opacity: savingProfile ? 0.75 : 1 }}>
+                  {savingProfile ? 'Saving…' : 'Save profile'}
+                </button>
+              </div>
+            </form>
+          </div>
+
+          {/* Password */}
+          <div style={{ ...cardStyle, marginBottom: 0, maxWidth: 'none' }}>
+            <h2 style={{ margin: '0 0 20px', fontSize: 16, fontWeight: 800, color: TEXT }}>Change password</h2>
+            <form onSubmit={handleChangePassword} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {[
+                { label: 'Current password', value: currentPassword, set: setCurrentPassword, show: showCurrent, toggle: () => setShowCurrent(v => !v) },
+                { label: 'New password', value: newPassword, set: setNewPassword, show: showNew, toggle: () => setShowNew(v => !v) },
+                { label: 'Confirm new password', value: confirmPassword, set: setConfirmPassword, show: showConfirm, toggle: () => setShowConfirm(v => !v) },
+              ].map(({ label, value, set, show, toggle }) => (
+                <div key={label}>
+                  <label style={labelStyle}>{label}</label>
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type={show ? 'text' : 'password'}
+                      style={{ ...inputStyle, paddingRight: 44 }}
+                      value={value}
+                      onChange={e => set(e.target.value)}
+                      placeholder="••••••••"
+                      required
+                    />
+                    <button type="button" onClick={toggle} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: MUTED, display: 'flex', alignItems: 'center' }}>
+                      {show ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                </div>
+              ))}
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <button type="submit" disabled={savingPassword} style={{ background: ORANGE, color: '#fff', border: 'none', borderRadius: 10, padding: '10px 22px', fontSize: 13, fontWeight: 800, cursor: savingPassword ? 'default' : 'pointer', opacity: savingPassword ? 0.75 : 1 }}>
+                  {savingPassword ? 'Saving…' : 'Change password'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </section>
+    </main>
+  )
+}

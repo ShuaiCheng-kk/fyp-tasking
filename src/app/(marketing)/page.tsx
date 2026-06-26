@@ -257,7 +257,15 @@ const EventIcon = () => (
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+import { useMarketingCopy } from './useMarketingCopy';
+
 export default function HomePage() {
+  const copy = useMarketingCopy('home');
+  const dashboardImageUrl = copy('hero.dashboard_image', '');
+  const demoVideoUrl = copy('video.demo', '/demo.mp4');
+  const videoTitle = copy('video.title', 'See Tasking in Action');
+  const videoSubtitle = copy('video.subtitle', 'Watch how Tasking simplifies your entire casual workforce workflow in minutes.');
+
   // Hero headline staggered animation
   const [h0, setH0] = useState(false);
   const [h1, setH1] = useState(false);
@@ -378,7 +386,7 @@ export default function HomePage() {
             </p>
           </div>
 
-          {/* Right side – hardcoded dashboard mockup component */}
+          {/* Right side – dashboard image or built-in mockup */}
           <div
             className="hero-mockup"
             style={{
@@ -389,9 +397,16 @@ export default function HomePage() {
               boxShadow: '0 0 80px rgba(249,115,22,0.22), 0 32px 80px rgba(0,0,0,0.55)',
               border: '1px solid #333',
               background: '#111',
-              padding: 3,
+              padding: dashboardImageUrl ? 0 : 3,
             }}
           >
+          {dashboardImageUrl ? (
+            <img
+              src={dashboardImageUrl}
+              alt="Dashboard preview"
+              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block', borderRadius: 14 }}
+            />
+          ) : (<>
             {/* Inner rounded container */}
             <div style={{ background: '#1A1A1A', borderRadius: 14, overflow: 'hidden' }}>
 
@@ -599,6 +614,7 @@ export default function HomePage() {
                 </div>
               </div>
             </div>
+          </>)}
           </div>
         </div>
       </section>
@@ -615,10 +631,9 @@ export default function HomePage() {
           }}
         >
           <AnimatedSection>
-            <h2 style={{ ...heading2, color: '#FFFFFF' }}>See Tasking in Action</h2>
+            <h2 style={{ ...heading2, color: '#FFFFFF' }}>{videoTitle}</h2>
             <p style={{ ...sectionSubtitle, color: 'rgba(255,255,255,0.8)' }}>
-              Watch how Tasking simplifies your entire casual workforce workflow
-              in minutes.
+              {videoSubtitle}
             </p>
           </AnimatedSection>
 
@@ -643,7 +658,7 @@ export default function HomePage() {
                 playsInline
                 style={{ display: 'block' }}
               >
-                <source src="/demo.mp4" type="video/mp4" />
+                <source src={demoVideoUrl} type="video/mp4" />
                 Your browser does not support the video tag.
               </video>
             </div>
@@ -760,10 +775,9 @@ export default function HomePage() {
           }}
         >
           <AnimatedSection style={{ textAlign: 'center', marginBottom: '52px' }}>
-            <h2 style={heading2}>Everything You Need, In One Platform</h2>
+            <h2 style={heading2}>{copy('products.title', 'Everything You Need, In One Platform')}</h2>
             <p style={sectionSubtitle}>
-              Tasking covers every aspect of casual workforce management across
-              5 core modules.
+              {copy('products.subtitle', 'Tasking covers every aspect of casual workforce management across 5 core modules.')}
             </p>
           </AnimatedSection>
 
@@ -779,11 +793,11 @@ export default function HomePage() {
             }}
           >
             {[
-              { Icon: RecruitmentIcon, title: 'Recruitment', desc: 'Post jobs, shortlist candidates, and send invitations — powered by AI.', href: '/products/recruitment' },
-              { Icon: AttendanceIcon, title: 'Attendance', desc: 'Photo-verified clock-in, AI auto-approval, and anomaly detection.', href: '/products/attendance' },
-              { Icon: AIIcon, title: 'AI Features', desc: 'Intelligent automation built into every step of your workflow.', href: '/products/ai-features' },
-              { Icon: TeamIcon, title: 'Team Management', desc: 'Manage roles, departments, and permissions with ease.', href: '/products/team-management' },
-              { Icon: BellIcon, title: 'Smart Notifications', desc: 'Automated alerts that keep your team informed and on time.', href: '/products/smart-notifications' },
+              { Icon: RecruitmentIcon, title: 'Recruitment', desc: copy('products.card.recruitment.desc', 'Post jobs, shortlist candidates, and send invitations — powered by AI.'), href: '/products/recruitment' },
+              { Icon: AttendanceIcon, title: 'Attendance', desc: copy('products.card.attendance.desc', 'Photo-verified clock-in, AI auto-approval, and anomaly detection.'), href: '/products/attendance' },
+              { Icon: AIIcon, title: 'AI Features', desc: copy('products.card.ai.desc', 'Intelligent automation built into every step of your workflow.'), href: '/products/ai-features' },
+              { Icon: TeamIcon, title: 'Team Management', desc: copy('products.card.team.desc', 'Manage roles, departments, and permissions with ease.'), href: '/products/team-management' },
+              { Icon: BellIcon, title: 'Smart Notifications', desc: copy('products.card.notifications.desc', 'Automated alerts that keep your team informed and on time.'), href: '/products/smart-notifications' },
             ].map(({ Icon, title, desc, href }, i) => (
               <AnimatedSection key={href} delay={i * 70} style={{ height: '100%' }}>
                 <Link
@@ -836,10 +850,9 @@ export default function HomePage() {
       <section id="industries" className="page-section" style={{ background: '#FFFBF5', padding: '80px 0' }}>
         <div className="section-inner" style={{ maxWidth: '1280px', margin: '0 auto', padding: '0 24px' }}>
           <AnimatedSection style={{ textAlign: 'center', marginBottom: '52px' }}>
-            <h2 style={heading2}>Built for the Industries That Run on Casual Workers</h2>
+            <h2 style={heading2}>{copy('industries.title', 'Built for the Industries That Run on Casual Workers')}</h2>
             <p style={sectionSubtitle}>
-              From retail floors to event venues, Tasking adapts to the way
-              your industry works.
+              {copy('industries.subtitle', 'From retail floors to event venues, Tasking adapts to the way your industry works.')}
             </p>
           </AnimatedSection>
 
@@ -854,10 +867,10 @@ export default function HomePage() {
             }}
           >
             {[
-              { Icon: ShoppingBagIcon, name: 'Retail' },
-              { Icon: UtensilsIcon, name: 'Food & Beverage' },
-              { Icon: TruckIcon, name: 'Logistics' },
-              { Icon: EventIcon, name: 'Event Management' },
+              { Icon: ShoppingBagIcon, name: copy('industries.card.retail', 'Retail') },
+              { Icon: UtensilsIcon, name: copy('industries.card.food', 'Food & Beverage') },
+              { Icon: TruckIcon, name: copy('industries.card.logistics', 'Logistics') },
+              { Icon: EventIcon, name: copy('industries.card.events', 'Event Management') },
             ].map(({ Icon, name }, i) => (
               <AnimatedSection key={name} delay={i * 80}>
                 <div
