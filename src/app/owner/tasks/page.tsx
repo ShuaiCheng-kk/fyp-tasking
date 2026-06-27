@@ -277,6 +277,10 @@ type Member = {
   full_name: string
   role: string
   department_id: string | null
+  email_address?: string | null
+  phone_number?: string | null
+  date_of_birth?: string | null
+  created_at?: string | null
   skills?: string[] | string | null
   worker_status?: string | null
   profile_photo_url?: string | null
@@ -372,6 +376,13 @@ function isDueOverdue(due: string): boolean {
 function isDueWithinHours(due: string, hours: number): boolean {
   const msRemaining = new Date(due).getTime() - Date.now()
   return msRemaining > 0 && msRemaining <= hours * 60 * 60 * 1000
+}
+
+function formatDateDisplay(value: string | null | undefined, empty = '—'): string {
+  if (!value) return empty
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return empty
+  return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(date)
 }
 
 function formatShiftOptionLabel(shift: ShiftOption): string {
@@ -917,7 +928,7 @@ function SubTaskOrderList({ items, onReorder, onRemove, onRename, disabled }: {
 // ─── Task Card ────────────────────────────────────────────────────────────────
 
 function TaskCard({
-  task, members, shiftOptions, departments, showDept, onClick, onEdit, subTaskCount, expanded, onToggleExpand, clickable = true, isOwner = true, highlighted = false,
+  task, members, shiftOptions, departments, showDept, onClick, onEdit, subTaskCount, expanded, onToggleExpand, clickable = true, isOwner = true, highlighted = false, noOuterMargin = false, fillHeight = false,
 }: {
   task: Task
   members: Member[]
@@ -932,6 +943,8 @@ function TaskCard({
   clickable?: boolean
   isOwner?: boolean
   highlighted?: boolean
+  noOuterMargin?: boolean
+  fillHeight?: boolean
 }) {
   const assignee = members.find(m => m.id === task.assigned_user_id)
   const shift = task.shift_id ? shiftOptions.find(s => s.id === task.shift_id) : null
@@ -942,7 +955,7 @@ function TaskCard({
   const hasTopRowBadges = !!(priority && task.priority) || !!dept || !!subTaskCount
 
   return (
-    <div style={{ position: 'relative', marginBottom: showStack ? 22 : 14 }}>
+    <div style={{ position: 'relative', marginBottom: noOuterMargin ? 0 : (showStack ? 22 : 14), height: fillHeight ? '100%' : undefined }}>
       {showStack && (
         <>
           <div style={{ position: 'absolute', left: 12, right: 12, bottom: -8, height: 14, background: '#EEF1F5', border: '1px solid #E2E8F0', borderRadius: 10, zIndex: 0 }} />
@@ -961,6 +974,11 @@ function TaskCard({
           cursor: clickable ? 'pointer' : 'default',
           position: 'relative',
           zIndex: 2,
+          height: fillHeight ? '100%' : undefined,
+          boxSizing: 'border-box',
+          display: fillHeight ? 'flex' : undefined,
+          flexDirection: fillHeight ? 'column' : undefined,
+          justifyContent: fillHeight ? 'space-between' : undefined,
           boxShadow: highlighted ? '0 0 0 3px rgba(249,115,22,0.16), 0 10px 28px rgba(249,115,22,0.16)' : undefined,
         }}
       >
@@ -1148,8 +1166,10 @@ export default function OwnerTasksPage() {
   const [editSubTasks, setEditSubTasks] = useState<{ id: string; title: string }[]>([])
   const [reassignmentSuggestion, setReassignmentSuggestion] = useState<TaskReassignmentSuggestion | null>(null)
   const [workloadSuggestion, setWorkloadSuggestion] = useState<TaskWorkloadSuggestion | null>(null)
-  const [workloadApplyLoading, setWorkloadApplyLoading] = useState(false)
+  const [workloadSuggestions, setWorkloadSuggestions] = useState<TaskWorkloadSuggestion[]>([])
+  const [workloadApplyLoadingId, setWorkloadApplyLoadingId] = useState('')
   const [workloadApplyError, setWorkloadApplyError] = useState('')
+  const [profileMember, setProfileMember] = useState<Member | null>(null)
   const [stalledAlerts, setStalledAlerts] = useState<StalledTaskAlert[]>([])
   const [workloadInsightOpen, setWorkloadInsightOpen] = useState(false)
   const [highlightedStalledTaskId, setHighlightedStalledTaskId] = useState('')
@@ -1827,16 +1847,16 @@ export default function OwnerTasksPage() {
     finally { setTaskActionLoading('') }
   }
 
-  const handleApplyWorkloadSuggestion = async () => {
-    if (!workloadSuggestion?.suggested_task_id || !workloadSuggestion.recommended_user_id) return
-    setWorkloadApplyLoading(true); setWorkloadApplyError('')
+  const handleApplyWorkloadSuggestion = async (suggestion: TaskWorkloadSuggestion) => {
+    if (!suggestion.suggested_task_id || !suggestion.recommended_user_id) return
+    setWorkloadApplyLoadingId(suggestion.suggested_task_id); setWorkloadApplyError('')
     try {
       const res = await fetch('/api/task', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          id: workloadSuggestion.suggested_task_id,
-          assigned_user_id: workloadSuggestion.recommended_user_id,
+          id: suggestion.suggested_task_id,
+          assigned_user_id: suggestion.recommended_user_id,
           assigned_by: internalUserId || undefined,
         }),
       })
@@ -1849,7 +1869,7 @@ export default function OwnerTasksPage() {
     } catch (err) {
       setWorkloadApplyError(err instanceof Error ? err.message : 'Failed to reassign task')
     } finally {
-      setWorkloadApplyLoading(false)
+      setWorkloadApplyLoadingId('')
     }
   }
 
@@ -1935,14 +1955,16 @@ export default function OwnerTasksPage() {
     try {
       const deptParam = selectedDeptId ? `&department_id=${selectedDeptId}` : ''
       const query = kind === 'workload'
-        ? `/api/task?company_id=${companyId}&suggestion=workload${deptParam}`
+        ? `/api/task?company_id=${companyId}&suggestion=workload`
         : `/api/task?company_id=${companyId}&suggestion=stalled${deptParam}`
       const res = await fetch(query)
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
       if (kind === 'workload') {
-        setWorkloadSuggestion(data.suggestion)
-        if (data.suggestion?.type !== 'rebalance') setWorkloadInsightOpen(false)
+        const suggestions = (data.suggestions ?? []).filter((item: TaskWorkloadSuggestion) => item.type === 'rebalance')
+        setWorkloadSuggestions(suggestions)
+        setWorkloadSuggestion(suggestions[0] ?? data.suggestion)
+        if (suggestions.length === 0) setWorkloadInsightOpen(false)
       } else {
         const alerts = data.alerts ?? []
         setStalledAlerts(alerts)
@@ -2279,6 +2301,10 @@ export default function OwnerTasksPage() {
     }
     return dates
   }, [kanban])
+
+  const allKanbanTasks = useMemo(() => (
+    kanban ? COLUMNS.flatMap(col => kanban[col] ?? []) : []
+  ), [kanban])
 
   useEffect(() => {
     if (hasAutoSelectedTaskDateRef.current || datesWithTasks.size === 0) return
@@ -3006,7 +3032,7 @@ export default function OwnerTasksPage() {
                   </div>
                   <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
                     {(() => {
-                      const hasIssue = workloadSuggestion?.type === 'rebalance'
+                      const hasIssue = workloadSuggestions.length > 0
                       return (
                         <div style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#F9FAFB', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
                           <span style={{ width: 28, height: 28, borderRadius: 9, background: '#EEF2FF', color: '#4F46E5', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -3922,91 +3948,195 @@ export default function OwnerTasksPage() {
       )}
 
       {/* ═══════════════ DELETE TASK MODAL ═══════════════ */}
-      {workloadInsightOpen && workloadSuggestion?.type === 'rebalance' && (() => {
-        const departmentName = departments.find(d => d.id === workloadSuggestion.department_id)?.name ?? 'Selected Department'
-        const overloadedName = members.find(m => m.id === workloadSuggestion.overloaded_user_id)?.full_name ?? 'A manager'
-        const recommendedName = members.find(m => m.id === workloadSuggestion.recommended_user_id)?.full_name ?? 'another manager'
-        const suggestedTaskTitle = workloadSuggestion.suggested_task_title ?? 'the suggested task'
-        return (
+      {workloadInsightOpen && workloadSuggestions.length > 0 && (
+        <div
+          onClick={() => setWorkloadInsightOpen(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, zIndex: 110, animation: 'overlayFadeIn 0.18s ease-out' }}
+        >
           <div
-            onClick={() => setWorkloadInsightOpen(false)}
-            style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'grid', placeItems: 'center', padding: 18, zIndex: 110, animation: 'overlayFadeIn 0.18s ease-out' }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="workload-suggestion-title"
+            onClick={e => e.stopPropagation()}
+            style={{ width: 'min(600px, calc(100vw - 36px))', maxHeight: '88vh', background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)', display: 'flex', flexDirection: 'column' }}
           >
-            <div
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="workload-suggestion-title"
-              onClick={e => e.stopPropagation()}
-              style={{ width: 'min(480px, 100%)', background: '#FFFFFF', borderRadius: 16, border: '1px solid #E2E8F0', boxShadow: '0 24px 70px rgba(15,23,42,0.32)', padding: 18, animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 16 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                  <span style={{ width: 34, height: 34, borderRadius: 10, background: '#FEF3C7', color: '#D97706', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <AlertTriangle size={17} />
-                  </span>
-                  <h2 id="workload-suggestion-title" style={{ margin: 0, color: TASK_TEXT, fontSize: 16, fontWeight: 800 }}>Workload Suggestion</h2>
+            <div style={{ padding: '18px 20px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <AlertTriangle size={15} color="#fff" strokeWidth={2.5} />
                 </div>
-                <button type="button" onClick={() => setWorkloadInsightOpen(false)} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, border: `1px solid ${TASK_BORDER}`, borderRadius: 9, background: '#FFFFFF', cursor: 'pointer', color: TASK_TEXT }}>
-                  <X size={16} />
-                </button>
+                <h2 id="workload-suggestion-title" style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+                  Workload Suggestion
+                </h2>
               </div>
+              <button onClick={() => setWorkloadInsightOpen(false)} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+                onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
+              >
+                <X size={16} />
+              </button>
+            </div>
 
-              <div style={{ display: 'grid', gap: 10 }}>
-                <div style={{ border: `1px solid ${TASK_BORDER}`, borderRadius: 12, background: '#F8FAFC', padding: '12px 14px' }}>
-                  <p style={{ margin: '0 0 5px', fontSize: 11, fontWeight: 800, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Department</p>
-                  <p style={{ margin: 0, fontSize: 15, fontWeight: 800, color: TASK_TEXT }}>{departmentName}</p>
-                </div>
+            <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto' }}>
+              {workloadSuggestions.map(suggestion => {
+                const recommendedMember = members.find(m => m.id === suggestion.recommended_user_id)
+                const recommendedName = recommendedMember?.full_name ?? 'another manager'
+                const suggestedTask = allKanbanTasks.find(task => task.id === suggestion.suggested_task_id)
+                const loading = workloadApplyLoadingId === suggestion.suggested_task_id
+                return (
+                  <div key={`${suggestion.department_id}-${suggestion.suggested_task_id}`} style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10, background: '#FFFFFF' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(126px, 0.5fr) auto 110px', alignItems: 'stretch', gap: 10 }}>
+                      <div style={{ minWidth: 0 }}>
+                        {suggestedTask ? (
+                          <TaskCard
+                            task={suggestedTask}
+                            members={members}
+                            shiftOptions={shiftOptions}
+                            departments={departments}
+                            showDept
+                            onClick={() => {}}
+                            onEdit={() => {}}
+                            clickable={false}
+                            isOwner={false}
+                            noOuterMargin
+                            fillHeight
+                          />
+                        ) : (
+                          <div className="task-card" style={{ height: '100%', boxSizing: 'border-box', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 10, padding: '16px 16px', color: TASK_TEXT, fontSize: 14, fontWeight: 800 }}>
+                            {suggestion.suggested_task_title ?? 'Task'}
+                          </div>
+                        )}
+                      </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'stretch', gap: 10 }}>
-                  <div style={{ border: '1px solid #FECACA', borderRadius: 12, background: '#FEF2F2', padding: '12px 14px', minWidth: 0 }}>
-                    <p style={{ margin: '0 0 5px', fontSize: 11, fontWeight: 800, color: '#B91C1C', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Too High</p>
-                    <p style={{ margin: 0, fontSize: 14, fontWeight: 800, color: TASK_TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{overloadedName}</p>
-                    {typeof workloadSuggestion.overloaded_score === 'number' && (
-                      <p style={{ margin: '5px 0 0', fontSize: 12, fontWeight: 700, color: '#991B1B' }}>Score {workloadSuggestion.overloaded_score}</p>
-                    )}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <button
+                          type="button"
+                          title="Reassign task"
+                          aria-label={`Reassign task to ${recommendedName}`}
+                          onClick={() => handleApplyWorkloadSuggestion(suggestion)}
+                          disabled={!!workloadApplyLoadingId || !suggestion.suggested_task_id || !suggestion.recommended_user_id}
+                          style={{ width: 36, height: 36, border: 0, borderRadius: 8, background: loading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', cursor: workloadApplyLoadingId ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, opacity: (!suggestion.suggested_task_id || !suggestion.recommended_user_id) ? 0.55 : 1, transition: 'opacity 0.18s ease, box-shadow 0.18s ease' }}
+                        >
+                          {loading ? <Spinner size={13} /> : <ArrowRightLeft size={15} />}
+                        </button>
+                      </div>
+
+                      <div style={{ minWidth: 0, justifySelf: 'stretch', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center', gap: 7 }}>
+                        <p style={{ margin: 0, fontSize: 10, fontWeight: 800, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em', lineHeight: 1.15 }}>Reassign Suggestion</p>
+                        <button
+                          type="button"
+                          aria-label={`Open ${recommendedName} profile`}
+                          onClick={() => { if (recommendedMember) setProfileMember(recommendedMember) }}
+                          className="internal-member-card"
+                          style={{ width: 110, height: 128, padding: '10px 8px', borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', boxShadow: '0 1px 3px rgba(15,23,42,0.06)', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', cursor: recommendedMember ? 'pointer' : 'default', textAlign: 'center', transition: 'box-shadow 0.22s ease, border-color 0.22s ease, transform 0.22s ease, background 0.22s ease' }}
+                          onMouseEnter={e => { if (recommendedMember) { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.boxShadow = '0 3px 10px rgba(0,0,0,0.10)'; e.currentTarget.style.background = '#FFFFFF' } }}
+                          onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.boxShadow = '0 1px 3px rgba(15,23,42,0.06)'; e.currentTarget.style.background = '#FFFFFF' }}
+                        >
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, width: '100%' }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 64, height: 64, borderRadius: 999, background: recommendedMember?.profile_photo_url ? 'transparent' : '#FFF7ED', color: '#EA580C', flexShrink: 0, overflow: 'hidden' }}>
+                              {recommendedMember?.profile_photo_url
+                                ? <img src={recommendedMember.profile_photo_url} alt={recommendedName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                : <UserCog size={30} />}
+                            </span>
+                            <p style={{ fontWeight: 700, fontSize: '0.875rem', color: '#0F172A', margin: 0, lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
+                              {recommendedName}
+                            </p>
+                          </div>
+                        </button>
+                      </div>
+                    </div>
                   </div>
-
-                  <span style={{ width: 34, height: 34, borderRadius: 999, background: '#FFF7ED', color: TASK_ORANGE, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', alignSelf: 'center' }}>
-                    <ArrowRightLeft size={16} />
-                  </span>
-
-                  <div style={{ border: '1px solid #BBF7D0', borderRadius: 12, background: '#F0FDF4', padding: '12px 14px', minWidth: 0 }}>
-                    <p style={{ margin: '0 0 5px', fontSize: 11, fontWeight: 800, color: '#15803D', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Reassign To</p>
-                    <p style={{ margin: 0, fontSize: 14, fontWeight: 800, color: TASK_TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{recommendedName}</p>
-                    {typeof workloadSuggestion.recommended_score === 'number' && (
-                      <p style={{ margin: '5px 0 0', fontSize: 12, fontWeight: 700, color: '#166534' }}>Score {workloadSuggestion.recommended_score}</p>
-                    )}
-                  </div>
+                )
+              })}
+              {workloadApplyError && (
+                <div style={{ border: '1px solid #FECACA', background: '#FEF2F2', color: '#B91C1C', borderRadius: 8, padding: '9px 11px', fontSize: 12, fontWeight: 700 }}>
+                  {workloadApplyError}
                 </div>
-
-                <div style={{ border: `1px solid ${TASK_BORDER}`, borderRadius: 12, background: '#FFFFFF', padding: '12px 14px' }}>
-                  <p style={{ margin: '0 0 5px', fontSize: 11, fontWeight: 800, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Task To Reassign</p>
-                  <p style={{ margin: 0, fontSize: 15, fontWeight: 800, color: TASK_TEXT, lineHeight: 1.35 }}>{suggestedTaskTitle}</p>
-                  <p style={{ margin: '8px 0 0', color: '#64748B', fontSize: 13, fontWeight: 700, lineHeight: 1.45 }}>
-                    Move this task from {overloadedName} to {recommendedName}.
-                  </p>
-                </div>
-
-                {workloadApplyError && (
-                  <div style={{ border: '1px solid #FECACA', background: '#FEF2F2', color: '#B91C1C', borderRadius: 10, padding: '9px 11px', fontSize: 12, fontWeight: 700 }}>
-                    {workloadApplyError}
-                  </div>
-                )}
-
-                <button
-                  type="button"
-                  onClick={handleApplyWorkloadSuggestion}
-                  disabled={workloadApplyLoading || !workloadSuggestion.suggested_task_id || !workloadSuggestion.recommended_user_id}
-                  style={{ height: 38, border: 0, borderRadius: 10, background: workloadApplyLoading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', fontSize: 13, fontWeight: 800, cursor: workloadApplyLoading ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, opacity: (!workloadSuggestion.suggested_task_id || !workloadSuggestion.recommended_user_id) ? 0.55 : 1 }}
-                >
-                  {workloadApplyLoading ? <Spinner size={13} /> : <ArrowRightLeft size={15} />}
-                  Reassign Task
-                </button>
-              </div>
+              )}
             </div>
           </div>
-        )
-      })()}
+        </div>
+      )}
+
+      {/* ─────────────── MEMBER PROFILE MODAL ─────────────── */}
+      {profileMember && (
+        <div
+          onClick={() => setProfileMember(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, zIndex: 130, animation: 'overlayFadeIn 0.18s ease-out' }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="workload-member-profile-title"
+            onClick={e => e.stopPropagation()}
+            style={{ width: 'min(420px, calc(100vw - 36px))', maxHeight: '88vh', overflowY: 'auto', background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}
+          >
+            <div style={{ padding: '18px 20px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <UserRound size={15} color="#fff" strokeWidth={2.5} />
+                </div>
+                <h2 id="workload-member-profile-title" style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+                  Member Profile
+                </h2>
+              </div>
+              <button
+                type="button"
+                aria-label="Close member profile"
+                onClick={() => setProfileMember(null)}
+                style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+                onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ padding: '16px 24px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', gap: 14 }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 44, height: 44, borderRadius: 999, background: profileMember.profile_photo_url ? 'transparent' : '#FFF7ED', color: '#EA580C', flexShrink: 0, overflow: 'hidden' }}>
+                {profileMember.profile_photo_url
+                  ? <img src={profileMember.profile_photo_url} alt={profileMember.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  : profileMember.role === 'Employee' ? <UserRound size={19} /> : <UserCog size={19} />}
+              </span>
+              <div>
+                <p style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A', margin: '0 0 5px' }}>{profileMember.full_name}</p>
+                <span style={{
+                  display: 'inline-block',
+                  padding: '3px 10px',
+                  borderRadius: 999,
+                  fontSize: '0.6875rem',
+                  fontWeight: 700,
+                  letterSpacing: '0.06em',
+                  textTransform: 'uppercase',
+                  background: profileMember.role === 'Owner' || profileMember.role === 'Partner' ? '#0F172A' :
+                    profileMember.role === 'Manager' ? '#FFF7ED' :
+                    profileMember.role === 'Employee' ? '#F3F4F6' : '#EFF6FF',
+                  color: profileMember.role === 'Owner' || profileMember.role === 'Partner' ? '#FFFFFF' :
+                    profileMember.role === 'Manager' ? '#EA580C' :
+                    profileMember.role === 'Employee' ? '#4B5563' : '#2563EB',
+                }}>
+                  {profileMember.role}
+                </span>
+              </div>
+            </div>
+
+            <div style={{ padding: '0 24px 20px', display: 'flex', flexDirection: 'column' }}>
+              {[
+                { label: 'Email Address', value: profileMember.email_address ?? '—' },
+                { label: 'Date of Birth', value: formatDateDisplay(profileMember.date_of_birth) },
+                { label: 'Phone Number', value: profileMember.phone_number ?? '—' },
+                { label: 'Joined On', value: formatDateDisplay(profileMember.created_at) },
+                { label: 'Department', value: departments.find(d => d.id === profileMember.department_id)?.name ?? '—' },
+              ].map(field => (
+                <div key={field.label} style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
+                  <label style={{ display: 'block', fontWeight: 700, fontSize: '0.8125rem', color: '#374151', marginBottom: 4 }}>{field.label}</label>
+                  <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, sans-serif" }}>{field.value}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {deleteTaskModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'grid', placeItems: 'center', padding: 18, zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>

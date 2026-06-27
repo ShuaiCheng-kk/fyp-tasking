@@ -110,6 +110,9 @@ export interface TaskWorkloadSuggestion {
   recommended_user_id?: string
   suggested_task_id?: string
   suggested_task_title?: string
+  reason?: string
+  score_gap_before?: number
+  score_gap_after?: number
   // Weighted score (priority x deadline urgency), not a raw task count — a person with 5 low-
   // priority, no-rush tasks can score lower than someone with 1 urgent, overdue task.
   overloaded_score?: number

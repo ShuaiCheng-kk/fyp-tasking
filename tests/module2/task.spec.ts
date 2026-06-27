@@ -266,6 +266,14 @@ test('UC25 shows a workload rebalancing suggestion', async ({ request }) => {
     overloaded_user_id: managerA.userId,
     recommended_user_id: managerB.userId,
   })
+  expect(body.suggestions).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      type: 'rebalance',
+      department_id: departmentId,
+      suggested_task_id: expect.any(String),
+      reason: expect.any(String),
+    }),
+  ]))
 })
 
 test('UC26 shows a task reassignment suggestion', async ({ request }) => {

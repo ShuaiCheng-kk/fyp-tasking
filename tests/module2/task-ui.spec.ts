@@ -88,6 +88,10 @@ function formatDateKey(date: Date): string {
   return `${year}-${month}-${day}`
 }
 
+function taskUiDayLabel(): string {
+  return String(new Date(`${taskUiDate}T00:00:00`).getDate())
+}
+
 test.beforeAll(async () => {
   seeded = await seedTestOwnerAndCompany('module2-ui')
 
@@ -101,7 +105,9 @@ test.beforeAll(async () => {
 
   managerA = await createManager('A')
   managerB = await createManager('B')
-  taskUiDate = formatDateKey(new Date())
+  const tomorrow = new Date()
+  tomorrow.setDate(tomorrow.getDate() + 1)
+  taskUiDate = formatDateKey(tomorrow)
 
   const { data: shift, error: shiftError } = await admin
     .from('shifts')
@@ -188,7 +194,7 @@ test('owner can use the Module 2 task UI end to end', async ({ page }) => {
   await page.getByRole('button', { name: 'Select priority' }).click()
   await page.getByRole('button', { name: 'High' }).click()
   await page.getByRole('button', { name: 'Select deadline' }).click()
-  await page.getByRole('button', { name: String(new Date().getDate()), exact: true }).and(page.locator('button:visible')).first().click()
+  await page.getByRole('button', { name: taskUiDayLabel(), exact: true }).and(page.locator('button:visible')).first().click()
   await page.getByRole('button', { name: 'PM', exact: true }).click()
   await page.getByRole('button', { name: '6:00' }).click()
   await page.getByRole('button', { name: 'Create Task' }).click()
@@ -235,7 +241,7 @@ test('New Task modal blocks past start dates and the Deadline field selects date
   // The field may prefill to a future shift date, so navigate backward and confirm the
   // prev-month chevron disables itself once today's month is reached (it must not go earlier).
   const todayMonthLabel = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-  const todayDay = String(new Date().getDate())
+  const todayDay = taskUiDayLabel()
   await page.locator('label', { hasText: 'Start Date' }).locator('..').getByRole('button').first().click()
   const startMonthLabel = page.locator('span', { hasText: /^[A-Z][a-z]+ \d{4}$/ })
   const startPrevBtn = startMonthLabel.locator('xpath=preceding-sibling::button[1]')
@@ -335,7 +341,7 @@ test('Kanban collapses a task with sub-tasks and expands them on click', async (
   await page.getByRole('button', { name: 'Select priority' }).click()
   await page.getByRole('button', { name: 'High' }).click()
   await page.getByRole('button', { name: 'Select deadline' }).click()
-  const todayDay = String(new Date().getDate())
+  const todayDay = taskUiDayLabel()
   await page.getByRole('button', { name: todayDay, exact: true }).and(page.locator('button:visible')).first().click()
   await page.getByRole('button', { name: 'PM', exact: true }).click()
   await page.getByRole('button', { name: '6:00' }).click()
@@ -382,7 +388,7 @@ test('Recurring replaces the top Deadline field with a Deadline rule picker', as
   await page.getByRole('button', { name: 'Daily', exact: true }).click()
   await expect(page.getByText('Repeat until')).toBeVisible()
   await page.locator('label', { hasText: 'Repeat until' }).getByRole('button').click()
-  const repeatUntilDate = new Date()
+  const repeatUntilDate = new Date(`${taskUiDate}T00:00:00`)
   repeatUntilDate.setDate(repeatUntilDate.getDate() + 1)
   await page.getByRole('button', { name: String(repeatUntilDate.getDate()), exact: true }).and(page.locator('button:visible')).first().click()
 
@@ -413,7 +419,7 @@ test('Edit Task defers sub-task changes until Save Changes and Recurring starts 
   await page.getByRole('button', { name: 'Select priority' }).click()
   await page.getByRole('button', { name: 'High' }).click()
   await page.getByRole('button', { name: 'Select deadline' }).click()
-  const todayDay = String(new Date().getDate())
+  const todayDay = taskUiDayLabel()
   await page.getByRole('button', { name: todayDay, exact: true }).and(page.locator('button:visible')).first().click()
   await page.getByRole('button', { name: 'PM', exact: true }).click()
   await page.getByRole('button', { name: '6:00' }).click()
