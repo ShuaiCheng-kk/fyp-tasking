@@ -3958,7 +3958,7 @@ export default function OwnerTasksPage() {
             aria-modal="true"
             aria-labelledby="workload-suggestion-title"
             onClick={e => e.stopPropagation()}
-            style={{ width: 'min(600px, calc(100vw - 36px))', maxHeight: '88vh', background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)', display: 'flex', flexDirection: 'column' }}
+            style={{ width: 'min(560px, calc(100vw - 36px))', maxHeight: '88vh', background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)', display: 'flex', flexDirection: 'column' }}
           >
             <div style={{ padding: '18px 20px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -3977,7 +3977,7 @@ export default function OwnerTasksPage() {
               </button>
             </div>
 
-            <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto' }}>
+            <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto' }}>
               {workloadSuggestions.map(suggestion => {
                 const recommendedMember = members.find(m => m.id === suggestion.recommended_user_id)
                 const recommendedName = recommendedMember?.full_name ?? 'another manager'
@@ -3985,7 +3985,7 @@ export default function OwnerTasksPage() {
                 const loading = workloadApplyLoadingId === suggestion.suggested_task_id
                 return (
                   <div key={`${suggestion.department_id}-${suggestion.suggested_task_id}`} style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10, background: '#FFFFFF' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(126px, 0.5fr) auto 110px', alignItems: 'stretch', gap: 10 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '260px 40px 150px', alignItems: 'stretch', justifyContent: 'center', gap: 12 }}>
                       <div style={{ minWidth: 0 }}>
                         {suggestedTask ? (
                           <TaskCard
@@ -4021,14 +4021,14 @@ export default function OwnerTasksPage() {
                         </button>
                       </div>
 
-                      <div style={{ minWidth: 0, justifySelf: 'stretch', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'stretch', justifyContent: 'center', gap: 7 }}>
-                        <p style={{ margin: 0, fontSize: 10, fontWeight: 800, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em', lineHeight: 1.15 }}>Reassign Suggestion</p>
+                      <div style={{ minWidth: 0, width: 150, justifySelf: 'stretch', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 7 }}>
+                        <p style={{ margin: 0, width: '100%', fontSize: 10, fontWeight: 800, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.02em', lineHeight: 1.15, textAlign: 'center', whiteSpace: 'nowrap' }}>Reassign Suggestion</p>
                         <button
                           type="button"
                           aria-label={`Open ${recommendedName} profile`}
                           onClick={() => { if (recommendedMember) setProfileMember(recommendedMember) }}
                           className="internal-member-card"
-                          style={{ width: 110, height: 128, padding: '10px 8px', borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', boxShadow: '0 1px 3px rgba(15,23,42,0.06)', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', cursor: recommendedMember ? 'pointer' : 'default', textAlign: 'center', transition: 'box-shadow 0.22s ease, border-color 0.22s ease, transform 0.22s ease, background 0.22s ease' }}
+                          style={{ width: 126, height: 128, padding: '10px 8px', borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', boxShadow: '0 1px 3px rgba(15,23,42,0.06)', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', cursor: recommendedMember ? 'pointer' : 'default', textAlign: 'center', transition: 'box-shadow 0.22s ease, border-color 0.22s ease, transform 0.22s ease, background 0.22s ease' }}
                           onMouseEnter={e => { if (recommendedMember) { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.boxShadow = '0 3px 10px rgba(0,0,0,0.10)'; e.currentTarget.style.background = '#FFFFFF' } }}
                           onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.boxShadow = '0 1px 3px rgba(15,23,42,0.06)'; e.currentTarget.style.background = '#FFFFFF' }}
                         >
