@@ -4015,7 +4015,7 @@ export default function OwnerTasksPage() {
                           aria-label={`Reassign task to ${recommendedName}`}
                           onClick={() => handleApplyWorkloadSuggestion(suggestion)}
                           disabled={!!workloadApplyLoadingId || !suggestion.suggested_task_id || !suggestion.recommended_user_id}
-                          style={{ width: 36, height: 36, border: 0, borderRadius: 8, background: loading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', cursor: workloadApplyLoadingId ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, opacity: (!suggestion.suggested_task_id || !suggestion.recommended_user_id) ? 0.55 : 1, transition: 'opacity 0.18s ease, box-shadow 0.18s ease' }}
+                          style={{ width: 36, height: 36, border: '1px solid #FED7AA', borderRadius: 8, background: loading ? '#FFEDD5' : '#FFF7ED', color: '#EA580C', cursor: workloadApplyLoadingId ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, opacity: (!suggestion.suggested_task_id || !suggestion.recommended_user_id) ? 0.55 : 1, transition: 'opacity 0.18s ease, box-shadow 0.18s ease, background 0.18s ease' }}
                         >
                           {loading ? <Spinner size={13} /> : <ArrowRightLeft size={15} />}
                         </button>
