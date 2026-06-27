@@ -60,8 +60,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: true, suggestion: reassignmentSuggestion })
     }
     if (suggestion === 'stalled') {
-      const staleAfterDays = Number(searchParams.get('stale_after_days') ?? 3)
-      const alerts = await taskService.getStalledTaskAlerts(company_id, staleAfterDays, department_id)
+      const alerts = await taskService.getStalledTaskAlerts(company_id, department_id)
       return NextResponse.json({ success: true, alerts })
     }
     if (shift_id) {

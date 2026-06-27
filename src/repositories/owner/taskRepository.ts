@@ -55,6 +55,10 @@ export const taskRepository = {
       .select('id, shift_id, company_id, department_id, parent_task_id, sequence_order, title, description, assigned_user_id, assigned_by, status, percentage_complete, priority, due_at, task_date, recurrence_group_id, source_task_id, is_archived, created_at, updated_at, shifts(shift_date)')
       .eq('company_id', company_id)
       .eq('is_archived', true)
+      // Sub-tasks and recurring sibling occurrences (source_task_id set) archive alongside their
+      // parent/original but only the top-level original task is listed in the archive view.
+      .is('parent_task_id', null)
+      .is('source_task_id', null)
       .order('updated_at', { ascending: false })
     if (error) throw new Error(error.message)
     return ((data ?? []) as unknown as (Task & { shifts: { shift_date: string }[] | null })[]).map(row => ({
@@ -136,6 +140,21 @@ export const taskRepository = {
     return (data ?? []).map((row: { department_id: string }) => row.department_id)
   },
 
+  async getManagersByDepartment(company_id: string, department_id: string): Promise<{ id: string; full_name: string }[]> {
+    const { data, error } = await supabase
+      .from('manager_departments')
+      .select('users!manager_departments_manager_id_fkey!inner(id, full_name)')
+      .eq('company_id', company_id)
+      .eq('department_id', department_id)
+    if (error) throw new Error(error.message)
+    return (data ?? [])
+      .map((row: { users?: { id: string; full_name: string } | { id: string; full_name: string }[] | null }) => {
+        if (!row.users) return null
+        return Array.isArray(row.users) ? row.users[0] ?? null : row.users
+      })
+      .filter((user): user is { id: string; full_name: string } => !!user)
+  },
+
   async getEmployeeDepartmentIds(user_id: string): Promise<string[]> {
     const { data, error } = await supabase
       .from('employee_departments')
@@ -155,6 +174,18 @@ export const taskRepository = {
     return data as Shift
   },
 
+  async hasShiftOnDate(user_id: string, company_id: string, shift_date: string): Promise<boolean> {
+    const { data, error } = await supabase
+      .from('shift_assignments')
+      .select('id, shifts!inner(shift_date, company_id)')
+      .eq('user_id', user_id)
+      .eq('shifts.company_id', company_id)
+      .eq('shifts.shift_date', shift_date)
+      .limit(1)
+    if (error) throw new Error(error.message)
+    return (data ?? []).length > 0
+  },
+
   async updateTask(id: string, input: Partial<TaskInput>): Promise<Task> {
     const { data, error } = await supabase
       .from('tasks')
@@ -164,6 +195,14 @@ export const taskRepository = {
       .single()
     if (error) throw new Error(error.message)
     return data as Task
+  },
+
+  async updateSubTasksByParent(parent_task_id: string, input: Partial<TaskInput>): Promise<void> {
+    const { error } = await supabase
+      .from('tasks')
+      .update(input)
+      .eq('parent_task_id', parent_task_id)
+    if (error) throw new Error(error.message)
   },
 
   async deleteTask(id: string): Promise<void> {
