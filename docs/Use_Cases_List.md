@@ -1,156 +1,144 @@
 # Tasking — Use Cases List
 
-Complete, code-verified use case inventory across all roles, organized by feature module. Each use case is numbered continuously (UC1–UC100, no gaps) and tagged with its subscription tier.
+Complete, code-verified use case inventory across all roles, organized by feature module. Each use case is numbered continuously (UC1–UC86, no gaps) and tagged with its subscription tier.
 
 **Tier legend**
 - **Free** — included in the free plan
 - **Paid** — gated behind a paid subscription
 - **N/A** — platform-internal feature, not part of the customer-facing Owner/Partner subscription tiers (operated by a separate platform role)
 
+**Role abbreviations:** O = Owner, P = Partner, M = Manager, E = Employee, CW = Casual Worker, GU = Guest User, UA = User Admin, MA = Marketing Admin
+
 ---
 
-## Module 1 — Shift UC1–14
+## Module 1 — Shift UC1–11
 
-- UC1 View Allocation Timeline — Free — Owner, Partner, Manager, Employee
-- UC2 Filter Timeline by Date Range — Free — Owner, Partner, Manager, Employee
-- UC3 Create Shift — Free — Owner, Partner, Manager
-- UC4 Create Shift Template — Paid — Owner, Partner, Manager
-- UC5 Edit Shift — Free — Owner, Partner, Manager
-- UC6 Delete Shift — Free — Owner, Partner, Manager
-- UC7 Publish / Unpublish Schedule — Free — Owner, Partner, Manager
-- UC8 Duplicate Shift — Paid — Owner, Partner, Manager
-- UC9 Set Recurring Shift — Paid — Owner, Partner, Manager
-- UC10 Create Split Shift — Free — Owner, Partner, Manager
-- UC11 View Clopening Conflict Warning — Paid — Owner, Partner, Manager
-- UC12 Undo and Redo Last Shift Action — Free — Owner, Partner, Manager
-- UC13 Bulk Shift Editor — Paid — Owner, Partner, Manager
-- UC14 AI Auto-Schedule — Paid — Owner, Partner, Manager
+- UC1 Create Shift — Free — O, P, M
+- UC2 Create Shift Template — Paid — O, P, M
+- UC3 Edit Shift — Free — O, P, M
+- UC4 Delete Shift — Free — O, P, M
+- UC5 Publish / Unpublish Schedule — Free — O, P, M
+- UC6 Duplicate Shift — Paid — O, P, M
+- UC7 Set Recurring Shift — Paid — O, P, M
+- UC8 Create Split Shift — Free — O, P, M
+- UC9 View Clopening Conflict Warning — Paid — O, P, M
+- UC10 Bulk Shift Editor — Paid — O, P, M
+- UC11 Generate AI Schedule Suggestion — Paid — O, P, M
 
-## Module 2 — Task UC15–28
+## Module 2 — Task UC12–23
 
-- UC15 Assign Task — Free — Owner, Partner, Manager, Employee
-- UC16 View Task Kanban Board — Free — Owner, Partner, Manager, Employee
-- UC17 Edit Task — Free — Owner, Partner, Manager, Employee
-- UC18 Delete Task — Free — Owner, Partner, Manager, Employee
-- UC19 Duplicate Task — Paid — Owner, Partner, Manager, Employee
-- UC20 Set Recurring Task — Paid — Owner, Partner, Manager, Employee
-- UC21 Archive Task — Free — Owner, Partner, Manager, Employee
-- UC22 Create Sub Task — Free — Owner, Partner, Manager, Employee
-- UC23 Task Calendar View — Paid — Owner, Partner, Manager, Employee
-- UC24 AI Task Assignment — Paid — Owner, Partner, Manager
-- UC25 View Workload Rebalancing Suggestion — Paid — Owner, Partner, Manager
-- UC26 View Task Reassignment Suggestion — Paid — Owner, Partner, Manager
-- UC27 View Stalled Task Alert — Paid — Owner, Partner, Manager
-- UC28 Set Task Dependencies — Paid — Owner, Partner, Manager, Employee
+- UC12 Assign Task — Free — O, P, M, E
+- UC13 Edit Task — Free — O, P, M, E
+- UC14 Create Task Template — Paid — O, P, M, E
+- UC15 Delete Task — Free — O, P, M, E
+- UC16 Duplicate Task — Paid — O, P, M, E
+- UC17 Set Recurring Task — Paid — O, P, M, E
+- UC18 Archive Task — Free — O, P, M, E
+- UC19 Create Sub Task — Free — O, P, M, E
+- UC20 Generate AI Task Assignment Suggestion — Paid — O, P, M
+- UC21 View Workload Rebalancing Alert — Paid — O, P, M
+- UC22 View Stalled Task Alert — Paid — O, P, M
+- UC23 Set Task Dependencies — Paid — O, P, M
 
-## Module 3 — Team / Company UC29–43
+## Module 3 — Team / Company UC24–34
 
-- UC29 Create Department — Free — Owner, Partner
-- UC30 Edit Department — Free — Owner, Partner
-- UC31 Delete Department — Free — Owner, Partner
-- UC32 Send Direct Invitation — Free — Owner, Partner, Manager
-- UC33 Reassign Manager's Department — Free — Owner, Partner
-- UC34 View Team Members — Free — Owner, Partner, Manager, Employee
-- UC35 Search Members — Free — Owner, Partner, Manager, Employee
-- UC36 Inactive / Active Casual Workers — Paid — Owner, Partner, Manager
-- UC37 Remove Team Member — Free — Owner, Partner, Manager
-- UC38 Change Member's Department — Free — Owner, Partner
-- UC39 Invite Members by CSV File — Paid — Owner, Partner
-- UC40 Import Departments from CSV File — Paid — Owner, Partner
-- UC41 View Organization Chart — Paid — Owner, Partner, Manager, Employee
-- UC42 View Activity Log — Paid — Owner, Partner, Manager
-- UC43 Edit Company Profile — Free — Owner, Partner
+- UC24 Create Department — Free — O, P
+- UC25 Edit Department — Free — O, P
+- UC26 Delete Department — Free — O, P
+- UC27 Send Direct Invitation — Free — O, P, M
+- UC28 Search Members — Free — O, P, M, E
+- UC29 Activate / Deactivate Casual Worker — Paid — O, P, M
+- UC30 Remove Team Member — Free — O, P
+- UC31 Change Member Department — Free — O, P
+- UC32 Invite Members by CSV — Paid — O, P
+- UC33 Import Departments by CSV — Paid — O, P
+- UC34 Edit Company Profile — Free — O, P
 
-## Module 4 — Recruitment UC44–61
+## Module 4 — Recruitment UC35–48
 
-- UC44 Post Job Opening — Free — Owner, Partner, Manager
-- UC45 Create Job Template — Paid — Owner, Partner, Manager
-- UC46 Edit Job Opening — Free — Owner, Partner, Manager
-- UC47 Archive Job Opening — Free — Owner, Partner, Manager
-- UC48 Duplicate Job Opening — Paid — Owner, Partner, Manager
-- UC49 Save Job Posting as Draft — Free — Owner, Partner, Manager
-- UC50 Submit Job Posting for Approval — Paid — Manager
-- UC51 Approve / Reject Job Posting — Paid — Owner, Partner
-- UC52 Set Job Acceptance Deadline — Free — Owner, Partner, Manager
-- UC53 View Applicant List — Free — Owner, Partner, Manager
-- UC54 Accept Applicant — Free — Owner, Partner, Manager
-- UC55 Reject Applicant — Free — Owner, Partner, Manager
-- UC56 Accept Job Invitation — Free — Casual Worker, Guest User
-- UC57 Reject Job Invitation — Free — Casual Worker, Guest User
-- UC58 Set Casual Worker Account Status — Paid — Owner, Partner, Manager
-- UC59 AI Job Description Generator — Paid — Owner, Partner, Manager
-- UC60 AI Candidate Recommendation — Paid — Owner, Partner, Manager
-- UC61 Browse Public Job Board — Free — Guest User, Casual Worker
+- UC35 Post Job Opening — Free — O, P, M
+- UC36 Create Job Template — Paid — O, P, M
+- UC37 Edit Job Opening — Free — O, P, M
+- UC38 Archive Job Opening — Free — O, P, M
+- UC39 Duplicate Job Opening — Paid — O, P, M
+- UC40 Save Job Posting as Draft — Free — O, P, M
+- UC41 Submit Job Posting for Approval — Paid — M
+- UC42 Approve / Reject Job Posting — Paid — O, P
+- UC43 Set Application Deadline — Free — O, P, M
+- UC44 View Applicant List — Free — O, P, M
+- UC45 Accept / Reject Applicant — Free — O, P, M
+- UC46 Accept / Reject Job Offer — Free — GU
+- UC47 Generate AI Job Description Suggestion — Paid — O, P, M
+- UC48 View AI Candidate Recommendation — Paid — O, P, M
 
-## Module 5 — Attendance UC62–72
+## Module 5 — Attendance UC49–58
 
-- UC62 Clock In / Clock Out — Free — Employee, Casual Worker
-- UC63 Review Attendance Record — Free — Owner, Partner, Manager, Employee
-- UC64 View Attendance Status — Free — Owner, Partner, Manager, Employee, Casual Worker
-- UC65 Submit Time-off Request — Free — Employee, Casual Worker
-- UC66 Submit Break Waiver Request — Free — Employee, Casual Worker
-- UC67 Submit Shift Swap Request — Free — Employee, Casual Worker
-- UC68 Approve Shift Swap Request — Free — Owner, Partner, Manager, Employee
-- UC69 AI Auto-approve Timesheets — Paid — Owner, Partner, Manager
-- UC70 Configure Auto-Approval Settings — Paid — Owner, Partner, Manager
-- UC71 Submit Fixed Day Off — Free — Employee, Casual Worker
-- UC72 Submit Leave Request — Free — Employee, Casual Worker
+- UC49 Clock In / Clock Out — Free — E, CW
+- UC50 Review Attendance Record — Free — O, P, M, E, CW
+- UC51 View Attendance Status — Free — O, P, M
+- UC52 Submit Shift Swap Request — Free — E, CW
+- UC53 Approve Shift Swap Request — Free — O, P, M
+- UC54 Generate AI Timesheet Approval Suggestion — Paid — O, P, M
+- UC55 Submit Fixed Day Off — Free — E, CW
+- UC56 Approve Fixed Day Off — Free — O, P, M
+- UC57 Submit Leave Request — Free — E, CW
+- UC58 Approve Leave Request — Free — O, P, M
 
-## Module 6 — Communication UC73–76
+## Module 6 — Communication UC59–62
 
-- UC73 Post Announcement — Free — Owner, Partner, Manager, Employee
-- UC74 Edit Own Announcement — Free — Owner, Partner, Manager, Employee
-- UC75 Delete Own Announcement — Free — Owner, Partner, Manager, Employee
-- UC76 Send Direct Message — Free — Owner, Partner, Manager, Employee, Casual Worker
+- UC59 Post Announcement — Free — O, P, M, E
+- UC60 Edit Own Announcement — Free — O, P, M, E
+- UC61 Delete Own Announcement — Free — O, P, M, E
+- UC62 Send Direct Message — Free — O, P, M, E, CW
 
-## Module 7 — Report UC77–79
+## Module 7 — Report UC63–65
 
-- UC77 View Workforce Analytics — Paid — Owner, Partner, Manager
-- UC78 View AI Anomaly Detection Report — Paid — Owner, Partner, Manager
-- UC79 Export Report as CSV — Paid — Owner, Partner, Manager
+- UC63 View Workforce Analytics — Paid — O, P, M
+- UC64 View AI Anomaly Detection Report — Paid — O, P, M
+- UC65 Export Report as CSV — Paid — O, P, M
 
-## Module 8 — Settings & Billing UC80–84
+## Module 8 — Settings & Billing UC66–70
 
-- UC80 Switch Active Company — Free — Owner, Partner, Manager, Employee
-- UC81 Create Additional Company — Paid — Owner, Partner
-- UC82 Delete Company — Free — Owner
-- UC83 Leave Company — Free — Owner, Partner, Manager, Employee
-- UC84 Manage Subscription Plan — Free — Owner, Partner
+- UC66 Switch Active Company — Free — O, P, M, E
+- UC67 Create Additional Company — Paid — O, P
+- UC68 Delete Company — Free — O
+- UC69 Leave Company — Free — O, P, M, E
+- UC70 Manage Subscription Plan — Free — O, P
 
-## Module 9 — Account & Authentication UC85–91
+## Module 9 — Account & Authentication UC71–77
 
-- UC85 Register Account — Free — Owner, Partner, Manager, Employee, Casual Worker, Guest User
-- UC86 Sign In — Free — Owner, Partner, Manager, Employee, Casual Worker, Guest User, User Admin, Marketing Admin
-- UC87 Forgot / Reset Password — Free — Owner, Partner, Manager, Employee, Casual Worker, Guest User, User Admin, Marketing Admin
-- UC88 Email Verification / Resend Confirmation — Free — Owner, Partner, Manager, Employee, Casual Worker, Guest User
-- UC89 Edit Own Profile — Free — Owner, Partner, Manager, Employee, Casual Worker
-- UC90 Accept Company Invitation — Free — Owner, Partner, Manager, Employee
-- UC91 Logout — Free — Owner, Partner, Manager, Employee, Casual Worker, Guest User, User Admin, Marketing Admin
+- UC71 Register Account — Free — O, P, M, E, CW, GU
+- UC72 Sign In — Free — All Users
+- UC73 Forgot / Reset Password — Free — All Users
+- UC74 Email Verification — Free — O, P, M, E, GU
+- UC75 Edit Own Profile — Free — O, P, M, E, CW
+- UC76 Accept Company Invitation — Free — O, P, M, E
+- UC77 Logout — Free — All Users
 
-## Module 10 — Marketing CMS UC92–95
+## Module 10 — Marketing CMS UC78–81
 
 Operated by a separate `Marketing Admin` role, outside the Owner/Partner/Manager/Employee/Casual Worker/Guest User hierarchy.
 
-- UC92 View Marketing Page List — N/A — Marketing Admin
-- UC93 Edit Marketing Page — N/A — Marketing Admin
-- UC94 Edit Content Block — N/A — Marketing Admin
-- UC95 View Public Marketing Page — N/A — Guest User, Owner, Partner, Manager, Employee, Casual Worker
+- UC78 View Marketing Page List — N/A — MA
+- UC79 Edit Marketing Page — N/A — MA
+- UC80 Edit Content Block — N/A — MA
+- UC81 View Public Marketing Page — N/A — O, P, M, E, CW, GU
 
-## Module 11 — User & Company Admin UC96–100
+## Module 11 — User & Company Admin UC82–86
 
 Operated by a separate `User Admin` role, outside the Owner/Partner/Manager/Employee/Casual Worker/Guest User hierarchy.
 
-- UC96 View and Search All Companies — N/A — User Admin
-- UC97 View and Search All Users — N/A — User Admin
-- UC98 View Company Detail — N/A — User Admin
-- UC99 Suspend Company — N/A — User Admin
-- UC100 Suspend User Account — N/A — User Admin
+- UC82 View and Search All Companies — N/A — UA
+- UC83 View and Search All Users — N/A — UA
+- UC84 View Company Detail — N/A — UA
+- UC85 Suspend Company — N/A — UA
+- UC86 Suspend User Account — N/A — UA
 
 ---
 
 ## Summary
 
-- Total use cases: **100**
-- Free: **59**
-- Paid: **32**
+- Total use cases: **86**
+- Free: **50**
+- Paid: **27**
 - N/A (platform-internal): **9**

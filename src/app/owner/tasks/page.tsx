@@ -287,6 +287,8 @@ type ShiftOption = TimelineShiftBlock & {
   user_id: string | null
 }
 
+const EMPTY_USER_ID_SET: Set<string> = new Set()
+
 type DeptTaskStats = {
   department_id: string
   department_name: string
@@ -365,6 +367,11 @@ function addDays(date: Date, days: number): Date {
 
 function isDueOverdue(due: string): boolean {
   return new Date(due) < new Date()
+}
+
+function isDueWithinHours(due: string, hours: number): boolean {
+  const msRemaining = new Date(due).getTime() - Date.now()
+  return msRemaining > 0 && msRemaining <= hours * 60 * 60 * 1000
 }
 
 function formatShiftOptionLabel(shift: ShiftOption): string {
@@ -910,7 +917,7 @@ function SubTaskOrderList({ items, onReorder, onRemove, onRename, disabled }: {
 // ─── Task Card ────────────────────────────────────────────────────────────────
 
 function TaskCard({
-  task, members, shiftOptions, departments, showDept, onClick, onEdit, subTaskCount, expanded, onToggleExpand, clickable = true, isOwner = true,
+  task, members, shiftOptions, departments, showDept, onClick, onEdit, subTaskCount, expanded, onToggleExpand, clickable = true, isOwner = true, highlighted = false,
 }: {
   task: Task
   members: Member[]
@@ -924,11 +931,12 @@ function TaskCard({
   onToggleExpand?: () => void
   clickable?: boolean
   isOwner?: boolean
+  highlighted?: boolean
 }) {
   const assignee = members.find(m => m.id === task.assigned_user_id)
   const shift = task.shift_id ? shiftOptions.find(s => s.id === task.shift_id) : null
   const priority = task.priority ? PRIORITY_COLORS[task.priority] : null
-  const overdue = task.due_at && task.status !== 'Complete' && isDueOverdue(task.due_at)
+  const deadlineWarning = task.due_at && task.status !== 'Complete' && (isDueOverdue(task.due_at) || isDueWithinHours(task.due_at, 2))
   const dept = showDept ? departments.find(d => d.id === task.department_id) : null
   const showStack = !!subTaskCount && !expanded
   const hasTopRowBadges = !!(priority && task.priority) || !!dept || !!subTaskCount
@@ -946,13 +954,14 @@ function TaskCard({
         className="task-card"
         style={{
           background: '#FFFFFF',
-          border: '1px solid #E5E7EB',
-          borderLeft: '1px solid #E5E7EB',
+          border: highlighted ? '1.5px solid #F97316' : '1px solid #E5E7EB',
+          borderLeft: highlighted ? '1.5px solid #F97316' : '1px solid #E5E7EB',
           borderRadius: '10px',
           padding: '16px 16px',
           cursor: clickable ? 'pointer' : 'default',
           position: 'relative',
           zIndex: 2,
+          boxShadow: highlighted ? '0 0 0 3px rgba(249,115,22,0.16), 0 10px 28px rgba(249,115,22,0.16)' : undefined,
         }}
       >
       {/* Edit pencil: absolutely positioned so it never reserves flow height when there are no badges */}
@@ -1018,8 +1027,8 @@ function TaskCard({
         )}
         {task.due_at && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-            {overdue ? <AlertCircle size={11} color="#EF4444" /> : <Clock size={11} color="#9CA3AF" />}
-            <span style={{ fontSize: '0.7rem', fontWeight: 600, color: overdue ? '#EF4444' : '#9CA3AF', whiteSpace: 'nowrap' }}>
+            {deadlineWarning ? <AlertCircle size={11} color="#EF4444" /> : <Clock size={11} color="#9CA3AF" />}
+            <span style={{ fontSize: '0.7rem', fontWeight: 600, color: deadlineWarning ? '#EF4444' : '#9CA3AF', whiteSpace: 'nowrap' }}>
               {formatDeadlineDisplay(task.due_at)}
             </span>
           </div>
@@ -1121,20 +1130,29 @@ export default function OwnerTasksPage() {
   const [deleteTaskLoading, setDeleteTaskLoading] = useState(false)
   const [deleteTaskError, setDeleteTaskError] = useState('')
   const [subTaskTitle,    setSubTaskTitle]    = useState('')
-  const [subTaskLoading,  setSubTaskLoading]  = useState(false)
   const [editSubTaskEnabled, setEditSubTaskEnabled] = useState(false)
   const [editSubTaskCollapsed, setEditSubTaskCollapsed] = useState(false)
   const [editRecurringEnabled, setEditRecurringEnabled] = useState(false)
   const [editRecurringCollapsed, setEditRecurringCollapsed] = useState(false)
   const [taskViewMode,    setTaskViewMode]    = useState(false)
   const [taskActionLoading, setTaskActionLoading] = useState('')
-  const [recurrenceRule, setRecurrenceRule] = useState<TaskRecurrenceRule>('weekly')
+  const [recurrenceRule, setRecurrenceRule] = useState<TaskRecurrenceRule | ''>('')
   const [recurrenceEndDate, setRecurrenceEndDate] = useState('')
-  const [panelSubTaskOrder, setPanelSubTaskOrder] = useState<string[]>([])
-  const [subTaskReorderLoading, setSubTaskReorderLoading] = useState(false)
+  const [editCustomIntervalDays, setEditCustomIntervalDays] = useState(14)
+  const [editCustomIntervalTouched, setEditCustomIntervalTouched] = useState(false)
+  const [editDeadlineRuleType, setEditDeadlineRuleType] = useState<TaskDeadlineRuleType | ''>('')
+  const [editDeadlineRuleTime, setEditDeadlineRuleTime] = useState('')
+  const [editDeadlineRuleWeekday, setEditDeadlineRuleWeekday] = useState<number | null>(null)
+  const [editDeadlineRuleOffsetAmount, setEditDeadlineRuleOffsetAmount] = useState(1)
+  const [editDeadlineRuleOffsetUnit, setEditDeadlineRuleOffsetUnit] = useState<'hours' | 'days'>('days')
+  const [editSubTasks, setEditSubTasks] = useState<{ id: string; title: string }[]>([])
   const [reassignmentSuggestion, setReassignmentSuggestion] = useState<TaskReassignmentSuggestion | null>(null)
   const [workloadSuggestion, setWorkloadSuggestion] = useState<TaskWorkloadSuggestion | null>(null)
+  const [workloadApplyLoading, setWorkloadApplyLoading] = useState(false)
+  const [workloadApplyError, setWorkloadApplyError] = useState('')
   const [stalledAlerts, setStalledAlerts] = useState<StalledTaskAlert[]>([])
+  const [workloadInsightOpen, setWorkloadInsightOpen] = useState(false)
+  const [highlightedStalledTaskId, setHighlightedStalledTaskId] = useState('')
   const [insightLoading, setInsightLoading] = useState('')
   const [insightError, setInsightError] = useState('')
 
@@ -1200,6 +1218,14 @@ export default function OwnerTasksPage() {
   useEffect(() => {
     if (newRecurrenceRule !== 'custom') setNewCustomIntervalTouched(false)
   }, [newRecurrenceRule])
+
+  useEffect(() => {
+    if (editDeadlineRuleType === 'fixed_day' && recurrenceRule !== 'weekly') setEditDeadlineRuleType('')
+  }, [recurrenceRule, editDeadlineRuleType])
+
+  useEffect(() => {
+    if (recurrenceRule !== 'custom') setEditCustomIntervalTouched(false)
+  }, [recurrenceRule])
 
   // AI Assign state (merged breakdown + department/manager/deadline suggestion)
   const [aiModal,          setAiModal]          = useState(false)
@@ -1466,12 +1492,67 @@ export default function OwnerTasksPage() {
   // ── Open task panel ────────────────────────────────────────────────────────
 
   const openTask = (task: Task, viewOnly = false) => {
-    const existingSubTaskIds = kanban
+    const existingSubTasks = kanban
       ? COLUMNS.flatMap(col => kanban[col])
           .filter(row => row.parent_task_id === task.id)
           .sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0))
-          .map(row => row.id)
+          .map(row => ({ id: row.id, title: row.title }))
       : []
+    // Recurrence isn't stored as a rule on the task row — it's only expressed as the actual
+    // generated sibling occurrences sharing recurrence_group_id. Re-derive the rule/end date
+    // (and the deadline rule, from how due_at moves relative to task_date) from those siblings
+    // so re-opening a recurring task shows what was configured, instead of resetting to blank.
+    let inferredRecurrenceRule: TaskRecurrenceRule | '' = ''
+    let inferredRecurrenceEndDate = ''
+    let inferredDeadlineRuleType: TaskDeadlineRuleType | '' = ''
+    let inferredDeadlineRuleTime = ''
+    let inferredDeadlineRuleWeekday: number | null = null
+    let inferredDeadlineRuleOffsetAmount = 1
+    let inferredDeadlineRuleOffsetUnit: 'hours' | 'days' = 'days'
+    if (task.recurrence_group_id && kanban) {
+      const groupOccurrences = COLUMNS.flatMap(col => kanban[col])
+        .filter(row => !row.parent_task_id && row.recurrence_group_id === task.recurrence_group_id)
+      const groupDates = Array.from(new Set(groupOccurrences.map(row => kanbanDateKey(row)))).sort()
+      if (groupDates.length >= 2) {
+        const intervalDays = Math.round(
+          (new Date(`${groupDates[1]}T00:00:00`).getTime() - new Date(`${groupDates[0]}T00:00:00`).getTime()) / 86400000
+        )
+        inferredRecurrenceRule = intervalDays === 1 ? 'daily' : intervalDays === 7 ? 'weekly' : 'custom'
+        if (inferredRecurrenceRule === 'custom') setEditCustomIntervalDays(intervalDays)
+        inferredRecurrenceEndDate = groupDates[groupDates.length - 1]
+      }
+      // Infer the deadline rule from how due_at relates to task_date on two occurrences —
+      // same gap every time means it was generated by one of the three rule types.
+      const datedOccurrences = groupOccurrences
+        .filter(row => row.due_at)
+        .map(row => ({ taskDate: kanbanDateKey(row), due: new Date(row.due_at!) }))
+        .sort((a, b) => a.taskDate.localeCompare(b.taskDate))
+      if (datedOccurrences.length >= 2) {
+        const [a, b] = datedOccurrences
+        const dueDateKey = (d: Date) => formatDateKey(d)
+        const timeKey = (d: Date) => d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+        if (dueDateKey(a.due) === a.taskDate && dueDateKey(b.due) === b.taskDate && timeKey(a.due) === timeKey(b.due)) {
+          inferredDeadlineRuleType = 'same_day'
+          inferredDeadlineRuleTime = timeKey(a.due)
+        } else if (inferredRecurrenceRule === 'weekly' && a.due.getDay() === b.due.getDay() && timeKey(a.due) === timeKey(b.due)) {
+          inferredDeadlineRuleType = 'fixed_day'
+          inferredDeadlineRuleTime = timeKey(a.due)
+          inferredDeadlineRuleWeekday = a.due.getDay()
+        } else {
+          const offsetMs = a.due.getTime() - new Date(`${a.taskDate}T00:00:00`).getTime()
+          const offsetHours = Math.round(offsetMs / 3600000)
+          if (offsetHours % 24 === 0 && offsetHours / 24 === Math.round((b.due.getTime() - new Date(`${b.taskDate}T00:00:00`).getTime()) / 3600000 / 24)) {
+            inferredDeadlineRuleType = 'relative'
+            inferredDeadlineRuleOffsetAmount = offsetHours / 24
+            inferredDeadlineRuleOffsetUnit = 'days'
+          } else if (offsetHours === Math.round((b.due.getTime() - new Date(`${b.taskDate}T00:00:00`).getTime()) / 3600000)) {
+            inferredDeadlineRuleType = 'relative'
+            inferredDeadlineRuleOffsetAmount = Math.max(1, offsetHours)
+            inferredDeadlineRuleOffsetUnit = 'hours'
+          }
+        }
+      }
+    }
     // Only the user who assigned this task may edit it — everyone else always gets the
     // read-only Details view, regardless of which entry point (pencil, calendar bar, etc.) was used.
     const isTaskOwner = !!internalUserId && task.assigned_by === internalUserId
@@ -1492,13 +1573,20 @@ export default function OwnerTasksPage() {
     setDeleteConfirm(false)
     setSubTaskTitle('')
     setTaskActionLoading('')
-    setRecurrenceRule('weekly')
-    setRecurrenceEndDate(formatDateKey(addDays(new Date(`${kanbanDateKey(task)}T00:00:00`), 28)))
-    setPanelSubTaskOrder(existingSubTaskIds)
-    setEditSubTaskEnabled(existingSubTaskIds.length > 0)
-    setEditSubTaskCollapsed(false)
+    setRecurrenceRule(inferredRecurrenceRule)
+    setRecurrenceEndDate(inferredRecurrenceEndDate)
+    if (inferredRecurrenceRule !== 'custom') setEditCustomIntervalDays(14)
+    setEditCustomIntervalTouched(inferredRecurrenceRule === 'custom')
+    setEditDeadlineRuleType(inferredDeadlineRuleType)
+    setEditDeadlineRuleTime(inferredDeadlineRuleTime)
+    setEditDeadlineRuleWeekday(inferredDeadlineRuleWeekday)
+    setEditDeadlineRuleOffsetAmount(inferredDeadlineRuleOffsetAmount)
+    setEditDeadlineRuleOffsetUnit(inferredDeadlineRuleOffsetUnit)
+    setEditSubTasks(existingSubTasks)
+    setEditSubTaskEnabled(existingSubTasks.length > 0)
+    setEditSubTaskCollapsed(true)
     setEditRecurringEnabled(!!task.recurrence_group_id)
-    setEditRecurringCollapsed(false)
+    setEditRecurringCollapsed(true)
     setReassignmentSuggestion(null)
   }
 
@@ -1536,10 +1624,113 @@ export default function OwnerTasksPage() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
+
+      // Sub-tasks were edited as a local draft (editSubTasks) — diff against the server snapshot
+      // taken when the panel opened (selectedSubTasksUnordered) and sync now, in one batch.
+      const original = selectedSubTasksUnordered
+      const removedIds = original.filter(t => !editSubTasks.some(s => s.id === t.id)).map(t => t.id)
+      const renamed = editSubTasks.filter(s => {
+        const match = original.find(t => t.id === s.id)
+        return match && match.title !== s.title
+      })
+      const added = editSubTasks.filter(s => !original.some(t => t.id === s.id))
+
+      for (const id of removedIds) {
+        const delRes = await fetch(`/api/task?id=${id}&assigned_by=${encodeURIComponent(internalUserId)}`, { method: 'DELETE' })
+        const delData = await delRes.json()
+        if (!delData.success) throw new Error(delData.message)
+      }
+      for (const s of renamed) {
+        const original_ = original.find(t => t.id === s.id)!
+        const renameRes = await fetch('/api/task', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: s.id,
+            assigned_by: internalUserId || undefined,
+            company_id: original_.company_id,
+            department_id: original_.department_id,
+            title: s.title,
+            description: original_.description,
+            priority: original_.priority,
+            due_at: original_.due_at,
+            task_date: original_.task_date,
+            assigned_user_id: original_.assigned_user_id,
+            shift_id: original_.shift_id,
+            status: original_.status,
+            percentage_complete: original_.percentage_complete,
+          }),
+        })
+        const renameData = await renameRes.json()
+        if (!renameData.success) throw new Error(renameData.message)
+      }
+      const createdIdByDraftId = new Map<string, string>()
+      for (const s of added) {
+        const createRes = await fetch('/api/task', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            company_id: selectedTask.company_id,
+            department_id: editDeptId,
+            shift_id: editShiftId || null,
+            parent_task_id: selectedTask.id,
+            title: s.title,
+            assigned_user_id: editAssignee || null,
+            assigned_by: internalUserId || null,
+            status: 'Assigned',
+            percentage_complete: 0,
+            task_date: editStartDate,
+            // priority/due_at are intentionally omitted — the service always inherits them from
+            // the parent task whenever parent_task_id is set.
+          }),
+        })
+        const createData = await createRes.json()
+        if (!createData.success) throw new Error(createData.message)
+        createdIdByDraftId.set(s.id, createData.task.id)
+      }
+      if (editSubTasks.length > 0) {
+        const finalOrderIds = editSubTasks.map(s => createdIdByDraftId.get(s.id) ?? s.id)
+        const reorderRes = await fetch('/api/task', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'reorder_subtasks', id: selectedTask.id, sub_task_ids: finalOrderIds, assigned_by: internalUserId || undefined }),
+        })
+        const reorderData = await reorderRes.json()
+        if (!reorderData.success) throw new Error(reorderData.message)
+      }
+
+      let recurringCreatedCount = 0
+      if (editRecurringEnabled && recurrenceRule && recurrenceEndDate) {
+        const deadlineRule = editDeadlineRuleType === 'same_day'
+          ? { type: 'same_day' as const, time: editDeadlineRuleTime }
+          : editDeadlineRuleType === 'fixed_day'
+            ? { type: 'fixed_day' as const, time: editDeadlineRuleTime, weekday: editDeadlineRuleWeekday! }
+            : { type: 'relative' as const, offset_amount: editDeadlineRuleOffsetAmount, offset_unit: editDeadlineRuleOffsetUnit }
+        const recurringRes = await fetch('/api/task', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'recurring',
+            id: selectedTask.id,
+            recurrence_rule: recurrenceRule,
+            recurrence_end_date: recurrenceEndDate,
+            custom_interval_days: recurrenceRule === 'custom' ? editCustomIntervalDays : undefined,
+            deadline_rule: deadlineRule,
+            assigned_by: internalUserId || undefined,
+          }),
+        })
+        const recurringData = await recurringRes.json()
+        if (!recurringData.success) throw new Error(recurringData.message)
+        recurringCreatedCount = recurringData.tasks?.length ?? 0
+      }
+
       await fetchKanban(companyId)
+      await refreshAllTaskInsights()
       setTaskDate(editStartDate)
       closePanel()
-      showTaskToast('Task updated successfully.')
+      showTaskToast(recurringCreatedCount > 0
+        ? `Task updated and ${recurringCreatedCount} recurring task${recurringCreatedCount === 1 ? '' : 's'} created.`
+        : 'Task updated successfully.')
     } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to save') }
     finally { setEditLoading(false) }
   }
@@ -1560,9 +1751,9 @@ export default function OwnerTasksPage() {
     try {
       const res = await fetch(`/api/task?id=${taskId}&assigned_by=${encodeURIComponent(internalUserId)}`, { method: 'DELETE' })
       const data = await res.json()
-      if (!data.success) fetchKanban(companyId, true)
-      else showTaskToast('Task deleted successfully.')
-    } catch { fetchKanban(companyId, true) }
+      if (!data.success) { fetchKanban(companyId, true); void refreshAllTaskInsights() }
+      else { await refreshAllTaskInsights(); showTaskToast('Task deleted successfully.') }
+    } catch { fetchKanban(companyId, true); void refreshAllTaskInsights() }
     finally { setDeleteLoading(false) }
   }
 
@@ -1570,10 +1761,22 @@ export default function OwnerTasksPage() {
     if (!deleteTaskModal) return
     setDeleteTaskLoading(true); setDeleteTaskError('')
     const taskId = deleteTaskModal.id
+    // Deleting the original of a recurring series takes the whole series with it on the server
+    // (taskService.deleteTask) — mirror that here so the board doesn't go stale until a refetch.
+    const isRecurrenceOriginal = !!deleteTaskModal.recurrence_group_id && deleteTaskModal.source_task_id === null
+    const recurrenceGroupId = deleteTaskModal.recurrence_group_id
     setKanban(prev => {
       if (!prev) return prev
+      const allTasks = COLUMNS.flatMap(col => prev[col] ?? [])
+      const rootIdsToRemove = new Set(
+        isRecurrenceOriginal && recurrenceGroupId
+          ? allTasks.filter(t => t.recurrence_group_id === recurrenceGroupId).map(t => t.id)
+          : [taskId]
+      )
       const next = { ...prev } as KanbanGroup
-      for (const col of COLUMNS) next[col] = (prev[col] ?? []).filter(t => t.id !== taskId && t.parent_task_id !== taskId)
+      for (const col of COLUMNS) {
+        next[col] = (prev[col] ?? []).filter(t => !rootIdsToRemove.has(t.id) && !(t.parent_task_id && rootIdsToRemove.has(t.parent_task_id)))
+      }
       return next
     })
     setDeleteTaskModal(null)
@@ -1581,8 +1784,8 @@ export default function OwnerTasksPage() {
       const res = await fetch(`/api/task?id=${taskId}&assigned_by=${encodeURIComponent(internalUserId)}`, { method: 'DELETE' })
       const data = await res.json()
       if (!data.success) { fetchKanban(companyId, true); setDeleteTaskError(data.message ?? 'Failed to delete') }
-      else showTaskToast('Task deleted successfully.')
-    } catch { fetchKanban(companyId, true) }
+      else { await refreshAllTaskInsights(); showTaskToast('Task deleted successfully.') }
+    } catch { fetchKanban(companyId, true); void refreshAllTaskInsights() }
     finally { setDeleteTaskLoading(false) }
   }
 
@@ -1598,6 +1801,7 @@ export default function OwnerTasksPage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
       await fetchKanban(companyId)
+      await refreshAllTaskInsights()
       closePanel()
       showTaskToast('Task duplicated.')
     } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to duplicate task') }
@@ -1616,10 +1820,37 @@ export default function OwnerTasksPage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
       await fetchKanban(companyId)
+      await refreshAllTaskInsights()
       closePanel()
       showTaskToast('Task archived.')
     } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to archive task') }
     finally { setTaskActionLoading('') }
+  }
+
+  const handleApplyWorkloadSuggestion = async () => {
+    if (!workloadSuggestion?.suggested_task_id || !workloadSuggestion.recommended_user_id) return
+    setWorkloadApplyLoading(true); setWorkloadApplyError('')
+    try {
+      const res = await fetch('/api/task', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: workloadSuggestion.suggested_task_id,
+          assigned_user_id: workloadSuggestion.recommended_user_id,
+          assigned_by: internalUserId || undefined,
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      await fetchKanban(companyId)
+      await refreshAllTaskInsights()
+      setWorkloadInsightOpen(false)
+      showTaskToast('Task reassigned.')
+    } catch (err) {
+      setWorkloadApplyError(err instanceof Error ? err.message : 'Failed to reassign task')
+    } finally {
+      setWorkloadApplyLoading(false)
+    }
   }
 
   const handleUnarchiveTask = async (taskId: string) => {
@@ -1635,6 +1866,7 @@ export default function OwnerTasksPage() {
       setArchivedTasks(prev => prev.filter(t => t.id !== taskId))
       setSelectedArchivedTask(prev => prev?.id === taskId ? null : prev)
       await fetchKanban(companyId)
+      await refreshAllTaskInsights()
       showTaskToast('Task unarchived.')
     } catch (err) {
       setArchiveListError(err instanceof Error ? err.message : 'Failed to unarchive task')
@@ -1652,6 +1884,7 @@ export default function OwnerTasksPage() {
       if (!data.success) throw new Error(data.message)
       setArchivedTasks(prev => prev.filter(t => t.id !== taskId))
       setSelectedArchivedTask(prev => prev?.id === taskId ? null : prev)
+      await refreshAllTaskInsights()
       showTaskToast('Task deleted successfully.')
     } catch (err) {
       setArchiveListError(err instanceof Error ? err.message : 'Failed to delete task')
@@ -1660,91 +1893,21 @@ export default function OwnerTasksPage() {
     }
   }
 
-  const handleCreateRecurringTasks = async () => {
-    if (!selectedTask || !recurrenceEndDate) return
-    setTaskActionLoading('recurring'); setPanelError('')
-    try {
-      const res = await fetch('/api/task', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'recurring',
-          id: selectedTask.id,
-          recurrence_rule: recurrenceRule,
-          recurrence_end_date: recurrenceEndDate,
-          assigned_by: internalUserId || undefined,
-        }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message)
-      setEditRecurringEnabled(true)
-      await fetchKanban(companyId)
-      showTaskToast(`${data.tasks?.length ?? 0} recurring task${data.tasks?.length === 1 ? '' : 's'} created.`)
-    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to create recurring tasks') }
-    finally { setTaskActionLoading('') }
-  }
-
   // UC28 Set Task Dependencies — drag-reorder of the panel's sub-tasks; saves immediately on drop.
-  const handleReorderSubTasks = async (orderedIds: string[]) => {
-    if (!selectedTask) return
-    setPanelSubTaskOrder(orderedIds)
-    setSubTaskReorderLoading(true); setPanelError('')
-    try {
-      const res = await fetch('/api/task', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'reorder_subtasks', id: selectedTask.id, sub_task_ids: orderedIds, assigned_by: internalUserId || undefined }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message)
-      await fetchKanban(companyId)
-    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to reorder sub-tasks') }
-    finally { setSubTaskReorderLoading(false) }
+  // Sub-task add/remove/rename/reorder are purely local drafts while the Edit Task panel is
+  // open — mirrors the New Task modal's newSubTasks pattern — and only sync to the server
+  // (create/delete/rename/reorder calls) when the user clicks Save Changes, see handleSaveTask.
+  const handleReorderSubTasks = (orderedIds: string[]) => {
+    setEditSubTasks(prev => orderedIds.map(id => prev.find(s => s.id === id)).filter((s): s is { id: string; title: string } => !!s))
   }
 
-  const handleRenameSubTask = async (subTaskId: string, title: string) => {
-    const subTask = selectedSubTasks.find(t => t.id === subTaskId)
-    if (!subTask || !title.trim()) return
-    setSubTaskReorderLoading(true); setPanelError('')
-    try {
-      const res = await fetch('/api/task', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: subTask.id,
-          assigned_by: internalUserId || undefined,
-          company_id: subTask.company_id,
-          department_id: subTask.department_id,
-          title: title.trim(),
-          description: subTask.description,
-          priority: subTask.priority,
-          due_at: subTask.due_at,
-          task_date: subTask.task_date,
-          assigned_user_id: subTask.assigned_user_id,
-          shift_id: subTask.shift_id,
-          status: subTask.status,
-          percentage_complete: subTask.percentage_complete,
-        }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message)
-      await fetchKanban(companyId)
-      showTaskToast('Sub-task updated successfully.')
-    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to update sub-task') }
-    finally { setSubTaskReorderLoading(false) }
+  const handleRenameSubTask = (subTaskId: string, title: string) => {
+    if (!title.trim()) return
+    setEditSubTasks(prev => prev.map(s => s.id === subTaskId ? { ...s, title: title.trim() } : s))
   }
 
-  const handleRemoveSubTask = async (subTaskId: string) => {
-    setSubTaskReorderLoading(true); setPanelError('')
-    setPanelSubTaskOrder(prev => prev.filter(id => id !== subTaskId))
-    try {
-      const res = await fetch(`/api/task?id=${subTaskId}&assigned_by=${encodeURIComponent(internalUserId)}`, { method: 'DELETE' })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message)
-      await fetchKanban(companyId)
-      showTaskToast('Sub-task deleted successfully.')
-    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to delete sub-task'); await fetchKanban(companyId, true) }
-    finally { setSubTaskReorderLoading(false) }
+  const handleRemoveSubTask = (subTaskId: string) => {
+    setEditSubTasks(prev => prev.filter(s => s.id !== subTaskId))
   }
 
   const handleFetchReassignmentSuggestion = async () => {
@@ -1773,17 +1936,46 @@ export default function OwnerTasksPage() {
       const deptParam = selectedDeptId ? `&department_id=${selectedDeptId}` : ''
       const query = kind === 'workload'
         ? `/api/task?company_id=${companyId}&suggestion=workload${deptParam}`
-        : `/api/task?company_id=${companyId}&suggestion=stalled&stale_after_days=3${deptParam}`
+        : `/api/task?company_id=${companyId}&suggestion=stalled${deptParam}`
       const res = await fetch(query)
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
-      if (kind === 'workload') setWorkloadSuggestion(data.suggestion)
-      else setStalledAlerts(data.alerts ?? [])
+      if (kind === 'workload') {
+        setWorkloadSuggestion(data.suggestion)
+        if (data.suggestion?.type !== 'rebalance') setWorkloadInsightOpen(false)
+      } else {
+        const alerts = data.alerts ?? []
+        setStalledAlerts(alerts)
+        if (alerts.length === 0) setHighlightedStalledTaskId('')
+      }
     } catch (err) { setInsightError(err instanceof Error ? err.message : 'Failed to refresh task insight') }
     finally { setInsightLoading('') }
   }, [companyId, selectedDeptId])
 
+  const refreshAllTaskInsights = useCallback(async () => {
+    await refreshTaskInsights('workload')
+    await refreshTaskInsights('stalled')
+  }, [refreshTaskInsights])
+
   // ── Create task ────────────────────────────────────────────────────────────
+
+  const highlightFirstStalledTask = useCallback(() => {
+    const alert = stalledAlerts[0]
+    if (!alert) return
+    if (highlightedStalledTaskId === alert.task_id) {
+      setHighlightedStalledTaskId('')
+      return
+    }
+    setHighlightedStalledTaskId(alert.task_id)
+    setBoardViewMode('kanban')
+
+    const task = kanban
+      ? COLUMNS.flatMap(col => kanban[col] ?? []).find(row => row.id === alert.task_id)
+      : null
+    if (!task) return
+    setSelectedDeptId(task.department_id)
+    setTaskDate(kanbanDateKey(task))
+  }, [highlightedStalledTaskId, kanban, stalledAlerts])
 
   useEffect(() => {
     if (!companyId) return
@@ -1791,35 +1983,11 @@ export default function OwnerTasksPage() {
     void refreshTaskInsights('stalled')
   }, [companyId, selectedDeptId, refreshTaskInsights])
 
-  const handleCreateSubTask = async () => {
-    if (!selectedTask || !subTaskTitle.trim()) return
-    setSubTaskLoading(true); setPanelError('')
-    try {
-      const input: Partial<TaskInput> & { company_id: string; department_id: string; title: string } = {
-        company_id: selectedTask.company_id,
-        department_id: selectedTask.department_id,
-        shift_id: editShiftId || selectedTask.shift_id,
-        parent_task_id: selectedTask.id,
-        title: subTaskTitle.trim(),
-        assigned_user_id: editAssignee || selectedTask.assigned_user_id,
-        assigned_by: internalUserId || null,
-        status: 'Assigned',
-        percentage_complete: 0,
-        task_date: selectedTask.task_date ?? taskDate,
-      }
-      const res = await fetch('/api/task', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(input),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message)
-      setSubTaskTitle('')
-      setEditSubTaskEnabled(true)
-      fetchKanban(companyId)
-      showTaskToast('Sub-task created successfully.')
-    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to create sub-task') }
-    finally { setSubTaskLoading(false) }
+  const handleCreateSubTask = () => {
+    if (!subTaskTitle.trim()) return
+    setEditSubTasks(prev => [...prev, { id: crypto.randomUUID(), title: subTaskTitle.trim() }])
+    setSubTaskTitle('')
+    setEditSubTaskEnabled(true)
   }
 
   const handleCreateTask = async () => {
@@ -1887,7 +2055,8 @@ export default function OwnerTasksPage() {
       setNewRecurringEnabled(false); setNewRecurringCollapsed(false); setNewRecurrenceRule(''); setNewRecurrenceEndDate(''); setNewCustomIntervalDays(14); setNewCustomIntervalTouched(false)
       setNewDeadlineRuleType(''); setNewDeadlineRuleTime(''); setNewDeadlineRuleWeekday(null); setNewDeadlineRuleOffsetAmount(1); setNewDeadlineRuleOffsetUnit('days')
       setTaskDate(taskDate)
-      fetchKanban(companyId)
+      await fetchKanban(companyId)
+      await refreshAllTaskInsights()
       showTaskToast(newRecurringEnabled ? 'Recurring task created successfully.' : 'Task created successfully.')
     } catch (err) { setNewError(err instanceof Error ? err.message : 'Failed to create task') }
     finally { setNewLoading(false) }
@@ -2081,6 +2250,24 @@ export default function OwnerTasksPage() {
     finally { setEditManagerLoading(false) }
   }
 
+  // ── Members with a shift on a given date ───────────────────────────────────
+
+  const shiftUserIdsByDate = useMemo(() => {
+    const map = new Map<string, Set<string>>()
+    for (const shift of shiftOptions) {
+      if (!shift.user_id) continue
+      const set = map.get(shift.shift_date) ?? new Set<string>()
+      set.add(shift.user_id)
+      map.set(shift.shift_date, set)
+    }
+    return map
+  }, [shiftOptions])
+  const userIdsWithShiftOnDate = useCallback(
+    (date: string) => shiftUserIdsByDate.get(date) ?? EMPTY_USER_ID_SET,
+    [shiftUserIdsByDate],
+  )
+  const userIdsWithShiftOnTaskDate = useMemo(() => userIdsWithShiftOnDate(taskDate), [userIdsWithShiftOnDate, taskDate])
+
   // ── Dates that have tasks (for calendar dots) ─────────────────────────────
 
   const datesWithTasks = useMemo<Set<string>>(() => {
@@ -2180,9 +2367,6 @@ export default function OwnerTasksPage() {
     const ROW_HEIGHT = 58
     const NAME_COL = 180
     const dayIndex = (date: string) => calendarWeekDates.indexOf(date)
-    const overlapsCalendarItems = (a: typeof taskCalendarItems[number], b: typeof taskCalendarItems[number]) => (
-      a.startDate <= b.endDate && b.startDate <= a.endDate
-    )
     const taskCalendarRows = (() => {
       const rows = new Map<string, {
         key: string
@@ -2243,8 +2427,31 @@ export default function OwnerTasksPage() {
               {taskCalendarRows.map(row => {
                 const rowDept = departments.find(d => d.id === row.items[0]?.task.department_id)
                 const rowColor = rowDept ? deptColor(rowDept.id) : STATUS_CONFIG[row.items[0]?.task.status ?? 'Assigned'].color
-                const maxStackCount = Math.max(1, ...row.items.map(item => row.items.filter(other => overlapsCalendarItems(other, item)).length))
-                const rowHeight = Math.max(ROW_HEIGHT, maxStackCount * 34 + 18)
+                // Every top-level task gets its own dedicated lane (no packing two unrelated tasks
+                // into one lane just because their dates don't overlap) — assigned once, up front, so
+                // every bar in the row agrees on the same layout instead of each recomputing "who
+                // overlaps me" and centering independently. An expanded task's sub-task rows are
+                // inserted directly under their own parent's lane, never interleaved with siblings.
+                const primaryItemsForLanes = row.items
+                  .filter(item => !item.task.parent_task_id)
+                  .sort((a, b) => (
+                    a.startDate.localeCompare(b.startDate) || a.endDate.localeCompare(b.endDate) || a.task.title.localeCompare(b.task.title)
+                  ))
+                const laneByTaskId = new Map<string, number>()
+                let nextLane = 0
+                for (const primary of primaryItemsForLanes) {
+                  laneByTaskId.set(primary.task.id, nextLane)
+                  nextLane += 1
+                  const subItems = row.items
+                    .filter(sub => sub.task.parent_task_id === primary.task.id)
+                    .sort((a, b) => (a.subTaskIndex ?? 0) - (b.subTaskIndex ?? 0))
+                  for (const sub of subItems) {
+                    laneByTaskId.set(sub.task.id, nextLane)
+                    nextLane += 1
+                  }
+                }
+                const laneCount = nextLane
+                const rowHeight = Math.max(ROW_HEIGHT, laneCount * 34 + 18)
                 const assignee = row.assignee
                 const isManager = assignee?.role === 'Manager'
                 return (
@@ -2272,21 +2479,13 @@ export default function OwnerTasksPage() {
                       a.task.title.localeCompare(b.task.title)
                     )).map(item => {
                       const dept = departments.find(d => d.id === item.task.department_id)
-                      const color = dept ? deptColor(dept.id) : STATUS_CONFIG[item.task.status].color
+                      const color = dept ? deptColor(dept.id) : TASK_ORANGE
                       const startCol = Math.max(0, dayIndex(item.startDate))
                       const endCol = dayIndex(item.endDate) === -1 ? 6 : dayIndex(item.endDate)
                       const truncatedStart = item.startDate < calendarWeekDates[0]
                       const truncatedEnd = item.endDate > calendarWeekDates[6]
-                      const stackItems = row.items
-                        .filter(other => overlapsCalendarItems(other, item))
-                        .sort((a, b) => (
-                          (PRIORITY_ORDER[a.task.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.task.priority ?? ''] ?? 4) ||
-                          a.startDate.localeCompare(b.startDate) ||
-                          a.task.title.localeCompare(b.task.title)
-                        ))
-                      const stackIndex = Math.max(0, stackItems.findIndex(other => other.task.id === item.task.id))
-                      const stackHeight = stackItems.length * 28 + Math.max(0, stackItems.length - 1) * 6
-                      const stackTop = Math.max(0, (rowHeight - stackHeight) / 2) + stackIndex * 34
+                      const stackHeight = laneCount * 28 + Math.max(0, laneCount - 1) * 6
+                      const stackTop = Math.max(0, (rowHeight - stackHeight) / 2) + (laneByTaskId.get(item.task.id) ?? 0) * 34
                       return (
                         <button
                           key={item.task.id}
@@ -2415,28 +2614,69 @@ export default function OwnerTasksPage() {
   )
   const isNewTaskValid = newTitle.trim() !== '' && newDeptId !== '' && newPriority !== '' && newStartDate !== ''
     && (newRecurringEnabled ? (newRecurrenceRule !== '' && newRecurrenceEndDate !== '' && newRecurrenceEndDate > newStartDate && (newRecurrenceRule !== 'custom' || newCustomIntervalDays >= 1) && isNewDeadlineRuleValid) : (newDeadlineDate !== '' && newDeadlineTime !== ''))
-  const editTaskDeptMembers = editDeptId ? assignableMembers.filter(m => m.department_id === editDeptId) : assignableMembers
+  // When editing a sibling occurrence (not the original), the original's own task_date is
+  // earlier than editStartDate — look it up from the loaded siblings so the Preview can still
+  // anchor on and label the true original, instead of treating the opened occurrence as it.
+  const originalTaskDateForEdit = (() => {
+    if (!selectedTask?.recurrence_group_id || !kanban) return editStartDate
+    if (selectedTask.source_task_id === null) return editStartDate
+    const original = COLUMNS.flatMap(col => kanban[col])
+      .find(row => row.recurrence_group_id === selectedTask.recurrence_group_id && row.source_task_id === null)
+    return original ? kanbanDateKey(original) : editStartDate
+  })()
+  const editRecurringPreviewDates: string[] = (() => {
+    if (!editRecurringEnabled || !recurrenceRule || !originalTaskDateForEdit || !recurrenceEndDate) return []
+    const intervalDays = recurrenceRule === 'daily'
+      ? 1
+      : recurrenceRule === 'weekly'
+        ? 7
+        : editCustomIntervalDays
+    if (!intervalDays || intervalDays < 1) return []
+    const dates: string[] = []
+    let next = addDays(new Date(`${originalTaskDateForEdit}T00:00:00`), intervalDays)
+    while (formatDateKey(next) <= recurrenceEndDate && dates.length < 60) {
+      dates.push(formatDateKey(next))
+      next = addDays(next, intervalDays)
+    }
+    return dates
+  })()
+  const isEditDeadlineRuleValid = editDeadlineRuleType !== '' && (
+    editDeadlineRuleType === 'same_day' ? editDeadlineRuleTime !== '' :
+    editDeadlineRuleType === 'fixed_day' ? editDeadlineRuleTime !== '' && editDeadlineRuleWeekday !== null :
+    editDeadlineRuleOffsetAmount >= 1
+  )
+  // Preview-only mirror of taskService's computeDeadlineFromRule for the Edit panel's recurring preview.
+  const previewDeadlineForEdit = (taskDate: string): string | null => {
+    if (!isEditDeadlineRuleValid) return null
+    if (editDeadlineRuleType === 'same_day') {
+      return new Date(`${taskDate}T${editDeadlineRuleTime}:00`).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    }
+    if (editDeadlineRuleType === 'fixed_day') {
+      const d = new Date(`${taskDate}T00:00:00`)
+      d.setDate(d.getDate() + (((editDeadlineRuleWeekday ?? 0) - d.getDay() + 7) % 7))
+      return new Date(`${formatDateKey(d)}T${editDeadlineRuleTime}:00`).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    }
+    const base = new Date(`${taskDate}T00:00:00`)
+    if (editDeadlineRuleOffsetUnit === 'hours') base.setHours(base.getHours() + editDeadlineRuleOffsetAmount)
+    else base.setDate(base.getDate() + editDeadlineRuleOffsetAmount)
+    return base.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  }
+  const editTaskDeptMembers = (editDeptId ? assignableMembers.filter(m => m.department_id === editDeptId) : assignableMembers)
+    .filter(m => userIdsWithShiftOnDate(editStartDate).has(m.id) || m.id === editAssignee)
   const editAssigneeDropdownOptions = editTaskDeptMembers.map(m => ({ value: m.id, label: m.full_name }))
   const isEditTaskValid = editTitle.trim() !== '' && editDeptId !== '' && editStartDate !== '' && editPriority !== '' && editDueAt !== '' && editDeadlineTime !== ''
+  const isEditRecurringFormValid = !editRecurringEnabled || (
+    recurrenceEndDate !== '' && recurrenceEndDate > editStartDate && (recurrenceRule !== 'custom' || editCustomIntervalDays >= 1) && isEditDeadlineRuleValid
+  )
+  // The server-persisted sub-tasks as of when the panel was opened — used as the "before" side
+  // of the diff handleSaveTask runs against editSubTasks (the local draft) on Save Changes.
   const selectedSubTasksUnordered = selectedTask && kanban
     ? COLUMNS.flatMap(col => kanban[col]).filter(task => task.parent_task_id === selectedTask.id)
     : []
-  // Reflects panelSubTaskOrder optimistically while a drag-reorder save is in flight;
-  // falls back to server order whenever the sub-task set itself changed (e.g. one was just added).
-  const selectedSubTaskIdsKey = selectedSubTasksUnordered.map(t => t.id).sort().join(',')
-  const selectedSubTasks = panelSubTaskOrder.length === selectedSubTasksUnordered.length && panelSubTaskOrder.every(id => selectedSubTasksUnordered.some(t => t.id === id))
-    ? panelSubTaskOrder.map(id => selectedSubTasksUnordered.find(t => t.id === id)).filter((t): t is Task => !!t)
-    : [...selectedSubTasksUnordered].sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0))
   const visibleArchivedTasks = useMemo(
     () => archivedTasks.filter(t => !t.parent_task_id && !t.source_task_id),
     [archivedTasks],
   )
-
-  useEffect(() => {
-    if (!selectedTask) return
-    setPanelSubTaskOrder([...selectedSubTasksUnordered].sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0)).map(t => t.id))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTask?.id, selectedSubTaskIdsKey])
   const recommendedAssigneeName = reassignmentSuggestion?.recommended_assignee_id
     ? members.find(m => m.id === reassignmentSuggestion.recommended_assignee_id)?.full_name ?? 'Unknown'
     : ''
@@ -2767,8 +3007,6 @@ export default function OwnerTasksPage() {
                   <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
                     {(() => {
                       const hasIssue = workloadSuggestion?.type === 'rebalance'
-                      const overloadedName = members.find(m => m.id === workloadSuggestion?.overloaded_user_id)?.full_name ?? 'a member'
-                      const recommendedName = members.find(m => m.id === workloadSuggestion?.recommended_user_id)?.full_name ?? 'another member'
                       return (
                         <div style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#F9FAFB', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
                           <span style={{ width: 28, height: 28, borderRadius: 9, background: '#EEF2FF', color: '#4F46E5', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -2776,17 +3014,15 @@ export default function OwnerTasksPage() {
                           </span>
                           <div style={{ minWidth: 0, flex: 1 }}>
                             <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: TASK_TEXT }}>Workload Suggestion</p>
-                            {hasIssue && (
-                              <p style={{ margin: '3px 0 0', color: '#64748B', fontSize: 12, fontWeight: 600, lineHeight: 1.35 }}>
-                                {`Move one active task from ${overloadedName} to ${recommendedName}.`}
-                              </p>
-                            )}
                           </div>
                           <button
                             type="button"
-                            onClick={() => void refreshTaskInsights('workload')}
+                            onClick={() => {
+                              if (hasIssue) { setWorkloadApplyError(''); setWorkloadInsightOpen(true) }
+                              else void refreshTaskInsights('workload')
+                            }}
                             disabled={insightLoading === 'workload'}
-                            title="Refresh"
+                            title={hasIssue ? 'View workload suggestion' : 'Refresh'}
                             style={{ width: 30, height: 30, border: 'none', borderRadius: 999, background: hasIssue ? '#FEF3C7' : '#DCFCE7', color: hasIssue ? '#D97706' : '#16A34A', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: insightLoading === 'workload' ? 'default' : 'pointer' }}
                           >
                             {insightLoading === 'workload' ? <Spinner size={12} dark /> : hasIssue ? <AlertTriangle size={15} /> : <Check size={15} strokeWidth={3} />}
@@ -2804,17 +3040,15 @@ export default function OwnerTasksPage() {
                           </span>
                           <div style={{ minWidth: 0, flex: 1 }}>
                             <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: TASK_TEXT }}>Stalled Tasks</p>
-                            {hasIssue && (
-                              <p style={{ margin: '3px 0 0', color: '#64748B', fontSize: 12, fontWeight: 600, lineHeight: 1.35 }}>
-                                {`${stalledAlerts.length} task${stalledAlerts.length === 1 ? '' : 's'} need attention: ${stalledAlerts[0].title}`}
-                              </p>
-                            )}
                           </div>
                           <button
                             type="button"
-                            onClick={() => void refreshTaskInsights('stalled')}
+                            onClick={() => {
+                              if (hasIssue) highlightFirstStalledTask()
+                              else void refreshTaskInsights('stalled')
+                            }}
                             disabled={insightLoading === 'stalled'}
-                            title="Refresh"
+                            title={hasIssue ? 'Highlight stalled task' : 'Refresh'}
                             style={{ width: 30, height: 30, border: 'none', borderRadius: 999, background: hasIssue ? '#FEF3C7' : '#DCFCE7', color: hasIssue ? '#D97706' : '#16A34A', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: insightLoading === 'stalled' ? 'default' : 'pointer' }}
                           >
                             {insightLoading === 'stalled' ? <Spinner size={12} dark /> : hasIssue ? <AlertTriangle size={15} /> : <Check size={15} strokeWidth={3} />}
@@ -2875,8 +3109,13 @@ export default function OwnerTasksPage() {
                         <>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 12 }}>
                             {orderedDepartments.map((d, deptIdx) => {
-                              const managerCount = members.filter(m => m.department_id === d.id && m.role === 'Manager').length
-                              const taskCount = dayTasks.filter(t => t.department_id === d.id).length
+                              const managerCount = members.filter(m => m.department_id === d.id && m.role === 'Manager' && userIdsWithShiftOnTaskDate.has(m.id)).length
+                              // A recurring task's occurrences all count as one task — same principle as a
+                              // task with sub-tasks still being one task — so dedupe by recurrence_group_id
+                              // (falling back to the task's own id when it isn't part of a series).
+                              const taskCount = new Set(
+                                dayTasks.filter(t => t.department_id === d.id).map(t => t.recurrence_group_id ?? t.id)
+                              ).size
                               const isDragging = draggingDepartmentId === d.id
                               const isDragOver = dragOverDepartmentId === d.id
                               return (
@@ -2982,7 +3221,7 @@ export default function OwnerTasksPage() {
                     }
 
                     // ── Department selected: manager list ──
-                    const deptMembers = members.filter(m => m.department_id === dept.id && m.role === 'Manager')
+                    const deptMembers = members.filter(m => m.department_id === dept.id && m.role === 'Manager' && userIdsWithShiftOnTaskDate.has(m.id))
                     // Count tasks due on the selected date only, so the panel matches what's visible in the Kanban
                     const dateTaskCountByUser = COLUMNS
                       .flatMap(col => filteredTasks(col))
@@ -3182,6 +3421,7 @@ export default function OwnerTasksPage() {
                                       expanded={isExpanded}
                                       onToggleExpand={() => toggleTaskExpanded(task.id)}
                                       isOwner={!!internalUserId && task.assigned_by === internalUserId}
+                                      highlighted={highlightedStalledTaskId === task.id}
                                     />
                                     {isExpanded && subTasks.length > 0 && (
                                       <div style={{ marginTop: -6, marginBottom: 14, paddingLeft: 6 }}>
@@ -3235,16 +3475,9 @@ export default function OwnerTasksPage() {
       {/* ═══════════════ TASK DETAIL PANEL ═══════════════ */}
       {selectedTask && taskViewMode && (() => {
         const viewFieldValue: React.CSSProperties = {
-          padding: '10px 12px',
-          border: '1.5px solid #E5E7EB',
-          borderRadius: 8,
-          background: '#FFFFFF',
-          fontSize: '0.9375rem',
-          color: '#111827',
-          minHeight: 40,
+          ...modalInputStyle,
           display: 'flex',
           alignItems: 'center',
-          boxSizing: 'border-box',
         }
         const viewEmpty: React.CSSProperties = { ...viewFieldValue, color: '#9CA3AF', fontStyle: 'italic' }
         const isOwner = !!internalUserId && selectedTask.assigned_by === internalUserId
@@ -3423,9 +3656,9 @@ export default function OwnerTasksPage() {
                     <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flex: 1 }}>
                       <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
                         <GitBranch size={13} color={TASK_ORANGE} /> Sub Task
-                        {selectedSubTasks.length > 0 && (
+                        {editSubTasks.length > 0 && (
                           <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 18, height: 18, padding: '0 5px', borderRadius: 9, background: '#FFF3E8', color: '#EA580C', fontSize: 11, fontWeight: 800 }}>
-                            {selectedSubTasks.length}
+                            {editSubTasks.length}
                           </span>
                         )}
                       </span>
@@ -3436,7 +3669,7 @@ export default function OwnerTasksPage() {
                         style={{ width: 16, height: 16, accentColor: TASK_ORANGE, cursor: 'pointer', marginLeft: 'auto' }}
                       />
                     </label>
-                    {editSubTaskEnabled && selectedSubTasks.length > 0 && (
+                    {editSubTaskEnabled && editSubTasks.length > 0 && (
                       <button
                         type="button"
                         onClick={() => setEditSubTaskCollapsed(prev => !prev)}
@@ -3447,16 +3680,15 @@ export default function OwnerTasksPage() {
                     )}
                   </div>
 
-                  {editSubTaskEnabled && !(editSubTaskCollapsed && selectedSubTasks.length > 0) && (
+                  {editSubTaskEnabled && !(editSubTaskCollapsed && editSubTasks.length > 0) && (
                     <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                      {selectedSubTasks.length > 0 && (
+                      {editSubTasks.length > 0 && (
                         <div>
                           <SubTaskOrderList
-                            items={selectedSubTasks.map(t => ({ id: t.id, title: t.title }))}
+                            items={editSubTasks}
                             onReorder={handleReorderSubTasks}
                             onRemove={handleRemoveSubTask}
                             onRename={handleRenameSubTask}
-                            disabled={subTaskReorderLoading}
                           />
                         </div>
                       )}
@@ -3469,8 +3701,8 @@ export default function OwnerTasksPage() {
                           style={{ ...modalInputStyle, flex: 1, minWidth: 0, minHeight: 32, padding: '6px 10px', fontSize: 12 }}
                           onKeyDown={e => { if (e.key === 'Enter') handleCreateSubTask() }}
                         />
-                        <button type="button" onClick={handleCreateSubTask} disabled={subTaskLoading || !subTaskTitle.trim()} style={{ flexShrink: 0, width: 32, height: 30, padding: 0, border: 0, borderRadius: 7, background: subTaskTitle.trim() ? 'linear-gradient(135deg, #F97316, #EA580C)' : '#E5E7EB', color: subTaskTitle.trim() ? '#FFFFFF' : '#9CA3AF', fontWeight: 700, fontSize: 12, cursor: subTaskTitle.trim() ? 'pointer' : 'not-allowed', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                          {subTaskLoading ? <Spinner size={12} /> : <Plus size={14} strokeWidth={2.5} />}
+                        <button type="button" onClick={handleCreateSubTask} disabled={!subTaskTitle.trim()} style={{ flexShrink: 0, width: 32, height: 30, padding: 0, border: 0, borderRadius: 7, background: subTaskTitle.trim() ? 'linear-gradient(135deg, #F97316, #EA580C)' : '#E5E7EB', color: subTaskTitle.trim() ? '#FFFFFF' : '#9CA3AF', fontWeight: 700, fontSize: 12, cursor: subTaskTitle.trim() ? 'pointer' : 'not-allowed', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <Plus size={14} strokeWidth={2.5} />
                         </button>
                       </div>
                     </div>
@@ -3500,28 +3732,175 @@ export default function OwnerTasksPage() {
                       </button>
                     )}
                   </div>
-                  {editRecurringEnabled && !editRecurringCollapsed && <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 8, alignItems: 'end' }}>
-                    <div>
-                      <label style={{ ...modalLabelStyle, fontSize: 12, marginBottom: 6 }}>Repeats</label>
-                      <DropdownField
-                        value={recurrenceRule}
-                        options={[
-                          { value: 'daily', label: 'Daily' },
-                          { value: 'weekly', label: 'Weekly' },
-                          { value: 'custom', label: 'Custom' },
-                        ]}
-                        onChange={v => setRecurrenceRule(v as TaskRecurrenceRule)}
-                      />
+                  {editRecurringEnabled && !editRecurringCollapsed && (
+                    <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Repeats</span>
+                          <DropdownField
+                            value={recurrenceRule}
+                            options={[
+                              { value: 'daily', label: 'Daily' },
+                              { value: 'weekly', label: 'Weekly' },
+                              { value: 'custom', label: 'Custom' },
+                            ]}
+                            onChange={v => setRecurrenceRule(v as TaskRecurrenceRule)}
+                            placeholder="Select frequency"
+                          />
+                        </label>
+                        <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Repeat until</span>
+                          <CompactDatePicker
+                            value={recurrenceEndDate}
+                            onChange={setRecurrenceEndDate}
+                            minDate={editStartDate || todayTaskDate}
+                            accentColor={TASK_ORANGE}
+                          />
+                        </label>
+                      </div>
+                      {recurrenceRule === 'custom' && recurrenceEndDate && (
+                        <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Repeat every (days)</span>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={editCustomIntervalDays || ''}
+                            onChange={e => {
+                              const digits = e.target.value.replace(/\D/g, '')
+                              setEditCustomIntervalDays(digits === '' ? 0 : Number(digits))
+                              setEditCustomIntervalTouched(true)
+                            }}
+                            onBlur={() => setEditCustomIntervalDays(prev => Math.min(31, Math.max(1, prev || 1)))}
+                            style={{ ...modalInputStyle, minHeight: 40, padding: '9px 12px', fontSize: '0.8125rem' }}
+                          />
+                        </label>
+                      )}
+                      {recurrenceRule && recurrenceEndDate && (recurrenceRule !== 'custom' || editCustomIntervalTouched) && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0, borderTop: '1px dashed #E5E7EB', paddingTop: 10 }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Deadline rule</span>
+                              <DropdownField
+                                value={editDeadlineRuleType}
+                                options={[
+                                  { value: 'same_day', label: 'Same day' },
+                                  ...(recurrenceRule === 'weekly' ? [{ value: 'fixed_day', label: 'Fixed day' }] : []),
+                                  { value: 'relative', label: 'Relative' },
+                                ]}
+                                onChange={v => setEditDeadlineRuleType(v as TaskDeadlineRuleType)}
+                                placeholder="Select deadline rule"
+                              />
+                            </label>
+
+                            {editDeadlineRuleType === 'same_day' && (
+                              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Due at</span>
+                                <DropdownField
+                                  value={editDeadlineRuleTime}
+                                  options={TIME_OPTIONS}
+                                  onChange={setEditDeadlineRuleTime}
+                                  placeholder="Select time"
+                                />
+                              </label>
+                            )}
+
+                            {editDeadlineRuleType === 'fixed_day' && (
+                              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>At</span>
+                                <DropdownField
+                                  value={editDeadlineRuleTime}
+                                  options={TIME_OPTIONS}
+                                  onChange={setEditDeadlineRuleTime}
+                                  placeholder="Select time"
+                                />
+                              </label>
+                            )}
+
+                            {editDeadlineRuleType === 'relative' && (
+                              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Due within</span>
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  value={editDeadlineRuleOffsetAmount || ''}
+                                  onChange={e => {
+                                    const digits = e.target.value.replace(/\D/g, '')
+                                    setEditDeadlineRuleOffsetAmount(digits === '' ? 0 : Number(digits))
+                                  }}
+                                  onBlur={() => setEditDeadlineRuleOffsetAmount(prev => Math.max(1, prev || 1))}
+                                  style={{ ...modalInputStyle, minHeight: 40, padding: '9px 12px', fontSize: '0.8125rem' }}
+                                />
+                              </label>
+                            )}
+                          </div>
+
+                          {editDeadlineRuleType === 'fixed_day' && (
+                            <div>
+                              <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151', marginBottom: 6 }}>Due every</span>
+                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                {WEEKDAY_LABELS.map((label, weekday) => {
+                                  const active = editDeadlineRuleWeekday === weekday
+                                  return (
+                                    <button
+                                      key={weekday}
+                                      type="button"
+                                      onClick={() => setEditDeadlineRuleWeekday(weekday)}
+                                      style={{ width: 34, height: 30, border: active ? `1.5px solid ${TASK_ORANGE}` : '1.5px solid #E5E7EB', background: active ? '#FFF7ED' : '#FFFFFF', color: active ? TASK_ORANGE : '#374151', borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                                    >
+                                      {label}
+                                    </button>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          )}
+
+                          {editDeadlineRuleType === 'relative' && (
+                            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Unit</span>
+                              <DropdownField
+                                value={editDeadlineRuleOffsetUnit}
+                                options={[{ value: 'days', label: 'Days' }, { value: 'hours', label: 'Hours' }]}
+                                onChange={v => setEditDeadlineRuleOffsetUnit(v as 'hours' | 'days')}
+                              />
+                            </label>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <div>
-                      <label style={{ ...modalLabelStyle, fontSize: 12, marginBottom: 6 }}>Repeat until</label>
-                      <TaskDatePicker value={recurrenceEndDate || editStartDate || formatDateKey(new Date())} onChange={setRecurrenceEndDate} taskDates={datesWithTasks} minDate={editStartDate || todayTaskDate} accentColor={TASK_ORANGE} fullWidth />
-                    </div>
-                    <button type="button" onClick={handleCreateRecurringTasks} disabled={taskActionLoading === 'recurring' || !recurrenceEndDate} style={{ height: 30, border: 0, borderRadius: 7, background: '#0F172A', color: '#FFFFFF', fontSize: 12, fontWeight: 800, padding: '0 12px', cursor: taskActionLoading === 'recurring' ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                      {taskActionLoading === 'recurring' ? <Spinner size={12} /> : null} Create
-                    </button>
-                  </div>}
+                  )}
                 </div>
+
+                {editRecurringEnabled && editRecurringPreviewDates.length > 0 && (
+                  <div>
+                    <p style={{ margin: '0 0 10px', fontWeight: 600, fontSize: '0.875rem', color: '#374151' }}>Preview</p>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+                      {[originalTaskDateForEdit, ...editRecurringPreviewDates].map((date, idx) => {
+                        const isOriginal = idx === 0
+                        const isCurrentlyEditing = date === editStartDate
+                        const deadlinePreview = isOriginal
+                          ? (editDeadlineRuleType ? previewDeadlineForEdit(date) : null)
+                          : previewDeadlineForEdit(date)
+                        const d = new Date(`${date}T00:00:00`)
+                        const dateLabel = `${d.toLocaleDateString('en-US', { weekday: 'short' })}, ${d.toLocaleDateString('en-US', { month: 'long' })} ${d.getDate()}`
+                        return (
+                          <div key={date} style={{ border: isCurrentlyEditing ? `1.5px solid ${TASK_ORANGE}` : '1px solid #E5E7EB', borderRadius: 10, padding: '9px 10px', background: '#FFFFFF' }}>
+                            <p style={{ margin: '0 0 7px', fontSize: 11, fontWeight: 600, color: TASK_TEXT }}>{dateLabel}</p>
+                            {deadlinePreview && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', fontSize: 11, fontWeight: 600, color: TASK_TEXT }}>
+                                <Clock size={11} color="#9CA3AF" /> {deadlinePreview}
+                              </div>
+                            )}
+                            <p style={{ margin: '6px 0 0', fontSize: 10.5, color: isOriginal ? TASK_ORANGE : '#B45309', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 3 }}>
+                              {isOriginal ? <><GitBranch size={10} /> Main Task</> : <><Repeat size={10} /> Auto-generated</>}
+                              {isCurrentlyEditing && !isOriginal && <span style={{ marginLeft: 4, color: TASK_ORANGE }}>· Editing</span>}
+                            </p>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <InlineError message={panelError} />
@@ -3532,8 +3911,8 @@ export default function OwnerTasksPage() {
               <button
                 type="button"
                 onClick={handleSaveTask}
-                disabled={editLoading || !isEditTaskValid}
-                style={{ padding: '7px 18px', background: !isEditTaskValid ? '#E5E7EB' : editLoading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: !isEditTaskValid ? '#9CA3AF' : '#FFFFFF', cursor: editLoading || !isEditTaskValid ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: editLoading ? 0.65 : 1 }}
+                disabled={editLoading || !isEditTaskValid || !isEditRecurringFormValid}
+                style={{ padding: '7px 18px', background: (!isEditTaskValid || !isEditRecurringFormValid) ? '#E5E7EB' : editLoading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: (!isEditTaskValid || !isEditRecurringFormValid) ? '#9CA3AF' : '#FFFFFF', cursor: editLoading || !isEditTaskValid || !isEditRecurringFormValid ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: editLoading ? 0.65 : 1 }}
               >
                 {editLoading ? <Spinner size={13} /> : <Check size={13} />} Save Changes
               </button>
@@ -3543,6 +3922,92 @@ export default function OwnerTasksPage() {
       )}
 
       {/* ═══════════════ DELETE TASK MODAL ═══════════════ */}
+      {workloadInsightOpen && workloadSuggestion?.type === 'rebalance' && (() => {
+        const departmentName = departments.find(d => d.id === workloadSuggestion.department_id)?.name ?? 'Selected Department'
+        const overloadedName = members.find(m => m.id === workloadSuggestion.overloaded_user_id)?.full_name ?? 'A manager'
+        const recommendedName = members.find(m => m.id === workloadSuggestion.recommended_user_id)?.full_name ?? 'another manager'
+        const suggestedTaskTitle = workloadSuggestion.suggested_task_title ?? 'the suggested task'
+        return (
+          <div
+            onClick={() => setWorkloadInsightOpen(false)}
+            style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'grid', placeItems: 'center', padding: 18, zIndex: 110, animation: 'overlayFadeIn 0.18s ease-out' }}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="workload-suggestion-title"
+              onClick={e => e.stopPropagation()}
+              style={{ width: 'min(480px, 100%)', background: '#FFFFFF', borderRadius: 16, border: '1px solid #E2E8F0', boxShadow: '0 24px 70px rgba(15,23,42,0.32)', padding: 18, animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                  <span style={{ width: 34, height: 34, borderRadius: 10, background: '#FEF3C7', color: '#D97706', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <AlertTriangle size={17} />
+                  </span>
+                  <h2 id="workload-suggestion-title" style={{ margin: 0, color: TASK_TEXT, fontSize: 16, fontWeight: 800 }}>Workload Suggestion</h2>
+                </div>
+                <button type="button" onClick={() => setWorkloadInsightOpen(false)} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, border: `1px solid ${TASK_BORDER}`, borderRadius: 9, background: '#FFFFFF', cursor: 'pointer', color: TASK_TEXT }}>
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div style={{ display: 'grid', gap: 10 }}>
+                <div style={{ border: `1px solid ${TASK_BORDER}`, borderRadius: 12, background: '#F8FAFC', padding: '12px 14px' }}>
+                  <p style={{ margin: '0 0 5px', fontSize: 11, fontWeight: 800, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Department</p>
+                  <p style={{ margin: 0, fontSize: 15, fontWeight: 800, color: TASK_TEXT }}>{departmentName}</p>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'stretch', gap: 10 }}>
+                  <div style={{ border: '1px solid #FECACA', borderRadius: 12, background: '#FEF2F2', padding: '12px 14px', minWidth: 0 }}>
+                    <p style={{ margin: '0 0 5px', fontSize: 11, fontWeight: 800, color: '#B91C1C', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Too High</p>
+                    <p style={{ margin: 0, fontSize: 14, fontWeight: 800, color: TASK_TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{overloadedName}</p>
+                    {typeof workloadSuggestion.overloaded_score === 'number' && (
+                      <p style={{ margin: '5px 0 0', fontSize: 12, fontWeight: 700, color: '#991B1B' }}>Score {workloadSuggestion.overloaded_score}</p>
+                    )}
+                  </div>
+
+                  <span style={{ width: 34, height: 34, borderRadius: 999, background: '#FFF7ED', color: TASK_ORANGE, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', alignSelf: 'center' }}>
+                    <ArrowRightLeft size={16} />
+                  </span>
+
+                  <div style={{ border: '1px solid #BBF7D0', borderRadius: 12, background: '#F0FDF4', padding: '12px 14px', minWidth: 0 }}>
+                    <p style={{ margin: '0 0 5px', fontSize: 11, fontWeight: 800, color: '#15803D', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Reassign To</p>
+                    <p style={{ margin: 0, fontSize: 14, fontWeight: 800, color: TASK_TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{recommendedName}</p>
+                    {typeof workloadSuggestion.recommended_score === 'number' && (
+                      <p style={{ margin: '5px 0 0', fontSize: 12, fontWeight: 700, color: '#166534' }}>Score {workloadSuggestion.recommended_score}</p>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ border: `1px solid ${TASK_BORDER}`, borderRadius: 12, background: '#FFFFFF', padding: '12px 14px' }}>
+                  <p style={{ margin: '0 0 5px', fontSize: 11, fontWeight: 800, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Task To Reassign</p>
+                  <p style={{ margin: 0, fontSize: 15, fontWeight: 800, color: TASK_TEXT, lineHeight: 1.35 }}>{suggestedTaskTitle}</p>
+                  <p style={{ margin: '8px 0 0', color: '#64748B', fontSize: 13, fontWeight: 700, lineHeight: 1.45 }}>
+                    Move this task from {overloadedName} to {recommendedName}.
+                  </p>
+                </div>
+
+                {workloadApplyError && (
+                  <div style={{ border: '1px solid #FECACA', background: '#FEF2F2', color: '#B91C1C', borderRadius: 10, padding: '9px 11px', fontSize: 12, fontWeight: 700 }}>
+                    {workloadApplyError}
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleApplyWorkloadSuggestion}
+                  disabled={workloadApplyLoading || !workloadSuggestion.suggested_task_id || !workloadSuggestion.recommended_user_id}
+                  style={{ height: 38, border: 0, borderRadius: 10, background: workloadApplyLoading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', fontSize: 13, fontWeight: 800, cursor: workloadApplyLoading ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, opacity: (!workloadSuggestion.suggested_task_id || !workloadSuggestion.recommended_user_id) ? 0.55 : 1 }}
+                >
+                  {workloadApplyLoading ? <Spinner size={13} /> : <ArrowRightLeft size={15} />}
+                  Reassign Task
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
       {deleteTaskModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'grid', placeItems: 'center', padding: 18, zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>
           <div onClick={e => e.stopPropagation()} style={{ width: 'min(480px, 100%)', maxHeight: '88vh', overflowY: 'auto', background: '#FFFFFF', borderRadius: 16, border: '1px solid #E2E8F0', boxShadow: '0 24px 70px rgba(15,23,42,0.32)', padding: 16, animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
@@ -3981,7 +4446,7 @@ export default function OwnerTasksPage() {
                       const assignee = task.assigned_user_id ? members.find(m => m.id === task.assigned_user_id) : null
                       const priorityStyle = task.priority ? PRIORITY_COLORS[task.priority] : null
                       const dept = departments.find(d => d.id === task.department_id)
-                      const overdue = task.due_at && task.status !== 'Complete' && isDueOverdue(task.due_at)
+                      const deadlineWarning = task.due_at && task.status !== 'Complete' && (isDueOverdue(task.due_at) || isDueWithinHours(task.due_at, 2))
                       const busy = unarchiveLoadingId === task.id || archiveDeleteLoadingId === task.id
                       const subTasks = archivedTasks
                         .filter(t => t.parent_task_id === task.id)
@@ -4074,8 +4539,8 @@ export default function OwnerTasksPage() {
                               )}
                               {task.due_at && (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-                                  {overdue ? <AlertCircle size={11} color="#EF4444" /> : <Clock size={11} color="#9CA3AF" />}
-                                  <span style={{ fontSize: '0.7rem', fontWeight: 600, color: overdue ? '#EF4444' : '#9CA3AF', whiteSpace: 'nowrap' }}>
+                                  {deadlineWarning ? <AlertCircle size={11} color="#EF4444" /> : <Clock size={11} color="#9CA3AF" />}
+                                  <span style={{ fontSize: '0.7rem', fontWeight: 600, color: deadlineWarning ? '#EF4444' : '#9CA3AF', whiteSpace: 'nowrap' }}>
                                     {formatDeadlineDisplay(task.due_at)}
                                   </span>
                                 </div>
@@ -4127,16 +4592,9 @@ export default function OwnerTasksPage() {
       {archiveModalOpen && selectedArchivedTask && (() => {
         const task = selectedArchivedTask
         const viewFieldValue: React.CSSProperties = {
-          padding: '10px 12px',
-          border: '1.5px solid #E5E7EB',
-          borderRadius: 8,
-          background: '#FFFFFF',
-          fontSize: '0.9375rem',
-          color: '#111827',
-          minHeight: 40,
+          ...modalInputStyle,
           display: 'flex',
           alignItems: 'center',
-          boxSizing: 'border-box',
         }
         const viewEmpty: React.CSSProperties = { ...viewFieldValue, color: '#9CA3AF', fontStyle: 'italic' }
         return (
@@ -4400,7 +4858,7 @@ export default function OwnerTasksPage() {
       {/* ═══════════════ AI TASK BREAKDOWN MODAL ═══════════════ */}
       {aiModal && (() => {
         const isReview = aiStep === 'review'
-        const aiDeptManagers = members.filter(m => m.role === 'Manager' && m.department_id === aiDeptId)
+        const aiDeptManagers = members.filter(m => m.role === 'Manager' && m.department_id === aiDeptId && userIdsWithShiftOnTaskDate.has(m.id))
 
         const handleGenerate = async () => {
           if (!aiTitle.trim()) { setAiError('Please enter a task title'); return }
@@ -4468,7 +4926,8 @@ export default function OwnerTasksPage() {
             const data = await res.json()
             if (!data.success) throw new Error(data.message)
             setAiModal(false)
-            fetchKanban(companyId)
+            await fetchKanban(companyId)
+            await refreshAllTaskInsights()
             showTaskToast('Task created successfully.')
           } catch (err) {
             setAiError(err instanceof Error ? err.message : 'Failed to create task')

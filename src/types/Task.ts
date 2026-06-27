@@ -105,10 +105,15 @@ export interface TaskCalendarItem extends Task {
 export interface TaskWorkloadSuggestion {
   type: 'balanced' | 'rebalance'
   message: string
+  department_id?: string
   overloaded_user_id?: string
   recommended_user_id?: string
-  overloaded_count?: number
-  recommended_count?: number
+  suggested_task_id?: string
+  suggested_task_title?: string
+  // Weighted score (priority x deadline urgency), not a raw task count — a person with 5 low-
+  // priority, no-rush tasks can score lower than someone with 1 urgent, overdue task.
+  overloaded_score?: number
+  recommended_score?: number
 }
 
 export interface TaskReassignmentSuggestion {
@@ -122,6 +127,8 @@ export interface StalledTaskAlert {
   task_id: string
   title: string
   status: Task['status']
-  days_since_update: number
+  // How much of the assigned-to-deadline window has elapsed, as a percentage (50 = halfway,
+  // 100 = exactly at the deadline, >100 = overdue). Alerts fire once this reaches 50.
+  percent_elapsed: number
   message: string
 }
