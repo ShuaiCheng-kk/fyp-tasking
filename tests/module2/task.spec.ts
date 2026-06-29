@@ -703,3 +703,56 @@ test('only the user who assigned a task may edit, archive, duplicate, recur, reo
 
   await admin.from('tasks').delete().eq('id', task.id)
 })
+
+test('completes sub-tasks in order while In Progress, and auto-promotes the parent on the last one', async ({ request }) => {
+  const parent = await createTask(request, { title: 'Restock shelves', shift_id: null })
+  const subA = await createTask(request, { title: 'Count inventory', shift_id: null, parent_task_id: parent.id })
+  const subB = await createTask(request, { title: 'Place orders', shift_id: null, parent_task_id: parent.id })
+
+  // Sub-tasks can't be completed until the parent is In Progress.
+  const tooEarly = await request.patch('/api/task', {
+    data: { id: subA.id, action: 'complete_subtask', assigned_by: managerA.userId },
+  })
+  expect(tooEarly.status()).toBe(400)
+
+  const moveToInProgress = await request.patch('/api/task', {
+    data: { id: parent.id, status: 'In Progress', percentage_complete: 33 },
+  })
+  expect(moveToInProgress.status()).toBe(200)
+
+  // Only the parent's assignee may tick a sub-task.
+  const wrongUser = await request.patch('/api/task', {
+    data: { id: subA.id, action: 'complete_subtask', assigned_by: managerB.userId },
+  })
+  expect(wrongUser.status()).toBe(400)
+
+  // Ticking out of order is rejected — subB before subA.
+  const outOfOrder = await request.patch('/api/task', {
+    data: { id: subB.id, action: 'complete_subtask', assigned_by: managerA.userId },
+  })
+  expect(outOfOrder.status()).toBe(400)
+
+  const firstTick = await request.patch('/api/task', {
+    data: { id: subA.id, action: 'complete_subtask', assigned_by: managerA.userId },
+  })
+  expect(firstTick.status()).toBe(200)
+  const firstBody = await firstTick.json()
+  expect(firstBody.subTask.is_completed).toBe(true)
+  expect(firstBody.parent.status).toBe('In Progress')
+
+  const lastTick = await request.patch('/api/task', {
+    data: { id: subB.id, action: 'complete_subtask', assigned_by: managerA.userId },
+  })
+  expect(lastTick.status()).toBe(200)
+  const lastBody = await lastTick.json()
+  expect(lastBody.subTask.is_completed).toBe(true)
+  expect(lastBody.parent.status).toBe('Review')
+
+  const kanban = await request.get(`/api/task?company_id=${seeded.companyId}&kanban=true`)
+  const kanbanBody = await kanban.json()
+  const allTasks = [...kanbanBody.groups.Assigned, ...kanbanBody.groups['In Progress'], ...kanbanBody.groups.Review, ...kanbanBody.groups.Complete]
+  const refreshedSubA = allTasks.find((t: { id: string }) => t.id === subA.id)
+  expect(refreshedSubA.status).toBe('Review')
+
+  await admin.from('tasks').delete().in('id', [subA.id, subB.id, parent.id])
+})

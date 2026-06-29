@@ -107,12 +107,25 @@ export const taskService = {
       }
     }
     const updated = await taskRepository.updateTask(id, input)
-    if (
-      existing.parent_task_id === null &&
-      input.assigned_user_id !== undefined &&
-      input.assigned_user_id !== existing.assigned_user_id
-    ) {
-      await taskRepository.updateSubTasksByParent(id, { assigned_user_id: input.assigned_user_id })
+    if (existing.parent_task_id === null) {
+      const cascade: Partial<TaskInput> = {}
+      if (input.assigned_user_id !== undefined && input.assigned_user_id !== existing.assigned_user_id) {
+        cascade.assigned_user_id = input.assigned_user_id
+      }
+      // Sub-tasks mirror the parent's priority/deadline/start date (see assignTask) — keep them
+      // in sync whenever the parent's own values change, not just at creation time.
+      if (input.priority !== undefined && input.priority !== existing.priority) {
+        cascade.priority = input.priority
+      }
+      if (input.due_at !== undefined && input.due_at !== existing.due_at) {
+        cascade.due_at = input.due_at
+      }
+      if (input.task_date !== undefined && input.task_date !== existing.task_date) {
+        cascade.task_date = input.task_date
+      }
+      if (Object.keys(cascade).length > 0) {
+        await taskRepository.updateSubTasksByParent(id, cascade)
+      }
     }
     return updated
   },
@@ -375,6 +388,41 @@ export const taskService = {
       throw new Error('percentage_complete must be between 0 and 100')
     }
     return taskRepository.updateTask(id, { status, percentage_complete })
+  },
+
+  // To-do checkbox for a sub-task — only meaningful while the parent is In Progress (the work is
+  // actually happening), only the parent's assignee may tick it (the person doing the work, same
+  // permission as dragging the parent's Kanban card), and only in sequence_order — the previous
+  // sub-task must already be ticked before the next one can be. Ticking the last sub-task in the
+  // chain auto-promotes the parent and every sub-task to Review, mirroring the one-step-forward
+  // drag-and-drop move.
+  async completeSubTask(subTaskId: string, actingUserId?: string | null): Promise<Task[]> {
+    if (!subTaskId) throw new Error('Sub-task id is required')
+    const subTask = await taskRepository.getTaskById(subTaskId)
+    if (!subTask.parent_task_id) throw new Error('Task is not a sub-task')
+    const parent = await taskRepository.getTaskById(subTask.parent_task_id)
+    if (!actingUserId || parent.assigned_user_id !== actingUserId) {
+      throw new Error('Only the user assigned to this task can complete its sub-tasks')
+    }
+    if (parent.status !== 'In Progress') {
+      throw new Error('Sub-tasks can only be completed while the task is In Progress')
+    }
+    if (subTask.is_completed) return [subTask, parent]
+
+    const siblings = await taskRepository.getSubTasks(parent.id)
+    const ordered = [...siblings].sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0))
+    const index = ordered.findIndex(t => t.id === subTaskId)
+    if (index === -1) throw new Error('Sub-task does not belong to this task')
+    const priorIncomplete = ordered.slice(0, index).some(t => !t.is_completed)
+    if (priorIncomplete) throw new Error('Complete the previous sub-tasks first')
+
+    const updatedSubTask = await taskRepository.updateTask(subTaskId, { is_completed: true })
+    const allComplete = ordered.every((t, i) => i === index ? true : t.is_completed)
+    if (!allComplete) return [updatedSubTask, parent]
+
+    const updatedParent = await taskRepository.updateTask(parent.id, { status: 'Review', percentage_complete: 66 })
+    await taskRepository.updateSubTasksByParent(parent.id, { status: 'Review', percentage_complete: 66 })
+    return [updatedSubTask, updatedParent]
   },
 
   async getKanbanTasks(company_id: string): Promise<KanbanGroup> {
