@@ -39,9 +39,10 @@ export interface AiAssignStep {
 
 // Raw structured-output shape returned by the LLM call
 export interface AiAssignDraft {
-  steps: AiAssignStep[]
   department_id: string
-  due_in_days: number
+  description: string
+  reason: string
+  steps: AiAssignStep[]
 }
 
 export interface ScoredManager {
@@ -51,14 +52,19 @@ export interface ScoredManager {
   score: number
 }
 
-// Full orchestrated result returned to the client: LLM draft + department resolved + managers ranked
+// Full orchestrated result returned to the client: LLM draft + department resolved + manager ranked.
+// sub_tasks is only populated when the caller opted in via want_sub_tasks — the decision to
+// split is made up front by the user, not offered/accepted after the fact.
 export interface AiAssignSuggestion {
-  steps: AiAssignStep[]
   department_id: string
   department_name: string
-  due_at: string
+  // Polished version of the user's description, or generated from the title if they left it
+  // blank — always returned so the review step has something to show alongside the title.
+  description: string
+  recommended_manager_id: string | null
+  reason: string
   candidates: ScoredManager[]
-  suggested_manager_ids: string[]
+  sub_tasks: AiAssignStep[]
 }
 
 export interface ShiftSuggestion {

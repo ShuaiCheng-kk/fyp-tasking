@@ -25,6 +25,10 @@ export async function GET(req: NextRequest) {
       const requests = await attendanceService.getShiftSwapRequests(company_id)
       return NextResponse.json({ success: true, requests })
     }
+    if (resource === 'fixed_off_days') {
+      const requests = await attendanceService.getFixedOffDayRequests(company_id)
+      return NextResponse.json({ success: true, requests })
+    }
     const dashboard = await attendanceService.getAttendanceDashboard(company_id)
     return NextResponse.json({ success: true, dashboard })
   } catch (err) {
@@ -89,6 +93,18 @@ export async function PATCH(req: NextRequest) {
         return NextResponse.json({ success: false, message: 'id, reviewer_id and decision are required' }, { status: 400 })
       }
       const request = await attendanceService.decideShiftSwapRequest({
+        id: b.id,
+        reviewer_id: b.reviewer_id,
+        decision: b.decision as AttendanceRequestStatus,
+      })
+      return NextResponse.json({ success: true, request })
+    }
+
+    if (action === 'decide_fixed_off_day') {
+      if (typeof b.id !== 'string' || typeof b.reviewer_id !== 'string' || typeof b.decision !== 'string') {
+        return NextResponse.json({ success: false, message: 'id, reviewer_id and decision are required' }, { status: 400 })
+      }
+      const request = await attendanceService.decideFixedOffDayRequest({
         id: b.id,
         reviewer_id: b.reviewer_id,
         decision: b.decision as AttendanceRequestStatus,

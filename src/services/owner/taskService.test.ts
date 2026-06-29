@@ -22,6 +22,7 @@ vi.mock('@/repositories/owner/taskRepository', () => ({
     getShiftById: vi.fn(),
     hasShiftOnDate: vi.fn(),
     updateTask: vi.fn(),
+    updateSubTasksByParent: vi.fn(),
     deleteTask: vi.fn(),
     deleteSubTasksByParent: vi.fn(),
     getTaskStatsByCompany: vi.fn(),
@@ -63,6 +64,7 @@ describe('taskService — Task (UC14-26)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.mocked(taskRepository.getManagersByDepartment).mockResolvedValue([])
+    vi.mocked(taskRepository.hasShiftOnDate).mockResolvedValue(true)
   })
 
   describe('assignTask (UC14)', () => {
@@ -731,6 +733,27 @@ describe('taskService — Task (UC14-26)', () => {
 
       expect(taskRepository.createTask).toHaveBeenCalledTimes(1)
     })
+
+    it('uses a per-sub-task assigned_user_id/due_at when provided (UC20 AI step distribution), falling back to the parent otherwise', async () => {
+      vi.mocked(taskRepository.createTask).mockImplementation(async input => ({
+        ...baseTask, ...input, id: input.parent_task_id ? `sub-${input.title}` : 'main-1',
+      }))
+
+      await taskService.assignTaskWithSubTasks(
+        { company_id: 'company-1', department_id: 'dept-1', title: 'Main task', due_at: '2026-07-01T18:00:00.000Z' },
+        [
+          { title: 'Step 1', assigned_user_id: 'manager-2', due_at: '2026-06-30T12:00:00.000Z' },
+          { title: 'Step 2' },
+        ],
+      )
+
+      expect(taskRepository.createTask).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        title: 'Step 1', assigned_user_id: 'manager-2', due_at: '2026-06-30T12:00:00.000Z',
+      }))
+      expect(taskRepository.createTask).toHaveBeenNthCalledWith(3, expect.objectContaining({
+        title: 'Step 2', due_at: '2026-07-01T18:00:00.000Z',
+      }))
+    })
   })
 
   describe('reorderSubTasks (UC28)', () => {
@@ -863,6 +886,47 @@ describe('taskService — Task (UC14-26)', () => {
       expect(result.type).toBe('rebalance')
       expect(result.overloaded_user_id).toBe('user-1')
       expect(result.recommended_user_id).toBe('user-2')
+    })
+
+    it('chooses the task that improves balance instead of flipping the imbalance', async () => {
+      const within24Hours = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+      const within3Days = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString()
+      vi.mocked(taskRepository.getManagersByDepartment).mockResolvedValue([
+        { id: 'user-1', full_name: 'User One' },
+        { id: 'user-2', full_name: 'User Two' },
+      ])
+      vi.mocked(taskRepository.getTasksByCompany).mockResolvedValue([
+        // user-1 total: 12 + 6 = 18. Moving t1 would flip to 6 vs 18, so t2 is the useful move.
+        { ...baseTask, id: 't1', department_id: 'dept-1', parent_task_id: null, assigned_user_id: 'user-1', status: 'Assigned', priority: 'Urgent', due_at: within24Hours },
+        { ...baseTask, id: 't2', department_id: 'dept-1', parent_task_id: null, assigned_user_id: 'user-1', status: 'Assigned', priority: 'High', due_at: within3Days },
+        { ...baseTask, id: 't3', department_id: 'dept-1', parent_task_id: null, assigned_user_id: 'user-2', status: 'Assigned', priority: 'High', due_at: within3Days },
+      ])
+
+      const result = await taskService.getWorkloadRebalancingSuggestion('company-1')
+
+      expect(result.type).toBe('rebalance')
+      expect(result.suggested_task_id).toBe('t2')
+    })
+
+    it('returns one workload suggestion card per affected department', async () => {
+      const overdue = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+      vi.mocked(taskRepository.getManagersByDepartment).mockImplementation(async (_companyId, deptId) => (
+        deptId === 'dept-1'
+          ? [{ id: 'user-1', full_name: 'User One' }, { id: 'user-2', full_name: 'User Two' }]
+          : [{ id: 'user-3', full_name: 'User Three' }, { id: 'user-4', full_name: 'User Four' }]
+      ))
+      vi.mocked(taskRepository.getTasksByCompany).mockResolvedValue([
+        { ...baseTask, id: 'd1-t1', department_id: 'dept-1', parent_task_id: null, assigned_user_id: 'user-1', status: 'Assigned', priority: 'Urgent', due_at: overdue },
+        { ...baseTask, id: 'd1-t2', department_id: 'dept-1', parent_task_id: null, assigned_user_id: 'user-1', status: 'Assigned', priority: 'High', due_at: overdue },
+        { ...baseTask, id: 'd2-t1', department_id: 'dept-2', parent_task_id: null, assigned_user_id: 'user-3', status: 'Assigned', priority: 'Urgent', due_at: overdue },
+        { ...baseTask, id: 'd2-t2', department_id: 'dept-2', parent_task_id: null, assigned_user_id: 'user-3', status: 'Assigned', priority: 'High', due_at: overdue },
+      ])
+
+      const result = await taskService.getWorkloadRebalancingSuggestions('company-1')
+
+      expect(result).toHaveLength(2)
+      expect(result.map(item => item.department_id).sort()).toEqual(['dept-1', 'dept-2'])
+      expect(result.every(item => item.type === 'rebalance' && item.suggested_task_id && item.reason)).toBe(true)
     })
 
     it('scopes the suggestion to the given department only', async () => {

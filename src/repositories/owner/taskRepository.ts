@@ -175,12 +175,14 @@ export const taskRepository = {
   },
 
   async hasShiftOnDate(user_id: string, company_id: string, shift_date: string): Promise<boolean> {
+    // A draft shift isn't a real commitment yet, so it can't make someone eligible for a task.
     const { data, error } = await supabase
       .from('shift_assignments')
-      .select('id, shifts!inner(shift_date, company_id)')
+      .select('id, shifts!inner(shift_date, company_id, publication_status)')
       .eq('user_id', user_id)
       .eq('shifts.company_id', company_id)
       .eq('shifts.shift_date', shift_date)
+      .eq('shifts.publication_status', 'published')
       .limit(1)
     if (error) throw new Error(error.message)
     return (data ?? []).length > 0

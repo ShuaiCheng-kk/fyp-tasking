@@ -179,6 +179,7 @@ export const schedulingRuleRepository = {
       .from('employee_fixed_off_days')
       .select('user_id, weekday')
       .eq('company_id', company_id)
+      .eq('status', 'approved')
     if (error) {
       if (/employee_fixed_off_days|does not exist|schema cache/i.test(error.message)) return []
       throw new Error(error.message)

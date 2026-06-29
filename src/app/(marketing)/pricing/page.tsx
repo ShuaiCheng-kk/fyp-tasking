@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { useState, useEffect, Suspense } from 'react';
 import { Check, ChevronDown, X } from 'lucide-react';
 import { hero, plans, comparisonTable, faqs, cta } from './content';
@@ -64,12 +64,13 @@ function UpgradeModal({
   companyId: string;
   onClose: () => void;
 }) {
-  const router = useRouter();
   const [companyName, setCompanyName] = useState('your company');
   const [memberCount, setMemberCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState('');
+  const [userId, setUserId] = useState('');
+  const [userEmail, setUserEmail] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -85,12 +86,18 @@ function UpgradeModal({
         // Fetch company name from companies list
         const uid = typeof localStorage !== 'undefined' ? localStorage.getItem('tasking_user_id') : null;
         if (uid) {
-          const companiesRes = await fetch(`/api/company/my-companies?owner_id=${uid}`);
+          setUserId(uid);
+          const [companiesRes, meRes] = await Promise.all([
+            fetch(`/api/company/my-companies?owner_id=${uid}`),
+            fetch(`/api/user/me?user_id=${uid}`),
+          ]);
           const companiesData = await companiesRes.json();
           if (!cancelled && companiesData.success) {
             const match = companiesData.companies?.find((c: any) => c.id === companyId);
             if (match) setCompanyName(match.name);
           }
+          const meData = await meRes.json();
+          if (!cancelled && meData.success) setUserEmail(meData.user.email_address);
         }
       } catch {}
       finally { if (!cancelled) setLoading(false); }
@@ -103,16 +110,16 @@ function UpgradeModal({
     setConfirming(true);
     setError('');
     try {
-      const res = await fetch('/api/company/update-plan', {
+      const res = await fetch('/api/stripe/upgrade-checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company_id: companyId, plan: 'Paid' }),
+        body: JSON.stringify({ companyId, userId, email: userEmail }),
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.message);
-      router.push('/owner/settings?tab=subscription');
+      window.location.href = data.url;
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to upgrade plan');
+      setError(err instanceof Error ? err.message : 'Failed to start checkout');
       setConfirming(false);
     }
   };

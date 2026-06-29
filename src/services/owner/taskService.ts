@@ -74,14 +74,15 @@ export const taskService = {
         sequence_order: ordered ? i : null,
         title,
         description: subTasks[i].description ?? null,
-        assigned_user_id: mainTask.assigned_user_id,
+        // AI-distributed sub-tasks (UC20) carry their own assignee/due_at per step; manually
+        // created sub-tasks (UC19) have neither, so they inherit the parent's values.
+        assigned_user_id: subTasks[i].assigned_user_id ?? mainTask.assigned_user_id,
         assigned_by: mainTask.assigned_by,
         status: 'Assigned',
         percentage_complete: 0,
         task_date: mainTask.task_date,
-        // Sub-tasks inherit the parent's priority/deadline so they remain part of the same task plan.
         priority: mainTask.priority,
-        due_at: mainTask.due_at,
+        due_at: subTasks[i].due_at ?? mainTask.due_at,
       })
     }
     return mainTask
@@ -451,15 +452,14 @@ export const taskService = {
   // manager pool starts at score 0 so managers with no active tasks can be recommended. A user
   // must have at least two active main tasks before we suggest moving one away; moving their only
   // task is not a meaningful rebalance.
-  async getWorkloadRebalancingSuggestion(company_id: string, department_id?: string): Promise<TaskWorkloadSuggestion> {
+  async getWorkloadRebalancingSuggestions(company_id: string, department_id?: string): Promise<TaskWorkloadSuggestion[]> {
     const activeTasks = (await taskRepository.getTasksByCompany(company_id))
       .filter(task => task.status !== 'Complete' && task.parent_task_id === null && task.assigned_user_id)
       .filter(task => !department_id || task.department_id === department_id)
 
     const departmentIds = department_id ? [department_id] : [...new Set(activeTasks.map(task => task.department_id))]
 
-    let worst: TaskWorkloadSuggestion | null = null
-    let worstGap = 0
+    const suggestions: TaskWorkloadSuggestion[] = []
     for (const deptId of departmentIds) {
       const scores = new Map<string, number>()
       const taskCounts = new Map<string, number>()
@@ -483,26 +483,34 @@ export const taskService = {
       let suggestedTask: Task | undefined
       let recommended_user_id = ''
       let recommended_score = 0
+      let bestPostSpread = Number.POSITIVE_INFINITY
+      const currentSpread = ranked[0][1] - ranked[ranked.length - 1][1]
       const movableTasks = activeTasks
         .filter(task => task.department_id === deptId && task.assigned_user_id === overloaded_user_id)
         .sort((a, b) => taskWorkloadWeight(b) - taskWorkloadWeight(a))
       for (const [candidateUserId, candidateScore] of ranked.slice(1).reverse()) {
         if (overloaded_score <= candidateScore * 2) continue
         for (const task of movableTasks) {
-          if (!task.task_date || await taskRepository.hasShiftOnDate(candidateUserId, company_id, task.task_date)) {
+          if (task.task_date && !(await taskRepository.hasShiftOnDate(candidateUserId, company_id, task.task_date))) continue
+          const taskWeight = taskWorkloadWeight(task)
+          const postScores = new Map(scores)
+          postScores.set(overloaded_user_id, overloaded_score - taskWeight)
+          postScores.set(candidateUserId, candidateScore + taskWeight)
+          const postRanked = [...postScores.values()].sort((a, b) => b - a)
+          const postSpread = postRanked[0] - postRanked[postRanked.length - 1]
+          if (postSpread < currentSpread && postSpread < bestPostSpread) {
             recommended_user_id = candidateUserId
             recommended_score = candidateScore
             suggestedTask = task
-            break
+            bestPostSpread = postSpread
           }
         }
-        if (suggestedTask) break
       }
       if (!suggestedTask) continue
 
-      const gap = overloaded_score - recommended_score
-      if (gap <= worstGap) continue
-      worst = {
+      const improvement = currentSpread - bestPostSpread
+      if (improvement <= 0) continue
+      suggestions.push({
         type: 'rebalance',
         message: `Move one active task from ${overloaded_user_id} to ${recommended_user_id}.`,
         department_id: deptId,
@@ -510,13 +518,22 @@ export const taskService = {
         recommended_user_id,
         suggested_task_id: suggestedTask.id,
         suggested_task_title: suggestedTask.title,
+        reason: `This move reduces the workload score gap from ${currentSpread} to ${bestPostSpread}.`,
+        score_gap_before: currentSpread,
+        score_gap_after: bestPostSpread,
         overloaded_score,
         recommended_score,
-      }
-      worstGap = gap
+      })
     }
 
-    return worst ?? { type: 'balanced', message: 'Workload is currently balanced across assigned users.' }
+    return suggestions
+  },
+
+  async getWorkloadRebalancingSuggestion(company_id: string, department_id?: string): Promise<TaskWorkloadSuggestion> {
+    const suggestions = await this.getWorkloadRebalancingSuggestions(company_id, department_id)
+    return suggestions
+      .sort((a, b) => (b.score_gap_before ?? 0) - (b.score_gap_after ?? 0) - ((a.score_gap_before ?? 0) - (a.score_gap_after ?? 0)))[0]
+      ?? { type: 'balanced', message: 'Workload is currently balanced across assigned users.' }
   },
 
   async getTaskReassignmentSuggestion(id: string): Promise<TaskReassignmentSuggestion> {

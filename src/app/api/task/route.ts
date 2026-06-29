@@ -52,8 +52,12 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: true, tasks })
     }
     if (suggestion === 'workload') {
-      const workloadSuggestion = await taskService.getWorkloadRebalancingSuggestion(company_id, department_id)
-      return NextResponse.json({ success: true, suggestion: workloadSuggestion })
+      const suggestions = await taskService.getWorkloadRebalancingSuggestions(company_id, department_id)
+      return NextResponse.json({
+        success: true,
+        suggestions,
+        suggestion: suggestions[0] ?? { type: 'balanced', message: 'Workload is currently balanced across assigned users.' },
+      })
     }
     if (suggestion === 'reassignment' && task_id) {
       const reassignmentSuggestion = await taskService.getTaskReassignmentSuggestion(task_id)

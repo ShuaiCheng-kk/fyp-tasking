@@ -277,6 +277,10 @@ type Member = {
   full_name: string
   role: string
   department_id: string | null
+  email_address?: string | null
+  phone_number?: string | null
+  date_of_birth?: string | null
+  created_at?: string | null
   skills?: string[] | string | null
   worker_status?: string | null
   profile_photo_url?: string | null
@@ -372,6 +376,13 @@ function isDueOverdue(due: string): boolean {
 function isDueWithinHours(due: string, hours: number): boolean {
   const msRemaining = new Date(due).getTime() - Date.now()
   return msRemaining > 0 && msRemaining <= hours * 60 * 60 * 1000
+}
+
+function formatDateDisplay(value: string | null | undefined, empty = '—'): string {
+  if (!value) return empty
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return empty
+  return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(date)
 }
 
 function formatShiftOptionLabel(shift: ShiftOption): string {
@@ -917,7 +928,7 @@ function SubTaskOrderList({ items, onReorder, onRemove, onRename, disabled }: {
 // ─── Task Card ────────────────────────────────────────────────────────────────
 
 function TaskCard({
-  task, members, shiftOptions, departments, showDept, onClick, onEdit, subTaskCount, expanded, onToggleExpand, clickable = true, isOwner = true, highlighted = false,
+  task, members, shiftOptions, departments, showDept, onClick, onEdit, subTaskCount, expanded, onToggleExpand, clickable = true, isOwner = true, highlighted = false, noOuterMargin = false, fillHeight = false,
 }: {
   task: Task
   members: Member[]
@@ -932,6 +943,8 @@ function TaskCard({
   clickable?: boolean
   isOwner?: boolean
   highlighted?: boolean
+  noOuterMargin?: boolean
+  fillHeight?: boolean
 }) {
   const assignee = members.find(m => m.id === task.assigned_user_id)
   const shift = task.shift_id ? shiftOptions.find(s => s.id === task.shift_id) : null
@@ -942,7 +955,7 @@ function TaskCard({
   const hasTopRowBadges = !!(priority && task.priority) || !!dept || !!subTaskCount
 
   return (
-    <div style={{ position: 'relative', marginBottom: showStack ? 22 : 14 }}>
+    <div style={{ position: 'relative', marginBottom: noOuterMargin ? 0 : (showStack ? 22 : 14), height: fillHeight ? '100%' : undefined }}>
       {showStack && (
         <>
           <div style={{ position: 'absolute', left: 12, right: 12, bottom: -8, height: 14, background: '#EEF1F5', border: '1px solid #E2E8F0', borderRadius: 10, zIndex: 0 }} />
@@ -961,6 +974,11 @@ function TaskCard({
           cursor: clickable ? 'pointer' : 'default',
           position: 'relative',
           zIndex: 2,
+          height: fillHeight ? '100%' : undefined,
+          boxSizing: 'border-box',
+          display: fillHeight ? 'flex' : undefined,
+          flexDirection: fillHeight ? 'column' : undefined,
+          justifyContent: fillHeight ? 'space-between' : undefined,
           boxShadow: highlighted ? '0 0 0 3px rgba(249,115,22,0.16), 0 10px 28px rgba(249,115,22,0.16)' : undefined,
         }}
       >
@@ -1148,8 +1166,10 @@ export default function OwnerTasksPage() {
   const [editSubTasks, setEditSubTasks] = useState<{ id: string; title: string }[]>([])
   const [reassignmentSuggestion, setReassignmentSuggestion] = useState<TaskReassignmentSuggestion | null>(null)
   const [workloadSuggestion, setWorkloadSuggestion] = useState<TaskWorkloadSuggestion | null>(null)
-  const [workloadApplyLoading, setWorkloadApplyLoading] = useState(false)
+  const [workloadSuggestions, setWorkloadSuggestions] = useState<TaskWorkloadSuggestion[]>([])
+  const [workloadApplyLoadingId, setWorkloadApplyLoadingId] = useState('')
   const [workloadApplyError, setWorkloadApplyError] = useState('')
+  const [profileMember, setProfileMember] = useState<Member | null>(null)
   const [stalledAlerts, setStalledAlerts] = useState<StalledTaskAlert[]>([])
   const [workloadInsightOpen, setWorkloadInsightOpen] = useState(false)
   const [highlightedStalledTaskId, setHighlightedStalledTaskId] = useState('')
@@ -1233,14 +1253,20 @@ export default function OwnerTasksPage() {
   const [aiTitle,          setAiTitle]          = useState('')
   const [aiDescription,    setAiDescription]    = useState('')
   const [aiPriority,       setAiPriority]       = useState('')
-  const [aiPeopleNeeded,   setAiPeopleNeeded]   = useState(1)
+  const [aiDueDate,        setAiDueDate]        = useState('')
+  const [aiDueTime,        setAiDueTime]        = useState('')
+  // Both optional, chosen up front so Generate already knows whether to ask the AI for
+  // sub-tasks, and whether to surface the (simple Repeats + Repeat-until) recurring fields.
+  const [aiSubTaskEnabled, setAiSubTaskEnabled] = useState(false)
+  const [aiRecurringEnabled, setAiRecurringEnabled] = useState(false)
+  const [aiRecurrenceRule, setAiRecurrenceRule] = useState<TaskRecurrenceRule | ''>('')
+  const [aiRecurrenceEndDate, setAiRecurrenceEndDate] = useState('')
   const [aiLoading,        setAiLoading]        = useState(false)
   const [aiError,          setAiError]          = useState('')
   const [aiSuggestion,     setAiSuggestion]     = useState<AiAssignSuggestion | null>(null)
   const [aiDeptId,         setAiDeptId]         = useState('')
-  const [aiManagerIds,     setAiManagerIds]     = useState<string[]>([])
-  const [aiDueDate,        setAiDueDate]        = useState('')
-  const [aiDueTime,        setAiDueTime]        = useState('')
+  const [aiManagerId,      setAiManagerId]      = useState('')
+  const [aiSubTaskDrafts,  setAiSubTaskDrafts]  = useState<{ title: string; description: string }[]>([])
   const [aiCreateLoading,  setAiCreateLoading]  = useState(false)
 
   // Task Template management modal
@@ -1827,16 +1853,16 @@ export default function OwnerTasksPage() {
     finally { setTaskActionLoading('') }
   }
 
-  const handleApplyWorkloadSuggestion = async () => {
-    if (!workloadSuggestion?.suggested_task_id || !workloadSuggestion.recommended_user_id) return
-    setWorkloadApplyLoading(true); setWorkloadApplyError('')
+  const handleApplyWorkloadSuggestion = async (suggestion: TaskWorkloadSuggestion) => {
+    if (!suggestion.suggested_task_id || !suggestion.recommended_user_id) return
+    setWorkloadApplyLoadingId(suggestion.suggested_task_id); setWorkloadApplyError('')
     try {
       const res = await fetch('/api/task', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          id: workloadSuggestion.suggested_task_id,
-          assigned_user_id: workloadSuggestion.recommended_user_id,
+          id: suggestion.suggested_task_id,
+          assigned_user_id: suggestion.recommended_user_id,
           assigned_by: internalUserId || undefined,
         }),
       })
@@ -1849,7 +1875,7 @@ export default function OwnerTasksPage() {
     } catch (err) {
       setWorkloadApplyError(err instanceof Error ? err.message : 'Failed to reassign task')
     } finally {
-      setWorkloadApplyLoading(false)
+      setWorkloadApplyLoadingId('')
     }
   }
 
@@ -1935,14 +1961,16 @@ export default function OwnerTasksPage() {
     try {
       const deptParam = selectedDeptId ? `&department_id=${selectedDeptId}` : ''
       const query = kind === 'workload'
-        ? `/api/task?company_id=${companyId}&suggestion=workload${deptParam}`
+        ? `/api/task?company_id=${companyId}&suggestion=workload`
         : `/api/task?company_id=${companyId}&suggestion=stalled${deptParam}`
       const res = await fetch(query)
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
       if (kind === 'workload') {
-        setWorkloadSuggestion(data.suggestion)
-        if (data.suggestion?.type !== 'rebalance') setWorkloadInsightOpen(false)
+        const suggestions = (data.suggestions ?? []).filter((item: TaskWorkloadSuggestion) => item.type === 'rebalance')
+        setWorkloadSuggestions(suggestions)
+        setWorkloadSuggestion(suggestions[0] ?? data.suggestion)
+        if (suggestions.length === 0) setWorkloadInsightOpen(false)
       } else {
         const alerts = data.alerts ?? []
         setStalledAlerts(alerts)
@@ -2068,12 +2096,16 @@ export default function OwnerTasksPage() {
     setAiTitle('')
     setAiDescription('')
     setAiPriority('')
-    setAiPeopleNeeded(1)
-    setAiSuggestion(null)
-    setAiDeptId(selectedDeptId || '')
-    setAiManagerIds([])
     setAiDueDate('')
     setAiDueTime('')
+    setAiSubTaskEnabled(false)
+    setAiRecurringEnabled(false)
+    setAiRecurrenceRule('')
+    setAiRecurrenceEndDate('')
+    setAiSuggestion(null)
+    setAiDeptId(selectedDeptId || '')
+    setAiManagerId('')
+    setAiSubTaskDrafts([])
     setAiError('')
   }
 
@@ -2254,8 +2286,9 @@ export default function OwnerTasksPage() {
 
   const shiftUserIdsByDate = useMemo(() => {
     const map = new Map<string, Set<string>>()
+    // A draft shift isn't a real commitment yet, so it can't make someone eligible for a task.
     for (const shift of shiftOptions) {
-      if (!shift.user_id) continue
+      if (!shift.user_id || shift.publication_status !== 'published') continue
       const set = map.get(shift.shift_date) ?? new Set<string>()
       set.add(shift.user_id)
       map.set(shift.shift_date, set)
@@ -2279,6 +2312,10 @@ export default function OwnerTasksPage() {
     }
     return dates
   }, [kanban])
+
+  const allKanbanTasks = useMemo(() => (
+    kanban ? COLUMNS.flatMap(col => kanban[col] ?? []) : []
+  ), [kanban])
 
   useEffect(() => {
     if (hasAutoSelectedTaskDateRef.current || datesWithTasks.size === 0) return
@@ -3006,7 +3043,7 @@ export default function OwnerTasksPage() {
                   </div>
                   <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
                     {(() => {
-                      const hasIssue = workloadSuggestion?.type === 'rebalance'
+                      const hasIssue = workloadSuggestions.length > 0
                       return (
                         <div style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#F9FAFB', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
                           <span style={{ width: 28, height: 28, borderRadius: 9, background: '#EEF2FF', color: '#4F46E5', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -3922,91 +3959,195 @@ export default function OwnerTasksPage() {
       )}
 
       {/* ═══════════════ DELETE TASK MODAL ═══════════════ */}
-      {workloadInsightOpen && workloadSuggestion?.type === 'rebalance' && (() => {
-        const departmentName = departments.find(d => d.id === workloadSuggestion.department_id)?.name ?? 'Selected Department'
-        const overloadedName = members.find(m => m.id === workloadSuggestion.overloaded_user_id)?.full_name ?? 'A manager'
-        const recommendedName = members.find(m => m.id === workloadSuggestion.recommended_user_id)?.full_name ?? 'another manager'
-        const suggestedTaskTitle = workloadSuggestion.suggested_task_title ?? 'the suggested task'
-        return (
+      {workloadInsightOpen && workloadSuggestions.length > 0 && (
+        <div
+          onClick={() => setWorkloadInsightOpen(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, zIndex: 110, animation: 'overlayFadeIn 0.18s ease-out' }}
+        >
           <div
-            onClick={() => setWorkloadInsightOpen(false)}
-            style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'grid', placeItems: 'center', padding: 18, zIndex: 110, animation: 'overlayFadeIn 0.18s ease-out' }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="workload-suggestion-title"
+            onClick={e => e.stopPropagation()}
+            style={{ width: 'min(560px, calc(100vw - 36px))', maxHeight: '88vh', background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)', display: 'flex', flexDirection: 'column' }}
           >
-            <div
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="workload-suggestion-title"
-              onClick={e => e.stopPropagation()}
-              style={{ width: 'min(480px, 100%)', background: '#FFFFFF', borderRadius: 16, border: '1px solid #E2E8F0', boxShadow: '0 24px 70px rgba(15,23,42,0.32)', padding: 18, animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 16 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                  <span style={{ width: 34, height: 34, borderRadius: 10, background: '#FEF3C7', color: '#D97706', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <AlertTriangle size={17} />
-                  </span>
-                  <h2 id="workload-suggestion-title" style={{ margin: 0, color: TASK_TEXT, fontSize: 16, fontWeight: 800 }}>Workload Suggestion</h2>
+            <div style={{ padding: '18px 20px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <AlertTriangle size={15} color="#fff" strokeWidth={2.5} />
                 </div>
-                <button type="button" onClick={() => setWorkloadInsightOpen(false)} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, border: `1px solid ${TASK_BORDER}`, borderRadius: 9, background: '#FFFFFF', cursor: 'pointer', color: TASK_TEXT }}>
-                  <X size={16} />
-                </button>
+                <h2 id="workload-suggestion-title" style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+                  Workload Suggestion
+                </h2>
               </div>
+              <button onClick={() => setWorkloadInsightOpen(false)} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+                onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
+              >
+                <X size={16} />
+              </button>
+            </div>
 
-              <div style={{ display: 'grid', gap: 10 }}>
-                <div style={{ border: `1px solid ${TASK_BORDER}`, borderRadius: 12, background: '#F8FAFC', padding: '12px 14px' }}>
-                  <p style={{ margin: '0 0 5px', fontSize: 11, fontWeight: 800, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Department</p>
-                  <p style={{ margin: 0, fontSize: 15, fontWeight: 800, color: TASK_TEXT }}>{departmentName}</p>
-                </div>
+            <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto' }}>
+              {workloadSuggestions.map(suggestion => {
+                const recommendedMember = members.find(m => m.id === suggestion.recommended_user_id)
+                const recommendedName = recommendedMember?.full_name ?? 'another manager'
+                const suggestedTask = allKanbanTasks.find(task => task.id === suggestion.suggested_task_id)
+                const loading = workloadApplyLoadingId === suggestion.suggested_task_id
+                return (
+                  <div key={`${suggestion.department_id}-${suggestion.suggested_task_id}`} style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10, background: '#FFFFFF' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '260px 40px 150px', alignItems: 'stretch', justifyContent: 'center', gap: 12 }}>
+                      <div style={{ minWidth: 0 }}>
+                        {suggestedTask ? (
+                          <TaskCard
+                            task={suggestedTask}
+                            members={members}
+                            shiftOptions={shiftOptions}
+                            departments={departments}
+                            showDept
+                            onClick={() => {}}
+                            onEdit={() => {}}
+                            clickable={false}
+                            isOwner={false}
+                            noOuterMargin
+                            fillHeight
+                          />
+                        ) : (
+                          <div className="task-card" style={{ height: '100%', boxSizing: 'border-box', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 10, padding: '16px 16px', color: TASK_TEXT, fontSize: 14, fontWeight: 800 }}>
+                            {suggestion.suggested_task_title ?? 'Task'}
+                          </div>
+                        )}
+                      </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'stretch', gap: 10 }}>
-                  <div style={{ border: '1px solid #FECACA', borderRadius: 12, background: '#FEF2F2', padding: '12px 14px', minWidth: 0 }}>
-                    <p style={{ margin: '0 0 5px', fontSize: 11, fontWeight: 800, color: '#B91C1C', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Too High</p>
-                    <p style={{ margin: 0, fontSize: 14, fontWeight: 800, color: TASK_TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{overloadedName}</p>
-                    {typeof workloadSuggestion.overloaded_score === 'number' && (
-                      <p style={{ margin: '5px 0 0', fontSize: 12, fontWeight: 700, color: '#991B1B' }}>Score {workloadSuggestion.overloaded_score}</p>
-                    )}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <button
+                          type="button"
+                          title="Reassign task"
+                          aria-label={`Reassign task to ${recommendedName}`}
+                          onClick={() => handleApplyWorkloadSuggestion(suggestion)}
+                          disabled={!!workloadApplyLoadingId || !suggestion.suggested_task_id || !suggestion.recommended_user_id}
+                          style={{ width: 36, height: 36, border: '1px solid #FED7AA', borderRadius: 8, background: loading ? '#FFEDD5' : '#FFF7ED', color: '#EA580C', cursor: workloadApplyLoadingId ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, opacity: (!suggestion.suggested_task_id || !suggestion.recommended_user_id) ? 0.55 : 1, transition: 'opacity 0.18s ease, box-shadow 0.18s ease, background 0.18s ease' }}
+                        >
+                          {loading ? <Spinner size={13} /> : <ArrowRightLeft size={15} />}
+                        </button>
+                      </div>
+
+                      <div style={{ minWidth: 0, width: 150, justifySelf: 'stretch', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 7 }}>
+                        <p style={{ margin: 0, width: '100%', fontSize: 10, fontWeight: 800, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.02em', lineHeight: 1.15, textAlign: 'center', whiteSpace: 'nowrap' }}>Reassign Suggestion</p>
+                        <button
+                          type="button"
+                          aria-label={`Open ${recommendedName} profile`}
+                          onClick={() => { if (recommendedMember) setProfileMember(recommendedMember) }}
+                          className="internal-member-card"
+                          style={{ width: 126, height: 128, padding: '10px 8px', borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', boxShadow: '0 1px 3px rgba(15,23,42,0.06)', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', cursor: recommendedMember ? 'pointer' : 'default', textAlign: 'center', transition: 'box-shadow 0.22s ease, border-color 0.22s ease, transform 0.22s ease, background 0.22s ease' }}
+                          onMouseEnter={e => { if (recommendedMember) { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.boxShadow = '0 3px 10px rgba(0,0,0,0.10)'; e.currentTarget.style.background = '#FFFFFF' } }}
+                          onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.boxShadow = '0 1px 3px rgba(15,23,42,0.06)'; e.currentTarget.style.background = '#FFFFFF' }}
+                        >
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, width: '100%' }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 64, height: 64, borderRadius: 999, background: recommendedMember?.profile_photo_url ? 'transparent' : '#FFF7ED', color: '#EA580C', flexShrink: 0, overflow: 'hidden' }}>
+                              {recommendedMember?.profile_photo_url
+                                ? <img src={recommendedMember.profile_photo_url} alt={recommendedName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                : <UserCog size={30} />}
+                            </span>
+                            <p style={{ fontWeight: 700, fontSize: '0.875rem', color: '#0F172A', margin: 0, lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
+                              {recommendedName}
+                            </p>
+                          </div>
+                        </button>
+                      </div>
+                    </div>
                   </div>
-
-                  <span style={{ width: 34, height: 34, borderRadius: 999, background: '#FFF7ED', color: TASK_ORANGE, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', alignSelf: 'center' }}>
-                    <ArrowRightLeft size={16} />
-                  </span>
-
-                  <div style={{ border: '1px solid #BBF7D0', borderRadius: 12, background: '#F0FDF4', padding: '12px 14px', minWidth: 0 }}>
-                    <p style={{ margin: '0 0 5px', fontSize: 11, fontWeight: 800, color: '#15803D', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Reassign To</p>
-                    <p style={{ margin: 0, fontSize: 14, fontWeight: 800, color: TASK_TEXT, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{recommendedName}</p>
-                    {typeof workloadSuggestion.recommended_score === 'number' && (
-                      <p style={{ margin: '5px 0 0', fontSize: 12, fontWeight: 700, color: '#166534' }}>Score {workloadSuggestion.recommended_score}</p>
-                    )}
-                  </div>
+                )
+              })}
+              {workloadApplyError && (
+                <div style={{ border: '1px solid #FECACA', background: '#FEF2F2', color: '#B91C1C', borderRadius: 8, padding: '9px 11px', fontSize: 12, fontWeight: 700 }}>
+                  {workloadApplyError}
                 </div>
-
-                <div style={{ border: `1px solid ${TASK_BORDER}`, borderRadius: 12, background: '#FFFFFF', padding: '12px 14px' }}>
-                  <p style={{ margin: '0 0 5px', fontSize: 11, fontWeight: 800, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Task To Reassign</p>
-                  <p style={{ margin: 0, fontSize: 15, fontWeight: 800, color: TASK_TEXT, lineHeight: 1.35 }}>{suggestedTaskTitle}</p>
-                  <p style={{ margin: '8px 0 0', color: '#64748B', fontSize: 13, fontWeight: 700, lineHeight: 1.45 }}>
-                    Move this task from {overloadedName} to {recommendedName}.
-                  </p>
-                </div>
-
-                {workloadApplyError && (
-                  <div style={{ border: '1px solid #FECACA', background: '#FEF2F2', color: '#B91C1C', borderRadius: 10, padding: '9px 11px', fontSize: 12, fontWeight: 700 }}>
-                    {workloadApplyError}
-                  </div>
-                )}
-
-                <button
-                  type="button"
-                  onClick={handleApplyWorkloadSuggestion}
-                  disabled={workloadApplyLoading || !workloadSuggestion.suggested_task_id || !workloadSuggestion.recommended_user_id}
-                  style={{ height: 38, border: 0, borderRadius: 10, background: workloadApplyLoading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', fontSize: 13, fontWeight: 800, cursor: workloadApplyLoading ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, opacity: (!workloadSuggestion.suggested_task_id || !workloadSuggestion.recommended_user_id) ? 0.55 : 1 }}
-                >
-                  {workloadApplyLoading ? <Spinner size={13} /> : <ArrowRightLeft size={15} />}
-                  Reassign Task
-                </button>
-              </div>
+              )}
             </div>
           </div>
-        )
-      })()}
+        </div>
+      )}
+
+      {/* ─────────────── MEMBER PROFILE MODAL ─────────────── */}
+      {profileMember && (
+        <div
+          onClick={() => setProfileMember(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, zIndex: 130, animation: 'overlayFadeIn 0.18s ease-out' }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="workload-member-profile-title"
+            onClick={e => e.stopPropagation()}
+            style={{ width: 'min(420px, calc(100vw - 36px))', maxHeight: '88vh', overflowY: 'auto', background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}
+          >
+            <div style={{ padding: '18px 20px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <UserRound size={15} color="#fff" strokeWidth={2.5} />
+                </div>
+                <h2 id="workload-member-profile-title" style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+                  Member Profile
+                </h2>
+              </div>
+              <button
+                type="button"
+                aria-label="Close member profile"
+                onClick={() => setProfileMember(null)}
+                style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+                onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ padding: '16px 24px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', gap: 14 }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 44, height: 44, borderRadius: 999, background: profileMember.profile_photo_url ? 'transparent' : '#FFF7ED', color: '#EA580C', flexShrink: 0, overflow: 'hidden' }}>
+                {profileMember.profile_photo_url
+                  ? <img src={profileMember.profile_photo_url} alt={profileMember.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  : profileMember.role === 'Employee' ? <UserRound size={19} /> : <UserCog size={19} />}
+              </span>
+              <div>
+                <p style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A', margin: '0 0 5px' }}>{profileMember.full_name}</p>
+                <span style={{
+                  display: 'inline-block',
+                  padding: '3px 10px',
+                  borderRadius: 999,
+                  fontSize: '0.6875rem',
+                  fontWeight: 700,
+                  letterSpacing: '0.06em',
+                  textTransform: 'uppercase',
+                  background: profileMember.role === 'Owner' || profileMember.role === 'Partner' ? '#0F172A' :
+                    profileMember.role === 'Manager' ? '#FFF7ED' :
+                    profileMember.role === 'Employee' ? '#F3F4F6' : '#EFF6FF',
+                  color: profileMember.role === 'Owner' || profileMember.role === 'Partner' ? '#FFFFFF' :
+                    profileMember.role === 'Manager' ? '#EA580C' :
+                    profileMember.role === 'Employee' ? '#4B5563' : '#2563EB',
+                }}>
+                  {profileMember.role}
+                </span>
+              </div>
+            </div>
+
+            <div style={{ padding: '0 24px 20px', display: 'flex', flexDirection: 'column' }}>
+              {[
+                { label: 'Email Address', value: profileMember.email_address ?? '—' },
+                { label: 'Date of Birth', value: formatDateDisplay(profileMember.date_of_birth) },
+                { label: 'Phone Number', value: profileMember.phone_number ?? '—' },
+                { label: 'Joined On', value: formatDateDisplay(profileMember.created_at) },
+                { label: 'Department', value: departments.find(d => d.id === profileMember.department_id)?.name ?? '—' },
+              ].map(field => (
+                <div key={field.label} style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
+                  <label style={{ display: 'block', fontWeight: 700, fontSize: '0.8125rem', color: '#374151', marginBottom: 4 }}>{field.label}</label>
+                  <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, sans-serif" }}>{field.value}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {deleteTaskModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'grid', placeItems: 'center', padding: 18, zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>
@@ -4855,14 +4996,19 @@ export default function OwnerTasksPage() {
         </div>
       )}
 
-      {/* ═══════════════ AI TASK BREAKDOWN MODAL ═══════════════ */}
+      {/* ═══════════════ AI TASK ASSIGNMENT MODAL ═══════════════ */}
       {aiModal && (() => {
         const isReview = aiStep === 'review'
-        const aiDeptManagers = members.filter(m => m.role === 'Manager' && m.department_id === aiDeptId && userIdsWithShiftOnTaskDate.has(m.id))
+        // Eligibility is based on the task's own deadline date, not whatever date happens to be
+        // selected on the board — those can differ once the user picks a Deadline in this modal.
+        const aiDeptManagers = members.filter(m => m.role === 'Manager' && m.department_id === aiDeptId && userIdsWithShiftOnDate(aiDueDate).has(m.id))
 
         const handleGenerate = async () => {
           if (!aiTitle.trim()) { setAiError('Please enter a task title'); return }
           if (!aiPriority) { setAiError('Please select a priority'); return }
+          if (!aiDueDate || !aiDueTime) { setAiError('Please select a deadline'); return }
+          if (aiRecurringEnabled && !aiRecurrenceRule) { setAiError('Choose how often this task repeats'); return }
+          if (aiRecurringEnabled && !aiRecurrenceEndDate) { setAiError('Repeat until date is required for recurring tasks'); return }
           setAiLoading(true); setAiError('')
           try {
             const res = await fetch('/api/ai/assign', {
@@ -4873,19 +5019,18 @@ export default function OwnerTasksPage() {
                 title: aiTitle,
                 description: aiDescription,
                 priority: aiPriority,
-                people_needed: aiPeopleNeeded,
-                task_date: taskDate,
+                want_sub_tasks: aiSubTaskEnabled,
+                task_date: aiDueDate,
               }),
             })
             const data = await res.json()
             if (!data.success) throw new Error(data.message)
             const suggestion = data.suggestion as AiAssignSuggestion
             setAiSuggestion(suggestion)
+            setAiDescription(suggestion.description)
             setAiDeptId(suggestion.department_id)
-            setAiManagerIds(suggestion.suggested_manager_ids)
-            const due = new Date(suggestion.due_at)
-            setAiDueDate(formatDateKey(due))
-            setAiDueTime(due.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }))
+            setAiManagerId(suggestion.recommended_manager_id ?? '')
+            setAiSubTaskDrafts(suggestion.sub_tasks.map(s => ({ title: s.title, description: s.description })))
             setAiStep('review')
           } catch (err) {
             setAiError(err instanceof Error ? err.message : 'Failed to generate suggestion')
@@ -4899,13 +5044,11 @@ export default function OwnerTasksPage() {
           setAiCreateLoading(true); setAiError('')
           try {
             const due_at = new Date(`${aiDueDate}T${aiDueTime}:00`).toISOString()
-            const completionSteps = aiSuggestion.steps
-              .map((step, i) => `${i + 1}. ${step.title}\n   ${step.description}`)
-              .join('\n')
-            const taskDescription = [
-              aiDescription.trim(),
-              completionSteps ? `Completion Steps:\n${completionSteps}` : '',
-            ].filter(Boolean).join('\n\n') || null
+            const subTasks = aiSubTaskEnabled
+              ? aiSubTaskDrafts
+                  .map(s => ({ title: s.title.trim(), description: s.description.trim() || null }))
+                  .filter(s => s.title)
+              : []
             const res = await fetch('/api/task', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -4913,22 +5056,46 @@ export default function OwnerTasksPage() {
                 company_id: companyId,
                 department_id: aiDeptId,
                 title: aiTitle.trim(),
-                description: taskDescription,
+                description: aiDescription.trim() || null,
                 priority: aiPriority,
                 due_at,
-                assigned_user_id: aiManagerIds[0] || null,
+                assigned_user_id: aiManagerId || null,
                 assigned_by: internalUserId || null,
                 status: 'Assigned',
                 percentage_complete: 0,
                 task_date: taskDate,
+                sub_tasks: subTasks.length > 0 ? subTasks : undefined,
               }),
             })
             const data = await res.json()
             if (!data.success) throw new Error(data.message)
+
+            // Recurring is set up as a second step against the task just created, mirroring
+            // the New Task modal's flow — but kept to just Repeats + Repeat-until here, so the
+            // deadline rule defaults to same_day at the AI deadline's own time.
+            if (aiRecurringEnabled && aiRecurrenceRule) {
+              const taskId = data.task?.id
+              if (!taskId) throw new Error('Task created, but recurring setup could not find the new task')
+              const recurringRes = await fetch('/api/task', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: 'recurring',
+                  id: taskId,
+                  recurrence_rule: aiRecurrenceRule,
+                  recurrence_end_date: aiRecurrenceEndDate,
+                  assigned_by: internalUserId || undefined,
+                  deadline_rule: { type: 'same_day', time: aiDueTime },
+                }),
+              })
+              const recurringData = await recurringRes.json()
+              if (!recurringData.success) throw new Error(recurringData.message)
+            }
+
             setAiModal(false)
             await fetchKanban(companyId)
             await refreshAllTaskInsights()
-            showTaskToast('Task created successfully.')
+            showTaskToast(aiRecurringEnabled ? 'Recurring task created successfully.' : 'Task created successfully.')
           } catch (err) {
             setAiError(err instanceof Error ? err.message : 'Failed to create task')
           } finally {
@@ -4938,10 +5105,10 @@ export default function OwnerTasksPage() {
 
         return (
           <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>
-            <div onClick={e => e.stopPropagation()} style={{ width: 560, maxHeight: '90vh', background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.18)', display: 'flex', flexDirection: 'column', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
+            <div onClick={e => e.stopPropagation()} style={{ width: 440, maxHeight: '90vh', background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.18)', display: 'flex', flexDirection: 'column', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
 
               {/* Header */}
-              <div style={{ padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+              <div style={{ padding: '18px 20px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <Sparkles size={15} color="#fff" strokeWidth={2} />
@@ -4956,13 +5123,13 @@ export default function OwnerTasksPage() {
               </div>
 
               {/* Body */}
-              <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ flex: 1, overflowY: 'auto', padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
 
                 {!isReview ? (
                   <>
                     {/* Title */}
                     <div>
-                      <label style={modalLabelStyle}>Task Title <span style={{ color: '#F97316' }}>*</span></label>
+                      <label style={modalLabelStyle}>Task Title</label>
                       <input
                         autoFocus
                         value={aiTitle}
@@ -4980,16 +5147,16 @@ export default function OwnerTasksPage() {
                         value={aiDescription}
                         onChange={e => setAiDescription(e.target.value)}
                         onKeyDown={e => handleDescriptionKeyDown(e, aiDescription, setAiDescription)}
-                        rows={3}
-                        placeholder="Add context to help AI break this down accurately..."
+                        rows={2}
+                        placeholder="Add more context..."
                         style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
                       />
                     </div>
 
-                    {/* Priority + People Needed */}
+                    {/* Priority + Deadline */}
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                       <div>
-                        <label style={modalLabelStyle}>Priority <span style={{ color: '#F97316' }}>*</span></label>
+                        <label style={modalLabelStyle}>Priority</label>
                         <DropdownField
                           value={aiPriority}
                           options={priorityDropdownOptions}
@@ -4999,19 +5166,72 @@ export default function OwnerTasksPage() {
                         />
                       </div>
                       <div>
-                        <label style={modalLabelStyle}>People Needed</label>
-                        <div style={{ display: 'flex', gap: 6 }}>
-                          {[1, 2, 3].map(n => (
-                            <button
-                              key={n}
-                              type="button"
-                              onClick={() => setAiPeopleNeeded(n)}
-                              style={{ flex: 1, height: 42, border: `1.5px solid ${aiPeopleNeeded === n ? '#7C3AED' : '#E5E7EB'}`, borderRadius: 8, background: aiPeopleNeeded === n ? '#7C3AED' : '#FFFFFF', color: aiPeopleNeeded === n ? '#FFFFFF' : '#374151', fontWeight: 700, fontSize: '0.9375rem', cursor: 'pointer' }}
-                            >
-                              {n}
-                            </button>
-                          ))}
-                        </div>
+                        <label style={modalLabelStyle}>Deadline</label>
+                        <DeadlinePicker
+                          dateValue={aiDueDate}
+                          timeValue={aiDueTime}
+                          onChange={(date, time) => { setAiDueDate(date); setAiDueTime(time) }}
+                          minDate={formatDateKey(new Date())}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Divider */}
+                    <div style={{ borderTop: '1px dashed #E5E7EB' }} />
+
+                    {/* Sub Task + Recurring toggles — both optional */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
+                            <GitBranch size={13} color="#7C3AED" /> Sub Task <span style={{ fontWeight: 400, color: '#9CA3AF' }}>(Optional)</span>
+                          </span>
+                          <input
+                            type="checkbox"
+                            checked={aiSubTaskEnabled}
+                            onChange={e => setAiSubTaskEnabled(e.target.checked)}
+                            style={{ width: 16, height: 16, accentColor: '#7C3AED', cursor: 'pointer', marginLeft: 'auto' }}
+                          />
+                        </label>
+                      </div>
+
+                      <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
+                            <Repeat size={13} color="#7C3AED" /> Recurring <span style={{ fontWeight: 400, color: '#9CA3AF' }}>(Optional)</span>
+                          </span>
+                          <input
+                            type="checkbox"
+                            checked={aiRecurringEnabled}
+                            onChange={e => setAiRecurringEnabled(e.target.checked)}
+                            style={{ width: 16, height: 16, accentColor: '#7C3AED', cursor: 'pointer', marginLeft: 'auto' }}
+                          />
+                        </label>
+                        {aiRecurringEnabled && (
+                          <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Repeats</span>
+                              <DropdownField
+                                value={aiRecurrenceRule}
+                                options={[
+                                  { value: 'daily', label: 'Daily' },
+                                  { value: 'weekly', label: 'Weekly' },
+                                ]}
+                                onChange={v => setAiRecurrenceRule(v as TaskRecurrenceRule)}
+                                placeholder="Select frequency"
+                              />
+                            </label>
+                            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Repeat until</span>
+                              <CompactDatePicker
+                                value={aiRecurrenceEndDate}
+                                onChange={setAiRecurrenceEndDate}
+                                minDate={aiDueDate || formatDateKey(new Date())}
+                                accentColor="#7C3AED"
+                              />
+                            </label>
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -5022,70 +5242,64 @@ export default function OwnerTasksPage() {
                       disabled={aiLoading}
                       style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '11px', background: aiLoading ? '#EDE9FE' : 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: '0.9375rem', color: '#fff', cursor: aiLoading ? 'default' : 'pointer' }}
                     >
-                      {aiLoading ? <><Spinner size={16} /> Generating...</> : <><Sparkles size={15} /> Generate</>}
+                      {aiLoading ? <><Spinner size={16} /> Generating...</> : <><Sparkles size={15} /> Generate AI Suggestion</>}
                     </button>
                   </>
                 ) : aiSuggestion && (
                   <>
-                    {/* Steps */}
+                    {/* Title */}
                     <div>
-                      <label style={modalLabelStyle}>Completion Steps</label>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        {aiSuggestion.steps.map((step, i) => (
-                          <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 9, padding: '9px 11px', border: '1px solid #E5E7EB', borderRadius: 9, background: '#FAFAFA' }}>
-                            <span style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 999, background: '#EDE9FE', color: '#7C3AED', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 1 }}>{i + 1}</span>
-                            <div style={{ minWidth: 0 }}>
-                              <p style={{ margin: 0, fontWeight: 600, fontSize: '0.8125rem', color: '#111827' }}>{step.title}</p>
-                              <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: '#6B7280', lineHeight: 1.45 }}>{step.description}</p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+                      <label style={modalLabelStyle}>Task Title</label>
+                      <input
+                        value={aiTitle}
+                        onChange={e => setAiTitle(e.target.value)}
+                        style={modalInputStyle}
+                      />
                     </div>
 
-                    {/* Divider */}
-                    <div style={{ borderTop: '1px dashed #E5E7EB' }} />
-
-                    {/* Department */}
+                    {/* Description */}
                     <div>
-                      <label style={modalLabelStyle}>Department <span style={{ fontSize: 11, fontWeight: 400, color: '#7C3AED' }}>| AI picked</span></label>
+                      <label style={modalLabelStyle}>Description</label>
+                      <textarea
+                        value={aiDescription}
+                        onChange={e => setAiDescription(e.target.value)}
+                        onKeyDown={e => handleDescriptionKeyDown(e, aiDescription, setAiDescription)}
+                        rows={2}
+                        style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
+                      />
+                    </div>
+
+                    {/* Recommended Department */}
+                    <div>
+                      <label style={modalLabelStyle}>Recommended Department</label>
                       <DropdownField
                         value={aiDeptId}
                         options={deptDropdownOptions}
-                        onChange={v => { setAiDeptId(v); setAiManagerIds([]) }}
+                        onChange={v => { setAiDeptId(v); setAiManagerId('') }}
                         placeholder="Select department"
                       />
                     </div>
 
-                    {/* Assign To (multi-select, up to people_needed) */}
+                    {/* Recommended Assignee */}
                     <div>
-                      <label style={modalLabelStyle}>
-                        Assign To <span style={{ fontWeight: 400, color: '#9CA3AF' }}>({aiManagerIds.length}/{aiPeopleNeeded} selected)</span>
-                        <span style={{ fontSize: 11, fontWeight: 400, color: '#7C3AED', marginLeft: 6 }}>| AI picked</span>
-                      </label>
+                      <label style={modalLabelStyle}>Recommended Assignee</label>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                         {aiDeptManagers.length === 0 && (
-                          <p style={{ margin: 0, fontSize: '0.8125rem', color: '#9CA3AF', fontStyle: 'italic' }}>No managers in this department.</p>
+                          <p style={{ margin: 0, fontSize: '0.8125rem', color: '#9CA3AF', fontStyle: 'italic' }}>No managers available on this date.</p>
                         )}
                         {aiDeptManagers.map(m => {
-                          const cand = aiSuggestion.candidates.find(c => c.id === m.id)
-                          const checked = aiManagerIds.includes(m.id)
-                          const isAiPick = aiSuggestion.suggested_manager_ids.includes(m.id)
-                          const atLimit = aiManagerIds.length >= aiPeopleNeeded && !checked
+                          const selected = aiManagerId === m.id
+                          const isAiPick = aiSuggestion.recommended_manager_id === m.id
                           return (
                             <div
                               key={m.id}
-                              onClick={() => {
-                                if (atLimit) return
-                                setAiManagerIds(prev => checked ? prev.filter(id => id !== m.id) : [...prev, m.id])
-                              }}
-                              style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '9px 11px', border: `1.5px solid ${checked ? '#7C3AED' : '#E5E7EB'}`, borderRadius: 9, background: checked ? '#FAF5FF' : '#FFFFFF', cursor: atLimit ? 'not-allowed' : 'pointer', opacity: atLimit ? 0.5 : 1 }}
+                              onClick={() => setAiManagerId(m.id)}
+                              style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '9px 11px', border: `1.5px solid ${selected ? '#7C3AED' : '#E5E7EB'}`, borderRadius: 9, background: selected ? '#FAF5FF' : '#FFFFFF', cursor: 'pointer' }}
                             >
-                              <div style={{ width: 16, height: 16, borderRadius: 5, border: `2px solid ${checked ? '#7C3AED' : '#D1D5DB'}`, background: checked ? '#7C3AED' : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                {checked && <CheckCircle size={11} color="#fff" strokeWidth={3} />}
+                              <div style={{ width: 16, height: 16, borderRadius: 999, border: `2px solid ${selected ? '#7C3AED' : '#D1D5DB'}`, background: selected ? '#7C3AED' : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                {selected && <div style={{ width: 6, height: 6, borderRadius: 999, background: '#fff' }} />}
                               </div>
                               <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#111827' }}>{m.full_name}</span>
-                              {cand && <span style={{ fontSize: 11, color: '#9CA3AF' }}>{cand.active_task_count} active</span>}
                               {isAiPick && <span style={{ fontSize: 10, fontWeight: 700, color: '#7C3AED', marginLeft: 'auto' }}>AI PICK</span>}
                             </div>
                           )
@@ -5093,31 +5307,67 @@ export default function OwnerTasksPage() {
                       </div>
                     </div>
 
+                    {/* Reason */}
+                    <div style={{ display: 'flex', gap: 8, padding: '10px 12px', background: '#FAF5FF', border: '1px solid #EDE9FE', borderRadius: 9 }}>
+                      <Sparkles size={14} color="#7C3AED" style={{ flexShrink: 0, marginTop: 1 }} />
+                      <p style={{ margin: 0, fontSize: '0.8125rem', color: '#5B21B6', lineHeight: 1.5 }}>{aiSuggestion.reason}</p>
+                    </div>
+
                     {/* Divider */}
                     <div style={{ borderTop: '1px dashed #E5E7EB' }} />
 
-                    {/* Priority */}
-                    <div>
-                      <label style={modalLabelStyle}>Priority</label>
-                      <DropdownField
-                        value={aiPriority}
-                        options={priorityDropdownOptions}
-                        onChange={setAiPriority}
-                        placeholder="Select priority"
-                        badgeColors={PRIORITY_COLORS}
-                      />
+                    {/* Priority + Deadline */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <div>
+                        <label style={modalLabelStyle}>Priority</label>
+                        <DropdownField
+                          value={aiPriority}
+                          options={priorityDropdownOptions}
+                          onChange={setAiPriority}
+                          placeholder="Select priority"
+                          badgeColors={PRIORITY_COLORS}
+                        />
+                      </div>
+                      <div>
+                        <label style={modalLabelStyle}>Deadline</label>
+                        <DeadlinePicker
+                          dateValue={aiDueDate}
+                          timeValue={aiDueTime}
+                          onChange={(date, time) => { setAiDueDate(date); setAiDueTime(time) }}
+                          minDate={formatDateKey(new Date())}
+                        />
+                      </div>
                     </div>
 
-                    {/* Deadline */}
-                    <div>
-                      <label style={modalLabelStyle}>Deadline <span style={{ fontSize: 11, fontWeight: 400, color: '#7C3AED' }}>| AI suggested</span></label>
-                      <DeadlinePicker
-                        dateValue={aiDueDate}
-                        timeValue={aiDueTime}
-                        onChange={(date, time) => { setAiDueDate(date); setAiDueTime(time) }}
-                        minDate={formatDateKey(new Date())}
-                      />
-                    </div>
+                    {/* Sub-tasks — requested up front, AI-generated, still editable here */}
+                    {aiSubTaskEnabled && (
+                      <>
+                        <div style={{ borderTop: '1px dashed #E5E7EB' }} />
+                        <div>
+                          <label style={modalLabelStyle}>Sub-Tasks <span style={{ fontSize: 11, fontWeight: 400, color: '#7C3AED' }}>| AI generated</span></label>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {aiSubTaskDrafts.map((step, i) => (
+                              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 9, padding: '9px 11px', border: '1px solid #E5E7EB', borderRadius: 9, background: '#FAFAFA' }}>
+                                <span style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 999, background: '#EDE9FE', color: '#7C3AED', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 1 }}>{i + 1}</span>
+                                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                  <input
+                                    value={step.title}
+                                    onChange={e => setAiSubTaskDrafts(prev => prev.map((s, si) => si === i ? { ...s, title: e.target.value } : s))}
+                                    style={{ ...modalInputStyle, height: 32, fontSize: '0.8125rem', fontWeight: 600 }}
+                                  />
+                                  <textarea
+                                    value={step.description}
+                                    onChange={e => setAiSubTaskDrafts(prev => prev.map((s, si) => si === i ? { ...s, description: e.target.value } : s))}
+                                    rows={2}
+                                    style={{ ...modalInputStyle, fontSize: '0.75rem', resize: 'vertical' }}
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </>
+                    )}
 
                     <InlineError message={aiError} />
                   </>
@@ -5126,7 +5376,7 @@ export default function OwnerTasksPage() {
 
               {/* Footer */}
               {isReview && (
-                <div style={{ padding: '14px 24px', borderTop: '1px solid #F3F4F6', display: 'flex', gap: 10, flexShrink: 0 }}>
+                <div style={{ padding: '14px 20px', borderTop: '1px solid #F3F4F6', display: 'flex', gap: 10, flexShrink: 0 }}>
                   <button
                     onClick={() => setAiStep('input')}
                     style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: '1px solid #E5E7EB', borderRadius: 10, background: '#FFFFFF', color: '#374151', height: 40, padding: '0 16px', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}

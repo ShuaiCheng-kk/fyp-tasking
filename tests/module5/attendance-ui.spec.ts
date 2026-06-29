@@ -169,7 +169,7 @@ test('casual worker can manage availability from the UI', async ({ page }) => {
   await page.getByRole('button', { name: 'Mon' }).click()
   await page.getByRole('button', { name: 'Wed' }).click()
   await page.getByRole('button', { name: 'Save Fixed Off Days' }).click()
-  await expect(page.getByText('Fixed off days saved.')).toBeVisible()
+  await expect(page.getByText('Submitted for approval')).toBeVisible()
 
   await page.getByRole('combobox').selectOption('break_waiver')
   await page.getByPlaceholder('Reason').fill('UI break waiver')
@@ -190,30 +190,29 @@ test('owner can review Module 5 work from the attendance UI', async ({ page }) =
   await expect(page.getByRole('heading', { name: 'Attendance' })).toBeVisible()
   await expect(page.getByText('Module 5 UI Shift').first()).toBeVisible()
 
+  // UC50: Review Attendance Record
   await page.getByTitle('Approve').first().click()
-  await expect(page.getByText('Final Attendance Review')).toBeVisible()
+  await expect(page.getByText('Review Attendance Record')).toBeVisible()
   await page.getByRole('button', { name: /Save Review/ }).click()
-  await expect(page.getByText('Final Attendance Review')).toBeHidden()
+  await expect(page.getByText('Review Attendance Record')).toBeHidden()
   await expect(page.getByText('approved').first()).toBeVisible()
 
-  await page.getByRole('button', { name: 'Time Off' }).click()
+  // UC58: Approve Leave Request
+  await page.getByRole('button', { name: 'Leave Requests' }).click()
   await expect(page.getByText('UI needs time off')).toBeVisible()
   await expect(page.getByText('UI break waiver')).toBeVisible()
   await page.getByRole('button', { name: 'Approve' }).first().click()
   await expect(page.getByText('approved').first()).toBeVisible()
 
+  // UC53: Approve Shift Swap Request
   await page.getByRole('button', { name: 'Shift Swaps' }).click()
   await expect(page.getByText('Replacement confirmed in UI')).toBeVisible()
   await page.getByRole('button', { name: 'Approve' }).first().click()
   await expect(page.getByText('approved').first()).toBeVisible()
 
-  await page.getByRole('button', { name: /Auto-Approval Settings/ }).click()
-  await page.getByLabel('Enable AI auto-approval for clean records').check()
-  const threshold = page.getByLabel('Confidence Threshold (%)')
-  await threshold.fill('92')
-  await page.getByRole('button', { name: 'Save Settings' }).click()
-  await expect(page.getByRole('button', { name: 'Saved' })).toBeVisible()
-
-  const stored = await page.evaluate((companyId) => localStorage.getItem(`tasking_auto_approval_${companyId}`), seeded.companyId)
-  expect(stored).toBe(JSON.stringify({ enabled: true, threshold: 92 }))
+  // UC56: Approve Fixed Day Off
+  await page.getByRole('button', { name: 'Fixed Day Off' }).click()
+  await expect(page.getByText('Module 5 UI Worker').first()).toBeVisible()
+  await page.getByRole('button', { name: 'Approve' }).first().click()
+  await expect(page.getByText('approved').first()).toBeVisible()
 })

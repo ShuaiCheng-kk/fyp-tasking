@@ -8,6 +8,8 @@ import {
   AttendanceExceptionType,
   AttendanceManagerReviewInput,
   AttendanceReviewInput,
+  FixedOffDayDecisionInput,
+  FixedOffDayRequestView,
   ShiftSwapDecisionInput,
   ShiftSwapRequestView,
   TimeOffRequestDecisionInput,
@@ -206,6 +208,30 @@ export const attendanceService = {
     }
 
     return attendanceRepository.updateShiftSwapRequest(input.id, {
+      status: input.decision,
+      reviewed_by: input.reviewer_id,
+      reviewed_at: new Date().toISOString(),
+    })
+  },
+
+  // UC56: Approve Fixed Day Off
+  async getFixedOffDayRequests(company_id: string): Promise<FixedOffDayRequestView[]> {
+    const requests = await attendanceRepository.getFixedOffDayRequestsByCompany(company_id)
+    const users = await attendanceRepository.getUsersByIds([...new Set(requests.map(request => request.user_id))])
+    const usersById = indexById(users)
+
+    return requests.map(request => ({
+      ...request,
+      requester_name: usersById.get(request.user_id)?.full_name ?? 'Unknown member',
+    }))
+  },
+
+  async decideFixedOffDayRequest(input: FixedOffDayDecisionInput) {
+    if (!['approved', 'rejected'].includes(input.decision)) throw new Error('Invalid request decision')
+    const existing = await attendanceRepository.getFixedOffDayRequestById(input.id)
+    if (!existing) throw new Error('Fixed day off request not found')
+
+    return attendanceRepository.updateFixedOffDayRequest(input.id, {
       status: input.decision,
       reviewed_by: input.reviewer_id,
       reviewed_at: new Date().toISOString(),
