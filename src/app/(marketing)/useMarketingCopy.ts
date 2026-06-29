@@ -32,9 +32,14 @@ export function useMarketingCopy(slug: string) {
   // Returns the text value for a block key, falling back to the provided default
   const copy = (key: string, fallback: string) => blocks[key] || fallback
 
-  // Returns false only when the admin has explicitly set the section to 'false'
-  // Defaults to true (visible) when the block doesn't exist yet
   copy.visible = (sectionKey: string) => (blocks[`section.${sectionKey}.visible`] ?? 'true') !== 'false'
+
+  // Returns all block keys that match prefix + suffix (e.g. 'feature.', '.name')
+  copy.keys = (prefix: string, suffix: string) =>
+    (page?.blocks ?? [])
+      .filter(b => b.block_key.startsWith(prefix) && b.block_key.endsWith(suffix))
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map(b => b.block_key.slice(prefix.length, b.block_key.length - suffix.length))
 
   return copy
 }

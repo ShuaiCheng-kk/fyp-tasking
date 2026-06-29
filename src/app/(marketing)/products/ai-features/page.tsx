@@ -79,12 +79,8 @@ export default function AiFeaturesPage() {
     { step: '03', labelKey: 'workflow.step3.label', defaultLabel: 'Approve', titleKey: 'workflow.step3.title', descKey: 'workflow.step3.desc', defaultTitle: 'Shift ends', defaultDesc: 'AI reviews the timesheet and approves or escalates instantly — so clean records never sit waiting for manual review.' },
   ];
 
-  const features: { icon: React.ReactNode; nameKey: string; descKey: string; defaultName: string; defaultDesc: string }[] = [
-    { icon: <IcoStar />, nameKey: 'feature.1.name', descKey: 'feature.1.desc', defaultName: 'AI Candidate Recommendation', defaultDesc: "Stop guessing who's the right fit. Tasking ranks every applicant by skills, availability, and work history — so the best match is always at the top." },
-    { icon: <IcoPen />,  nameKey: 'feature.2.name', descKey: 'feature.2.desc', defaultName: 'AI Job Description Generator', defaultDesc: 'Enter a role title and key requirements. Get a ready-to-publish job description in seconds. No more staring at a blank page.' },
-    { icon: <IcoCheck />,nameKey: 'feature.3.name', descKey: 'feature.3.desc', defaultName: 'AI Auto-approve Timesheets',  defaultDesc: 'Clean records that meet all criteria get approved without you lifting a finger. Only the ones that need your attention ever reach your inbox.' },
-    { icon: <IcoShield />,nameKey:'feature.4.name', descKey: 'feature.4.desc', defaultName: 'AI Anomaly Detection',         defaultDesc: 'Photo mismatches, unusual clock-in patterns, repeated late arrivals — Tasking catches them automatically before they turn into disputes.' },
-  ];
+  const featureIcons = [<IcoStar key="s"/>, <IcoPen key="p"/>, <IcoCheck key="c"/>, <IcoShield key="sh"/>];
+  const featureIdxs = copy.keys('feature.', '.name');
 
   return (
     <>
@@ -117,8 +113,8 @@ export default function AiFeaturesPage() {
             <p style={subtitleStyle}>{copy('features.subtitle', 'Four AI tools. All free. All built in.')}</p>
           </div>
           <div className="grid-features-2" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '20px' }}>
-            {features.map(f => (
-              <FeatureCard key={f.nameKey} icon={f.icon} name={copy(f.nameKey, f.defaultName)} desc={copy(f.descKey, f.defaultDesc)} />
+            {featureIdxs.map((idx, i) => (
+              <FeatureCard key={idx} icon={featureIcons[i % featureIcons.length]} name={copy(`feature.${idx}.name`, 'Feature')} desc={copy(`feature.${idx}.desc`, '')} />
             ))}
           </div>
         </div>

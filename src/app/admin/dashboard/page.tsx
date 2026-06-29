@@ -373,6 +373,7 @@ export default function AdminDashboardPage() {
     multiline = false,
     styleOverride,
     onDarkBg = false,
+    hideDirtyBadge = false,
   }: {
     blockKey: string
     fallback: string
@@ -380,6 +381,7 @@ export default function AdminDashboardPage() {
     multiline?: boolean
     styleOverride?: React.CSSProperties
     onDarkBg?: boolean
+    hideDirtyBadge?: boolean
   }) => {
     const block = blockByKey[blockKey] ?? null
     const value = getDraftValue(drafts, block, fallback)
@@ -484,9 +486,7 @@ export default function AdminDashboardPage() {
         style={{ ...baseStyle, ...mergedTextStyle }}
       >
         {value}
-        <span style={{ position: 'absolute', right: -8, top: -14, transform: 'translateX(100%)', background: ORANGE, color: '#FFFFFF', borderRadius: 999, padding: '3px 7px', fontSize: 10, fontWeight: 900, opacity: dirty ? 1 : 0 }}>
-          Unsaved
-        </span>
+        {!hideDirtyBadge && <span style={{ position: 'absolute', right: -8, top: -14, transform: 'translateX(100%)', background: ORANGE, color: '#FFFFFF', borderRadius: 999, padding: '3px 7px', fontSize: 10, fontWeight: 900, opacity: dirty ? 1 : 0 }}>Unsaved</span>}
       </span>
     )
   }
@@ -637,6 +637,10 @@ export default function AdminDashboardPage() {
                   style={{ width: '100%', padding: '7px 10px', border: `1.5px solid ${BORDER}`, borderRadius: 7, fontSize: 12, fontFamily: 'monospace', outline: 'none', color: TEXT }}
                 />
                 <datalist id={`url-options-${urlBlock.id}`}>
+                  <option value="/get-started">Get Started</option>
+                  <option value="/signin">Sign In</option>
+                  <option value="/signup">Sign Up</option>
+                  <option value="#modules">Modules section (anchor)</option>
                   {pages.map(p => (
                     <option key={p.slug} value={p.route_path}>{p.title}</option>
                   ))}
@@ -685,12 +689,9 @@ export default function AdminDashboardPage() {
       <svg key="check" width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke={ORANGE} strokeWidth="2" /><path d="M8 12l3 3 5-5" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>,
       <svg key="shield" width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M9 12l2 2 4-4" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>,
     ]
-    const features = [
-      { nameKey: 'feature.1.name', descKey: 'feature.1.desc', defaultName: 'AI Candidate Recommendation', defaultDesc: "Stop guessing who's the right fit. Tasking ranks every applicant by skills, availability, and work history — so the best match is always at the top." },
-      { nameKey: 'feature.2.name', descKey: 'feature.2.desc', defaultName: 'AI Job Description Generator', defaultDesc: 'Enter a role title and key requirements. Get a ready-to-publish job description in seconds. No more staring at a blank page.' },
-      { nameKey: 'feature.3.name', descKey: 'feature.3.desc', defaultName: 'AI Auto-approve Timesheets',  defaultDesc: 'Clean records that meet all criteria get approved without you lifting a finger. Only the ones that need your attention ever reach your inbox.' },
-      { nameKey: 'feature.4.name', descKey: 'feature.4.desc', defaultName: 'AI Anomaly Detection',         defaultDesc: 'Photo mismatches, unusual clock-in patterns, repeated late arrivals — Tasking catches them automatically before they turn into disputes.' },
-    ]
+    const aiFeaturesBlocks = (selectedPage?.blocks ?? [])
+      .filter(b => b.block_key.startsWith('feature.') && b.block_key.endsWith('.name'))
+      .sort((a, b) => a.sort_order - b.sort_order)
     const steps = [
       { step: '01', labelKey: 'workflow.step1.label', defaultLabel: 'Recruit', titleKey: 'workflow.step1.title', descKey: 'workflow.step1.desc', defaultTitle: 'Post a job',             defaultDesc: 'AI generates the description and ranks applicants automatically — so you open the list already knowing who to pick.' },
       { step: '02', labelKey: 'workflow.step2.label', defaultLabel: 'Verify',  titleKey: 'workflow.step2.title', descKey: 'workflow.step2.desc', defaultTitle: 'Casual worker clocks in', defaultDesc: 'AI verifies the photo against the record and flags anything that looks off — before it becomes your problem.' },
@@ -725,15 +726,48 @@ export default function AdminDashboardPage() {
               {renderEditableText({ blockKey: 'features.subtitle', fallback: 'Four AI tools. All free. All built in.', variant: 'body', styleOverride: { textAlign: 'center' as const } })}
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 18 }}>
-              {features.map((f, i) => (
-                <div key={f.nameKey} style={{ background: '#FFFFFF', border: '1px solid #F0E8D8', borderRadius: 16, padding: 24 }}>
-                  <div style={{ width: 44, height: 44, background: '#FEF3C7', borderRadius: 11, display: 'grid', placeItems: 'center', marginBottom: 14 }}>{featureIcons[i]}</div>
-                  <div style={{ marginBottom: 8 }}>
-                    {renderEditableText({ blockKey: f.nameKey, fallback: f.defaultName, variant: 'cardTitle', styleOverride: { fontSize: 15, fontWeight: 600, color: '#1C1917' } })}
+              {aiFeaturesBlocks.map((nameBlock, i) => {
+                const idx = nameBlock.block_key.replace('feature.', '').replace('.name', '')
+                const descKey = `feature.${idx}.desc`
+                const icon = featureIcons[i % featureIcons.length]
+                const descBlock = blockByKey[descKey]
+                const cardDirty = (drafts[nameBlock.id] ?? '') !== nameBlock.value || (descBlock ? (drafts[descBlock.id] ?? '') !== descBlock.value : false)
+                return (
+                  <div key={nameBlock.id} style={{ position: 'relative', background: '#FFFFFF', border: '1px solid #F0E8D8', borderRadius: 16, padding: 24 }}>
+                    {cardDirty && <span style={{ position: 'absolute', top: 36, right: 8, background: ORANGE, color: '#FFFFFF', borderRadius: 999, padding: '3px 7px', fontSize: 10, fontWeight: 900, zIndex: 2 }}>Unsaved</span>}
+                    <button
+                      type="button"
+                      onClick={() => deleteBlock(nameBlock.id).then(() => { if (descBlock) deleteBlock(descBlock.id) })}
+                      title="Remove feature card"
+                      style={{ position: 'absolute', top: 10, right: 10, background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 4, lineHeight: 1 }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                    </button>
+                    <div style={{ width: 44, height: 44, background: '#FEF3C7', borderRadius: 11, display: 'grid', placeItems: 'center', marginBottom: 14 }}>{icon}</div>
+                    <div style={{ marginBottom: 8 }}>
+                      {renderEditableText({ blockKey: nameBlock.block_key, fallback: 'Feature name', variant: 'cardTitle', styleOverride: { fontSize: 15, fontWeight: 600, color: '#1C1917' }, hideDirtyBadge: true })}
+                    </div>
+                    {renderEditableText({ blockKey: descKey, fallback: 'Feature description', variant: 'cardBody', multiline: true, styleOverride: { fontSize: 14, lineHeight: 1.7 }, hideDirtyBadge: true })}
                   </div>
-                  {renderEditableText({ blockKey: f.descKey, fallback: f.defaultDesc, variant: 'cardBody', multiline: true, styleOverride: { fontSize: 14, lineHeight: 1.7 } })}
-                </div>
-              ))}
+                )
+              })}
+              {/* Add feature card */}
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!selectedPage) return
+                  const existing = (selectedPage.blocks ?? []).filter(b => b.block_key.startsWith('feature.') && b.block_key.endsWith('.name'))
+                  const maxIdx = existing.reduce((m, b) => { const n = parseInt(b.block_key.split('.')[1]); return n > m ? n : m }, 0)
+                  const nextIdx = maxIdx + 1
+                  const maxSort = existing.reduce((m, b) => b.sort_order > m ? b.sort_order : m, 0)
+                  await createBlock(selectedPage.id, `feature.${nextIdx}.name`, `Feature ${nextIdx} Name`, 'New Feature', maxSort + 1)
+                  await createBlock(selectedPage.id, `feature.${nextIdx}.desc`, `Feature ${nextIdx} Description`, 'Describe this feature.', maxSort + 2)
+                }}
+                style={{ background: 'none', border: '2px dashed #F0E8D8', borderRadius: 16, padding: 24, cursor: 'pointer', color: '#A8A29E', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 120 }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Add feature card
+              </button>
             </div>
           </section>
         )}
@@ -788,6 +822,431 @@ export default function AdminDashboardPage() {
               </div>
               <div style={{ marginBottom: 28 }}>
                 {renderEditableText({ blockKey: 'cta.subheadline', fallback: 'All four AI features are free. No upgrade required.', variant: 'subhead', multiline: true, styleOverride: { fontSize: 16 }, onDarkBg: true })}
+              </div>
+              {renderEditableBtn({ labelKey: 'cta.button.label', urlKey: 'cta.button.url', fallbackLabel: 'Get Started Free', fallbackUrl: '/get-started', editing: editingCtaBtn, setEditing: setEditingCtaBtn, btnStyle: { background: '#FFFFFF', color: ORANGE, border: 'none', borderRadius: 10, padding: '13px 30px', fontSize: 15, fontWeight: 700, cursor: 'pointer' } })}
+            </div>
+          </section>
+        )}
+
+      </div>
+    )
+  }
+
+  const renderSmartNotificationsPreview = () => {
+    const featureIcons = [
+      <svg key="timer" width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="13" r="8" stroke={ORANGE} strokeWidth="2" /><path d="M12 9v4l2.5 2.5" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M9 2h6M12 2v3" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" /></svg>,
+      <svg key="bell"  width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M13.73 21a2 2 0 0 1-3.46 0" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" /></svg>,
+      <svg key="alert" width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M12 9v4M12 17h.01" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>,
+      <svg key="check" width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke={ORANGE} strokeWidth="2" /><path d="M8 12l3 3 5-5" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>,
+      <svg key="mega"  width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M3 11l19-9-9 19-2-8-8-2z" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>,
+      <svg key="zap"   width="20" height="20" viewBox="0 0 24 24" fill="none"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>,
+    ]
+    const snFeatureBlocks = (selectedPage?.blocks ?? [])
+      .filter(b => b.block_key.startsWith('feature.') && b.block_key.endsWith('.name'))
+      .sort((a, b) => a.sort_order - b.sort_order)
+    const timelineBlocks = (selectedPage?.blocks ?? [])
+      .filter(b => b.block_key.startsWith('timeline.') && b.block_key.endsWith('.trigger'))
+      .sort((a, b) => a.sort_order - b.sort_order)
+
+    return (
+      <div style={{ background: '#FFFFFF', borderRadius: 18, overflow: 'hidden', border: `1px solid ${BORDER}` }}>
+
+        {/* Hero */}
+        {renderSectionWrap('section.hero.visible', 'Hero Section',
+          <section style={{ background: '#1C1C1E', padding: '72px 48px 64px', textAlign: 'center' }}>
+            <div style={{ marginBottom: 20 }}>
+              {renderEditableText({ blockKey: 'hero.badge', fallback: 'Smart Notifications', variant: 'badge' })}
+            </div>
+            <div style={{ maxWidth: 640, margin: '0 auto 18px' }}>
+              {renderEditableText({ blockKey: 'hero.headline', fallback: 'No more chasing people for updates.', variant: 'hero' })}
+            </div>
+            <div style={{ maxWidth: 520, margin: '0 auto 32px' }}>
+              {renderEditableText({ blockKey: 'hero.subheadline', fallback: 'Tasking handles the follow-ups. You handle the business.', variant: 'subhead', multiline: true })}
+            </div>
+            {renderEditableBtn({ labelKey: 'hero.button.label', urlKey: 'hero.button.url', fallbackLabel: 'Get Started Free', fallbackUrl: '/get-started', editing: editingProductsBtn, setEditing: setEditingProductsBtn, btnStyle: { background: ORANGE, color: '#FFFFFF', border: 'none', borderRadius: 10, padding: '13px 30px', fontSize: 15, fontWeight: 600, cursor: 'pointer' } })}
+          </section>
+        )}
+
+        {/* Features grid */}
+        {renderSectionWrap('section.intro.visible', 'Features Grid',
+          <section style={{ background: '#FFFBF5', padding: '56px 48px' }}>
+            <div style={{ textAlign: 'center', marginBottom: 40 }}>
+              <div style={{ marginBottom: 10 }}>
+                {renderEditableText({ blockKey: 'features.title', fallback: 'Every notification your workflow needs', variant: 'sectionTitle' })}
+              </div>
+              {renderEditableText({ blockKey: 'features.subtitle', fallback: 'Automatic, targeted, and triggered at exactly the right moment.', variant: 'body', styleOverride: { textAlign: 'center' as const } })}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 18 }}>
+              {snFeatureBlocks.map((nameBlock, i) => {
+                const idx = nameBlock.block_key.replace('feature.', '').replace('.name', '')
+                const descKey = `feature.${idx}.desc`
+                const descBlock = blockByKey[descKey]
+                const cardDirty = (drafts[nameBlock.id] ?? '') !== nameBlock.value || (descBlock ? (drafts[descBlock.id] ?? '') !== descBlock.value : false)
+                return (
+                  <div key={nameBlock.id} style={{ position: 'relative', background: '#FFFFFF', border: '1px solid #F0E8D8', borderRadius: 16, padding: 24 }}>
+                    {cardDirty && <span style={{ position: 'absolute', top: 36, right: 8, background: ORANGE, color: '#FFFFFF', borderRadius: 999, padding: '3px 7px', fontSize: 10, fontWeight: 900, zIndex: 2 }}>Unsaved</span>}
+                    <button type="button" onClick={() => deleteBlock(nameBlock.id).then(() => { if (descBlock) deleteBlock(descBlock.id) })} title="Remove feature card" style={{ position: 'absolute', top: 10, right: 10, background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 4, lineHeight: 1 }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                    </button>
+                    <div style={{ width: 44, height: 44, background: '#FEF3C7', borderRadius: 11, display: 'grid', placeItems: 'center', marginBottom: 14 }}>{featureIcons[i % featureIcons.length]}</div>
+                    <div style={{ marginBottom: 8 }}>
+                      {renderEditableText({ blockKey: nameBlock.block_key, fallback: 'Feature name', variant: 'cardTitle', styleOverride: { fontSize: 15, fontWeight: 600, color: '#1C1917' }, hideDirtyBadge: true })}
+                    </div>
+                    {renderEditableText({ blockKey: descKey, fallback: 'Feature description', variant: 'cardBody', multiline: true, styleOverride: { fontSize: 14, lineHeight: 1.7 }, hideDirtyBadge: true })}
+                  </div>
+                )
+              })}
+              <button type="button" onClick={async () => {
+                if (!selectedPage) return
+                const existing = (selectedPage.blocks ?? []).filter(b => b.block_key.startsWith('feature.') && b.block_key.endsWith('.name'))
+                const maxIdx = existing.reduce((m, b) => { const n = parseInt(b.block_key.split('.')[1]); return n > m ? n : m }, 0)
+                const maxSort = existing.reduce((m, b) => b.sort_order > m ? b.sort_order : m, 0)
+                const nextIdx = maxIdx + 1
+                await createBlock(selectedPage.id, `feature.${nextIdx}.name`, `Feature ${nextIdx} Name`, 'New Feature', maxSort + 1)
+                await createBlock(selectedPage.id, `feature.${nextIdx}.desc`, `Feature ${nextIdx} Description`, 'Describe this feature.', maxSort + 2)
+              }} style={{ background: 'none', border: '2px dashed #F0E8D8', borderRadius: 16, padding: 24, cursor: 'pointer', color: '#A8A29E', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 120 }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Add feature card
+              </button>
+            </div>
+          </section>
+        )}
+
+        {/* Timeline */}
+        {renderSectionWrap('section.content.visible', 'Timeline',
+          <section style={{ background: '#FFFFFF', padding: '56px 48px' }}>
+            <div style={{ textAlign: 'center', marginBottom: 44 }}>
+              <div style={{ marginBottom: 12 }}>
+                {renderEditableText({ blockKey: 'timeline.title', fallback: 'The right message. At the right moment. Every time.', variant: 'sectionTitle' })}
+              </div>
+              {renderEditableText({ blockKey: 'timeline.subtitle', fallback: 'Every notification in Tasking is triggered automatically — no manual sending, no missed updates.', variant: 'body', multiline: true, styleOverride: { textAlign: 'center' as const } })}
+            </div>
+            <div style={{ maxWidth: 640, margin: '0 auto', position: 'relative' }}>
+              <div style={{ position: 'absolute', left: 23, top: 24, bottom: 24, width: 2, background: '#F0E8D8' }} />
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                {timelineBlocks.map((triggerBlock, i) => {
+                  const idx = triggerBlock.block_key.replace('timeline.', '').replace('.trigger', '')
+                  const eventKey = `timeline.${idx}.event`
+                  return (
+                    <div key={triggerBlock.id} style={{ display: 'flex', gap: 20, alignItems: 'flex-start', paddingBottom: i < timelineBlocks.length - 1 ? 28 : 0 }}>
+                      <div style={{ width: 48, height: 48, borderRadius: '50%', background: '#FEF3C7', border: '3px solid #F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, position: 'relative', zIndex: 1 }}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M13.73 21a2 2 0 0 1-3.46 0" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" /></svg>
+                      </div>
+                      <div style={{ paddingTop: 8, flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+                          {renderEditableText({ blockKey: triggerBlock.block_key, fallback: 'Trigger', variant: 'cardTitle', styleOverride: { fontSize: 15, fontWeight: 600, color: '#1C1917' } })}
+                          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}><path d="M3 8h10M9 4l4 4-4 4" stroke={ORANGE} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                        </div>
+                        {renderEditableText({ blockKey: eventKey, fallback: 'Event description', variant: 'cardBody', multiline: true, styleOverride: { fontSize: 14, color: '#78716C', lineHeight: 1.65 } })}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* CTA */}
+        {renderSectionWrap('section.cta.visible', 'CTA Section',
+          <section style={{ background: ORANGE, padding: '64px 48px', textAlign: 'center' }}>
+            <div style={{ maxWidth: 560, margin: '0 auto' }}>
+              <div style={{ marginBottom: 14 }}>
+                {renderEditableText({ blockKey: 'cta.headline', fallback: 'Stay in the loop. Automatically.', variant: 'cta', styleOverride: { fontSize: 36 }, onDarkBg: true })}
+              </div>
+              <div style={{ marginBottom: 28 }}>
+                {renderEditableText({ blockKey: 'cta.subheadline', fallback: 'Every key moment in your workflow, covered — without you lifting a finger.', variant: 'subhead', multiline: true, styleOverride: { fontSize: 16 }, onDarkBg: true })}
+              </div>
+              {renderEditableBtn({ labelKey: 'cta.button.label', urlKey: 'cta.button.url', fallbackLabel: 'Get Started Free', fallbackUrl: '/get-started', editing: editingCtaBtn, setEditing: setEditingCtaBtn, btnStyle: { background: '#FFFFFF', color: ORANGE, border: 'none', borderRadius: 10, padding: '13px 30px', fontSize: 15, fontWeight: 700, cursor: 'pointer' } })}
+            </div>
+          </section>
+        )}
+
+      </div>
+    )
+  }
+
+  const renderRecruitmentPreview = () => {
+    const featureIcons = [
+      <svg key="post"     width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M14 2v6h6M12 18v-6M9 15h6" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>,
+      <svg key="users"    width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><circle cx="9" cy="7" r="4" stroke={ORANGE} strokeWidth="2" /><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" /></svg>,
+      <svg key="clock"    width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke={ORANGE} strokeWidth="2" /><path d="M12 6v6l4 2" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>,
+      <svg key="list"     width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>,
+      <svg key="cal"      width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="18" rx="2" stroke={ORANGE} strokeWidth="2" /><path d="M16 2v4M8 2v4M3 10h18" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" /></svg>,
+      <svg key="search"   width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="8" stroke={ORANGE} strokeWidth="2" /><path d="M21 21l-4.35-4.35" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" /></svg>,
+      <svg key="undo"     width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M3 7v6h6" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>,
+      <svg key="globe"    width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke={ORANGE} strokeWidth="2" /><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" stroke={ORANGE} strokeWidth="2" /></svg>,
+    ]
+    const recruitFeatureBlocks = (selectedPage?.blocks ?? [])
+      .filter(b => b.block_key.startsWith('feature.') && b.block_key.endsWith('.name'))
+      .sort((a, b) => a.sort_order - b.sort_order)
+    const steps = [
+      { step: '01', titleKey: 'workflow.step1.title', descKey: 'workflow.step1.desc', defaultTitle: 'Post',    defaultDesc: 'Publish your job opening to the public recruitment page. Casual workers and applicants can browse and apply instantly.' },
+      { step: '02', titleKey: 'workflow.step2.title', descKey: 'workflow.step2.desc', defaultTitle: 'Review',  defaultDesc: 'See every applicant ranked by AI recommendation. Skills, availability, and work history — all surfaced automatically.' },
+      { step: '03', titleKey: 'workflow.step3.title', descKey: 'workflow.step3.desc', defaultTitle: 'Invite',  defaultDesc: 'Select your candidate and send the invitation. The 12-hour acceptance window starts automatically.' },
+      { step: '04', titleKey: 'workflow.step4.title', descKey: 'workflow.step4.desc', defaultTitle: 'Confirm', defaultDesc: 'Candidate accepts, job closes, worker is assigned to the shift. Done.' },
+    ]
+    return (
+      <div style={{ background: '#FFFFFF', borderRadius: 18, overflow: 'hidden', border: `1px solid ${BORDER}` }}>
+
+        {/* Hero */}
+        {renderSectionWrap('section.hero.visible', 'Hero Section',
+          <section style={{ background: '#1C1C1E', padding: '72px 48px 64px', textAlign: 'center' }}>
+            <div style={{ marginBottom: 20 }}>
+              {renderEditableText({ blockKey: 'hero.badge', fallback: 'Recruitment', variant: 'badge' })}
+            </div>
+            <div style={{ maxWidth: 640, margin: '0 auto 18px' }}>
+              {renderEditableText({ blockKey: 'hero.headline', fallback: 'Find the right people. Fast.', variant: 'hero' })}
+            </div>
+            <div style={{ maxWidth: 520, margin: '0 auto 32px' }}>
+              {renderEditableText({ blockKey: 'hero.subheadline', fallback: 'From job posting to confirmed hire — without the back-and-forth.', variant: 'subhead', multiline: true })}
+            </div>
+            {renderEditableBtn({ labelKey: 'hero.button.label', urlKey: 'hero.button.url', fallbackLabel: 'Get Started Free', fallbackUrl: '/get-started', editing: editingProductsBtn, setEditing: setEditingProductsBtn, btnStyle: { background: ORANGE, color: '#FFFFFF', border: 'none', borderRadius: 10, padding: '13px 30px', fontSize: 15, fontWeight: 600, cursor: 'pointer' } })}
+          </section>
+        )}
+
+        {/* Features grid */}
+        {renderSectionWrap('section.intro.visible', 'Features Grid',
+          <section style={{ background: '#FFFBF5', padding: '56px 48px' }}>
+            <div style={{ textAlign: 'center', marginBottom: 40 }}>
+              <div style={{ marginBottom: 10 }}>
+                {renderEditableText({ blockKey: 'features.title', fallback: 'Everything you need to hire casual workers', variant: 'sectionTitle' })}
+              </div>
+              {renderEditableText({ blockKey: 'features.subtitle', fallback: 'Every feature in this module exists because SMEs asked for it.', variant: 'body', styleOverride: { textAlign: 'center' as const } })}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 18 }}>
+              {recruitFeatureBlocks.map((nameBlock, i) => {
+                const idx = nameBlock.block_key.replace('feature.', '').replace('.name', '')
+                const descKey = `feature.${idx}.desc`
+                const descBlock = blockByKey[descKey]
+                const cardDirty = (drafts[nameBlock.id] ?? '') !== nameBlock.value || (descBlock ? (drafts[descBlock.id] ?? '') !== descBlock.value : false)
+                return (
+                  <div key={nameBlock.id} style={{ position: 'relative', background: '#FFFFFF', border: '1px solid #F0E8D8', borderRadius: 16, padding: 24 }}>
+                    {cardDirty && <span style={{ position: 'absolute', top: 36, right: 8, background: ORANGE, color: '#FFFFFF', borderRadius: 999, padding: '3px 7px', fontSize: 10, fontWeight: 900, zIndex: 2 }}>Unsaved</span>}
+                    <button
+                      type="button"
+                      onClick={() => deleteBlock(nameBlock.id).then(() => { if (descBlock) deleteBlock(descBlock.id) })}
+                      title="Remove feature card"
+                      style={{ position: 'absolute', top: 10, right: 10, background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 4, lineHeight: 1 }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                    </button>
+                    <div style={{ width: 44, height: 44, background: '#FEF3C7', borderRadius: 11, display: 'grid', placeItems: 'center', marginBottom: 14 }}>{featureIcons[i % featureIcons.length]}</div>
+                    <div style={{ marginBottom: 8 }}>
+                      {renderEditableText({ blockKey: nameBlock.block_key, fallback: 'Feature name', variant: 'cardTitle', styleOverride: { fontSize: 15, fontWeight: 600, color: '#1C1917' }, hideDirtyBadge: true })}
+                    </div>
+                    {renderEditableText({ blockKey: descKey, fallback: 'Feature description', variant: 'cardBody', multiline: true, styleOverride: { fontSize: 14, lineHeight: 1.7 }, hideDirtyBadge: true })}
+                  </div>
+                )
+              })}
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!selectedPage) return
+                  const existing = (selectedPage.blocks ?? []).filter(b => b.block_key.startsWith('feature.') && b.block_key.endsWith('.name'))
+                  const maxIdx = existing.reduce((m, b) => { const n = parseInt(b.block_key.split('.')[1]); return n > m ? n : m }, 0)
+                  const maxSort = existing.reduce((m, b) => b.sort_order > m ? b.sort_order : m, 0)
+                  const nextIdx = maxIdx + 1
+                  await createBlock(selectedPage.id, `feature.${nextIdx}.name`, `Feature ${nextIdx} Name`, 'New Feature', maxSort + 1)
+                  await createBlock(selectedPage.id, `feature.${nextIdx}.desc`, `Feature ${nextIdx} Description`, 'Describe this feature.', maxSort + 2)
+                }}
+                style={{ background: 'none', border: '2px dashed #F0E8D8', borderRadius: 16, padding: 24, cursor: 'pointer', color: '#A8A29E', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 120 }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Add feature card
+              </button>
+            </div>
+          </section>
+        )}
+
+        {/* Workflow steps */}
+        {renderSectionWrap('section.content.visible', 'Workflow Steps',
+          <section style={{ background: '#FFFFFF', padding: '56px 48px' }}>
+            <div style={{ textAlign: 'center', marginBottom: 52 }}>
+              <div style={{ marginBottom: 12 }}>
+                {renderEditableText({ blockKey: 'workflow.title', fallback: 'From open role to confirmed hire in four steps.', variant: 'sectionTitle' })}
+              </div>
+              {renderEditableText({ blockKey: 'workflow.subtitle', fallback: 'A complete hiring flow — built specifically for casual workforce management.', variant: 'body', multiline: true, styleOverride: { textAlign: 'center' as const } })}
+            </div>
+            <div style={{ position: 'relative', display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', marginBottom: 20 }}>
+              <div style={{ position: 'absolute', top: 36, left: '12.5%', right: '12.5%', height: 2, background: 'linear-gradient(90deg, #F97316, #FED7AA 33%, #FED7AA 66%, #F97316)', zIndex: 0 }} />
+              {steps.map(s => (
+                <div key={s.step} style={{ display: 'flex', justifyContent: 'center', position: 'relative', zIndex: 1 }}>
+                  <div style={{ width: 72, height: 72, borderRadius: '50%', background: '#FEF3C7', border: '3px solid #F97316', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                    <span style={{ fontSize: 9, fontWeight: 700, color: ORANGE, letterSpacing: '0.1em', lineHeight: 1 }}>STEP</span>
+                    <span style={{ fontSize: 18, fontWeight: 700, color: ORANGE, lineHeight: 1.1 }}>{s.step}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: 8 }}>
+              {steps.map(s => (
+                <div key={s.step} style={{ textAlign: 'center', padding: '0 12px' }}>
+                  <div style={{ marginBottom: 8 }}>
+                    {renderEditableText({ blockKey: s.titleKey, fallback: s.defaultTitle, variant: 'cardTitle', styleOverride: { fontSize: 15, fontWeight: 700, color: '#1C1917' } })}
+                  </div>
+                  {renderEditableText({ blockKey: s.descKey, fallback: s.defaultDesc, variant: 'cardBody', multiline: true, styleOverride: { fontSize: 13, color: '#78716C', lineHeight: 1.65 } })}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* CTA */}
+        {renderSectionWrap('section.cta.visible', 'CTA Section',
+          <section style={{ background: ORANGE, padding: '64px 48px', textAlign: 'center' }}>
+            <div style={{ maxWidth: 560, margin: '0 auto' }}>
+              <div style={{ marginBottom: 14 }}>
+                {renderEditableText({ blockKey: 'cta.headline', fallback: 'Your next hire is one post away.', variant: 'cta', styleOverride: { fontSize: 36 }, onDarkBg: true })}
+              </div>
+              <div style={{ marginBottom: 28 }}>
+                {renderEditableText({ blockKey: 'cta.subheadline', fallback: 'Join SMEs already using Tasking to fill shifts faster and smarter.', variant: 'subhead', multiline: true, styleOverride: { fontSize: 16 }, onDarkBg: true })}
+              </div>
+              {renderEditableBtn({ labelKey: 'cta.button.label', urlKey: 'cta.button.url', fallbackLabel: 'Get Started Free', fallbackUrl: '/get-started', editing: editingCtaBtn, setEditing: setEditingCtaBtn, btnStyle: { background: '#FFFFFF', color: ORANGE, border: 'none', borderRadius: 10, padding: '13px 30px', fontSize: 15, fontWeight: 700, cursor: 'pointer' } })}
+            </div>
+          </section>
+        )}
+
+      </div>
+    )
+  }
+
+  const renderAttendancePreview = () => {
+    const featureIcons = [
+      <svg key="clock"   width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke={ORANGE} strokeWidth="2" /><path d="M12 6v6l4 2" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>,
+      <svg key="camera"  width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><circle cx="12" cy="13" r="4" stroke={ORANGE} strokeWidth="2" /></svg>,
+      <svg key="sign"    width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M20 14.66V20a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5.34" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><polygon points="18 2 22 6 12 16 8 16 8 12 18 2" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>,
+      <svg key="check"   width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M22 4L12 14.01l-3-3" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>,
+      <svg key="lock"    width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="3" y="11" width="18" height="11" rx="2" stroke={ORANGE} strokeWidth="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" /></svg>,
+      <svg key="star"    width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z" stroke={ORANGE} strokeWidth="2" strokeLinejoin="round" /></svg>,
+      <svg key="shield"  width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M9 12l2 2 4-4" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>,
+    ]
+    const attendanceFeatureBlocks = (selectedPage?.blocks ?? [])
+      .filter(b => b.block_key.startsWith('feature.') && b.block_key.endsWith('.name'))
+      .sort((a, b) => a.sort_order - b.sort_order)
+    const steps = [
+      { step: '01', titleKey: 'workflow.step1.title', descKey: 'workflow.step1.desc', defaultTitle: 'Clock In',         defaultDesc: 'Casual worker clocks in and submits a live photo. Time and photo are recorded instantly.' },
+      { step: '02', titleKey: 'workflow.step2.title', descKey: 'workflow.step2.desc', defaultTitle: 'Confirm',          defaultDesc: 'The assigned employee confirms the casual worker was present and carried out their duties.' },
+      { step: '03', titleKey: 'workflow.step3.title', descKey: 'workflow.step3.desc', defaultTitle: 'Submit',           defaultDesc: 'Employee signs and submits the attendance record to the manager for review.' },
+      { step: '04', titleKey: 'workflow.step4.title', descKey: 'workflow.step4.desc', defaultTitle: 'Review & Approve', defaultDesc: 'Manager reviews the record — or lets AI approve it automatically if everything checks out.' },
+    ]
+    return (
+      <div style={{ background: '#FFFFFF', borderRadius: 18, overflow: 'hidden', border: `1px solid ${BORDER}` }}>
+
+        {/* Hero */}
+        {renderSectionWrap('section.hero.visible', 'Hero Section',
+          <section style={{ background: '#1C1C1E', padding: '72px 48px 64px', textAlign: 'center' }}>
+            <div style={{ marginBottom: 20 }}>
+              {renderEditableText({ blockKey: 'hero.badge', fallback: 'Attendance', variant: 'badge' })}
+            </div>
+            <div style={{ maxWidth: 640, margin: '0 auto 18px' }}>
+              {renderEditableText({ blockKey: 'hero.headline', fallback: 'Every clock-in. Verified. Every record. Protected.', variant: 'hero' })}
+            </div>
+            <div style={{ maxWidth: 520, margin: '0 auto 32px' }}>
+              {renderEditableText({ blockKey: 'hero.subheadline', fallback: 'Accurate attendance tracking with AI built in — so nothing slips through the cracks.', variant: 'subhead', multiline: true })}
+            </div>
+            {renderEditableBtn({ labelKey: 'hero.button.label', urlKey: 'hero.button.url', fallbackLabel: 'Get Started Free', fallbackUrl: '/get-started', editing: editingProductsBtn, setEditing: setEditingProductsBtn, btnStyle: { background: ORANGE, color: '#FFFFFF', border: 'none', borderRadius: 10, padding: '13px 30px', fontSize: 15, fontWeight: 600, cursor: 'pointer' } })}
+          </section>
+        )}
+
+        {/* Features grid */}
+        {renderSectionWrap('section.intro.visible', 'Features Grid',
+          <section style={{ background: '#FFFBF5', padding: '56px 48px' }}>
+            <div style={{ textAlign: 'center', marginBottom: 40 }}>
+              <div style={{ marginBottom: 10 }}>
+                {renderEditableText({ blockKey: 'features.title', fallback: 'Everything you need to track attendance with confidence', variant: 'sectionTitle' })}
+              </div>
+              {renderEditableText({ blockKey: 'features.subtitle', fallback: 'From the moment they clock in to the moment the record is approved.', variant: 'body', styleOverride: { textAlign: 'center' as const } })}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 18 }}>
+              {attendanceFeatureBlocks.map((nameBlock, i) => {
+                const idx = nameBlock.block_key.replace('feature.', '').replace('.name', '')
+                const descKey = `feature.${idx}.desc`
+                const icon = featureIcons[i % featureIcons.length]
+                const descBlock = blockByKey[descKey]
+                const cardDirty = (drafts[nameBlock.id] ?? '') !== nameBlock.value || (descBlock ? (drafts[descBlock.id] ?? '') !== descBlock.value : false)
+                return (
+                  <div key={nameBlock.id} style={{ position: 'relative', background: '#FFFFFF', border: '1px solid #F0E8D8', borderRadius: 16, padding: 24 }}>
+                    {cardDirty && <span style={{ position: 'absolute', top: 36, right: 8, background: ORANGE, color: '#FFFFFF', borderRadius: 999, padding: '3px 7px', fontSize: 10, fontWeight: 900, zIndex: 2 }}>Unsaved</span>}
+                    <button
+                      type="button"
+                      onClick={() => deleteBlock(nameBlock.id).then(() => { if (descBlock) deleteBlock(descBlock.id) })}
+                      title="Remove feature card"
+                      style={{ position: 'absolute', top: 10, right: 10, background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 4, lineHeight: 1 }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                    </button>
+                    <div style={{ width: 44, height: 44, background: '#FEF3C7', borderRadius: 11, display: 'grid', placeItems: 'center', marginBottom: 14 }}>{icon}</div>
+                    <div style={{ marginBottom: 8 }}>
+                      {renderEditableText({ blockKey: nameBlock.block_key, fallback: 'Feature name', variant: 'cardTitle', styleOverride: { fontSize: 15, fontWeight: 600, color: '#1C1917' }, hideDirtyBadge: true })}
+                    </div>
+                    {renderEditableText({ blockKey: descKey, fallback: 'Feature description', variant: 'cardBody', multiline: true, styleOverride: { fontSize: 14, lineHeight: 1.7 }, hideDirtyBadge: true })}
+                  </div>
+                )
+              })}
+              {/* Add feature card */}
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!selectedPage) return
+                  const existing = (selectedPage.blocks ?? []).filter(b => b.block_key.startsWith('feature.') && b.block_key.endsWith('.name'))
+                  const maxIdx = existing.reduce((m, b) => { const n = parseInt(b.block_key.split('.')[1]); return n > m ? n : m }, 0)
+                  const nextIdx = maxIdx + 1
+                  const maxSort = existing.reduce((m, b) => b.sort_order > m ? b.sort_order : m, 0)
+                  await createBlock(selectedPage.id, `feature.${nextIdx}.name`, `Feature ${nextIdx} Name`, 'New Feature', maxSort + 1)
+                  await createBlock(selectedPage.id, `feature.${nextIdx}.desc`, `Feature ${nextIdx} Description`, 'Describe this feature.', maxSort + 2)
+                }}
+                style={{ background: 'none', border: '2px dashed #F0E8D8', borderRadius: 16, padding: 24, cursor: 'pointer', color: '#A8A29E', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 120 }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Add feature card
+              </button>
+            </div>
+          </section>
+        )}
+
+        {/* Workflow steps */}
+        {renderSectionWrap('section.content.visible', 'Workflow Steps',
+          <section style={{ background: '#FFFFFF', padding: '56px 48px' }}>
+            <div style={{ textAlign: 'center', marginBottom: 52 }}>
+              <div style={{ marginBottom: 12 }}>
+                {renderEditableText({ blockKey: 'workflow.title', fallback: 'From clock-in to approved record — fully covered.', variant: 'sectionTitle' })}
+              </div>
+              {renderEditableText({ blockKey: 'workflow.subtitle', fallback: 'A complete attendance flow with verification and AI built into every step.', variant: 'body', multiline: true, styleOverride: { textAlign: 'center' as const } })}
+            </div>
+            <div style={{ position: 'relative', display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', marginBottom: 20 }}>
+              <div style={{ position: 'absolute', top: 36, left: '12.5%', right: '12.5%', height: 2, background: 'linear-gradient(90deg, #F97316, #FED7AA 33%, #FED7AA 66%, #F97316)', zIndex: 0 }} />
+              {steps.map(s => (
+                <div key={s.step} style={{ display: 'flex', justifyContent: 'center', position: 'relative', zIndex: 1 }}>
+                  <div style={{ width: 72, height: 72, borderRadius: '50%', background: '#FEF3C7', border: '3px solid #F97316', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                    <span style={{ fontSize: 9, fontWeight: 700, color: ORANGE, letterSpacing: '0.1em', lineHeight: 1 }}>STEP</span>
+                    <span style={{ fontSize: 18, fontWeight: 700, color: ORANGE, lineHeight: 1.1 }}>{s.step}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0,1fr))', gap: 8 }}>
+              {steps.map(s => (
+                <div key={s.step} style={{ textAlign: 'center', padding: '0 12px' }}>
+                  <div style={{ marginBottom: 8 }}>
+                    {renderEditableText({ blockKey: s.titleKey, fallback: s.defaultTitle, variant: 'cardTitle', styleOverride: { fontSize: 15, fontWeight: 700, color: '#1C1917' } })}
+                  </div>
+                  {renderEditableText({ blockKey: s.descKey, fallback: s.defaultDesc, variant: 'cardBody', multiline: true, styleOverride: { fontSize: 13, color: '#78716C', lineHeight: 1.65 } })}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* CTA */}
+        {renderSectionWrap('section.cta.visible', 'CTA Section',
+          <section style={{ background: ORANGE, padding: '64px 48px', textAlign: 'center' }}>
+            <div style={{ maxWidth: 560, margin: '0 auto' }}>
+              <div style={{ marginBottom: 14 }}>
+                {renderEditableText({ blockKey: 'cta.headline', fallback: 'No more disputed timesheets.', variant: 'cta', styleOverride: { fontSize: 36 }, onDarkBg: true })}
+              </div>
+              <div style={{ marginBottom: 28 }}>
+                {renderEditableText({ blockKey: 'cta.subheadline', fallback: 'Photo-verified, AI-assisted, and fully auditable — from the first clock-in.', variant: 'subhead', multiline: true, styleOverride: { fontSize: 16 }, onDarkBg: true })}
               </div>
               {renderEditableBtn({ labelKey: 'cta.button.label', urlKey: 'cta.button.url', fallbackLabel: 'Get Started Free', fallbackUrl: '/get-started', editing: editingCtaBtn, setEditing: setEditingCtaBtn, btnStyle: { background: '#FFFFFF', color: ORANGE, border: 'none', borderRadius: 10, padding: '13px 30px', fontSize: 15, fontWeight: 700, cursor: 'pointer' } })}
             </div>
@@ -1416,7 +1875,7 @@ export default function AdminDashboardPage() {
                   Loading live preview...
                 </div>
               ) : selectedPage ? (
-                <>{selectedPage.slug === 'home' ? renderHomePreview() : selectedPage.slug === 'products' ? renderProductsPreview() : selectedPage.slug === 'about' ? renderAboutPreview() : selectedPage.slug === 'products-ai-features' ? renderAiFeaturesPreview() : renderGenericPreview()}</>
+                <>{selectedPage.slug === 'home' ? renderHomePreview() : selectedPage.slug === 'products' ? renderProductsPreview() : selectedPage.slug === 'about' ? renderAboutPreview() : selectedPage.slug === 'products-ai-features' ? renderAiFeaturesPreview() : selectedPage.slug === 'products-recruitment' ? renderRecruitmentPreview() : selectedPage.slug === 'products-attendance' ? renderAttendancePreview() : selectedPage.slug === 'products-smart-notifications' ? renderSmartNotificationsPreview() : renderGenericPreview()}</>
 
               ) : (
                 <div style={{ display: 'grid', placeItems: 'center', minHeight: 520, background: '#FFFFFF', borderRadius: 14, color: MUTED, fontSize: 13, fontWeight: 700 }}>
