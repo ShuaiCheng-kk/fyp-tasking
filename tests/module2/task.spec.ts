@@ -90,7 +90,7 @@ async function createShiftAssignmentsForDate(shiftDate: string, userIds = [manag
       end_time: '17:00',
       title: `Module 2 Test Shift ${shiftDate}`,
       created_by: seeded.ownerId,
-      publication_status: 'draft',
+      publication_status: 'published',
     })
     .select('id')
     .single()
@@ -129,7 +129,7 @@ test.beforeAll(async () => {
       end_time: '17:00',
       title: 'Module 2 Test Shift',
       created_by: seeded.ownerId,
-      publication_status: 'draft',
+      publication_status: 'published',
     })
     .select('id')
     .single()
@@ -237,7 +237,7 @@ test('UC24 generates an AI task assignment suggestion', async ({ request }) => {
       title: 'Prepare VIP booking',
       description: 'Coordinate staffing and room setup.',
       priority: 'High',
-      people_needed: 1,
+      want_sub_tasks: false,
       task_date: '2026-07-01',
     },
   })
@@ -245,8 +245,50 @@ test('UC24 generates an AI task assignment suggestion', async ({ request }) => {
   const body = await res.json()
   expect(body.success).toBe(true)
   expect(body.suggestion.department_id).toBe(departmentId)
-  expect(body.suggestion.suggested_manager_ids).toContain(managerB.userId)
-  expect(body.suggestion.steps.length).toBeGreaterThan(0)
+  // recommended_manager_id is whichever of the seeded managers currently has the lighter
+  // workload (depends on tasks created by earlier tests in this serial suite), so assert
+  // it's a valid candidate rather than hardcoding which one. Both have a published shift on
+  // 2026-07-01 (seeded in beforeAll), so both remain eligible candidates.
+  expect([managerA.userId, managerB.userId]).toContain(body.suggestion.recommended_manager_id)
+  expect(body.suggestion.reason).toBeTruthy()
+  expect(body.suggestion.description).toBeTruthy()
+  expect(body.suggestion.sub_tasks).toEqual([])
+})
+
+test('UC24 excludes managers with no published shift on the given task_date', async ({ request }) => {
+  // Only managerA has a shift_assignments row on 2026-08-01 (seeded in beforeAll); managerB
+  // never does, so they must never appear as a candidate or be recommended for this date.
+  const res = await request.post('/api/ai/assign', {
+    data: {
+      company_id: seeded.companyId,
+      title: 'Restock supplies',
+      description: '',
+      priority: 'Medium',
+      want_sub_tasks: false,
+      task_date: '2026-08-01',
+    },
+  })
+  expect(res.status()).toBe(200)
+  const body = await res.json()
+  expect(body.success).toBe(true)
+  expect(body.suggestion.candidates.map((c: { id: string }) => c.id)).toEqual([managerA.userId])
+  expect(body.suggestion.recommended_manager_id).toBe(managerA.userId)
+})
+
+test('UC24 returns AI-generated sub-tasks when want_sub_tasks is true', async ({ request }) => {
+  const res = await request.post('/api/ai/assign', {
+    data: {
+      company_id: seeded.companyId,
+      title: 'Plan and run the quarterly marketing campaign',
+      description: 'Coordinate content, channels, and budget across the team.',
+      priority: 'High',
+      want_sub_tasks: true,
+    },
+  })
+  expect(res.status()).toBe(200)
+  const body = await res.json()
+  expect(body.success).toBe(true)
+  expect(Array.isArray(body.suggestion.sub_tasks)).toBe(true)
 })
 
 test('UC25 shows a workload rebalancing suggestion', async ({ request }) => {

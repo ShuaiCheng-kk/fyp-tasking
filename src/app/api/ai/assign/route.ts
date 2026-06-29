@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
       title: b.title,
       description: (b.description as string) ?? '',
       priority: b.priority,
-      people_needed: typeof b.people_needed === 'number' ? b.people_needed : 1,
+      want_sub_tasks: b.want_sub_tasks === true,
       task_date: typeof b.task_date === 'string' ? b.task_date : undefined,
     })
     return NextResponse.json({ success: true, suggestion })

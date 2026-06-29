@@ -13,6 +13,7 @@ import {
   ClipboardList,
   CheckSquare,
   CalendarDays,
+  Settings,
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 
@@ -25,6 +26,7 @@ const NAV_ITEMS = [
   { label: 'Recruitment',   Icon: UserPlus,         href: '/partner/recruitment',     dot: 'review' as const },
   { label: 'Attendance',    Icon: ClipboardList,    href: '/partner/attendance',      dot: null },
   { label: 'Report',        Icon: BarChart2,        href: '/partner/report',          dot: null },
+  { label: 'Settings',      Icon: Settings,         href: '/partner/settings',        dot: null },
 ]
 
 type Theme = {

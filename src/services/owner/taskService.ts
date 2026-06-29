@@ -74,14 +74,15 @@ export const taskService = {
         sequence_order: ordered ? i : null,
         title,
         description: subTasks[i].description ?? null,
-        assigned_user_id: mainTask.assigned_user_id,
+        // AI-distributed sub-tasks (UC20) carry their own assignee/due_at per step; manually
+        // created sub-tasks (UC19) have neither, so they inherit the parent's values.
+        assigned_user_id: subTasks[i].assigned_user_id ?? mainTask.assigned_user_id,
         assigned_by: mainTask.assigned_by,
         status: 'Assigned',
         percentage_complete: 0,
         task_date: mainTask.task_date,
-        // Sub-tasks inherit the parent's priority/deadline so they remain part of the same task plan.
         priority: mainTask.priority,
-        due_at: mainTask.due_at,
+        due_at: subTasks[i].due_at ?? mainTask.due_at,
       })
     }
     return mainTask

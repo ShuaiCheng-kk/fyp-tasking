@@ -1253,14 +1253,20 @@ export default function OwnerTasksPage() {
   const [aiTitle,          setAiTitle]          = useState('')
   const [aiDescription,    setAiDescription]    = useState('')
   const [aiPriority,       setAiPriority]       = useState('')
-  const [aiPeopleNeeded,   setAiPeopleNeeded]   = useState(1)
+  const [aiDueDate,        setAiDueDate]        = useState('')
+  const [aiDueTime,        setAiDueTime]        = useState('')
+  // Both optional, chosen up front so Generate already knows whether to ask the AI for
+  // sub-tasks, and whether to surface the (simple Repeats + Repeat-until) recurring fields.
+  const [aiSubTaskEnabled, setAiSubTaskEnabled] = useState(false)
+  const [aiRecurringEnabled, setAiRecurringEnabled] = useState(false)
+  const [aiRecurrenceRule, setAiRecurrenceRule] = useState<TaskRecurrenceRule | ''>('')
+  const [aiRecurrenceEndDate, setAiRecurrenceEndDate] = useState('')
   const [aiLoading,        setAiLoading]        = useState(false)
   const [aiError,          setAiError]          = useState('')
   const [aiSuggestion,     setAiSuggestion]     = useState<AiAssignSuggestion | null>(null)
   const [aiDeptId,         setAiDeptId]         = useState('')
-  const [aiManagerIds,     setAiManagerIds]     = useState<string[]>([])
-  const [aiDueDate,        setAiDueDate]        = useState('')
-  const [aiDueTime,        setAiDueTime]        = useState('')
+  const [aiManagerId,      setAiManagerId]      = useState('')
+  const [aiSubTaskDrafts,  setAiSubTaskDrafts]  = useState<{ title: string; description: string }[]>([])
   const [aiCreateLoading,  setAiCreateLoading]  = useState(false)
 
   // Task Template management modal
@@ -2090,12 +2096,16 @@ export default function OwnerTasksPage() {
     setAiTitle('')
     setAiDescription('')
     setAiPriority('')
-    setAiPeopleNeeded(1)
-    setAiSuggestion(null)
-    setAiDeptId(selectedDeptId || '')
-    setAiManagerIds([])
     setAiDueDate('')
     setAiDueTime('')
+    setAiSubTaskEnabled(false)
+    setAiRecurringEnabled(false)
+    setAiRecurrenceRule('')
+    setAiRecurrenceEndDate('')
+    setAiSuggestion(null)
+    setAiDeptId(selectedDeptId || '')
+    setAiManagerId('')
+    setAiSubTaskDrafts([])
     setAiError('')
   }
 
@@ -2276,8 +2286,9 @@ export default function OwnerTasksPage() {
 
   const shiftUserIdsByDate = useMemo(() => {
     const map = new Map<string, Set<string>>()
+    // A draft shift isn't a real commitment yet, so it can't make someone eligible for a task.
     for (const shift of shiftOptions) {
-      if (!shift.user_id) continue
+      if (!shift.user_id || shift.publication_status !== 'published') continue
       const set = map.get(shift.shift_date) ?? new Set<string>()
       set.add(shift.user_id)
       map.set(shift.shift_date, set)
@@ -4985,14 +4996,19 @@ export default function OwnerTasksPage() {
         </div>
       )}
 
-      {/* ═══════════════ AI TASK BREAKDOWN MODAL ═══════════════ */}
+      {/* ═══════════════ AI TASK ASSIGNMENT MODAL ═══════════════ */}
       {aiModal && (() => {
         const isReview = aiStep === 'review'
-        const aiDeptManagers = members.filter(m => m.role === 'Manager' && m.department_id === aiDeptId && userIdsWithShiftOnTaskDate.has(m.id))
+        // Eligibility is based on the task's own deadline date, not whatever date happens to be
+        // selected on the board — those can differ once the user picks a Deadline in this modal.
+        const aiDeptManagers = members.filter(m => m.role === 'Manager' && m.department_id === aiDeptId && userIdsWithShiftOnDate(aiDueDate).has(m.id))
 
         const handleGenerate = async () => {
           if (!aiTitle.trim()) { setAiError('Please enter a task title'); return }
           if (!aiPriority) { setAiError('Please select a priority'); return }
+          if (!aiDueDate || !aiDueTime) { setAiError('Please select a deadline'); return }
+          if (aiRecurringEnabled && !aiRecurrenceRule) { setAiError('Choose how often this task repeats'); return }
+          if (aiRecurringEnabled && !aiRecurrenceEndDate) { setAiError('Repeat until date is required for recurring tasks'); return }
           setAiLoading(true); setAiError('')
           try {
             const res = await fetch('/api/ai/assign', {
@@ -5003,19 +5019,18 @@ export default function OwnerTasksPage() {
                 title: aiTitle,
                 description: aiDescription,
                 priority: aiPriority,
-                people_needed: aiPeopleNeeded,
-                task_date: taskDate,
+                want_sub_tasks: aiSubTaskEnabled,
+                task_date: aiDueDate,
               }),
             })
             const data = await res.json()
             if (!data.success) throw new Error(data.message)
             const suggestion = data.suggestion as AiAssignSuggestion
             setAiSuggestion(suggestion)
+            setAiDescription(suggestion.description)
             setAiDeptId(suggestion.department_id)
-            setAiManagerIds(suggestion.suggested_manager_ids)
-            const due = new Date(suggestion.due_at)
-            setAiDueDate(formatDateKey(due))
-            setAiDueTime(due.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }))
+            setAiManagerId(suggestion.recommended_manager_id ?? '')
+            setAiSubTaskDrafts(suggestion.sub_tasks.map(s => ({ title: s.title, description: s.description })))
             setAiStep('review')
           } catch (err) {
             setAiError(err instanceof Error ? err.message : 'Failed to generate suggestion')
@@ -5029,13 +5044,11 @@ export default function OwnerTasksPage() {
           setAiCreateLoading(true); setAiError('')
           try {
             const due_at = new Date(`${aiDueDate}T${aiDueTime}:00`).toISOString()
-            const completionSteps = aiSuggestion.steps
-              .map((step, i) => `${i + 1}. ${step.title}\n   ${step.description}`)
-              .join('\n')
-            const taskDescription = [
-              aiDescription.trim(),
-              completionSteps ? `Completion Steps:\n${completionSteps}` : '',
-            ].filter(Boolean).join('\n\n') || null
+            const subTasks = aiSubTaskEnabled
+              ? aiSubTaskDrafts
+                  .map(s => ({ title: s.title.trim(), description: s.description.trim() || null }))
+                  .filter(s => s.title)
+              : []
             const res = await fetch('/api/task', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -5043,22 +5056,46 @@ export default function OwnerTasksPage() {
                 company_id: companyId,
                 department_id: aiDeptId,
                 title: aiTitle.trim(),
-                description: taskDescription,
+                description: aiDescription.trim() || null,
                 priority: aiPriority,
                 due_at,
-                assigned_user_id: aiManagerIds[0] || null,
+                assigned_user_id: aiManagerId || null,
                 assigned_by: internalUserId || null,
                 status: 'Assigned',
                 percentage_complete: 0,
                 task_date: taskDate,
+                sub_tasks: subTasks.length > 0 ? subTasks : undefined,
               }),
             })
             const data = await res.json()
             if (!data.success) throw new Error(data.message)
+
+            // Recurring is set up as a second step against the task just created, mirroring
+            // the New Task modal's flow — but kept to just Repeats + Repeat-until here, so the
+            // deadline rule defaults to same_day at the AI deadline's own time.
+            if (aiRecurringEnabled && aiRecurrenceRule) {
+              const taskId = data.task?.id
+              if (!taskId) throw new Error('Task created, but recurring setup could not find the new task')
+              const recurringRes = await fetch('/api/task', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: 'recurring',
+                  id: taskId,
+                  recurrence_rule: aiRecurrenceRule,
+                  recurrence_end_date: aiRecurrenceEndDate,
+                  assigned_by: internalUserId || undefined,
+                  deadline_rule: { type: 'same_day', time: aiDueTime },
+                }),
+              })
+              const recurringData = await recurringRes.json()
+              if (!recurringData.success) throw new Error(recurringData.message)
+            }
+
             setAiModal(false)
             await fetchKanban(companyId)
             await refreshAllTaskInsights()
-            showTaskToast('Task created successfully.')
+            showTaskToast(aiRecurringEnabled ? 'Recurring task created successfully.' : 'Task created successfully.')
           } catch (err) {
             setAiError(err instanceof Error ? err.message : 'Failed to create task')
           } finally {
@@ -5068,10 +5105,10 @@ export default function OwnerTasksPage() {
 
         return (
           <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>
-            <div onClick={e => e.stopPropagation()} style={{ width: 560, maxHeight: '90vh', background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.18)', display: 'flex', flexDirection: 'column', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
+            <div onClick={e => e.stopPropagation()} style={{ width: 440, maxHeight: '90vh', background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.18)', display: 'flex', flexDirection: 'column', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
 
               {/* Header */}
-              <div style={{ padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+              <div style={{ padding: '18px 20px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <Sparkles size={15} color="#fff" strokeWidth={2} />
@@ -5086,13 +5123,13 @@ export default function OwnerTasksPage() {
               </div>
 
               {/* Body */}
-              <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ flex: 1, overflowY: 'auto', padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
 
                 {!isReview ? (
                   <>
                     {/* Title */}
                     <div>
-                      <label style={modalLabelStyle}>Task Title <span style={{ color: '#F97316' }}>*</span></label>
+                      <label style={modalLabelStyle}>Task Title</label>
                       <input
                         autoFocus
                         value={aiTitle}
@@ -5110,16 +5147,16 @@ export default function OwnerTasksPage() {
                         value={aiDescription}
                         onChange={e => setAiDescription(e.target.value)}
                         onKeyDown={e => handleDescriptionKeyDown(e, aiDescription, setAiDescription)}
-                        rows={3}
-                        placeholder="Add context to help AI break this down accurately..."
+                        rows={2}
+                        placeholder="Add more context..."
                         style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
                       />
                     </div>
 
-                    {/* Priority + People Needed */}
+                    {/* Priority + Deadline */}
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                       <div>
-                        <label style={modalLabelStyle}>Priority <span style={{ color: '#F97316' }}>*</span></label>
+                        <label style={modalLabelStyle}>Priority</label>
                         <DropdownField
                           value={aiPriority}
                           options={priorityDropdownOptions}
@@ -5129,19 +5166,72 @@ export default function OwnerTasksPage() {
                         />
                       </div>
                       <div>
-                        <label style={modalLabelStyle}>People Needed</label>
-                        <div style={{ display: 'flex', gap: 6 }}>
-                          {[1, 2, 3].map(n => (
-                            <button
-                              key={n}
-                              type="button"
-                              onClick={() => setAiPeopleNeeded(n)}
-                              style={{ flex: 1, height: 42, border: `1.5px solid ${aiPeopleNeeded === n ? '#7C3AED' : '#E5E7EB'}`, borderRadius: 8, background: aiPeopleNeeded === n ? '#7C3AED' : '#FFFFFF', color: aiPeopleNeeded === n ? '#FFFFFF' : '#374151', fontWeight: 700, fontSize: '0.9375rem', cursor: 'pointer' }}
-                            >
-                              {n}
-                            </button>
-                          ))}
-                        </div>
+                        <label style={modalLabelStyle}>Deadline</label>
+                        <DeadlinePicker
+                          dateValue={aiDueDate}
+                          timeValue={aiDueTime}
+                          onChange={(date, time) => { setAiDueDate(date); setAiDueTime(time) }}
+                          minDate={formatDateKey(new Date())}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Divider */}
+                    <div style={{ borderTop: '1px dashed #E5E7EB' }} />
+
+                    {/* Sub Task + Recurring toggles — both optional */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
+                            <GitBranch size={13} color="#7C3AED" /> Sub Task <span style={{ fontWeight: 400, color: '#9CA3AF' }}>(Optional)</span>
+                          </span>
+                          <input
+                            type="checkbox"
+                            checked={aiSubTaskEnabled}
+                            onChange={e => setAiSubTaskEnabled(e.target.checked)}
+                            style={{ width: 16, height: 16, accentColor: '#7C3AED', cursor: 'pointer', marginLeft: 'auto' }}
+                          />
+                        </label>
+                      </div>
+
+                      <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
+                            <Repeat size={13} color="#7C3AED" /> Recurring <span style={{ fontWeight: 400, color: '#9CA3AF' }}>(Optional)</span>
+                          </span>
+                          <input
+                            type="checkbox"
+                            checked={aiRecurringEnabled}
+                            onChange={e => setAiRecurringEnabled(e.target.checked)}
+                            style={{ width: 16, height: 16, accentColor: '#7C3AED', cursor: 'pointer', marginLeft: 'auto' }}
+                          />
+                        </label>
+                        {aiRecurringEnabled && (
+                          <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Repeats</span>
+                              <DropdownField
+                                value={aiRecurrenceRule}
+                                options={[
+                                  { value: 'daily', label: 'Daily' },
+                                  { value: 'weekly', label: 'Weekly' },
+                                ]}
+                                onChange={v => setAiRecurrenceRule(v as TaskRecurrenceRule)}
+                                placeholder="Select frequency"
+                              />
+                            </label>
+                            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Repeat until</span>
+                              <CompactDatePicker
+                                value={aiRecurrenceEndDate}
+                                onChange={setAiRecurrenceEndDate}
+                                minDate={aiDueDate || formatDateKey(new Date())}
+                                accentColor="#7C3AED"
+                              />
+                            </label>
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -5152,70 +5242,64 @@ export default function OwnerTasksPage() {
                       disabled={aiLoading}
                       style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '11px', background: aiLoading ? '#EDE9FE' : 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: '0.9375rem', color: '#fff', cursor: aiLoading ? 'default' : 'pointer' }}
                     >
-                      {aiLoading ? <><Spinner size={16} /> Generating...</> : <><Sparkles size={15} /> Generate</>}
+                      {aiLoading ? <><Spinner size={16} /> Generating...</> : <><Sparkles size={15} /> Generate AI Suggestion</>}
                     </button>
                   </>
                 ) : aiSuggestion && (
                   <>
-                    {/* Steps */}
+                    {/* Title */}
                     <div>
-                      <label style={modalLabelStyle}>Completion Steps</label>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        {aiSuggestion.steps.map((step, i) => (
-                          <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 9, padding: '9px 11px', border: '1px solid #E5E7EB', borderRadius: 9, background: '#FAFAFA' }}>
-                            <span style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 999, background: '#EDE9FE', color: '#7C3AED', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 1 }}>{i + 1}</span>
-                            <div style={{ minWidth: 0 }}>
-                              <p style={{ margin: 0, fontWeight: 600, fontSize: '0.8125rem', color: '#111827' }}>{step.title}</p>
-                              <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: '#6B7280', lineHeight: 1.45 }}>{step.description}</p>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+                      <label style={modalLabelStyle}>Task Title</label>
+                      <input
+                        value={aiTitle}
+                        onChange={e => setAiTitle(e.target.value)}
+                        style={modalInputStyle}
+                      />
                     </div>
 
-                    {/* Divider */}
-                    <div style={{ borderTop: '1px dashed #E5E7EB' }} />
-
-                    {/* Department */}
+                    {/* Description */}
                     <div>
-                      <label style={modalLabelStyle}>Department <span style={{ fontSize: 11, fontWeight: 400, color: '#7C3AED' }}>| AI picked</span></label>
+                      <label style={modalLabelStyle}>Description</label>
+                      <textarea
+                        value={aiDescription}
+                        onChange={e => setAiDescription(e.target.value)}
+                        onKeyDown={e => handleDescriptionKeyDown(e, aiDescription, setAiDescription)}
+                        rows={2}
+                        style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
+                      />
+                    </div>
+
+                    {/* Recommended Department */}
+                    <div>
+                      <label style={modalLabelStyle}>Recommended Department</label>
                       <DropdownField
                         value={aiDeptId}
                         options={deptDropdownOptions}
-                        onChange={v => { setAiDeptId(v); setAiManagerIds([]) }}
+                        onChange={v => { setAiDeptId(v); setAiManagerId('') }}
                         placeholder="Select department"
                       />
                     </div>
 
-                    {/* Assign To (multi-select, up to people_needed) */}
+                    {/* Recommended Assignee */}
                     <div>
-                      <label style={modalLabelStyle}>
-                        Assign To <span style={{ fontWeight: 400, color: '#9CA3AF' }}>({aiManagerIds.length}/{aiPeopleNeeded} selected)</span>
-                        <span style={{ fontSize: 11, fontWeight: 400, color: '#7C3AED', marginLeft: 6 }}>| AI picked</span>
-                      </label>
+                      <label style={modalLabelStyle}>Recommended Assignee</label>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                         {aiDeptManagers.length === 0 && (
-                          <p style={{ margin: 0, fontSize: '0.8125rem', color: '#9CA3AF', fontStyle: 'italic' }}>No managers in this department.</p>
+                          <p style={{ margin: 0, fontSize: '0.8125rem', color: '#9CA3AF', fontStyle: 'italic' }}>No managers available on this date.</p>
                         )}
                         {aiDeptManagers.map(m => {
-                          const cand = aiSuggestion.candidates.find(c => c.id === m.id)
-                          const checked = aiManagerIds.includes(m.id)
-                          const isAiPick = aiSuggestion.suggested_manager_ids.includes(m.id)
-                          const atLimit = aiManagerIds.length >= aiPeopleNeeded && !checked
+                          const selected = aiManagerId === m.id
+                          const isAiPick = aiSuggestion.recommended_manager_id === m.id
                           return (
                             <div
                               key={m.id}
-                              onClick={() => {
-                                if (atLimit) return
-                                setAiManagerIds(prev => checked ? prev.filter(id => id !== m.id) : [...prev, m.id])
-                              }}
-                              style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '9px 11px', border: `1.5px solid ${checked ? '#7C3AED' : '#E5E7EB'}`, borderRadius: 9, background: checked ? '#FAF5FF' : '#FFFFFF', cursor: atLimit ? 'not-allowed' : 'pointer', opacity: atLimit ? 0.5 : 1 }}
+                              onClick={() => setAiManagerId(m.id)}
+                              style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '9px 11px', border: `1.5px solid ${selected ? '#7C3AED' : '#E5E7EB'}`, borderRadius: 9, background: selected ? '#FAF5FF' : '#FFFFFF', cursor: 'pointer' }}
                             >
-                              <div style={{ width: 16, height: 16, borderRadius: 5, border: `2px solid ${checked ? '#7C3AED' : '#D1D5DB'}`, background: checked ? '#7C3AED' : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                {checked && <CheckCircle size={11} color="#fff" strokeWidth={3} />}
+                              <div style={{ width: 16, height: 16, borderRadius: 999, border: `2px solid ${selected ? '#7C3AED' : '#D1D5DB'}`, background: selected ? '#7C3AED' : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                {selected && <div style={{ width: 6, height: 6, borderRadius: 999, background: '#fff' }} />}
                               </div>
                               <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#111827' }}>{m.full_name}</span>
-                              {cand && <span style={{ fontSize: 11, color: '#9CA3AF' }}>{cand.active_task_count} active</span>}
                               {isAiPick && <span style={{ fontSize: 10, fontWeight: 700, color: '#7C3AED', marginLeft: 'auto' }}>AI PICK</span>}
                             </div>
                           )
@@ -5223,31 +5307,67 @@ export default function OwnerTasksPage() {
                       </div>
                     </div>
 
+                    {/* Reason */}
+                    <div style={{ display: 'flex', gap: 8, padding: '10px 12px', background: '#FAF5FF', border: '1px solid #EDE9FE', borderRadius: 9 }}>
+                      <Sparkles size={14} color="#7C3AED" style={{ flexShrink: 0, marginTop: 1 }} />
+                      <p style={{ margin: 0, fontSize: '0.8125rem', color: '#5B21B6', lineHeight: 1.5 }}>{aiSuggestion.reason}</p>
+                    </div>
+
                     {/* Divider */}
                     <div style={{ borderTop: '1px dashed #E5E7EB' }} />
 
-                    {/* Priority */}
-                    <div>
-                      <label style={modalLabelStyle}>Priority</label>
-                      <DropdownField
-                        value={aiPriority}
-                        options={priorityDropdownOptions}
-                        onChange={setAiPriority}
-                        placeholder="Select priority"
-                        badgeColors={PRIORITY_COLORS}
-                      />
+                    {/* Priority + Deadline */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <div>
+                        <label style={modalLabelStyle}>Priority</label>
+                        <DropdownField
+                          value={aiPriority}
+                          options={priorityDropdownOptions}
+                          onChange={setAiPriority}
+                          placeholder="Select priority"
+                          badgeColors={PRIORITY_COLORS}
+                        />
+                      </div>
+                      <div>
+                        <label style={modalLabelStyle}>Deadline</label>
+                        <DeadlinePicker
+                          dateValue={aiDueDate}
+                          timeValue={aiDueTime}
+                          onChange={(date, time) => { setAiDueDate(date); setAiDueTime(time) }}
+                          minDate={formatDateKey(new Date())}
+                        />
+                      </div>
                     </div>
 
-                    {/* Deadline */}
-                    <div>
-                      <label style={modalLabelStyle}>Deadline <span style={{ fontSize: 11, fontWeight: 400, color: '#7C3AED' }}>| AI suggested</span></label>
-                      <DeadlinePicker
-                        dateValue={aiDueDate}
-                        timeValue={aiDueTime}
-                        onChange={(date, time) => { setAiDueDate(date); setAiDueTime(time) }}
-                        minDate={formatDateKey(new Date())}
-                      />
-                    </div>
+                    {/* Sub-tasks — requested up front, AI-generated, still editable here */}
+                    {aiSubTaskEnabled && (
+                      <>
+                        <div style={{ borderTop: '1px dashed #E5E7EB' }} />
+                        <div>
+                          <label style={modalLabelStyle}>Sub-Tasks <span style={{ fontSize: 11, fontWeight: 400, color: '#7C3AED' }}>| AI generated</span></label>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {aiSubTaskDrafts.map((step, i) => (
+                              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 9, padding: '9px 11px', border: '1px solid #E5E7EB', borderRadius: 9, background: '#FAFAFA' }}>
+                                <span style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 999, background: '#EDE9FE', color: '#7C3AED', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 1 }}>{i + 1}</span>
+                                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                  <input
+                                    value={step.title}
+                                    onChange={e => setAiSubTaskDrafts(prev => prev.map((s, si) => si === i ? { ...s, title: e.target.value } : s))}
+                                    style={{ ...modalInputStyle, height: 32, fontSize: '0.8125rem', fontWeight: 600 }}
+                                  />
+                                  <textarea
+                                    value={step.description}
+                                    onChange={e => setAiSubTaskDrafts(prev => prev.map((s, si) => si === i ? { ...s, description: e.target.value } : s))}
+                                    rows={2}
+                                    style={{ ...modalInputStyle, fontSize: '0.75rem', resize: 'vertical' }}
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </>
+                    )}
 
                     <InlineError message={aiError} />
                   </>
@@ -5256,7 +5376,7 @@ export default function OwnerTasksPage() {
 
               {/* Footer */}
               {isReview && (
-                <div style={{ padding: '14px 24px', borderTop: '1px solid #F3F4F6', display: 'flex', gap: 10, flexShrink: 0 }}>
+                <div style={{ padding: '14px 20px', borderTop: '1px solid #F3F4F6', display: 'flex', gap: 10, flexShrink: 0 }}>
                   <button
                     onClick={() => setAiStep('input')}
                     style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: '1px solid #E5E7EB', borderRadius: 10, background: '#FFFFFF', color: '#374151', height: 40, padding: '0 16px', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}

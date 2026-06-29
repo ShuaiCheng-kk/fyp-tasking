@@ -45,6 +45,8 @@ export interface TaskInput {
 export interface SubTaskInput {
   title: string
   description?: string | null
+  assigned_user_id?: string | null
+  due_at?: string | null
 }
 
 export interface TaskStatItem {

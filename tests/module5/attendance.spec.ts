@@ -183,7 +183,7 @@ test('UC63 reviews attendance through manager and owner decisions', async ({ req
   expect(await ownerReview.json()).toMatchObject({ success: true, record: { owner_status: 'approved', status: 'owner_approved' } })
 })
 
-test('UC65, UC66, UC71, and UC72 submit availability and leave requests', async ({ request }) => {
+test('UC55 and UC57 submit fixed day off and leave requests, all landing as pending', async ({ request }) => {
   const fixed = await request.post('/api/user/fixed-off-days', {
     data: {
       user_id: worker.userId,
@@ -198,6 +198,7 @@ test('UC65, UC66, UC71, and UC72 submit availability and leave requests', async 
   expect(fixedRead.status()).toBe(200)
   const fixedReadBody = await fixedRead.json()
   expect(fixedReadBody.days.map((day: { weekday: number }) => day.weekday).sort()).toEqual([0, 6])
+  expect(fixedReadBody.days.every((day: { status: string }) => day.status === 'pending')).toBe(true)
 
   const timeOff = await request.post('/api/user/leave-requests', {
     data: {
@@ -223,6 +224,18 @@ test('UC65, UC66, UC71, and UC72 submit availability and leave requests', async 
   expect(breakWaiver.status()).toBe(200)
   expect(await breakWaiver.json()).toMatchObject({ success: true, request: { request_type: 'break_waiver', status: 'pending' } })
 
+  const leave = await request.post('/api/user/leave-requests', {
+    data: {
+      user_id: worker.userId,
+      company_id: seeded.companyId,
+      shift_assignment_id: assignmentId,
+      request_type: 'leave',
+      reason: 'Personal leave.',
+    },
+  })
+  expect(leave.status()).toBe(200)
+  expect(await leave.json()).toMatchObject({ success: true, request: { request_type: 'leave', status: 'pending' } })
+
   const requests = await request.get(`/api/user/leave-requests?user_id=${worker.userId}`)
   expect(requests.status()).toBe(200)
   const requestsBody = await requests.json()
@@ -230,8 +243,47 @@ test('UC65, UC66, UC71, and UC72 submit availability and leave requests', async 
     expect.arrayContaining([
       expect.objectContaining({ request_type: 'time_off' }),
       expect.objectContaining({ request_type: 'break_waiver' }),
+      expect.objectContaining({ request_type: 'leave' }),
     ]),
   )
+})
+
+test('UC56 approves a fixed day off request', async ({ request }) => {
+  const list = await request.get(`/api/attendance?company_id=${seeded.companyId}&resource=fixed_off_days`)
+  expect(list.status()).toBe(200)
+  const listBody = await list.json()
+  const pendingRequest = listBody.requests.find((r: { user_id: string; status: string }) => r.user_id === worker.userId && r.status === 'pending')
+  expect(pendingRequest).toBeTruthy()
+
+  const decide = await request.patch('/api/attendance', {
+    data: {
+      action: 'decide_fixed_off_day',
+      id: pendingRequest.id,
+      reviewer_id: seeded.ownerId,
+      decision: 'approved',
+    },
+  })
+  expect(decide.status()).toBe(200)
+  expect(await decide.json()).toMatchObject({ success: true, request: { status: 'approved' } })
+})
+
+test('UC58 approves a leave request', async ({ request }) => {
+  const list = await request.get(`/api/attendance?company_id=${seeded.companyId}&resource=time_off`)
+  expect(list.status()).toBe(200)
+  const listBody = await list.json()
+  const pendingLeave = listBody.requests.find((r: { request_type: string; status: string }) => r.request_type === 'leave' && r.status === 'pending')
+  expect(pendingLeave).toBeTruthy()
+
+  const decide = await request.patch('/api/attendance', {
+    data: {
+      action: 'decide_time_off',
+      id: pendingLeave.id,
+      reviewer_id: seeded.ownerId,
+      decision: 'approved',
+    },
+  })
+  expect(decide.status()).toBe(200)
+  expect(await decide.json()).toMatchObject({ success: true, request: { status: 'approved' } })
 })
 
 test('UC67 and UC68 submit and approve a shift swap request', async ({ request }) => {

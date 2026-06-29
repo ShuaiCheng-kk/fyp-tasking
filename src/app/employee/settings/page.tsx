@@ -18,6 +18,7 @@ const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frida
 const LEAVE_TYPES = [
   { value: 'time_off',    label: 'Time Off' },
   { value: 'break_waiver', label: 'Break Waiver' },
+  { value: 'leave',       label: 'Leave Request' },
 ]
 
 type LeaveRequest = {
@@ -49,6 +50,7 @@ export default function EmployeeSettingsPage() {
 
   // Fixed off days
   const [fixedOffDays, setFixedOffDays] = useState<number[]>([])
+  const [fixedOffDayStatus, setFixedOffDayStatus] = useState<Record<number, string>>({})
   const [savingDays, setSavingDays] = useState(false)
   const [daysMsg, setDaysMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
 
@@ -89,7 +91,11 @@ export default function EmployeeSettingsPage() {
 
       const daysRes = await fetch(`/api/user/fixed-off-days?user_id=${internalId}`)
       const daysData = await daysRes.json()
-      if (daysData.success) setFixedOffDays((daysData.days ?? []).map((d: { weekday: number }) => d.weekday))
+      if (daysData.success) {
+        const days = (daysData.days ?? []) as { weekday: number; status: string }[]
+        setFixedOffDays(days.map(d => d.weekday))
+        setFixedOffDayStatus(Object.fromEntries(days.map(d => [d.weekday, d.status])))
+      }
 
       setLoadingLeave(true)
       const leavRes = await fetch(`/api/user/leave-requests?user_id=${internalId}`)
@@ -118,7 +124,8 @@ export default function EmployeeSettingsPage() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
-      setDaysMsg({ type: 'ok', text: 'Fixed off days saved successfully.' })
+      setFixedOffDayStatus(Object.fromEntries(fixedOffDays.map(d => [d, 'pending'])))
+      setDaysMsg({ type: 'ok', text: 'Submitted for approval. Your manager will review it.' })
     } catch (err) {
       setDaysMsg({ type: 'err', text: err instanceof Error ? err.message : 'Failed to save' })
     } finally {
@@ -173,6 +180,9 @@ export default function EmployeeSettingsPage() {
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {WEEKDAYS.map((day, i) => {
                   const selected = fixedOffDays.includes(i)
+                  const status = fixedOffDayStatus[i]
+                  const pending = selected && status === 'pending'
+                  const rejected = selected && status === 'rejected'
                   return (
                     <button
                       key={day}
@@ -182,16 +192,20 @@ export default function EmployeeSettingsPage() {
                         height: 36,
                         padding: '0 16px',
                         borderRadius: 999,
-                        border: selected ? `1.5px solid ${GREEN}` : `1.5px solid ${BORDER}`,
-                        background: selected ? '#DCFCE7' : '#FFFFFF',
-                        color: selected ? GREEN : MUTED,
+                        border: rejected ? '1.5px solid #FCA5A5' : pending ? '1.5px solid #FCD34D' : selected ? `1.5px solid ${GREEN}` : `1.5px solid ${BORDER}`,
+                        background: rejected ? '#FEF2F2' : pending ? '#FFFBEB' : selected ? '#DCFCE7' : '#FFFFFF',
+                        color: rejected ? '#B91C1C' : pending ? '#B45309' : selected ? GREEN : MUTED,
                         fontWeight: selected ? 700 : 500,
                         fontSize: 13,
                         cursor: 'pointer',
                         transition: 'all 0.12s',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
                       }}
                     >
                       {day}
+                      {selected && <span style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase' }}>{status ?? 'pending'}</span>}
                     </button>
                   )
                 })}

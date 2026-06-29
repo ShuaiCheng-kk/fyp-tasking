@@ -733,6 +733,27 @@ describe('taskService — Task (UC14-26)', () => {
 
       expect(taskRepository.createTask).toHaveBeenCalledTimes(1)
     })
+
+    it('uses a per-sub-task assigned_user_id/due_at when provided (UC20 AI step distribution), falling back to the parent otherwise', async () => {
+      vi.mocked(taskRepository.createTask).mockImplementation(async input => ({
+        ...baseTask, ...input, id: input.parent_task_id ? `sub-${input.title}` : 'main-1',
+      }))
+
+      await taskService.assignTaskWithSubTasks(
+        { company_id: 'company-1', department_id: 'dept-1', title: 'Main task', due_at: '2026-07-01T18:00:00.000Z' },
+        [
+          { title: 'Step 1', assigned_user_id: 'manager-2', due_at: '2026-06-30T12:00:00.000Z' },
+          { title: 'Step 2' },
+        ],
+      )
+
+      expect(taskRepository.createTask).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        title: 'Step 1', assigned_user_id: 'manager-2', due_at: '2026-06-30T12:00:00.000Z',
+      }))
+      expect(taskRepository.createTask).toHaveBeenNthCalledWith(3, expect.objectContaining({
+        title: 'Step 2', due_at: '2026-07-01T18:00:00.000Z',
+      }))
+    })
   })
 
   describe('reorderSubTasks (UC28)', () => {

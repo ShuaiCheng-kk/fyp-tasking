@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase'
 import {
   AttendanceRecord,
   AttendanceRecordUpdate,
+  FixedOffDayRequest,
   ShiftSwapRequest,
   TimeOffRequest,
 } from '@/types/Attendance'
@@ -143,5 +144,39 @@ export const attendanceRepository = {
       .single()
     if (error) throw new Error(error.message)
     return data as ShiftAssignment
+  },
+
+  async getFixedOffDayRequestsByCompany(company_id: string): Promise<FixedOffDayRequest[]> {
+    const { data, error } = await supabase
+      .from('employee_fixed_off_days')
+      .select('id, user_id, company_id, weekday, status, reviewed_by, reviewed_at, created_at')
+      .eq('company_id', company_id)
+      .order('created_at', { ascending: false })
+    if (error) throw new Error(error.message)
+    return (data ?? []) as FixedOffDayRequest[]
+  },
+
+  async getFixedOffDayRequestById(id: string): Promise<FixedOffDayRequest | null> {
+    const { data, error } = await supabase
+      .from('employee_fixed_off_days')
+      .select('id, user_id, company_id, weekday, status, reviewed_by, reviewed_at, created_at')
+      .eq('id', id)
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    return (data as FixedOffDayRequest | null) ?? null
+  },
+
+  async updateFixedOffDayRequest(
+    id: string,
+    fields: Pick<FixedOffDayRequest, 'status' | 'reviewed_by' | 'reviewed_at'>,
+  ): Promise<FixedOffDayRequest> {
+    const { data, error } = await supabase
+      .from('employee_fixed_off_days')
+      .update(fields)
+      .eq('id', id)
+      .select('id, user_id, company_id, weekday, status, reviewed_by, reviewed_at, created_at')
+      .single()
+    if (error) throw new Error(error.message)
+    return data as FixedOffDayRequest
   },
 }

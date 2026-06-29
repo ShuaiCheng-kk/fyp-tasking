@@ -11,6 +11,7 @@ async function generateDraft(input: {
   title: string
   description: string
   priority: string
+  wantSubTasks: boolean
   departments: { id: string; name: string }[]
 }): Promise<AiAssignDraft> {
   let draft: AiAssignDraft
@@ -18,19 +19,26 @@ async function generateDraft(input: {
   try {
     draft = await openAIService.generateStructuredJson<AiAssignDraft>({
       schemaName: 'ai_assign_draft',
-      maxOutputTokens: 700,
+      maxOutputTokens: 500,
       instructions: [
         'You are a workforce task planner for SMEs.',
-        'Given a task title, description, and priority, break the task down into 3 to 6 concrete completion steps.',
-        'Each step needs a short title (under 10 words) and a 1-sentence description.',
         'Pick the single best-fit department for this task from the given list of departments by id - return the exact id from the list, never invent one.',
-        'Estimate due_in_days: how many days from today this task should realistically be completed in, based on priority (Urgent = 1-2 days, High = 2-4 days, Medium = 4-7 days, Low = 7-14 days) and the number/complexity of the steps.',
+        input.description.trim()
+          ? 'Lightly polish the given description for clarity and grammar, keeping its original meaning and length - do not invent new requirements.'
+          : 'No description was given - write a 1-2 sentence description for this task based on its title and priority.',
+        'Give a one-sentence reason for the department choice (e.g. "This task is related to promotion, suited to the Marketing department"). Do not name a specific assignee in this reason - the best-fit assignee is chosen separately from workload data, not by you.',
+        input.wantSubTasks
+          ? 'Break the task into 3 to 6 concrete completion steps, each with a short title (under 10 words) and a 1-sentence description.'
+          : 'Return an empty steps array - this task should not be split into sub-tasks.',
       ].join(' '),
-      input,
+      input: { title: input.title, description: input.description, priority: input.priority, departments: input.departments },
       schema: {
         type: 'object',
         additionalProperties: false,
         properties: {
+          department_id: { type: 'string' },
+          description: { type: 'string' },
+          reason: { type: 'string' },
           steps: {
             type: 'array',
             items: {
@@ -43,10 +51,8 @@ async function generateDraft(input: {
               required: ['title', 'description'],
             },
           },
-          department_id: { type: 'string' },
-          due_in_days: { type: 'integer' },
         },
-        required: ['steps', 'department_id', 'due_in_days'],
+        required: ['department_id', 'description', 'reason', 'steps'],
       },
     })
   } catch {
@@ -56,6 +62,8 @@ async function generateDraft(input: {
   if (!input.departments.some(d => d.id === draft.department_id)) {
     draft.department_id = input.departments[0].id
   }
+  if (!draft.description.trim()) draft.description = input.description
+  if (!input.wantSubTasks) draft.steps = []
   return draft
 }
 
@@ -65,20 +73,11 @@ function buildFallbackDraft(input: {
   priority: string
   departments: { id: string; name: string }[]
 }): AiAssignDraft {
-  const dueByPriority: Record<string, number> = {
-    Urgent: 1,
-    High: 3,
-    Medium: 5,
-    Low: 10,
-  }
   return {
     department_id: input.departments[0]?.id ?? '',
-    due_in_days: dueByPriority[input.priority] ?? 5,
-    steps: [
-      { title: 'Confirm scope', description: `Review the requirements for ${input.title}.` },
-      { title: 'Assign owner', description: 'Choose the best available manager for delivery.' },
-      { title: 'Track completion', description: 'Move the task through review and completion.' },
-    ],
+    description: input.description.trim() || `Complete: ${input.title}.`,
+    reason: `This task best matches the ${input.departments[0]?.name ?? 'selected'} department.`,
+    steps: [],
   }
 }
 
@@ -88,7 +87,7 @@ export const aiTaskAssignService = {
     title: string
     description: string
     priority: string
-    people_needed: number
+    want_sub_tasks: boolean
     task_date?: string
   }): Promise<AiAssignSuggestion> {
     if (!input.title.trim()) throw new Error('title is required')
@@ -100,11 +99,23 @@ export const aiTaskAssignService = {
       title: input.title,
       description: input.description,
       priority: input.priority,
+      wantSubTasks: input.want_sub_tasks,
       departments: departments.map(d => ({ id: d.id, name: d.name })),
     })
 
     const department = departments.find(d => d.id === draft.department_id) ?? departments[0]
-    const managers = await companyService.getManagersByDepartment(input.company_id, department.id)
+    const allManagers = await companyService.getManagersByDepartment(input.company_id, department.id)
+
+    // Only managers with a published shift on the task's date are real candidates — a draft
+    // shift isn't a commitment, and someone with no shift at all on that date can't be assigned.
+    const managers = input.task_date
+      ? (await Promise.all(allManagers.map(async m => ({
+          manager: m,
+          eligible: await taskRepository.hasShiftOnDate(m.id, input.company_id, input.task_date!),
+        }))))
+          .filter(r => r.eligible)
+          .map(r => r.manager)
+      : allManagers
 
     let candidates: AiAssignSuggestion['candidates'] = []
     if (managers.length > 0) {
@@ -118,19 +129,19 @@ export const aiTaskAssignService = {
       )
     }
 
-    const dueAt = input.task_date ? new Date(`${input.task_date}T00:00:00`) : new Date()
-    dueAt.setDate(dueAt.getDate() + draft.due_in_days)
-    dueAt.setHours(18, 0, 0, 0)
-
-    const peopleNeeded = Math.min(Math.max(input.people_needed, 1), 3)
+    const recommended = candidates[0] ?? null
+    const reason = recommended
+      ? `${draft.reason} ${recommended.full_name} currently has the lightest workload among managers available on this date.`
+      : draft.reason
 
     return {
-      steps: draft.steps,
       department_id: department.id,
       department_name: department.name,
-      due_at: dueAt.toISOString(),
+      description: draft.description,
+      recommended_manager_id: recommended?.id ?? null,
+      reason,
       candidates,
-      suggested_manager_ids: candidates.slice(0, peopleNeeded).map(c => c.id),
+      sub_tasks: draft.steps,
     }
   },
 }

@@ -4,7 +4,7 @@ import { ShiftAssignment } from './ShiftAssignment'
 export type AttendanceOwnerStatus = 'pending' | 'approved' | 'rejected' | 'modified'
 export type AttendanceExceptionType = 'pending' | 'late' | 'absent' | 'overtime'
 export type AttendanceRequestStatus = 'pending' | 'approved' | 'rejected'
-export type TimeOffRequestType = 'time_off' | 'break_waiver'
+export type TimeOffRequestType = 'time_off' | 'break_waiver' | 'leave'
 
 export interface AttendanceRecord {
   id: string
@@ -182,4 +182,25 @@ export interface ShiftSwapRequestView extends ShiftSwapRequest {
   shift_date: string | null
   start_time: string | null
   end_time: string | null
+}
+
+export interface FixedOffDayRequest {
+  id: string
+  user_id: string
+  company_id: string
+  weekday: number
+  status: AttendanceRequestStatus
+  reviewed_by: string | null
+  reviewed_at: string | null
+  created_at: string
+}
+
+export interface FixedOffDayDecisionInput {
+  id: string
+  reviewer_id: string
+  decision: AttendanceRequestStatus
+}
+
+export interface FixedOffDayRequestView extends FixedOffDayRequest {
+  requester_name: string
 }
