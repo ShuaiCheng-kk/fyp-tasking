@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Check, Circle, ExternalLink, FileText, ImagePlus, Layers3, MousePointer2, RefreshCcw, Save, Trash2 } from 'lucide-react'
+import { Check, ExternalLink, FileText, ImagePlus, MousePointer2, RefreshCcw, Save, Trash2 } from 'lucide-react'
 import AdminSidebar from '@/components/AdminSidebar'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import { createBrowserClient } from '@supabase/ssr'
@@ -34,7 +34,8 @@ function hasBlock(blocks: Record<string, MarketingContentBlock>, blockKey: strin
 
 export default function AdminDashboardPage() {
   const router = useRouter()
-  const [adminUserId] = useState(() => typeof window === 'undefined' ? '' : window.localStorage.getItem('tasking_user_id') || '')
+  const [adminUserId, setAdminUserId] = useState('')
+  const [authChecked, setAuthChecked] = useState(false)
   const [userName, setUserName] = useState('')
   const [userPhoto, setUserPhoto] = useState<string | null>(null)
   const [pages, setPages] = useState<MarketingPageSummary[]>([])
@@ -46,6 +47,9 @@ export default function AdminDashboardPage() {
   const [loadingPage, setLoadingPage] = useState(false)
   const [savingBlockId, setSavingBlockId] = useState('')
   const [uploadingBlockId, setUploadingBlockId] = useState('')
+  const [editingCtaBtn, setEditingCtaBtn] = useState(false)
+  const [editingProductsBtn, setEditingProductsBtn] = useState(false)
+  const [editingIndustriesBtn, setEditingIndustriesBtn] = useState(false)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
   const imageInputRef = useRef<HTMLInputElement>(null)
@@ -64,11 +68,15 @@ export default function AdminDashboardPage() {
   }, [selectedPage])
 
   useEffect(() => {
+    const id = window.localStorage.getItem('tasking_user_id') || ''
     const role = window.localStorage.getItem('tasking_user_role') || ''
-    if (!adminUserId || role !== 'Marketing Admin') {
+    setAdminUserId(id)
+    if (!id || role !== 'Marketing Admin') {
       router.replace('/signin')
+    } else {
+      setAuthChecked(true)
     }
-  }, [adminUserId, router])
+  }, [router])
 
   useEffect(() => {
     if (!adminUserId) return
@@ -107,6 +115,9 @@ export default function AdminDashboardPage() {
     const loadPage = async () => {
       setLoadingPage(true)
       setEditingBlockId('')
+      setEditingCtaBtn(false)
+      setEditingProductsBtn(false)
+      setEditingIndustriesBtn(false)
       setError('')
       setNotice('')
       try {
@@ -441,6 +452,195 @@ export default function AdminDashboardPage() {
     )
   }
 
+  const toggleSection = (blockKey: string, currentlyVisible: boolean) => {
+    const block = blockByKey[blockKey] ?? null
+    if (!block) return
+    const newVal = currentlyVisible ? 'false' : 'true'
+    setDrafts(prev => ({ ...prev, [block.id]: newVal }))
+    setSavingBlockId(block.id)
+    fetch('/api/admin/marketing-pages', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ block_id: block.id, value: newVal, admin_user_id: adminUserId }),
+    }).finally(() => setSavingBlockId(''))
+  }
+
+  const isSectionVisible = (blockKey: string) => {
+    const block = blockByKey[blockKey] ?? null
+    if (!block) return true
+    return (drafts[block.id] ?? block.value) !== 'false'
+  }
+
+  const renderSectionWrap = (
+    visibilityKey: string,
+    label: string,
+    children: React.ReactNode,
+  ) => {
+    const block = blockByKey[visibilityKey] ?? null
+    const visible = isSectionVisible(visibilityKey)
+    const saving = block ? savingBlockId === block.id : false
+
+    if (!visible) {
+      return (
+        <div style={{ background: '#F1F5F9', border: '2px dashed #CBD5E1', borderRadius: 0, padding: '18px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" strokeWidth="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+            <span style={{ fontSize: 13, fontWeight: 700, color: '#64748B' }}>{label} — hidden from visitors</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => toggleSection(visibilityKey, false)}
+            disabled={saving}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 14px', background: '#FFFFFF', border: '1.5px solid #CBD5E1', borderRadius: 8, color: '#374151', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+          >
+            {saving ? 'Saving…' : 'Show section'}
+          </button>
+        </div>
+      )
+    }
+
+    return (
+      <div style={{ position: 'relative' }}>
+        <div
+          style={{
+            position: 'absolute', top: 10, right: 10, zIndex: 4,
+            display: 'flex', alignItems: 'center', gap: 8,
+            background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(6px)',
+            border: '1px solid rgba(226,232,240,0.8)', borderRadius: 10,
+            padding: '5px 10px 5px 8px', boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
+          }}
+        >
+          <div
+            onClick={() => toggleSection(visibilityKey, true)}
+            style={{
+              width: 34, height: 19, borderRadius: 999, position: 'relative', cursor: 'pointer', flexShrink: 0,
+              background: ORANGE, transition: 'background 0.2s',
+            }}
+          >
+            <div style={{
+              position: 'absolute', top: 2, left: 17, width: 15, height: 15,
+              borderRadius: 999, background: '#FFFFFF', boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
+              transition: 'left 0.2s',
+            }} />
+          </div>
+          <span style={{ fontSize: 11, fontWeight: 700, color: TEXT, whiteSpace: 'nowrap' }}>
+            {saving ? 'Saving…' : label}
+          </span>
+        </div>
+        {children}
+      </div>
+    )
+  }
+
+  const renderEditableBtn = ({
+    labelKey, urlKey, fallbackLabel, fallbackUrl, editing, setEditing, btnStyle,
+  }: {
+    labelKey: string; urlKey: string; fallbackLabel: string; fallbackUrl: string
+    editing: boolean; setEditing: (v: boolean) => void
+    btnStyle: React.CSSProperties
+  }) => {
+    const labelBlock = blockByKey[labelKey] ?? null
+    const urlBlock   = blockByKey[urlKey]   ?? null
+    const labelVal = labelBlock ? (drafts[labelBlock.id] ?? labelBlock.value) : fallbackLabel
+
+    const saveBlock = async (block: MarketingContentBlock) => {
+      setSavingBlockId(block.id)
+      const res = await fetch('/api/admin/marketing-pages', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ admin_user_id: adminUserId, block_id: block.id, value: drafts[block.id] ?? block.value }),
+      })
+      const data = await res.json()
+      setSavingBlockId('')
+      if (data.success) {
+        setSelectedPage(c => c ? { ...c, blocks: c.blocks.map(b => b.id === data.block.id ? data.block : b) } : c)
+        setNotice('Saved')
+      }
+    }
+
+    return (
+      <div style={{ position: 'relative', display: 'inline-block' }}>
+        <button
+          type="button"
+          onClick={() => setEditing(!editing)}
+          style={{ ...btnStyle, border: editing ? `2px solid #FDBA74` : (btnStyle.border as string ?? '2px solid transparent'), display: 'inline-flex', alignItems: 'center', gap: 8 }}
+        >
+          {labelVal}
+          <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 5 }}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke={ORANGE} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </span>
+        </button>
+        {editing && (
+          <div style={{ position: 'absolute', bottom: 'calc(100% + 10px)', left: '50%', transform: 'translateX(-50%)', zIndex: 20, background: '#FFFFFF', border: `1px solid ${BORDER}`, borderRadius: 12, padding: '14px 16px', minWidth: 280, boxShadow: '0 8px 24px rgba(0,0,0,0.14)', textAlign: 'left' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <p style={{ margin: 0, fontSize: 11, fontWeight: 900, color: ORANGE, letterSpacing: 1.1, textTransform: 'uppercase' }}>Button Properties</p>
+              <button type="button" onClick={() => setEditing(false)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: MUTED, padding: 2 }}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+            {labelBlock && (
+              <div style={{ marginBottom: 10 }}>
+                <p style={{ margin: '0 0 4px', fontSize: 11, fontWeight: 700, color: MUTED }}>Label</p>
+                <input value={drafts[labelBlock.id] ?? labelBlock.value} onChange={e => setDrafts(p => ({ ...p, [labelBlock.id]: e.target.value }))}
+                  style={{ width: '100%', padding: '7px 10px', border: `1.5px solid ${BORDER}`, borderRadius: 7, fontSize: 13, fontFamily: 'var(--font-body)', outline: 'none', color: TEXT }} />
+              </div>
+            )}
+            {urlBlock && (
+              <div style={{ marginBottom: 12 }}>
+                <p style={{ margin: '0 0 4px', fontSize: 11, fontWeight: 700, color: MUTED }}>URL</p>
+                <select
+                  value=""
+                  onChange={e => { if (e.target.value) setDrafts(p => ({ ...p, [urlBlock.id]: e.target.value })) }}
+                  style={{ width: '100%', padding: '7px 10px', border: `1.5px solid ${BORDER}`, borderRadius: 7, fontSize: 12, outline: 'none', color: MUTED, background: '#FFFFFF', marginBottom: 6 }}
+                >
+                  <option value="">Pick a page…</option>
+                  {pages.map(p => (
+                    <option key={p.slug} value={p.route_path}>{p.title} — {p.route_path}</option>
+                  ))}
+                </select>
+                <input
+                  value={drafts[urlBlock.id] ?? urlBlock.value}
+                  onChange={e => setDrafts(p => ({ ...p, [urlBlock.id]: e.target.value }))}
+                  placeholder={fallbackUrl}
+                  style={{ width: '100%', padding: '7px 10px', border: `1.5px solid ${BORDER}`, borderRadius: 7, fontSize: 12, fontFamily: 'monospace', outline: 'none', color: TEXT }}
+                />
+              </div>
+            )}
+            <button type="button"
+              onClick={async () => { if (labelBlock) await saveBlock(labelBlock); if (urlBlock) await saveBlock(urlBlock); setEditing(false) }}
+              style={{ width: '100%', padding: '8px', background: ORANGE, border: 'none', borderRadius: 7, color: '#fff', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}>
+              {savingBlockId ? 'Saving…' : 'Save changes'}
+            </button>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  const renderCtaBtnSection = (bgColor: string, headlineKey: string, subheadlineKey: string) => {
+    const hasBtn = !!(blockByKey['cta.button.label'] || blockByKey['cta.button.url'])
+    return (
+      <section style={{ background: bgColor, padding: '62px 48px', textAlign: 'center' }}>
+        {renderEditableText({ blockKey: headlineKey, fallback: 'Ready to simplify your workforce?', variant: 'cta' })}
+        <div style={{ height: 16 }} />
+        <div style={{ display: 'flex', justifyContent: 'center' }}>
+          {renderEditableText({ blockKey: subheadlineKey, fallback: 'Join SMEs already using Tasking to hire smarter, schedule faster, and track with confidence.', variant: 'subhead', multiline: true })}
+        </div>
+        {hasBtn && (
+          <>
+            <div style={{ height: 32 }} />
+            {renderEditableBtn({
+              labelKey: 'cta.button.label', urlKey: 'cta.button.url',
+              fallbackLabel: 'Get Started Free', fallbackUrl: '/get-started',
+              editing: editingCtaBtn, setEditing: setEditingCtaBtn,
+              btnStyle: { background: '#FFFFFF', color: ORANGE, borderRadius: 12, padding: '13px 32px', fontSize: 15, fontWeight: 800, cursor: 'pointer' },
+            })}
+          </>
+        )}
+      </section>
+    )
+  }
+
   const renderGenericPreview = () => {
     const hasIntro = hasBlock(blockByKey, 'intro.title') || hasBlock(blockByKey, 'intro.body')
     const hasCta = hasBlock(blockByKey, 'cta.headline') || hasBlock(blockByKey, 'cta.subheadline')
@@ -482,13 +682,7 @@ export default function AdminDashboardPage() {
           </div>
         </section>
       ) : null}
-      {hasCta ? (
-        <section style={{ padding: '56px 48px', background: ORANGE, textAlign: 'center' }}>
-          {hasBlock(blockByKey, 'cta.headline') ? renderEditableText({ blockKey: 'cta.headline', fallback: '', variant: 'cta' }) : null}
-          {hasBlock(blockByKey, 'cta.headline') && hasBlock(blockByKey, 'cta.subheadline') ? <div style={{ height: 14 }} /> : null}
-          {hasBlock(blockByKey, 'cta.subheadline') ? renderEditableText({ blockKey: 'cta.subheadline', fallback: '', variant: 'subhead', multiline: true }) : null}
-        </section>
-      ) : null}
+      {hasCta ? renderCtaBtnSection(ORANGE, 'cta.headline', 'cta.subheadline') : null}
     </div>
     )
   }
@@ -535,7 +729,7 @@ export default function AdminDashboardPage() {
 
   const renderHomePreview = () => (
     <div style={{ background: '#FFFFFF', borderRadius: 18, overflow: 'hidden', border: `1px solid ${BORDER}` }}>
-      <section style={{ background: '#1C1C1E', padding: '76px 54px 86px' }}>
+      {renderSectionWrap('section.hero.visible', 'Hero Banner', <section style={{ background: '#1C1C1E', padding: '76px 54px 86px', position: 'relative' }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 440px', gap: 48, alignItems: 'center' }}>
           <div>
             {renderEditableText({ blockKey: 'hero.badge', fallback: 'Built for SMEs', variant: 'badge' })}
@@ -573,10 +767,9 @@ export default function AdminDashboardPage() {
             )
           })()}
         </div>
-      </section>
+      </section>)}
 
-      {/* Video section */}
-      {(() => {
+      {renderSectionWrap('section.how-it-works.visible', 'How It Works', (() => {
         const vBlock = blockByKey['video.demo'] ?? null
         const vUrl = vBlock ? (drafts[vBlock.id] ?? vBlock.value) : ''
         const vUploading = vBlock ? uploadingBlockId === vBlock.id : false
@@ -631,9 +824,9 @@ export default function AdminDashboardPage() {
             )}
           </section>
         )
-      })()}
+      })())}
 
-      <section style={{ background: '#FFFBF5', padding: '60px 48px', textAlign: 'center' }}>
+      {renderSectionWrap('section.why.visible', 'Why Tasking', <section style={{ background: '#FFFBF5', padding: '60px 48px', textAlign: 'center' }}>
         {renderEditableText({ blockKey: 'why.title', fallback: 'Why SMEs Choose Tasking', variant: 'sectionTitle' })}
         <div style={{ marginTop: 34, display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 18, textAlign: 'left' }}>
           {[
@@ -677,9 +870,9 @@ export default function AdminDashboardPage() {
             </div>
           ))}
         </div>
-      </section>
+      </section>)}
 
-      <section style={{ background: '#FFFFFF', padding: '60px 48px', textAlign: 'center' }}>
+      {renderSectionWrap('section.products.visible', 'Products Preview', <section style={{ background: '#FFFFFF', padding: '60px 48px', textAlign: 'center' }}>
         {renderEditableText({ blockKey: 'products.title', fallback: 'Everything You Need, In One Platform', variant: 'sectionTitle' })}
         <div style={{ margin: '14px auto 32px', maxWidth: 560 }}>
           {renderEditableText({ blockKey: 'products.subtitle', fallback: 'Tasking covers every aspect of casual workforce management across 5 core modules.', variant: 'body', multiline: true })}
@@ -702,11 +895,11 @@ export default function AdminDashboardPage() {
           ))}
         </div>
         <div style={{ marginTop: 32 }}>
-          <span style={{ display: 'inline-block', background: ORANGE, color: '#FFFFFF', borderRadius: 10, padding: '12px 28px', fontWeight: 700, fontSize: 14 }}>Explore All Features</span>
+          {renderEditableBtn({ labelKey: 'products.button.label', urlKey: 'products.button.url', fallbackLabel: 'Explore All Features', fallbackUrl: '/products', editing: editingProductsBtn, setEditing: setEditingProductsBtn, btnStyle: { background: ORANGE, color: '#FFFFFF', borderRadius: 10, padding: '12px 28px', fontWeight: 700, fontSize: 14, cursor: 'pointer' } })}
         </div>
-      </section>
+      </section>)}
 
-      <section style={{ background: '#FFFBF5', padding: '60px 48px', textAlign: 'center' }}>
+      {renderSectionWrap('section.industries.visible', 'Industries', <section style={{ background: '#FFFBF5', padding: '60px 48px', textAlign: 'center' }}>
         {renderEditableText({ blockKey: 'industries.title', fallback: 'Built for the Industries That Run on Casual Workers', variant: 'sectionTitle' })}
         <div style={{ margin: '14px auto 36px', maxWidth: 560 }}>
           {renderEditableText({ blockKey: 'industries.subtitle', fallback: 'From retail floors to event venues, Tasking adapts to the way your industry works.', variant: 'body', multiline: true })}
@@ -727,20 +920,16 @@ export default function AdminDashboardPage() {
           ))}
         </div>
         <div style={{ marginTop: 32 }}>
-          <span style={{ display: 'inline-block', background: '#FFFFFF', color: TEXT, border: `1px solid ${BORDER}`, borderRadius: 10, padding: '12px 28px', fontWeight: 700, fontSize: 14 }}>Explore All Industries</span>
+          {renderEditableBtn({ labelKey: 'industries.button.label', urlKey: 'industries.button.url', fallbackLabel: 'Explore All Industries', fallbackUrl: '/industries', editing: editingIndustriesBtn, setEditing: setEditingIndustriesBtn, btnStyle: { background: '#FFFFFF', color: TEXT, border: `1px solid ${BORDER}`, borderRadius: 10, padding: '12px 28px', fontWeight: 700, fontSize: 14, cursor: 'pointer' } })}
         </div>
-      </section>
+      </section>)}
 
-      <section style={{ background: ORANGE, padding: '62px 48px', textAlign: 'center' }}>
-        {renderEditableText({ blockKey: 'cta.headline', fallback: 'Ready to simplify your workforce?', variant: 'cta' })}
-        <div style={{ height: 16 }} />
-        <div style={{ display: 'flex', justifyContent: 'center' }}>
-          {renderEditableText({ blockKey: 'cta.subheadline', fallback: 'Join SMEs already using Tasking to hire smarter, schedule faster, and track with confidence.', variant: 'subhead', multiline: true })}
-        </div>
-      </section>
+      {renderSectionWrap('section.cta.visible', 'CTA Banner', renderCtaBtnSection(ORANGE, 'cta.headline', 'cta.subheadline'))}
 
     </div>
   )
+
+  if (!authChecked) return null
 
   const dirtyBlocks = selectedPage?.blocks.filter(block => (drafts[block.id] ?? '') !== block.value) ?? []
   return (
@@ -769,7 +958,12 @@ export default function AdminDashboardPage() {
           e.target.value = ''
         }}
       />
-      <AdminSidebar />
+      <AdminSidebar
+        pages={pages}
+        selectedSlug={selectedSlug}
+        onSelectSlug={setSelectedSlug}
+        loadingPages={loadingPages}
+      />
 
       <section style={{ marginLeft: 64, padding: '28px 32px 44px' }}>
         <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, marginBottom: 18 }}>
@@ -800,44 +994,6 @@ export default function AdminDashboardPage() {
         ) : null}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-          {/* Page tabs */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 7, color: ORANGE, marginRight: 4 }}>
-              <Layers3 size={15} />
-              <span style={{ fontSize: 12, fontWeight: 900, color: MUTED }}>PAGES:</span>
-            </span>
-            {loadingPages ? (
-              <span style={{ fontSize: 12, color: MUTED }}>Loading…</span>
-            ) : pages.map(page => {
-              const active = page.slug === selectedSlug
-              return (
-                <button
-                  key={page.id}
-                  type="button"
-                  onClick={() => setSelectedSlug(page.slug)}
-                  style={{
-                    border: `1.5px solid ${active ? ORANGE : BORDER}`,
-                    background: active ? SOFT_ORANGE : '#FFFFFF',
-                    borderRadius: 999,
-                    padding: '7px 16px',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 7,
-                    fontSize: 13,
-                    fontWeight: 900,
-                    color: active ? ORANGE : TEXT,
-                    boxShadow: active ? '0 4px 14px rgba(249,115,22,0.18)' : 'none',
-                    transition: 'all 0.15s',
-                  }}
-                >
-                  {page.title}
-                  {active && <Circle size={7} fill={ORANGE} color={ORANGE} />}
-                </button>
-              )
-            })}
-          </div>
-
           <section style={{ background: 'rgba(255,255,255,0.92)', border: `1px solid ${BORDER}`, borderRadius: 20, minHeight: 720, overflow: 'hidden', boxShadow: '0 22px 52px rgba(15,23,42,0.09)' }}>
             <div style={{ padding: '15px 18px', borderBottom: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, background: '#FFFFFF' }}>
               <div>
@@ -888,7 +1044,8 @@ export default function AdminDashboardPage() {
                   Loading live preview...
                 </div>
               ) : selectedPage ? (
-                selectedPage.slug === 'home' ? renderHomePreview() : selectedPage.slug === 'about' ? renderAboutPreview() : renderGenericPreview()
+                <>{selectedPage.slug === 'home' ? renderHomePreview() : selectedPage.slug === 'about' ? renderAboutPreview() : renderGenericPreview()}</>
+
               ) : (
                 <div style={{ display: 'grid', placeItems: 'center', minHeight: 520, background: '#FFFFFF', borderRadius: 14, color: MUTED, fontSize: 13, fontWeight: 700 }}>
                   Run the Supabase SQL first, then this live preview will show editable content.

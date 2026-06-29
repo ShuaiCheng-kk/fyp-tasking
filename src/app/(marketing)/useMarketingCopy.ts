@@ -20,9 +20,7 @@ export function useMarketingCopy(slug: string) {
     }
 
     loadPage()
-    return () => {
-      cancelled = true
-    }
+    return () => { cancelled = true }
   }, [slug])
 
   const blocks = useMemo(() => {
@@ -31,5 +29,12 @@ export function useMarketingCopy(slug: string) {
     return map
   }, [page])
 
-  return (key: string, fallback: string) => blocks[key] || fallback
+  // Returns the text value for a block key, falling back to the provided default
+  const copy = (key: string, fallback: string) => blocks[key] || fallback
+
+  // Returns false only when the admin has explicitly set the section to 'false'
+  // Defaults to true (visible) when the block doesn't exist yet
+  copy.visible = (sectionKey: string) => (blocks[`section.${sectionKey}.visible`] ?? 'true') !== 'false'
+
+  return copy
 }

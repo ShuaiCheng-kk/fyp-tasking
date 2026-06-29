@@ -301,7 +301,7 @@ export default function HomePage() {
   return (
     <>
       {/* ========== HERO SECTION ========== */}
-      <section id="hero" className="page-section" style={{ background: '#1C1C1E', padding: '80px 0 120px' }}>
+      {copy.visible('hero') && <section id="hero" className="page-section" style={{ background: '#1C1C1E', padding: '80px 0 120px' }}>
         <div
           className="hero-flex section-inner"
           style={{
@@ -617,10 +617,10 @@ export default function HomePage() {
           </>)}
           </div>
         </div>
-      </section>
+      </section>}
 
       {/* ========== HOW IT WORKS SECTION ========== */}
-      <section id="how-it-works" className="page-section" style={{ background: '#F97316', padding: '80px 0' }}>
+      {copy.visible('how-it-works') && <section id="how-it-works" className="page-section" style={{ background: '#F97316', padding: '80px 0' }}>
         <div
           className="section-inner"
           style={{
@@ -664,10 +664,10 @@ export default function HomePage() {
             </div>
           </AnimatedSection>
         </div>
-      </section>
+      </section>}
 
       {/* ========== UNIQUE SELLING POINT (USP) SECTION ========== */}
-      <section id="why-tasking" className="page-section" style={{ background: '#FFFBF5', padding: '80px 0' }}>
+      {copy.visible('why') && <section id="why-tasking" className="page-section" style={{ background: '#FFFBF5', padding: '80px 0' }}>
         <div
           className="section-inner"
           style={{
@@ -762,10 +762,10 @@ export default function HomePage() {
             ))}
           </div>
         </div>
-      </section>
+      </section>}
 
       {/* ========== PRODUCTS PREVIEW SECTION ========== */}
-      <section id="products" className="page-section" style={{ background: '#FFFFFF', padding: '80px 0' }}>
+      {copy.visible('products') && <section id="products" className="page-section" style={{ background: '#FFFFFF', padding: '80px 0' }}>
         <div
           className="section-inner"
           style={{
@@ -844,10 +844,10 @@ export default function HomePage() {
             </Link>
           </AnimatedSection>
         </div>
-      </section>
+      </section>}
 
       {/* ========== INDUSTRIES PREVIEW SECTION ========== */}
-      <section id="industries" className="page-section" style={{ background: '#FFFBF5', padding: '80px 0' }}>
+      {copy.visible('industries') && <section id="industries" className="page-section" style={{ background: '#FFFBF5', padding: '80px 0' }}>
         <div className="section-inner" style={{ maxWidth: '1280px', margin: '0 auto', padding: '0 24px' }}>
           <AnimatedSection style={{ textAlign: 'center', marginBottom: '52px' }}>
             <h2 style={heading2}>{copy('industries.title', 'Built for the Industries That Run on Casual Workers')}</h2>
@@ -912,10 +912,10 @@ export default function HomePage() {
             </Link>
           </AnimatedSection>
         </div>
-      </section>
+      </section>}
 
       {/* ========== FINAL CTA BANNER SECTION ========== */}
-      <section id="get-started" className="page-section" style={{ background: '#F97316', padding: '80px 24px' }}>
+      {copy.visible('cta') && <section id="get-started" className="page-section" style={{ background: '#F97316', padding: '80px 24px' }}>
         <AnimatedSection>
           <div style={{ maxWidth: '640px', margin: '0 auto', textAlign: 'center' }}>
             <h2
@@ -944,7 +944,7 @@ export default function HomePage() {
             </p>
 
             <Link
-              href="/get-started"
+              href={copy('cta.button.url', '/get-started')}
               className="btn-press"
               style={{
                 display: 'inline-block',
@@ -957,7 +957,7 @@ export default function HomePage() {
                 fontSize: '1rem',
               }}
             >
-              Get Started Free
+              {copy('cta.button.label', 'Get Started Free')}
             </Link>
 
             <p
@@ -971,7 +971,7 @@ export default function HomePage() {
             </p>
           </div>
         </AnimatedSection>
-      </section>
+      </section>}
 
       {/* ── Scroll to top ── */}
       <ScrollToTop />
