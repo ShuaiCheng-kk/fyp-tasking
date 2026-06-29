@@ -402,6 +402,13 @@ function deptCardBorder(deptId: string): string {
   const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16)
   return `rgba(${r},${g},${b},0.22)`
 }
+// Lighter, opaque tint of a department/priority color — used for sub-task calendar bars so they
+// read as visually subordinate to the main task's solid bar, with dark text for contrast on it.
+function lightenColor(hex: string, amount: number): string {
+  const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16)
+  const blend = (c: number) => Math.round(c + (255 - c) * amount)
+  return `rgb(${blend(r)},${blend(g)},${blend(b)})`
+}
 
 const PRIORITY_ORDER: Record<string, number> = { Urgent: 0, High: 1, Medium: 2, Low: 3 }
 
@@ -417,6 +424,16 @@ const modalLabelStyle: React.CSSProperties = {
 }
 const modalSelectStyle: React.CSSProperties = {
   ...modalInputStyle, paddingRight: 36, appearance: 'none', cursor: 'pointer',
+}
+const aiReviewFieldStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 8,
+}
+const aiReviewSectionStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 18,
 }
 
 // ─── Description textarea: Tab → bullet point, "1." + space → numbered list ──
@@ -458,6 +475,12 @@ function handleDescriptionKeyDown(
       onChange(next)
     }
   }
+}
+
+function resizeTextareaToContent(el: HTMLTextAreaElement | null) {
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = `${el.scrollHeight}px`
 }
 
 function InlineError({ message }: { message: string }) {
@@ -805,18 +828,22 @@ function DeadlinePicker({ dateValue, timeValue, onChange, minDate }: {
 
 // ─── Sub-task Order List (drag to reorder; shows step numbers + "do in order" connector once 2+) ──
 
-function SubTaskOrderList({ items, onReorder, onRemove, onRename, disabled }: {
+function SubTaskOrderList({ items, onReorder, onRemove, onRename, disabled, accent = 'orange' }: {
   items: { id: string; title: string }[]
   onReorder: (orderedIds: string[]) => void
   onRemove?: (id: string) => void
   onRename?: (id: string, title: string) => void
   disabled?: boolean
+  accent?: 'orange' | 'purple'
 }) {
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
   const ordered = items.length >= 2
+  const accentColor = accent === 'purple' ? '#7C3AED' : '#F97316'
+  const accentText = accent === 'purple' ? '#7C3AED' : '#EA580C'
+  const accentBg = accent === 'purple' ? '#F3E8FF' : '#FFF3E8'
 
   const saveRename = () => {
     if (!editingId) return
@@ -872,15 +899,15 @@ function SubTaskOrderList({ items, onReorder, onRemove, onRename, disabled }: {
               }}
               style={{
                 display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px',
-                border: `1px solid ${isDragOver ? '#F97316' : '#E5E7EB'}`, borderRadius: 9,
+                border: `1px solid ${isDragOver ? accentColor : '#E5E7EB'}`, borderRadius: 9,
                 background: '#FFFFFF', cursor: disabled ? 'default' : isDragging ? 'grabbing' : 'grab',
                 opacity: isDragging ? 0.6 : 1,
-                outline: isDragOver ? '2px dashed #F97316' : 'none', outlineOffset: 2,
+                outline: isDragOver ? `2px dashed ${accentColor}` : 'none', outlineOffset: 2,
                 transition: 'border-color 0.15s, opacity 0.15s',
               }}
             >
               {ordered ? (
-                <span style={{ width: 20, height: 20, borderRadius: '50%', background: '#FFF3E8', color: '#EA580C', fontSize: 11, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <span style={{ width: 20, height: 20, borderRadius: '50%', background: accentBg, color: accentText, fontSize: 11, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   {idx + 1}
                 </span>
               ) : (
@@ -928,7 +955,7 @@ function SubTaskOrderList({ items, onReorder, onRemove, onRename, disabled }: {
 // ─── Task Card ────────────────────────────────────────────────────────────────
 
 function TaskCard({
-  task, members, shiftOptions, departments, showDept, onClick, onEdit, subTaskCount, expanded, onToggleExpand, clickable = true, isOwner = true, highlighted = false, noOuterMargin = false, fillHeight = false,
+  task, members, shiftOptions, departments, showDept, onClick, onEdit, subTaskCount, expanded, onToggleExpand, clickable = true, isOwner = true, highlighted = false, noOuterMargin = false, fillHeight = false, isSubTask = false,
 }: {
   task: Task
   members: Member[]
@@ -945,12 +972,13 @@ function TaskCard({
   highlighted?: boolean
   noOuterMargin?: boolean
   fillHeight?: boolean
+  isSubTask?: boolean
 }) {
   const assignee = members.find(m => m.id === task.assigned_user_id)
   const shift = task.shift_id ? shiftOptions.find(s => s.id === task.shift_id) : null
-  const priority = task.priority ? PRIORITY_COLORS[task.priority] : null
+  const priority = !isSubTask && task.priority ? PRIORITY_COLORS[task.priority] : null
   const deadlineWarning = task.due_at && task.status !== 'Complete' && (isDueOverdue(task.due_at) || isDueWithinHours(task.due_at, 2))
-  const dept = showDept ? departments.find(d => d.id === task.department_id) : null
+  const dept = showDept && !isSubTask ? departments.find(d => d.id === task.department_id) : null
   const showStack = !!subTaskCount && !expanded
   const hasTopRowBadges = !!(priority && task.priority) || !!dept || !!subTaskCount
 
@@ -1023,7 +1051,7 @@ function TaskCard({
       )}
 
       {/* Title */}
-      <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: '0 0 16px', lineHeight: 1.4, paddingRight: !clickable || !isOwner || hasTopRowBadges ? 0 : 24 }}>
+      <p style={{ fontWeight: 600, fontSize: isSubTask ? '0.8rem' : '0.875rem', color: '#111827', margin: '0 0 16px', lineHeight: 1.4, paddingRight: !clickable || !isOwner || hasTopRowBadges ? 0 : 24 }}>
         {task.title}
       </p>
 
@@ -1043,7 +1071,7 @@ function TaskCard({
         ) : (
           <span style={{ fontSize: '0.75rem', color: '#CBD5E1', fontStyle: 'italic' }}>No assignee</span>
         )}
-        {task.due_at && (
+        {!isSubTask && task.due_at && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
             {deadlineWarning ? <AlertCircle size={11} color="#EF4444" /> : <Clock size={11} color="#9CA3AF" />}
             <span style={{ fontSize: '0.7rem', fontWeight: 600, color: deadlineWarning ? '#EF4444' : '#9CA3AF', whiteSpace: 'nowrap' }}>
@@ -1255,19 +1283,23 @@ export default function OwnerTasksPage() {
   const [aiPriority,       setAiPriority]       = useState('')
   const [aiDueDate,        setAiDueDate]        = useState('')
   const [aiDueTime,        setAiDueTime]        = useState('')
-  // Both optional, chosen up front so Generate already knows whether to ask the AI for
-  // sub-tasks, and whether to surface the (simple Repeats + Repeat-until) recurring fields.
+  // Optional, chosen up front so Generate already knows whether to ask the AI for sub-tasks.
   const [aiSubTaskEnabled, setAiSubTaskEnabled] = useState(false)
-  const [aiRecurringEnabled, setAiRecurringEnabled] = useState(false)
-  const [aiRecurrenceRule, setAiRecurrenceRule] = useState<TaskRecurrenceRule | ''>('')
-  const [aiRecurrenceEndDate, setAiRecurrenceEndDate] = useState('')
   const [aiLoading,        setAiLoading]        = useState(false)
   const [aiError,          setAiError]          = useState('')
   const [aiSuggestion,     setAiSuggestion]     = useState<AiAssignSuggestion | null>(null)
   const [aiDeptId,         setAiDeptId]         = useState('')
   const [aiManagerId,      setAiManagerId]      = useState('')
-  const [aiSubTaskDrafts,  setAiSubTaskDrafts]  = useState<{ title: string; description: string }[]>([])
+  const [aiSubTaskDrafts,  setAiSubTaskDrafts]  = useState<{ id: string; title: string }[]>([])
+  const [aiSubTaskCollapsed, setAiSubTaskCollapsed] = useState(true)
+  const [aiSubTaskDraft, setAiSubTaskDraft] = useState('')
   const [aiCreateLoading,  setAiCreateLoading]  = useState(false)
+  const aiReviewDescriptionRef = useRef<HTMLTextAreaElement>(null)
+
+  useLayoutEffect(() => {
+    if (!aiModal) return
+    resizeTextareaToContent(aiReviewDescriptionRef.current)
+  }, [aiDescription, aiModal, aiStep])
 
   // Task Template management modal
   const [taskTemplates,        setTaskTemplates]        = useState<TaskTemplate[]>([])
@@ -1675,12 +1707,15 @@ export default function OwnerTasksPage() {
             id: s.id,
             assigned_by: internalUserId || undefined,
             company_id: original_.company_id,
-            department_id: original_.department_id,
+            department_id: editDeptId,
             title: s.title,
             description: original_.description,
-            priority: original_.priority,
-            due_at: original_.due_at,
-            task_date: original_.task_date,
+            // Priority/deadline/start date mirror whatever the parent was just saved with (not
+            // the sub-task's own stale snapshot) — the service also cascades these onto every
+            // sub-task when the parent changes, so this rename PATCH must agree, not undo it.
+            priority: editPriority || null,
+            due_at,
+            task_date: editStartDate,
             assigned_user_id: original_.assigned_user_id,
             shift_id: original_.shift_id,
             status: original_.status,
@@ -2090,8 +2125,7 @@ export default function OwnerTasksPage() {
     finally { setNewLoading(false) }
   }
 
-  const openAiAssign = () => {
-    setAiModal(true)
+  const resetAiAssignInput = () => {
     setAiStep('input')
     setAiTitle('')
     setAiDescription('')
@@ -2099,14 +2133,18 @@ export default function OwnerTasksPage() {
     setAiDueDate('')
     setAiDueTime('')
     setAiSubTaskEnabled(false)
-    setAiRecurringEnabled(false)
-    setAiRecurrenceRule('')
-    setAiRecurrenceEndDate('')
     setAiSuggestion(null)
     setAiDeptId(selectedDeptId || '')
     setAiManagerId('')
     setAiSubTaskDrafts([])
+    setAiSubTaskCollapsed(true)
+    setAiSubTaskDraft('')
     setAiError('')
+  }
+
+  const openAiAssign = () => {
+    setAiModal(true)
+    resetAiAssignInput()
   }
 
   // Open new task modal pre-filled with dept + assignee.
@@ -2474,21 +2512,36 @@ export default function OwnerTasksPage() {
                   .sort((a, b) => (
                     a.startDate.localeCompare(b.startDate) || a.endDate.localeCompare(b.endDate) || a.task.title.localeCompare(b.task.title)
                   ))
+                // Sub-task bars wrap their title onto two lines instead of truncating, so their
+                // lane needs to reserve more height (44px bar) than a main-task lane (28px bar).
+                const LANE_GAP = 6
+                const MAIN_BAR_HEIGHT = 28
+                const SUB_BAR_HEIGHT = 34
                 const laneByTaskId = new Map<string, number>()
+                const laneTopByTaskId = new Map<string, number>()
+                const laneHeightByTaskId = new Map<string, number>()
                 let nextLane = 0
+                let stackHeightAcc = 0
                 for (const primary of primaryItemsForLanes) {
                   laneByTaskId.set(primary.task.id, nextLane)
+                  laneTopByTaskId.set(primary.task.id, stackHeightAcc)
+                  laneHeightByTaskId.set(primary.task.id, MAIN_BAR_HEIGHT)
+                  stackHeightAcc += MAIN_BAR_HEIGHT + LANE_GAP
                   nextLane += 1
                   const subItems = row.items
                     .filter(sub => sub.task.parent_task_id === primary.task.id)
                     .sort((a, b) => (a.subTaskIndex ?? 0) - (b.subTaskIndex ?? 0))
                   for (const sub of subItems) {
                     laneByTaskId.set(sub.task.id, nextLane)
+                    laneTopByTaskId.set(sub.task.id, stackHeightAcc)
+                    laneHeightByTaskId.set(sub.task.id, SUB_BAR_HEIGHT)
+                    stackHeightAcc += SUB_BAR_HEIGHT + LANE_GAP
                     nextLane += 1
                   }
                 }
                 const laneCount = nextLane
-                const rowHeight = Math.max(ROW_HEIGHT, laneCount * 34 + 18)
+                const stackHeight = Math.max(0, stackHeightAcc - LANE_GAP)
+                const rowHeight = Math.max(ROW_HEIGHT, stackHeight + 18)
                 const assignee = row.assignee
                 const isManager = assignee?.role === 'Manager'
                 return (
@@ -2516,38 +2569,40 @@ export default function OwnerTasksPage() {
                       a.task.title.localeCompare(b.task.title)
                     )).map(item => {
                       const dept = departments.find(d => d.id === item.task.department_id)
-                      const color = dept ? deptColor(dept.id) : TASK_ORANGE
+                      const baseColor = dept ? deptColor(dept.id) : TASK_ORANGE
+                      const isSubTask = !!item.task.parent_task_id
+                      const color = isSubTask ? lightenColor(baseColor, 0.72) : baseColor
                       const startCol = Math.max(0, dayIndex(item.startDate))
                       const endCol = dayIndex(item.endDate) === -1 ? 6 : dayIndex(item.endDate)
                       const truncatedStart = item.startDate < calendarWeekDates[0]
                       const truncatedEnd = item.endDate > calendarWeekDates[6]
-                      const stackHeight = laneCount * 28 + Math.max(0, laneCount - 1) * 6
-                      const stackTop = Math.max(0, (rowHeight - stackHeight) / 2) + (laneByTaskId.get(item.task.id) ?? 0) * 34
+                      const barHeight = laneHeightByTaskId.get(item.task.id) ?? MAIN_BAR_HEIGHT
+                      const stackTop = Math.max(0, (rowHeight - stackHeight) / 2) + (laneTopByTaskId.get(item.task.id) ?? 0)
                       return (
                         <button
                           key={item.task.id}
                           type="button"
-                          onClick={() => openTask(item.task, false)}
+                          onClick={isSubTask ? undefined : () => openTask(item.task, false)}
                           title={`${item.task.title} | ${item.startDate} - ${item.endDate}`}
                           style={{
                             gridColumn: `${startCol + 2} / ${endCol + 3}`,
                             gridRow: 1,
                             alignSelf: 'start',
                             position: 'relative',
-                            margin: `${stackTop}px 6px 0`,
-                            height: 28,
+                            margin: isSubTask ? `${stackTop}px 22px 0` : `${stackTop}px 6px 0`,
+                            height: barHeight,
                             display: 'flex',
                             alignItems: 'center',
-                            justifyContent: 'center',
-                            padding: '0 12px',
+                            justifyContent: isSubTask ? 'flex-start' : 'center',
+                            padding: isSubTask ? '2px 12px' : '0 12px',
                             border: 'none',
-                            borderRadius: 999,
+                            borderRadius: isSubTask ? 10 : 999,
                             background: color,
-                            cursor: 'pointer',
+                            cursor: isSubTask ? 'default' : 'pointer',
                             overflow: 'hidden',
                           }}
-                          onMouseEnter={e => { e.currentTarget.style.filter = 'brightness(1.08)' }}
-                          onMouseLeave={e => { e.currentTarget.style.filter = 'none' }}
+                          onMouseEnter={isSubTask ? undefined : e => { e.currentTarget.style.filter = 'brightness(1.08)' }}
+                          onMouseLeave={isSubTask ? undefined : e => { e.currentTarget.style.filter = 'none' }}
                         >
                           {truncatedStart && (
                             <span
@@ -2563,11 +2618,14 @@ export default function OwnerTasksPage() {
                             </span>
                           )}
                           {item.subTaskIndex !== null && (
-                            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: '50%', background: 'rgba(255,255,255,0.3)', color: '#FFFFFF', fontSize: 9, fontWeight: 800, flexShrink: 0, marginRight: 5 }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: '50%', background: isSubTask ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.3)', color: isSubTask ? baseColor : '#FFFFFF', fontSize: 9, fontWeight: 800, flexShrink: 0, marginRight: 5 }}>
                               {item.subTaskIndex}
                             </span>
                           )}
-                          <span style={{ fontSize: 12, fontWeight: 700, color: '#FFFFFF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.task.title}</span>
+                          <span style={isSubTask
+                            ? { fontSize: 11, fontWeight: 700, color: baseColor, lineHeight: 1.25, display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2, overflow: 'hidden', textAlign: 'left' }
+                            : { fontSize: 12, fontWeight: 700, color: '#FFFFFF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }
+                          }>{item.task.title}</span>
                           {item.subTaskCount > 0 && (
                             <span
                               role="button"
@@ -3461,7 +3519,7 @@ export default function OwnerTasksPage() {
                                       highlighted={highlightedStalledTaskId === task.id}
                                     />
                                     {isExpanded && subTasks.length > 0 && (
-                                      <div style={{ marginTop: -6, marginBottom: 14, paddingLeft: 6 }}>
+                                      <div style={{ marginTop: -6, marginBottom: 14, paddingLeft: 6, paddingRight: 20 }}>
                                         {subTasks.map((sub, idx) => (
                                           <div key={sub.id} style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
                                             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
@@ -3485,6 +3543,7 @@ export default function OwnerTasksPage() {
                                                 onClick={() => {}}
                                                 onEdit={() => openTask(sub, false)}
                                                 clickable={false}
+                                                isSubTask
                                               />
                                             </div>
                                           </div>
@@ -3594,13 +3653,20 @@ export default function OwnerTasksPage() {
           >
             {/* Header */}
             <div style={{ padding: '18px 20px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   <Pencil size={14} color="#fff" strokeWidth={2.5} />
                 </div>
-                <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>Edit Task</h2>
+                <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif", whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {boardViewMode === 'calendar' ? `Edit ${selectedTask.title}` : 'Edit Task'}
+                </h2>
+                {boardViewMode === 'calendar' && (
+                  <span style={{ flexShrink: 0, fontSize: '0.7rem', fontWeight: 700, padding: '3px 9px', borderRadius: 999, background: STATUS_CONFIG[selectedTask.status].bg, color: STATUS_CONFIG[selectedTask.status].color }}>
+                    {STATUS_CONFIG[selectedTask.status].label}
+                  </span>
+                )}
               </div>
-              <button onClick={closePanel} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
+              <button onClick={closePanel} style={{ flexShrink: 0, background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
                 onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
                 onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
               >
@@ -3755,7 +3821,7 @@ export default function OwnerTasksPage() {
                       <input
                         type="checkbox"
                         checked={editRecurringEnabled}
-                        onChange={e => setEditRecurringEnabled(e.target.checked)}
+                        onChange={e => { setEditRecurringEnabled(e.target.checked); if (e.target.checked) setEditRecurringCollapsed(false) }}
                         style={{ width: 16, height: 16, accentColor: TASK_ORANGE, cursor: 'pointer', marginLeft: 'auto' }}
                       />
                     </label>
@@ -4689,7 +4755,7 @@ export default function OwnerTasksPage() {
                             </div>
                           </div>
                           {isExpanded && subTasks.length > 0 && (
-                            <div style={{ marginTop: -4, marginBottom: 2, paddingLeft: 6 }}>
+                            <div style={{ marginTop: -4, marginBottom: 2, paddingLeft: 6, paddingRight: 20 }}>
                               {subTasks.map((sub, idx) => (
                                 <div key={sub.id} style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
                                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
@@ -4713,6 +4779,7 @@ export default function OwnerTasksPage() {
                                       onClick={() => {}}
                                       onEdit={() => {}}
                                       clickable={false}
+                                      isSubTask
                                     />
                                   </div>
                                 </div>
@@ -5001,14 +5068,15 @@ export default function OwnerTasksPage() {
         const isReview = aiStep === 'review'
         // Eligibility is based on the task's own deadline date, not whatever date happens to be
         // selected on the board — those can differ once the user picks a Deadline in this modal.
-        const aiDeptManagers = members.filter(m => m.role === 'Manager' && m.department_id === aiDeptId && userIdsWithShiftOnDate(aiDueDate).has(m.id))
+        const aiAssignDate = boardViewMode === 'kanban' && taskDate > todayTaskDate ? taskDate : todayTaskDate
+        const aiDeptManagers = members.filter(m => m.role === 'Manager' && m.department_id === aiDeptId && userIdsWithShiftOnDate(aiAssignDate).has(m.id))
+        const aiManagerDropdownOptions = aiDeptManagers.map(m => ({ value: m.id, label: m.full_name }))
 
         const handleGenerate = async () => {
           if (!aiTitle.trim()) { setAiError('Please enter a task title'); return }
           if (!aiPriority) { setAiError('Please select a priority'); return }
-          if (!aiDueDate || !aiDueTime) { setAiError('Please select a deadline'); return }
-          if (aiRecurringEnabled && !aiRecurrenceRule) { setAiError('Choose how often this task repeats'); return }
-          if (aiRecurringEnabled && !aiRecurrenceEndDate) { setAiError('Repeat until date is required for recurring tasks'); return }
+          if (!aiDueDate) { setAiError('Please select a deadline'); return }
+          if (!aiDueTime) { setAiError('Please select a deadline time'); return }
           setAiLoading(true); setAiError('')
           try {
             const res = await fetch('/api/ai/assign', {
@@ -5020,7 +5088,7 @@ export default function OwnerTasksPage() {
                 description: aiDescription,
                 priority: aiPriority,
                 want_sub_tasks: aiSubTaskEnabled,
-                task_date: aiDueDate,
+                task_date: aiAssignDate,
               }),
             })
             const data = await res.json()
@@ -5030,7 +5098,8 @@ export default function OwnerTasksPage() {
             setAiDescription(suggestion.description)
             setAiDeptId(suggestion.department_id)
             setAiManagerId(suggestion.recommended_manager_id ?? '')
-            setAiSubTaskDrafts(suggestion.sub_tasks.map(s => ({ title: s.title, description: s.description })))
+            setAiSubTaskDrafts(suggestion.sub_tasks.map(s => ({ id: crypto.randomUUID(), title: s.title })))
+            setAiSubTaskCollapsed(true)
             setAiStep('review')
           } catch (err) {
             setAiError(err instanceof Error ? err.message : 'Failed to generate suggestion')
@@ -5046,7 +5115,7 @@ export default function OwnerTasksPage() {
             const due_at = new Date(`${aiDueDate}T${aiDueTime}:00`).toISOString()
             const subTasks = aiSubTaskEnabled
               ? aiSubTaskDrafts
-                  .map(s => ({ title: s.title.trim(), description: s.description.trim() || null }))
+                  .map(s => ({ title: s.title.trim() }))
                   .filter(s => s.title)
               : []
             const res = await fetch('/api/task', {
@@ -5063,39 +5132,17 @@ export default function OwnerTasksPage() {
                 assigned_by: internalUserId || null,
                 status: 'Assigned',
                 percentage_complete: 0,
-                task_date: taskDate,
+                task_date: aiAssignDate,
                 sub_tasks: subTasks.length > 0 ? subTasks : undefined,
               }),
             })
             const data = await res.json()
             if (!data.success) throw new Error(data.message)
 
-            // Recurring is set up as a second step against the task just created, mirroring
-            // the New Task modal's flow — but kept to just Repeats + Repeat-until here, so the
-            // deadline rule defaults to same_day at the AI deadline's own time.
-            if (aiRecurringEnabled && aiRecurrenceRule) {
-              const taskId = data.task?.id
-              if (!taskId) throw new Error('Task created, but recurring setup could not find the new task')
-              const recurringRes = await fetch('/api/task', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  action: 'recurring',
-                  id: taskId,
-                  recurrence_rule: aiRecurrenceRule,
-                  recurrence_end_date: aiRecurrenceEndDate,
-                  assigned_by: internalUserId || undefined,
-                  deadline_rule: { type: 'same_day', time: aiDueTime },
-                }),
-              })
-              const recurringData = await recurringRes.json()
-              if (!recurringData.success) throw new Error(recurringData.message)
-            }
-
             setAiModal(false)
             await fetchKanban(companyId)
             await refreshAllTaskInsights()
-            showTaskToast(aiRecurringEnabled ? 'Recurring task created successfully.' : 'Task created successfully.')
+            showTaskToast('Task created successfully.')
           } catch (err) {
             setAiError(err instanceof Error ? err.message : 'Failed to create task')
           } finally {
@@ -5114,7 +5161,7 @@ export default function OwnerTasksPage() {
                     <Sparkles size={15} color="#fff" strokeWidth={2} />
                   </div>
                   <div>
-                    <h2 style={{ margin: 0, fontWeight: 700, fontSize: '1rem', color: '#111827' }}>AI Assign</h2>
+                    <h2 style={{ margin: 0, fontWeight: 700, fontSize: '1rem', color: '#111827' }}>Auto Task Assignment</h2>
                   </div>
                 </div>
                 <button onClick={() => setAiModal(false)} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}>
@@ -5140,19 +5187,6 @@ export default function OwnerTasksPage() {
                       />
                     </div>
 
-                    {/* Description */}
-                    <div>
-                      <label style={modalLabelStyle}>Description</label>
-                      <textarea
-                        value={aiDescription}
-                        onChange={e => setAiDescription(e.target.value)}
-                        onKeyDown={e => handleDescriptionKeyDown(e, aiDescription, setAiDescription)}
-                        rows={2}
-                        placeholder="Add more context..."
-                        style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
-                      />
-                    </div>
-
                     {/* Priority + Deadline */}
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                       <div>
@@ -5171,7 +5205,7 @@ export default function OwnerTasksPage() {
                           dateValue={aiDueDate}
                           timeValue={aiDueTime}
                           onChange={(date, time) => { setAiDueDate(date); setAiDueTime(time) }}
-                          minDate={formatDateKey(new Date())}
+                          minDate={aiAssignDate}
                         />
                       </div>
                     </div>
@@ -5194,123 +5228,70 @@ export default function OwnerTasksPage() {
                           />
                         </label>
                       </div>
-
-                      <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                          <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
-                            <Repeat size={13} color="#7C3AED" /> Recurring <span style={{ fontWeight: 400, color: '#9CA3AF' }}>(Optional)</span>
-                          </span>
-                          <input
-                            type="checkbox"
-                            checked={aiRecurringEnabled}
-                            onChange={e => setAiRecurringEnabled(e.target.checked)}
-                            style={{ width: 16, height: 16, accentColor: '#7C3AED', cursor: 'pointer', marginLeft: 'auto' }}
-                          />
-                        </label>
-                        {aiRecurringEnabled && (
-                          <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                              <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Repeats</span>
-                              <DropdownField
-                                value={aiRecurrenceRule}
-                                options={[
-                                  { value: 'daily', label: 'Daily' },
-                                  { value: 'weekly', label: 'Weekly' },
-                                ]}
-                                onChange={v => setAiRecurrenceRule(v as TaskRecurrenceRule)}
-                                placeholder="Select frequency"
-                              />
-                            </label>
-                            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                              <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Repeat until</span>
-                              <CompactDatePicker
-                                value={aiRecurrenceEndDate}
-                                onChange={setAiRecurrenceEndDate}
-                                minDate={aiDueDate || formatDateKey(new Date())}
-                                accentColor="#7C3AED"
-                              />
-                            </label>
-                          </div>
-                        )}
-                      </div>
                     </div>
 
                     <InlineError message={aiError} />
 
-                    <button
-                      onClick={handleGenerate}
-                      disabled={aiLoading}
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '11px', background: aiLoading ? '#EDE9FE' : 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: '0.9375rem', color: '#fff', cursor: aiLoading ? 'default' : 'pointer' }}
-                    >
-                      {aiLoading ? <><Spinner size={16} /> Generating...</> : <><Sparkles size={15} /> Generate AI Suggestion</>}
-                    </button>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                      <button
+                        onClick={handleGenerate}
+                        disabled={aiLoading}
+                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '7px 18px', background: aiLoading ? '#A78BFA' : 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: aiLoading ? 'not-allowed' : 'pointer', opacity: aiLoading ? 0.65 : 1 }}
+                      >
+                        {aiLoading ? <><Spinner size={14} /> Generating...</> : 'Generate'}
+                      </button>
+                    </div>
                   </>
                 ) : aiSuggestion && (
                   <>
-                    {/* Title */}
-                    <div>
-                      <label style={modalLabelStyle}>Task Title</label>
-                      <input
-                        value={aiTitle}
-                        onChange={e => setAiTitle(e.target.value)}
-                        style={modalInputStyle}
-                      />
-                    </div>
-
-                    {/* Description */}
-                    <div>
-                      <label style={modalLabelStyle}>Description</label>
-                      <textarea
-                        value={aiDescription}
-                        onChange={e => setAiDescription(e.target.value)}
-                        onKeyDown={e => handleDescriptionKeyDown(e, aiDescription, setAiDescription)}
-                        rows={2}
-                        style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
-                      />
-                    </div>
-
-                    {/* Recommended Department */}
-                    <div>
-                      <label style={modalLabelStyle}>Recommended Department</label>
-                      <DropdownField
-                        value={aiDeptId}
-                        options={deptDropdownOptions}
-                        onChange={v => { setAiDeptId(v); setAiManagerId('') }}
-                        placeholder="Select department"
-                      />
-                    </div>
-
-                    {/* Recommended Assignee */}
-                    <div>
-                      <label style={modalLabelStyle}>Recommended Assignee</label>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        {aiDeptManagers.length === 0 && (
-                          <p style={{ margin: 0, fontSize: '0.8125rem', color: '#9CA3AF', fontStyle: 'italic' }}>No managers available on this date.</p>
-                        )}
-                        {aiDeptManagers.map(m => {
-                          const selected = aiManagerId === m.id
-                          const isAiPick = aiSuggestion.recommended_manager_id === m.id
-                          return (
-                            <div
-                              key={m.id}
-                              onClick={() => setAiManagerId(m.id)}
-                              style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '9px 11px', border: `1.5px solid ${selected ? '#7C3AED' : '#E5E7EB'}`, borderRadius: 9, background: selected ? '#FAF5FF' : '#FFFFFF', cursor: 'pointer' }}
-                            >
-                              <div style={{ width: 16, height: 16, borderRadius: 999, border: `2px solid ${selected ? '#7C3AED' : '#D1D5DB'}`, background: selected ? '#7C3AED' : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                {selected && <div style={{ width: 6, height: 6, borderRadius: 999, background: '#fff' }} />}
-                              </div>
-                              <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#111827' }}>{m.full_name}</span>
-                              {isAiPick && <span style={{ fontSize: 10, fontWeight: 700, color: '#7C3AED', marginLeft: 'auto' }}>AI PICK</span>}
-                            </div>
-                          )
-                        })}
+                    <div style={aiReviewSectionStyle}>
+                      {/* Title */}
+                      <div style={aiReviewFieldStyle}>
+                        <label style={{ ...modalLabelStyle, marginBottom: 0 }}>Task Title</label>
+                        <input
+                          value={aiTitle}
+                          onChange={e => setAiTitle(e.target.value)}
+                          style={modalInputStyle}
+                        />
                       </div>
-                    </div>
 
-                    {/* Reason */}
-                    <div style={{ display: 'flex', gap: 8, padding: '10px 12px', background: '#FAF5FF', border: '1px solid #EDE9FE', borderRadius: 9 }}>
-                      <Sparkles size={14} color="#7C3AED" style={{ flexShrink: 0, marginTop: 1 }} />
-                      <p style={{ margin: 0, fontSize: '0.8125rem', color: '#5B21B6', lineHeight: 1.5 }}>{aiSuggestion.reason}</p>
+                      {/* Description */}
+                      <div style={aiReviewFieldStyle}>
+                        <label style={{ ...modalLabelStyle, marginBottom: 0 }}>Description</label>
+                        <textarea
+                          ref={aiReviewDescriptionRef}
+                          value={aiDescription}
+                          onChange={e => { setAiDescription(e.target.value); resizeTextareaToContent(e.currentTarget) }}
+                          onKeyDown={e => handleDescriptionKeyDown(e, aiDescription, setAiDescription)}
+                          rows={2}
+                          style={{ ...modalInputStyle, resize: 'none', overflow: 'hidden', lineHeight: 1.55 }}
+                        />
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        {/* Department */}
+                        <div style={aiReviewFieldStyle}>
+                          <label style={{ ...modalLabelStyle, marginBottom: 0 }}>Department</label>
+                          <DropdownField
+                            value={aiDeptId}
+                            options={deptDropdownOptions}
+                            onChange={v => { setAiDeptId(v); setAiManagerId('') }}
+                            placeholder="Select department"
+                          />
+                        </div>
+
+                        {/* Assignee */}
+                        <div style={aiReviewFieldStyle}>
+                          <label style={{ ...modalLabelStyle, marginBottom: 0 }}>Assignee</label>
+                          <DropdownField
+                            value={aiManagerId}
+                            options={aiManagerDropdownOptions}
+                            onChange={setAiManagerId}
+                            placeholder={aiManagerDropdownOptions.length === 0 ? 'No managers available' : 'Select assignee'}
+                            disabled={aiManagerDropdownOptions.length === 0}
+                          />
+                        </div>
+                      </div>
                     </div>
 
                     {/* Divider */}
@@ -5334,7 +5315,7 @@ export default function OwnerTasksPage() {
                           dateValue={aiDueDate}
                           timeValue={aiDueTime}
                           onChange={(date, time) => { setAiDueDate(date); setAiDueTime(time) }}
-                          minDate={formatDateKey(new Date())}
+                          minDate={aiAssignDate}
                         />
                       </div>
                     </div>
@@ -5343,28 +5324,62 @@ export default function OwnerTasksPage() {
                     {aiSubTaskEnabled && (
                       <>
                         <div style={{ borderTop: '1px dashed #E5E7EB' }} />
-                        <div>
-                          <label style={modalLabelStyle}>Sub-Tasks <span style={{ fontSize: 11, fontWeight: 400, color: '#7C3AED' }}>| AI generated</span></label>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                            {aiSubTaskDrafts.map((step, i) => (
-                              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 9, padding: '9px 11px', border: '1px solid #E5E7EB', borderRadius: 9, background: '#FAFAFA' }}>
-                                <span style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 999, background: '#EDE9FE', color: '#7C3AED', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 1 }}>{i + 1}</span>
-                                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                  <input
-                                    value={step.title}
-                                    onChange={e => setAiSubTaskDrafts(prev => prev.map((s, si) => si === i ? { ...s, title: e.target.value } : s))}
-                                    style={{ ...modalInputStyle, height: 32, fontSize: '0.8125rem', fontWeight: 600 }}
-                                  />
-                                  <textarea
-                                    value={step.description}
-                                    onChange={e => setAiSubTaskDrafts(prev => prev.map((s, si) => si === i ? { ...s, description: e.target.value } : s))}
-                                    rows={2}
-                                    style={{ ...modalInputStyle, fontSize: '0.75rem', resize: 'vertical' }}
-                                  />
-                                </div>
+                        <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, overflow: 'hidden', background: '#FFFFFF' }}>
+                          <button
+                            type="button"
+                            onClick={() => setAiSubTaskCollapsed(v => !v)}
+                            style={{ width: '100%', border: 'none', background: '#FFFFFF', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: '#374151' }}
+                          >
+                            <GitBranch size={13} color="#7C3AED" />
+                            <span style={{ flex: 1, textAlign: 'left', fontSize: '0.8125rem', fontWeight: 700 }}>
+                              Sub-Tasks
+                              {aiSubTaskDrafts.length > 0 && (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 18, height: 18, padding: '0 5px', borderRadius: 9, background: '#F3E8FF', color: '#7C3AED', fontSize: 11, fontWeight: 800, marginLeft: 6 }}>
+                                  {aiSubTaskDrafts.length}
+                                </span>
+                              )}
+                            </span>
+                            <ChevronDown size={15} style={{ color: '#9CA3AF', transform: aiSubTaskCollapsed ? 'rotate(0deg)' : 'rotate(180deg)', transition: 'transform 0.16s ease' }} />
+                          </button>
+                          {!aiSubTaskCollapsed && (
+                            <div style={{ padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                              {aiSubTaskDrafts.length > 0 && (
+                                <SubTaskOrderList
+                                  items={aiSubTaskDrafts}
+                                  onReorder={orderedIds => setAiSubTaskDrafts(prev => orderedIds.map(id => prev.find(s => s.id === id)!))}
+                                  onRemove={id => setAiSubTaskDrafts(prev => prev.filter(s => s.id !== id))}
+                                  onRename={(id, title) => setAiSubTaskDrafts(prev => prev.map(s => s.id === id ? { ...s, title } : s))}
+                                  accent="purple"
+                                />
+                              )}
+                              <div style={{ display: 'flex', gap: 8 }}>
+                                <input
+                                  value={aiSubTaskDraft}
+                                  onChange={e => setAiSubTaskDraft(e.target.value)}
+                                  placeholder="Sub-task title..."
+                                  style={{ ...modalInputStyle, flex: 1, minWidth: 0, minHeight: 32, padding: '6px 10px', fontSize: 12 }}
+                                  onKeyDown={e => {
+                                    if (e.key !== 'Enter' || !aiSubTaskDraft.trim()) return
+                                    e.preventDefault()
+                                    setAiSubTaskDrafts(prev => [...prev, { id: crypto.randomUUID(), title: aiSubTaskDraft.trim() }])
+                                    setAiSubTaskDraft('')
+                                  }}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (!aiSubTaskDraft.trim()) return
+                                    setAiSubTaskDrafts(prev => [...prev, { id: crypto.randomUUID(), title: aiSubTaskDraft.trim() }])
+                                    setAiSubTaskDraft('')
+                                  }}
+                                  disabled={!aiSubTaskDraft.trim()}
+                                  style={{ flexShrink: 0, width: 32, height: 30, padding: 0, border: 'none', borderRadius: 7, background: aiSubTaskDraft.trim() ? 'linear-gradient(135deg, #7C3AED, #6D28D9)' : '#E5E7EB', color: aiSubTaskDraft.trim() ? '#FFFFFF' : '#9CA3AF', fontWeight: 700, fontSize: 12, cursor: aiSubTaskDraft.trim() ? 'pointer' : 'not-allowed', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                                >
+                                  <Plus size={14} strokeWidth={2.5} />
+                                </button>
                               </div>
-                            ))}
-                          </div>
+                            </div>
+                          )}
                         </div>
                       </>
                     )}
@@ -5376,17 +5391,17 @@ export default function OwnerTasksPage() {
 
               {/* Footer */}
               {isReview && (
-                <div style={{ padding: '14px 20px', borderTop: '1px solid #F3F4F6', display: 'flex', gap: 10, flexShrink: 0 }}>
+                <div style={{ padding: '14px 20px', borderTop: '1px solid #F3F4F6', display: 'flex', justifyContent: 'flex-end', gap: 8, flexShrink: 0 }}>
                   <button
-                    onClick={() => setAiStep('input')}
-                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: '1px solid #E5E7EB', borderRadius: 10, background: '#FFFFFF', color: '#374151', height: 40, padding: '0 16px', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}
+                    onClick={resetAiAssignInput}
+                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', color: '#374151', padding: '7px 18px', fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer' }}
                   >
                     Back
                   </button>
                   <button
                     onClick={handleCreate}
                     disabled={aiCreateLoading}
-                    style={{ ...primaryBtn(aiCreateLoading), background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#fff', flex: 1 }}
+                    style={{ padding: '7px 18px', background: aiCreateLoading ? '#A78BFA' : 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: aiCreateLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, opacity: aiCreateLoading ? 0.65 : 1 }}
                   >
                     {aiCreateLoading ? <><Spinner size={14} /> Creating...</> : 'Create Task'}
                   </button>

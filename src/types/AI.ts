@@ -34,7 +34,6 @@ export interface JobDescriptionDraft {
 
 export interface AiAssignStep {
   title: string
-  description: string
 }
 
 // Raw structured-output shape returned by the LLM call

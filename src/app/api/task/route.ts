@@ -200,6 +200,16 @@ export async function PATCH(req: NextRequest) {
     }
   }
 
+  if (b.action === 'complete_subtask') {
+    try {
+      const [subTask, parent] = await taskService.completeSubTask(b.id, b.assigned_by as string | undefined)
+      return NextResponse.json({ success: true, subTask, parent })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to complete sub-task'
+      return NextResponse.json({ success: false, message }, { status: 400 })
+    }
+  }
+
   // Quick status+percentage update shortcut (only when no other fields are present)
   if (b.status !== undefined && b.percentage_complete !== undefined && !b.title) {
     try {
