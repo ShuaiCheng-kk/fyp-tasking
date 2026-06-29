@@ -180,6 +180,37 @@ export default function AdminDashboardPage() {
     setEditingBlockId('')
   }
 
+  const createBlock = async (page_id: string, block_key: string, label: string, value: string, sort_order: number) => {
+    if (!adminUserId) return null
+    try {
+      const res = await fetch('/api/marketing/blocks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ admin_user_id: adminUserId, page_id, block_key, block_type: 'text', label, value, sort_order }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      const newBlock = data.block as MarketingContentBlock
+      setSelectedPage(current => current ? { ...current, blocks: [...current.blocks, newBlock] } : current)
+      return newBlock
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create block')
+      return null
+    }
+  }
+
+  const deleteBlock = async (block_id: string) => {
+    if (!adminUserId) return
+    try {
+      const res = await fetch(`/api/marketing/blocks?admin_user_id=${adminUserId}&id=${block_id}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      setSelectedPage(current => current ? { ...current, blocks: current.blocks.filter(b => b.id !== block_id) } : current)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete block')
+    }
+  }
+
   const signOut = async () => {
     await fetch('/api/auth/signout', { method: 'POST' }).catch(() => null)
     window.localStorage.removeItem('tasking_user_id')
@@ -340,11 +371,15 @@ export default function AdminDashboardPage() {
     fallback,
     variant,
     multiline = false,
+    styleOverride,
+    onDarkBg = false,
   }: {
     blockKey: string
     fallback: string
-    variant: 'badge' | 'hero' | 'heroAccent' | 'subhead' | 'sectionTitle' | 'body' | 'cardTitle' | 'cardBody' | 'cta'
+    variant: 'badge' | 'hero' | 'heroAccent' | 'subhead' | 'sectionTitle' | 'body' | 'cardTitle' | 'cardBody' | 'cta' | 'eyebrow'
     multiline?: boolean
+    styleOverride?: React.CSSProperties
+    onDarkBg?: boolean
   }) => {
     const block = blockByKey[blockKey] ?? null
     const value = getDraftValue(drafts, block, fallback)
@@ -366,15 +401,18 @@ export default function AdminDashboardPage() {
       variant === 'badge' ? { color: '#FB923C', fontSize: 13, fontWeight: 700, background: 'rgba(249,115,22,0.18)', padding: '5px 14px' } :
       variant === 'hero' ? { color: '#FFFFFF', fontSize: 52, fontWeight: 700, lineHeight: 1.08, fontFamily: 'var(--font-heading)' } :
       variant === 'heroAccent' ? { color: ORANGE, fontSize: 52, fontWeight: 700, lineHeight: 1.08, fontFamily: 'var(--font-heading)' } :
-      variant === 'subhead' ? { color: 'rgba(255,255,255,0.7)', fontSize: 17, lineHeight: 1.75, maxWidth: 520, textAlign: 'center' as const } :
+      variant === 'subhead' ? { color: 'rgba(255,255,255,0.65)', fontSize: 17, lineHeight: 1.75, textAlign: 'center' as const } :
       variant === 'sectionTitle' ? { color: '#1C1917', fontSize: 32, fontWeight: 700, lineHeight: 1.2, fontFamily: 'var(--font-heading)' } :
       variant === 'cardTitle' ? { color: '#1C1917', fontSize: 17, fontWeight: 800, lineHeight: 1.35, fontFamily: 'var(--font-heading)' } :
       variant === 'cardBody' ? { color: '#78716C', fontSize: 14, lineHeight: 1.65 } :
+      variant === 'eyebrow' ? { fontSize: 11, fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.1em' } :
       variant === 'cta' ? { color: '#FFFFFF', fontSize: 36, fontWeight: 700, lineHeight: 1.18, fontFamily: 'var(--font-heading)' } :
       { color: '#78716C', fontSize: 15, lineHeight: 1.7 }
 
+    const mergedTextStyle = { ...textStyle, ...styleOverride }
+
     if (!canEdit) {
-      return <span style={{ ...baseStyle, ...textStyle }}>{value}</span>
+      return <span style={{ ...baseStyle, ...mergedTextStyle }}>{value}</span>
     }
 
     if (editing) {
@@ -393,13 +431,14 @@ export default function AdminDashboardPage() {
             }}
             style={{
               ...baseStyle,
-              ...textStyle,
+              ...mergedTextStyle,
               display: 'block',
-              outline: '2px solid #FDBA74',
+              outline: `2px solid ${onDarkBg ? 'rgba(255,255,255,0.5)' : '#FDBA74'}`,
               outlineOffset: 4,
               cursor: 'text',
               whiteSpace: 'pre-wrap',
               minWidth: 40,
+              backgroundColor: onDarkBg ? 'rgba(255,255,255,0.1)' : 'transparent',
             }}
           />
           <span style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 50, display: 'flex', gap: 6, background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 10, padding: '6px 8px', boxShadow: '0 8px 24px rgba(0,0,0,0.14)', whiteSpace: 'nowrap' }}>
@@ -433,16 +472,16 @@ export default function AdminDashboardPage() {
           if (event.key === 'Enter') setEditingBlockId(block.id)
         }}
         onMouseEnter={(event) => {
-          event.currentTarget.style.outlineColor = '#FDBA74'
-          event.currentTarget.style.backgroundColor = variant === 'hero' || variant === 'heroAccent' || variant === 'subhead' || variant === 'cta' ? 'rgba(249,115,22,0.08)' : '#FFF7ED'
-          event.currentTarget.style.boxShadow = '0 10px 24px rgba(249,115,22,0.14)'
+          event.currentTarget.style.outlineColor = onDarkBg ? 'rgba(255,255,255,0.5)' : '#FDBA74'
+          event.currentTarget.style.backgroundColor = onDarkBg ? 'rgba(255,255,255,0.1)' : (variant === 'hero' || variant === 'heroAccent' || variant === 'subhead' || variant === 'cta' ? 'rgba(249,115,22,0.08)' : '#FFF7ED')
+          event.currentTarget.style.boxShadow = onDarkBg ? '0 4px 16px rgba(0,0,0,0.15)' : '0 10px 24px rgba(249,115,22,0.14)'
         }}
         onMouseLeave={(event) => {
           event.currentTarget.style.outlineColor = 'transparent'
           event.currentTarget.style.backgroundColor = variant === 'badge' ? 'rgba(249,115,22,0.18)' : 'transparent'
           event.currentTarget.style.boxShadow = 'none'
         }}
-        style={{ ...baseStyle, ...textStyle }}
+        style={{ ...baseStyle, ...mergedTextStyle }}
       >
         {value}
         <span style={{ position: 'absolute', right: -8, top: -14, transform: 'translateX(100%)', background: ORANGE, color: '#FFFFFF', borderRadius: 999, padding: '3px 7px', fontSize: 10, fontWeight: 900, opacity: dirty ? 1 : 0 }}>
@@ -501,6 +540,7 @@ export default function AdminDashboardPage() {
 
     return (
       <div style={{ position: 'relative' }}>
+        {block && (
         <div
           style={{
             position: 'absolute', top: 10, right: 10, zIndex: 4,
@@ -527,6 +567,7 @@ export default function AdminDashboardPage() {
             {saving ? 'Saving…' : label}
           </span>
         </div>
+        )}
         {children}
       </div>
     )
@@ -588,22 +629,18 @@ export default function AdminDashboardPage() {
             {urlBlock && (
               <div style={{ marginBottom: 12 }}>
                 <p style={{ margin: '0 0 4px', fontSize: 11, fontWeight: 700, color: MUTED }}>URL</p>
-                <select
-                  value=""
-                  onChange={e => { if (e.target.value) setDrafts(p => ({ ...p, [urlBlock.id]: e.target.value })) }}
-                  style={{ width: '100%', padding: '7px 10px', border: `1.5px solid ${BORDER}`, borderRadius: 7, fontSize: 12, outline: 'none', color: MUTED, background: '#FFFFFF', marginBottom: 6 }}
-                >
-                  <option value="">Pick a page…</option>
-                  {pages.map(p => (
-                    <option key={p.slug} value={p.route_path}>{p.title} — {p.route_path}</option>
-                  ))}
-                </select>
                 <input
+                  list={`url-options-${urlBlock.id}`}
                   value={drafts[urlBlock.id] ?? urlBlock.value}
                   onChange={e => setDrafts(p => ({ ...p, [urlBlock.id]: e.target.value }))}
                   placeholder={fallbackUrl}
                   style={{ width: '100%', padding: '7px 10px', border: `1.5px solid ${BORDER}`, borderRadius: 7, fontSize: 12, fontFamily: 'monospace', outline: 'none', color: TEXT }}
                 />
+                <datalist id={`url-options-${urlBlock.id}`}>
+                  {pages.map(p => (
+                    <option key={p.slug} value={p.route_path}>{p.title}</option>
+                  ))}
+                </datalist>
               </div>
             )}
             <button type="button"
@@ -641,6 +678,126 @@ export default function AdminDashboardPage() {
     )
   }
 
+  const renderAiFeaturesPreview = () => {
+    const featureIcons = [
+      <svg key="star" width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z" stroke={ORANGE} strokeWidth="2" strokeLinejoin="round" /></svg>,
+      <svg key="pen" width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>,
+      <svg key="check" width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke={ORANGE} strokeWidth="2" /><path d="M8 12l3 3 5-5" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>,
+      <svg key="shield" width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M9 12l2 2 4-4" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>,
+    ]
+    const features = [
+      { nameKey: 'feature.1.name', descKey: 'feature.1.desc', defaultName: 'AI Candidate Recommendation', defaultDesc: "Stop guessing who's the right fit. Tasking ranks every applicant by skills, availability, and work history — so the best match is always at the top." },
+      { nameKey: 'feature.2.name', descKey: 'feature.2.desc', defaultName: 'AI Job Description Generator', defaultDesc: 'Enter a role title and key requirements. Get a ready-to-publish job description in seconds. No more staring at a blank page.' },
+      { nameKey: 'feature.3.name', descKey: 'feature.3.desc', defaultName: 'AI Auto-approve Timesheets',  defaultDesc: 'Clean records that meet all criteria get approved without you lifting a finger. Only the ones that need your attention ever reach your inbox.' },
+      { nameKey: 'feature.4.name', descKey: 'feature.4.desc', defaultName: 'AI Anomaly Detection',         defaultDesc: 'Photo mismatches, unusual clock-in patterns, repeated late arrivals — Tasking catches them automatically before they turn into disputes.' },
+    ]
+    const steps = [
+      { step: '01', labelKey: 'workflow.step1.label', defaultLabel: 'Recruit', titleKey: 'workflow.step1.title', descKey: 'workflow.step1.desc', defaultTitle: 'Post a job',             defaultDesc: 'AI generates the description and ranks applicants automatically — so you open the list already knowing who to pick.' },
+      { step: '02', labelKey: 'workflow.step2.label', defaultLabel: 'Verify',  titleKey: 'workflow.step2.title', descKey: 'workflow.step2.desc', defaultTitle: 'Casual worker clocks in', defaultDesc: 'AI verifies the photo against the record and flags anything that looks off — before it becomes your problem.' },
+      { step: '03', labelKey: 'workflow.step3.label', defaultLabel: 'Approve', titleKey: 'workflow.step3.title', descKey: 'workflow.step3.desc', defaultTitle: 'Shift ends',              defaultDesc: 'AI reviews the timesheet and approves or escalates instantly — so clean records never sit waiting for manual review.' },
+    ]
+    return (
+      <div style={{ background: '#FFFFFF', borderRadius: 18, overflow: 'hidden', border: `1px solid ${BORDER}` }}>
+
+        {/* Hero */}
+        {renderSectionWrap('section.hero.visible', 'Hero Section',
+          <section style={{ background: '#1C1C1E', padding: '72px 48px 64px', textAlign: 'center' }}>
+            <div style={{ marginBottom: 20 }}>
+              {renderEditableText({ blockKey: 'hero.badge', fallback: 'AI Features', variant: 'badge' })}
+            </div>
+            <div style={{ maxWidth: 640, margin: '0 auto 18px' }}>
+              {renderEditableText({ blockKey: 'hero.headline', fallback: 'Enterprise-grade AI. Free for everyone.', variant: 'hero' })}
+            </div>
+            <div style={{ maxWidth: 520, margin: '0 auto 32px' }}>
+              {renderEditableText({ blockKey: 'hero.subheadline', fallback: 'Four intelligent tools built into your workflow from day one — no upgrades, no paywalls, no excuses.', variant: 'subhead', multiline: true })}
+            </div>
+            {renderEditableBtn({ labelKey: 'hero.button.label', urlKey: 'hero.button.url', fallbackLabel: 'Get Started Free', fallbackUrl: '/get-started', editing: editingProductsBtn, setEditing: setEditingProductsBtn, btnStyle: { background: ORANGE, color: '#FFFFFF', border: 'none', borderRadius: 10, padding: '13px 30px', fontSize: 15, fontWeight: 600, cursor: 'pointer' } })}
+          </section>
+        )}
+
+        {/* Features grid */}
+        {renderSectionWrap('section.intro.visible', 'Features Grid',
+          <section style={{ background: '#FFFBF5', padding: '56px 48px' }}>
+            <div style={{ textAlign: 'center', marginBottom: 40 }}>
+              <div style={{ marginBottom: 10 }}>
+                {renderEditableText({ blockKey: 'features.title', fallback: "What's inside", variant: 'sectionTitle' })}
+              </div>
+              {renderEditableText({ blockKey: 'features.subtitle', fallback: 'Four AI tools. All free. All built in.', variant: 'body', styleOverride: { textAlign: 'center' as const } })}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 18 }}>
+              {features.map((f, i) => (
+                <div key={f.nameKey} style={{ background: '#FFFFFF', border: '1px solid #F0E8D8', borderRadius: 16, padding: 24 }}>
+                  <div style={{ width: 44, height: 44, background: '#FEF3C7', borderRadius: 11, display: 'grid', placeItems: 'center', marginBottom: 14 }}>{featureIcons[i]}</div>
+                  <div style={{ marginBottom: 8 }}>
+                    {renderEditableText({ blockKey: f.nameKey, fallback: f.defaultName, variant: 'cardTitle', styleOverride: { fontSize: 15, fontWeight: 600, color: '#1C1917' } })}
+                  </div>
+                  {renderEditableText({ blockKey: f.descKey, fallback: f.defaultDesc, variant: 'cardBody', multiline: true, styleOverride: { fontSize: 14, lineHeight: 1.7 } })}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Workflow steps */}
+        {renderSectionWrap('section.content.visible', 'Workflow Steps',
+          <section style={{ background: '#FFFFFF', padding: '56px 48px' }}>
+            <div style={{ textAlign: 'center', marginBottom: 52 }}>
+              <div style={{ marginBottom: 12 }}>
+                {renderEditableText({ blockKey: 'workflow.title', fallback: 'AI that works with you, not around you.', variant: 'sectionTitle' })}
+              </div>
+              {renderEditableText({ blockKey: 'workflow.subtitle', fallback: "These aren't standalone tools. They're built into the exact moments in your workflow where they matter most.", variant: 'body', multiline: true, styleOverride: { textAlign: 'center' as const } })}
+            </div>
+            {/* Step circles row with connecting line */}
+            <div style={{ position: 'relative', display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', marginBottom: 20 }}>
+              {/* connecting line */}
+              <div style={{ position: 'absolute', top: 36, left: '16.66%', right: '16.66%', height: 2, background: 'linear-gradient(90deg, #F97316, #FED7AA 50%, #F97316)', zIndex: 0 }} />
+              {steps.map(s => (
+                <div key={s.step} style={{ display: 'flex', justifyContent: 'center', position: 'relative', zIndex: 1 }}>
+                  <div style={{ width: 72, height: 72, borderRadius: '50%', background: '#FEF3C7', border: '3px solid #F97316', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                    <span style={{ fontSize: 9, fontWeight: 700, color: ORANGE, letterSpacing: '0.1em', lineHeight: 1 }}>STEP</span>
+                    <span style={{ fontSize: 18, fontWeight: 700, color: ORANGE, lineHeight: 1.1 }}>{s.step}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {/* Step content row */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 12 }}>
+              {steps.map(s => (
+                <div key={s.step} style={{ textAlign: 'center', padding: '0 16px' }}>
+                  <div style={{ marginBottom: 10 }}>
+                    <span style={{ display: 'inline-block', background: '#FEF3C7', borderRadius: 999, padding: '3px 12px' }}>
+                      {renderEditableText({ blockKey: s.labelKey, fallback: s.defaultLabel, variant: 'eyebrow', styleOverride: { fontSize: 12, fontWeight: 600, color: '#92400E', textTransform: 'none' as const, letterSpacing: 0 } })}
+                    </span>
+                  </div>
+                  <div style={{ marginBottom: 8 }}>
+                    {renderEditableText({ blockKey: s.titleKey, fallback: s.defaultTitle, variant: 'cardTitle', styleOverride: { fontSize: 16, fontWeight: 700, color: '#1C1917' } })}
+                  </div>
+                  {renderEditableText({ blockKey: s.descKey, fallback: s.defaultDesc, variant: 'cardBody', multiline: true, styleOverride: { fontSize: 14, color: '#78716C', lineHeight: 1.7 } })}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* CTA */}
+        {renderSectionWrap('section.cta.visible', 'CTA Section',
+          <section style={{ background: ORANGE, padding: '64px 48px', textAlign: 'center' }}>
+            <div style={{ maxWidth: 560, margin: '0 auto' }}>
+              <div style={{ marginBottom: 14 }}>
+                {renderEditableText({ blockKey: 'cta.headline', fallback: 'Ready to put AI to work?', variant: 'cta', styleOverride: { fontSize: 36 }, onDarkBg: true })}
+              </div>
+              <div style={{ marginBottom: 28 }}>
+                {renderEditableText({ blockKey: 'cta.subheadline', fallback: 'All four AI features are free. No upgrade required.', variant: 'subhead', multiline: true, styleOverride: { fontSize: 16 }, onDarkBg: true })}
+              </div>
+              {renderEditableBtn({ labelKey: 'cta.button.label', urlKey: 'cta.button.url', fallbackLabel: 'Get Started Free', fallbackUrl: '/get-started', editing: editingCtaBtn, setEditing: setEditingCtaBtn, btnStyle: { background: '#FFFFFF', color: ORANGE, border: 'none', borderRadius: 10, padding: '13px 30px', fontSize: 15, fontWeight: 700, cursor: 'pointer' } })}
+            </div>
+          </section>
+        )}
+
+      </div>
+    )
+  }
+
   const renderGenericPreview = () => {
     const hasIntro = hasBlock(blockByKey, 'intro.title') || hasBlock(blockByKey, 'intro.body')
     const hasCta = hasBlock(blockByKey, 'cta.headline') || hasBlock(blockByKey, 'cta.subheadline')
@@ -652,19 +809,21 @@ export default function AdminDashboardPage() {
 
     return (
     <div style={{ background: '#FFFFFF', borderRadius: 18, overflow: 'hidden', border: `1px solid ${BORDER}` }}>
-      <section style={{ background: '#1C1C1E', padding: '64px 48px', textAlign: 'center' }}>
-        {renderEditableText({ blockKey: 'hero.headline', fallback: selectedPage?.title ?? 'Marketing page', variant: 'hero' })}
-        <div style={{ height: 18 }} />
-        {renderEditableText({ blockKey: 'hero.subheadline', fallback: 'Double-click this text to edit the marketing content for this page.', variant: 'subhead', multiline: true })}
-      </section>
-      {hasIntro ? (
+      {renderSectionWrap('section.hero.visible', 'Hero Section',
+        <section style={{ background: '#1C1C1E', padding: '64px 48px', textAlign: 'center' }}>
+          {renderEditableText({ blockKey: 'hero.headline', fallback: selectedPage?.title ?? 'Marketing page', variant: 'hero' })}
+          <div style={{ height: 18 }} />
+          {renderEditableText({ blockKey: 'hero.subheadline', fallback: 'Double-click this text to edit the marketing content for this page.', variant: 'subhead', multiline: true })}
+        </section>
+      )}
+      {hasIntro ? renderSectionWrap('section.intro.visible', 'Intro Section',
         <section style={{ padding: '56px 48px', background: '#FFFBF5' }}>
           {hasBlock(blockByKey, 'intro.title') ? renderEditableText({ blockKey: 'intro.title', fallback: 'Section headline', variant: 'sectionTitle' }) : null}
           {hasBlock(blockByKey, 'intro.title') && hasBlock(blockByKey, 'intro.body') ? <div style={{ height: 14 }} /> : null}
           {hasBlock(blockByKey, 'intro.body') ? renderEditableText({ blockKey: 'intro.body', fallback: 'Add the body copy for this marketing section from the live editor.', variant: 'body', multiline: true }) : null}
         </section>
       ) : null}
-      {secondaryBlocks.length > 0 ? (
+      {secondaryBlocks.length > 0 ? renderSectionWrap('section.content.visible', 'Page Content',
         <section style={{ padding: '56px 48px', background: '#FFFFFF' }}>
           <h2 style={{ margin: '0 0 24px', color: '#1C1917', fontSize: 28, fontWeight: 800, fontFamily: 'var(--font-heading)' }}>Page content</h2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 16 }}>
@@ -682,48 +841,261 @@ export default function AdminDashboardPage() {
           </div>
         </section>
       ) : null}
-      {hasCta ? renderCtaBtnSection(ORANGE, 'cta.headline', 'cta.subheadline') : null}
+      {hasCta ? renderSectionWrap('section.cta.visible', 'CTA Section', renderCtaBtnSection(ORANGE, 'cta.headline', 'cta.subheadline')) : null}
     </div>
+    )
+  }
+
+  const renderProductsPreview = () => {
+    const ORANGE = '#F97316'
+    const modules = [
+      { key: 'recruitment', icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" stroke={ORANGE} strokeWidth="2" strokeLinecap="round"/><circle cx="9" cy="7" r="4" stroke={ORANGE} strokeWidth="2"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" stroke={ORANGE} strokeWidth="2" strokeLinecap="round"/></svg>, name: 'Recruitment',         tagline: 'Find the right people. Fast.',                      href: '/products/recruitment' },
+      { key: 'attendance',  icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="18" rx="2" stroke={ORANGE} strokeWidth="2"/><path d="M16 2v4M8 2v4M3 10h18" stroke={ORANGE} strokeWidth="2" strokeLinecap="round"/><path d="M9 16l2 2 4-4" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>, name: 'Attendance',          tagline: 'Every clock-in. Verified.',                         href: '/products/attendance' },
+      { key: 'team',        icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="3" stroke={ORANGE} strokeWidth="2"/><circle cx="5" cy="10" r="2.5" stroke={ORANGE} strokeWidth="1.75"/><circle cx="19" cy="10" r="2.5" stroke={ORANGE} strokeWidth="1.75"/><path d="M2 20c0-3 1.8-5 5-5M22 20c0-3-1.8-5-5-5M6 20c0-3.314 2.686-6 6-6s6 2.686 6 6" stroke={ORANGE} strokeWidth="1.75" strokeLinecap="round"/></svg>, name: 'Team Management',     tagline: 'Your company structure, exactly how you need it.',  href: '/products/team-management' },
+      { key: 'notifications',icon:<svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M13.73 21a2 2 0 0 1-3.46 0" stroke={ORANGE} strokeWidth="2" strokeLinecap="round"/></svg>, name: 'Smart Notifications', tagline: 'No more chasing people for updates.',                 href: '/products/smart-notifications' },
+      { key: 'ai',          icon: <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 2L13.8 8.2L20 10L13.8 11.8L12 18L10.2 11.8L4 10L10.2 8.2L12 2Z" stroke={ORANGE} strokeWidth="2" strokeLinejoin="round"/><path d="M19 15l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3z" stroke={ORANGE} strokeWidth="1.5" strokeLinejoin="round"/></svg>, name: 'AI Features',         tagline: 'Enterprise-grade AI. Free for everyone.',          href: '/products/ai-features' },
+    ]
+    const notIncluded = ['Payment & Payroll', 'Integrations', 'Reporting & Analytics', 'Support & Onboarding']
+    return (
+      <div style={{ background: '#FFFFFF', borderRadius: 18, overflow: 'hidden', border: `1px solid ${BORDER}` }}>
+        {/* Hero */}
+        {renderSectionWrap('section.hero.visible', 'Hero Section', <section style={{ background: '#1C1C1E', padding: '96px 48px 80px', textAlign: 'center' }}>
+          <div style={{ marginBottom: 24 }}>
+            {renderEditableText({ blockKey: 'hero.badge', fallback: 'Products', variant: 'badge' })}
+          </div>
+          <div style={{ maxWidth: 760, margin: '0 auto 20px' }}>
+            {renderEditableText({ blockKey: 'hero.headline', fallback: 'One platform. Every tool your casual workforce needs.', variant: 'hero' })}
+          </div>
+          <div style={{ maxWidth: 640, margin: '0 auto' }}>
+            {renderEditableText({ blockKey: 'hero.subheadline', fallback: "Tasking brings recruitment, attendance, team management, and AI automation together in one place — so you can stop juggling tools and start running your business.", variant: 'subhead', multiline: true })}
+          </div>
+          <div style={{ height: 36 }} />
+          {renderEditableBtn({ labelKey: 'hero.button.label', urlKey: 'hero.button.url', fallbackLabel: 'Explore Our Modules', fallbackUrl: '#modules', editing: editingProductsBtn, setEditing: setEditingProductsBtn, btnStyle: { background: ORANGE, color: '#FFFFFF', border: 'none', borderRadius: 10, padding: '13px 30px', fontSize: 15, fontWeight: 600, cursor: 'pointer' } })}
+        </section>)}
+
+        {/* We kept it simple */}
+        {renderSectionWrap('section.why.visible', '"We kept it simple"', <section style={{ background: '#FFFFFF', padding: '56px 48px' }}>
+          <div style={{ textAlign: 'center', marginBottom: 40 }}>
+            <p style={{ margin: '0 0 10px', fontSize: 11, fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+              {renderEditableText({ blockKey: 'why.eyebrow', fallback: 'What we left out', variant: 'eyebrow' })}
+            </p>
+            <div style={{ marginBottom: 12 }}>
+              {renderEditableText({ blockKey: 'why.title', fallback: 'We kept it simple. On purpose.', variant: 'sectionTitle', styleOverride: { fontSize: 36, fontWeight: 600 } })}
+            </div>
+            <div style={{ maxWidth: 720, margin: '0 auto' }}>
+              {renderEditableText({ blockKey: 'why.intro', fallback: "Most workforce tools were built for corporations with dedicated IT teams and six-figure software budgets. They come packed with modules that look impressive on a features list — but for an SME trying to manage a casual workforce, they just get in the way. Here's what we left out, and why.", variant: 'body', multiline: true, styleOverride: { textAlign: 'center' as const, lineHeight: 1.75, fontSize: 17 } })}
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 20, marginBottom: 32 }}>
+            {[
+              { titleKey: 'why.card.payroll.title',      bodyKey: 'why.card.payroll.body',      fallbackTitle: 'Payment & Payroll',      fallbackBody: "Payroll is a legal minefield — tax filings, CPF calculations, regional compliance. It belongs in dedicated payroll software, not a workforce management tool. We stay in our lane so you're not exposed to the risks." },
+              { titleKey: 'why.card.integrations.title', bodyKey: 'why.card.integrations.body', fallbackTitle: 'Integrations',           fallbackBody: "Enterprise API connectors exist for companies with full-time IT departments. If you're running an SME, you don't need a 12-week implementation just to get your team scheduled." },
+              { titleKey: 'why.card.reporting.title',    bodyKey: 'why.card.reporting.body',    fallbackTitle: 'Reporting & Analytics',  fallbackBody: 'Labour forecasting and sales-based scheduling sound great. But they require months of historical data and dedicated analysts to be useful. We give you what actually matters — who showed up, when, and whether the record is accurate.' },
+              { titleKey: 'why.card.onboarding.title',   bodyKey: 'why.card.onboarding.body',   fallbackTitle: 'Support & Onboarding',   fallbackBody: "If you need a 3-day onboarding programme to use a scheduling tool, something's already gone wrong. Tasking is designed so your team picks it up on day one." },
+            ].map(({ titleKey, bodyKey, fallbackTitle, fallbackBody }) => (
+              <div key={titleKey} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 16, padding: 32, position: 'relative' }}>
+                <span style={{ position: 'absolute', top: 20, right: 20, background: '#F3F4F6', color: '#9CA3AF', fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 999, letterSpacing: '0.04em' }}>Not included</span>
+                <div style={{ paddingRight: 100, marginBottom: 10 }}>
+                  {renderEditableText({ blockKey: titleKey, fallback: fallbackTitle, variant: 'cardTitle', styleOverride: { color: '#6B7280', fontSize: 18, fontWeight: 600 } })}
+                </div>
+                {renderEditableText({ blockKey: bodyKey, fallback: fallbackBody, variant: 'cardBody', multiline: true, styleOverride: { fontSize: 15, lineHeight: 1.7 } })}
+              </div>
+            ))}
+          </div>
+          <p style={{ textAlign: 'center' }}>
+            {renderEditableText({ blockKey: 'why.footer', fallback: 'Less bloat. More clarity. Everything your team needs to run a casual workforce — nothing that slows you down.', variant: 'body', styleOverride: { fontSize: 16, fontWeight: 600, color: '#1C1917', textAlign: 'center' as const } })}
+          </p>
+        </section>)}
+
+        {/* Comparison table */}
+        {renderSectionWrap('section.comparison.visible', 'Comparison Table', (() => {
+          const comparisonBlocks = (selectedPage?.blocks ?? [])
+            .filter(b => b.block_key.startsWith('comparison.row.'))
+            .sort((a, b) => a.sort_order - b.sort_order)
+
+          const addRow = async () => {
+            if (!selectedPage) return
+            const nextOrder = comparisonBlocks.length > 0
+              ? Math.max(...comparisonBlocks.map(b => b.sort_order)) + 1
+              : 200
+            const key = `comparison.row.${Date.now()}`
+            await createBlock(selectedPage.id, key, `Comparison Row`, 'New feature', nextOrder)
+          }
+
+          return (
+            <section style={{ background: '#FFFBF5', padding: '56px 48px' }}>
+              <div style={{ textAlign: 'center', marginBottom: 36 }}>
+                <div style={{ marginBottom: 10 }}>
+                  {renderEditableText({ blockKey: 'comparison.title', fallback: 'Built different. Here\'s the proof.', variant: 'sectionTitle', styleOverride: { fontSize: 34 } })}
+                </div>
+                {renderEditableText({ blockKey: 'comparison.subtitle', fallback: 'Features that exist in Tasking and nowhere else.', variant: 'body', styleOverride: { textAlign: 'center' as const } })}
+              </div>
+              <div style={{ maxWidth: 600, margin: '0 auto', border: '1px solid #E5E7EB', borderRadius: 16, overflow: 'hidden', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
+                {/* Header */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 160px 120px 36px', background: '#1C1917', padding: '14px 24px', alignItems: 'center', gap: 4 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#FFFFFF' }}>Feature</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#FFFFFF', textAlign: 'center' }}>Current Workforce Tools</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: ORANGE, textAlign: 'center' }}>Tasking</span>
+                  <span />
+                </div>
+                {comparisonBlocks.map(block => (
+                  <div key={block.id} style={{ display: 'grid', gridTemplateColumns: '1fr 160px 120px 36px', padding: '11px 24px', background: '#FFFFFF', borderTop: '1px solid #F3F4F6', alignItems: 'center', gap: 4 }}>
+                    <div>
+                      {renderEditableText({ blockKey: block.block_key, fallback: block.value, variant: 'body', styleOverride: { fontSize: 13, color: '#6B7280', fontWeight: 400 } })}
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'center' }}>
+                      <span style={{ width: 24, height: 24, borderRadius: 999, background: 'rgba(239,68,68,0.12)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 2l8 8M10 2l-8 8" stroke="#EF4444" strokeWidth="1.75" strokeLinecap="round"/></svg>
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'center' }}>
+                      <span style={{ width: 24, height: 24, borderRadius: 999, background: 'rgba(249,115,22,0.15)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M1.5 6l3.5 3.5 5.5-7" stroke={ORANGE} strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      title="Remove row"
+                      onClick={() => deleteBlock(block.id)}
+                      style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: 'transparent', color: '#CBD5E1', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.15s, color 0.15s' }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#FEE2E2'; (e.currentTarget as HTMLButtonElement).style.color = '#EF4444' }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent'; (e.currentTarget as HTMLButtonElement).style.color = '#CBD5E1' }}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ))}
+                {/* Add row */}
+                <div style={{ borderTop: '1px solid #F3F4F6', padding: '10px 24px' }}>
+                  <button
+                    type="button"
+                    onClick={addRow}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: '1px dashed #D1D5DB', borderRadius: 8, padding: '7px 14px', fontSize: 12, fontWeight: 600, color: '#9CA3AF', cursor: 'pointer', transition: 'border-color 0.15s, color 0.15s' }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = ORANGE; (e.currentTarget as HTMLButtonElement).style.color = ORANGE }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = '#D1D5DB'; (e.currentTarget as HTMLButtonElement).style.color = '#9CA3AF' }}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M6 1v10M1 6h10" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round"/></svg>
+                    Add feature row
+                  </button>
+                </div>
+              </div>
+            </section>
+          )
+        })())}
+
+        {/* Module cards */}
+        {renderSectionWrap('section.modules.visible', 'Module Cards', <section style={{ background: '#FFFFFF', padding: '56px 48px' }}>
+          <div style={{ textAlign: 'center', marginBottom: 48 }}>
+            <div style={{ marginBottom: 12 }}>
+              <span style={{ fontSize: 34, fontWeight: 700, color: '#1C1917', fontFamily: 'var(--font-heading)', lineHeight: 1.2 }}>
+                {blockByKey['modules.title']
+                  ? (blockByKey['modules.title'].value || 'Five modules. One workflow. Zero gaps.')
+                  : 'Five modules. One workflow. Zero gaps.'}
+              </span>
+            </div>
+            {renderEditableText({ blockKey: 'modules.subtitle', fallback: 'Every module in Tasking is designed to work together — from the moment you post a job to the moment the shift ends.', variant: 'body', multiline: true, styleOverride: { textAlign: 'center' as const } })}
+          </div>
+          {(() => {
+            const renderModuleCard = (m: typeof modules[0]) => (
+              <div key={m.key} style={{ background: '#FFFBF5', border: '1px solid #F0E8D8', borderRadius: 16, padding: 28, display: 'flex', flexDirection: 'column' }}>
+                <div style={{ width: 48, height: 48, background: '#FEF3C7', borderRadius: 12, display: 'grid', placeItems: 'center', marginBottom: 16 }}>{m.icon}</div>
+                <p style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 700, color: '#1C1917', fontFamily: 'var(--font-heading)' }}>{m.name}</p>
+                <div style={{ marginBottom: 12 }}>
+                  {renderEditableText({ blockKey: `module.${m.key}.tagline`, fallback: m.tagline, variant: 'body', styleOverride: { fontSize: 13, fontWeight: 700, color: ORANGE } })}
+                </div>
+                <div style={{ marginBottom: 20, flex: 1 }}>
+                  {renderEditableText({ blockKey: `module.${m.key}.body`, fallback: '', variant: 'body', multiline: true, styleOverride: { fontSize: 13, color: '#6B7280', lineHeight: 1.7 } })}
+                </div>
+                <div>
+                  {renderEditableText({ blockKey: `module.${m.key}.link`, fallback: `See how ${m.name} works →`, variant: 'body', styleOverride: { fontSize: 13, fontWeight: 600, color: ORANGE } })}
+                </div>
+              </div>
+            )
+            return (
+              <>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 16, marginBottom: 16 }}>
+                  {modules.slice(0, 3).map(renderModuleCard)}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0,1fr))', gap: 16, maxWidth: 640, margin: '0 auto' }}>
+                  {modules.slice(3).map(renderModuleCard)}
+                </div>
+              </>
+            )
+          })()}
+        </section>)}
+
+        {/* CTA */}
+        {renderSectionWrap('section.cta.visible', 'CTA Section', <section style={{ background: ORANGE, padding: '72px 48px', textAlign: 'center' }}>
+          <div style={{ maxWidth: 600, margin: '0 auto' }}>
+            <div style={{ marginBottom: 16 }}>
+              {renderEditableText({ blockKey: 'cta.headline', fallback: 'Ready to see it in action?', variant: 'cta', styleOverride: { fontSize: 40, fontWeight: 700 }, onDarkBg: true })}
+            </div>
+            <div style={{ marginBottom: 32 }}>
+              {renderEditableText({ blockKey: 'cta.subheadline', fallback: 'Join SMEs already using Tasking to hire smarter, schedule faster, and track with confidence.', variant: 'subhead', multiline: true, styleOverride: { fontSize: 17, color: 'rgba(255,255,255,0.85)', lineHeight: 1.7 }, onDarkBg: true })}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+              {renderEditableBtn({ labelKey: 'cta.button.label', urlKey: 'cta.button.url', fallbackLabel: 'Get Started Free', fallbackUrl: '/get-started', editing: editingCtaBtn, setEditing: setEditingCtaBtn, btnStyle: { background: '#FFFFFF', color: ORANGE, border: 'none', borderRadius: 10, padding: '13px 30px', fontSize: 15, fontWeight: 700, cursor: 'pointer' } })}
+              {renderEditableBtn({ labelKey: 'cta.button2.label', urlKey: 'cta.button2.url', fallbackLabel: 'View Pricing', fallbackUrl: '/pricing', editing: editingIndustriesBtn, setEditing: setEditingIndustriesBtn, btnStyle: { background: 'transparent', color: '#FFFFFF', border: '2px solid rgba(255,255,255,0.6)', borderRadius: 10, padding: '13px 30px', fontSize: 15, fontWeight: 600, cursor: 'pointer' } })}
+            </div>
+            <div>
+              {renderEditableText({ blockKey: 'cta.note', fallback: 'No credit card required. Free forever.', variant: 'body', styleOverride: { fontSize: 14, color: 'rgba(255,255,255,0.6)', textAlign: 'center' as const }, onDarkBg: true })}
+            </div>
+          </div>
+        </section>)}
+      </div>
     )
   }
 
   const renderAboutPreview = () => (
     <div style={{ background: '#FFFFFF', borderRadius: 18, overflow: 'hidden', border: `1px solid ${BORDER}` }}>
-      <section style={{ background: '#1C1C1E', padding: '76px 48px', textAlign: 'center' }}>
-        <span style={{ display: 'inline-block', background: 'rgba(249,115,22,0.18)', color: '#FB923C', padding: '5px 14px', borderRadius: 999, fontSize: 13, fontWeight: 700, marginBottom: 24 }}>
-          About
-        </span>
-        {renderEditableText({ blockKey: 'hero.headline', fallback: "Built by people who've seen the chaos firsthand.", variant: 'hero' })}
-        <div style={{ height: 20 }} />
-        {renderEditableText({ blockKey: 'hero.subheadline', fallback: 'Tasking was born out of a simple frustration - watching SMEs struggle with casual workforce management using tools that were never built for them.', variant: 'subhead', multiline: true })}
-      </section>
+      {renderSectionWrap('section.hero.visible', 'Hero Section',
+        <section style={{ background: '#1C1C1E', padding: '96px 48px 80px', textAlign: 'center' }}>
+          <div style={{ marginBottom: 24 }}>
+            {renderEditableText({ blockKey: 'hero.badge', fallback: 'About', variant: 'badge' })}
+          </div>
+          <div style={{ maxWidth: 720, margin: '0 auto 20px' }}>
+            {renderEditableText({ blockKey: 'hero.headline', fallback: "Built by people who've seen the chaos firsthand.", variant: 'hero' })}
+          </div>
+          <div style={{ maxWidth: 580, margin: '0 auto' }}>
+            {renderEditableText({ blockKey: 'hero.subheadline', fallback: 'Tasking was born out of a simple frustration — watching SMEs struggle with casual workforce management using tools that were never built for them.', variant: 'subhead', multiline: true })}
+          </div>
+        </section>
+      )}
 
-      <section style={{ background: '#FFFBF5', padding: '64px 48px', textAlign: 'center' }}>
-        <h2 style={{ margin: 0, color: '#1C1917', fontSize: 32, fontWeight: 700, fontFamily: 'var(--font-heading)' }}>Learn more about us</h2>
-        <p style={{ margin: '12px auto 38px', color: '#78716C', fontSize: 16, lineHeight: 1.7, maxWidth: 640 }}>
-          Everything you need to know about why Tasking exists and the people behind it.
-        </p>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 18, textAlign: 'left' }}>
-          {[
-            ['Mission', 'Why we built Tasking and what we stand for.'],
-            ['Problem & Solution', 'The real problems SMEs face, and exactly how we fix them.'],
-            ['Meet the Team', 'The people behind Tasking.'],
-            ['FAQ', 'Answers to the questions we get most often.'],
-          ].map(([title, body]) => (
-            <div key={title} className="card-lift" style={{ background: '#FFFFFF', border: '1px solid #F0E8D8', borderRadius: 16, padding: 26 }}>
-              <h3 style={{ margin: 0, color: '#1C1917', fontSize: 17, fontWeight: 800 }}>{title}</h3>
-              <p style={{ margin: '8px 0 0', color: '#78716C', fontSize: 14, lineHeight: 1.6 }}>{body}</p>
-            </div>
-          ))}
-        </div>
-      </section>
+      {renderSectionWrap('section.learn-more.visible', 'Learn More Cards',
+        <section style={{ background: '#FFFBF5', padding: '64px 48px', textAlign: 'center' }}>
+          <div style={{ marginBottom: 12 }}>
+            {renderEditableText({ blockKey: 'learn-more.title', fallback: 'Learn more about us', variant: 'sectionTitle' })}
+          </div>
+          <div style={{ maxWidth: 640, margin: '0 auto 38px' }}>
+            {renderEditableText({ blockKey: 'learn-more.subtitle', fallback: 'Everything you need to know about why Tasking exists and the people behind it.', variant: 'body', multiline: true })}
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 18, textAlign: 'left' }}>
+            {[
+              ['Mission', 'Why we built Tasking and what we stand for.'],
+              ['Problem & Solution', 'The real problems SMEs face, and exactly how we fix them.'],
+              ['Meet the Team', 'The people behind Tasking.'],
+              ['FAQ', 'Answers to the questions we get most often.'],
+            ].map(([title, body]) => (
+              <div key={title} className="card-lift" style={{ background: '#FFFFFF', border: '1px solid #F0E8D8', borderRadius: 16, padding: 26 }}>
+                <h3 style={{ margin: 0, color: '#1C1917', fontSize: 17, fontWeight: 800 }}>{title}</h3>
+                <p style={{ margin: '8px 0 0', color: '#78716C', fontSize: 14, lineHeight: 1.6 }}>{body}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
-      <section style={{ background: ORANGE, padding: '62px 48px', textAlign: 'center' }}>
-        <p style={{ margin: '0 auto 18px', maxWidth: 720, color: '#FFFFFF', fontSize: 28, fontWeight: 800, lineHeight: 1.25, fontFamily: 'var(--font-heading)' }}>
-          &quot;We didn&apos;t build another HR tool. We built the thing SMEs actually needed.&quot;
-        </p>
-        <p style={{ margin: 0, color: 'rgba(255,255,255,0.75)', fontSize: 14, fontWeight: 600 }}>- The Tasking Team</p>
-      </section>
+      {renderSectionWrap('section.cta.visible', 'CTA / Quote Section',
+        <section style={{ background: ORANGE, padding: '72px 48px', textAlign: 'center' }}>
+          <div style={{ maxWidth: 640, margin: '0 auto 20px', color: '#FFFFFF', fontSize: 30, fontWeight: 700, lineHeight: 1.3, fontFamily: 'var(--font-heading)' }}>
+            {renderEditableText({ blockKey: 'cta.quote', fallback: '"We didn\'t build another HR tool. We built the thing SMEs actually needed."', variant: 'cta' })}
+          </div>
+          <p style={{ margin: 0, color: 'rgba(255,255,255,0.75)', fontSize: 15, fontWeight: 600 }}>
+            {renderEditableText({ blockKey: 'cta.author', fallback: '— The Tasking Team', variant: 'body' })}
+          </p>
+        </section>
+      )}
     </div>
   )
 
@@ -1044,7 +1416,7 @@ export default function AdminDashboardPage() {
                   Loading live preview...
                 </div>
               ) : selectedPage ? (
-                <>{selectedPage.slug === 'home' ? renderHomePreview() : selectedPage.slug === 'about' ? renderAboutPreview() : renderGenericPreview()}</>
+                <>{selectedPage.slug === 'home' ? renderHomePreview() : selectedPage.slug === 'products' ? renderProductsPreview() : selectedPage.slug === 'about' ? renderAboutPreview() : selectedPage.slug === 'products-ai-features' ? renderAiFeaturesPreview() : renderGenericPreview()}</>
 
               ) : (
                 <div style={{ display: 'grid', placeItems: 'center', minHeight: 520, background: '#FFFFFF', borderRadius: 14, color: MUTED, fontSize: 13, fontWeight: 700 }}>

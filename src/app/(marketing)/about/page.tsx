@@ -1,5 +1,8 @@
+'use client';
+
 import Link from 'next/link';
 import { Target, Lightbulb, Users, HelpCircle, ArrowRight } from 'lucide-react';
+import { useMarketingCopy } from '../useMarketingCopy';
 
 // ─── Nav cards data ───────────────────────────────────────────────────────────
 
@@ -33,9 +36,12 @@ const cards = [
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AboutPage() {
+  const copy = useMarketingCopy('about');
+
   return (
     <>
       {/* ========== HERO ========== */}
+      {copy.visible('hero') && (
       <section style={{ background: '#1C1C1E', padding: '96px 0 80px' }}>
         <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '0 24px', textAlign: 'center' }}>
           <span style={{
@@ -49,7 +55,7 @@ export default function AboutPage() {
             fontFamily: 'var(--font-body)',
             marginBottom: '24px',
           }}>
-            About
+            {copy('hero.badge', 'About')}
           </span>
           <h1 style={{
             fontFamily: 'var(--font-heading)',
@@ -60,7 +66,7 @@ export default function AboutPage() {
             maxWidth: '720px',
             margin: '0 auto 20px',
           }}>
-            Built by people who&apos;ve seen the chaos firsthand.
+            {copy('hero.headline', "Built by people who've seen the chaos firsthand.")}
           </h1>
           <p style={{
             fontFamily: 'var(--font-body)',
@@ -70,13 +76,14 @@ export default function AboutPage() {
             maxWidth: '580px',
             margin: '0 auto',
           }}>
-            Tasking was born out of a simple frustration — watching SMEs struggle with casual workforce
-            management using tools that were never built for them.
+            {copy('hero.subheadline', 'Tasking was born out of a simple frustration — watching SMEs struggle with casual workforce management using tools that were never built for them.')}
           </p>
         </div>
       </section>
+      )}
 
       {/* ========== NAV CARDS ========== */}
+      {copy.visible('learn-more') && (
       <section style={{ background: '#FFFBF5', padding: '80px 0' }}>
         <div style={{ maxWidth: '1280px', margin: '0 auto', padding: '0 24px' }}>
           <div style={{ textAlign: 'center', marginBottom: '52px' }}>
@@ -87,7 +94,7 @@ export default function AboutPage() {
               color: '#1C1917',
               marginBottom: '12px',
             }}>
-              Learn more about us
+              {copy('learn-more.title', 'Learn more about us')}
             </h2>
             <p style={{
               fontFamily: 'var(--font-body)',
@@ -95,7 +102,7 @@ export default function AboutPage() {
               color: '#78716C',
               lineHeight: 1.7,
             }}>
-              Everything you need to know about why Tasking exists and the people behind it.
+              {copy('learn-more.subtitle', 'Everything you need to know about why Tasking exists and the people behind it.')}
             </p>
           </div>
 
@@ -154,8 +161,10 @@ export default function AboutPage() {
           </div>
         </div>
       </section>
+      )}
 
       {/* ========== CLOSING QUOTE ========== */}
+      {copy.visible('cta') && (
       <section style={{ background: '#F97316', padding: '72px 24px' }}>
         <div style={{ maxWidth: '640px', margin: '0 auto', textAlign: 'center' }}>
           <p style={{
@@ -166,17 +175,18 @@ export default function AboutPage() {
             lineHeight: 1.3,
             marginBottom: '20px',
           }}>
-            &ldquo;We didn&apos;t build another HR tool. We built the thing SMEs actually needed.&rdquo;
+            {copy('cta.quote', '"We didn\'t build another HR tool. We built the thing SMEs actually needed."')}
           </p>
           <p style={{
             fontFamily: 'var(--font-body)',
             fontSize: '0.9375rem',
             color: 'rgba(255,255,255,0.75)',
           }}>
-            — The Tasking Team
+            {copy('cta.author', '— The Tasking Team')}
           </p>
         </div>
       </section>
+      )}
     </>
   );
 }

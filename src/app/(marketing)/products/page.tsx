@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useMarketingCopy } from '../useMarketingCopy';
 
 // ─── Shared styles ────────────────────────────────────────────────────────────
 
@@ -100,13 +101,21 @@ const Cross = () => (
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ProductsPage() {
+  const copy = useMarketingCopy('products');
+
   const scrollToModules = () => {
-    document.getElementById('modules')?.scrollIntoView({ behavior: 'smooth' });
+    const url = copy('hero.button.url', '#modules');
+    if (url.startsWith('#')) {
+      document.getElementById(url.slice(1))?.scrollIntoView({ behavior: 'smooth' });
+    } else {
+      window.location.href = url;
+    }
   };
 
   return (
     <>
       {/* ========== HERO ========== */}
+      {copy.visible('hero') && (
       <section className="sub-section" style={{ background: '#1C1C1E', padding: '96px 0 80px' }}>
         <div className="sub-inner" style={{ ...inner, textAlign: 'center' }}>
           <span style={{
@@ -120,14 +129,13 @@ export default function ProductsPage() {
             fontFamily: 'var(--font-body)',
             marginBottom: '24px',
           }}>
-            Products
+            {copy('hero.badge', 'Products')}
           </span>
           <h1 style={{ ...h1Style, color: '#FFFFFF', maxWidth: '760px', margin: '0 auto 20px' }}>
-            One platform. Every tool your casual workforce needs.
+            {copy('hero.headline', 'One platform. Every tool your casual workforce needs.')}
           </h1>
           <p style={{ ...subtitleStyle, color: 'rgba(255,255,255,0.65)', maxWidth: '640px' }}>
-            Tasking brings recruitment, attendance, team management, and AI automation together in one
-            place — so you can stop juggling tools and start running your business.
+            {copy('hero.subheadline', 'Tasking brings recruitment, attendance, team management, and AI automation together in one place — so you can stop juggling tools and start running your business.')}
           </p>
           <button
             onClick={scrollToModules}
@@ -146,12 +154,14 @@ export default function ProductsPage() {
               cursor: 'pointer',
             }}
           >
-            Explore Our Modules
+            {copy('hero.button.label', 'Explore Our Modules')}
           </button>
         </div>
       </section>
+      )}
 
       {/* ========== WHY ONLY 5 MODULES ========== */}
+      {copy.visible('why') && (
       <section style={{ ...sectionBase, background: '#FFFFFF' }}>
         <div style={inner}>
           <div style={{ textAlign: 'center', marginBottom: '16px' }}>
@@ -166,9 +176,9 @@ export default function ProductsPage() {
                 marginBottom: '12px',
               }}
             >
-              What we left out
+              {copy('why.eyebrow', 'What we left out')}
             </p>
-            <h2 style={h2Style}>We kept it simple. On purpose.</h2>
+            <h2 style={h2Style}>{copy('why.title', 'We kept it simple. On purpose.')}</h2>
           </div>
           <p
             style={{
@@ -181,10 +191,7 @@ export default function ProductsPage() {
               textAlign: 'center',
             }}
           >
-            Most workforce tools were built for corporations with dedicated IT teams and six-figure
-            software budgets. They come packed with modules that look impressive on a features list —
-            but for an SME trying to manage a casual workforce, they just get in the way. Here&apos;s what
-            we left out, and why.
+            {copy('why.intro', "Most workforce tools were built for corporations with dedicated IT teams and six-figure software budgets. They come packed with modules that look impressive on a features list — but for an SME trying to manage a casual workforce, they just get in the way. Here’s what we left out, and why.")}
           </p>
 
           <div
@@ -198,20 +205,20 @@ export default function ProductsPage() {
           >
             {[
               {
-                title: 'Payment & Payroll',
-                body: 'Payroll is a legal minefield — tax filings, CPF calculations, regional compliance. It belongs in dedicated payroll software, not a workforce management tool. We stay in our lane so you\'re not exposed to the risks.',
+                title: copy('why.card.payroll.title',      'Payment & Payroll'),
+                body:  copy('why.card.payroll.body',       "Payroll is a legal minefield — tax filings, CPF calculations, regional compliance. It belongs in dedicated payroll software, not a workforce management tool. We stay in our lane so you're not exposed to the risks."),
               },
               {
-                title: 'Integrations',
-                body: 'Enterprise API connectors exist for companies with full-time IT departments. If you\'re running an SME, you don\'t need a 12-week implementation just to get your team scheduled.',
+                title: copy('why.card.integrations.title', 'Integrations'),
+                body:  copy('why.card.integrations.body',  "Enterprise API connectors exist for companies with full-time IT departments. If you're running an SME, you don't need a 12-week implementation just to get your team scheduled."),
               },
               {
-                title: 'Reporting & Analytics',
-                body: 'Labour forecasting and sales-based scheduling sound great. But they require months of historical data and dedicated analysts to be useful. We give you what actually matters — who showed up, when, and whether the record is accurate.',
+                title: copy('why.card.reporting.title',    'Reporting & Analytics'),
+                body:  copy('why.card.reporting.body',     'Labour forecasting and sales-based scheduling sound great. But they require months of historical data and dedicated analysts to be useful. We give you what actually matters — who showed up, when, and whether the record is accurate.'),
               },
               {
-                title: 'Support & Onboarding',
-                body: 'If you need a 3-day onboarding programme to use a scheduling tool, something\'s already gone wrong. Tasking is designed so your team picks it up on day one.',
+                title: copy('why.card.onboarding.title',   'Support & Onboarding'),
+                body:  copy('why.card.onboarding.body',    "If you need a 3-day onboarding programme to use a scheduling tool, something's already gone wrong. Tasking is designed so your team picks it up on day one."),
               },
             ].map(({ title, body }) => (
               <div
@@ -277,13 +284,14 @@ export default function ProductsPage() {
               color: '#1C1917',
             }}
           >
-            Less bloat. More clarity. Everything your team needs to run a casual workforce — nothing
-            that slows you down.
+            {copy('why.footer', 'Less bloat. More clarity. Everything your team needs to run a casual workforce — nothing that slows you down.')}
           </p>
         </div>
       </section>
+      )}
 
       {/* ========== COMPARISON TABLE ========== */}
+      {copy.visible('comparison') && (
       <section style={{ ...sectionBase, background: '#FFFBF5' }}>
         <div style={inner}>
           <div style={{ textAlign: 'center', marginBottom: '52px' }}>
@@ -367,15 +375,16 @@ export default function ProductsPage() {
           </div>
         </div>
       </section>
+      )}
 
       {/* ========== MODULE OVERVIEW ========== */}
+      {copy.visible('modules') && (
       <section id="modules" style={{ ...sectionBase, background: '#FFFFFF' }}>
         <div style={inner}>
           <div style={{ textAlign: 'center', marginBottom: '52px' }}>
-            <h2 style={h2Style}>Five modules. One workflow. Zero gaps.</h2>
+            <h2 style={h2Style}>{copy('modules.title', 'Five modules. One workflow. Zero gaps.')}</h2>
             <p style={subtitleStyle}>
-              Every module in Tasking is designed to work together — from the moment you post a job to
-              the moment the shift ends.
+              {copy('modules.subtitle', 'Every module in Tasking is designed to work together — from the moment you post a job to the moment the shift ends.')}
             </p>
           </div>
 
@@ -393,26 +402,29 @@ export default function ProductsPage() {
               {
                 Icon: RecruitmentIcon,
                 name: 'Recruitment',
-                tagline: 'Find the right people. Fast.',
-                body: 'Hiring casual workers shouldn\'t feel like a full-time job. Tasking gives you a public-facing recruitment page, an AI-powered applicant ranking system, and a one-click invitation flow — so you spend less time sorting through applications and more time running your operations.',
+                tagline: copy('module.recruitment.tagline', 'Find the right people. Fast.'),
+                body: copy('module.recruitment.body', 'Hiring casual workers shouldn\'t feel like a full-time job. Tasking gives you a public-facing recruitment page, an AI-powered applicant ranking system, and a one-click invitation flow — so you spend less time sorting through applications and more time running your operations.'),
+                link: copy('module.recruitment.link', 'See how Recruitment works →'),
                 href: '/products/recruitment',
               },
               {
                 Icon: AttendanceIcon,
                 name: 'Attendance',
-                tagline: 'Every clock-in. Verified. Every record. Protected.',
-                body: 'Manual timesheets get lost. WhatsApp confirmations get disputed. Tasking replaces all of that with photo-verified clock-ins, employee-signed attendance records, and AI that automatically approves clean records and flags suspicious ones.',
+                tagline: copy('module.attendance.tagline', 'Every clock-in. Verified. Every record. Protected.'),
+                body: copy('module.attendance.body', 'Manual timesheets get lost. WhatsApp confirmations get disputed. Tasking replaces all of that with photo-verified clock-ins, employee-signed attendance records, and AI that automatically approves clean records and flags suspicious ones.'),
+                link: copy('module.attendance.link', 'See how Attendance works →'),
                 href: '/products/attendance',
               },
               {
                 Icon: TeamIcon,
                 name: 'Team Management',
-                tagline: 'Your company structure, exactly how you need it.',
-                body: 'Set up departments, assign managers, and define who can do what — all from one place. Owners have full visibility across the entire organisation while managers stay focused on their own teams.',
+                tagline: copy('module.team.tagline', 'Your company structure, exactly how you need it.'),
+                body: copy('module.team.body', 'Set up departments, assign managers, and define who can do what — all from one place. Owners have full visibility across the entire organisation while managers stay focused on their own teams.'),
+                link: copy('module.team.link', 'See how Team Management works →'),
                 href: '/products/team-management',
               },
-            ].map(({ Icon, name, tagline, body, href }) => (
-              <ModuleCard key={href} Icon={Icon} name={name} tagline={tagline} body={body} href={href} />
+            ].map(({ Icon, name, tagline, body, link, href }) => (
+              <ModuleCard key={href} Icon={Icon} name={name} tagline={tagline} body={body} link={link} href={href} />
             ))}
           </div>
 
@@ -431,25 +443,29 @@ export default function ProductsPage() {
               {
                 Icon: BellIcon,
                 name: 'Smart Notifications',
-                tagline: 'No more chasing people for updates.',
-                body: 'Tasking handles the follow-ups automatically. Shift reminders go out before deadlines. Managers get notified the moment an attendance record is submitted. Your team stays in sync without you having to send a single message.',
+                tagline: copy('module.notifications.tagline', 'No more chasing people for updates.'),
+                body: copy('module.notifications.body', 'Tasking handles the follow-ups automatically. Shift reminders go out before deadlines. Managers get notified the moment an attendance record is submitted. Your team stays in sync without you having to send a single message.'),
+                link: copy('module.notifications.link', 'See how Smart Notifications works →'),
                 href: '/products/smart-notifications',
               },
               {
                 Icon: AIIcon,
                 name: 'AI Features',
-                tagline: 'Enterprise-grade AI. Free for everyone.',
-                body: 'Four AI tools built directly into your workflow — and none of them are locked behind a paywall. Generate a job description in seconds. Let the system rank your applicants. Auto-approve timesheets that check out. Get alerted the moment something looks off.',
+                tagline: copy('module.ai.tagline', 'Enterprise-grade AI. Free for everyone.'),
+                body: copy('module.ai.body', 'Four AI tools built directly into your workflow — and none of them are locked behind a paywall. Generate a job description in seconds. Let the system rank your applicants. Auto-approve timesheets that check out. Get alerted the moment something looks off.'),
+                link: copy('module.ai.link', 'See how AI Features works →'),
                 href: '/products/ai-features',
               },
-            ].map(({ Icon, name, tagline, body, href }) => (
-              <ModuleCard key={href} Icon={Icon} name={name} tagline={tagline} body={body} href={href} />
+            ].map(({ Icon, name, tagline, body, link, href }) => (
+              <ModuleCard key={href} Icon={Icon} name={name} tagline={tagline} body={body} link={link} href={href} />
             ))}
           </div>
         </div>
       </section>
+      )}
 
       {/* ========== FINAL CTA ========== */}
+      {copy.visible('cta') && (
       <section style={{ background: '#F97316', padding: '80px 24px' }}>
         <div style={{ maxWidth: '640px', margin: '0 auto', textAlign: 'center' }}>
           <h2
@@ -462,7 +478,7 @@ export default function ProductsPage() {
               lineHeight: 1.2,
             }}
           >
-            Ready to see it in action?
+            {copy('cta.headline', 'Ready to see it in action?')}
           </h2>
           <p
             style={{
@@ -473,12 +489,11 @@ export default function ProductsPage() {
               marginBottom: '36px',
             }}
           >
-            Join SMEs already using Tasking to hire smarter, schedule faster, and track with
-            confidence.
+            {copy('cta.subheadline', 'Join SMEs already using Tasking to hire smarter, schedule faster, and track with confidence.')}
           </p>
           <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap' }}>
             <Link
-              href="/get-started"
+              href={copy('cta.button.url', '/get-started')}
               className="btn-press"
               style={{
                 display: 'inline-block',
@@ -491,10 +506,10 @@ export default function ProductsPage() {
                 fontSize: '0.9375rem',
               }}
             >
-              Get Started Free
+              {copy('cta.button.label', 'Get Started Free')}
             </Link>
             <Link
-              href="/pricing"
+              href={copy('cta.button2.url', '/pricing')}
               className="btn-press"
               style={{
                 display: 'inline-block',
@@ -508,7 +523,7 @@ export default function ProductsPage() {
                 border: '2px solid rgba(255,255,255,0.6)',
               }}
             >
-              View Pricing
+              {copy('cta.button2.label', 'View Pricing')}
             </Link>
           </div>
           <p
@@ -519,10 +534,11 @@ export default function ProductsPage() {
               marginTop: '16px',
             }}
           >
-            No credit card required. Free forever.
+            {copy('cta.note', 'No credit card required. Free forever.')}
           </p>
         </div>
       </section>
+      )}
     </>
   );
 }
@@ -534,12 +550,14 @@ function ModuleCard({
   name,
   tagline,
   body,
+  link,
   href,
 }: {
   Icon: React.FC;
   name: string;
   tagline: string;
   body: string;
+  link?: string;
   href: string;
 }) {
   return (
@@ -615,7 +633,7 @@ function ModuleCard({
           gap: '4px',
         }}
       >
-        See how {name} works →
+        {link ?? `See how ${name} works →`}
       </Link>
     </div>
   );
