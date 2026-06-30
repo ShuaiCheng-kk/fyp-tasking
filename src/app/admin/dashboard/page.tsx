@@ -1,12 +1,15 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { Check, ExternalLink, FileText, ImagePlus, MousePointer2, RefreshCcw, Save, Trash2 } from 'lucide-react'
 import AdminSidebar from '@/components/AdminSidebar'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import { createBrowserClient } from '@supabase/ssr'
 import { MarketingContentBlock, MarketingPage, MarketingPageSummary } from '@/types/MarketingPage'
+import { MarketingIcon, MARKETING_ICON_NAMES } from '@/app/(marketing)/marketingIcons'
+import { comparisonTable as pricingComparisonTable } from '@/app/(marketing)/pricing/content'
 
 const ORANGE = '#F97316'
 const TEXT = '#0F172A'
@@ -50,6 +53,7 @@ export default function AdminDashboardPage() {
   const [editingCtaBtn, setEditingCtaBtn] = useState(false)
   const [editingProductsBtn, setEditingProductsBtn] = useState(false)
   const [editingIndustriesBtn, setEditingIndustriesBtn] = useState(false)
+  const [iconPickerTarget, setIconPickerTarget] = useState<{ cardKey: string; iconBlockKey: string; sortOrder: number; anchorLeft: number; anchorRight: number; anchorBottom: number; anchorTop: number } | null>(null)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
   const imageInputRef = useRef<HTMLInputElement>(null)
@@ -108,6 +112,7 @@ export default function AdminDashboardPage() {
 
     loadPages()
   }, [adminUserId])
+
 
   useEffect(() => {
     if (!adminUserId || !selectedSlug) return
@@ -209,6 +214,24 @@ export default function AdminDashboardPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete block')
     }
+  }
+
+  const setIconBlock = async (iconBlockKey: string, iconName: string, sortOrder: number) => {
+    if (!selectedPage || !adminUserId) return
+    const existing = blockByKey[iconBlockKey]
+    if (existing) {
+      await fetch('/api/admin/marketing-pages', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ admin_user_id: adminUserId, block_id: existing.id, value: iconName }),
+      })
+      setSelectedPage(current => current ? { ...current, blocks: current.blocks.map(b => b.id === existing.id ? { ...b, value: iconName } : b) } : current)
+      setDrafts(d => ({ ...d, [existing.id]: iconName }))
+    } else {
+      const newBlock = await createBlock(selectedPage.id, iconBlockKey, 'Icon', iconName, sortOrder)
+      if (newBlock) setDrafts(d => ({ ...d, [newBlock.id]: iconName }))
+    }
+    setIconPickerTarget(null)
   }
 
   const signOut = async () => {
@@ -573,6 +596,59 @@ export default function AdminDashboardPage() {
     )
   }
 
+  const openIconPicker = (e: React.MouseEvent, cardKey: string, iconBlockKey: string, sortOrder: number) => {
+    e.stopPropagation()
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    setIconPickerTarget({ cardKey, iconBlockKey, sortOrder, anchorLeft: rect.left, anchorRight: rect.right, anchorBottom: rect.bottom, anchorTop: rect.top })
+  }
+
+  const renderIconBox = (cardKey: string, iconBlockKey: string, currentIconName: string | null, sortOrder: number, size = 20) => (
+    <div
+      onClick={(e) => openIconPicker(e, cardKey, iconBlockKey, sortOrder)}
+      title="Click to change icon"
+      style={{ cursor: 'pointer', position: 'relative', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+    >
+      {currentIconName
+        ? <MarketingIcon name={currentIconName} size={size} />
+        : <svg width={size} height={size} viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke={ORANGE} strokeWidth="1.5"/><path d="M12 8v4M12 16h.01" stroke={ORANGE} strokeWidth="1.5" strokeLinecap="round"/></svg>
+      }
+      <div style={{ position: 'absolute', bottom: -4, right: -4, background: ORANGE, borderRadius: '50%', width: 15, height: 15, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 1px 4px rgba(0,0,0,0.25)', pointerEvents: 'none' }}>
+        <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+      </div>
+    </div>
+  )
+
+  const renderIconPickerOverlay = () => {
+    if (!iconPickerTarget) return null
+    const { iconBlockKey, sortOrder } = iconPickerTarget
+    const currentIconName = blockByKey[iconBlockKey]?.value ?? null
+    return createPortal(
+      <>
+        <div style={{ position: 'fixed', inset: 0, zIndex: 998, background: 'rgba(0,0,0,0.25)' }} onClick={() => setIconPickerTarget(null)} />
+        <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 999, background: '#FFFFFF', border: `1px solid ${BORDER}`, borderRadius: 14, padding: '14px 14px 8px', boxShadow: '0 16px 48px rgba(0,0,0,0.22)', width: 220, boxSizing: 'border-box' }}>
+          <p style={{ fontSize: 9, fontWeight: 700, color: MUTED, marginBottom: 8, textAlign: 'center', letterSpacing: '0.08em' }}>CHOOSE ICON</p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 3 }}>
+            {MARKETING_ICON_NAMES.map(name => (
+              <button
+                key={name}
+                type="button"
+                title={name}
+                onClick={(e) => { e.stopPropagation(); setIconBlock(iconBlockKey, name, sortOrder) }}
+                style={{ background: currentIconName === name ? '#FEF3C7' : 'transparent', border: `1.5px solid ${currentIconName === name ? ORANGE : 'transparent'}`, borderRadius: 6, padding: '5px 0', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background 0.1s' }}
+                onMouseEnter={e => { if (currentIconName !== name) (e.currentTarget as HTMLElement).style.background = '#FFF7ED' }}
+                onMouseLeave={e => { if (currentIconName !== name) (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+              >
+                <MarketingIcon name={name} size={16} />
+              </button>
+            ))}
+          </div>
+          <button type="button" onClick={() => setIconPickerTarget(null)} style={{ marginTop: 10, width: '100%', background: 'none', border: 'none', fontSize: 12, color: MUTED, cursor: 'pointer', padding: '4px 0' }}>Cancel</button>
+        </div>
+      </>,
+      document.body
+    )
+  }
+
   const renderEditableBtn = ({
     labelKey, urlKey, fallbackLabel, fallbackUrl, editing, setEditing, btnStyle,
   }: {
@@ -729,7 +805,7 @@ export default function AdminDashboardPage() {
               {aiFeaturesBlocks.map((nameBlock, i) => {
                 const idx = nameBlock.block_key.replace('feature.', '').replace('.name', '')
                 const descKey = `feature.${idx}.desc`
-                const icon = featureIcons[i % featureIcons.length]
+
                 const descBlock = blockByKey[descKey]
                 const cardDirty = (drafts[nameBlock.id] ?? '') !== nameBlock.value || (descBlock ? (drafts[descBlock.id] ?? '') !== descBlock.value : false)
                 return (
@@ -743,7 +819,9 @@ export default function AdminDashboardPage() {
                     >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
                     </button>
-                    <div style={{ width: 44, height: 44, background: '#FEF3C7', borderRadius: 11, display: 'grid', placeItems: 'center', marginBottom: 14 }}>{icon}</div>
+                    <div style={{ width: 44, height: 44, background: '#FEF3C7', borderRadius: 11, display: 'grid', placeItems: 'center', marginBottom: 14, position: 'relative' }}>
+                      {renderIconBox(nameBlock.block_key, `feature.${nameBlock.block_key.replace('feature.','').replace('.name','')}.icon`, blockByKey[`feature.${nameBlock.block_key.replace('feature.','').replace('.name','')}.icon`]?.value ?? null, nameBlock.sort_order - 1)}
+                    </div>
                     <div style={{ marginBottom: 8 }}>
                       {renderEditableText({ blockKey: nameBlock.block_key, fallback: 'Feature name', variant: 'cardTitle', styleOverride: { fontSize: 15, fontWeight: 600, color: '#1C1917' }, hideDirtyBadge: true })}
                     </div>
@@ -888,7 +966,9 @@ export default function AdminDashboardPage() {
                     <button type="button" onClick={() => deleteBlock(nameBlock.id).then(() => { if (descBlock) deleteBlock(descBlock.id) })} title="Remove feature card" style={{ position: 'absolute', top: 10, right: 10, background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 4, lineHeight: 1 }}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
                     </button>
-                    <div style={{ width: 44, height: 44, background: '#FEF3C7', borderRadius: 11, display: 'grid', placeItems: 'center', marginBottom: 14 }}>{featureIcons[i % featureIcons.length]}</div>
+                    <div style={{ width: 44, height: 44, background: '#FEF3C7', borderRadius: 11, display: 'grid', placeItems: 'center', marginBottom: 14, position: 'relative' }}>
+                      {renderIconBox(nameBlock.block_key, `feature.${nameBlock.block_key.replace('feature.','').replace('.name','')}.icon`, blockByKey[`feature.${nameBlock.block_key.replace('feature.','').replace('.name','')}.icon`]?.value ?? null, nameBlock.sort_order - 1)}
+                    </div>
                     <div style={{ marginBottom: 8 }}>
                       {renderEditableText({ blockKey: nameBlock.block_key, fallback: 'Feature name', variant: 'cardTitle', styleOverride: { fontSize: 15, fontWeight: 600, color: '#1C1917' }, hideDirtyBadge: true })}
                     </div>
@@ -1031,7 +1111,9 @@ export default function AdminDashboardPage() {
                     >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
                     </button>
-                    <div style={{ width: 44, height: 44, background: '#FEF3C7', borderRadius: 11, display: 'grid', placeItems: 'center', marginBottom: 14 }}>{featureIcons[i % featureIcons.length]}</div>
+                    <div style={{ width: 44, height: 44, background: '#FEF3C7', borderRadius: 11, display: 'grid', placeItems: 'center', marginBottom: 14, position: 'relative' }}>
+                      {renderIconBox(nameBlock.block_key, `feature.${nameBlock.block_key.replace('feature.','').replace('.name','')}.icon`, blockByKey[`feature.${nameBlock.block_key.replace('feature.','').replace('.name','')}.icon`]?.value ?? null, nameBlock.sort_order - 1)}
+                    </div>
                     <div style={{ marginBottom: 8 }}>
                       {renderEditableText({ blockKey: nameBlock.block_key, fallback: 'Feature name', variant: 'cardTitle', styleOverride: { fontSize: 15, fontWeight: 600, color: '#1C1917' }, hideDirtyBadge: true })}
                     </div>
@@ -1162,7 +1244,7 @@ export default function AdminDashboardPage() {
               {attendanceFeatureBlocks.map((nameBlock, i) => {
                 const idx = nameBlock.block_key.replace('feature.', '').replace('.name', '')
                 const descKey = `feature.${idx}.desc`
-                const icon = featureIcons[i % featureIcons.length]
+
                 const descBlock = blockByKey[descKey]
                 const cardDirty = (drafts[nameBlock.id] ?? '') !== nameBlock.value || (descBlock ? (drafts[descBlock.id] ?? '') !== descBlock.value : false)
                 return (
@@ -1176,7 +1258,9 @@ export default function AdminDashboardPage() {
                     >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
                     </button>
-                    <div style={{ width: 44, height: 44, background: '#FEF3C7', borderRadius: 11, display: 'grid', placeItems: 'center', marginBottom: 14 }}>{icon}</div>
+                    <div style={{ width: 44, height: 44, background: '#FEF3C7', borderRadius: 11, display: 'grid', placeItems: 'center', marginBottom: 14, position: 'relative' }}>
+                      {renderIconBox(nameBlock.block_key, `feature.${nameBlock.block_key.replace('feature.','').replace('.name','')}.icon`, blockByKey[`feature.${nameBlock.block_key.replace('feature.','').replace('.name','')}.icon`]?.value ?? null, nameBlock.sort_order - 1)}
+                    </div>
                     <div style={{ marginBottom: 8 }}>
                       {renderEditableText({ blockKey: nameBlock.block_key, fallback: 'Feature name', variant: 'cardTitle', styleOverride: { fontSize: 15, fontWeight: 600, color: '#1C1917' }, hideDirtyBadge: true })}
                     </div>
@@ -1249,6 +1333,297 @@ export default function AdminDashboardPage() {
                 {renderEditableText({ blockKey: 'cta.subheadline', fallback: 'Photo-verified, AI-assisted, and fully auditable — from the first clock-in.', variant: 'subhead', multiline: true, styleOverride: { fontSize: 16 }, onDarkBg: true })}
               </div>
               {renderEditableBtn({ labelKey: 'cta.button.label', urlKey: 'cta.button.url', fallbackLabel: 'Get Started Free', fallbackUrl: '/get-started', editing: editingCtaBtn, setEditing: setEditingCtaBtn, btnStyle: { background: '#FFFFFF', color: ORANGE, border: 'none', borderRadius: 10, padding: '13px 30px', fontSize: 15, fontWeight: 700, cursor: 'pointer' } })}
+            </div>
+          </section>
+        )}
+
+      </div>
+    )
+  }
+
+  const renderTeamManagementPreview = () => {
+    const featureIcons = [
+      <svg key="dept"    width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="2" y="3" width="8" height="5" rx="1" stroke={ORANGE} strokeWidth="2" /><rect x="14" y="3" width="8" height="5" rx="1" stroke={ORANGE} strokeWidth="2" /><rect x="8" y="16" width="8" height="5" rx="1" stroke={ORANGE} strokeWidth="2" /><path d="M6 8v4h12V8M12 12v4" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" /></svg>,
+      <svg key="link"    width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>,
+      <svg key="perm"    width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M9 12l2 2 4-4" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>,
+      <svg key="block"   width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke={ORANGE} strokeWidth="2" /><path d="M4.93 4.93l14.14 14.14" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" /></svg>,
+      <svg key="dash"    width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="7" height="7" rx="1" stroke={ORANGE} strokeWidth="2" /><rect x="14" y="3" width="7" height="7" rx="1" stroke={ORANGE} strokeWidth="2" /><rect x="3" y="14" width="7" height="7" rx="1" stroke={ORANGE} strokeWidth="2" /><rect x="14" y="14" width="7" height="7" rx="1" stroke={ORANGE} strokeWidth="2" /></svg>,
+      <svg key="eye"     width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><circle cx="12" cy="12" r="3" stroke={ORANGE} strokeWidth="2" /></svg>,
+      <svg key="history" width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M3 3v5h5" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M12 7v5l3 3" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>,
+    ]
+    const tmFeatureBlocks = (selectedPage?.blocks ?? [])
+      .filter(b => b.block_key.startsWith('feature.') && b.block_key.endsWith('.name'))
+      .sort((a, b) => a.sort_order - b.sort_order)
+    const roleBlocks = (selectedPage?.blocks ?? [])
+      .filter(b => b.block_key.startsWith('role.') && b.block_key.endsWith('.name'))
+      .sort((a, b) => a.sort_order - b.sort_order)
+    const roleBadgeColors: Record<string, { badge: string; badgeBg: string }> = {
+      Owner:           { badge: '#92400E', badgeBg: '#FEF3C7' },
+      Partner:         { badge: '#7C3AED', badgeBg: '#EDE9FE' },
+      Manager:         { badge: '#1E3A5F', badgeBg: '#DBEAFE' },
+      Employee:        { badge: '#065F46', badgeBg: '#D1FAE5' },
+      'Casual Worker': { badge: '#374151', badgeBg: '#F3F4F6' },
+      'Guest User':    { badge: '#4B3A2A', badgeBg: '#F0E8D8' },
+    }
+
+    return (
+      <div style={{ background: '#FFFFFF', borderRadius: 18, overflow: 'hidden', border: `1px solid ${BORDER}` }}>
+
+        {/* Hero */}
+        {renderSectionWrap('section.hero.visible', 'Hero Section',
+          <section style={{ background: '#1C1C1E', padding: '72px 48px 64px', textAlign: 'center' }}>
+            <div style={{ marginBottom: 20 }}>
+              {renderEditableText({ blockKey: 'hero.badge', fallback: 'Team Management', variant: 'badge' })}
+            </div>
+            <div style={{ maxWidth: 640, margin: '0 auto 18px' }}>
+              {renderEditableText({ blockKey: 'hero.headline', fallback: 'Your company structure, exactly how you need it.', variant: 'hero' })}
+            </div>
+            <div style={{ maxWidth: 500, margin: '0 auto 32px' }}>
+              {renderEditableText({ blockKey: 'hero.subheadline', fallback: 'Full control from the top. Focused access for everyone else.', variant: 'subhead', multiline: true })}
+            </div>
+            {renderEditableBtn({ labelKey: 'hero.button.label', urlKey: 'hero.button.url', fallbackLabel: 'Get Started Free', fallbackUrl: '/get-started', editing: editingProductsBtn, setEditing: setEditingProductsBtn, btnStyle: { background: ORANGE, color: '#FFFFFF', border: 'none', borderRadius: 10, padding: '13px 30px', fontSize: 15, fontWeight: 600, cursor: 'pointer' } })}
+          </section>
+        )}
+
+        {/* Features grid */}
+        {renderSectionWrap('section.intro.visible', 'Features Grid',
+          <section style={{ background: '#FFFBF5', padding: '56px 48px' }}>
+            <div style={{ textAlign: 'center', marginBottom: 40 }}>
+              <div style={{ marginBottom: 10 }}>
+                {renderEditableText({ blockKey: 'features.title', fallback: 'Everything you need to run your organisation', variant: 'sectionTitle' })}
+              </div>
+              {renderEditableText({ blockKey: 'features.subtitle', fallback: 'Structure, permissions, and access — all in one place.', variant: 'body', styleOverride: { textAlign: 'center' as const } })}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 18 }}>
+              {tmFeatureBlocks.map((nameBlock, i) => {
+                const idx = nameBlock.block_key.replace('feature.', '').replace('.name', '')
+                const descKey = `feature.${idx}.desc`
+                const descBlock = blockByKey[descKey]
+                const cardDirty = (drafts[nameBlock.id] ?? '') !== nameBlock.value || (descBlock ? (drafts[descBlock.id] ?? '') !== descBlock.value : false)
+                return (
+                  <div key={nameBlock.id} style={{ position: 'relative', background: '#FFFFFF', border: '1px solid #F0E8D8', borderRadius: 16, padding: 24 }}>
+                    {cardDirty && <span style={{ position: 'absolute', top: 36, right: 8, background: ORANGE, color: '#FFFFFF', borderRadius: 999, padding: '3px 7px', fontSize: 10, fontWeight: 900, zIndex: 2 }}>Unsaved</span>}
+                    <button type="button" onClick={() => deleteBlock(nameBlock.id).then(() => { if (descBlock) deleteBlock(descBlock.id) })} title="Remove feature card" style={{ position: 'absolute', top: 10, right: 10, background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 4, lineHeight: 1 }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                    </button>
+                    <div style={{ width: 44, height: 44, background: '#FEF3C7', borderRadius: 11, display: 'grid', placeItems: 'center', marginBottom: 14, position: 'relative' }}>
+                      {renderIconBox(nameBlock.block_key, `feature.${nameBlock.block_key.replace('feature.','').replace('.name','')}.icon`, blockByKey[`feature.${nameBlock.block_key.replace('feature.','').replace('.name','')}.icon`]?.value ?? null, nameBlock.sort_order - 1)}
+                    </div>
+                    <div style={{ marginBottom: 8 }}>
+                      {renderEditableText({ blockKey: nameBlock.block_key, fallback: 'Feature name', variant: 'cardTitle', styleOverride: { fontSize: 15, fontWeight: 600, color: '#1C1917' }, hideDirtyBadge: true })}
+                    </div>
+                    {renderEditableText({ blockKey: descKey, fallback: 'Feature description', variant: 'cardBody', multiline: true, styleOverride: { fontSize: 14, lineHeight: 1.7 }, hideDirtyBadge: true })}
+                  </div>
+                )
+              })}
+              <button type="button" onClick={async () => {
+                if (!selectedPage) return
+                const existing = (selectedPage.blocks ?? []).filter(b => b.block_key.startsWith('feature.') && b.block_key.endsWith('.name'))
+                const maxIdx = existing.reduce((m, b) => { const n = parseInt(b.block_key.split('.')[1]); return n > m ? n : m }, 0)
+                const maxSort = existing.reduce((m, b) => b.sort_order > m ? b.sort_order : m, 0)
+                const nextIdx = maxIdx + 1
+                await createBlock(selectedPage.id, `feature.${nextIdx}.name`, `Feature ${nextIdx} Name`, 'New Feature', maxSort + 1)
+                await createBlock(selectedPage.id, `feature.${nextIdx}.desc`, `Feature ${nextIdx} Description`, 'Describe this feature.', maxSort + 2)
+              }} style={{ background: 'none', border: '2px dashed #F0E8D8', borderRadius: 16, padding: 24, cursor: 'pointer', color: '#A8A29E', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 120 }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Add feature card
+              </button>
+            </div>
+          </section>
+        )}
+
+        {/* Roles */}
+        {renderSectionWrap('section.content.visible', 'Role Breakdown',
+          <section style={{ background: '#FFFFFF', padding: '56px 48px' }}>
+            <div style={{ textAlign: 'center', marginBottom: 40 }}>
+              <div style={{ marginBottom: 10 }}>
+                {renderEditableText({ blockKey: 'roles.title', fallback: 'The right access for every role.', variant: 'sectionTitle' })}
+              </div>
+              {renderEditableText({ blockKey: 'roles.subtitle', fallback: 'Tasking is built around five roles, each with exactly the visibility and control they need — nothing more.', variant: 'body', multiline: true, styleOverride: { textAlign: 'center' as const } })}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(roleBlocks.length || 5, 5)}, minmax(0,1fr))`, gap: 14 }}>
+              {roleBlocks.map(nameBlock => {
+                const idx = nameBlock.block_key.replace('role.', '').replace('.name', '')
+                const descKey = `role.${idx}.desc`
+                const descBlock = blockByKey[descKey]
+                const nameVal = drafts[nameBlock.id] ?? nameBlock.value
+                const colors = roleBadgeColors[nameVal] ?? { badge: '#374151', badgeBg: '#F3F4F6' }
+                const cardDirty = (drafts[nameBlock.id] ?? '') !== nameBlock.value || (descBlock ? (drafts[descBlock.id] ?? '') !== descBlock.value : false)
+                return (
+                  <div key={nameBlock.id} style={{ position: 'relative', background: '#FFFBF5', border: '1px solid #F0E8D8', borderRadius: 16, padding: 20 }}>
+                    {cardDirty && <span style={{ position: 'absolute', top: 10, right: 8, background: ORANGE, color: '#FFFFFF', borderRadius: 999, padding: '3px 7px', fontSize: 10, fontWeight: 900, zIndex: 2 }}>Unsaved</span>}
+                    <div style={{ marginBottom: 12 }}>
+                      <span style={{ display: 'inline-block', background: colors.badgeBg, color: colors.badge, padding: '4px 12px', borderRadius: 100, fontSize: 13, fontWeight: 700 }}>
+                        {renderEditableText({ blockKey: nameBlock.block_key, fallback: 'Role', variant: 'cardTitle', styleOverride: { display: 'inline', fontSize: 13, fontWeight: 700, color: colors.badge }, hideDirtyBadge: true })}
+                      </span>
+                    </div>
+                    {renderEditableText({ blockKey: descKey, fallback: 'Role description', variant: 'cardBody', multiline: true, styleOverride: { fontSize: 14, lineHeight: 1.7 }, hideDirtyBadge: true })}
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        )}
+
+        {/* CTA */}
+        {renderSectionWrap('section.cta.visible', 'CTA Section',
+          <section style={{ background: ORANGE, padding: '64px 48px', textAlign: 'center' }}>
+            <div style={{ maxWidth: 560, margin: '0 auto' }}>
+              <div style={{ marginBottom: 14 }}>
+                {renderEditableText({ blockKey: 'cta.headline', fallback: 'Get your team set up in minutes.', variant: 'cta', styleOverride: { fontSize: 36 }, onDarkBg: true })}
+              </div>
+              <div style={{ marginBottom: 28 }}>
+                {renderEditableText({ blockKey: 'cta.subheadline', fallback: 'No IT team. No training programme. Just a clean system your whole organisation can use from day one.', variant: 'subhead', multiline: true, styleOverride: { fontSize: 16 }, onDarkBg: true })}
+              </div>
+              {renderEditableBtn({ labelKey: 'cta.button.label', urlKey: 'cta.button.url', fallbackLabel: 'Get Started Free', fallbackUrl: '/get-started', editing: editingCtaBtn, setEditing: setEditingCtaBtn, btnStyle: { background: '#FFFFFF', color: ORANGE, border: 'none', borderRadius: 10, padding: '13px 30px', fontSize: 15, fontWeight: 700, cursor: 'pointer' } })}
+            </div>
+          </section>
+        )}
+
+      </div>
+    )
+  }
+
+  const renderIndustriesPreview = () => {
+    const industryBlocks = (selectedPage?.blocks ?? [])
+      .filter(b => b.block_key.startsWith('industry.') && b.block_key.endsWith('.badge'))
+      .sort((a, b) => a.sort_order - b.sort_order)
+
+    const industryIconMap: Record<string, React.ReactNode> = {
+      retail: <svg width="80" height="80" viewBox="0 0 24 24" fill="none" strokeWidth="1.25"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" stroke={ORANGE} strokeLinecap="round" strokeLinejoin="round" /><line x1="3" y1="6" x2="21" y2="6" stroke={ORANGE} strokeLinecap="round" /><path d="M16 10a4 4 0 0 1-8 0" stroke={ORANGE} strokeLinecap="round" strokeLinejoin="round" /></svg>,
+      fnb: <svg width="80" height="80" viewBox="0 0 24 24" fill="none" strokeWidth="1.25"><path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2" stroke={ORANGE} strokeLinecap="round" strokeLinejoin="round" /><path d="M7 2v20" stroke={ORANGE} strokeLinecap="round" /><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3zm0 0v7" stroke={ORANGE} strokeLinecap="round" strokeLinejoin="round" /></svg>,
+      logistics: <svg width="80" height="80" viewBox="0 0 24 24" fill="none" strokeWidth="1.25"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" stroke={ORANGE} strokeLinecap="round" strokeLinejoin="round" /><circle cx="12" cy="10" r="3" stroke={ORANGE} /></svg>,
+      'event-management': <svg width="80" height="80" viewBox="0 0 24 24" fill="none" strokeWidth="1.25"><rect x="3" y="4" width="18" height="18" rx="2" stroke={ORANGE} strokeLinecap="round" strokeLinejoin="round" /><line x1="16" y1="2" x2="16" y2="6" stroke={ORANGE} strokeLinecap="round" /><line x1="8" y1="2" x2="8" y2="6" stroke={ORANGE} strokeLinecap="round" /><line x1="3" y1="10" x2="21" y2="10" stroke={ORANGE} strokeLinecap="round" /><path d="m9 16 2 2 4-4" stroke={ORANGE} strokeLinecap="round" strokeLinejoin="round" /></svg>,
+    }
+
+    return (
+      <div style={{ background: '#FFFFFF', borderRadius: 18, overflow: 'hidden', border: `1px solid ${BORDER}` }}>
+
+        {/* Hero */}
+        {renderSectionWrap('section.hero.visible', 'Hero Section',
+          <section style={{ background: '#1C1C1E', padding: '72px 48px 64px', textAlign: 'center' }}>
+            <div style={{ marginBottom: 20 }}>
+              {renderEditableText({ blockKey: 'hero.badge', fallback: 'Industries', variant: 'badge' })}
+            </div>
+            <div style={{ maxWidth: 620, margin: '0 auto 18px' }}>
+              {renderEditableText({ blockKey: 'hero.headline', fallback: 'One platform. Every industry.', variant: 'hero' })}
+            </div>
+            <div style={{ maxWidth: 560, margin: '0 auto 32px' }}>
+              {renderEditableText({ blockKey: 'hero.subheadline', fallback: "Whether you're running a retail floor, a restaurant, a warehouse, or an event — Tasking is built to handle the way your workforce actually operates.", variant: 'subhead', multiline: true })}
+            </div>
+            {renderEditableBtn({ labelKey: 'hero.button.label', urlKey: 'hero.button.url', fallbackLabel: 'Get Started Free', fallbackUrl: '/get-started', editing: editingProductsBtn, setEditing: setEditingProductsBtn, btnStyle: { background: ORANGE, color: '#FFFFFF', border: 'none', borderRadius: 10, padding: '13px 30px', fontSize: 15, fontWeight: 600, cursor: 'pointer' } })}
+          </section>
+        )}
+
+        {/* Intro */}
+        {renderSectionWrap('section.intro.visible', 'Intro Section',
+          <section style={{ background: '#FFFFFF', padding: '56px 48px', textAlign: 'center' }}>
+            <div style={{ maxWidth: 640, margin: '0 auto' }}>
+              <div style={{ marginBottom: 16 }}>
+                {renderEditableText({ blockKey: 'intro.title', fallback: "The workforce challenge looks different in every industry. The solution doesn't.", variant: 'sectionTitle' })}
+              </div>
+              {renderEditableText({ blockKey: 'intro.body', fallback: 'Every business that relies on casual workers faces the same core problems.', variant: 'body', multiline: true, styleOverride: { textAlign: 'center' as const } })}
+            </div>
+          </section>
+        )}
+
+        {/* Industries */}
+        {renderSectionWrap('section.content.visible', 'Industries',
+          <section style={{ background: '#FFFBF5', padding: '32px 48px 56px' }}>
+            {industryBlocks.map((badgeBlock, i) => {
+              const idx = badgeBlock.block_key.replace('industry.', '').replace('.badge', '')
+              const idBlock = blockByKey[`industry.${idx}.id`]
+              const industryId = idBlock ? (drafts[idBlock.id] ?? idBlock.value) : idx
+              const questionKey = `industry.${idx}.question`
+              const painpointKey = `industry.${idx}.painpoint`
+              const solutionKey = `industry.${idx}.solution`
+              const icon = industryIconMap[industryId] ?? industryIconMap['retail']
+              const isEven = i % 2 === 0
+              const relatedBlocks = [badgeBlock, blockByKey[questionKey], blockByKey[painpointKey], blockByKey[solutionKey], idBlock].filter(Boolean) as typeof badgeBlock[]
+              const cardDirty = relatedBlocks.some(b => (drafts[b.id] ?? '') !== b.value)
+              return (
+                <div key={badgeBlock.id} style={{ position: 'relative' }}>
+                  {cardDirty && <span style={{ position: 'absolute', top: 16, right: 40, background: ORANGE, color: '#FFFFFF', borderRadius: 999, padding: '3px 7px', fontSize: 10, fontWeight: 900, zIndex: 2 }}>Unsaved</span>}
+                  <button type="button" onClick={() => relatedBlocks.forEach(b => deleteBlock(b.id))} title="Remove industry" style={{ position: 'absolute', top: 16, right: 0, background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 4, lineHeight: 1, zIndex: 2 }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+                  </button>
+                  <div style={{ display: 'flex', flexDirection: isEven ? 'row' : 'row-reverse', gap: 48, alignItems: 'center', padding: '40px 0' }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ marginBottom: 16 }}>
+                        {renderEditableText({ blockKey: badgeBlock.block_key, fallback: 'Industry', variant: 'badge', styleOverride: { background: '#FEF3C7', color: '#92400E', fontSize: 13 }, hideDirtyBadge: true })}
+                      </div>
+                      <div style={{ marginBottom: 12 }}>
+                        {renderEditableText({ blockKey: questionKey, fallback: 'Question headline', variant: 'sectionTitle', styleOverride: { fontSize: 22, textAlign: 'left' as const }, hideDirtyBadge: true })}
+                      </div>
+                      <div style={{ marginBottom: 20 }}>
+                        {renderEditableText({ blockKey: painpointKey, fallback: 'Pain point description', variant: 'body', multiline: true, styleOverride: { fontSize: 14, color: '#78716C' }, hideDirtyBadge: true })}
+                      </div>
+                      <p style={{ fontFamily: 'var(--font-heading)', fontWeight: 600, fontSize: 14, color: ORANGE, marginBottom: 8 }}>How Tasking helps</p>
+                      {renderEditableText({ blockKey: solutionKey, fallback: 'Solution description', variant: 'body', multiline: true, styleOverride: { fontSize: 14, color: '#1C1917' }, hideDirtyBadge: true })}
+                    </div>
+                    {(() => {
+                      const icoBlockKey = `industry.${idx}.icon`
+                      const resolvedName = blockByKey[icoBlockKey]?.value ?? industryId
+                      return (
+                        <div style={{ width: 240, height: 240, flexShrink: 0, background: '#FFFFFF', border: '1px solid #F0E8D8', borderRadius: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 24px rgba(0,0,0,0.06)', position: 'relative', cursor: 'pointer' }}
+                          onClick={(e) => { e.stopPropagation(); openIconPicker(e, badgeBlock.block_key, icoBlockKey, badgeBlock.sort_order - 1) }}>
+                          <MarketingIcon name={resolvedName} size={80} />
+                          <div style={{ position: 'absolute', bottom: 10, right: 10, background: ORANGE, borderRadius: '50%', width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 6px rgba(0,0,0,0.2)' }}>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                          </div>
+                        </div>
+                      )
+                    })()}
+                  </div>
+                  {i < industryBlocks.length - 1 && <div style={{ height: 1, background: '#F0E8D8' }} />}
+                </div>
+              )
+            })}
+            <button type="button" onClick={async () => {
+              if (!selectedPage) return
+              const existing = (selectedPage.blocks ?? []).filter(b => b.block_key.startsWith('industry.') && b.block_key.endsWith('.badge'))
+              const maxIdx = existing.reduce((m, b) => { const n = parseInt(b.block_key.split('.')[1]); return n > m ? n : m }, 0)
+              const maxSort = existing.reduce((m, b) => b.sort_order > m ? b.sort_order : m, 29)
+              const nextIdx = maxIdx + 1
+              await createBlock(selectedPage.id, `industry.${nextIdx}.id`, `Industry ${nextIdx} ID`, `industry-${nextIdx}`, maxSort + 1)
+              await createBlock(selectedPage.id, `industry.${nextIdx}.badge`, `Industry ${nextIdx} Badge`, 'New Industry', maxSort + 2)
+              await createBlock(selectedPage.id, `industry.${nextIdx}.question`, `Industry ${nextIdx} Question`, 'What challenge does this industry face?', maxSort + 3)
+              await createBlock(selectedPage.id, `industry.${nextIdx}.painpoint`, `Industry ${nextIdx} Pain Point`, 'Describe the pain point here.', maxSort + 4)
+              await createBlock(selectedPage.id, `industry.${nextIdx}.solution`, `Industry ${nextIdx} Solution`, 'Describe how Tasking helps.', maxSort + 5)
+            }} style={{ marginTop: 24, width: '100%', background: 'none', border: '2px dashed #F0E8D8', borderRadius: 16, padding: '20px 24px', cursor: 'pointer', color: '#A8A29E', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Add industry
+            </button>
+          </section>
+        )}
+
+        {/* Closing */}
+        {renderSectionWrap('section.closing.visible', 'Closing Statement',
+          <section style={{ background: '#F5F0E8', padding: '56px 48px', textAlign: 'center' }}>
+            <div style={{ maxWidth: 600, margin: '0 auto' }}>
+              <div style={{ marginBottom: 14 }}>
+                {renderEditableText({ blockKey: 'closing.title', fallback: 'Different industry. Same result.', variant: 'sectionTitle' })}
+              </div>
+              {renderEditableText({ blockKey: 'closing.body', fallback: 'Less time coordinating. Fewer no-shows.', variant: 'body', multiline: true, styleOverride: { textAlign: 'center' as const } })}
+            </div>
+          </section>
+        )}
+
+        {/* CTA */}
+        {renderSectionWrap('section.cta.visible', 'CTA Section',
+          <section style={{ background: ORANGE, padding: '64px 48px', textAlign: 'center' }}>
+            <div style={{ maxWidth: 560, margin: '0 auto' }}>
+              <div style={{ marginBottom: 14 }}>
+                {renderEditableText({ blockKey: 'cta.headline', fallback: 'Ready to see Tasking in your industry?', variant: 'cta', styleOverride: { fontSize: 36 }, onDarkBg: true })}
+              </div>
+              <div style={{ marginBottom: 28 }}>
+                {renderEditableText({ blockKey: 'cta.subheadline', fallback: 'Join SMEs already using Tasking to manage their casual workforce.', variant: 'subhead', multiline: true, styleOverride: { fontSize: 16 }, onDarkBg: true })}
+              </div>
+              <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap', marginBottom: 16 }}>
+                {renderEditableBtn({ labelKey: 'cta.button.label', urlKey: 'cta.button.url', fallbackLabel: 'Get Started Free', fallbackUrl: '/get-started', editing: editingCtaBtn, setEditing: setEditingCtaBtn, btnStyle: { background: '#FFFFFF', color: ORANGE, border: 'none', borderRadius: 10, padding: '12px 28px', fontSize: 15, fontWeight: 700, cursor: 'pointer' } })}
+                {renderEditableBtn({ labelKey: 'cta.button2.label', urlKey: 'cta.button2.url', fallbackLabel: 'View Pricing', fallbackUrl: '/pricing', editing: editingCtaBtn, setEditing: setEditingCtaBtn, btnStyle: { background: 'transparent', color: '#FFFFFF', border: '2px solid rgba(255,255,255,0.6)', borderRadius: 10, padding: '12px 28px', fontSize: 15, fontWeight: 600, cursor: 'pointer' } })}
+              </div>
+              {renderEditableText({ blockKey: 'cta.footnote', fallback: 'No credit card required. Free forever.', variant: 'body', styleOverride: { fontSize: 13, color: 'rgba(255,255,255,0.6)', textAlign: 'center' as const }, onDarkBg: true })}
             </div>
           </section>
         )}
@@ -1760,10 +2135,236 @@ export default function AdminDashboardPage() {
     </div>
   )
 
+  const renderPricingPreview = () => {
+    const freeFeatBlocks = (selectedPage?.blocks ?? []).filter(b => b.block_key.startsWith('plan.free.feature.')).sort((a,b) => a.sort_order - b.sort_order)
+    const proFeatBlocks  = (selectedPage?.blocks ?? []).filter(b => b.block_key.startsWith('plan.pro.feature.')).sort((a,b) => a.sort_order - b.sort_order)
+    const faqQBlocks     = (selectedPage?.blocks ?? []).filter(b => b.block_key.startsWith('faq.') && b.block_key.endsWith('.q')).sort((a,b) => a.sort_order - b.sort_order)
+    return (
+      <div style={{ background: '#FFFFFF', borderRadius: 18, overflow: 'hidden', border: `1px solid ${BORDER}` }}>
+
+        {/* Hero */}
+        {renderSectionWrap('section.hero.visible', 'Hero',
+          <section style={{ background: '#1C1C1E', padding: '56px 48px', textAlign: 'center' }}>
+            <div style={{ marginBottom: 16 }}>{renderEditableText({ blockKey: 'hero.badge', fallback: 'Pricing', variant: 'badge' })}</div>
+            <div style={{ maxWidth: 560, margin: '0 auto 14px' }}>{renderEditableText({ blockKey: 'hero.headline', fallback: 'Simple pricing. No surprises.', variant: 'hero' })}</div>
+            <div style={{ maxWidth: 520, margin: '0 auto' }}>{renderEditableText({ blockKey: 'hero.subheadline', fallback: "Start free. Scale when you're ready.", variant: 'subhead', multiline: true })}</div>
+          </section>
+        )}
+
+        {/* Plans */}
+        {renderSectionWrap('section.plans.visible', 'Pricing Cards',
+          <section style={{ background: '#FFFBF5', padding: '48px' }}>
+            <div style={{ textAlign: 'center', marginBottom: 36 }}>
+              {renderEditableText({ blockKey: 'plans.title', fallback: 'Find the plan that fits your team.', variant: 'sectionTitle' })}
+              <div style={{ marginTop: 8 }}>{renderEditableText({ blockKey: 'plans.subtitle', fallback: 'Two plans. Zero hidden fees.', variant: 'body', styleOverride: { textAlign: 'center' as const } })}</div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, alignItems: 'start' }}>
+              {/* Free card */}
+              {(() => {
+                const nextFreeIdx = freeFeatBlocks.length > 0 ? Math.max(...freeFeatBlocks.map(b => parseInt(b.block_key.split('.').pop() ?? '0'))) + 1 : 1
+                const maxFreeOrder = freeFeatBlocks.length > 0 ? Math.max(...freeFeatBlocks.map(b => b.sort_order)) : 20
+                return (
+                  <div style={{ background: '#FFFFFF', border: `1px solid ${BORDER}`, borderRadius: 20, padding: '36px 32px', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+                    <span style={{ position: 'absolute', top: 18, right: 18, background: '#F3F4F6', color: '#6B7280', padding: '3px 12px', borderRadius: 999, fontSize: 11, fontWeight: 700 }}>
+                      {renderEditableText({ blockKey: 'plan.free.badge', fallback: 'Free Forever', variant: 'body' })}
+                    </span>
+                    <div style={{ marginBottom: 10 }}>{renderEditableText({ blockKey: 'plan.free.name', fallback: 'Free', variant: 'sectionTitle' })}</div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 4 }}>
+                      {renderEditableText({ blockKey: 'plan.free.price', fallback: '$0', variant: 'hero', styleOverride: { color: '#1C1917', fontSize: 40 } })}
+                    </div>
+                    <div style={{ marginBottom: 12 }}>{renderEditableText({ blockKey: 'plan.free.pricesub', fallback: 'per month, forever', variant: 'body' })}</div>
+                    <div style={{ paddingBottom: 20, marginBottom: 20, borderBottom: `1px solid ${BORDER}` }}>{renderEditableText({ blockKey: 'plan.free.tagline', fallback: 'Everything you need to get started.', variant: 'body' })}</div>
+                    <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 28, flex: 1 }}>
+                      {freeFeatBlocks.map(fb => (
+                        <li key={fb.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}><polyline points="20 6 9 17 4 12" stroke={ORANGE} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                          <div style={{ flex: 1 }}>{renderEditableText({ blockKey: fb.block_key, fallback: fb.value, variant: 'body' })}</div>
+                          <button type="button" onClick={() => deleteBlock(fb.id)} title="Remove" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 2, flexShrink: 0, opacity: 0.6 }}>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                    <button type="button" onClick={() => createBlock(selectedPage!.id, `plan.free.feature.${nextFreeIdx}`, 'Feature', 'New feature', maxFreeOrder + 2)} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: `1.5px dashed ${BORDER}`, borderRadius: 8, padding: '7px 12px', fontSize: 12, color: MUTED, cursor: 'pointer', marginBottom: 20 }}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                      Add feature
+                    </button>
+                    {renderEditableBtn({ labelKey: 'plan.free.cta.label', urlKey: 'plan.free.cta.url', fallbackLabel: 'Get Started Free', fallbackUrl: '/get-started', editing: editingCtaBtn, setEditing: setEditingCtaBtn, btnStyle: { background: ORANGE, color: '#FFFFFF', border: 'none', borderRadius: 10, padding: '13px 20px', fontSize: 14, fontWeight: 700, cursor: 'pointer', width: '100%', textAlign: 'center' as const } })}
+                  </div>
+                )
+              })()}
+              {/* Pro card */}
+              {(() => {
+                const nextProIdx = proFeatBlocks.length > 0 ? Math.max(...proFeatBlocks.map(b => parseInt(b.block_key.split('.').pop() ?? '0'))) + 1 : 1
+                const maxProOrder = proFeatBlocks.length > 0 ? Math.max(...proFeatBlocks.map(b => b.sort_order)) : 50
+                return (
+                  <div style={{ background: '#FFFFFF', border: `2px solid ${ORANGE}`, borderRadius: 20, padding: '36px 32px', display: 'flex', flexDirection: 'column', position: 'relative', boxShadow: '0 8px 40px rgba(249,115,22,0.12)' }}>
+                    <span style={{ position: 'absolute', top: 18, right: 18, background: ORANGE, color: '#FFFFFF', padding: '3px 12px', borderRadius: 999, fontSize: 11, fontWeight: 700 }}>
+                      {renderEditableText({ blockKey: 'plan.pro.badge', fallback: 'Most Popular', variant: 'body' })}
+                    </span>
+                    <div style={{ marginBottom: 10 }}>{renderEditableText({ blockKey: 'plan.pro.name', fallback: 'Pro', variant: 'sectionTitle' })}</div>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 4 }}>
+                      {renderEditableText({ blockKey: 'plan.pro.price', fallback: '$6', variant: 'hero', styleOverride: { color: ORANGE, fontSize: 40 } })}
+                    </div>
+                    <div style={{ marginBottom: 12 }}>{renderEditableText({ blockKey: 'plan.pro.pricesub', fallback: 'per user / month', variant: 'body' })}</div>
+                    <div style={{ paddingBottom: 20, marginBottom: 20, borderBottom: `1px solid ${BORDER}` }}>{renderEditableText({ blockKey: 'plan.pro.tagline', fallback: 'For teams that need more control.', variant: 'body' })}</div>
+                    <div style={{ marginBottom: 12 }}>{renderEditableText({ blockKey: 'plan.pro.featuresintro', fallback: 'Includes everything in the Free Plan, plus:', variant: 'body', styleOverride: { fontSize: 12, fontWeight: 600, color: '#9CA3AF' } })}</div>
+                    <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 28, flex: 1 }}>
+                      {proFeatBlocks.map(fb => (
+                        <li key={fb.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}><polyline points="20 6 9 17 4 12" stroke={ORANGE} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                          <div style={{ flex: 1 }}>{renderEditableText({ blockKey: fb.block_key, fallback: fb.value, variant: 'body' })}</div>
+                          <button type="button" onClick={() => deleteBlock(fb.id)} title="Remove" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 2, flexShrink: 0, opacity: 0.6 }}>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                    <button type="button" onClick={() => createBlock(selectedPage!.id, `plan.pro.feature.${nextProIdx}`, 'Feature', 'New feature', maxProOrder + 2)} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: `1.5px dashed ${BORDER}`, borderRadius: 8, padding: '7px 12px', fontSize: 12, color: MUTED, cursor: 'pointer', marginBottom: 20 }}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                      Add feature
+                    </button>
+                    {renderEditableBtn({ labelKey: 'plan.pro.cta.label', urlKey: 'plan.pro.cta.url', fallbackLabel: 'Get Started', fallbackUrl: '/get-started', editing: editingProductsBtn, setEditing: setEditingProductsBtn, btnStyle: { background: ORANGE, color: '#FFFFFF', border: 'none', borderRadius: 10, padding: '13px 20px', fontSize: 14, fontWeight: 700, cursor: 'pointer', width: '100%', textAlign: 'center' as const } })}
+                  </div>
+                )
+              })()}
+            </div>
+          </section>
+        )}
+
+        {/* Comparison table — fully editable */}
+        {renderSectionWrap('section.compare.visible', 'Comparison Table',
+          <section style={{ background: '#FFFFFF', padding: '48px' }}>
+            <div style={{ textAlign: 'center', marginBottom: 32 }}>
+              {renderEditableText({ blockKey: 'compare.title', fallback: 'Everything side by side.', variant: 'sectionTitle' })}
+              <div style={{ marginTop: 8 }}>{renderEditableText({ blockKey: 'compare.subtitle', fallback: "See exactly what's included in each plan.", variant: 'body', styleOverride: { textAlign: 'center' as const } })}</div>
+            </div>
+            {(() => {
+              const rowIdxs = (selectedPage?.blocks ?? [])
+                .filter(b => b.block_key.startsWith('compare.row.') && b.block_key.endsWith('.type'))
+                .sort((a, b) => a.sort_order - b.sort_order)
+              const maxOrder = rowIdxs.length > 0 ? Math.max(...rowIdxs.map(b => b.sort_order)) : 180
+              const nextIdx = rowIdxs.length > 0 ? Math.max(...rowIdxs.map(b => parseInt(b.block_key.split('.')[2]))) + 1 : 1
+              const Tick = ({ val, blockKey }: { val: boolean; blockKey: string }) => {
+                const block = blockByKey[blockKey]
+                return (
+                  <button type="button" title="Click to toggle" onClick={async () => {
+                    if (!block || !selectedPage || !adminUserId) return
+                    const newVal = val ? 'false' : 'true'
+                    await fetch('/api/admin/marketing-pages', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ admin_user_id: adminUserId, block_id: block.id, value: newVal }) })
+                    setSelectedPage(c => c ? { ...c, blocks: c.blocks.map(b => b.id === block.id ? { ...b, value: newVal } : b) } : c)
+                    setDrafts(d => ({ ...d, [block.id]: newVal }))
+                  }} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6, padding: 4, transition: 'background 0.1s' }}
+                  onMouseEnter={e => (e.currentTarget as HTMLElement).style.background = '#FFF7ED'}
+                  onMouseLeave={e => (e.currentTarget as HTMLElement).style.background = 'transparent'}>
+                    {val
+                      ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><polyline points="20 6 9 17 4 12" stroke={ORANGE} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                      : <span style={{ color: '#D1D5DB', fontSize: 16, lineHeight: 1 }}>—</span>}
+                  </button>
+                )
+              }
+              return (
+                <div style={{ border: `1px solid ${BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 80px 32px', background: '#1C1917', padding: '12px 20px' }}>
+                    <span style={{ color: 'rgba(255,255,255,0.5)', fontWeight: 600, fontSize: 10, textTransform: 'uppercase' as const, letterSpacing: '0.08em' }}>Feature</span>
+                    <span style={{ color: '#FFFFFF', fontWeight: 700, fontSize: 13, textAlign: 'center' as const }}>Free</span>
+                    <span style={{ color: '#FB923C', fontWeight: 700, fontSize: 13, textAlign: 'center' as const }}>Pro</span>
+                    <span />
+                  </div>
+                  {rowIdxs.map((typeBlock, i) => {
+                    const idx = typeBlock.block_key.split('.')[2]
+                    const type = typeBlock.value
+                    if (type === 'group') {
+                      const labelBlock = blockByKey[`compare.row.${idx}.label`]
+                      return (
+                        <div key={typeBlock.id} style={{ display: 'grid', gridTemplateColumns: '1fr 80px 80px 32px', background: '#F9FAFB', padding: '8px 20px', borderTop: i > 0 ? `1px solid ${BORDER}` : undefined, alignItems: 'center' }}>
+                          <div>{labelBlock && renderEditableText({ blockKey: labelBlock.block_key, fallback: labelBlock.value, variant: 'body', styleOverride: { fontSize: 10, fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.1em' } })}</div>
+                          <span /><span />
+                          <button type="button" onClick={() => { deleteBlock(typeBlock.id); if (labelBlock) deleteBlock(labelBlock.id) }} title="Remove group" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 2, opacity: 0.6 }}>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                          </button>
+                        </div>
+                      )
+                    }
+                    const featBlock = blockByKey[`compare.row.${idx}.feature`]
+                    const freeBlock = blockByKey[`compare.row.${idx}.free`]
+                    const proBlock  = blockByKey[`compare.row.${idx}.pro`]
+                    const isFree = freeBlock?.value === 'true'
+                    const isPro  = proBlock?.value === 'true'
+                    return (
+                      <div key={typeBlock.id} style={{ display: 'grid', gridTemplateColumns: '1fr 80px 80px 32px', padding: '8px 20px', borderTop: `1px solid #F5F0E8`, alignItems: 'center' }}>
+                        <div>{featBlock && renderEditableText({ blockKey: featBlock.block_key, fallback: featBlock.value, variant: 'body', styleOverride: { fontSize: 13, color: '#374151' } })}</div>
+                        <div style={{ display: 'flex', justifyContent: 'center' }}>{freeBlock && <Tick val={isFree} blockKey={freeBlock.block_key} />}</div>
+                        <div style={{ display: 'flex', justifyContent: 'center' }}>{proBlock && <Tick val={isPro} blockKey={proBlock.block_key} />}</div>
+                        <button type="button" onClick={() => { deleteBlock(typeBlock.id); if (featBlock) deleteBlock(featBlock.id); if (freeBlock) deleteBlock(freeBlock.id); if (proBlock) deleteBlock(proBlock.id) }} title="Remove row" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 2, opacity: 0.6 }}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                        </button>
+                      </div>
+                    )
+                  })}
+                  {/* Add buttons */}
+                  <div style={{ display: 'flex', gap: 8, padding: '12px 20px', borderTop: `1px solid ${BORDER}`, background: '#FAFAF9' }}>
+                    <button type="button" onClick={() => { if (!selectedPage) return; createBlock(selectedPage.id, `compare.row.${nextIdx}.type`, 'Type', 'row', maxOrder + 2); createBlock(selectedPage.id, `compare.row.${nextIdx}.feature`, 'Feature', 'New feature', maxOrder + 3); createBlock(selectedPage.id, `compare.row.${nextIdx}.free`, 'Free', 'false', maxOrder + 4); createBlock(selectedPage.id, `compare.row.${nextIdx}.pro`, 'Pro', 'true', maxOrder + 5) }} style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: `1.5px dashed ${BORDER}`, borderRadius: 7, padding: '5px 12px', fontSize: 11, color: MUTED, cursor: 'pointer' }}>
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                      Add row
+                    </button>
+                    <button type="button" onClick={() => { if (!selectedPage) return; createBlock(selectedPage.id, `compare.row.${nextIdx}.type`, 'Type', 'group', maxOrder + 2); createBlock(selectedPage.id, `compare.row.${nextIdx}.label`, 'Label', 'New Group', maxOrder + 3) }} style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: `1.5px dashed ${BORDER}`, borderRadius: 7, padding: '5px 12px', fontSize: 11, color: MUTED, cursor: 'pointer' }}>
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                      Add group header
+                    </button>
+                  </div>
+                </div>
+              )
+            })()}
+          </section>
+        )}
+
+        {/* FAQ */}
+        {renderSectionWrap('section.faq.visible', 'FAQ',
+          <section style={{ background: '#FFFBF5', padding: '48px' }}>
+            <div style={{ textAlign: 'center', marginBottom: 32 }}>
+              {renderEditableText({ blockKey: 'faq.title', fallback: 'Pricing questions, answered.', variant: 'sectionTitle' })}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 640, margin: '0 auto' }}>
+              {faqQBlocks.map(qb => {
+                const idx = qb.block_key.replace('faq.', '').replace('.q', '')
+                const aKey = `faq.${idx}.a`
+                const aBlock = blockByKey[aKey]
+                const aDirty = aBlock ? (drafts[aBlock.id] ?? '') !== aBlock.value : false
+                const qDirty = (drafts[qb.id] ?? '') !== qb.value
+                return (
+                  <div key={qb.id} style={{ position: 'relative', background: '#FFFFFF', border: `1px solid ${BORDER}`, borderRadius: 12, padding: '16px 20px' }}>
+                    {(qDirty || aDirty) && <span style={{ position: 'absolute', top: 8, right: 8, background: ORANGE, color: '#FFFFFF', borderRadius: 999, padding: '2px 6px', fontSize: 9, fontWeight: 900 }}>Unsaved</span>}
+                    {renderEditableText({ blockKey: qb.block_key, fallback: qb.value, variant: 'body', styleOverride: { fontWeight: 600, color: '#1C1917', marginBottom: 6 } })}
+                    {aBlock && renderEditableText({ blockKey: aKey, fallback: aBlock.value, variant: 'body', multiline: true })}
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        )}
+
+        {/* CTA */}
+        {renderSectionWrap('section.cta.visible', 'CTA Banner',
+          <section style={{ background: ORANGE, padding: '56px 48px', textAlign: 'center' }}>
+            <div style={{ maxWidth: 560, margin: '0 auto' }}>
+              <div style={{ marginBottom: 12 }}>{renderEditableText({ blockKey: 'cta.headline', fallback: 'Start free. No commitment.', variant: 'hero', styleOverride: { color: '#FFFFFF' } })}</div>
+              <div style={{ marginBottom: 28 }}>{renderEditableText({ blockKey: 'cta.subheadline', fallback: 'Join SMEs already using Tasking.', variant: 'subhead', multiline: true, styleOverride: { color: 'rgba(255,255,255,0.85)' } })}</div>
+              {renderEditableBtn({ labelKey: 'cta.button.label', urlKey: 'cta.button.url', fallbackLabel: 'Get Started Free', fallbackUrl: '/get-started', editing: editingCtaBtn, setEditing: setEditingCtaBtn, btnStyle: { background: '#FFFFFF', color: ORANGE, border: 'none', borderRadius: 10, padding: '13px 28px', fontSize: 15, fontWeight: 700, cursor: 'pointer' } })}
+              <div style={{ marginTop: 16 }}>{renderEditableText({ blockKey: 'cta.footnote', fallback: 'No credit card required. Cancel anytime.', variant: 'body', styleOverride: { color: 'rgba(255,255,255,0.7)', fontSize: 13 } })}</div>
+            </div>
+          </section>
+        )}
+
+      </div>
+    )
+  }
+
   if (!authChecked) return null
 
   const dirtyBlocks = selectedPage?.blocks.filter(block => (drafts[block.id] ?? '') !== block.value) ?? []
   return (
+  <>
     <main style={{ minHeight: '100vh', background: `radial-gradient(circle at top left, rgba(249,115,22,0.10), transparent 34%), ${BG}`, color: TEXT, fontFamily: 'var(--font-body)' }}>
       <input
         ref={imageInputRef}
@@ -1875,7 +2476,7 @@ export default function AdminDashboardPage() {
                   Loading live preview...
                 </div>
               ) : selectedPage ? (
-                <>{selectedPage.slug === 'home' ? renderHomePreview() : selectedPage.slug === 'products' ? renderProductsPreview() : selectedPage.slug === 'about' ? renderAboutPreview() : selectedPage.slug === 'products-ai-features' ? renderAiFeaturesPreview() : selectedPage.slug === 'products-recruitment' ? renderRecruitmentPreview() : selectedPage.slug === 'products-attendance' ? renderAttendancePreview() : selectedPage.slug === 'products-smart-notifications' ? renderSmartNotificationsPreview() : renderGenericPreview()}</>
+                <>{selectedPage.slug === 'home' ? renderHomePreview() : selectedPage.slug === 'products' ? renderProductsPreview() : selectedPage.slug === 'about' ? renderAboutPreview() : selectedPage.slug === 'pricing' ? renderPricingPreview() : selectedPage.slug === 'products-ai-features' ? renderAiFeaturesPreview() : selectedPage.slug === 'products-recruitment' ? renderRecruitmentPreview() : selectedPage.slug === 'products-attendance' ? renderAttendancePreview() : selectedPage.slug === 'products-smart-notifications' ? renderSmartNotificationsPreview() : selectedPage.slug === 'products-team-management' ? renderTeamManagementPreview() : selectedPage.slug === 'industries' ? renderIndustriesPreview() : renderGenericPreview()}</>
 
               ) : (
                 <div style={{ display: 'grid', placeItems: 'center', minHeight: 520, background: '#FFFFFF', borderRadius: 14, color: MUTED, fontSize: 13, fontWeight: 700 }}>
@@ -1890,5 +2491,7 @@ export default function AdminDashboardPage() {
         </div>
       </section>
     </main>
+    {renderIconPickerOverlay()}
+  </>
   )
 }

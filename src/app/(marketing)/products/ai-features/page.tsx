@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useMarketingCopy } from '../../useMarketingCopy';
+import { MarketingIcon } from '../../marketingIcons';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 
@@ -113,9 +114,11 @@ export default function AiFeaturesPage() {
             <p style={subtitleStyle}>{copy('features.subtitle', 'Four AI tools. All free. All built in.')}</p>
           </div>
           <div className="grid-features-2" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '20px' }}>
-            {featureIdxs.map((idx, i) => (
-              <FeatureCard key={idx} icon={featureIcons[i % featureIcons.length]} name={copy(`feature.${idx}.name`, 'Feature')} desc={copy(`feature.${idx}.desc`, '')} />
-            ))}
+            {featureIdxs.map((idx, i) => {
+              const iconName = copy(`feature.${idx}.icon`, '')
+              const icon = iconName ? <MarketingIcon name={iconName} size={24} /> : featureIcons[i % featureIcons.length]
+              return <FeatureCard key={idx} icon={icon} name={copy(`feature.${idx}.name`, 'Feature')} desc={copy(`feature.${idx}.desc`, '')} />
+            })}
           </div>
         </div>
       </section>

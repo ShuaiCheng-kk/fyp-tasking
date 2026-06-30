@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useMarketingCopy } from '../../useMarketingCopy';
+import { MarketingIcon } from '../../marketingIcons';
 
 const inner: React.CSSProperties = { maxWidth: '1280px', margin: '0 auto', padding: '0 24px' };
 const h2style: React.CSSProperties = { fontFamily: 'var(--font-heading)', fontWeight: 700, fontSize: '2.25rem', color: '#1C1917', marginBottom: '12px' };
@@ -73,9 +74,11 @@ export default function AttendancePage() {
             <p style={subtitleStyle}>{copy('features.subtitle', 'From the moment they clock in to the moment the record is approved.')}</p>
           </div>
           <div className="grid-features-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px' }}>
-            {featureIdxs.map((idx, i) => (
-              <FeatureCard key={idx} icon={featureIcons[i % featureIcons.length]} name={copy(`feature.${idx}.name`, 'Feature')} desc={copy(`feature.${idx}.desc`, '')} />
-            ))}
+            {featureIdxs.map((idx, i) => {
+              const iconName = copy(`feature.${idx}.icon`, '')
+              const icon = iconName ? <MarketingIcon name={iconName} size={24} /> : featureIcons[i % featureIcons.length]
+              return <FeatureCard key={idx} icon={icon} name={copy(`feature.${idx}.name`, 'Feature')} desc={copy(`feature.${idx}.desc`, '')} />
+            })}
           </div>
         </div>
       </section>
