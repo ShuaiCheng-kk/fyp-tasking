@@ -99,6 +99,12 @@ export const marketingRepository = {
     return data as MarketingContentBlock
   },
 
+  async reorderMarketingContentBlocks(updates: { id: string; sort_order: number }[]): Promise<void> {
+    await Promise.all(updates.map(({ id, sort_order }) =>
+      supabase.from('marketing_content_blocks').update({ sort_order }).eq('id', id)
+    ))
+  },
+
   async updateMarketingContentBlock(block_id: string, value: string): Promise<MarketingContentBlock> {
     const { data, error } = await supabase
       .from('marketing_content_blocks')

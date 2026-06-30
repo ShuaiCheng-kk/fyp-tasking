@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { usePathname } from 'next/navigation'
 import Link from 'next/link'
-import { FileText, LogOut, Settings, ExternalLink, ChevronDown, ChevronRight } from 'lucide-react'
+import { FileText, LogOut, Settings, ChevronDown, ChevronRight } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import { MarketingPageSummary } from '@/types/MarketingPage'
 
@@ -31,7 +31,7 @@ export default function AdminSidebar({ pages = [], selectedSlug = '', onSelectSl
   const pathname = usePathname()
   const [expanded, setExpanded] = useState(false)
   const [hoveredKey, setHoveredKey] = useState<string | null>(null)
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ products: true, about: true })
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ marketingPages: true, products: true, about: true })
 
   const handleLogout = async () => {
     const supabase = createBrowserClient(
@@ -46,10 +46,12 @@ export default function AdminSidebar({ pages = [], selectedSlug = '', onSelectSl
 
   const hasPageTree = onSelectSlug !== undefined
 
+  const PRODUCTS_ORDER = ['products-ai-features', 'products-recruitment', 'products-attendance', 'products-team-management', 'products-smart-notifications']
   const productsParent = pages.find(p => p.slug === 'products')
-  const productsSubs   = pages.filter(p => p.slug.startsWith('products-'))
+  const productsSubs   = PRODUCTS_ORDER.map(slug => pages.find(p => p.slug === slug)).filter(Boolean) as MarketingPageSummary[]
+  const ABOUT_ORDER = ['about-mission', 'about-problem-solution', 'about-team', 'about-faq']
   const aboutParent    = pages.find(p => p.slug === 'about')
-  const aboutSubs      = pages.filter(p => p.slug.startsWith('about-'))
+  const aboutSubs      = ABOUT_ORDER.map(slug => pages.find(p => p.slug === slug)).filter(Boolean) as MarketingPageSummary[]
   // Order: Home, Products (+subs), Industries, Pricing, About (+subs)
   const STANDALONE_ORDER = ['industries', 'pricing']
   const standalonePages = STANDALONE_ORDER
@@ -108,7 +110,7 @@ export default function AdminSidebar({ pages = [], selectedSlug = '', onSelectSl
     >
       {/* Logo */}
       <Link
-        href="/admin/dashboard"
+        href="/"
         style={{
           display: 'flex', alignItems: 'center', gap: '10px',
           padding: '20px 18px 18px',
@@ -138,25 +140,33 @@ export default function AdminSidebar({ pages = [], selectedSlug = '', onSelectSl
 
         {/* Marketing Pages + page tree */}
         <div style={{ padding: '12px 8px 0' }}>
-          <a
-            href="/admin/dashboard"
-            onMouseEnter={() => setHoveredKey('marketing')}
-            onMouseLeave={() => setHoveredKey(null)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '10px',
-              padding: '10px 12px', borderRadius: '8px', marginBottom: 2,
-              background: pathname === '/admin/dashboard' ? THEME.sidebarActiveBg : hoveredKey === 'marketing' ? THEME.sidebarHoverBg : 'transparent',
-              color: pathname === '/admin/dashboard' ? THEME.sidebarActiveText : THEME.sidebarText,
-              fontWeight: pathname === '/admin/dashboard' ? 600 : 500,
-              fontSize: '0.9rem', textDecoration: 'none', whiteSpace: 'nowrap',
-            }}
-          >
-            <FileText size={18} strokeWidth={2.1} style={{ display: 'block', flexShrink: 0 }} />
-            <span style={{ opacity: expanded ? 1 : 0, transition: 'opacity 0.15s' }}>Marketing Pages</span>
-          </a>
+          <div style={{ display: 'flex', alignItems: 'center', marginBottom: 2 }}>
+            <a
+              href="/admin/dashboard"
+              onMouseEnter={() => setHoveredKey('marketing')}
+              onMouseLeave={() => setHoveredKey(null)}
+              style={{
+                flex: 1, display: 'flex', alignItems: 'center', gap: '10px',
+                padding: '10px 12px', borderRadius: '8px',
+                background: pathname === '/admin/dashboard' ? THEME.sidebarActiveBg : hoveredKey === 'marketing' ? THEME.sidebarHoverBg : 'transparent',
+                color: pathname === '/admin/dashboard' ? THEME.sidebarActiveText : THEME.sidebarText,
+                fontWeight: pathname === '/admin/dashboard' ? 600 : 500,
+                fontSize: '0.9rem', textDecoration: 'none', whiteSpace: 'nowrap',
+              }}
+            >
+              <FileText size={18} strokeWidth={2.1} style={{ display: 'block', flexShrink: 0 }} />
+              <span style={{ opacity: expanded ? 1 : 0, transition: 'opacity 0.15s' }}>Marketing Pages</span>
+            </a>
+            {hasPageTree && expanded && (
+              <button type="button" onClick={() => toggleGroup('marketingPages')}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: THEME.subText, padding: '0 6px', display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                {openGroups.marketingPages ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+              </button>
+            )}
+          </div>
 
           {/* Page tree — shown only when expanded and props provided */}
-          {hasPageTree && (
+          {hasPageTree && openGroups.marketingPages && (
             <div style={{
               opacity: expanded ? 1 : 0,
               transition: 'opacity 0.15s',
@@ -216,8 +226,7 @@ export default function AdminSidebar({ pages = [], selectedSlug = '', onSelectSl
         {/* Other nav items */}
         <div style={{ padding: '0 8px 12px' }}>
           {[
-            { label: 'View Live Site', Icon: ExternalLink, href: '/',               external: true  },
-            { label: 'Settings',       Icon: Settings,     href: '/admin/settings', external: false },
+            { label: 'Settings', Icon: Settings, href: '/admin/settings', external: false },
           ].map(({ label, Icon, href, external }) => (
             <a
               key={label}

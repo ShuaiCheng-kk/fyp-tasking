@@ -23,6 +23,11 @@ export const marketingService = {
     return page
   },
 
+  async reorderMarketingContentBlocks(admin_user_id: string, updates: { id: string; sort_order: number }[]): Promise<void> {
+    await marketingService.verifyMarketingAdmin(admin_user_id)
+    await marketingRepository.reorderMarketingContentBlocks(updates)
+  },
+
   async updateMarketingContentBlock(admin_user_id: string, input: UpdateMarketingContentBlockInput): Promise<MarketingContentBlock> {
     await marketingService.verifyMarketingAdmin(admin_user_id)
 

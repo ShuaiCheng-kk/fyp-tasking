@@ -11,6 +11,40 @@ import { MarketingContentBlock, MarketingPage, MarketingPageSummary } from '@/ty
 import { MarketingIcon, MARKETING_ICON_NAMES } from '@/app/(marketing)/marketingIcons'
 import { comparisonTable as pricingComparisonTable } from '@/app/(marketing)/pricing/content'
 
+function ContentEditableSpan({ initialValue, onTextChange, onKeyDown, style, autoFocus }: {
+  initialValue: string
+  onTextChange: (text: string) => void
+  onKeyDown: (e: React.KeyboardEvent<HTMLSpanElement>) => void
+  style: React.CSSProperties
+  autoFocus?: boolean
+}) {
+  const ref = useRef<HTMLSpanElement>(null)
+  useEffect(() => {
+    if (!ref.current) return
+    ref.current.innerText = initialValue
+    if (autoFocus) {
+      ref.current.focus()
+      const range = document.createRange()
+      const sel = window.getSelection()
+      range.selectNodeContents(ref.current)
+      range.collapse(false)
+      sel?.removeAllRanges()
+      sel?.addRange(range)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  return (
+    <span
+      ref={ref}
+      contentEditable
+      suppressContentEditableWarning
+      onInput={(e) => onTextChange((e.target as HTMLElement).textContent ?? '')}
+      onKeyDown={onKeyDown}
+      style={style}
+    />
+  )
+}
+
 const ORANGE = '#F97316'
 const TEXT = '#0F172A'
 const MUTED = '#64748B'
@@ -216,6 +250,27 @@ export default function AdminDashboardPage() {
     }
   }
 
+  const dragIndexRef = useRef<number | null>(null)
+
+  const reorderBlocks = async (blocks: { id: string; sort_order: number }[], fromIndex: number, toIndex: number, getRelatedIds?: (b: { id: string; sort_order: number }) => string[]) => {
+    if (fromIndex === toIndex || !adminUserId) return
+    const reordered = [...blocks]
+    const [moved] = reordered.splice(fromIndex, 1)
+    reordered.splice(toIndex, 0, moved)
+    const updates = reordered.map((b, i) => ({ id: b.id, sort_order: i * 10 }))
+    setSelectedPage(current => {
+      if (!current) return current
+      const updateMap: Record<string, number> = {}
+      updates.forEach(u => { updateMap[u.id] = u.sort_order })
+      return { ...current, blocks: current.blocks.map(b => updateMap[b.id] !== undefined ? { ...b, sort_order: updateMap[b.id] } : b) }
+    })
+    await fetch('/api/admin/marketing-pages', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ admin_user_id: adminUserId, updates }),
+    })
+  }
+
   const setIconBlock = async (iconBlockKey: string, iconName: string, sortOrder: number) => {
     if (!selectedPage || !adminUserId) return
     const existing = blockByKey[iconBlockKey]
@@ -392,6 +447,7 @@ export default function AdminDashboardPage() {
   const renderEditableText = ({
     blockKey,
     fallback,
+    placeholder,
     variant,
     multiline = false,
     styleOverride,
@@ -400,6 +456,7 @@ export default function AdminDashboardPage() {
   }: {
     blockKey: string
     fallback: string
+    placeholder?: string
     variant: 'badge' | 'hero' | 'heroAccent' | 'subhead' | 'sectionTitle' | 'body' | 'cardTitle' | 'cardBody' | 'cta' | 'eyebrow'
     multiline?: boolean
     styleOverride?: React.CSSProperties
@@ -443,13 +500,10 @@ export default function AdminDashboardPage() {
     if (editing) {
       return (
         <span style={{ position: 'relative', display: baseStyle.display }}>
-          <span
-            // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions
-            contentEditable
-            suppressContentEditableWarning
+          <ContentEditableSpan
+            initialValue={value}
             autoFocus
-            dangerouslySetInnerHTML={{ __html: value }}
-            onInput={(e) => setDrafts(curr => ({ ...curr, [block.id]: (e.target as HTMLElement).textContent ?? '' }))}
+            onTextChange={(text) => setDrafts(curr => ({ ...curr, [block.id]: text }))}
             onKeyDown={(e) => {
               if (e.key === 'Escape') { e.preventDefault(); resetDraft(block) }
               if (!multiline && e.key === 'Enter') { e.preventDefault(); if (dirty) saveBlock(block) }
@@ -508,7 +562,9 @@ export default function AdminDashboardPage() {
         }}
         style={{ ...baseStyle, ...mergedTextStyle }}
       >
-        {value}
+        {value
+          ? value
+          : <span style={{ color: onDarkBg ? 'rgba(255,255,255,0.35)' : '#CBD5E1', fontStyle: 'italic', fontWeight: 400 }}>{placeholder ?? fallback}</span>}
         {!hideDirtyBadge && <span style={{ position: 'absolute', right: -8, top: -14, transform: 'translateX(100%)', background: ORANGE, color: '#FFFFFF', borderRadius: 999, padding: '3px 7px', fontSize: 10, fontWeight: 900, opacity: dirty ? 1 : 0 }}>Unsaved</span>}
       </span>
     )
@@ -809,7 +865,8 @@ export default function AdminDashboardPage() {
                 const descBlock = blockByKey[descKey]
                 const cardDirty = (drafts[nameBlock.id] ?? '') !== nameBlock.value || (descBlock ? (drafts[descBlock.id] ?? '') !== descBlock.value : false)
                 return (
-                  <div key={nameBlock.id} style={{ position: 'relative', background: '#FFFFFF', border: '1px solid #F0E8D8', borderRadius: 16, padding: 24 }}>
+                  <div key={nameBlock.id} draggable onDragStart={() => { dragIndexRef.current = i }} onDragOver={e => e.preventDefault()} onDrop={() => reorderBlocks(aiFeaturesBlocks, dragIndexRef.current ?? i, i)} style={{ position: 'relative', background: '#FFFFFF', border: '1px solid #F0E8D8', borderRadius: 16, padding: 24 }}>
+                    <span style={{ position: 'absolute', top: 10, left: 10, cursor: 'grab', color: MUTED, fontSize: 14, lineHeight: 1 }} title="Drag to reorder">⠿</span>
                     {cardDirty && <span style={{ position: 'absolute', top: 36, right: 8, background: ORANGE, color: '#FFFFFF', borderRadius: 999, padding: '3px 7px', fontSize: 10, fontWeight: 900, zIndex: 2 }}>Unsaved</span>}
                     <button
                       type="button"
@@ -838,8 +895,8 @@ export default function AdminDashboardPage() {
                   const maxIdx = existing.reduce((m, b) => { const n = parseInt(b.block_key.split('.')[1]); return n > m ? n : m }, 0)
                   const nextIdx = maxIdx + 1
                   const maxSort = existing.reduce((m, b) => b.sort_order > m ? b.sort_order : m, 0)
-                  await createBlock(selectedPage.id, `feature.${nextIdx}.name`, `Feature ${nextIdx} Name`, 'New Feature', maxSort + 1)
-                  await createBlock(selectedPage.id, `feature.${nextIdx}.desc`, `Feature ${nextIdx} Description`, 'Describe this feature.', maxSort + 2)
+                  await createBlock(selectedPage.id, `feature.${nextIdx}.name`, `Feature ${nextIdx} Name`, '', maxSort + 1)
+                  await createBlock(selectedPage.id, `feature.${nextIdx}.desc`, `Feature ${nextIdx} Description`, '', maxSort + 2)
                 }}
                 style={{ background: 'none', border: '2px dashed #F0E8D8', borderRadius: 16, padding: 24, cursor: 'pointer', color: '#A8A29E', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 120 }}
               >
@@ -961,7 +1018,8 @@ export default function AdminDashboardPage() {
                 const descBlock = blockByKey[descKey]
                 const cardDirty = (drafts[nameBlock.id] ?? '') !== nameBlock.value || (descBlock ? (drafts[descBlock.id] ?? '') !== descBlock.value : false)
                 return (
-                  <div key={nameBlock.id} style={{ position: 'relative', background: '#FFFFFF', border: '1px solid #F0E8D8', borderRadius: 16, padding: 24 }}>
+                  <div key={nameBlock.id} draggable onDragStart={() => { dragIndexRef.current = i }} onDragOver={e => e.preventDefault()} onDrop={() => reorderBlocks(snFeatureBlocks, dragIndexRef.current ?? i, i)} style={{ position: 'relative', background: '#FFFFFF', border: '1px solid #F0E8D8', borderRadius: 16, padding: 24 }}>
+                    <span style={{ position: 'absolute', top: 10, left: 10, cursor: 'grab', color: MUTED, fontSize: 14, lineHeight: 1 }} title="Drag to reorder">⠿</span>
                     {cardDirty && <span style={{ position: 'absolute', top: 36, right: 8, background: ORANGE, color: '#FFFFFF', borderRadius: 999, padding: '3px 7px', fontSize: 10, fontWeight: 900, zIndex: 2 }}>Unsaved</span>}
                     <button type="button" onClick={() => deleteBlock(nameBlock.id).then(() => { if (descBlock) deleteBlock(descBlock.id) })} title="Remove feature card" style={{ position: 'absolute', top: 10, right: 10, background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 4, lineHeight: 1 }}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
@@ -982,8 +1040,8 @@ export default function AdminDashboardPage() {
                 const maxIdx = existing.reduce((m, b) => { const n = parseInt(b.block_key.split('.')[1]); return n > m ? n : m }, 0)
                 const maxSort = existing.reduce((m, b) => b.sort_order > m ? b.sort_order : m, 0)
                 const nextIdx = maxIdx + 1
-                await createBlock(selectedPage.id, `feature.${nextIdx}.name`, `Feature ${nextIdx} Name`, 'New Feature', maxSort + 1)
-                await createBlock(selectedPage.id, `feature.${nextIdx}.desc`, `Feature ${nextIdx} Description`, 'Describe this feature.', maxSort + 2)
+                await createBlock(selectedPage.id, `feature.${nextIdx}.name`, `Feature ${nextIdx} Name`, '', maxSort + 1)
+                await createBlock(selectedPage.id, `feature.${nextIdx}.desc`, `Feature ${nextIdx} Description`, '', maxSort + 2)
               }} style={{ background: 'none', border: '2px dashed #F0E8D8', borderRadius: 16, padding: 24, cursor: 'pointer', color: '#A8A29E', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 120 }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                 Add feature card
@@ -1008,7 +1066,8 @@ export default function AdminDashboardPage() {
                   const idx = triggerBlock.block_key.replace('timeline.', '').replace('.trigger', '')
                   const eventKey = `timeline.${idx}.event`
                   return (
-                    <div key={triggerBlock.id} style={{ display: 'flex', gap: 20, alignItems: 'flex-start', paddingBottom: i < timelineBlocks.length - 1 ? 28 : 0 }}>
+                    <div key={triggerBlock.id} draggable onDragStart={() => { dragIndexRef.current = i }} onDragOver={e => e.preventDefault()} onDrop={() => reorderBlocks(timelineBlocks, dragIndexRef.current ?? i, i)} style={{ display: 'flex', gap: 20, alignItems: 'flex-start', paddingBottom: i < timelineBlocks.length - 1 ? 28 : 0, position: 'relative' }}>
+                      <span style={{ position: 'absolute', top: 0, left: -18, cursor: 'grab', color: MUTED, fontSize: 14, lineHeight: 1 }} title="Drag to reorder">⠿</span>
                       <div style={{ width: 48, height: 48, borderRadius: '50%', background: '#FEF3C7', border: '3px solid #F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, position: 'relative', zIndex: 1 }}>
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M13.73 21a2 2 0 0 1-3.46 0" stroke={ORANGE} strokeWidth="2" strokeLinecap="round" /></svg>
                       </div>
@@ -1101,7 +1160,8 @@ export default function AdminDashboardPage() {
                 const descBlock = blockByKey[descKey]
                 const cardDirty = (drafts[nameBlock.id] ?? '') !== nameBlock.value || (descBlock ? (drafts[descBlock.id] ?? '') !== descBlock.value : false)
                 return (
-                  <div key={nameBlock.id} style={{ position: 'relative', background: '#FFFFFF', border: '1px solid #F0E8D8', borderRadius: 16, padding: 24 }}>
+                  <div key={nameBlock.id} draggable onDragStart={() => { dragIndexRef.current = i }} onDragOver={e => e.preventDefault()} onDrop={() => reorderBlocks(recruitFeatureBlocks, dragIndexRef.current ?? i, i)} style={{ position: 'relative', background: '#FFFFFF', border: '1px solid #F0E8D8', borderRadius: 16, padding: 24 }}>
+                    <span style={{ position: 'absolute', top: 10, left: 10, cursor: 'grab', color: MUTED, fontSize: 14, lineHeight: 1 }} title="Drag to reorder">⠿</span>
                     {cardDirty && <span style={{ position: 'absolute', top: 36, right: 8, background: ORANGE, color: '#FFFFFF', borderRadius: 999, padding: '3px 7px', fontSize: 10, fontWeight: 900, zIndex: 2 }}>Unsaved</span>}
                     <button
                       type="button"
@@ -1129,8 +1189,8 @@ export default function AdminDashboardPage() {
                   const maxIdx = existing.reduce((m, b) => { const n = parseInt(b.block_key.split('.')[1]); return n > m ? n : m }, 0)
                   const maxSort = existing.reduce((m, b) => b.sort_order > m ? b.sort_order : m, 0)
                   const nextIdx = maxIdx + 1
-                  await createBlock(selectedPage.id, `feature.${nextIdx}.name`, `Feature ${nextIdx} Name`, 'New Feature', maxSort + 1)
-                  await createBlock(selectedPage.id, `feature.${nextIdx}.desc`, `Feature ${nextIdx} Description`, 'Describe this feature.', maxSort + 2)
+                  await createBlock(selectedPage.id, `feature.${nextIdx}.name`, `Feature ${nextIdx} Name`, '', maxSort + 1)
+                  await createBlock(selectedPage.id, `feature.${nextIdx}.desc`, `Feature ${nextIdx} Description`, '', maxSort + 2)
                 }}
                 style={{ background: 'none', border: '2px dashed #F0E8D8', borderRadius: 16, padding: 24, cursor: 'pointer', color: '#A8A29E', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 120 }}
               >
@@ -1248,7 +1308,8 @@ export default function AdminDashboardPage() {
                 const descBlock = blockByKey[descKey]
                 const cardDirty = (drafts[nameBlock.id] ?? '') !== nameBlock.value || (descBlock ? (drafts[descBlock.id] ?? '') !== descBlock.value : false)
                 return (
-                  <div key={nameBlock.id} style={{ position: 'relative', background: '#FFFFFF', border: '1px solid #F0E8D8', borderRadius: 16, padding: 24 }}>
+                  <div key={nameBlock.id} draggable onDragStart={() => { dragIndexRef.current = i }} onDragOver={e => e.preventDefault()} onDrop={() => reorderBlocks(attendanceFeatureBlocks, dragIndexRef.current ?? i, i)} style={{ position: 'relative', background: '#FFFFFF', border: '1px solid #F0E8D8', borderRadius: 16, padding: 24 }}>
+                    <span style={{ position: 'absolute', top: 10, left: 10, cursor: 'grab', color: MUTED, fontSize: 14, lineHeight: 1 }} title="Drag to reorder">⠿</span>
                     {cardDirty && <span style={{ position: 'absolute', top: 36, right: 8, background: ORANGE, color: '#FFFFFF', borderRadius: 999, padding: '3px 7px', fontSize: 10, fontWeight: 900, zIndex: 2 }}>Unsaved</span>}
                     <button
                       type="button"
@@ -1277,8 +1338,8 @@ export default function AdminDashboardPage() {
                   const maxIdx = existing.reduce((m, b) => { const n = parseInt(b.block_key.split('.')[1]); return n > m ? n : m }, 0)
                   const nextIdx = maxIdx + 1
                   const maxSort = existing.reduce((m, b) => b.sort_order > m ? b.sort_order : m, 0)
-                  await createBlock(selectedPage.id, `feature.${nextIdx}.name`, `Feature ${nextIdx} Name`, 'New Feature', maxSort + 1)
-                  await createBlock(selectedPage.id, `feature.${nextIdx}.desc`, `Feature ${nextIdx} Description`, 'Describe this feature.', maxSort + 2)
+                  await createBlock(selectedPage.id, `feature.${nextIdx}.name`, `Feature ${nextIdx} Name`, '', maxSort + 1)
+                  await createBlock(selectedPage.id, `feature.${nextIdx}.desc`, `Feature ${nextIdx} Description`, '', maxSort + 2)
                 }}
                 style={{ background: 'none', border: '2px dashed #F0E8D8', borderRadius: 16, padding: 24, cursor: 'pointer', color: '#A8A29E', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 120 }}
               >
@@ -1401,7 +1462,8 @@ export default function AdminDashboardPage() {
                 const descBlock = blockByKey[descKey]
                 const cardDirty = (drafts[nameBlock.id] ?? '') !== nameBlock.value || (descBlock ? (drafts[descBlock.id] ?? '') !== descBlock.value : false)
                 return (
-                  <div key={nameBlock.id} style={{ position: 'relative', background: '#FFFFFF', border: '1px solid #F0E8D8', borderRadius: 16, padding: 24 }}>
+                  <div key={nameBlock.id} draggable onDragStart={() => { dragIndexRef.current = i }} onDragOver={e => e.preventDefault()} onDrop={() => reorderBlocks(tmFeatureBlocks, dragIndexRef.current ?? i, i)} style={{ position: 'relative', background: '#FFFFFF', border: '1px solid #F0E8D8', borderRadius: 16, padding: 24 }}>
+                    <span style={{ position: 'absolute', top: 10, left: 10, cursor: 'grab', color: MUTED, fontSize: 14, lineHeight: 1 }} title="Drag to reorder">⠿</span>
                     {cardDirty && <span style={{ position: 'absolute', top: 36, right: 8, background: ORANGE, color: '#FFFFFF', borderRadius: 999, padding: '3px 7px', fontSize: 10, fontWeight: 900, zIndex: 2 }}>Unsaved</span>}
                     <button type="button" onClick={() => deleteBlock(nameBlock.id).then(() => { if (descBlock) deleteBlock(descBlock.id) })} title="Remove feature card" style={{ position: 'absolute', top: 10, right: 10, background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 4, lineHeight: 1 }}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
@@ -1422,8 +1484,8 @@ export default function AdminDashboardPage() {
                 const maxIdx = existing.reduce((m, b) => { const n = parseInt(b.block_key.split('.')[1]); return n > m ? n : m }, 0)
                 const maxSort = existing.reduce((m, b) => b.sort_order > m ? b.sort_order : m, 0)
                 const nextIdx = maxIdx + 1
-                await createBlock(selectedPage.id, `feature.${nextIdx}.name`, `Feature ${nextIdx} Name`, 'New Feature', maxSort + 1)
-                await createBlock(selectedPage.id, `feature.${nextIdx}.desc`, `Feature ${nextIdx} Description`, 'Describe this feature.', maxSort + 2)
+                await createBlock(selectedPage.id, `feature.${nextIdx}.name`, `Feature ${nextIdx} Name`, '', maxSort + 1)
+                await createBlock(selectedPage.id, `feature.${nextIdx}.desc`, `Feature ${nextIdx} Description`, '', maxSort + 2)
               }} style={{ background: 'none', border: '2px dashed #F0E8D8', borderRadius: 16, padding: 24, cursor: 'pointer', color: '#A8A29E', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 120 }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                 Add feature card
@@ -1542,7 +1604,8 @@ export default function AdminDashboardPage() {
               const relatedBlocks = [badgeBlock, blockByKey[questionKey], blockByKey[painpointKey], blockByKey[solutionKey], idBlock].filter(Boolean) as typeof badgeBlock[]
               const cardDirty = relatedBlocks.some(b => (drafts[b.id] ?? '') !== b.value)
               return (
-                <div key={badgeBlock.id} style={{ position: 'relative' }}>
+                <div key={badgeBlock.id} draggable onDragStart={() => { dragIndexRef.current = i }} onDragOver={e => e.preventDefault()} onDrop={() => reorderBlocks(industryBlocks, dragIndexRef.current ?? i, i)} style={{ position: 'relative' }}>
+                  <span style={{ position: 'absolute', top: 18, left: 0, cursor: 'grab', color: MUTED, fontSize: 14, lineHeight: 1, zIndex: 2 }} title="Drag to reorder">⠿</span>
                   {cardDirty && <span style={{ position: 'absolute', top: 16, right: 40, background: ORANGE, color: '#FFFFFF', borderRadius: 999, padding: '3px 7px', fontSize: 10, fontWeight: 900, zIndex: 2 }}>Unsaved</span>}
                   <button type="button" onClick={() => relatedBlocks.forEach(b => deleteBlock(b.id))} title="Remove industry" style={{ position: 'absolute', top: 16, right: 0, background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 4, lineHeight: 1, zIndex: 2 }}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
@@ -1588,8 +1651,8 @@ export default function AdminDashboardPage() {
               await createBlock(selectedPage.id, `industry.${nextIdx}.id`, `Industry ${nextIdx} ID`, `industry-${nextIdx}`, maxSort + 1)
               await createBlock(selectedPage.id, `industry.${nextIdx}.badge`, `Industry ${nextIdx} Badge`, 'New Industry', maxSort + 2)
               await createBlock(selectedPage.id, `industry.${nextIdx}.question`, `Industry ${nextIdx} Question`, 'What challenge does this industry face?', maxSort + 3)
-              await createBlock(selectedPage.id, `industry.${nextIdx}.painpoint`, `Industry ${nextIdx} Pain Point`, 'Describe the pain point here.', maxSort + 4)
-              await createBlock(selectedPage.id, `industry.${nextIdx}.solution`, `Industry ${nextIdx} Solution`, 'Describe how Tasking helps.', maxSort + 5)
+              await createBlock(selectedPage.id, `industry.${nextIdx}.painpoint`, `Industry ${nextIdx} Pain Point`, '', maxSort + 4)
+              await createBlock(selectedPage.id, `industry.${nextIdx}.solution`, `Industry ${nextIdx} Solution`, '', maxSort + 5)
             }} style={{ marginTop: 24, width: '100%', background: 'none', border: '2px dashed #F0E8D8', borderRadius: 16, padding: '20px 24px', cursor: 'pointer', color: '#A8A29E', fontSize: 13, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               Add industry
@@ -1753,7 +1816,7 @@ export default function AdminDashboardPage() {
               ? Math.max(...comparisonBlocks.map(b => b.sort_order)) + 1
               : 200
             const key = `comparison.row.${Date.now()}`
-            await createBlock(selectedPage.id, key, `Comparison Row`, 'New feature', nextOrder)
+            await createBlock(selectedPage.id, key, `Comparison Row`, '', nextOrder)
           }
 
           return (
@@ -1876,6 +1939,331 @@ export default function AdminDashboardPage() {
             </div>
           </div>
         </section>)}
+      </div>
+    )
+  }
+
+  const renderAboutMissionPreview = () => {
+    const painBlocks  = (selectedPage?.blocks ?? []).filter(b => b.block_key.startsWith('why.pain.')  && !b.block_key.includes('.visible')).sort((a, b) => a.sort_order - b.sort_order)
+    const goalBlocks  = (selectedPage?.blocks ?? []).filter(b => b.block_key.startsWith('goals.')     && b.block_key.endsWith('.title')).sort((a, b) => a.sort_order - b.sort_order)
+    const valueBlocks = (selectedPage?.blocks ?? []).filter(b => b.block_key.startsWith('values.')    && b.block_key.endsWith('.badge')).sort((a, b) => a.sort_order - b.sort_order)
+    const dragRef = dragIndexRef
+
+    return (
+      <div style={{ background: '#FFFFFF', borderRadius: 18, overflow: 'hidden', border: `1px solid ${BORDER}` }}>
+        {renderSectionWrap('section.hero.visible', 'Hero Section',
+          <section style={{ background: '#1C1C1E', padding: '72px 48px 64px', textAlign: 'center' }}>
+            <div style={{ marginBottom: 20 }}>{renderEditableText({ blockKey: 'hero.badge', fallback: 'Mission', variant: 'badge' })}</div>
+            <div style={{ maxWidth: 640, margin: '0 auto 18px' }}>{renderEditableText({ blockKey: 'hero.headline', fallback: 'We built Tasking because SMEs deserve better.', variant: 'hero' })}</div>
+            <div style={{ maxWidth: 520, margin: '0 auto' }}>{renderEditableText({ blockKey: 'hero.subheadline', fallback: 'Not a watered-down version of enterprise software. Not another spreadsheet wrapper.', variant: 'subhead', multiline: true })}</div>
+          </section>
+        )}
+
+        {renderSectionWrap('section.why.visible', 'Why We Built It',
+          <section style={{ background: '#FFFFFF', padding: '56px 48px' }}>
+            <div style={{ marginBottom: 16 }}>{renderEditableText({ blockKey: 'why.headline', fallback: 'Why we built it', variant: 'sectionTitle' })}</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 40 }}>
+              <div>
+                <div style={{ marginBottom: 12 }}>{renderEditableText({ blockKey: 'why.para1', fallback: '', variant: 'body', multiline: true })}</div>
+                <div>{renderEditableText({ blockKey: 'why.para2', fallback: '', variant: 'body', multiline: true })}</div>
+              </div>
+              <div style={{ background: '#FFFBF5', border: '1px solid #F0E8D8', borderRadius: 16, padding: 28 }}>
+                {painBlocks.map((pb, i) => (
+                  <div key={pb.id} draggable onDragStart={() => { dragRef.current = i }} onDragOver={e => e.preventDefault()} onDrop={() => reorderBlocks(painBlocks, dragRef.current ?? i, i)}
+                    style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: i < painBlocks.length - 1 ? 14 : 0, cursor: 'grab' }}>
+                    <span style={{ fontSize: 14, color: '#CBD5E1', userSelect: 'none', flexShrink: 0, marginTop: 1 }}>⠿</span>
+                    <div style={{ width: 22, height: 22, borderRadius: '50%', background: '#FEF3C7', border: '2px solid #F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1 }}>
+                      <span style={{ fontSize: '0.6875rem', fontWeight: 700, color: '#F97316' }}>{i + 1}</span>
+                    </div>
+                    <div style={{ flex: 1 }}>{renderEditableText({ blockKey: pb.block_key, fallback: pb.value, placeholder: 'Pain point…', variant: 'body', hideDirtyBadge: false })}</div>
+                    <button onClick={() => deleteBlock(pb.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', fontSize: 15, padding: '0 4px', flexShrink: 0 }}>🗑</button>
+                  </div>
+                ))}
+                <button onClick={() => { const idx = painBlocks.length + 1; createBlock(selectedPage!.id, `why.pain.${idx}`, 'Pain Point', '', (painBlocks[painBlocks.length - 1]?.sort_order ?? 0) + 10) }}
+                  style={{ marginTop: 12, background: 'none', border: '1px dashed #CBD5E1', borderRadius: 8, padding: '6px 14px', fontSize: 13, color: '#64748B', cursor: 'pointer', width: '100%' }}>+ Add pain point</button>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {renderSectionWrap('section.goals.visible', 'What We Set Out To Do',
+          <section style={{ background: '#FFFBF5', padding: '56px 48px' }}>
+            <div style={{ marginBottom: 32 }}>{renderEditableText({ blockKey: 'goals.headline', fallback: 'What we set out to do', variant: 'sectionTitle' })}</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
+              {goalBlocks.map((gb, i) => {
+                const n = gb.block_key.replace('goals.', '').replace('.title', '')
+                return (
+                  <div key={gb.id} draggable onDragStart={() => { dragRef.current = i }} onDragOver={e => e.preventDefault()} onDrop={() => reorderBlocks(goalBlocks, dragRef.current ?? i, i)}
+                    style={{ background: '#FFFFFF', border: `1px solid ${BORDER}`, borderRadius: 14, padding: 24, position: 'relative' }}>
+                    <span style={{ position: 'absolute', top: 10, left: 10, fontSize: 14, color: '#CBD5E1', cursor: 'grab' }}>⠿</span>
+                    <button onClick={() => { deleteBlock(gb.id); const bodyBlock = (selectedPage?.blocks ?? []).find(b => b.block_key === `goals.${n}.body`); if (bodyBlock) deleteBlock(bodyBlock.id) }}
+                      style={{ position: 'absolute', top: 8, right: 8, background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', fontSize: 14 }}>🗑</button>
+                    <div style={{ marginBottom: 8, paddingLeft: 24 }}>{renderEditableText({ blockKey: `goals.${n}.title`, fallback: gb.value, placeholder: 'Goal title', variant: 'body', styleOverride: { fontWeight: 700 } })}</div>
+                    <div style={{ paddingLeft: 24 }}>{renderEditableText({ blockKey: `goals.${n}.body`, fallback: '', placeholder: 'Goal description', variant: 'body', multiline: true })}</div>
+                  </div>
+                )
+              })}
+            </div>
+            <button onClick={() => { const n = goalBlocks.length + 1; createBlock(selectedPage!.id, `goals.${n}.title`, 'Goal Title', '', (goalBlocks[goalBlocks.length-1]?.sort_order ?? 0) + 10); createBlock(selectedPage!.id, `goals.${n}.body`, 'Goal Body', '', (goalBlocks[goalBlocks.length-1]?.sort_order ?? 0) + 11) }}
+              style={{ marginTop: 16, background: 'none', border: '1px dashed #CBD5E1', borderRadius: 8, padding: '8px 18px', fontSize: 13, color: '#64748B', cursor: 'pointer' }}>+ Add goal</button>
+          </section>
+        )}
+
+        {renderSectionWrap('section.values.visible', 'What We Stand For',
+          <section style={{ background: '#FFFFFF', padding: '56px 48px' }}>
+            <div style={{ marginBottom: 32 }}>{renderEditableText({ blockKey: 'values.headline', fallback: 'What we stand for', variant: 'sectionTitle' })}</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+              {valueBlocks.map((vb, i) => {
+                const n = vb.block_key.replace('values.', '').replace('.badge', '')
+                return (
+                  <div key={vb.id} draggable onDragStart={() => { dragRef.current = i }} onDragOver={e => e.preventDefault()} onDrop={() => reorderBlocks(valueBlocks, dragRef.current ?? i, i)}
+                    style={{ background: '#FFFBF5', border: `1px solid ${BORDER}`, borderRadius: 14, padding: 24, position: 'relative' }}>
+                    <span style={{ position: 'absolute', top: 10, left: 10, fontSize: 14, color: '#CBD5E1', cursor: 'grab' }}>⠿</span>
+                    <button onClick={() => { deleteBlock(vb.id); const t = (selectedPage?.blocks ?? []).find(b => b.block_key === `values.${n}.title`); const bo = (selectedPage?.blocks ?? []).find(b => b.block_key === `values.${n}.body`); if (t) deleteBlock(t.id); if (bo) deleteBlock(bo.id) }}
+                      style={{ position: 'absolute', top: 8, right: 8, background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', fontSize: 14 }}>🗑</button>
+                    <div style={{ marginBottom: 8, paddingLeft: 24 }}>{renderEditableText({ blockKey: `values.${n}.badge`, fallback: vb.value, placeholder: 'Badge label', variant: 'badge' })}</div>
+                    <div style={{ marginBottom: 8 }}>{renderEditableText({ blockKey: `values.${n}.title`, fallback: '', placeholder: 'Value title', variant: 'body', styleOverride: { fontWeight: 700 } })}</div>
+                    <div>{renderEditableText({ blockKey: `values.${n}.body`, fallback: '', placeholder: 'Value description', variant: 'body', multiline: true })}</div>
+                  </div>
+                )
+              })}
+            </div>
+            <button onClick={() => { const n = valueBlocks.length + 1; createBlock(selectedPage!.id, `values.${n}.badge`, 'Value Badge', '', (valueBlocks[valueBlocks.length-1]?.sort_order ?? 0) + 10); createBlock(selectedPage!.id, `values.${n}.title`, 'Value Title', '', (valueBlocks[valueBlocks.length-1]?.sort_order ?? 0) + 11); createBlock(selectedPage!.id, `values.${n}.body`, 'Value Body', '', (valueBlocks[valueBlocks.length-1]?.sort_order ?? 0) + 12) }}
+              style={{ marginTop: 16, background: 'none', border: '1px dashed #CBD5E1', borderRadius: 8, padding: '8px 18px', fontSize: 13, color: '#64748B', cursor: 'pointer' }}>+ Add value</button>
+          </section>
+        )}
+
+        {renderSectionWrap('section.cta.visible', 'CTA Section',
+          <section style={{ background: ORANGE, padding: '64px 48px', textAlign: 'center' }}>
+            <div style={{ maxWidth: 500, margin: '0 auto 24px' }}>
+              {renderEditableText({ blockKey: 'cta.headline', fallback: 'Ready to see it for yourself?', variant: 'cta' })}
+            </div>
+            {renderEditableBtn({ labelKey: 'cta.button.label', urlKey: 'cta.button.url', fallbackLabel: 'Get Started Free', fallbackUrl: '/get-started', editing: editingCtaBtn, setEditing: setEditingCtaBtn, btnStyle: { background: '#FFFFFF', color: ORANGE, border: 'none', borderRadius: 10, padding: '13px 30px', fontSize: 15, fontWeight: 700, cursor: 'pointer' } })}
+          </section>
+        )}
+      </div>
+    )
+  }
+
+  const renderAboutProblemSolutionPreview = () => {
+    const problemBlocks = (selectedPage?.blocks ?? []).filter(b => b.block_key.startsWith('problems.') && b.block_key.endsWith('.title')).sort((a, b) => a.sort_order - b.sort_order)
+    const gapBlocks     = (selectedPage?.blocks ?? []).filter(b => b.block_key.startsWith('gaps.')     && b.block_key.endsWith('.title')).sort((a, b) => a.sort_order - b.sort_order)
+    const fixBlocks     = (selectedPage?.blocks ?? []).filter(b => b.block_key.startsWith('fixes.')    && b.block_key.endsWith('.problem')).sort((a, b) => a.sort_order - b.sort_order)
+    const dragRef = dragIndexRef
+
+    return (
+      <div style={{ background: '#FFFFFF', borderRadius: 18, overflow: 'hidden', border: `1px solid ${BORDER}` }}>
+        {renderSectionWrap('section.hero.visible', 'Hero Section',
+          <section style={{ background: '#1C1C1E', padding: '72px 48px 64px', textAlign: 'center' }}>
+            <div style={{ marginBottom: 20 }}>{renderEditableText({ blockKey: 'hero.badge', fallback: 'Problem & Solution', variant: 'badge' })}</div>
+            <div style={{ maxWidth: 640, margin: '0 auto 18px' }}>{renderEditableText({ blockKey: 'hero.headline', fallback: 'The problem is real. The fixes are already built.', variant: 'hero' })}</div>
+            <div style={{ maxWidth: 520, margin: '0 auto' }}>{renderEditableText({ blockKey: 'hero.subheadline', fallback: "Here's an honest breakdown of what's broken in casual workforce management.", variant: 'subhead', multiline: true })}</div>
+          </section>
+        )}
+
+        {renderSectionWrap('section.problems.visible', 'Problems',
+          <section style={{ background: '#FFFBF5', padding: '56px 48px' }}>
+            <div style={{ marginBottom: 12 }}>{renderEditableText({ blockKey: 'problems.title', fallback: 'What SMEs are dealing with every day', variant: 'sectionTitle' })}</div>
+            <div style={{ marginBottom: 28 }}>{renderEditableText({ blockKey: 'problems.subtitle', fallback: '', variant: 'body', multiline: true })}</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {problemBlocks.map((pb, i) => {
+                const n = pb.block_key.replace('problems.', '').replace('.title', '')
+                return (
+                  <div key={pb.id} draggable onDragStart={() => { dragRef.current = i }} onDragOver={e => e.preventDefault()} onDrop={() => reorderBlocks(problemBlocks, dragRef.current ?? i, i)}
+                    style={{ display: 'flex', gap: 12, background: '#FFFFFF', border: `1px solid ${BORDER}`, borderRadius: 12, padding: 20, position: 'relative' }}>
+                    <span style={{ position: 'absolute', top: '50%', left: 8, transform: 'translateY(-50%)', fontSize: 14, color: '#CBD5E1', cursor: 'grab' }}>⠿</span>
+                    <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#FEF3C7', border: '2px solid #F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginLeft: 16 }}>
+                      <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#F97316' }}>{String(i + 1).padStart(2, '0')}</span>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ marginBottom: 6 }}>{renderEditableText({ blockKey: `problems.${n}.title`, fallback: pb.value, placeholder: 'Problem title', variant: 'body', styleOverride: { fontWeight: 700 } })}</div>
+                      <div>{renderEditableText({ blockKey: `problems.${n}.body`, fallback: '', placeholder: 'Problem description', variant: 'body', multiline: true })}</div>
+                    </div>
+                    <button onClick={() => { deleteBlock(pb.id); const bo = (selectedPage?.blocks ?? []).find(b => b.block_key === `problems.${n}.body`); if (bo) deleteBlock(bo.id) }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', fontSize: 14, flexShrink: 0 }}>🗑</button>
+                  </div>
+                )
+              })}
+            </div>
+            <button onClick={() => { const n = problemBlocks.length + 1; createBlock(selectedPage!.id, `problems.${n}.title`, 'Problem Title', '', (problemBlocks[problemBlocks.length-1]?.sort_order ?? 0) + 10); createBlock(selectedPage!.id, `problems.${n}.body`, 'Problem Body', '', (problemBlocks[problemBlocks.length-1]?.sort_order ?? 0) + 11) }}
+              style={{ marginTop: 12, background: 'none', border: '1px dashed #CBD5E1', borderRadius: 8, padding: '7px 16px', fontSize: 13, color: '#64748B', cursor: 'pointer' }}>+ Add problem</button>
+          </section>
+        )}
+
+        {renderSectionWrap('section.gaps.visible', 'Market Gaps',
+          <section style={{ background: '#FFFFFF', padding: '56px 48px' }}>
+            <div style={{ marginBottom: 12 }}>{renderEditableText({ blockKey: 'gaps.title', fallback: "Existing tools weren't built for this", variant: 'sectionTitle' })}</div>
+            <div style={{ marginBottom: 28 }}>{renderEditableText({ blockKey: 'gaps.subtitle', fallback: '', variant: 'body', multiline: true })}</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12 }}>
+              {gapBlocks.map((gb, i) => {
+                const n = gb.block_key.replace('gaps.', '').replace('.title', '')
+                return (
+                  <div key={gb.id} draggable onDragStart={() => { dragRef.current = i }} onDragOver={e => e.preventDefault()} onDrop={() => reorderBlocks(gapBlocks, dragRef.current ?? i, i)}
+                    style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 12, padding: 18, position: 'relative' }}>
+                    <span style={{ position: 'absolute', top: 8, left: 8, fontSize: 14, color: '#CBD5E1', cursor: 'grab' }}>⠿</span>
+                    <button onClick={() => { deleteBlock(gb.id); const det = (selectedPage?.blocks ?? []).find(b => b.block_key === `gaps.${n}.detail`); if (det) deleteBlock(det.id) }}
+                      style={{ position: 'absolute', top: 8, right: 8, background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', fontSize: 13 }}>🗑</button>
+                    <div style={{ marginBottom: 6, paddingLeft: 20 }}>{renderEditableText({ blockKey: `gaps.${n}.title`, fallback: gb.value, placeholder: 'Gap title', variant: 'body', styleOverride: { fontWeight: 700, color: '#6B7280' } })}</div>
+                    <div style={{ paddingLeft: 20 }}>{renderEditableText({ blockKey: `gaps.${n}.detail`, fallback: '', placeholder: 'Gap detail', variant: 'body', multiline: true })}</div>
+                  </div>
+                )
+              })}
+            </div>
+            <button onClick={() => { const n = gapBlocks.length + 1; createBlock(selectedPage!.id, `gaps.${n}.title`, 'Gap Title', '', (gapBlocks[gapBlocks.length-1]?.sort_order ?? 0) + 10); createBlock(selectedPage!.id, `gaps.${n}.detail`, 'Gap Detail', '', (gapBlocks[gapBlocks.length-1]?.sort_order ?? 0) + 11) }}
+              style={{ marginTop: 12, background: 'none', border: '1px dashed #CBD5E1', borderRadius: 8, padding: '7px 16px', fontSize: 13, color: '#64748B', cursor: 'pointer' }}>+ Add gap</button>
+          </section>
+        )}
+
+        {renderSectionWrap('section.fixes.visible', 'How Tasking Fixes It',
+          <section style={{ background: '#FFFBF5', padding: '56px 48px' }}>
+            <div style={{ marginBottom: 12 }}>{renderEditableText({ blockKey: 'fixes.title', fallback: 'Every problem. Directly addressed.', variant: 'sectionTitle' })}</div>
+            <div style={{ marginBottom: 28 }}>{renderEditableText({ blockKey: 'fixes.subtitle', fallback: '', variant: 'body', multiline: true })}</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {fixBlocks.map((fb, i) => {
+                const n = fb.block_key.replace('fixes.', '').replace('.problem', '')
+                return (
+                  <div key={fb.id} draggable onDragStart={() => { dragRef.current = i }} onDragOver={e => e.preventDefault()} onDrop={() => reorderBlocks(fixBlocks, dragRef.current ?? i, i)}
+                    style={{ background: '#FFFFFF', border: `1px solid ${BORDER}`, borderRadius: 14, padding: 22, position: 'relative' }}>
+                    <span style={{ position: 'absolute', top: '50%', left: 8, transform: 'translateY(-50%)', fontSize: 14, color: '#CBD5E1', cursor: 'grab' }}>⠿</span>
+                    <button onClick={() => { deleteBlock(fb.id); ['solution', 'detail'].forEach(k => { const b = (selectedPage?.blocks ?? []).find(x => x.block_key === `fixes.${n}.${k}`); if (b) deleteBlock(b.id) }) }}
+                      style={{ position: 'absolute', top: 8, right: 8, background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', fontSize: 14 }}>🗑</button>
+                    <div style={{ paddingLeft: 16 }}>
+                      <div style={{ marginBottom: 4 }}>
+                        <span style={{ fontSize: 11, fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Problem: </span>
+                        {renderEditableText({ blockKey: `fixes.${n}.problem`, fallback: fb.value, placeholder: 'Problem label', variant: 'body', hideDirtyBadge: true })}
+                      </div>
+                      <div style={{ color: ORANGE, fontWeight: 700, marginBottom: 8 }}>{renderEditableText({ blockKey: `fixes.${n}.solution`, fallback: '', placeholder: 'Solution headline', variant: 'body', hideDirtyBadge: true })}</div>
+                      <div>{renderEditableText({ blockKey: `fixes.${n}.detail`, fallback: '', placeholder: 'Solution detail', variant: 'body', multiline: true, hideDirtyBadge: true })}</div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+            <button onClick={() => { const n = fixBlocks.length + 1; const base = (fixBlocks[fixBlocks.length-1]?.sort_order ?? 0) + 10; ['problem', 'solution', 'detail'].forEach((k, j) => createBlock(selectedPage!.id, `fixes.${n}.${k}`, `Fix ${n} ${k}`, '', base + j)) }}
+              style={{ marginTop: 12, background: 'none', border: '1px dashed #CBD5E1', borderRadius: 8, padding: '7px 16px', fontSize: 13, color: '#64748B', cursor: 'pointer' }}>+ Add fix</button>
+          </section>
+        )}
+
+        {renderSectionWrap('section.cta.visible', 'CTA Section',
+          <section style={{ background: ORANGE, padding: '64px 48px', textAlign: 'center' }}>
+            <div style={{ maxWidth: 500, margin: '0 auto 24px' }}>
+              {renderEditableText({ blockKey: 'cta.headline', fallback: 'See it working. For free.', variant: 'cta' })}
+            </div>
+            {renderEditableBtn({ labelKey: 'cta.button.label', urlKey: 'cta.button.url', fallbackLabel: 'Get Started Free', fallbackUrl: '/get-started', editing: editingCtaBtn, setEditing: setEditingCtaBtn, btnStyle: { background: '#FFFFFF', color: ORANGE, border: 'none', borderRadius: 10, padding: '13px 30px', fontSize: 15, fontWeight: 700, cursor: 'pointer' } })}
+          </section>
+        )}
+      </div>
+    )
+  }
+
+  const renderAboutTeamPreview = () => {
+    const memberColors: Record<string, { color: string; bg: string }> = {
+      '1': { color: '#F97316', bg: '#FEF3C7' }, '2': { color: '#8B5CF6', bg: '#EDE9FE' },
+      '3': { color: '#0EA5E9', bg: '#E0F2FE' }, '4': { color: '#10B981', bg: '#D1FAE5' },
+      '5': { color: '#EF4444', bg: '#FEE2E2' }, '6': { color: '#F59E0B', bg: '#FEF3C7' },
+    }
+    const memberBlocks = (selectedPage?.blocks ?? []).filter(b => b.block_key.startsWith('member.') && b.block_key.endsWith('.name')).sort((a, b) => a.sort_order - b.sort_order)
+    const dragRef = dragIndexRef
+
+    return (
+      <div style={{ background: '#FFFFFF', borderRadius: 18, overflow: 'hidden', border: `1px solid ${BORDER}` }}>
+        {renderSectionWrap('section.hero.visible', 'Hero Section',
+          <section style={{ background: '#1C1C1E', padding: '72px 48px 64px', textAlign: 'center' }}>
+            <div style={{ marginBottom: 20 }}>{renderEditableText({ blockKey: 'hero.badge', fallback: 'The Team', variant: 'badge' })}</div>
+            <div style={{ maxWidth: 640, margin: '0 auto 18px' }}>{renderEditableText({ blockKey: 'hero.headline', fallback: 'The people behind Tasking.', variant: 'hero' })}</div>
+            <div style={{ maxWidth: 520, margin: '0 auto' }}>{renderEditableText({ blockKey: 'hero.subheadline', fallback: 'A multidisciplinary team of six.', variant: 'subhead', multiline: true })}</div>
+          </section>
+        )}
+
+        {renderSectionWrap('section.team.visible', 'Team Members',
+          <section style={{ background: '#FFFBF5', padding: '56px 48px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20 }}>
+              {memberBlocks.map((mb, i) => {
+                const n = mb.block_key.replace('member.', '').replace('.name', '')
+                const { color, bg } = memberColors[n] ?? { color: '#F97316', bg: '#FEF3C7' }
+                const initials = (selectedPage?.blocks ?? []).find(b => b.block_key === `member.${n}.initials`)?.value ?? '?'
+                return (
+                  <div key={mb.id} draggable onDragStart={() => { dragRef.current = i }} onDragOver={e => e.preventDefault()} onDrop={() => reorderBlocks(memberBlocks, dragRef.current ?? i, i)}
+                    style={{ background: '#FFFFFF', border: `1px solid ${BORDER}`, borderRadius: 16, padding: 22, position: 'relative' }}>
+                    <span style={{ position: 'absolute', top: 8, left: 8, fontSize: 14, color: '#CBD5E1', cursor: 'grab' }}>⠿</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, paddingLeft: 18 }}>
+                      <div style={{ width: 44, height: 44, borderRadius: '50%', background: bg, border: `2px solid ${color}`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <span style={{ fontWeight: 700, fontSize: '0.875rem', color }}>{initials}</span>
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ marginBottom: 4 }}>{renderEditableText({ blockKey: `member.${n}.name`, fallback: mb.value, placeholder: 'Full name', variant: 'body', styleOverride: { fontWeight: 700 }, hideDirtyBadge: true })}</div>
+                        <div>{renderEditableText({ blockKey: `member.${n}.role`, fallback: '', placeholder: 'Role', variant: 'body', styleOverride: { fontSize: 13, color: '#78716C' }, hideDirtyBadge: true })}</div>
+                      </div>
+                    </div>
+                    <div style={{ paddingLeft: 18, marginBottom: 10 }}>{renderEditableText({ blockKey: `member.${n}.desc`, fallback: '', placeholder: 'Description', variant: 'body', multiline: true, hideDirtyBadge: true })}</div>
+                    <div style={{ paddingLeft: 18 }}>{renderEditableText({ blockKey: `member.${n}.focus`, fallback: '', placeholder: 'Focus areas (comma-separated)', variant: 'body', styleOverride: { fontSize: 12, color: '#78716C' }, hideDirtyBadge: true })}</div>
+                  </div>
+                )
+              })}
+            </div>
+          </section>
+        )}
+
+        {renderSectionWrap('section.cta.visible', 'CTA Section',
+          <section style={{ background: ORANGE, padding: '64px 48px', textAlign: 'center' }}>
+            <div style={{ maxWidth: 560, margin: '0 auto' }}>
+              {renderEditableText({ blockKey: 'cta.headline', fallback: 'Six people. One platform. Built for the businesses that need it most.', variant: 'cta' })}
+            </div>
+          </section>
+        )}
+      </div>
+    )
+  }
+
+  const renderAboutFaqPreview = () => {
+    const faqQBlocks = (selectedPage?.blocks ?? []).filter(b => b.block_key.startsWith('faq.') && b.block_key.endsWith('.q')).sort((a, b) => a.sort_order - b.sort_order)
+    const dragRef = dragIndexRef
+    const nextFaqIdx = faqQBlocks.length > 0 ? Math.max(...faqQBlocks.map(b => parseInt(b.block_key.split('.')[1] ?? '0'))) + 1 : 1
+
+    return (
+      <div style={{ background: '#FFFFFF', borderRadius: 18, overflow: 'hidden', border: `1px solid ${BORDER}` }}>
+        {renderSectionWrap('section.hero.visible', 'Hero Section',
+          <section style={{ background: '#1C1C1E', padding: '72px 48px 64px', textAlign: 'center' }}>
+            <div style={{ marginBottom: 20 }}>{renderEditableText({ blockKey: 'hero.badge', fallback: 'FAQ', variant: 'badge' })}</div>
+            <div style={{ maxWidth: 640, margin: '0 auto 18px' }}>{renderEditableText({ blockKey: 'hero.headline', fallback: 'Questions we get all the time.', variant: 'hero' })}</div>
+            <div style={{ maxWidth: 520, margin: '0 auto' }}>{renderEditableText({ blockKey: 'hero.subheadline', fallback: "Honest answers about how Tasking works, what's free, and what to expect.", variant: 'subhead', multiline: true })}</div>
+          </section>
+        )}
+
+        {renderSectionWrap('section.faq.visible', 'FAQ Items',
+          <section style={{ background: '#FFFBF5', padding: '56px 48px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {faqQBlocks.map((qb, i) => {
+                const n = qb.block_key.replace('faq.', '').replace('.q', '')
+                const aKey  = `faq.${n}.a`
+                const aBlock = (selectedPage?.blocks ?? []).find(b => b.block_key === aKey)
+                const dirty = (drafts[qb.id] ?? '') !== qb.value || (aBlock ? (drafts[aBlock.id] ?? '') !== aBlock.value : false)
+                return (
+                  <div key={qb.id} draggable onDragStart={() => { dragRef.current = i }} onDragOver={e => e.preventDefault()} onDrop={() => reorderBlocks(faqQBlocks, dragRef.current ?? i, i)}
+                    style={{ position: 'relative', background: '#FFFFFF', border: `1px solid ${dirty ? ORANGE : BORDER}`, borderRadius: 14, padding: '18px 48px 18px 40px' }}>
+                    <span style={{ position: 'absolute', top: '50%', left: 10, transform: 'translateY(-50%)', cursor: 'grab', fontSize: 14, color: '#CBD5E1' }}>⠿</span>
+                    {dirty && <span style={{ position: 'absolute', top: 8, right: 36, background: ORANGE, color: '#fff', fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 100 }}>Unsaved</span>}
+                    <button onClick={() => { deleteBlock(qb.id); if (aBlock) deleteBlock(aBlock.id) }} style={{ position: 'absolute', top: 8, right: 8, background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', fontSize: 15 }}>🗑</button>
+                    <div style={{ marginBottom: 8 }}>{renderEditableText({ blockKey: qb.block_key, fallback: qb.value, placeholder: 'Your question?', variant: 'body', styleOverride: { fontWeight: 600 }, hideDirtyBadge: true })}</div>
+                    {aBlock && <div>{renderEditableText({ blockKey: aKey, fallback: aBlock.value, placeholder: 'Type your answer here...', variant: 'body', multiline: true, hideDirtyBadge: true })}</div>}
+                  </div>
+                )
+              })}
+            </div>
+            <button onClick={() => { createBlock(selectedPage!.id, `faq.${nextFaqIdx}.q`, 'FAQ Question', '', (faqQBlocks[faqQBlocks.length - 1]?.sort_order ?? 0) + 10); createBlock(selectedPage!.id, `faq.${nextFaqIdx}.a`, 'FAQ Answer', '', (faqQBlocks[faqQBlocks.length - 1]?.sort_order ?? 0) + 11) }}
+              style={{ marginTop: 14, background: 'none', border: '1px dashed #CBD5E1', borderRadius: 8, padding: '8px 18px', fontSize: 13, color: '#64748B', cursor: 'pointer' }}>+ Add question</button>
+          </section>
+        )}
+
+        {renderSectionWrap('section.still.visible', 'Still Have Questions',
+          <section style={{ background: '#FFFFFF', padding: '48px' }}>
+            <div style={{ maxWidth: 500, margin: '0 auto', textAlign: 'center' }}>
+              <div style={{ marginBottom: 10 }}>{renderEditableText({ blockKey: 'still.headline', fallback: 'Still have questions?', variant: 'sectionTitle' })}</div>
+              <div style={{ marginBottom: 20 }}>{renderEditableText({ blockKey: 'still.body', fallback: 'The best way to get answers is to try it. Everything in the core plan is free.', variant: 'body', multiline: true })}</div>
+              {renderEditableBtn({ labelKey: 'still.button.label', urlKey: 'still.button.url', fallbackLabel: 'Get Started Free', fallbackUrl: '/get-started', editing: editingCtaBtn, setEditing: setEditingCtaBtn, btnStyle: { background: ORANGE, color: '#FFFFFF', border: 'none', borderRadius: 10, padding: '12px 26px', fontSize: 14, fontWeight: 700, cursor: 'pointer' } })}
+            </div>
+          </section>
+        )}
       </div>
     )
   }
@@ -2175,17 +2563,18 @@ export default function AdminDashboardPage() {
                     <div style={{ marginBottom: 12 }}>{renderEditableText({ blockKey: 'plan.free.pricesub', fallback: 'per month, forever', variant: 'body' })}</div>
                     <div style={{ paddingBottom: 20, marginBottom: 20, borderBottom: `1px solid ${BORDER}` }}>{renderEditableText({ blockKey: 'plan.free.tagline', fallback: 'Everything you need to get started.', variant: 'body' })}</div>
                     <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 28, flex: 1 }}>
-                      {freeFeatBlocks.map(fb => (
-                        <li key={fb.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {freeFeatBlocks.map((fb, i) => (
+                        <li key={fb.id} draggable onDragStart={() => { dragIndexRef.current = i }} onDragOver={e => e.preventDefault()} onDrop={() => reorderBlocks(freeFeatBlocks, dragIndexRef.current ?? i, i)} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ cursor: 'grab', color: MUTED, fontSize: 14, lineHeight: 1, flexShrink: 0 }} title="Drag to reorder">⠿</span>
                           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}><polyline points="20 6 9 17 4 12" stroke={ORANGE} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                          <div style={{ flex: 1 }}>{renderEditableText({ blockKey: fb.block_key, fallback: fb.value, variant: 'body' })}</div>
+                          <div style={{ flex: 1 }}>{renderEditableText({ blockKey: fb.block_key, fallback: fb.value, placeholder: 'Type a feature...', variant: 'body' })}</div>
                           <button type="button" onClick={() => deleteBlock(fb.id)} title="Remove" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 2, flexShrink: 0, opacity: 0.6 }}>
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
                           </button>
                         </li>
                       ))}
                     </ul>
-                    <button type="button" onClick={() => createBlock(selectedPage!.id, `plan.free.feature.${nextFreeIdx}`, 'Feature', 'New feature', maxFreeOrder + 2)} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: `1.5px dashed ${BORDER}`, borderRadius: 8, padding: '7px 12px', fontSize: 12, color: MUTED, cursor: 'pointer', marginBottom: 20 }}>
+                    <button type="button" onClick={() => createBlock(selectedPage!.id, `plan.free.feature.${nextFreeIdx}`, 'Feature', '', maxFreeOrder + 2)} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: `1.5px dashed ${BORDER}`, borderRadius: 8, padding: '7px 12px', fontSize: 12, color: MUTED, cursor: 'pointer', marginBottom: 20 }}>
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                       Add feature
                     </button>
@@ -2210,17 +2599,18 @@ export default function AdminDashboardPage() {
                     <div style={{ paddingBottom: 20, marginBottom: 20, borderBottom: `1px solid ${BORDER}` }}>{renderEditableText({ blockKey: 'plan.pro.tagline', fallback: 'For teams that need more control.', variant: 'body' })}</div>
                     <div style={{ marginBottom: 12 }}>{renderEditableText({ blockKey: 'plan.pro.featuresintro', fallback: 'Includes everything in the Free Plan, plus:', variant: 'body', styleOverride: { fontSize: 12, fontWeight: 600, color: '#9CA3AF' } })}</div>
                     <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 28, flex: 1 }}>
-                      {proFeatBlocks.map(fb => (
-                        <li key={fb.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {proFeatBlocks.map((fb, i) => (
+                        <li key={fb.id} draggable onDragStart={() => { dragIndexRef.current = i }} onDragOver={e => e.preventDefault()} onDrop={() => reorderBlocks(proFeatBlocks, dragIndexRef.current ?? i, i)} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ cursor: 'grab', color: MUTED, fontSize: 14, lineHeight: 1, flexShrink: 0 }} title="Drag to reorder">⠿</span>
                           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}><polyline points="20 6 9 17 4 12" stroke={ORANGE} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                          <div style={{ flex: 1 }}>{renderEditableText({ blockKey: fb.block_key, fallback: fb.value, variant: 'body' })}</div>
+                          <div style={{ flex: 1 }}>{renderEditableText({ blockKey: fb.block_key, fallback: fb.value, placeholder: 'Type a feature...', variant: 'body' })}</div>
                           <button type="button" onClick={() => deleteBlock(fb.id)} title="Remove" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 2, flexShrink: 0, opacity: 0.6 }}>
                             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
                           </button>
                         </li>
                       ))}
                     </ul>
-                    <button type="button" onClick={() => createBlock(selectedPage!.id, `plan.pro.feature.${nextProIdx}`, 'Feature', 'New feature', maxProOrder + 2)} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: `1.5px dashed ${BORDER}`, borderRadius: 8, padding: '7px 12px', fontSize: 12, color: MUTED, cursor: 'pointer', marginBottom: 20 }}>
+                    <button type="button" onClick={() => createBlock(selectedPage!.id, `plan.pro.feature.${nextProIdx}`, 'Feature', '', maxProOrder + 2)} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: `1.5px dashed ${BORDER}`, borderRadius: 8, padding: '7px 12px', fontSize: 12, color: MUTED, cursor: 'pointer', marginBottom: 20 }}>
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                       Add feature
                     </button>
@@ -2239,6 +2629,7 @@ export default function AdminDashboardPage() {
               {renderEditableText({ blockKey: 'compare.title', fallback: 'Everything side by side.', variant: 'sectionTitle' })}
               <div style={{ marginTop: 8 }}>{renderEditableText({ blockKey: 'compare.subtitle', fallback: "See exactly what's included in each plan.", variant: 'body', styleOverride: { textAlign: 'center' as const } })}</div>
             </div>
+            <div style={{ maxWidth: 640, margin: '0 auto' }}>
             {(() => {
               const rowIdxs = (selectedPage?.blocks ?? [])
                 .filter(b => b.block_key.startsWith('compare.row.') && b.block_key.endsWith('.type'))
@@ -2263,52 +2654,116 @@ export default function AdminDashboardPage() {
                   </button>
                 )
               }
+              // Build group buckets: each group = { header: typeBlock | null, rows: typeBlock[] }
+              type CompareGroup = { header: typeof rowIdxs[0] | null; rows: typeof rowIdxs }
+              const groups: CompareGroup[] = []
+              for (const tb of rowIdxs) {
+                if (tb.value === 'group') {
+                  groups.push({ header: tb, rows: [] })
+                } else {
+                  if (groups.length === 0) groups.push({ header: null, rows: [] })
+                  groups[groups.length - 1].rows.push(tb)
+                }
+              }
+
+              const reorderGroups = async (fromGrpIdx: number, toGrpIdx: number) => {
+                if (fromGrpIdx === toGrpIdx || !adminUserId) return
+                const reordered = [...groups]
+                const [moved] = reordered.splice(fromGrpIdx, 1)
+                reordered.splice(toGrpIdx, 0, moved)
+                // Flatten to all typeBlocks in new order
+                const flat = reordered.flatMap(g => g.header ? [g.header, ...g.rows] : g.rows)
+                const updates = flat.map((b, i) => ({ id: b.id, sort_order: i * 10 }))
+                setSelectedPage(current => {
+                  if (!current) return current
+                  const m: Record<string, number> = {}
+                  updates.forEach(u => { m[u.id] = u.sort_order })
+                  return { ...current, blocks: current.blocks.map(b => m[b.id] !== undefined ? { ...b, sort_order: m[b.id] } : b) }
+                })
+                await fetch('/api/admin/marketing-pages', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ admin_user_id: adminUserId, updates }) })
+              }
+
+              const reorderRowsInGroup = async (grpIdx: number, fromRowIdx: number, toRowIdx: number) => {
+                if (fromRowIdx === toRowIdx || !adminUserId) return
+                const grp = groups[grpIdx]
+                const reordered = [...grp.rows]
+                const [moved] = reordered.splice(fromRowIdx, 1)
+                reordered.splice(toRowIdx, 0, moved)
+                // Only reassign sort_orders for rows in this group; keep header and other groups unchanged
+                // Compute base sort_order from the header (or 0) and space rows after it
+                const baseOrder = grp.header ? grp.header.sort_order : 0
+                const updates = reordered.map((b, i) => ({ id: b.id, sort_order: baseOrder + (i + 1) * 2 }))
+                setSelectedPage(current => {
+                  if (!current) return current
+                  const m: Record<string, number> = {}
+                  updates.forEach(u => { m[u.id] = u.sort_order })
+                  return { ...current, blocks: current.blocks.map(b => m[b.id] !== undefined ? { ...b, sort_order: m[b.id] } : b) }
+                })
+                await fetch('/api/admin/marketing-pages', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ admin_user_id: adminUserId, updates }) })
+              }
+
               return (
                 <div style={{ border: `1px solid ${BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px 80px 32px', background: '#1C1917', padding: '12px 20px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '24px 1fr 80px 80px 32px', background: '#1C1917', padding: '12px 20px' }}>
+                    <span />
                     <span style={{ color: 'rgba(255,255,255,0.5)', fontWeight: 600, fontSize: 10, textTransform: 'uppercase' as const, letterSpacing: '0.08em' }}>Feature</span>
                     <span style={{ color: '#FFFFFF', fontWeight: 700, fontSize: 13, textAlign: 'center' as const }}>Free</span>
                     <span style={{ color: '#FB923C', fontWeight: 700, fontSize: 13, textAlign: 'center' as const }}>Pro</span>
                     <span />
                   </div>
-                  {rowIdxs.map((typeBlock, i) => {
-                    const idx = typeBlock.block_key.split('.')[2]
-                    const type = typeBlock.value
-                    if (type === 'group') {
-                      const labelBlock = blockByKey[`compare.row.${idx}.label`]
-                      return (
-                        <div key={typeBlock.id} style={{ display: 'grid', gridTemplateColumns: '1fr 80px 80px 32px', background: '#F9FAFB', padding: '8px 20px', borderTop: i > 0 ? `1px solid ${BORDER}` : undefined, alignItems: 'center' }}>
-                          <div>{labelBlock && renderEditableText({ blockKey: labelBlock.block_key, fallback: labelBlock.value, variant: 'body', styleOverride: { fontSize: 10, fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.1em' } })}</div>
-                          <span /><span />
-                          <button type="button" onClick={() => { deleteBlock(typeBlock.id); if (labelBlock) deleteBlock(labelBlock.id) }} title="Remove group" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 2, opacity: 0.6 }}>
-                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-                          </button>
-                        </div>
-                      )
-                    }
-                    const featBlock = blockByKey[`compare.row.${idx}.feature`]
-                    const freeBlock = blockByKey[`compare.row.${idx}.free`]
-                    const proBlock  = blockByKey[`compare.row.${idx}.pro`]
-                    const isFree = freeBlock?.value === 'true'
-                    const isPro  = proBlock?.value === 'true'
-                    return (
-                      <div key={typeBlock.id} style={{ display: 'grid', gridTemplateColumns: '1fr 80px 80px 32px', padding: '8px 20px', borderTop: `1px solid #F5F0E8`, alignItems: 'center' }}>
-                        <div>{featBlock && renderEditableText({ blockKey: featBlock.block_key, fallback: featBlock.value, variant: 'body', styleOverride: { fontSize: 13, color: '#374151' } })}</div>
-                        <div style={{ display: 'flex', justifyContent: 'center' }}>{freeBlock && <Tick val={isFree} blockKey={freeBlock.block_key} />}</div>
-                        <div style={{ display: 'flex', justifyContent: 'center' }}>{proBlock && <Tick val={isPro} blockKey={proBlock.block_key} />}</div>
-                        <button type="button" onClick={() => { deleteBlock(typeBlock.id); if (featBlock) deleteBlock(featBlock.id); if (freeBlock) deleteBlock(freeBlock.id); if (proBlock) deleteBlock(proBlock.id) }} title="Remove row" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 2, opacity: 0.6 }}>
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-                        </button>
-                      </div>
-                    )
-                  })}
+                  {groups.map((grp, gi) => (
+                    <div key={grp.header?.id ?? `ungrouped-${gi}`}>
+                      {/* Group header — dragging it moves the whole group */}
+                      {grp.header && (() => {
+                        const idx = grp.header.block_key.split('.')[2]
+                        const labelBlock = blockByKey[`compare.row.${idx}.label`]
+                        const isFirstItem = gi === 0 && !grp.header
+                        return (
+                          <div
+                            draggable
+                            onDragStart={() => { dragIndexRef.current = gi }}
+                            onDragOver={e => e.preventDefault()}
+                            onDrop={() => reorderGroups(dragIndexRef.current ?? gi, gi)}
+                            style={{ display: 'grid', gridTemplateColumns: '24px 1fr 80px 80px 32px', background: '#F9FAFB', padding: '8px 20px', borderTop: `1px solid ${BORDER}`, alignItems: 'center' }}
+                          >
+                            <span style={{ cursor: 'grab', color: MUTED, fontSize: 14, lineHeight: 1 }} title="Drag to move group">⠿</span>
+                            <div>{labelBlock && renderEditableText({ blockKey: labelBlock.block_key, fallback: labelBlock.value, placeholder: 'Group name', variant: 'body', styleOverride: { fontSize: 10, fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase' as const, letterSpacing: '0.1em' } })}</div>
+                            <span /><span />
+                            <button type="button" onClick={() => { deleteBlock(grp.header!.id); if (labelBlock) deleteBlock(labelBlock.id); grp.rows.forEach(r => { const ridx = r.block_key.split('.')[2]; ['feature','free','pro'].forEach(k => { const b = blockByKey[`compare.row.${ridx}.${k}`]; if (b) deleteBlock(b.id) }); deleteBlock(r.id) }) }} title="Remove group and its rows" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 2, opacity: 0.6 }}>
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                            </button>
+                          </div>
+                        )
+                      })()}
+                      {/* Rows within this group — dragging reorders within the group only */}
+                      {grp.rows.map((typeBlock, ri) => {
+                        const idx = typeBlock.block_key.split('.')[2]
+                        const featBlock = blockByKey[`compare.row.${idx}.feature`]
+                        const freeBlock = blockByKey[`compare.row.${idx}.free`]
+                        const proBlock  = blockByKey[`compare.row.${idx}.pro`]
+                        const isFree = freeBlock?.value === 'true'
+                        const isPro  = proBlock?.value === 'true'
+                        return (
+                          <div key={typeBlock.id} draggable onDragStart={() => { dragIndexRef.current = ri }} onDragOver={e => e.preventDefault()} onDrop={() => reorderRowsInGroup(gi, dragIndexRef.current ?? ri, ri)} style={{ display: 'grid', gridTemplateColumns: '24px 1fr 80px 80px 32px', padding: '8px 20px', borderTop: `1px solid #F5F0E8`, alignItems: 'center' }}>
+                            <span style={{ cursor: 'grab', color: MUTED, fontSize: 14, lineHeight: 1 }} title="Drag to reorder row">⠿</span>
+                            <div>{featBlock && renderEditableText({ blockKey: featBlock.block_key, fallback: featBlock.value, placeholder: 'Feature name', variant: 'body', styleOverride: { fontSize: 13, color: '#374151' } })}</div>
+                            <div style={{ display: 'flex', justifyContent: 'center' }}>{freeBlock && <Tick val={isFree} blockKey={freeBlock.block_key} />}</div>
+                            <div style={{ display: 'flex', justifyContent: 'center' }}>{proBlock && <Tick val={isPro} blockKey={proBlock.block_key} />}</div>
+                            <button type="button" onClick={() => { deleteBlock(typeBlock.id); if (featBlock) deleteBlock(featBlock.id); if (freeBlock) deleteBlock(freeBlock.id); if (proBlock) deleteBlock(proBlock.id) }} title="Remove row" style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 2, opacity: 0.6 }}>
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  ))}
                   {/* Add buttons */}
                   <div style={{ display: 'flex', gap: 8, padding: '12px 20px', borderTop: `1px solid ${BORDER}`, background: '#FAFAF9' }}>
-                    <button type="button" onClick={() => { if (!selectedPage) return; createBlock(selectedPage.id, `compare.row.${nextIdx}.type`, 'Type', 'row', maxOrder + 2); createBlock(selectedPage.id, `compare.row.${nextIdx}.feature`, 'Feature', 'New feature', maxOrder + 3); createBlock(selectedPage.id, `compare.row.${nextIdx}.free`, 'Free', 'false', maxOrder + 4); createBlock(selectedPage.id, `compare.row.${nextIdx}.pro`, 'Pro', 'true', maxOrder + 5) }} style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: `1.5px dashed ${BORDER}`, borderRadius: 7, padding: '5px 12px', fontSize: 11, color: MUTED, cursor: 'pointer' }}>
+                    <button type="button" onClick={() => { if (!selectedPage) return; createBlock(selectedPage.id, `compare.row.${nextIdx}.type`, 'Type', 'row', maxOrder + 2); createBlock(selectedPage.id, `compare.row.${nextIdx}.feature`, 'Feature', '', maxOrder + 3); createBlock(selectedPage.id, `compare.row.${nextIdx}.free`, 'Free', 'false', maxOrder + 4); createBlock(selectedPage.id, `compare.row.${nextIdx}.pro`, 'Pro', 'true', maxOrder + 5) }} style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: `1.5px dashed ${BORDER}`, borderRadius: 7, padding: '5px 12px', fontSize: 11, color: MUTED, cursor: 'pointer' }}>
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                       Add row
                     </button>
-                    <button type="button" onClick={() => { if (!selectedPage) return; createBlock(selectedPage.id, `compare.row.${nextIdx}.type`, 'Type', 'group', maxOrder + 2); createBlock(selectedPage.id, `compare.row.${nextIdx}.label`, 'Label', 'New Group', maxOrder + 3) }} style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: `1.5px dashed ${BORDER}`, borderRadius: 7, padding: '5px 12px', fontSize: 11, color: MUTED, cursor: 'pointer' }}>
+                    <button type="button" onClick={() => { if (!selectedPage) return; createBlock(selectedPage.id, `compare.row.${nextIdx}.type`, 'Type', 'group', maxOrder + 2); createBlock(selectedPage.id, `compare.row.${nextIdx}.label`, 'Label', '', maxOrder + 3) }} style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: `1.5px dashed ${BORDER}`, borderRadius: 7, padding: '5px 12px', fontSize: 11, color: MUTED, cursor: 'pointer' }}>
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                       Add group header
                     </button>
@@ -2316,6 +2771,7 @@ export default function AdminDashboardPage() {
                 </div>
               )
             })()}
+            </div>
           </section>
         )}
 
@@ -2325,22 +2781,35 @@ export default function AdminDashboardPage() {
             <div style={{ textAlign: 'center', marginBottom: 32 }}>
               {renderEditableText({ blockKey: 'faq.title', fallback: 'Pricing questions, answered.', variant: 'sectionTitle' })}
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 640, margin: '0 auto' }}>
-              {faqQBlocks.map(qb => {
-                const idx = qb.block_key.replace('faq.', '').replace('.q', '')
-                const aKey = `faq.${idx}.a`
-                const aBlock = blockByKey[aKey]
-                const aDirty = aBlock ? (drafts[aBlock.id] ?? '') !== aBlock.value : false
-                const qDirty = (drafts[qb.id] ?? '') !== qb.value
-                return (
-                  <div key={qb.id} style={{ position: 'relative', background: '#FFFFFF', border: `1px solid ${BORDER}`, borderRadius: 12, padding: '16px 20px' }}>
-                    {(qDirty || aDirty) && <span style={{ position: 'absolute', top: 8, right: 8, background: ORANGE, color: '#FFFFFF', borderRadius: 999, padding: '2px 6px', fontSize: 9, fontWeight: 900 }}>Unsaved</span>}
-                    {renderEditableText({ blockKey: qb.block_key, fallback: qb.value, variant: 'body', styleOverride: { fontWeight: 600, color: '#1C1917', marginBottom: 6 } })}
-                    {aBlock && renderEditableText({ blockKey: aKey, fallback: aBlock.value, variant: 'body', multiline: true })}
-                  </div>
-                )
-              })}
-            </div>
+            {(() => {
+              const maxFaqOrder = faqQBlocks.length > 0 ? Math.max(...faqQBlocks.map(b => b.sort_order)) : 70
+              const nextFaqIdx = faqQBlocks.length > 0 ? Math.max(...faqQBlocks.map(b => parseInt(b.block_key.replace('faq.','').replace('.q','')))) + 1 : 1
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 640, margin: '0 auto' }}>
+                  {faqQBlocks.map((qb, i) => {
+                    const idx = qb.block_key.replace('faq.', '').replace('.q', '')
+                    const aKey = `faq.${idx}.a`
+                    const aBlock = blockByKey[aKey]
+                    const dirty = (drafts[qb.id] ?? '') !== qb.value || (aBlock ? (drafts[aBlock.id] ?? '') !== aBlock.value : false)
+                    return (
+                      <div key={qb.id} draggable onDragStart={() => { dragIndexRef.current = i }} onDragOver={e => e.preventDefault()} onDrop={() => reorderBlocks(faqQBlocks, dragIndexRef.current ?? i, i)} style={{ position: 'relative', background: '#FFFFFF', border: `1px solid ${BORDER}`, borderRadius: 12, padding: '16px 44px 16px 36px', cursor: 'default' }}>
+                        <span style={{ position: 'absolute', top: '50%', left: 10, transform: 'translateY(-50%)', cursor: 'grab', color: MUTED, fontSize: 14, lineHeight: 1 }} title="Drag to reorder">⠿</span>
+                        {dirty && <span style={{ position: 'absolute', top: 8, right: 36, background: ORANGE, color: '#FFFFFF', borderRadius: 999, padding: '2px 6px', fontSize: 9, fontWeight: 900 }}>Unsaved</span>}
+                        <button type="button" onClick={() => { deleteBlock(qb.id); if (aBlock) deleteBlock(aBlock.id) }} title="Remove" style={{ position: 'absolute', top: 12, right: 10, background: 'none', border: 'none', cursor: 'pointer', color: '#EF4444', padding: 2, opacity: 0.6 }}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                        </button>
+                        {renderEditableText({ blockKey: qb.block_key, fallback: qb.value, placeholder: 'Your question?', variant: 'body', styleOverride: { fontWeight: 600, color: '#1C1917', marginBottom: 8 }, hideDirtyBadge: true })}
+                        {aBlock && renderEditableText({ blockKey: aKey, fallback: aBlock.value, placeholder: 'Type your answer here...', variant: 'body', multiline: true, hideDirtyBadge: true })}
+                      </div>
+                    )
+                  })}
+                  <button type="button" onClick={() => { if (!selectedPage) return; createBlock(selectedPage.id, `faq.${nextFaqIdx}.q`, 'Question', '', maxFaqOrder + 2); createBlock(selectedPage.id, `faq.${nextFaqIdx}.a`, 'Answer', '', maxFaqOrder + 3) }} style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: `1.5px dashed ${BORDER}`, borderRadius: 10, padding: '10px 16px', fontSize: 12, color: MUTED, cursor: 'pointer' }}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Add question
+                  </button>
+                </div>
+              )
+            })()}
           </section>
         )}
 
@@ -2476,7 +2945,7 @@ export default function AdminDashboardPage() {
                   Loading live preview...
                 </div>
               ) : selectedPage ? (
-                <>{selectedPage.slug === 'home' ? renderHomePreview() : selectedPage.slug === 'products' ? renderProductsPreview() : selectedPage.slug === 'about' ? renderAboutPreview() : selectedPage.slug === 'pricing' ? renderPricingPreview() : selectedPage.slug === 'products-ai-features' ? renderAiFeaturesPreview() : selectedPage.slug === 'products-recruitment' ? renderRecruitmentPreview() : selectedPage.slug === 'products-attendance' ? renderAttendancePreview() : selectedPage.slug === 'products-smart-notifications' ? renderSmartNotificationsPreview() : selectedPage.slug === 'products-team-management' ? renderTeamManagementPreview() : selectedPage.slug === 'industries' ? renderIndustriesPreview() : renderGenericPreview()}</>
+                <>{selectedPage.slug === 'home' ? renderHomePreview() : selectedPage.slug === 'products' ? renderProductsPreview() : selectedPage.slug === 'about' ? renderAboutPreview() : selectedPage.slug === 'pricing' ? renderPricingPreview() : selectedPage.slug === 'products-ai-features' ? renderAiFeaturesPreview() : selectedPage.slug === 'products-recruitment' ? renderRecruitmentPreview() : selectedPage.slug === 'products-attendance' ? renderAttendancePreview() : selectedPage.slug === 'products-smart-notifications' ? renderSmartNotificationsPreview() : selectedPage.slug === 'products-team-management' ? renderTeamManagementPreview() : selectedPage.slug === 'industries' ? renderIndustriesPreview() : selectedPage.slug === 'about-mission' ? renderAboutMissionPreview() : selectedPage.slug === 'about-problem-solution' ? renderAboutProblemSolutionPreview() : selectedPage.slug === 'about-team' ? renderAboutTeamPreview() : selectedPage.slug === 'about-faq' ? renderAboutFaqPreview() : renderGenericPreview()}</>
 
               ) : (
                 <div style={{ display: 'grid', placeItems: 'center', minHeight: 520, background: '#FFFFFF', borderRadius: 14, color: MUTED, fontSize: 13, fontWeight: 700 }}>

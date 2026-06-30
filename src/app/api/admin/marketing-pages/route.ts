@@ -27,6 +27,33 @@ export async function GET(req: NextRequest) {
   }
 }
 
+export async function PUT(req: NextRequest) {
+  let body: unknown
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
+  }
+
+  const { admin_user_id, updates } = body as Record<string, unknown>
+
+  if (!admin_user_id || typeof admin_user_id !== 'string') {
+    return NextResponse.json({ success: false, message: 'admin_user_id is required' }, { status: 400 })
+  }
+  if (!Array.isArray(updates)) {
+    return NextResponse.json({ success: false, message: 'updates must be an array' }, { status: 400 })
+  }
+
+  try {
+    await marketingService.reorderMarketingContentBlocks(admin_user_id, updates as { id: string; sort_order: number }[])
+    return NextResponse.json({ success: true }, { status: 200 })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to reorder blocks'
+    const status = message.includes('access') ? 403 : 400
+    return NextResponse.json({ success: false, message }, { status })
+  }
+}
+
 export async function PATCH(req: NextRequest) {
   let body: unknown
   try {
