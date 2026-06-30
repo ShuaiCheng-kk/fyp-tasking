@@ -11,7 +11,6 @@ const BORDER = '#E2E8F0'
 const MUTED = '#94A3B8'
 
 export default function AdminSettingsPage() {
-  const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
@@ -21,7 +20,6 @@ export default function AdminSettingsPage() {
   const [showConfirm, setShowConfirm] = useState(false)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
-  const [savingProfile, setSavingProfile] = useState(false)
   const [savingPassword, setSavingPassword] = useState(false)
 
   useEffect(() => {
@@ -29,38 +27,12 @@ export default function AdminSettingsPage() {
     if (!authUid) return
     fetch(`/api/user/me?user_id=${authUid}`)
       .then(r => r.json())
-      .then(d => {
-        if (d.success) {
-          setFullName(d.user.full_name ?? '')
-          setEmail(d.user.email_address ?? '')
-        }
-      })
+      .then(d => { if (d.success) setEmail(d.user.email_address ?? '') })
   }, [])
 
   const showNotice = (msg: string) => {
     setNotice(msg)
     setTimeout(() => setNotice(''), 3500)
-  }
-
-  const handleSaveProfile = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setSavingProfile(true)
-    setError('')
-    try {
-      const authUid = localStorage.getItem('tasking_user_id')
-      const res = await fetch('/api/user/update-profile', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: authUid, full_name: fullName }),
-      })
-      const data = await res.json()
-      if (data.success) showNotice('Profile updated')
-      else setError(data.error ?? 'Failed to update profile')
-    } catch {
-      setError('Something went wrong')
-    } finally {
-      setSavingProfile(false)
-    }
   }
 
   const handleChangePassword = async (e: React.FormEvent) => {
@@ -125,30 +97,9 @@ export default function AdminSettingsPage() {
           </div>
         )}
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, alignItems: 'stretch' }}>
-          {/* Profile */}
-          <div style={{ ...cardStyle, marginBottom: 0, maxWidth: 'none', display: 'flex', flexDirection: 'column' }}>
-            <h2 style={{ margin: '0 0 20px', fontSize: 16, fontWeight: 800, color: TEXT }}>Profile</h2>
-            <form onSubmit={handleSaveProfile} style={{ display: 'flex', flexDirection: 'column', gap: 16, flex: 1 }}>
-              <div>
-                <label style={labelStyle}>Full name</label>
-                <input style={inputStyle} value={fullName} onChange={e => setFullName(e.target.value)} placeholder="Your name" />
-              </div>
-              <div>
-                <label style={labelStyle}>Email</label>
-                <input style={{ ...inputStyle, background: '#F8FAFC', color: MUTED }} value={email} disabled />
-                <p style={{ margin: '5px 0 0', fontSize: 11, color: MUTED }}>Email cannot be changed here</p>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 'auto' }}>
-                <button type="submit" disabled={savingProfile} style={{ background: ORANGE, color: '#fff', border: 'none', borderRadius: 10, padding: '10px 22px', fontSize: 13, fontWeight: 800, cursor: savingProfile ? 'default' : 'pointer', opacity: savingProfile ? 0.75 : 1 }}>
-                  {savingProfile ? 'Saving…' : 'Save profile'}
-                </button>
-              </div>
-            </form>
-          </div>
-
+        <div style={{ maxWidth: 520 }}>
           {/* Password */}
-          <div style={{ ...cardStyle, marginBottom: 0, maxWidth: 'none' }}>
+          <div style={{ ...cardStyle }}>
             <h2 style={{ margin: '0 0 20px', fontSize: 16, fontWeight: 800, color: TEXT }}>Change password</h2>
             <form onSubmit={handleChangePassword} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               {[
