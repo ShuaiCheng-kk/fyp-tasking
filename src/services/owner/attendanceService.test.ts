@@ -8,6 +8,7 @@ vi.mock('@/lib/supabase', () => ({
 vi.mock('@/repositories/owner/attendanceRepository', () => ({
   attendanceRepository: {
     getAssignmentsByCompany: vi.fn(),
+    getAssignmentsByCompanyAndDateRange: vi.fn(),
     getAttendanceRecordsByAssignmentIds: vi.fn(),
     getAttendanceRecordById: vi.fn(),
     updateAttendanceRecord: vi.fn(),
@@ -86,6 +87,91 @@ describe('attendanceService', () => {
       expect(dashboard.summary.total_assignments).toBe(1)
       expect(dashboard.summary.approved).toBe(1)
       expect(dashboard.summary.pending_final_review).toBe(0)
+    })
+
+    it('does not flag a clock-in inside the 10-minute grace period as late (UC49)', async () => {
+      vi.mocked(attendanceRepository.getAssignmentsByCompany).mockResolvedValue([
+        {
+          id: 'asn-1', user_id: 'user-1', supervisor_employee_id: null,
+          shifts: { id: 'shift-1', department_id: null, shift_date: '2026-01-01', start_time: '09:00', end_time: '17:00', title: 'Shift' },
+        },
+      ] as any)
+      vi.mocked(attendanceRepository.getAttendanceRecordsByAssignmentIds).mockResolvedValue([
+        { id: 'rec-1', shift_assignment_id: 'asn-1', casual_worker_id: 'user-1', confirmed_by_employee_id: 'user-1', submitted_by_employee_id: 'user-1', clock_in_time: '2026-01-01T09:10:00Z', clock_out_time: null, owner_status: 'pending' },
+      ] as any)
+      vi.mocked(attendanceRepository.getUsersByIds).mockResolvedValue([{ id: 'user-1', full_name: 'Alice', role: 'Employee' }] as any)
+      vi.mocked(attendanceRepository.getDepartmentsByIds).mockResolvedValue([])
+
+      const dashboard = await attendanceService.getAttendanceDashboard('company-1')
+
+      expect(dashboard.records[0].exceptions).not.toContain('late')
+    })
+
+    it('flags a clock-in past the 10-minute grace period as late (UC49)', async () => {
+      vi.mocked(attendanceRepository.getAssignmentsByCompany).mockResolvedValue([
+        {
+          id: 'asn-1', user_id: 'user-1', supervisor_employee_id: null,
+          shifts: { id: 'shift-1', department_id: null, shift_date: '2026-01-01', start_time: '09:00', end_time: '17:00', title: 'Shift' },
+        },
+      ] as any)
+      vi.mocked(attendanceRepository.getAttendanceRecordsByAssignmentIds).mockResolvedValue([
+        { id: 'rec-1', shift_assignment_id: 'asn-1', casual_worker_id: 'user-1', confirmed_by_employee_id: 'user-1', submitted_by_employee_id: 'user-1', clock_in_time: '2026-01-01T09:11:00Z', clock_out_time: null, owner_status: 'pending' },
+      ] as any)
+      vi.mocked(attendanceRepository.getUsersByIds).mockResolvedValue([{ id: 'user-1', full_name: 'Alice', role: 'Employee' }] as any)
+      vi.mocked(attendanceRepository.getDepartmentsByIds).mockResolvedValue([])
+
+      const dashboard = await attendanceService.getAttendanceDashboard('company-1')
+
+      expect(dashboard.records[0].exceptions).toContain('late')
+    })
+  })
+
+  describe('getAttendanceByDateRange (UC50: Review Attendance Record, UC51: View Attendance Status)', () => {
+    it('queries assignments scoped to the given date window, not the whole company history', async () => {
+      vi.mocked(attendanceRepository.getAssignmentsByCompanyAndDateRange).mockResolvedValue([
+        {
+          id: 'asn-1', user_id: 'user-1', supervisor_employee_id: null,
+          shifts: { id: 'shift-1', department_id: null, shift_date: '2026-06-29', start_time: '09:00', end_time: '17:00', title: 'Shift' },
+        },
+      ] as any)
+      vi.mocked(attendanceRepository.getAttendanceRecordsByAssignmentIds).mockResolvedValue([])
+      vi.mocked(attendanceRepository.getUsersByIds).mockResolvedValue([{ id: 'user-1', full_name: 'Alice', role: 'Employee' }] as any)
+      vi.mocked(attendanceRepository.getDepartmentsByIds).mockResolvedValue([])
+
+      const records = await attendanceService.getAttendanceByDateRange('company-1', '2026-06-29', '2026-06-29')
+
+      expect(attendanceRepository.getAssignmentsByCompanyAndDateRange).toHaveBeenCalledWith('company-1', '2026-06-29', '2026-06-29')
+      expect(attendanceRepository.getAssignmentsByCompany).not.toHaveBeenCalled()
+      expect(records).toHaveLength(1)
+      expect(records[0].assignee_name).toBe('Alice')
+    })
+
+    it('returns an empty array when there are no assignments in the window', async () => {
+      vi.mocked(attendanceRepository.getAssignmentsByCompanyAndDateRange).mockResolvedValue([])
+      vi.mocked(attendanceRepository.getAttendanceRecordsByAssignmentIds).mockResolvedValue([])
+      vi.mocked(attendanceRepository.getUsersByIds).mockResolvedValue([])
+      vi.mocked(attendanceRepository.getDepartmentsByIds).mockResolvedValue([])
+
+      const records = await attendanceService.getAttendanceByDateRange('company-1', '2026-06-01', '2026-06-30')
+
+      expect(records).toEqual([])
+    })
+
+    it('still computes exceptions (e.g. absent) per record the same way the dashboard does', async () => {
+      vi.mocked(attendanceRepository.getAssignmentsByCompanyAndDateRange).mockResolvedValue([
+        {
+          id: 'asn-1', user_id: 'user-1', supervisor_employee_id: null,
+          shifts: { id: 'shift-1', department_id: null, shift_date: '2026-01-01', start_time: '09:00', end_time: '17:00', title: 'Shift' },
+        },
+      ] as any)
+      vi.mocked(attendanceRepository.getAttendanceRecordsByAssignmentIds).mockResolvedValue([])
+      vi.mocked(attendanceRepository.getUsersByIds).mockResolvedValue([{ id: 'user-1', full_name: 'Alice', role: 'Employee' }] as any)
+      vi.mocked(attendanceRepository.getDepartmentsByIds).mockResolvedValue([])
+
+      const records = await attendanceService.getAttendanceByDateRange('company-1', '2026-01-01', '2026-01-01')
+
+      // No record + shift already in the past (relative to "now" the test runs) => absent.
+      expect(records[0].exceptions).toContain('absent')
     })
   })
 

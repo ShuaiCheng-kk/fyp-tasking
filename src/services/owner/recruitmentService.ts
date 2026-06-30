@@ -246,4 +246,10 @@ function validateJobPostingInput(input: JobPostingInput): void {
   if (input.salary_amount !== undefined && input.salary_amount !== null && input.salary_amount < 0) {
     throw new Error('salary_amount cannot be negative')
   }
+  // One-off jobs have no fixed end time (the worker decides when the task is done), but they
+  // still need a start time so UC49's Clock In gating has something to compare against — same
+  // role shift_start_time plays for Shift jobs.
+  if (!isDraft && input.form_type === 'oneoff' && !input.job_start_time) {
+    throw new Error('job_start_time is required to publish a one-off job')
+  }
 }

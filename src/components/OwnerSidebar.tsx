@@ -14,7 +14,6 @@ import {
   CheckSquare,
   CalendarDays,
   GripVertical,
-  Settings,
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 
@@ -27,7 +26,6 @@ const NAV_ITEMS = [
   { label: 'Recruitment',   Icon: UserPlus,         href: '/owner/recruitment',     dot: 'review' as const },
   { label: 'Attendance',    Icon: ClipboardList,    href: '/owner/attendance',      dot: null },
   { label: 'Report',        Icon: BarChart2,        href: '/owner/report',          dot: null },
-  { label: 'Settings',      Icon: Settings,         href: '/owner/settings',        dot: null },
 ]
 
 const NAV_LABELS = NAV_ITEMS.map(i => i.label)

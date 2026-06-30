@@ -23,8 +23,26 @@ type AttendanceShift = {
     shift_date: string
     start_time: string
     end_time: string
+    is_open_ended: boolean
   }
   record: AttendanceRecord | null
+}
+
+// UC49: Clock In only appears starting 30 minutes before the shift's scheduled start; Clock Out
+// never appears early — only once the shift has actually reached its end time (skipped for
+// open-ended one-off jobs, where the worker decides when the task is done).
+const CLOCK_IN_WINDOW_MINUTES_BEFORE = 30
+
+function canClockIn(shift: AttendanceShift['shift']): boolean {
+  const shiftStart = new Date(`${shift.shift_date}T${shift.start_time}Z`)
+  const earliestClockIn = new Date(shiftStart.getTime() - CLOCK_IN_WINDOW_MINUTES_BEFORE * 60000)
+  return Date.now() >= earliestClockIn.getTime()
+}
+
+function canClockOut(shift: AttendanceShift['shift']): boolean {
+  if (shift.is_open_ended) return true
+  const shiftEnd = new Date(`${shift.shift_date}T${shift.end_time}Z`)
+  return Date.now() >= shiftEnd.getTime()
 }
 
 type TeamMember = {
@@ -247,6 +265,8 @@ export default function CasualAttendancePage() {
               const badge = statusLabel(shift)
               const clockedIn = !!shift.record?.clock_in_time
               const clockedOut = !!shift.record?.clock_out_time
+              const clockInWindowOpen = canClockIn(shift.shift)
+              const clockOutWindowOpen = canClockOut(shift.shift)
               return (
                 <section key={shift.assignment.id} style={cardStyle}>
                   <div style={cardHeaderStyle}>
@@ -272,22 +292,32 @@ export default function CasualAttendancePage() {
                   </div>
 
                   <div style={actionRowStyle}>
-                    <button
-                      type="button"
-                      onClick={() => runAction(shift, 'clock_in')}
-                      disabled={clockedIn || !!busyId}
-                      style={{ ...primaryButtonStyle, background: clockedIn ? '#CBD5E1' : GREEN, cursor: clockedIn || busyId ? 'not-allowed' : 'pointer' }}
-                    >
-                      {busyId === `${shift.assignment.id}:clock_in` ? 'Working...' : 'Clock In'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => runAction(shift, 'clock_out')}
-                      disabled={!clockedIn || clockedOut || !!busyId}
-                      style={{ ...primaryButtonStyle, background: !clockedIn || clockedOut ? '#CBD5E1' : SLATE, cursor: !clockedIn || clockedOut || busyId ? 'not-allowed' : 'pointer' }}
-                    >
-                      {busyId === `${shift.assignment.id}:clock_out` ? 'Working...' : 'Clock Out'}
-                    </button>
+                    {!clockedIn && clockInWindowOpen && (
+                      <button
+                        type="button"
+                        onClick={() => runAction(shift, 'clock_in')}
+                        disabled={!!busyId}
+                        style={{ ...primaryButtonStyle, background: GREEN, cursor: busyId ? 'not-allowed' : 'pointer' }}
+                      >
+                        {busyId === `${shift.assignment.id}:clock_in` ? 'Working...' : 'Clock In'}
+                      </button>
+                    )}
+                    {!clockedIn && !clockInWindowOpen && (
+                      <span style={{ ...timeLabelStyle, fontStyle: 'italic' }}>Clock In opens 30 minutes before the shift starts</span>
+                    )}
+                    {clockedIn && !clockedOut && clockOutWindowOpen && (
+                      <button
+                        type="button"
+                        onClick={() => runAction(shift, 'clock_out')}
+                        disabled={!!busyId}
+                        style={{ ...primaryButtonStyle, background: SLATE, cursor: busyId ? 'not-allowed' : 'pointer' }}
+                      >
+                        {busyId === `${shift.assignment.id}:clock_out` ? 'Working...' : 'Clock Out'}
+                      </button>
+                    )}
+                    {clockedIn && !clockedOut && !clockOutWindowOpen && (
+                      <span style={{ ...timeLabelStyle, fontStyle: 'italic' }}>Clock Out opens once the shift ends</span>
+                    )}
                   </div>
 
                   <div style={dividerStyle} />
