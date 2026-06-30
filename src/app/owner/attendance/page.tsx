@@ -786,12 +786,12 @@ export default function OwnerAttendancePage() {
           headStyles: { fillColor: [249, 115, 22], textColor: 255, fontStyle: 'bold' },
           alternateRowStyles: { fillColor: [249, 250, 251] },
           margin: { left: 40, right: 40 },
-          didDrawRow: (hookData) => {
-            if (hookData.section !== 'body') return
-            const rowDate = String(hookData.row.cells[0]?.text?.[0] ?? '')
+          didDrawCell: (hookData) => {
+            // Only trigger once per row (on the first cell) to draw date dividers
+            if (hookData.section !== 'body' || hookData.column.index !== 0) return
+            const rowDate = String(hookData.cell.text?.[0] ?? '')
             if (lastDate && rowDate !== lastDate) {
-              // Draw divider at the top of this row, after row background is painted
-              const y = hookData.row.y
+              const y = hookData.cell.y
               doc.setDrawColor(180, 180, 180)
               doc.setLineWidth(0.5)
               doc.line(
