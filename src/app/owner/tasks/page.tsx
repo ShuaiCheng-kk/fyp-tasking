@@ -2403,9 +2403,10 @@ export default function OwnerTasksPage() {
   }, [taskDate])
 
   const calendarWeekLabel = useMemo(() => {
+    const fmtD = (d: Date) => `${String(d.getDate()).padStart(2, '0')} ${d.toLocaleDateString('en-AU', { month: 'short' })}`
     const first = new Date(`${calendarWeekDates[0]}T00:00:00`)
     const last = new Date(`${calendarWeekDates[6]}T00:00:00`)
-    return `${first.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${last.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+    return `${fmtD(first)} – ${fmtD(last)} ${last.getFullYear()}`
   }, [calendarWeekDates])
 
   const taskCalendarItems = useMemo(() => {
@@ -3427,7 +3428,7 @@ export default function OwnerTasksPage() {
                           onClick={() => setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), -7)))}
                           style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${TASK_BORDER}`, background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: 'pointer', color: TASK_TEXT }}
                         ><ChevronLeft size={16} /></button>
-                        <span style={{ height: 38, minWidth: 188, padding: '0 12px', border: `1px solid ${TASK_BORDER}`, borderRadius: 9, background: '#FFFFFF', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: TASK_TEXT, fontSize: 13, fontWeight: 500, fontFamily: 'var(--font-body), system-ui, sans-serif' }}>
+                        <span style={{ height: 38, minWidth: 176, padding: '0 12px', border: `1px solid ${TASK_BORDER}`, borderRadius: 9, background: '#FFFFFF', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: TASK_TEXT, fontSize: 13, fontWeight: 500, fontFamily: 'var(--font-body), system-ui, sans-serif' }}>
                           <CalendarDays size={14} color="#64748B" />{calendarWeekLabel}
                         </span>
                         <button

@@ -82,14 +82,24 @@ test.beforeAll(async () => {
   worker = await createCasualWorker('Worker')
   replacement = await createCasualWorker('Replacement')
 
+  // UC49 gates Clock In to within 30 minutes before the shift starts, and Clock Out to once the
+  // shift has reached its end time — so for a real-browser E2E run (no clock_time override like
+  // the API tests have), the shift must be scheduled in the recent past relative to wall-clock
+  // "now", not a fixed future date, or both buttons would be hidden the whole test run.
+  const now = new Date()
+  const shiftStart = new Date(now.getTime() - 20 * 60000)
+  const shiftEnd = new Date(now.getTime() - 5 * 60000)
+  const shiftDateKey = shiftStart.toISOString().slice(0, 10)
+  const toHms = (d: Date) => d.toISOString().slice(11, 19)
+
   const { data: shift, error: shiftError } = await admin
     .from('shifts')
     .insert({
       company_id: seeded.companyId,
       department_id: departmentId,
-      shift_date: '2030-03-01',
-      start_time: '09:00',
-      end_time: '17:00',
+      shift_date: shiftDateKey,
+      start_time: toHms(shiftStart),
+      end_time: toHms(shiftEnd),
       title: 'Module 5 UI Shift',
       created_by: seeded.ownerId,
       publication_status: 'published',
@@ -188,14 +198,23 @@ test('owner can review Module 5 work from the attendance UI', async ({ page }) =
 
   await page.goto('/owner/attendance')
   await expect(page.getByRole('heading', { name: 'Attendance' })).toBeVisible()
-  await expect(page.getByText('Module 5 UI Shift').first()).toBeVisible()
+  // UC51: today's live timeline shows the worker who already clocked in/out today
+  await expect(page.getByText('Module 5 UI Worker').first()).toBeVisible()
 
-  // UC50: Review Attendance Record
-  await page.getByTitle('Approve').first().click()
+  // UC50: Review Attendance Record — open the Casual Worker past attendance calendar,
+  // click today's cell for this worker, then Approve from the detail panel it opens.
+  await page.getByRole('button', { name: 'Casual Worker' }).click()
+  await expect(page.getByText('Casual Worker — Past Attendance Record')).toBeVisible()
+  await page.locator('button[title*="Module 5 UI Worker"]').first().click()
+  await expect(page.getByText('Module 5 UI Worker —')).toBeVisible()
+  await page.getByRole('button', { name: 'Approve' }).click()
   await expect(page.getByText('Review Attendance Record')).toBeVisible()
   await page.getByRole('button', { name: /Save Review/ }).click()
   await expect(page.getByText('Review Attendance Record')).toBeHidden()
-  await expect(page.getByText('approved').first()).toBeVisible()
+
+  // Close the Past Attendance Record modal before moving to the other tabs.
+  await page.getByRole('button', { name: 'Close' }).click()
+  await expect(page.getByText('Casual Worker — Past Attendance Record')).toBeHidden()
 
   // UC58: Approve Leave Request
   await page.getByRole('button', { name: 'Leave Requests' }).click()
