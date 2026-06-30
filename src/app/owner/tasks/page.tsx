@@ -277,6 +277,10 @@ type Member = {
   full_name: string
   role: string
   department_id: string | null
+  email_address?: string | null
+  phone_number?: string | null
+  date_of_birth?: string | null
+  created_at?: string | null
   skills?: string[] | string | null
   worker_status?: string | null
   profile_photo_url?: string | null
@@ -286,6 +290,8 @@ type ShiftOption = TimelineShiftBlock & {
   assignee_name: string
   user_id: string | null
 }
+
+const EMPTY_USER_ID_SET: Set<string> = new Set()
 
 type DeptTaskStats = {
   department_id: string
@@ -367,6 +373,18 @@ function isDueOverdue(due: string): boolean {
   return new Date(due) < new Date()
 }
 
+function isDueWithinHours(due: string, hours: number): boolean {
+  const msRemaining = new Date(due).getTime() - Date.now()
+  return msRemaining > 0 && msRemaining <= hours * 60 * 60 * 1000
+}
+
+function formatDateDisplay(value: string | null | undefined, empty = '—'): string {
+  if (!value) return empty
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return empty
+  return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(date)
+}
+
 function formatShiftOptionLabel(shift: ShiftOption): string {
   const date = new Date(`${shift.shift_date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
   const time = `${shift.start_time.slice(0, 5)}-${shift.end_time.slice(0, 5)}`
@@ -384,6 +402,13 @@ function deptCardBorder(deptId: string): string {
   const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16)
   return `rgba(${r},${g},${b},0.22)`
 }
+// Lighter, opaque tint of a department/priority color — used for sub-task calendar bars so they
+// read as visually subordinate to the main task's solid bar, with dark text for contrast on it.
+function lightenColor(hex: string, amount: number): string {
+  const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16)
+  const blend = (c: number) => Math.round(c + (255 - c) * amount)
+  return `rgb(${blend(r)},${blend(g)},${blend(b)})`
+}
 
 const PRIORITY_ORDER: Record<string, number> = { Urgent: 0, High: 1, Medium: 2, Low: 3 }
 
@@ -399,6 +424,16 @@ const modalLabelStyle: React.CSSProperties = {
 }
 const modalSelectStyle: React.CSSProperties = {
   ...modalInputStyle, paddingRight: 36, appearance: 'none', cursor: 'pointer',
+}
+const aiReviewFieldStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 8,
+}
+const aiReviewSectionStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 18,
 }
 
 // ─── Description textarea: Tab → bullet point, "1." + space → numbered list ──
@@ -440,6 +475,12 @@ function handleDescriptionKeyDown(
       onChange(next)
     }
   }
+}
+
+function resizeTextareaToContent(el: HTMLTextAreaElement | null) {
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = `${el.scrollHeight}px`
 }
 
 function InlineError({ message }: { message: string }) {
@@ -787,18 +828,22 @@ function DeadlinePicker({ dateValue, timeValue, onChange, minDate }: {
 
 // ─── Sub-task Order List (drag to reorder; shows step numbers + "do in order" connector once 2+) ──
 
-function SubTaskOrderList({ items, onReorder, onRemove, onRename, disabled }: {
+function SubTaskOrderList({ items, onReorder, onRemove, onRename, disabled, accent = 'orange' }: {
   items: { id: string; title: string }[]
   onReorder: (orderedIds: string[]) => void
   onRemove?: (id: string) => void
   onRename?: (id: string, title: string) => void
   disabled?: boolean
+  accent?: 'orange' | 'purple'
 }) {
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
   const ordered = items.length >= 2
+  const accentColor = accent === 'purple' ? '#7C3AED' : '#F97316'
+  const accentText = accent === 'purple' ? '#7C3AED' : '#EA580C'
+  const accentBg = accent === 'purple' ? '#F3E8FF' : '#FFF3E8'
 
   const saveRename = () => {
     if (!editingId) return
@@ -854,15 +899,15 @@ function SubTaskOrderList({ items, onReorder, onRemove, onRename, disabled }: {
               }}
               style={{
                 display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px',
-                border: `1px solid ${isDragOver ? '#F97316' : '#E5E7EB'}`, borderRadius: 9,
+                border: `1px solid ${isDragOver ? accentColor : '#E5E7EB'}`, borderRadius: 9,
                 background: '#FFFFFF', cursor: disabled ? 'default' : isDragging ? 'grabbing' : 'grab',
                 opacity: isDragging ? 0.6 : 1,
-                outline: isDragOver ? '2px dashed #F97316' : 'none', outlineOffset: 2,
+                outline: isDragOver ? `2px dashed ${accentColor}` : 'none', outlineOffset: 2,
                 transition: 'border-color 0.15s, opacity 0.15s',
               }}
             >
               {ordered ? (
-                <span style={{ width: 20, height: 20, borderRadius: '50%', background: '#FFF3E8', color: '#EA580C', fontSize: 11, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <span style={{ width: 20, height: 20, borderRadius: '50%', background: accentBg, color: accentText, fontSize: 11, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   {idx + 1}
                 </span>
               ) : (
@@ -910,7 +955,7 @@ function SubTaskOrderList({ items, onReorder, onRemove, onRename, disabled }: {
 // ─── Task Card ────────────────────────────────────────────────────────────────
 
 function TaskCard({
-  task, members, shiftOptions, departments, showDept, onClick, onEdit, subTaskCount, expanded, onToggleExpand, clickable = true, isOwner = true,
+  task, members, shiftOptions, departments, showDept, onClick, onEdit, subTaskCount, expanded, onToggleExpand, clickable = true, isOwner = true, highlighted = false, noOuterMargin = false, fillHeight = false, isSubTask = false,
 }: {
   task: Task
   members: Member[]
@@ -924,17 +969,21 @@ function TaskCard({
   onToggleExpand?: () => void
   clickable?: boolean
   isOwner?: boolean
+  highlighted?: boolean
+  noOuterMargin?: boolean
+  fillHeight?: boolean
+  isSubTask?: boolean
 }) {
   const assignee = members.find(m => m.id === task.assigned_user_id)
   const shift = task.shift_id ? shiftOptions.find(s => s.id === task.shift_id) : null
-  const priority = task.priority ? PRIORITY_COLORS[task.priority] : null
-  const overdue = task.due_at && task.status !== 'Complete' && isDueOverdue(task.due_at)
-  const dept = showDept ? departments.find(d => d.id === task.department_id) : null
+  const priority = !isSubTask && task.priority ? PRIORITY_COLORS[task.priority] : null
+  const deadlineWarning = task.due_at && task.status !== 'Complete' && (isDueOverdue(task.due_at) || isDueWithinHours(task.due_at, 2))
+  const dept = showDept && !isSubTask ? departments.find(d => d.id === task.department_id) : null
   const showStack = !!subTaskCount && !expanded
   const hasTopRowBadges = !!(priority && task.priority) || !!dept || !!subTaskCount
 
   return (
-    <div style={{ position: 'relative', marginBottom: showStack ? 22 : 14 }}>
+    <div style={{ position: 'relative', marginBottom: noOuterMargin ? 0 : (showStack ? 22 : 14), height: fillHeight ? '100%' : undefined }}>
       {showStack && (
         <>
           <div style={{ position: 'absolute', left: 12, right: 12, bottom: -8, height: 14, background: '#EEF1F5', border: '1px solid #E2E8F0', borderRadius: 10, zIndex: 0 }} />
@@ -946,13 +995,19 @@ function TaskCard({
         className="task-card"
         style={{
           background: '#FFFFFF',
-          border: '1px solid #E5E7EB',
-          borderLeft: '1px solid #E5E7EB',
+          border: highlighted ? '1.5px solid #F97316' : '1px solid #E5E7EB',
+          borderLeft: highlighted ? '1.5px solid #F97316' : '1px solid #E5E7EB',
           borderRadius: '10px',
           padding: '16px 16px',
           cursor: clickable ? 'pointer' : 'default',
           position: 'relative',
           zIndex: 2,
+          height: fillHeight ? '100%' : undefined,
+          boxSizing: 'border-box',
+          display: fillHeight ? 'flex' : undefined,
+          flexDirection: fillHeight ? 'column' : undefined,
+          justifyContent: fillHeight ? 'space-between' : undefined,
+          boxShadow: highlighted ? '0 0 0 3px rgba(249,115,22,0.16), 0 10px 28px rgba(249,115,22,0.16)' : undefined,
         }}
       >
       {/* Edit pencil: absolutely positioned so it never reserves flow height when there are no badges */}
@@ -996,7 +1051,7 @@ function TaskCard({
       )}
 
       {/* Title */}
-      <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: '0 0 16px', lineHeight: 1.4, paddingRight: !clickable || !isOwner || hasTopRowBadges ? 0 : 24 }}>
+      <p style={{ fontWeight: 600, fontSize: isSubTask ? '0.8rem' : '0.875rem', color: '#111827', margin: '0 0 16px', lineHeight: 1.4, paddingRight: !clickable || !isOwner || hasTopRowBadges ? 0 : 24 }}>
         {task.title}
       </p>
 
@@ -1016,10 +1071,10 @@ function TaskCard({
         ) : (
           <span style={{ fontSize: '0.75rem', color: '#CBD5E1', fontStyle: 'italic' }}>No assignee</span>
         )}
-        {task.due_at && (
+        {!isSubTask && task.due_at && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-            {overdue ? <AlertCircle size={11} color="#EF4444" /> : <Clock size={11} color="#9CA3AF" />}
-            <span style={{ fontSize: '0.7rem', fontWeight: 600, color: overdue ? '#EF4444' : '#9CA3AF', whiteSpace: 'nowrap' }}>
+            {deadlineWarning ? <AlertCircle size={11} color="#EF4444" /> : <Clock size={11} color="#9CA3AF" />}
+            <span style={{ fontSize: '0.7rem', fontWeight: 600, color: deadlineWarning ? '#EF4444' : '#9CA3AF', whiteSpace: 'nowrap' }}>
               {formatDeadlineDisplay(task.due_at)}
             </span>
           </div>
@@ -1121,20 +1176,31 @@ export default function OwnerTasksPage() {
   const [deleteTaskLoading, setDeleteTaskLoading] = useState(false)
   const [deleteTaskError, setDeleteTaskError] = useState('')
   const [subTaskTitle,    setSubTaskTitle]    = useState('')
-  const [subTaskLoading,  setSubTaskLoading]  = useState(false)
   const [editSubTaskEnabled, setEditSubTaskEnabled] = useState(false)
   const [editSubTaskCollapsed, setEditSubTaskCollapsed] = useState(false)
   const [editRecurringEnabled, setEditRecurringEnabled] = useState(false)
   const [editRecurringCollapsed, setEditRecurringCollapsed] = useState(false)
   const [taskViewMode,    setTaskViewMode]    = useState(false)
   const [taskActionLoading, setTaskActionLoading] = useState('')
-  const [recurrenceRule, setRecurrenceRule] = useState<TaskRecurrenceRule>('weekly')
+  const [recurrenceRule, setRecurrenceRule] = useState<TaskRecurrenceRule | ''>('')
   const [recurrenceEndDate, setRecurrenceEndDate] = useState('')
-  const [panelSubTaskOrder, setPanelSubTaskOrder] = useState<string[]>([])
-  const [subTaskReorderLoading, setSubTaskReorderLoading] = useState(false)
+  const [editCustomIntervalDays, setEditCustomIntervalDays] = useState(14)
+  const [editCustomIntervalTouched, setEditCustomIntervalTouched] = useState(false)
+  const [editDeadlineRuleType, setEditDeadlineRuleType] = useState<TaskDeadlineRuleType | ''>('')
+  const [editDeadlineRuleTime, setEditDeadlineRuleTime] = useState('')
+  const [editDeadlineRuleWeekday, setEditDeadlineRuleWeekday] = useState<number | null>(null)
+  const [editDeadlineRuleOffsetAmount, setEditDeadlineRuleOffsetAmount] = useState(1)
+  const [editDeadlineRuleOffsetUnit, setEditDeadlineRuleOffsetUnit] = useState<'hours' | 'days'>('days')
+  const [editSubTasks, setEditSubTasks] = useState<{ id: string; title: string }[]>([])
   const [reassignmentSuggestion, setReassignmentSuggestion] = useState<TaskReassignmentSuggestion | null>(null)
   const [workloadSuggestion, setWorkloadSuggestion] = useState<TaskWorkloadSuggestion | null>(null)
+  const [workloadSuggestions, setWorkloadSuggestions] = useState<TaskWorkloadSuggestion[]>([])
+  const [workloadApplyLoadingId, setWorkloadApplyLoadingId] = useState('')
+  const [workloadApplyError, setWorkloadApplyError] = useState('')
+  const [profileMember, setProfileMember] = useState<Member | null>(null)
   const [stalledAlerts, setStalledAlerts] = useState<StalledTaskAlert[]>([])
+  const [workloadInsightOpen, setWorkloadInsightOpen] = useState(false)
+  const [highlightedStalledTaskId, setHighlightedStalledTaskId] = useState('')
   const [insightLoading, setInsightLoading] = useState('')
   const [insightError, setInsightError] = useState('')
 
@@ -1201,21 +1267,39 @@ export default function OwnerTasksPage() {
     if (newRecurrenceRule !== 'custom') setNewCustomIntervalTouched(false)
   }, [newRecurrenceRule])
 
+  useEffect(() => {
+    if (editDeadlineRuleType === 'fixed_day' && recurrenceRule !== 'weekly') setEditDeadlineRuleType('')
+  }, [recurrenceRule, editDeadlineRuleType])
+
+  useEffect(() => {
+    if (recurrenceRule !== 'custom') setEditCustomIntervalTouched(false)
+  }, [recurrenceRule])
+
   // AI Assign state (merged breakdown + department/manager/deadline suggestion)
   const [aiModal,          setAiModal]          = useState(false)
   const [aiStep,           setAiStep]           = useState<'input' | 'review'>('input')
   const [aiTitle,          setAiTitle]          = useState('')
   const [aiDescription,    setAiDescription]    = useState('')
   const [aiPriority,       setAiPriority]       = useState('')
-  const [aiPeopleNeeded,   setAiPeopleNeeded]   = useState(1)
+  const [aiDueDate,        setAiDueDate]        = useState('')
+  const [aiDueTime,        setAiDueTime]        = useState('')
+  // Optional, chosen up front so Generate already knows whether to ask the AI for sub-tasks.
+  const [aiSubTaskEnabled, setAiSubTaskEnabled] = useState(false)
   const [aiLoading,        setAiLoading]        = useState(false)
   const [aiError,          setAiError]          = useState('')
   const [aiSuggestion,     setAiSuggestion]     = useState<AiAssignSuggestion | null>(null)
   const [aiDeptId,         setAiDeptId]         = useState('')
-  const [aiManagerIds,     setAiManagerIds]     = useState<string[]>([])
-  const [aiDueDate,        setAiDueDate]        = useState('')
-  const [aiDueTime,        setAiDueTime]        = useState('')
+  const [aiManagerId,      setAiManagerId]      = useState('')
+  const [aiSubTaskDrafts,  setAiSubTaskDrafts]  = useState<{ id: string; title: string }[]>([])
+  const [aiSubTaskCollapsed, setAiSubTaskCollapsed] = useState(true)
+  const [aiSubTaskDraft, setAiSubTaskDraft] = useState('')
   const [aiCreateLoading,  setAiCreateLoading]  = useState(false)
+  const aiReviewDescriptionRef = useRef<HTMLTextAreaElement>(null)
+
+  useLayoutEffect(() => {
+    if (!aiModal) return
+    resizeTextareaToContent(aiReviewDescriptionRef.current)
+  }, [aiDescription, aiModal, aiStep])
 
   // Task Template management modal
   const [taskTemplates,        setTaskTemplates]        = useState<TaskTemplate[]>([])
@@ -1466,12 +1550,67 @@ export default function OwnerTasksPage() {
   // ── Open task panel ────────────────────────────────────────────────────────
 
   const openTask = (task: Task, viewOnly = false) => {
-    const existingSubTaskIds = kanban
+    const existingSubTasks = kanban
       ? COLUMNS.flatMap(col => kanban[col])
           .filter(row => row.parent_task_id === task.id)
           .sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0))
-          .map(row => row.id)
+          .map(row => ({ id: row.id, title: row.title }))
       : []
+    // Recurrence isn't stored as a rule on the task row — it's only expressed as the actual
+    // generated sibling occurrences sharing recurrence_group_id. Re-derive the rule/end date
+    // (and the deadline rule, from how due_at moves relative to task_date) from those siblings
+    // so re-opening a recurring task shows what was configured, instead of resetting to blank.
+    let inferredRecurrenceRule: TaskRecurrenceRule | '' = ''
+    let inferredRecurrenceEndDate = ''
+    let inferredDeadlineRuleType: TaskDeadlineRuleType | '' = ''
+    let inferredDeadlineRuleTime = ''
+    let inferredDeadlineRuleWeekday: number | null = null
+    let inferredDeadlineRuleOffsetAmount = 1
+    let inferredDeadlineRuleOffsetUnit: 'hours' | 'days' = 'days'
+    if (task.recurrence_group_id && kanban) {
+      const groupOccurrences = COLUMNS.flatMap(col => kanban[col])
+        .filter(row => !row.parent_task_id && row.recurrence_group_id === task.recurrence_group_id)
+      const groupDates = Array.from(new Set(groupOccurrences.map(row => kanbanDateKey(row)))).sort()
+      if (groupDates.length >= 2) {
+        const intervalDays = Math.round(
+          (new Date(`${groupDates[1]}T00:00:00`).getTime() - new Date(`${groupDates[0]}T00:00:00`).getTime()) / 86400000
+        )
+        inferredRecurrenceRule = intervalDays === 1 ? 'daily' : intervalDays === 7 ? 'weekly' : 'custom'
+        if (inferredRecurrenceRule === 'custom') setEditCustomIntervalDays(intervalDays)
+        inferredRecurrenceEndDate = groupDates[groupDates.length - 1]
+      }
+      // Infer the deadline rule from how due_at relates to task_date on two occurrences —
+      // same gap every time means it was generated by one of the three rule types.
+      const datedOccurrences = groupOccurrences
+        .filter(row => row.due_at)
+        .map(row => ({ taskDate: kanbanDateKey(row), due: new Date(row.due_at!) }))
+        .sort((a, b) => a.taskDate.localeCompare(b.taskDate))
+      if (datedOccurrences.length >= 2) {
+        const [a, b] = datedOccurrences
+        const dueDateKey = (d: Date) => formatDateKey(d)
+        const timeKey = (d: Date) => d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+        if (dueDateKey(a.due) === a.taskDate && dueDateKey(b.due) === b.taskDate && timeKey(a.due) === timeKey(b.due)) {
+          inferredDeadlineRuleType = 'same_day'
+          inferredDeadlineRuleTime = timeKey(a.due)
+        } else if (inferredRecurrenceRule === 'weekly' && a.due.getDay() === b.due.getDay() && timeKey(a.due) === timeKey(b.due)) {
+          inferredDeadlineRuleType = 'fixed_day'
+          inferredDeadlineRuleTime = timeKey(a.due)
+          inferredDeadlineRuleWeekday = a.due.getDay()
+        } else {
+          const offsetMs = a.due.getTime() - new Date(`${a.taskDate}T00:00:00`).getTime()
+          const offsetHours = Math.round(offsetMs / 3600000)
+          if (offsetHours % 24 === 0 && offsetHours / 24 === Math.round((b.due.getTime() - new Date(`${b.taskDate}T00:00:00`).getTime()) / 3600000 / 24)) {
+            inferredDeadlineRuleType = 'relative'
+            inferredDeadlineRuleOffsetAmount = offsetHours / 24
+            inferredDeadlineRuleOffsetUnit = 'days'
+          } else if (offsetHours === Math.round((b.due.getTime() - new Date(`${b.taskDate}T00:00:00`).getTime()) / 3600000)) {
+            inferredDeadlineRuleType = 'relative'
+            inferredDeadlineRuleOffsetAmount = Math.max(1, offsetHours)
+            inferredDeadlineRuleOffsetUnit = 'hours'
+          }
+        }
+      }
+    }
     // Only the user who assigned this task may edit it — everyone else always gets the
     // read-only Details view, regardless of which entry point (pencil, calendar bar, etc.) was used.
     const isTaskOwner = !!internalUserId && task.assigned_by === internalUserId
@@ -1492,13 +1631,20 @@ export default function OwnerTasksPage() {
     setDeleteConfirm(false)
     setSubTaskTitle('')
     setTaskActionLoading('')
-    setRecurrenceRule('weekly')
-    setRecurrenceEndDate(formatDateKey(addDays(new Date(`${kanbanDateKey(task)}T00:00:00`), 28)))
-    setPanelSubTaskOrder(existingSubTaskIds)
-    setEditSubTaskEnabled(existingSubTaskIds.length > 0)
-    setEditSubTaskCollapsed(false)
+    setRecurrenceRule(inferredRecurrenceRule)
+    setRecurrenceEndDate(inferredRecurrenceEndDate)
+    if (inferredRecurrenceRule !== 'custom') setEditCustomIntervalDays(14)
+    setEditCustomIntervalTouched(inferredRecurrenceRule === 'custom')
+    setEditDeadlineRuleType(inferredDeadlineRuleType)
+    setEditDeadlineRuleTime(inferredDeadlineRuleTime)
+    setEditDeadlineRuleWeekday(inferredDeadlineRuleWeekday)
+    setEditDeadlineRuleOffsetAmount(inferredDeadlineRuleOffsetAmount)
+    setEditDeadlineRuleOffsetUnit(inferredDeadlineRuleOffsetUnit)
+    setEditSubTasks(existingSubTasks)
+    setEditSubTaskEnabled(existingSubTasks.length > 0)
+    setEditSubTaskCollapsed(true)
     setEditRecurringEnabled(!!task.recurrence_group_id)
-    setEditRecurringCollapsed(false)
+    setEditRecurringCollapsed(true)
     setReassignmentSuggestion(null)
   }
 
@@ -1536,10 +1682,116 @@ export default function OwnerTasksPage() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
+
+      // Sub-tasks were edited as a local draft (editSubTasks) — diff against the server snapshot
+      // taken when the panel opened (selectedSubTasksUnordered) and sync now, in one batch.
+      const original = selectedSubTasksUnordered
+      const removedIds = original.filter(t => !editSubTasks.some(s => s.id === t.id)).map(t => t.id)
+      const renamed = editSubTasks.filter(s => {
+        const match = original.find(t => t.id === s.id)
+        return match && match.title !== s.title
+      })
+      const added = editSubTasks.filter(s => !original.some(t => t.id === s.id))
+
+      for (const id of removedIds) {
+        const delRes = await fetch(`/api/task?id=${id}&assigned_by=${encodeURIComponent(internalUserId)}`, { method: 'DELETE' })
+        const delData = await delRes.json()
+        if (!delData.success) throw new Error(delData.message)
+      }
+      for (const s of renamed) {
+        const original_ = original.find(t => t.id === s.id)!
+        const renameRes = await fetch('/api/task', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: s.id,
+            assigned_by: internalUserId || undefined,
+            company_id: original_.company_id,
+            department_id: editDeptId,
+            title: s.title,
+            description: original_.description,
+            // Priority/deadline/start date mirror whatever the parent was just saved with (not
+            // the sub-task's own stale snapshot) — the service also cascades these onto every
+            // sub-task when the parent changes, so this rename PATCH must agree, not undo it.
+            priority: editPriority || null,
+            due_at,
+            task_date: editStartDate,
+            assigned_user_id: original_.assigned_user_id,
+            shift_id: original_.shift_id,
+            status: original_.status,
+            percentage_complete: original_.percentage_complete,
+          }),
+        })
+        const renameData = await renameRes.json()
+        if (!renameData.success) throw new Error(renameData.message)
+      }
+      const createdIdByDraftId = new Map<string, string>()
+      for (const s of added) {
+        const createRes = await fetch('/api/task', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            company_id: selectedTask.company_id,
+            department_id: editDeptId,
+            shift_id: editShiftId || null,
+            parent_task_id: selectedTask.id,
+            title: s.title,
+            assigned_user_id: editAssignee || null,
+            assigned_by: internalUserId || null,
+            status: 'Assigned',
+            percentage_complete: 0,
+            task_date: editStartDate,
+            // priority/due_at are intentionally omitted — the service always inherits them from
+            // the parent task whenever parent_task_id is set.
+          }),
+        })
+        const createData = await createRes.json()
+        if (!createData.success) throw new Error(createData.message)
+        createdIdByDraftId.set(s.id, createData.task.id)
+      }
+      if (editSubTasks.length > 0) {
+        const finalOrderIds = editSubTasks.map(s => createdIdByDraftId.get(s.id) ?? s.id)
+        const reorderRes = await fetch('/api/task', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'reorder_subtasks', id: selectedTask.id, sub_task_ids: finalOrderIds, assigned_by: internalUserId || undefined }),
+        })
+        const reorderData = await reorderRes.json()
+        if (!reorderData.success) throw new Error(reorderData.message)
+      }
+
+      let recurringCreatedCount = 0
+      if (editRecurringEnabled && recurrenceRule && recurrenceEndDate) {
+        const deadlineRule = editDeadlineRuleType === 'same_day'
+          ? { type: 'same_day' as const, time: editDeadlineRuleTime }
+          : editDeadlineRuleType === 'fixed_day'
+            ? { type: 'fixed_day' as const, time: editDeadlineRuleTime, weekday: editDeadlineRuleWeekday! }
+            : { type: 'relative' as const, offset_amount: editDeadlineRuleOffsetAmount, offset_unit: editDeadlineRuleOffsetUnit }
+        const recurringRes = await fetch('/api/task', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'recurring',
+            id: selectedTask.id,
+            recurrence_rule: recurrenceRule,
+            recurrence_end_date: recurrenceEndDate,
+            custom_interval_days: recurrenceRule === 'custom' ? editCustomIntervalDays : undefined,
+            deadline_rule: deadlineRule,
+            assigned_by: internalUserId || undefined,
+          }),
+        })
+        const recurringData = await recurringRes.json()
+        if (!recurringData.success) throw new Error(recurringData.message)
+        recurringCreatedCount = recurringData.tasks?.length ?? 0
+      }
+
       await fetchKanban(companyId)
+      await refreshAllTaskInsights()
       setTaskDate(editStartDate)
       closePanel()
-      showTaskToast('Task updated successfully.')
+      showTaskToast(recurringCreatedCount > 0
+        ? `Task updated and ${recurringCreatedCount} recurring task${recurringCreatedCount === 1 ? '' : 's'} created.`
+        : 'Task updated successfully.')
     } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to save') }
     finally { setEditLoading(false) }
   }
@@ -1560,9 +1812,9 @@ export default function OwnerTasksPage() {
     try {
       const res = await fetch(`/api/task?id=${taskId}&assigned_by=${encodeURIComponent(internalUserId)}`, { method: 'DELETE' })
       const data = await res.json()
-      if (!data.success) fetchKanban(companyId, true)
-      else showTaskToast('Task deleted successfully.')
-    } catch { fetchKanban(companyId, true) }
+      if (!data.success) { fetchKanban(companyId, true); void refreshAllTaskInsights() }
+      else { await refreshAllTaskInsights(); showTaskToast('Task deleted successfully.') }
+    } catch { fetchKanban(companyId, true); void refreshAllTaskInsights() }
     finally { setDeleteLoading(false) }
   }
 
@@ -1570,10 +1822,22 @@ export default function OwnerTasksPage() {
     if (!deleteTaskModal) return
     setDeleteTaskLoading(true); setDeleteTaskError('')
     const taskId = deleteTaskModal.id
+    // Deleting the original of a recurring series takes the whole series with it on the server
+    // (taskService.deleteTask) — mirror that here so the board doesn't go stale until a refetch.
+    const isRecurrenceOriginal = !!deleteTaskModal.recurrence_group_id && deleteTaskModal.source_task_id === null
+    const recurrenceGroupId = deleteTaskModal.recurrence_group_id
     setKanban(prev => {
       if (!prev) return prev
+      const allTasks = COLUMNS.flatMap(col => prev[col] ?? [])
+      const rootIdsToRemove = new Set(
+        isRecurrenceOriginal && recurrenceGroupId
+          ? allTasks.filter(t => t.recurrence_group_id === recurrenceGroupId).map(t => t.id)
+          : [taskId]
+      )
       const next = { ...prev } as KanbanGroup
-      for (const col of COLUMNS) next[col] = (prev[col] ?? []).filter(t => t.id !== taskId && t.parent_task_id !== taskId)
+      for (const col of COLUMNS) {
+        next[col] = (prev[col] ?? []).filter(t => !rootIdsToRemove.has(t.id) && !(t.parent_task_id && rootIdsToRemove.has(t.parent_task_id)))
+      }
       return next
     })
     setDeleteTaskModal(null)
@@ -1581,8 +1845,8 @@ export default function OwnerTasksPage() {
       const res = await fetch(`/api/task?id=${taskId}&assigned_by=${encodeURIComponent(internalUserId)}`, { method: 'DELETE' })
       const data = await res.json()
       if (!data.success) { fetchKanban(companyId, true); setDeleteTaskError(data.message ?? 'Failed to delete') }
-      else showTaskToast('Task deleted successfully.')
-    } catch { fetchKanban(companyId, true) }
+      else { await refreshAllTaskInsights(); showTaskToast('Task deleted successfully.') }
+    } catch { fetchKanban(companyId, true); void refreshAllTaskInsights() }
     finally { setDeleteTaskLoading(false) }
   }
 
@@ -1598,6 +1862,7 @@ export default function OwnerTasksPage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
       await fetchKanban(companyId)
+      await refreshAllTaskInsights()
       closePanel()
       showTaskToast('Task duplicated.')
     } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to duplicate task') }
@@ -1616,10 +1881,37 @@ export default function OwnerTasksPage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
       await fetchKanban(companyId)
+      await refreshAllTaskInsights()
       closePanel()
       showTaskToast('Task archived.')
     } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to archive task') }
     finally { setTaskActionLoading('') }
+  }
+
+  const handleApplyWorkloadSuggestion = async (suggestion: TaskWorkloadSuggestion) => {
+    if (!suggestion.suggested_task_id || !suggestion.recommended_user_id) return
+    setWorkloadApplyLoadingId(suggestion.suggested_task_id); setWorkloadApplyError('')
+    try {
+      const res = await fetch('/api/task', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: suggestion.suggested_task_id,
+          assigned_user_id: suggestion.recommended_user_id,
+          assigned_by: internalUserId || undefined,
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      await fetchKanban(companyId)
+      await refreshAllTaskInsights()
+      setWorkloadInsightOpen(false)
+      showTaskToast('Task reassigned.')
+    } catch (err) {
+      setWorkloadApplyError(err instanceof Error ? err.message : 'Failed to reassign task')
+    } finally {
+      setWorkloadApplyLoadingId('')
+    }
   }
 
   const handleUnarchiveTask = async (taskId: string) => {
@@ -1635,6 +1927,7 @@ export default function OwnerTasksPage() {
       setArchivedTasks(prev => prev.filter(t => t.id !== taskId))
       setSelectedArchivedTask(prev => prev?.id === taskId ? null : prev)
       await fetchKanban(companyId)
+      await refreshAllTaskInsights()
       showTaskToast('Task unarchived.')
     } catch (err) {
       setArchiveListError(err instanceof Error ? err.message : 'Failed to unarchive task')
@@ -1652,6 +1945,7 @@ export default function OwnerTasksPage() {
       if (!data.success) throw new Error(data.message)
       setArchivedTasks(prev => prev.filter(t => t.id !== taskId))
       setSelectedArchivedTask(prev => prev?.id === taskId ? null : prev)
+      await refreshAllTaskInsights()
       showTaskToast('Task deleted successfully.')
     } catch (err) {
       setArchiveListError(err instanceof Error ? err.message : 'Failed to delete task')
@@ -1660,91 +1954,21 @@ export default function OwnerTasksPage() {
     }
   }
 
-  const handleCreateRecurringTasks = async () => {
-    if (!selectedTask || !recurrenceEndDate) return
-    setTaskActionLoading('recurring'); setPanelError('')
-    try {
-      const res = await fetch('/api/task', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'recurring',
-          id: selectedTask.id,
-          recurrence_rule: recurrenceRule,
-          recurrence_end_date: recurrenceEndDate,
-          assigned_by: internalUserId || undefined,
-        }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message)
-      setEditRecurringEnabled(true)
-      await fetchKanban(companyId)
-      showTaskToast(`${data.tasks?.length ?? 0} recurring task${data.tasks?.length === 1 ? '' : 's'} created.`)
-    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to create recurring tasks') }
-    finally { setTaskActionLoading('') }
-  }
-
   // UC28 Set Task Dependencies — drag-reorder of the panel's sub-tasks; saves immediately on drop.
-  const handleReorderSubTasks = async (orderedIds: string[]) => {
-    if (!selectedTask) return
-    setPanelSubTaskOrder(orderedIds)
-    setSubTaskReorderLoading(true); setPanelError('')
-    try {
-      const res = await fetch('/api/task', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'reorder_subtasks', id: selectedTask.id, sub_task_ids: orderedIds, assigned_by: internalUserId || undefined }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message)
-      await fetchKanban(companyId)
-    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to reorder sub-tasks') }
-    finally { setSubTaskReorderLoading(false) }
+  // Sub-task add/remove/rename/reorder are purely local drafts while the Edit Task panel is
+  // open — mirrors the New Task modal's newSubTasks pattern — and only sync to the server
+  // (create/delete/rename/reorder calls) when the user clicks Save Changes, see handleSaveTask.
+  const handleReorderSubTasks = (orderedIds: string[]) => {
+    setEditSubTasks(prev => orderedIds.map(id => prev.find(s => s.id === id)).filter((s): s is { id: string; title: string } => !!s))
   }
 
-  const handleRenameSubTask = async (subTaskId: string, title: string) => {
-    const subTask = selectedSubTasks.find(t => t.id === subTaskId)
-    if (!subTask || !title.trim()) return
-    setSubTaskReorderLoading(true); setPanelError('')
-    try {
-      const res = await fetch('/api/task', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: subTask.id,
-          assigned_by: internalUserId || undefined,
-          company_id: subTask.company_id,
-          department_id: subTask.department_id,
-          title: title.trim(),
-          description: subTask.description,
-          priority: subTask.priority,
-          due_at: subTask.due_at,
-          task_date: subTask.task_date,
-          assigned_user_id: subTask.assigned_user_id,
-          shift_id: subTask.shift_id,
-          status: subTask.status,
-          percentage_complete: subTask.percentage_complete,
-        }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message)
-      await fetchKanban(companyId)
-      showTaskToast('Sub-task updated successfully.')
-    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to update sub-task') }
-    finally { setSubTaskReorderLoading(false) }
+  const handleRenameSubTask = (subTaskId: string, title: string) => {
+    if (!title.trim()) return
+    setEditSubTasks(prev => prev.map(s => s.id === subTaskId ? { ...s, title: title.trim() } : s))
   }
 
-  const handleRemoveSubTask = async (subTaskId: string) => {
-    setSubTaskReorderLoading(true); setPanelError('')
-    setPanelSubTaskOrder(prev => prev.filter(id => id !== subTaskId))
-    try {
-      const res = await fetch(`/api/task?id=${subTaskId}&assigned_by=${encodeURIComponent(internalUserId)}`, { method: 'DELETE' })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message)
-      await fetchKanban(companyId)
-      showTaskToast('Sub-task deleted successfully.')
-    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to delete sub-task'); await fetchKanban(companyId, true) }
-    finally { setSubTaskReorderLoading(false) }
+  const handleRemoveSubTask = (subTaskId: string) => {
+    setEditSubTasks(prev => prev.filter(s => s.id !== subTaskId))
   }
 
   const handleFetchReassignmentSuggestion = async () => {
@@ -1772,18 +1996,49 @@ export default function OwnerTasksPage() {
     try {
       const deptParam = selectedDeptId ? `&department_id=${selectedDeptId}` : ''
       const query = kind === 'workload'
-        ? `/api/task?company_id=${companyId}&suggestion=workload${deptParam}`
-        : `/api/task?company_id=${companyId}&suggestion=stalled&stale_after_days=3${deptParam}`
+        ? `/api/task?company_id=${companyId}&suggestion=workload`
+        : `/api/task?company_id=${companyId}&suggestion=stalled${deptParam}`
       const res = await fetch(query)
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
-      if (kind === 'workload') setWorkloadSuggestion(data.suggestion)
-      else setStalledAlerts(data.alerts ?? [])
+      if (kind === 'workload') {
+        const suggestions = (data.suggestions ?? []).filter((item: TaskWorkloadSuggestion) => item.type === 'rebalance')
+        setWorkloadSuggestions(suggestions)
+        setWorkloadSuggestion(suggestions[0] ?? data.suggestion)
+        if (suggestions.length === 0) setWorkloadInsightOpen(false)
+      } else {
+        const alerts = data.alerts ?? []
+        setStalledAlerts(alerts)
+        if (alerts.length === 0) setHighlightedStalledTaskId('')
+      }
     } catch (err) { setInsightError(err instanceof Error ? err.message : 'Failed to refresh task insight') }
     finally { setInsightLoading('') }
   }, [companyId, selectedDeptId])
 
+  const refreshAllTaskInsights = useCallback(async () => {
+    await refreshTaskInsights('workload')
+    await refreshTaskInsights('stalled')
+  }, [refreshTaskInsights])
+
   // ── Create task ────────────────────────────────────────────────────────────
+
+  const highlightFirstStalledTask = useCallback(() => {
+    const alert = stalledAlerts[0]
+    if (!alert) return
+    if (highlightedStalledTaskId === alert.task_id) {
+      setHighlightedStalledTaskId('')
+      return
+    }
+    setHighlightedStalledTaskId(alert.task_id)
+    setBoardViewMode('kanban')
+
+    const task = kanban
+      ? COLUMNS.flatMap(col => kanban[col] ?? []).find(row => row.id === alert.task_id)
+      : null
+    if (!task) return
+    setSelectedDeptId(task.department_id)
+    setTaskDate(kanbanDateKey(task))
+  }, [highlightedStalledTaskId, kanban, stalledAlerts])
 
   useEffect(() => {
     if (!companyId) return
@@ -1791,35 +2046,11 @@ export default function OwnerTasksPage() {
     void refreshTaskInsights('stalled')
   }, [companyId, selectedDeptId, refreshTaskInsights])
 
-  const handleCreateSubTask = async () => {
-    if (!selectedTask || !subTaskTitle.trim()) return
-    setSubTaskLoading(true); setPanelError('')
-    try {
-      const input: Partial<TaskInput> & { company_id: string; department_id: string; title: string } = {
-        company_id: selectedTask.company_id,
-        department_id: selectedTask.department_id,
-        shift_id: editShiftId || selectedTask.shift_id,
-        parent_task_id: selectedTask.id,
-        title: subTaskTitle.trim(),
-        assigned_user_id: editAssignee || selectedTask.assigned_user_id,
-        assigned_by: internalUserId || null,
-        status: 'Assigned',
-        percentage_complete: 0,
-        task_date: selectedTask.task_date ?? taskDate,
-      }
-      const res = await fetch('/api/task', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(input),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message)
-      setSubTaskTitle('')
-      setEditSubTaskEnabled(true)
-      fetchKanban(companyId)
-      showTaskToast('Sub-task created successfully.')
-    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to create sub-task') }
-    finally { setSubTaskLoading(false) }
+  const handleCreateSubTask = () => {
+    if (!subTaskTitle.trim()) return
+    setEditSubTasks(prev => [...prev, { id: crypto.randomUUID(), title: subTaskTitle.trim() }])
+    setSubTaskTitle('')
+    setEditSubTaskEnabled(true)
   }
 
   const handleCreateTask = async () => {
@@ -1887,25 +2118,33 @@ export default function OwnerTasksPage() {
       setNewRecurringEnabled(false); setNewRecurringCollapsed(false); setNewRecurrenceRule(''); setNewRecurrenceEndDate(''); setNewCustomIntervalDays(14); setNewCustomIntervalTouched(false)
       setNewDeadlineRuleType(''); setNewDeadlineRuleTime(''); setNewDeadlineRuleWeekday(null); setNewDeadlineRuleOffsetAmount(1); setNewDeadlineRuleOffsetUnit('days')
       setTaskDate(taskDate)
-      fetchKanban(companyId)
+      await fetchKanban(companyId)
+      await refreshAllTaskInsights()
       showTaskToast(newRecurringEnabled ? 'Recurring task created successfully.' : 'Task created successfully.')
     } catch (err) { setNewError(err instanceof Error ? err.message : 'Failed to create task') }
     finally { setNewLoading(false) }
   }
 
-  const openAiAssign = () => {
-    setAiModal(true)
+  const resetAiAssignInput = () => {
     setAiStep('input')
     setAiTitle('')
     setAiDescription('')
     setAiPriority('')
-    setAiPeopleNeeded(1)
-    setAiSuggestion(null)
-    setAiDeptId(selectedDeptId || '')
-    setAiManagerIds([])
     setAiDueDate('')
     setAiDueTime('')
+    setAiSubTaskEnabled(false)
+    setAiSuggestion(null)
+    setAiDeptId(selectedDeptId || '')
+    setAiManagerId('')
+    setAiSubTaskDrafts([])
+    setAiSubTaskCollapsed(true)
+    setAiSubTaskDraft('')
     setAiError('')
+  }
+
+  const openAiAssign = () => {
+    setAiModal(true)
+    resetAiAssignInput()
   }
 
   // Open new task modal pre-filled with dept + assignee.
@@ -2081,6 +2320,25 @@ export default function OwnerTasksPage() {
     finally { setEditManagerLoading(false) }
   }
 
+  // ── Members with a shift on a given date ───────────────────────────────────
+
+  const shiftUserIdsByDate = useMemo(() => {
+    const map = new Map<string, Set<string>>()
+    // A draft shift isn't a real commitment yet, so it can't make someone eligible for a task.
+    for (const shift of shiftOptions) {
+      if (!shift.user_id || shift.publication_status !== 'published') continue
+      const set = map.get(shift.shift_date) ?? new Set<string>()
+      set.add(shift.user_id)
+      map.set(shift.shift_date, set)
+    }
+    return map
+  }, [shiftOptions])
+  const userIdsWithShiftOnDate = useCallback(
+    (date: string) => shiftUserIdsByDate.get(date) ?? EMPTY_USER_ID_SET,
+    [shiftUserIdsByDate],
+  )
+  const userIdsWithShiftOnTaskDate = useMemo(() => userIdsWithShiftOnDate(taskDate), [userIdsWithShiftOnDate, taskDate])
+
   // ── Dates that have tasks (for calendar dots) ─────────────────────────────
 
   const datesWithTasks = useMemo<Set<string>>(() => {
@@ -2092,6 +2350,10 @@ export default function OwnerTasksPage() {
     }
     return dates
   }, [kanban])
+
+  const allKanbanTasks = useMemo(() => (
+    kanban ? COLUMNS.flatMap(col => kanban[col] ?? []) : []
+  ), [kanban])
 
   useEffect(() => {
     if (hasAutoSelectedTaskDateRef.current || datesWithTasks.size === 0) return
@@ -2141,9 +2403,10 @@ export default function OwnerTasksPage() {
   }, [taskDate])
 
   const calendarWeekLabel = useMemo(() => {
+    const fmtD = (d: Date) => `${String(d.getDate()).padStart(2, '0')} ${d.toLocaleDateString('en-AU', { month: 'short' })}`
     const first = new Date(`${calendarWeekDates[0]}T00:00:00`)
     const last = new Date(`${calendarWeekDates[6]}T00:00:00`)
-    return `${first.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${last.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+    return `${fmtD(first)} – ${fmtD(last)} ${last.getFullYear()}`
   }, [calendarWeekDates])
 
   const taskCalendarItems = useMemo(() => {
@@ -2180,9 +2443,6 @@ export default function OwnerTasksPage() {
     const ROW_HEIGHT = 58
     const NAME_COL = 180
     const dayIndex = (date: string) => calendarWeekDates.indexOf(date)
-    const overlapsCalendarItems = (a: typeof taskCalendarItems[number], b: typeof taskCalendarItems[number]) => (
-      a.startDate <= b.endDate && b.startDate <= a.endDate
-    )
     const taskCalendarRows = (() => {
       const rows = new Map<string, {
         key: string
@@ -2243,8 +2503,46 @@ export default function OwnerTasksPage() {
               {taskCalendarRows.map(row => {
                 const rowDept = departments.find(d => d.id === row.items[0]?.task.department_id)
                 const rowColor = rowDept ? deptColor(rowDept.id) : STATUS_CONFIG[row.items[0]?.task.status ?? 'Assigned'].color
-                const maxStackCount = Math.max(1, ...row.items.map(item => row.items.filter(other => overlapsCalendarItems(other, item)).length))
-                const rowHeight = Math.max(ROW_HEIGHT, maxStackCount * 34 + 18)
+                // Every top-level task gets its own dedicated lane (no packing two unrelated tasks
+                // into one lane just because their dates don't overlap) — assigned once, up front, so
+                // every bar in the row agrees on the same layout instead of each recomputing "who
+                // overlaps me" and centering independently. An expanded task's sub-task rows are
+                // inserted directly under their own parent's lane, never interleaved with siblings.
+                const primaryItemsForLanes = row.items
+                  .filter(item => !item.task.parent_task_id)
+                  .sort((a, b) => (
+                    a.startDate.localeCompare(b.startDate) || a.endDate.localeCompare(b.endDate) || a.task.title.localeCompare(b.task.title)
+                  ))
+                // Sub-task bars wrap their title onto two lines instead of truncating, so their
+                // lane needs to reserve more height (44px bar) than a main-task lane (28px bar).
+                const LANE_GAP = 6
+                const MAIN_BAR_HEIGHT = 28
+                const SUB_BAR_HEIGHT = 34
+                const laneByTaskId = new Map<string, number>()
+                const laneTopByTaskId = new Map<string, number>()
+                const laneHeightByTaskId = new Map<string, number>()
+                let nextLane = 0
+                let stackHeightAcc = 0
+                for (const primary of primaryItemsForLanes) {
+                  laneByTaskId.set(primary.task.id, nextLane)
+                  laneTopByTaskId.set(primary.task.id, stackHeightAcc)
+                  laneHeightByTaskId.set(primary.task.id, MAIN_BAR_HEIGHT)
+                  stackHeightAcc += MAIN_BAR_HEIGHT + LANE_GAP
+                  nextLane += 1
+                  const subItems = row.items
+                    .filter(sub => sub.task.parent_task_id === primary.task.id)
+                    .sort((a, b) => (a.subTaskIndex ?? 0) - (b.subTaskIndex ?? 0))
+                  for (const sub of subItems) {
+                    laneByTaskId.set(sub.task.id, nextLane)
+                    laneTopByTaskId.set(sub.task.id, stackHeightAcc)
+                    laneHeightByTaskId.set(sub.task.id, SUB_BAR_HEIGHT)
+                    stackHeightAcc += SUB_BAR_HEIGHT + LANE_GAP
+                    nextLane += 1
+                  }
+                }
+                const laneCount = nextLane
+                const stackHeight = Math.max(0, stackHeightAcc - LANE_GAP)
+                const rowHeight = Math.max(ROW_HEIGHT, stackHeight + 18)
                 const assignee = row.assignee
                 const isManager = assignee?.role === 'Manager'
                 return (
@@ -2272,46 +2570,40 @@ export default function OwnerTasksPage() {
                       a.task.title.localeCompare(b.task.title)
                     )).map(item => {
                       const dept = departments.find(d => d.id === item.task.department_id)
-                      const color = dept ? deptColor(dept.id) : STATUS_CONFIG[item.task.status].color
+                      const baseColor = dept ? deptColor(dept.id) : TASK_ORANGE
+                      const isSubTask = !!item.task.parent_task_id
+                      const color = isSubTask ? lightenColor(baseColor, 0.72) : baseColor
                       const startCol = Math.max(0, dayIndex(item.startDate))
                       const endCol = dayIndex(item.endDate) === -1 ? 6 : dayIndex(item.endDate)
                       const truncatedStart = item.startDate < calendarWeekDates[0]
                       const truncatedEnd = item.endDate > calendarWeekDates[6]
-                      const stackItems = row.items
-                        .filter(other => overlapsCalendarItems(other, item))
-                        .sort((a, b) => (
-                          (PRIORITY_ORDER[a.task.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.task.priority ?? ''] ?? 4) ||
-                          a.startDate.localeCompare(b.startDate) ||
-                          a.task.title.localeCompare(b.task.title)
-                        ))
-                      const stackIndex = Math.max(0, stackItems.findIndex(other => other.task.id === item.task.id))
-                      const stackHeight = stackItems.length * 28 + Math.max(0, stackItems.length - 1) * 6
-                      const stackTop = Math.max(0, (rowHeight - stackHeight) / 2) + stackIndex * 34
+                      const barHeight = laneHeightByTaskId.get(item.task.id) ?? MAIN_BAR_HEIGHT
+                      const stackTop = Math.max(0, (rowHeight - stackHeight) / 2) + (laneTopByTaskId.get(item.task.id) ?? 0)
                       return (
                         <button
                           key={item.task.id}
                           type="button"
-                          onClick={() => openTask(item.task, false)}
+                          onClick={isSubTask ? undefined : () => openTask(item.task, false)}
                           title={`${item.task.title} | ${item.startDate} - ${item.endDate}`}
                           style={{
                             gridColumn: `${startCol + 2} / ${endCol + 3}`,
                             gridRow: 1,
                             alignSelf: 'start',
                             position: 'relative',
-                            margin: `${stackTop}px 6px 0`,
-                            height: 28,
+                            margin: isSubTask ? `${stackTop}px 22px 0` : `${stackTop}px 6px 0`,
+                            height: barHeight,
                             display: 'flex',
                             alignItems: 'center',
-                            justifyContent: 'center',
-                            padding: '0 12px',
+                            justifyContent: isSubTask ? 'flex-start' : 'center',
+                            padding: isSubTask ? '2px 12px' : '0 12px',
                             border: 'none',
-                            borderRadius: 999,
+                            borderRadius: isSubTask ? 10 : 999,
                             background: color,
-                            cursor: 'pointer',
+                            cursor: isSubTask ? 'default' : 'pointer',
                             overflow: 'hidden',
                           }}
-                          onMouseEnter={e => { e.currentTarget.style.filter = 'brightness(1.08)' }}
-                          onMouseLeave={e => { e.currentTarget.style.filter = 'none' }}
+                          onMouseEnter={isSubTask ? undefined : e => { e.currentTarget.style.filter = 'brightness(1.08)' }}
+                          onMouseLeave={isSubTask ? undefined : e => { e.currentTarget.style.filter = 'none' }}
                         >
                           {truncatedStart && (
                             <span
@@ -2327,11 +2619,14 @@ export default function OwnerTasksPage() {
                             </span>
                           )}
                           {item.subTaskIndex !== null && (
-                            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: '50%', background: 'rgba(255,255,255,0.3)', color: '#FFFFFF', fontSize: 9, fontWeight: 800, flexShrink: 0, marginRight: 5 }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: '50%', background: isSubTask ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.3)', color: isSubTask ? baseColor : '#FFFFFF', fontSize: 9, fontWeight: 800, flexShrink: 0, marginRight: 5 }}>
                               {item.subTaskIndex}
                             </span>
                           )}
-                          <span style={{ fontSize: 12, fontWeight: 700, color: '#FFFFFF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.task.title}</span>
+                          <span style={isSubTask
+                            ? { fontSize: 11, fontWeight: 700, color: baseColor, lineHeight: 1.25, display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2, overflow: 'hidden', textAlign: 'left' }
+                            : { fontSize: 12, fontWeight: 700, color: '#FFFFFF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }
+                          }>{item.task.title}</span>
                           {item.subTaskCount > 0 && (
                             <span
                               role="button"
@@ -2415,28 +2710,69 @@ export default function OwnerTasksPage() {
   )
   const isNewTaskValid = newTitle.trim() !== '' && newDeptId !== '' && newPriority !== '' && newStartDate !== ''
     && (newRecurringEnabled ? (newRecurrenceRule !== '' && newRecurrenceEndDate !== '' && newRecurrenceEndDate > newStartDate && (newRecurrenceRule !== 'custom' || newCustomIntervalDays >= 1) && isNewDeadlineRuleValid) : (newDeadlineDate !== '' && newDeadlineTime !== ''))
-  const editTaskDeptMembers = editDeptId ? assignableMembers.filter(m => m.department_id === editDeptId) : assignableMembers
+  // When editing a sibling occurrence (not the original), the original's own task_date is
+  // earlier than editStartDate — look it up from the loaded siblings so the Preview can still
+  // anchor on and label the true original, instead of treating the opened occurrence as it.
+  const originalTaskDateForEdit = (() => {
+    if (!selectedTask?.recurrence_group_id || !kanban) return editStartDate
+    if (selectedTask.source_task_id === null) return editStartDate
+    const original = COLUMNS.flatMap(col => kanban[col])
+      .find(row => row.recurrence_group_id === selectedTask.recurrence_group_id && row.source_task_id === null)
+    return original ? kanbanDateKey(original) : editStartDate
+  })()
+  const editRecurringPreviewDates: string[] = (() => {
+    if (!editRecurringEnabled || !recurrenceRule || !originalTaskDateForEdit || !recurrenceEndDate) return []
+    const intervalDays = recurrenceRule === 'daily'
+      ? 1
+      : recurrenceRule === 'weekly'
+        ? 7
+        : editCustomIntervalDays
+    if (!intervalDays || intervalDays < 1) return []
+    const dates: string[] = []
+    let next = addDays(new Date(`${originalTaskDateForEdit}T00:00:00`), intervalDays)
+    while (formatDateKey(next) <= recurrenceEndDate && dates.length < 60) {
+      dates.push(formatDateKey(next))
+      next = addDays(next, intervalDays)
+    }
+    return dates
+  })()
+  const isEditDeadlineRuleValid = editDeadlineRuleType !== '' && (
+    editDeadlineRuleType === 'same_day' ? editDeadlineRuleTime !== '' :
+    editDeadlineRuleType === 'fixed_day' ? editDeadlineRuleTime !== '' && editDeadlineRuleWeekday !== null :
+    editDeadlineRuleOffsetAmount >= 1
+  )
+  // Preview-only mirror of taskService's computeDeadlineFromRule for the Edit panel's recurring preview.
+  const previewDeadlineForEdit = (taskDate: string): string | null => {
+    if (!isEditDeadlineRuleValid) return null
+    if (editDeadlineRuleType === 'same_day') {
+      return new Date(`${taskDate}T${editDeadlineRuleTime}:00`).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    }
+    if (editDeadlineRuleType === 'fixed_day') {
+      const d = new Date(`${taskDate}T00:00:00`)
+      d.setDate(d.getDate() + (((editDeadlineRuleWeekday ?? 0) - d.getDay() + 7) % 7))
+      return new Date(`${formatDateKey(d)}T${editDeadlineRuleTime}:00`).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    }
+    const base = new Date(`${taskDate}T00:00:00`)
+    if (editDeadlineRuleOffsetUnit === 'hours') base.setHours(base.getHours() + editDeadlineRuleOffsetAmount)
+    else base.setDate(base.getDate() + editDeadlineRuleOffsetAmount)
+    return base.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  }
+  const editTaskDeptMembers = (editDeptId ? assignableMembers.filter(m => m.department_id === editDeptId) : assignableMembers)
+    .filter(m => userIdsWithShiftOnDate(editStartDate).has(m.id) || m.id === editAssignee)
   const editAssigneeDropdownOptions = editTaskDeptMembers.map(m => ({ value: m.id, label: m.full_name }))
   const isEditTaskValid = editTitle.trim() !== '' && editDeptId !== '' && editStartDate !== '' && editPriority !== '' && editDueAt !== '' && editDeadlineTime !== ''
+  const isEditRecurringFormValid = !editRecurringEnabled || (
+    recurrenceEndDate !== '' && recurrenceEndDate > editStartDate && (recurrenceRule !== 'custom' || editCustomIntervalDays >= 1) && isEditDeadlineRuleValid
+  )
+  // The server-persisted sub-tasks as of when the panel was opened — used as the "before" side
+  // of the diff handleSaveTask runs against editSubTasks (the local draft) on Save Changes.
   const selectedSubTasksUnordered = selectedTask && kanban
     ? COLUMNS.flatMap(col => kanban[col]).filter(task => task.parent_task_id === selectedTask.id)
     : []
-  // Reflects panelSubTaskOrder optimistically while a drag-reorder save is in flight;
-  // falls back to server order whenever the sub-task set itself changed (e.g. one was just added).
-  const selectedSubTaskIdsKey = selectedSubTasksUnordered.map(t => t.id).sort().join(',')
-  const selectedSubTasks = panelSubTaskOrder.length === selectedSubTasksUnordered.length && panelSubTaskOrder.every(id => selectedSubTasksUnordered.some(t => t.id === id))
-    ? panelSubTaskOrder.map(id => selectedSubTasksUnordered.find(t => t.id === id)).filter((t): t is Task => !!t)
-    : [...selectedSubTasksUnordered].sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0))
   const visibleArchivedTasks = useMemo(
     () => archivedTasks.filter(t => !t.parent_task_id && !t.source_task_id),
     [archivedTasks],
   )
-
-  useEffect(() => {
-    if (!selectedTask) return
-    setPanelSubTaskOrder([...selectedSubTasksUnordered].sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0)).map(t => t.id))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTask?.id, selectedSubTaskIdsKey])
   const recommendedAssigneeName = reassignmentSuggestion?.recommended_assignee_id
     ? members.find(m => m.id === reassignmentSuggestion.recommended_assignee_id)?.full_name ?? 'Unknown'
     : ''
@@ -2766,9 +3102,7 @@ export default function OwnerTasksPage() {
                   </div>
                   <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
                     {(() => {
-                      const hasIssue = workloadSuggestion?.type === 'rebalance'
-                      const overloadedName = members.find(m => m.id === workloadSuggestion?.overloaded_user_id)?.full_name ?? 'a member'
-                      const recommendedName = members.find(m => m.id === workloadSuggestion?.recommended_user_id)?.full_name ?? 'another member'
+                      const hasIssue = workloadSuggestions.length > 0
                       return (
                         <div style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#F9FAFB', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
                           <span style={{ width: 28, height: 28, borderRadius: 9, background: '#EEF2FF', color: '#4F46E5', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -2776,17 +3110,15 @@ export default function OwnerTasksPage() {
                           </span>
                           <div style={{ minWidth: 0, flex: 1 }}>
                             <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: TASK_TEXT }}>Workload Suggestion</p>
-                            {hasIssue && (
-                              <p style={{ margin: '3px 0 0', color: '#64748B', fontSize: 12, fontWeight: 600, lineHeight: 1.35 }}>
-                                {`Move one active task from ${overloadedName} to ${recommendedName}.`}
-                              </p>
-                            )}
                           </div>
                           <button
                             type="button"
-                            onClick={() => void refreshTaskInsights('workload')}
+                            onClick={() => {
+                              if (hasIssue) { setWorkloadApplyError(''); setWorkloadInsightOpen(true) }
+                              else void refreshTaskInsights('workload')
+                            }}
                             disabled={insightLoading === 'workload'}
-                            title="Refresh"
+                            title={hasIssue ? 'View workload suggestion' : 'Refresh'}
                             style={{ width: 30, height: 30, border: 'none', borderRadius: 999, background: hasIssue ? '#FEF3C7' : '#DCFCE7', color: hasIssue ? '#D97706' : '#16A34A', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: insightLoading === 'workload' ? 'default' : 'pointer' }}
                           >
                             {insightLoading === 'workload' ? <Spinner size={12} dark /> : hasIssue ? <AlertTriangle size={15} /> : <Check size={15} strokeWidth={3} />}
@@ -2804,17 +3136,15 @@ export default function OwnerTasksPage() {
                           </span>
                           <div style={{ minWidth: 0, flex: 1 }}>
                             <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: TASK_TEXT }}>Stalled Tasks</p>
-                            {hasIssue && (
-                              <p style={{ margin: '3px 0 0', color: '#64748B', fontSize: 12, fontWeight: 600, lineHeight: 1.35 }}>
-                                {`${stalledAlerts.length} task${stalledAlerts.length === 1 ? '' : 's'} need attention: ${stalledAlerts[0].title}`}
-                              </p>
-                            )}
                           </div>
                           <button
                             type="button"
-                            onClick={() => void refreshTaskInsights('stalled')}
+                            onClick={() => {
+                              if (hasIssue) highlightFirstStalledTask()
+                              else void refreshTaskInsights('stalled')
+                            }}
                             disabled={insightLoading === 'stalled'}
-                            title="Refresh"
+                            title={hasIssue ? 'Highlight stalled task' : 'Refresh'}
                             style={{ width: 30, height: 30, border: 'none', borderRadius: 999, background: hasIssue ? '#FEF3C7' : '#DCFCE7', color: hasIssue ? '#D97706' : '#16A34A', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: insightLoading === 'stalled' ? 'default' : 'pointer' }}
                           >
                             {insightLoading === 'stalled' ? <Spinner size={12} dark /> : hasIssue ? <AlertTriangle size={15} /> : <Check size={15} strokeWidth={3} />}
@@ -2875,8 +3205,13 @@ export default function OwnerTasksPage() {
                         <>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 12 }}>
                             {orderedDepartments.map((d, deptIdx) => {
-                              const managerCount = members.filter(m => m.department_id === d.id && m.role === 'Manager').length
-                              const taskCount = dayTasks.filter(t => t.department_id === d.id).length
+                              const managerCount = members.filter(m => m.department_id === d.id && m.role === 'Manager' && userIdsWithShiftOnTaskDate.has(m.id)).length
+                              // A recurring task's occurrences all count as one task — same principle as a
+                              // task with sub-tasks still being one task — so dedupe by recurrence_group_id
+                              // (falling back to the task's own id when it isn't part of a series).
+                              const taskCount = new Set(
+                                dayTasks.filter(t => t.department_id === d.id).map(t => t.recurrence_group_id ?? t.id)
+                              ).size
                               const isDragging = draggingDepartmentId === d.id
                               const isDragOver = dragOverDepartmentId === d.id
                               return (
@@ -2982,7 +3317,7 @@ export default function OwnerTasksPage() {
                     }
 
                     // ── Department selected: manager list ──
-                    const deptMembers = members.filter(m => m.department_id === dept.id && m.role === 'Manager')
+                    const deptMembers = members.filter(m => m.department_id === dept.id && m.role === 'Manager' && userIdsWithShiftOnTaskDate.has(m.id))
                     // Count tasks due on the selected date only, so the panel matches what's visible in the Kanban
                     const dateTaskCountByUser = COLUMNS
                       .flatMap(col => filteredTasks(col))
@@ -3093,7 +3428,7 @@ export default function OwnerTasksPage() {
                           onClick={() => setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), -7)))}
                           style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${TASK_BORDER}`, background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: 'pointer', color: TASK_TEXT }}
                         ><ChevronLeft size={16} /></button>
-                        <span style={{ height: 38, minWidth: 188, padding: '0 12px', border: `1px solid ${TASK_BORDER}`, borderRadius: 9, background: '#FFFFFF', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: TASK_TEXT, fontSize: 13, fontWeight: 500, fontFamily: 'var(--font-body), system-ui, sans-serif' }}>
+                        <span style={{ height: 38, minWidth: 176, padding: '0 12px', border: `1px solid ${TASK_BORDER}`, borderRadius: 9, background: '#FFFFFF', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: TASK_TEXT, fontSize: 13, fontWeight: 500, fontFamily: 'var(--font-body), system-ui, sans-serif' }}>
                           <CalendarDays size={14} color="#64748B" />{calendarWeekLabel}
                         </span>
                         <button
@@ -3182,9 +3517,10 @@ export default function OwnerTasksPage() {
                                       expanded={isExpanded}
                                       onToggleExpand={() => toggleTaskExpanded(task.id)}
                                       isOwner={!!internalUserId && task.assigned_by === internalUserId}
+                                      highlighted={highlightedStalledTaskId === task.id}
                                     />
                                     {isExpanded && subTasks.length > 0 && (
-                                      <div style={{ marginTop: -6, marginBottom: 14, paddingLeft: 6 }}>
+                                      <div style={{ marginTop: -6, marginBottom: 14, paddingLeft: 6, paddingRight: 20 }}>
                                         {subTasks.map((sub, idx) => (
                                           <div key={sub.id} style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
                                             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
@@ -3208,6 +3544,7 @@ export default function OwnerTasksPage() {
                                                 onClick={() => {}}
                                                 onEdit={() => openTask(sub, false)}
                                                 clickable={false}
+                                                isSubTask
                                               />
                                             </div>
                                           </div>
@@ -3235,16 +3572,9 @@ export default function OwnerTasksPage() {
       {/* ═══════════════ TASK DETAIL PANEL ═══════════════ */}
       {selectedTask && taskViewMode && (() => {
         const viewFieldValue: React.CSSProperties = {
-          padding: '10px 12px',
-          border: '1.5px solid #E5E7EB',
-          borderRadius: 8,
-          background: '#FFFFFF',
-          fontSize: '0.9375rem',
-          color: '#111827',
-          minHeight: 40,
+          ...modalInputStyle,
           display: 'flex',
           alignItems: 'center',
-          boxSizing: 'border-box',
         }
         const viewEmpty: React.CSSProperties = { ...viewFieldValue, color: '#9CA3AF', fontStyle: 'italic' }
         const isOwner = !!internalUserId && selectedTask.assigned_by === internalUserId
@@ -3324,13 +3654,20 @@ export default function OwnerTasksPage() {
           >
             {/* Header */}
             <div style={{ padding: '18px 20px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   <Pencil size={14} color="#fff" strokeWidth={2.5} />
                 </div>
-                <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>Edit Task</h2>
+                <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif", whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {boardViewMode === 'calendar' ? `Edit ${selectedTask.title}` : 'Edit Task'}
+                </h2>
+                {boardViewMode === 'calendar' && (
+                  <span style={{ flexShrink: 0, fontSize: '0.7rem', fontWeight: 700, padding: '3px 9px', borderRadius: 999, background: STATUS_CONFIG[selectedTask.status].bg, color: STATUS_CONFIG[selectedTask.status].color }}>
+                    {STATUS_CONFIG[selectedTask.status].label}
+                  </span>
+                )}
               </div>
-              <button onClick={closePanel} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
+              <button onClick={closePanel} style={{ flexShrink: 0, background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
                 onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
                 onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
               >
@@ -3423,9 +3760,9 @@ export default function OwnerTasksPage() {
                     <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flex: 1 }}>
                       <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
                         <GitBranch size={13} color={TASK_ORANGE} /> Sub Task
-                        {selectedSubTasks.length > 0 && (
+                        {editSubTasks.length > 0 && (
                           <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 18, height: 18, padding: '0 5px', borderRadius: 9, background: '#FFF3E8', color: '#EA580C', fontSize: 11, fontWeight: 800 }}>
-                            {selectedSubTasks.length}
+                            {editSubTasks.length}
                           </span>
                         )}
                       </span>
@@ -3436,7 +3773,7 @@ export default function OwnerTasksPage() {
                         style={{ width: 16, height: 16, accentColor: TASK_ORANGE, cursor: 'pointer', marginLeft: 'auto' }}
                       />
                     </label>
-                    {editSubTaskEnabled && selectedSubTasks.length > 0 && (
+                    {editSubTaskEnabled && editSubTasks.length > 0 && (
                       <button
                         type="button"
                         onClick={() => setEditSubTaskCollapsed(prev => !prev)}
@@ -3447,16 +3784,15 @@ export default function OwnerTasksPage() {
                     )}
                   </div>
 
-                  {editSubTaskEnabled && !(editSubTaskCollapsed && selectedSubTasks.length > 0) && (
+                  {editSubTaskEnabled && !(editSubTaskCollapsed && editSubTasks.length > 0) && (
                     <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                      {selectedSubTasks.length > 0 && (
+                      {editSubTasks.length > 0 && (
                         <div>
                           <SubTaskOrderList
-                            items={selectedSubTasks.map(t => ({ id: t.id, title: t.title }))}
+                            items={editSubTasks}
                             onReorder={handleReorderSubTasks}
                             onRemove={handleRemoveSubTask}
                             onRename={handleRenameSubTask}
-                            disabled={subTaskReorderLoading}
                           />
                         </div>
                       )}
@@ -3469,8 +3805,8 @@ export default function OwnerTasksPage() {
                           style={{ ...modalInputStyle, flex: 1, minWidth: 0, minHeight: 32, padding: '6px 10px', fontSize: 12 }}
                           onKeyDown={e => { if (e.key === 'Enter') handleCreateSubTask() }}
                         />
-                        <button type="button" onClick={handleCreateSubTask} disabled={subTaskLoading || !subTaskTitle.trim()} style={{ flexShrink: 0, width: 32, height: 30, padding: 0, border: 0, borderRadius: 7, background: subTaskTitle.trim() ? 'linear-gradient(135deg, #F97316, #EA580C)' : '#E5E7EB', color: subTaskTitle.trim() ? '#FFFFFF' : '#9CA3AF', fontWeight: 700, fontSize: 12, cursor: subTaskTitle.trim() ? 'pointer' : 'not-allowed', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                          {subTaskLoading ? <Spinner size={12} /> : <Plus size={14} strokeWidth={2.5} />}
+                        <button type="button" onClick={handleCreateSubTask} disabled={!subTaskTitle.trim()} style={{ flexShrink: 0, width: 32, height: 30, padding: 0, border: 0, borderRadius: 7, background: subTaskTitle.trim() ? 'linear-gradient(135deg, #F97316, #EA580C)' : '#E5E7EB', color: subTaskTitle.trim() ? '#FFFFFF' : '#9CA3AF', fontWeight: 700, fontSize: 12, cursor: subTaskTitle.trim() ? 'pointer' : 'not-allowed', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <Plus size={14} strokeWidth={2.5} />
                         </button>
                       </div>
                     </div>
@@ -3486,7 +3822,7 @@ export default function OwnerTasksPage() {
                       <input
                         type="checkbox"
                         checked={editRecurringEnabled}
-                        onChange={e => setEditRecurringEnabled(e.target.checked)}
+                        onChange={e => { setEditRecurringEnabled(e.target.checked); if (e.target.checked) setEditRecurringCollapsed(false) }}
                         style={{ width: 16, height: 16, accentColor: TASK_ORANGE, cursor: 'pointer', marginLeft: 'auto' }}
                       />
                     </label>
@@ -3500,28 +3836,175 @@ export default function OwnerTasksPage() {
                       </button>
                     )}
                   </div>
-                  {editRecurringEnabled && !editRecurringCollapsed && <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 8, alignItems: 'end' }}>
-                    <div>
-                      <label style={{ ...modalLabelStyle, fontSize: 12, marginBottom: 6 }}>Repeats</label>
-                      <DropdownField
-                        value={recurrenceRule}
-                        options={[
-                          { value: 'daily', label: 'Daily' },
-                          { value: 'weekly', label: 'Weekly' },
-                          { value: 'custom', label: 'Custom' },
-                        ]}
-                        onChange={v => setRecurrenceRule(v as TaskRecurrenceRule)}
-                      />
+                  {editRecurringEnabled && !editRecurringCollapsed && (
+                    <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Repeats</span>
+                          <DropdownField
+                            value={recurrenceRule}
+                            options={[
+                              { value: 'daily', label: 'Daily' },
+                              { value: 'weekly', label: 'Weekly' },
+                              { value: 'custom', label: 'Custom' },
+                            ]}
+                            onChange={v => setRecurrenceRule(v as TaskRecurrenceRule)}
+                            placeholder="Select frequency"
+                          />
+                        </label>
+                        <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Repeat until</span>
+                          <CompactDatePicker
+                            value={recurrenceEndDate}
+                            onChange={setRecurrenceEndDate}
+                            minDate={editStartDate || todayTaskDate}
+                            accentColor={TASK_ORANGE}
+                          />
+                        </label>
+                      </div>
+                      {recurrenceRule === 'custom' && recurrenceEndDate && (
+                        <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Repeat every (days)</span>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={editCustomIntervalDays || ''}
+                            onChange={e => {
+                              const digits = e.target.value.replace(/\D/g, '')
+                              setEditCustomIntervalDays(digits === '' ? 0 : Number(digits))
+                              setEditCustomIntervalTouched(true)
+                            }}
+                            onBlur={() => setEditCustomIntervalDays(prev => Math.min(31, Math.max(1, prev || 1)))}
+                            style={{ ...modalInputStyle, minHeight: 40, padding: '9px 12px', fontSize: '0.8125rem' }}
+                          />
+                        </label>
+                      )}
+                      {recurrenceRule && recurrenceEndDate && (recurrenceRule !== 'custom' || editCustomIntervalTouched) && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0, borderTop: '1px dashed #E5E7EB', paddingTop: 10 }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Deadline rule</span>
+                              <DropdownField
+                                value={editDeadlineRuleType}
+                                options={[
+                                  { value: 'same_day', label: 'Same day' },
+                                  ...(recurrenceRule === 'weekly' ? [{ value: 'fixed_day', label: 'Fixed day' }] : []),
+                                  { value: 'relative', label: 'Relative' },
+                                ]}
+                                onChange={v => setEditDeadlineRuleType(v as TaskDeadlineRuleType)}
+                                placeholder="Select deadline rule"
+                              />
+                            </label>
+
+                            {editDeadlineRuleType === 'same_day' && (
+                              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Due at</span>
+                                <DropdownField
+                                  value={editDeadlineRuleTime}
+                                  options={TIME_OPTIONS}
+                                  onChange={setEditDeadlineRuleTime}
+                                  placeholder="Select time"
+                                />
+                              </label>
+                            )}
+
+                            {editDeadlineRuleType === 'fixed_day' && (
+                              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>At</span>
+                                <DropdownField
+                                  value={editDeadlineRuleTime}
+                                  options={TIME_OPTIONS}
+                                  onChange={setEditDeadlineRuleTime}
+                                  placeholder="Select time"
+                                />
+                              </label>
+                            )}
+
+                            {editDeadlineRuleType === 'relative' && (
+                              <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Due within</span>
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  value={editDeadlineRuleOffsetAmount || ''}
+                                  onChange={e => {
+                                    const digits = e.target.value.replace(/\D/g, '')
+                                    setEditDeadlineRuleOffsetAmount(digits === '' ? 0 : Number(digits))
+                                  }}
+                                  onBlur={() => setEditDeadlineRuleOffsetAmount(prev => Math.max(1, prev || 1))}
+                                  style={{ ...modalInputStyle, minHeight: 40, padding: '9px 12px', fontSize: '0.8125rem' }}
+                                />
+                              </label>
+                            )}
+                          </div>
+
+                          {editDeadlineRuleType === 'fixed_day' && (
+                            <div>
+                              <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151', marginBottom: 6 }}>Due every</span>
+                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                {WEEKDAY_LABELS.map((label, weekday) => {
+                                  const active = editDeadlineRuleWeekday === weekday
+                                  return (
+                                    <button
+                                      key={weekday}
+                                      type="button"
+                                      onClick={() => setEditDeadlineRuleWeekday(weekday)}
+                                      style={{ width: 34, height: 30, border: active ? `1.5px solid ${TASK_ORANGE}` : '1.5px solid #E5E7EB', background: active ? '#FFF7ED' : '#FFFFFF', color: active ? TASK_ORANGE : '#374151', borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+                                    >
+                                      {label}
+                                    </button>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          )}
+
+                          {editDeadlineRuleType === 'relative' && (
+                            <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Unit</span>
+                              <DropdownField
+                                value={editDeadlineRuleOffsetUnit}
+                                options={[{ value: 'days', label: 'Days' }, { value: 'hours', label: 'Hours' }]}
+                                onChange={v => setEditDeadlineRuleOffsetUnit(v as 'hours' | 'days')}
+                              />
+                            </label>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <div>
-                      <label style={{ ...modalLabelStyle, fontSize: 12, marginBottom: 6 }}>Repeat until</label>
-                      <TaskDatePicker value={recurrenceEndDate || editStartDate || formatDateKey(new Date())} onChange={setRecurrenceEndDate} taskDates={datesWithTasks} minDate={editStartDate || todayTaskDate} accentColor={TASK_ORANGE} fullWidth />
-                    </div>
-                    <button type="button" onClick={handleCreateRecurringTasks} disabled={taskActionLoading === 'recurring' || !recurrenceEndDate} style={{ height: 30, border: 0, borderRadius: 7, background: '#0F172A', color: '#FFFFFF', fontSize: 12, fontWeight: 800, padding: '0 12px', cursor: taskActionLoading === 'recurring' ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                      {taskActionLoading === 'recurring' ? <Spinner size={12} /> : null} Create
-                    </button>
-                  </div>}
+                  )}
                 </div>
+
+                {editRecurringEnabled && editRecurringPreviewDates.length > 0 && (
+                  <div>
+                    <p style={{ margin: '0 0 10px', fontWeight: 600, fontSize: '0.875rem', color: '#374151' }}>Preview</p>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+                      {[originalTaskDateForEdit, ...editRecurringPreviewDates].map((date, idx) => {
+                        const isOriginal = idx === 0
+                        const isCurrentlyEditing = date === editStartDate
+                        const deadlinePreview = isOriginal
+                          ? (editDeadlineRuleType ? previewDeadlineForEdit(date) : null)
+                          : previewDeadlineForEdit(date)
+                        const d = new Date(`${date}T00:00:00`)
+                        const dateLabel = `${d.toLocaleDateString('en-US', { weekday: 'short' })}, ${d.toLocaleDateString('en-US', { month: 'long' })} ${d.getDate()}`
+                        return (
+                          <div key={date} style={{ border: isCurrentlyEditing ? `1.5px solid ${TASK_ORANGE}` : '1px solid #E5E7EB', borderRadius: 10, padding: '9px 10px', background: '#FFFFFF' }}>
+                            <p style={{ margin: '0 0 7px', fontSize: 11, fontWeight: 600, color: TASK_TEXT }}>{dateLabel}</p>
+                            {deadlinePreview && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', fontSize: 11, fontWeight: 600, color: TASK_TEXT }}>
+                                <Clock size={11} color="#9CA3AF" /> {deadlinePreview}
+                              </div>
+                            )}
+                            <p style={{ margin: '6px 0 0', fontSize: 10.5, color: isOriginal ? TASK_ORANGE : '#B45309', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 3 }}>
+                              {isOriginal ? <><GitBranch size={10} /> Main Task</> : <><Repeat size={10} /> Auto-generated</>}
+                              {isCurrentlyEditing && !isOriginal && <span style={{ marginLeft: 4, color: TASK_ORANGE }}>· Editing</span>}
+                            </p>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <InlineError message={panelError} />
@@ -3532,8 +4015,8 @@ export default function OwnerTasksPage() {
               <button
                 type="button"
                 onClick={handleSaveTask}
-                disabled={editLoading || !isEditTaskValid}
-                style={{ padding: '7px 18px', background: !isEditTaskValid ? '#E5E7EB' : editLoading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: !isEditTaskValid ? '#9CA3AF' : '#FFFFFF', cursor: editLoading || !isEditTaskValid ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: editLoading ? 0.65 : 1 }}
+                disabled={editLoading || !isEditTaskValid || !isEditRecurringFormValid}
+                style={{ padding: '7px 18px', background: (!isEditTaskValid || !isEditRecurringFormValid) ? '#E5E7EB' : editLoading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: (!isEditTaskValid || !isEditRecurringFormValid) ? '#9CA3AF' : '#FFFFFF', cursor: editLoading || !isEditTaskValid || !isEditRecurringFormValid ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: editLoading ? 0.65 : 1 }}
               >
                 {editLoading ? <Spinner size={13} /> : <Check size={13} />} Save Changes
               </button>
@@ -3543,6 +4026,196 @@ export default function OwnerTasksPage() {
       )}
 
       {/* ═══════════════ DELETE TASK MODAL ═══════════════ */}
+      {workloadInsightOpen && workloadSuggestions.length > 0 && (
+        <div
+          onClick={() => setWorkloadInsightOpen(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, zIndex: 110, animation: 'overlayFadeIn 0.18s ease-out' }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="workload-suggestion-title"
+            onClick={e => e.stopPropagation()}
+            style={{ width: 'min(560px, calc(100vw - 36px))', maxHeight: '88vh', background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)', display: 'flex', flexDirection: 'column' }}
+          >
+            <div style={{ padding: '18px 20px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <AlertTriangle size={15} color="#fff" strokeWidth={2.5} />
+                </div>
+                <h2 id="workload-suggestion-title" style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+                  Workload Suggestion
+                </h2>
+              </div>
+              <button onClick={() => setWorkloadInsightOpen(false)} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+                onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto' }}>
+              {workloadSuggestions.map(suggestion => {
+                const recommendedMember = members.find(m => m.id === suggestion.recommended_user_id)
+                const recommendedName = recommendedMember?.full_name ?? 'another manager'
+                const suggestedTask = allKanbanTasks.find(task => task.id === suggestion.suggested_task_id)
+                const loading = workloadApplyLoadingId === suggestion.suggested_task_id
+                return (
+                  <div key={`${suggestion.department_id}-${suggestion.suggested_task_id}`} style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10, background: '#FFFFFF' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '260px 40px 150px', alignItems: 'stretch', justifyContent: 'center', gap: 12 }}>
+                      <div style={{ minWidth: 0 }}>
+                        {suggestedTask ? (
+                          <TaskCard
+                            task={suggestedTask}
+                            members={members}
+                            shiftOptions={shiftOptions}
+                            departments={departments}
+                            showDept
+                            onClick={() => {}}
+                            onEdit={() => {}}
+                            clickable={false}
+                            isOwner={false}
+                            noOuterMargin
+                            fillHeight
+                          />
+                        ) : (
+                          <div className="task-card" style={{ height: '100%', boxSizing: 'border-box', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 10, padding: '16px 16px', color: TASK_TEXT, fontSize: 14, fontWeight: 800 }}>
+                            {suggestion.suggested_task_title ?? 'Task'}
+                          </div>
+                        )}
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <button
+                          type="button"
+                          title="Reassign task"
+                          aria-label={`Reassign task to ${recommendedName}`}
+                          onClick={() => handleApplyWorkloadSuggestion(suggestion)}
+                          disabled={!!workloadApplyLoadingId || !suggestion.suggested_task_id || !suggestion.recommended_user_id}
+                          style={{ width: 36, height: 36, border: '1px solid #FED7AA', borderRadius: 8, background: loading ? '#FFEDD5' : '#FFF7ED', color: '#EA580C', cursor: workloadApplyLoadingId ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, opacity: (!suggestion.suggested_task_id || !suggestion.recommended_user_id) ? 0.55 : 1, transition: 'opacity 0.18s ease, box-shadow 0.18s ease, background 0.18s ease' }}
+                        >
+                          {loading ? <Spinner size={13} /> : <ArrowRightLeft size={15} />}
+                        </button>
+                      </div>
+
+                      <div style={{ minWidth: 0, width: 150, justifySelf: 'stretch', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 7 }}>
+                        <p style={{ margin: 0, width: '100%', fontSize: 10, fontWeight: 800, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.02em', lineHeight: 1.15, textAlign: 'center', whiteSpace: 'nowrap' }}>Reassign Suggestion</p>
+                        <button
+                          type="button"
+                          aria-label={`Open ${recommendedName} profile`}
+                          onClick={() => { if (recommendedMember) setProfileMember(recommendedMember) }}
+                          className="internal-member-card"
+                          style={{ width: 126, height: 128, padding: '10px 8px', borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', boxShadow: '0 1px 3px rgba(15,23,42,0.06)', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', cursor: recommendedMember ? 'pointer' : 'default', textAlign: 'center', transition: 'box-shadow 0.22s ease, border-color 0.22s ease, transform 0.22s ease, background 0.22s ease' }}
+                          onMouseEnter={e => { if (recommendedMember) { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.boxShadow = '0 3px 10px rgba(0,0,0,0.10)'; e.currentTarget.style.background = '#FFFFFF' } }}
+                          onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.boxShadow = '0 1px 3px rgba(15,23,42,0.06)'; e.currentTarget.style.background = '#FFFFFF' }}
+                        >
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, width: '100%' }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 64, height: 64, borderRadius: 999, background: recommendedMember?.profile_photo_url ? 'transparent' : '#FFF7ED', color: '#EA580C', flexShrink: 0, overflow: 'hidden' }}>
+                              {recommendedMember?.profile_photo_url
+                                ? <img src={recommendedMember.profile_photo_url} alt={recommendedName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                : <UserCog size={30} />}
+                            </span>
+                            <p style={{ fontWeight: 700, fontSize: '0.875rem', color: '#0F172A', margin: 0, lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>
+                              {recommendedName}
+                            </p>
+                          </div>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+              {workloadApplyError && (
+                <div style={{ border: '1px solid #FECACA', background: '#FEF2F2', color: '#B91C1C', borderRadius: 8, padding: '9px 11px', fontSize: 12, fontWeight: 700 }}>
+                  {workloadApplyError}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─────────────── MEMBER PROFILE MODAL ─────────────── */}
+      {profileMember && (
+        <div
+          onClick={() => setProfileMember(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18, zIndex: 130, animation: 'overlayFadeIn 0.18s ease-out' }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="workload-member-profile-title"
+            onClick={e => e.stopPropagation()}
+            style={{ width: 'min(420px, calc(100vw - 36px))', maxHeight: '88vh', overflowY: 'auto', background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}
+          >
+            <div style={{ padding: '18px 20px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <UserRound size={15} color="#fff" strokeWidth={2.5} />
+                </div>
+                <h2 id="workload-member-profile-title" style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+                  Member Profile
+                </h2>
+              </div>
+              <button
+                type="button"
+                aria-label="Close member profile"
+                onClick={() => setProfileMember(null)}
+                style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+                onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ padding: '16px 24px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', gap: 14 }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 44, height: 44, borderRadius: 999, background: profileMember.profile_photo_url ? 'transparent' : '#FFF7ED', color: '#EA580C', flexShrink: 0, overflow: 'hidden' }}>
+                {profileMember.profile_photo_url
+                  ? <img src={profileMember.profile_photo_url} alt={profileMember.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  : profileMember.role === 'Employee' ? <UserRound size={19} /> : <UserCog size={19} />}
+              </span>
+              <div>
+                <p style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A', margin: '0 0 5px' }}>{profileMember.full_name}</p>
+                <span style={{
+                  display: 'inline-block',
+                  padding: '3px 10px',
+                  borderRadius: 999,
+                  fontSize: '0.6875rem',
+                  fontWeight: 700,
+                  letterSpacing: '0.06em',
+                  textTransform: 'uppercase',
+                  background: profileMember.role === 'Owner' || profileMember.role === 'Partner' ? '#0F172A' :
+                    profileMember.role === 'Manager' ? '#FFF7ED' :
+                    profileMember.role === 'Employee' ? '#F3F4F6' : '#EFF6FF',
+                  color: profileMember.role === 'Owner' || profileMember.role === 'Partner' ? '#FFFFFF' :
+                    profileMember.role === 'Manager' ? '#EA580C' :
+                    profileMember.role === 'Employee' ? '#4B5563' : '#2563EB',
+                }}>
+                  {profileMember.role}
+                </span>
+              </div>
+            </div>
+
+            <div style={{ padding: '0 24px 20px', display: 'flex', flexDirection: 'column' }}>
+              {[
+                { label: 'Email Address', value: profileMember.email_address ?? '—' },
+                { label: 'Date of Birth', value: formatDateDisplay(profileMember.date_of_birth) },
+                { label: 'Phone Number', value: profileMember.phone_number ?? '—' },
+                { label: 'Joined On', value: formatDateDisplay(profileMember.created_at) },
+                { label: 'Department', value: departments.find(d => d.id === profileMember.department_id)?.name ?? '—' },
+              ].map(field => (
+                <div key={field.label} style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
+                  <label style={{ display: 'block', fontWeight: 700, fontSize: '0.8125rem', color: '#374151', marginBottom: 4 }}>{field.label}</label>
+                  <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, sans-serif" }}>{field.value}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {deleteTaskModal && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'grid', placeItems: 'center', padding: 18, zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>
           <div onClick={e => e.stopPropagation()} style={{ width: 'min(480px, 100%)', maxHeight: '88vh', overflowY: 'auto', background: '#FFFFFF', borderRadius: 16, border: '1px solid #E2E8F0', boxShadow: '0 24px 70px rgba(15,23,42,0.32)', padding: 16, animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
@@ -3981,7 +4654,7 @@ export default function OwnerTasksPage() {
                       const assignee = task.assigned_user_id ? members.find(m => m.id === task.assigned_user_id) : null
                       const priorityStyle = task.priority ? PRIORITY_COLORS[task.priority] : null
                       const dept = departments.find(d => d.id === task.department_id)
-                      const overdue = task.due_at && task.status !== 'Complete' && isDueOverdue(task.due_at)
+                      const deadlineWarning = task.due_at && task.status !== 'Complete' && (isDueOverdue(task.due_at) || isDueWithinHours(task.due_at, 2))
                       const busy = unarchiveLoadingId === task.id || archiveDeleteLoadingId === task.id
                       const subTasks = archivedTasks
                         .filter(t => t.parent_task_id === task.id)
@@ -4074,8 +4747,8 @@ export default function OwnerTasksPage() {
                               )}
                               {task.due_at && (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
-                                  {overdue ? <AlertCircle size={11} color="#EF4444" /> : <Clock size={11} color="#9CA3AF" />}
-                                  <span style={{ fontSize: '0.7rem', fontWeight: 600, color: overdue ? '#EF4444' : '#9CA3AF', whiteSpace: 'nowrap' }}>
+                                  {deadlineWarning ? <AlertCircle size={11} color="#EF4444" /> : <Clock size={11} color="#9CA3AF" />}
+                                  <span style={{ fontSize: '0.7rem', fontWeight: 600, color: deadlineWarning ? '#EF4444' : '#9CA3AF', whiteSpace: 'nowrap' }}>
                                     {formatDeadlineDisplay(task.due_at)}
                                   </span>
                                 </div>
@@ -4083,7 +4756,7 @@ export default function OwnerTasksPage() {
                             </div>
                           </div>
                           {isExpanded && subTasks.length > 0 && (
-                            <div style={{ marginTop: -4, marginBottom: 2, paddingLeft: 6 }}>
+                            <div style={{ marginTop: -4, marginBottom: 2, paddingLeft: 6, paddingRight: 20 }}>
                               {subTasks.map((sub, idx) => (
                                 <div key={sub.id} style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
                                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
@@ -4107,6 +4780,7 @@ export default function OwnerTasksPage() {
                                       onClick={() => {}}
                                       onEdit={() => {}}
                                       clickable={false}
+                                      isSubTask
                                     />
                                   </div>
                                 </div>
@@ -4127,16 +4801,9 @@ export default function OwnerTasksPage() {
       {archiveModalOpen && selectedArchivedTask && (() => {
         const task = selectedArchivedTask
         const viewFieldValue: React.CSSProperties = {
-          padding: '10px 12px',
-          border: '1.5px solid #E5E7EB',
-          borderRadius: 8,
-          background: '#FFFFFF',
-          fontSize: '0.9375rem',
-          color: '#111827',
-          minHeight: 40,
+          ...modalInputStyle,
           display: 'flex',
           alignItems: 'center',
-          boxSizing: 'border-box',
         }
         const viewEmpty: React.CSSProperties = { ...viewFieldValue, color: '#9CA3AF', fontStyle: 'italic' }
         return (
@@ -4397,14 +5064,20 @@ export default function OwnerTasksPage() {
         </div>
       )}
 
-      {/* ═══════════════ AI TASK BREAKDOWN MODAL ═══════════════ */}
+      {/* ═══════════════ AI TASK ASSIGNMENT MODAL ═══════════════ */}
       {aiModal && (() => {
         const isReview = aiStep === 'review'
-        const aiDeptManagers = members.filter(m => m.role === 'Manager' && m.department_id === aiDeptId)
+        // Eligibility is based on the task's own deadline date, not whatever date happens to be
+        // selected on the board — those can differ once the user picks a Deadline in this modal.
+        const aiAssignDate = boardViewMode === 'kanban' && taskDate > todayTaskDate ? taskDate : todayTaskDate
+        const aiDeptManagers = members.filter(m => m.role === 'Manager' && m.department_id === aiDeptId && userIdsWithShiftOnDate(aiAssignDate).has(m.id))
+        const aiManagerDropdownOptions = aiDeptManagers.map(m => ({ value: m.id, label: m.full_name }))
 
         const handleGenerate = async () => {
           if (!aiTitle.trim()) { setAiError('Please enter a task title'); return }
           if (!aiPriority) { setAiError('Please select a priority'); return }
+          if (!aiDueDate) { setAiError('Please select a deadline'); return }
+          if (!aiDueTime) { setAiError('Please select a deadline time'); return }
           setAiLoading(true); setAiError('')
           try {
             const res = await fetch('/api/ai/assign', {
@@ -4415,19 +5088,19 @@ export default function OwnerTasksPage() {
                 title: aiTitle,
                 description: aiDescription,
                 priority: aiPriority,
-                people_needed: aiPeopleNeeded,
-                task_date: taskDate,
+                want_sub_tasks: aiSubTaskEnabled,
+                task_date: aiAssignDate,
               }),
             })
             const data = await res.json()
             if (!data.success) throw new Error(data.message)
             const suggestion = data.suggestion as AiAssignSuggestion
             setAiSuggestion(suggestion)
+            setAiDescription(suggestion.description)
             setAiDeptId(suggestion.department_id)
-            setAiManagerIds(suggestion.suggested_manager_ids)
-            const due = new Date(suggestion.due_at)
-            setAiDueDate(formatDateKey(due))
-            setAiDueTime(due.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }))
+            setAiManagerId(suggestion.recommended_manager_id ?? '')
+            setAiSubTaskDrafts(suggestion.sub_tasks.map(s => ({ id: crypto.randomUUID(), title: s.title })))
+            setAiSubTaskCollapsed(true)
             setAiStep('review')
           } catch (err) {
             setAiError(err instanceof Error ? err.message : 'Failed to generate suggestion')
@@ -4441,13 +5114,11 @@ export default function OwnerTasksPage() {
           setAiCreateLoading(true); setAiError('')
           try {
             const due_at = new Date(`${aiDueDate}T${aiDueTime}:00`).toISOString()
-            const completionSteps = aiSuggestion.steps
-              .map((step, i) => `${i + 1}. ${step.title}\n   ${step.description}`)
-              .join('\n')
-            const taskDescription = [
-              aiDescription.trim(),
-              completionSteps ? `Completion Steps:\n${completionSteps}` : '',
-            ].filter(Boolean).join('\n\n') || null
+            const subTasks = aiSubTaskEnabled
+              ? aiSubTaskDrafts
+                  .map(s => ({ title: s.title.trim() }))
+                  .filter(s => s.title)
+              : []
             const res = await fetch('/api/task', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -4455,20 +5126,23 @@ export default function OwnerTasksPage() {
                 company_id: companyId,
                 department_id: aiDeptId,
                 title: aiTitle.trim(),
-                description: taskDescription,
+                description: aiDescription.trim() || null,
                 priority: aiPriority,
                 due_at,
-                assigned_user_id: aiManagerIds[0] || null,
+                assigned_user_id: aiManagerId || null,
                 assigned_by: internalUserId || null,
                 status: 'Assigned',
                 percentage_complete: 0,
-                task_date: taskDate,
+                task_date: aiAssignDate,
+                sub_tasks: subTasks.length > 0 ? subTasks : undefined,
               }),
             })
             const data = await res.json()
             if (!data.success) throw new Error(data.message)
+
             setAiModal(false)
-            fetchKanban(companyId)
+            await fetchKanban(companyId)
+            await refreshAllTaskInsights()
             showTaskToast('Task created successfully.')
           } catch (err) {
             setAiError(err instanceof Error ? err.message : 'Failed to create task')
@@ -4479,16 +5153,16 @@ export default function OwnerTasksPage() {
 
         return (
           <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>
-            <div onClick={e => e.stopPropagation()} style={{ width: 560, maxHeight: '90vh', background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.18)', display: 'flex', flexDirection: 'column', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
+            <div onClick={e => e.stopPropagation()} style={{ width: 440, maxHeight: '90vh', background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.18)', display: 'flex', flexDirection: 'column', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
 
               {/* Header */}
-              <div style={{ padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+              <div style={{ padding: '18px 20px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <Sparkles size={15} color="#fff" strokeWidth={2} />
                   </div>
                   <div>
-                    <h2 style={{ margin: 0, fontWeight: 700, fontSize: '1rem', color: '#111827' }}>AI Assign</h2>
+                    <h2 style={{ margin: 0, fontWeight: 700, fontSize: '1rem', color: '#111827' }}>Auto Task Assignment</h2>
                   </div>
                 </div>
                 <button onClick={() => setAiModal(false)} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}>
@@ -4497,13 +5171,13 @@ export default function OwnerTasksPage() {
               </div>
 
               {/* Body */}
-              <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ flex: 1, overflowY: 'auto', padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
 
                 {!isReview ? (
                   <>
                     {/* Title */}
                     <div>
-                      <label style={modalLabelStyle}>Task Title <span style={{ color: '#F97316' }}>*</span></label>
+                      <label style={modalLabelStyle}>Task Title</label>
                       <input
                         autoFocus
                         value={aiTitle}
@@ -4514,23 +5188,10 @@ export default function OwnerTasksPage() {
                       />
                     </div>
 
-                    {/* Description */}
-                    <div>
-                      <label style={modalLabelStyle}>Description</label>
-                      <textarea
-                        value={aiDescription}
-                        onChange={e => setAiDescription(e.target.value)}
-                        onKeyDown={e => handleDescriptionKeyDown(e, aiDescription, setAiDescription)}
-                        rows={3}
-                        placeholder="Add context to help AI break this down accurately..."
-                        style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
-                      />
-                    </div>
-
-                    {/* Priority + People Needed */}
+                    {/* Priority + Deadline */}
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                       <div>
-                        <label style={modalLabelStyle}>Priority <span style={{ color: '#F97316' }}>*</span></label>
+                        <label style={modalLabelStyle}>Priority</label>
                         <DropdownField
                           value={aiPriority}
                           options={priorityDropdownOptions}
@@ -4540,125 +5201,189 @@ export default function OwnerTasksPage() {
                         />
                       </div>
                       <div>
-                        <label style={modalLabelStyle}>People Needed</label>
-                        <div style={{ display: 'flex', gap: 6 }}>
-                          {[1, 2, 3].map(n => (
-                            <button
-                              key={n}
-                              type="button"
-                              onClick={() => setAiPeopleNeeded(n)}
-                              style={{ flex: 1, height: 42, border: `1.5px solid ${aiPeopleNeeded === n ? '#7C3AED' : '#E5E7EB'}`, borderRadius: 8, background: aiPeopleNeeded === n ? '#7C3AED' : '#FFFFFF', color: aiPeopleNeeded === n ? '#FFFFFF' : '#374151', fontWeight: 700, fontSize: '0.9375rem', cursor: 'pointer' }}
-                            >
-                              {n}
-                            </button>
-                          ))}
-                        </div>
+                        <label style={modalLabelStyle}>Deadline</label>
+                        <DeadlinePicker
+                          dateValue={aiDueDate}
+                          timeValue={aiDueTime}
+                          onChange={(date, time) => { setAiDueDate(date); setAiDueTime(time) }}
+                          minDate={aiAssignDate}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Divider */}
+                    <div style={{ borderTop: '1px dashed #E5E7EB' }} />
+
+                    {/* Sub Task + Recurring toggles — both optional */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
+                            <GitBranch size={13} color="#7C3AED" /> Sub Task <span style={{ fontWeight: 400, color: '#9CA3AF' }}>(Optional)</span>
+                          </span>
+                          <input
+                            type="checkbox"
+                            checked={aiSubTaskEnabled}
+                            onChange={e => setAiSubTaskEnabled(e.target.checked)}
+                            style={{ width: 16, height: 16, accentColor: '#7C3AED', cursor: 'pointer', marginLeft: 'auto' }}
+                          />
+                        </label>
                       </div>
                     </div>
 
                     <InlineError message={aiError} />
 
-                    <button
-                      onClick={handleGenerate}
-                      disabled={aiLoading}
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '11px', background: aiLoading ? '#EDE9FE' : 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 10, fontWeight: 700, fontSize: '0.9375rem', color: '#fff', cursor: aiLoading ? 'default' : 'pointer' }}
-                    >
-                      {aiLoading ? <><Spinner size={16} /> Generating...</> : <><Sparkles size={15} /> Generate</>}
-                    </button>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                      <button
+                        onClick={handleGenerate}
+                        disabled={aiLoading}
+                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '7px 18px', background: aiLoading ? '#A78BFA' : 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: aiLoading ? 'not-allowed' : 'pointer', opacity: aiLoading ? 0.65 : 1 }}
+                      >
+                        {aiLoading ? <><Spinner size={14} /> Generating...</> : 'Generate'}
+                      </button>
+                    </div>
                   </>
                 ) : aiSuggestion && (
                   <>
-                    {/* Steps */}
-                    <div>
-                      <label style={modalLabelStyle}>Completion Steps</label>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        {aiSuggestion.steps.map((step, i) => (
-                          <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 9, padding: '9px 11px', border: '1px solid #E5E7EB', borderRadius: 9, background: '#FAFAFA' }}>
-                            <span style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 999, background: '#EDE9FE', color: '#7C3AED', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 1 }}>{i + 1}</span>
-                            <div style={{ minWidth: 0 }}>
-                              <p style={{ margin: 0, fontWeight: 600, fontSize: '0.8125rem', color: '#111827' }}>{step.title}</p>
-                              <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: '#6B7280', lineHeight: 1.45 }}>{step.description}</p>
-                            </div>
-                          </div>
-                        ))}
+                    <div style={aiReviewSectionStyle}>
+                      {/* Title */}
+                      <div style={aiReviewFieldStyle}>
+                        <label style={{ ...modalLabelStyle, marginBottom: 0 }}>Task Title</label>
+                        <input
+                          value={aiTitle}
+                          onChange={e => setAiTitle(e.target.value)}
+                          style={modalInputStyle}
+                        />
+                      </div>
+
+                      {/* Description */}
+                      <div style={aiReviewFieldStyle}>
+                        <label style={{ ...modalLabelStyle, marginBottom: 0 }}>Description</label>
+                        <textarea
+                          ref={aiReviewDescriptionRef}
+                          value={aiDescription}
+                          onChange={e => { setAiDescription(e.target.value); resizeTextareaToContent(e.currentTarget) }}
+                          onKeyDown={e => handleDescriptionKeyDown(e, aiDescription, setAiDescription)}
+                          rows={2}
+                          style={{ ...modalInputStyle, resize: 'none', overflow: 'hidden', lineHeight: 1.55 }}
+                        />
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        {/* Department */}
+                        <div style={aiReviewFieldStyle}>
+                          <label style={{ ...modalLabelStyle, marginBottom: 0 }}>Department</label>
+                          <DropdownField
+                            value={aiDeptId}
+                            options={deptDropdownOptions}
+                            onChange={v => { setAiDeptId(v); setAiManagerId('') }}
+                            placeholder="Select department"
+                          />
+                        </div>
+
+                        {/* Assignee */}
+                        <div style={aiReviewFieldStyle}>
+                          <label style={{ ...modalLabelStyle, marginBottom: 0 }}>Assignee</label>
+                          <DropdownField
+                            value={aiManagerId}
+                            options={aiManagerDropdownOptions}
+                            onChange={setAiManagerId}
+                            placeholder={aiManagerDropdownOptions.length === 0 ? 'No managers available' : 'Select assignee'}
+                            disabled={aiManagerDropdownOptions.length === 0}
+                          />
+                        </div>
                       </div>
                     </div>
 
                     {/* Divider */}
                     <div style={{ borderTop: '1px dashed #E5E7EB' }} />
 
-                    {/* Department */}
-                    <div>
-                      <label style={modalLabelStyle}>Department <span style={{ fontSize: 11, fontWeight: 400, color: '#7C3AED' }}>| AI picked</span></label>
-                      <DropdownField
-                        value={aiDeptId}
-                        options={deptDropdownOptions}
-                        onChange={v => { setAiDeptId(v); setAiManagerIds([]) }}
-                        placeholder="Select department"
-                      />
+                    {/* Priority + Deadline */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <div>
+                        <label style={modalLabelStyle}>Priority</label>
+                        <DropdownField
+                          value={aiPriority}
+                          options={priorityDropdownOptions}
+                          onChange={setAiPriority}
+                          placeholder="Select priority"
+                          badgeColors={PRIORITY_COLORS}
+                        />
+                      </div>
+                      <div>
+                        <label style={modalLabelStyle}>Deadline</label>
+                        <DeadlinePicker
+                          dateValue={aiDueDate}
+                          timeValue={aiDueTime}
+                          onChange={(date, time) => { setAiDueDate(date); setAiDueTime(time) }}
+                          minDate={aiAssignDate}
+                        />
+                      </div>
                     </div>
 
-                    {/* Assign To (multi-select, up to people_needed) */}
-                    <div>
-                      <label style={modalLabelStyle}>
-                        Assign To <span style={{ fontWeight: 400, color: '#9CA3AF' }}>({aiManagerIds.length}/{aiPeopleNeeded} selected)</span>
-                        <span style={{ fontSize: 11, fontWeight: 400, color: '#7C3AED', marginLeft: 6 }}>| AI picked</span>
-                      </label>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        {aiDeptManagers.length === 0 && (
-                          <p style={{ margin: 0, fontSize: '0.8125rem', color: '#9CA3AF', fontStyle: 'italic' }}>No managers in this department.</p>
-                        )}
-                        {aiDeptManagers.map(m => {
-                          const cand = aiSuggestion.candidates.find(c => c.id === m.id)
-                          const checked = aiManagerIds.includes(m.id)
-                          const isAiPick = aiSuggestion.suggested_manager_ids.includes(m.id)
-                          const atLimit = aiManagerIds.length >= aiPeopleNeeded && !checked
-                          return (
-                            <div
-                              key={m.id}
-                              onClick={() => {
-                                if (atLimit) return
-                                setAiManagerIds(prev => checked ? prev.filter(id => id !== m.id) : [...prev, m.id])
-                              }}
-                              style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '9px 11px', border: `1.5px solid ${checked ? '#7C3AED' : '#E5E7EB'}`, borderRadius: 9, background: checked ? '#FAF5FF' : '#FFFFFF', cursor: atLimit ? 'not-allowed' : 'pointer', opacity: atLimit ? 0.5 : 1 }}
-                            >
-                              <div style={{ width: 16, height: 16, borderRadius: 5, border: `2px solid ${checked ? '#7C3AED' : '#D1D5DB'}`, background: checked ? '#7C3AED' : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                {checked && <CheckCircle size={11} color="#fff" strokeWidth={3} />}
+                    {/* Sub-tasks — requested up front, AI-generated, still editable here */}
+                    {aiSubTaskEnabled && (
+                      <>
+                        <div style={{ borderTop: '1px dashed #E5E7EB' }} />
+                        <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, overflow: 'hidden', background: '#FFFFFF' }}>
+                          <button
+                            type="button"
+                            onClick={() => setAiSubTaskCollapsed(v => !v)}
+                            style={{ width: '100%', border: 'none', background: '#FFFFFF', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: '#374151' }}
+                          >
+                            <GitBranch size={13} color="#7C3AED" />
+                            <span style={{ flex: 1, textAlign: 'left', fontSize: '0.8125rem', fontWeight: 700 }}>
+                              Sub-Tasks
+                              {aiSubTaskDrafts.length > 0 && (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 18, height: 18, padding: '0 5px', borderRadius: 9, background: '#F3E8FF', color: '#7C3AED', fontSize: 11, fontWeight: 800, marginLeft: 6 }}>
+                                  {aiSubTaskDrafts.length}
+                                </span>
+                              )}
+                            </span>
+                            <ChevronDown size={15} style={{ color: '#9CA3AF', transform: aiSubTaskCollapsed ? 'rotate(0deg)' : 'rotate(180deg)', transition: 'transform 0.16s ease' }} />
+                          </button>
+                          {!aiSubTaskCollapsed && (
+                            <div style={{ padding: '0 12px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                              {aiSubTaskDrafts.length > 0 && (
+                                <SubTaskOrderList
+                                  items={aiSubTaskDrafts}
+                                  onReorder={orderedIds => setAiSubTaskDrafts(prev => orderedIds.map(id => prev.find(s => s.id === id)!))}
+                                  onRemove={id => setAiSubTaskDrafts(prev => prev.filter(s => s.id !== id))}
+                                  onRename={(id, title) => setAiSubTaskDrafts(prev => prev.map(s => s.id === id ? { ...s, title } : s))}
+                                  accent="purple"
+                                />
+                              )}
+                              <div style={{ display: 'flex', gap: 8 }}>
+                                <input
+                                  value={aiSubTaskDraft}
+                                  onChange={e => setAiSubTaskDraft(e.target.value)}
+                                  placeholder="Sub-task title..."
+                                  style={{ ...modalInputStyle, flex: 1, minWidth: 0, minHeight: 32, padding: '6px 10px', fontSize: 12 }}
+                                  onKeyDown={e => {
+                                    if (e.key !== 'Enter' || !aiSubTaskDraft.trim()) return
+                                    e.preventDefault()
+                                    setAiSubTaskDrafts(prev => [...prev, { id: crypto.randomUUID(), title: aiSubTaskDraft.trim() }])
+                                    setAiSubTaskDraft('')
+                                  }}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (!aiSubTaskDraft.trim()) return
+                                    setAiSubTaskDrafts(prev => [...prev, { id: crypto.randomUUID(), title: aiSubTaskDraft.trim() }])
+                                    setAiSubTaskDraft('')
+                                  }}
+                                  disabled={!aiSubTaskDraft.trim()}
+                                  style={{ flexShrink: 0, width: 32, height: 30, padding: 0, border: 'none', borderRadius: 7, background: aiSubTaskDraft.trim() ? 'linear-gradient(135deg, #7C3AED, #6D28D9)' : '#E5E7EB', color: aiSubTaskDraft.trim() ? '#FFFFFF' : '#9CA3AF', fontWeight: 700, fontSize: 12, cursor: aiSubTaskDraft.trim() ? 'pointer' : 'not-allowed', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                                >
+                                  <Plus size={14} strokeWidth={2.5} />
+                                </button>
                               </div>
-                              <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#111827' }}>{m.full_name}</span>
-                              {cand && <span style={{ fontSize: 11, color: '#9CA3AF' }}>{cand.active_task_count} active</span>}
-                              {isAiPick && <span style={{ fontSize: 10, fontWeight: 700, color: '#7C3AED', marginLeft: 'auto' }}>AI PICK</span>}
                             </div>
-                          )
-                        })}
-                      </div>
-                    </div>
-
-                    {/* Divider */}
-                    <div style={{ borderTop: '1px dashed #E5E7EB' }} />
-
-                    {/* Priority */}
-                    <div>
-                      <label style={modalLabelStyle}>Priority</label>
-                      <DropdownField
-                        value={aiPriority}
-                        options={priorityDropdownOptions}
-                        onChange={setAiPriority}
-                        placeholder="Select priority"
-                        badgeColors={PRIORITY_COLORS}
-                      />
-                    </div>
-
-                    {/* Deadline */}
-                    <div>
-                      <label style={modalLabelStyle}>Deadline <span style={{ fontSize: 11, fontWeight: 400, color: '#7C3AED' }}>| AI suggested</span></label>
-                      <DeadlinePicker
-                        dateValue={aiDueDate}
-                        timeValue={aiDueTime}
-                        onChange={(date, time) => { setAiDueDate(date); setAiDueTime(time) }}
-                        minDate={formatDateKey(new Date())}
-                      />
-                    </div>
+                          )}
+                        </div>
+                      </>
+                    )}
 
                     <InlineError message={aiError} />
                   </>
@@ -4667,17 +5392,17 @@ export default function OwnerTasksPage() {
 
               {/* Footer */}
               {isReview && (
-                <div style={{ padding: '14px 24px', borderTop: '1px solid #F3F4F6', display: 'flex', gap: 10, flexShrink: 0 }}>
+                <div style={{ padding: '14px 20px', borderTop: '1px solid #F3F4F6', display: 'flex', justifyContent: 'flex-end', gap: 8, flexShrink: 0 }}>
                   <button
-                    onClick={() => setAiStep('input')}
-                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: '1px solid #E5E7EB', borderRadius: 10, background: '#FFFFFF', color: '#374151', height: 40, padding: '0 16px', fontSize: '0.875rem', fontWeight: 600, cursor: 'pointer' }}
+                    onClick={resetAiAssignInput}
+                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', color: '#374151', padding: '7px 18px', fontSize: '0.8125rem', fontWeight: 600, cursor: 'pointer' }}
                   >
                     Back
                   </button>
                   <button
                     onClick={handleCreate}
                     disabled={aiCreateLoading}
-                    style={{ ...primaryBtn(aiCreateLoading), background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#fff', flex: 1 }}
+                    style={{ padding: '7px 18px', background: aiCreateLoading ? '#A78BFA' : 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: aiCreateLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, opacity: aiCreateLoading ? 0.65 : 1 }}
                   >
                     {aiCreateLoading ? <><Spinner size={14} /> Creating...</> : 'Create Task'}
                   </button>

@@ -15,6 +15,7 @@ export default function ModalHeader({ title, icon, iconBg, onClose }: { title: s
       </div>
       <button
         onClick={onClose}
+        aria-label="Close"
         style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8, flexShrink: 0 }}
         onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
         onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}

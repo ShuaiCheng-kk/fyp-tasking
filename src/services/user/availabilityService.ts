@@ -26,7 +26,7 @@ export const availabilityService = {
     reason: string | null
     shift_assignment_id?: string | null
   }): Promise<LeaveRequest> {
-    const allowed: TimeOffRequestType[] = ['time_off', 'break_waiver']
+    const allowed: TimeOffRequestType[] = ['time_off', 'break_waiver', 'leave']
     if (!allowed.includes(input.request_type as TimeOffRequestType)) {
       throw new Error('Invalid request type')
     }

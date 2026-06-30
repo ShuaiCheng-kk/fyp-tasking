@@ -17,6 +17,7 @@ const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const LEAVE_TYPES = [
   { value: 'time_off', label: 'Time Off' },
   { value: 'break_waiver', label: 'Break Waiver' },
+  { value: 'leave', label: 'Leave Request' },
 ]
 
 const BG = '#F3F4F6'
@@ -46,8 +47,9 @@ export default function CasualAvailabilityPage() {
   const [userName, setUserName] = useState('')
   const [loading, setLoading] = useState(true)
   const [fixedOffDays, setFixedOffDays] = useState<number[]>([])
+  const [fixedOffDayStatus, setFixedOffDayStatus] = useState<Record<number, string>>({})
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([])
-  const [leaveType, setLeaveType] = useState<'time_off' | 'break_waiver'>('time_off')
+  const [leaveType, setLeaveType] = useState<'time_off' | 'break_waiver' | 'leave'>('time_off')
   const [reason, setReason] = useState('')
   const [busy, setBusy] = useState('')
   const [message, setMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
@@ -76,7 +78,11 @@ export default function CasualAvailabilityPage() {
       ])
       const daysData = await daysRes.json()
       const leaveData = await leaveRes.json()
-      if (daysData.success) setFixedOffDays((daysData.days ?? []).map((day: { weekday: number }) => day.weekday))
+      if (daysData.success) {
+        const days = (daysData.days ?? []) as { weekday: number; status: string }[]
+        setFixedOffDays(days.map(day => day.weekday))
+        setFixedOffDayStatus(Object.fromEntries(days.map(day => [day.weekday, day.status])))
+      }
       if (leaveData.success) setLeaveRequests(leaveData.requests ?? [])
     } catch (err) {
       setMessage({ type: 'err', text: err instanceof Error ? err.message : 'Failed to load availability' })
@@ -112,7 +118,8 @@ export default function CasualAvailabilityPage() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to save fixed off days')
-      setMessage({ type: 'ok', text: 'Fixed off days saved.' })
+      setFixedOffDayStatus(Object.fromEntries(fixedOffDays.map(day => [day, 'pending'])))
+      setMessage({ type: 'ok', text: 'Submitted for approval. Your supervisor will review it.' })
     } catch (err) {
       setMessage({ type: 'err', text: err instanceof Error ? err.message : 'Failed to save fixed off days' })
     } finally {
@@ -139,7 +146,8 @@ export default function CasualAvailabilityPage() {
       if (!data.success) throw new Error(data.message || 'Failed to submit request')
       setLeaveRequests(prev => [data.request, ...prev])
       setReason('')
-      setMessage({ type: 'ok', text: `${leaveType === 'time_off' ? 'Time-off' : 'Break waiver'} request submitted.` })
+      const typeLabel = leaveType === 'time_off' ? 'Time-off' : leaveType === 'break_waiver' ? 'Break waiver' : 'Leave'
+      setMessage({ type: 'ok', text: `${typeLabel} request submitted.` })
     } catch (err) {
       setMessage({ type: 'err', text: err instanceof Error ? err.message : 'Failed to submit request' })
     } finally {
@@ -187,6 +195,9 @@ export default function CasualAvailabilityPage() {
               <div style={weekdayGridStyle}>
                 {WEEKDAYS.map((day, index) => {
                   const selected = fixedOffDays.includes(index)
+                  const status = fixedOffDayStatus[index]
+                  const pending = selected && status === 'pending'
+                  const rejected = selected && status === 'rejected'
                   return (
                     <button
                       key={day}
@@ -194,12 +205,17 @@ export default function CasualAvailabilityPage() {
                       onClick={() => toggleDay(index)}
                       style={{
                         ...weekdayButtonStyle,
-                        borderColor: selected ? GREEN : BORDER,
-                        background: selected ? '#DCFCE7' : PANEL,
-                        color: selected ? '#166534' : SLATE,
+                        borderColor: rejected ? '#FCA5A5' : pending ? '#FCD34D' : selected ? GREEN : BORDER,
+                        background: rejected ? '#FEF2F2' : pending ? '#FFFBEB' : selected ? '#DCFCE7' : PANEL,
+                        color: rejected ? '#B91C1C' : pending ? '#B45309' : selected ? '#166534' : SLATE,
+                        display: 'inline-flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: 2,
                       }}
                     >
                       {day}
+                      {selected && <span style={{ fontSize: 9, fontWeight: 800, textTransform: 'uppercase' }}>{status ?? 'pending'}</span>}
                     </button>
                   )
                 })}

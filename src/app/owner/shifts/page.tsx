@@ -1305,6 +1305,14 @@ export default function OwnerShiftsPage() {
     return ids
   }, [timelineRows])
 
+  const userIdsWithShiftToday = useMemo(() => {
+    const ids = new Set<string>()
+    for (const row of timelineRows) {
+      if (row.user_id && row.shifts.length > 0) ids.add(row.user_id)
+    }
+    return ids
+  }, [timelineRows])
+
   const selectedTimelineRows = useMemo(
     () => timelineIsPast ? [] : visibleTimelineRows.filter(row => row.user_id && selectedTimelineUserIds.includes(row.user_id)),
     [selectedTimelineUserIds, timelineIsPast, visibleTimelineRows],
@@ -3494,8 +3502,9 @@ export default function OwnerShiftsPage() {
               <div style={{ display: 'grid', gap: 10, marginBottom: 12 }}>
                 {orderedDepartments.map((department, deptIdx) => {
                   const deptMembers = membersByDepartment.get(department.id) ?? []
-                  const employeeCount = deptMembers.filter(member => member.role === 'Employee').length
+                  const employeeCount = deptMembers.filter(member => member.role === 'Employee' && userIdsWithShiftToday.has(member.id)).length
                   const deptManagerList = departmentManagers.filter(item => item.department_id === department.id)
+                  const managerCountToday = deptManagerList.filter(item => userIdsWithShiftToday.has(item.manager_id)).length
                   const isDragging = draggingDepartmentId === department.id
                   const isDragOver = dragOverDepartmentId === department.id
                   return (
@@ -3613,7 +3622,7 @@ export default function OwnerShiftsPage() {
                             <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 999, background: '#FFF7ED', color: '#EA580C', flexShrink: 0 }}>
                               <UserCog size={14} />
                             </span>
-                            <span style={{ color: '#111827', fontSize: 15, fontWeight: 600 }}>{deptManagerList.length}</span>
+                            <span style={{ color: '#111827', fontSize: 15, fontWeight: 600 }}>{managerCountToday}</span>
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                             <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 999, background: '#F3F4F6', color: '#4B5563', flexShrink: 0 }}>

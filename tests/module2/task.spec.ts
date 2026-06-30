@@ -20,6 +20,7 @@ type SeededMember = {
 let seeded: TestOwner
 let departmentId: string
 let shiftId: string
+let createdShiftIds: string[] = []
 let taskId: string
 let existingSubTaskId: string
 let managerA: SeededMember
@@ -78,6 +79,32 @@ async function createTask(request: APIRequestContext, overrides: Record<string, 
   return body.task as { id: string }
 }
 
+async function createShiftAssignmentsForDate(shiftDate: string, userIds = [managerA.userId, managerB.userId]) {
+  const { data: shift, error: shiftError } = await admin
+    .from('shifts')
+    .insert({
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      shift_date: shiftDate,
+      start_time: '09:00',
+      end_time: '17:00',
+      title: `Module 2 Test Shift ${shiftDate}`,
+      created_by: seeded.ownerId,
+      publication_status: 'published',
+    })
+    .select('id')
+    .single()
+  if (shiftError || !shift) throw new Error(`Failed to create shift for ${shiftDate}: ${shiftError?.message}`)
+  createdShiftIds.push(shift.id as string)
+
+  const { error: assignmentError } = await admin
+    .from('shift_assignments')
+    .insert(userIds.map(user_id => ({ shift_id: shift.id, user_id, assigned_by: seeded.ownerId })))
+  if (assignmentError) throw new Error(`Failed to create shift assignments for ${shiftDate}: ${assignmentError.message}`)
+
+  return shift.id as string
+}
+
 test.beforeAll(async () => {
   seeded = await seedTestOwnerAndCompany('module2')
 
@@ -102,18 +129,35 @@ test.beforeAll(async () => {
       end_time: '17:00',
       title: 'Module 2 Test Shift',
       created_by: seeded.ownerId,
-      publication_status: 'draft',
+      publication_status: 'published',
     })
     .select('id')
     .single()
   if (shiftError || !shift) throw new Error(`Failed to create shift: ${shiftError?.message}`)
   shiftId = shift.id
+  createdShiftIds.push(shiftId)
+
+  // Task assignment now requires the assignee to have a shift on the task's date — both managers
+  // need a shift_assignments row on shiftId's date for createTask() to succeed in the tests below.
+  const { error: assignmentError } = await admin
+    .from('shift_assignments')
+    .insert([
+      { shift_id: shiftId, user_id: managerA.userId, assigned_by: seeded.ownerId },
+      { shift_id: shiftId, user_id: managerB.userId, assigned_by: seeded.ownerId },
+    ])
+  if (assignmentError) throw new Error(`Failed to create shift assignments: ${assignmentError.message}`)
+
+  for (const date of ['2026-08-01', '2026-08-10', '2026-09-01', '2026-09-07']) {
+    await createShiftAssignmentsForDate(date, [managerA.userId])
+  }
 })
 
 test.afterAll(async () => {
   await admin.from('tasks').delete().eq('company_id', seeded.companyId)
-  await admin.from('shift_assignments').delete().eq('shift_id', shiftId)
-  await admin.from('shifts').delete().eq('id', shiftId)
+  if (createdShiftIds.length > 0) {
+    await admin.from('shift_assignments').delete().in('shift_id', createdShiftIds)
+    await admin.from('shifts').delete().in('id', createdShiftIds)
+  }
   await admin.from('manager_departments').delete().eq('company_id', seeded.companyId)
   for (const member of [managerA, managerB]) {
     await admin.from('users').delete().eq('id', member.userId)
@@ -193,7 +237,7 @@ test('UC24 generates an AI task assignment suggestion', async ({ request }) => {
       title: 'Prepare VIP booking',
       description: 'Coordinate staffing and room setup.',
       priority: 'High',
-      people_needed: 1,
+      want_sub_tasks: false,
       task_date: '2026-07-01',
     },
   })
@@ -201,13 +245,60 @@ test('UC24 generates an AI task assignment suggestion', async ({ request }) => {
   const body = await res.json()
   expect(body.success).toBe(true)
   expect(body.suggestion.department_id).toBe(departmentId)
-  expect(body.suggestion.suggested_manager_ids).toContain(managerB.userId)
-  expect(body.suggestion.steps.length).toBeGreaterThan(0)
+  // recommended_manager_id is whichever of the seeded managers currently has the lighter
+  // workload (depends on tasks created by earlier tests in this serial suite), so assert
+  // it's a valid candidate rather than hardcoding which one. Both have a published shift on
+  // 2026-07-01 (seeded in beforeAll), so both remain eligible candidates.
+  expect([managerA.userId, managerB.userId]).toContain(body.suggestion.recommended_manager_id)
+  expect(body.suggestion.reason).toBeTruthy()
+  expect(body.suggestion.description).toBeTruthy()
+  expect(body.suggestion.sub_tasks).toEqual([])
+})
+
+test('UC24 excludes managers with no published shift on the given task_date', async ({ request }) => {
+  // Only managerA has a shift_assignments row on 2026-08-01 (seeded in beforeAll); managerB
+  // never does, so they must never appear as a candidate or be recommended for this date.
+  const res = await request.post('/api/ai/assign', {
+    data: {
+      company_id: seeded.companyId,
+      title: 'Restock supplies',
+      description: '',
+      priority: 'Medium',
+      want_sub_tasks: false,
+      task_date: '2026-08-01',
+    },
+  })
+  expect(res.status()).toBe(200)
+  const body = await res.json()
+  expect(body.success).toBe(true)
+  expect(body.suggestion.candidates.map((c: { id: string }) => c.id)).toEqual([managerA.userId])
+  expect(body.suggestion.recommended_manager_id).toBe(managerA.userId)
+})
+
+test('UC24 returns AI-generated sub-tasks when want_sub_tasks is true', async ({ request }) => {
+  const res = await request.post('/api/ai/assign', {
+    data: {
+      company_id: seeded.companyId,
+      title: 'Plan and run the quarterly marketing campaign',
+      description: 'Coordinate content, channels, and budget across the team.',
+      priority: 'High',
+      want_sub_tasks: true,
+    },
+  })
+  expect(res.status()).toBe(200)
+  const body = await res.json()
+  expect(body.success).toBe(true)
+  expect(Array.isArray(body.suggestion.sub_tasks)).toBe(true)
 })
 
 test('UC25 shows a workload rebalancing suggestion', async ({ request }) => {
-  await createTask(request, { title: 'Extra active task', shift_id: null })
-  await createTask(request, { title: 'Lightly loaded manager task', shift_id: null, assigned_user_id: managerB.userId })
+  // Urgent + overdue scores far higher than Low + due-in-a-month, so managerA clears the
+  // 2x-the-lightest-person threshold regardless of whatever else accumulated earlier in this
+  // serial suite.
+  const overdue = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+  const farOut = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+  await createTask(request, { title: 'Urgent overdue task', shift_id: null, priority: 'Urgent', due_at: overdue })
+  await createTask(request, { title: 'Lightly loaded manager task', shift_id: null, assigned_user_id: managerB.userId, priority: 'Low', due_at: farOut })
 
   const res = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=workload`)
   expect(res.status()).toBe(200)
@@ -217,6 +308,14 @@ test('UC25 shows a workload rebalancing suggestion', async ({ request }) => {
     overloaded_user_id: managerA.userId,
     recommended_user_id: managerB.userId,
   })
+  expect(body.suggestions).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      type: 'rebalance',
+      department_id: departmentId,
+      suggested_task_id: expect.any(String),
+      reason: expect.any(String),
+    }),
+  ]))
 })
 
 test('UC26 shows a task reassignment suggestion', async ({ request }) => {
@@ -231,7 +330,13 @@ test('UC26 shows a task reassignment suggestion', async ({ request }) => {
 })
 
 test('UC27 shows stalled task alerts', async ({ request }) => {
-  const res = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=stalled&stale_after_days=-1`)
+  // created_at isn't client-settable through the API (DB default) — set it directly so taskId is
+  // deterministically past the halfway point to its deadline.
+  const pastHalfway = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString()
+  const dueIn3Hours = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString()
+  await admin.from('tasks').update({ created_at: pastHalfway, due_at: dueIn3Hours }).eq('id', taskId)
+
+  const res = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=stalled`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   expect(body.alerts).toEqual(expect.arrayContaining([expect.objectContaining({ task_id: taskId })]))
@@ -261,7 +366,14 @@ test('workload and stalled insights scope to a single department when department
   const workloadOriginalBody = await workloadOriginal.json()
   expect(workloadOriginalBody.suggestion.type).toBe('rebalance')
 
-  const stalledOther = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=stalled&stale_after_days=-1&department_id=${otherDept.id}`)
+  // created_at isn't client-settable through the API (DB default) — set it directly so the task
+  // is deterministically past the halfway point to its deadline, instead of racing real wall-clock
+  // time against a short window.
+  const pastHalfway = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString()
+  const dueIn3Hours = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString()
+  await admin.from('tasks').update({ created_at: pastHalfway, due_at: dueIn3Hours }).eq('id', otherDeptTask.id)
+
+  const stalledOther = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=stalled&department_id=${otherDept.id}`)
   expect(stalledOther.status()).toBe(200)
   const stalledOtherBody = await stalledOther.json()
   expect(stalledOtherBody.alerts).toEqual([expect.objectContaining({ task_id: otherDeptTask.id })])
@@ -590,4 +702,57 @@ test('only the user who assigned a task may edit, archive, duplicate, recur, reo
   expect(ownerEditRes.status()).toBe(200)
 
   await admin.from('tasks').delete().eq('id', task.id)
+})
+
+test('completes sub-tasks in order while In Progress, and auto-promotes the parent on the last one', async ({ request }) => {
+  const parent = await createTask(request, { title: 'Restock shelves', shift_id: null })
+  const subA = await createTask(request, { title: 'Count inventory', shift_id: null, parent_task_id: parent.id })
+  const subB = await createTask(request, { title: 'Place orders', shift_id: null, parent_task_id: parent.id })
+
+  // Sub-tasks can't be completed until the parent is In Progress.
+  const tooEarly = await request.patch('/api/task', {
+    data: { id: subA.id, action: 'complete_subtask', assigned_by: managerA.userId },
+  })
+  expect(tooEarly.status()).toBe(400)
+
+  const moveToInProgress = await request.patch('/api/task', {
+    data: { id: parent.id, status: 'In Progress', percentage_complete: 33 },
+  })
+  expect(moveToInProgress.status()).toBe(200)
+
+  // Only the parent's assignee may tick a sub-task.
+  const wrongUser = await request.patch('/api/task', {
+    data: { id: subA.id, action: 'complete_subtask', assigned_by: managerB.userId },
+  })
+  expect(wrongUser.status()).toBe(400)
+
+  // Ticking out of order is rejected — subB before subA.
+  const outOfOrder = await request.patch('/api/task', {
+    data: { id: subB.id, action: 'complete_subtask', assigned_by: managerA.userId },
+  })
+  expect(outOfOrder.status()).toBe(400)
+
+  const firstTick = await request.patch('/api/task', {
+    data: { id: subA.id, action: 'complete_subtask', assigned_by: managerA.userId },
+  })
+  expect(firstTick.status()).toBe(200)
+  const firstBody = await firstTick.json()
+  expect(firstBody.subTask.is_completed).toBe(true)
+  expect(firstBody.parent.status).toBe('In Progress')
+
+  const lastTick = await request.patch('/api/task', {
+    data: { id: subB.id, action: 'complete_subtask', assigned_by: managerA.userId },
+  })
+  expect(lastTick.status()).toBe(200)
+  const lastBody = await lastTick.json()
+  expect(lastBody.subTask.is_completed).toBe(true)
+  expect(lastBody.parent.status).toBe('Review')
+
+  const kanban = await request.get(`/api/task?company_id=${seeded.companyId}&kanban=true`)
+  const kanbanBody = await kanban.json()
+  const allTasks = [...kanbanBody.groups.Assigned, ...kanbanBody.groups['In Progress'], ...kanbanBody.groups.Review, ...kanbanBody.groups.Complete]
+  const refreshedSubA = allTasks.find((t: { id: string }) => t.id === subA.id)
+  expect(refreshedSubA.status).toBe('Review')
+
+  await admin.from('tasks').delete().in('id', [subA.id, subB.id, parent.id])
 })

@@ -87,6 +87,7 @@ export async function POST(req: NextRequest) {
     shift_end_time: typeof data.shift_end_time === 'string' && data.shift_end_time ? data.shift_end_time : null,
     break_start_time: typeof data.break_start_time === 'string' && data.break_start_time ? data.break_start_time : null,
     break_end_time: typeof data.break_end_time === 'string' && data.break_end_time ? data.break_end_time : null,
+    job_start_time: typeof data.job_start_time === 'string' && data.job_start_time ? data.job_start_time : null,
     assigned_employee_id: typeof data.assigned_employee_id === 'string' && data.assigned_employee_id ? data.assigned_employee_id : null,
     form_type: typeof data.formType === 'string' && data.formType ? data.formType : null,
   }
@@ -130,6 +131,7 @@ export async function PATCH(req: NextRequest) {
         shift_end_time: typeof data.shift_end_time === 'string' ? data.shift_end_time : null,
         break_start_time: typeof data.break_start_time === 'string' ? data.break_start_time : null,
         break_end_time: typeof data.break_end_time === 'string' ? data.break_end_time : null,
+        job_start_time: typeof data.job_start_time === 'string' ? data.job_start_time : null,
         assigned_employee_id: typeof data.assigned_employee_id === 'string' ? data.assigned_employee_id : null,
       })
       return NextResponse.json({ success: true, posting })

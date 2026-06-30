@@ -6,11 +6,14 @@ import { createBrowserClient } from '@supabase/ssr'
 import {
   Briefcase, Check, CheckSquare, Clock, Edit3, RefreshCw, X,
   AlertTriangle, CalendarDays, Users, ChevronDown, UserCog,
+  Coffee, Paperclip, XCircle, ArrowLeftRight, Calendar, ShieldCheck,
+  Sparkles, ChevronUp,
 } from 'lucide-react'
 import ManagerSidebar from '@/components/ManagerSidebar'
 import {
   AttendanceDashboard,
   AttendanceDashboardRecord,
+  FixedOffDayRequestView,
   ShiftSwapRequestView,
   TimeOffRequestView,
 } from '@/types/Attendance'
@@ -77,8 +80,34 @@ function Spinner({ light = false }: { light?: boolean }) {
   )
 }
 
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
 type Department = { id: string; name: string }
-type TabKey = 'records' | 'time_off' | 'swaps'
+type TabKey = 'records' | 'time_off' | 'swaps' | 'my_requests'
+
+type MyShiftRecord = { id: string; clock_in_time: string | null; clock_out_time: string | null; break_in_time: string | null; break_out_time: string | null; status: string }
+type MyShift = {
+  assignment: { id: string; user_id: string }
+  shift: { id: string; title: string | null; shift_date: string; start_time: string; end_time: string; is_open_ended: boolean }
+  record: MyShiftRecord | null
+}
+
+// UC49: Clock In only appears starting 30 minutes before the shift's scheduled start; Clock Out
+// never appears early — only once the shift has actually reached its end time (skipped for
+// open-ended one-off jobs, where the worker decides when the task is done).
+const CLOCK_IN_WINDOW_MINUTES_BEFORE = 30
+
+function canClockIn(shift: MyShift['shift']): boolean {
+  const shiftStart = new Date(`${shift.shift_date}T${shift.start_time}Z`)
+  const earliestClockIn = new Date(shiftStart.getTime() - CLOCK_IN_WINDOW_MINUTES_BEFORE * 60000)
+  return Date.now() >= earliestClockIn.getTime()
+}
+
+function canClockOut(shift: MyShift['shift']): boolean {
+  if (shift.is_open_ended) return true
+  const shiftEnd = new Date(`${shift.shift_date}T${shift.end_time}Z`)
+  return Date.now() >= shiftEnd.getTime()
+}
 
 export default function ManagerAttendancePage() {
   const router = useRouter()
@@ -101,6 +130,216 @@ export default function ManagerAttendancePage() {
   const [reviewNotes, setReviewNotes] = useState('')
   const [actionLoading, setActionLoading] = useState(false)
 
+  // UC49: Manager clocks in/out for their own shift, same as Employee/Casual Worker.
+  const [myShifts, setMyShifts] = useState<MyShift[]>([])
+  const [clockBusyId, setClockBusyId] = useState('')
+  const [clockMessage, setClockMessage] = useState('')
+
+  // My Requests tab state
+  const [mySwaps, setMySwaps] = useState<ShiftSwapRequestView[]>([])
+  const [myTimeOff, setMyTimeOff] = useState<TimeOffRequestView[]>([])
+  const [myFixedOff, setMyFixedOff] = useState<FixedOffDayRequestView[]>([])
+  const [myReqLoading, setMyReqLoading] = useState(false)
+  const [myReqError, setMyReqError] = useState('')
+  const [myReqSuccess, setMyReqSuccess] = useState('')
+
+  // Submit: Shift Swap form
+  const [swapFormOpen, setSwapFormOpen] = useState(false)
+  const [swapShiftId, setSwapShiftId] = useState('')
+  const [swapReplacementId, setSwapReplacementId] = useState('')
+  const [swapReason, setSwapReason] = useState('')
+  const [swapSubmitting, setSwapSubmitting] = useState(false)
+
+  // Submit: Leave Request form
+  const [leaveFormOpen, setLeaveFormOpen] = useState(false)
+  const [leaveType, setLeaveType] = useState<'leave' | 'time_off'>('leave')
+  const [leaveShiftId, setLeaveShiftId] = useState('')
+  const [leaveReason, setLeaveReason] = useState('')
+  const [leaveSubmitting, setLeaveSubmitting] = useState(false)
+
+  // Submit: Fixed Day Off form
+  const [fixedFormOpen, setFixedFormOpen] = useState(false)
+  const [fixedWeekday, setFixedWeekday] = useState(1)
+  const [fixedSubmitting, setFixedSubmitting] = useState(false)
+
+  // Company members for replacement picker
+  const [companyMembers, setCompanyMembers] = useState<Array<{ id: string; full_name: string; role: string }>>([])
+
+  // Late reason / absence form state (per shift assignment id)
+  const [lateFormId, setLateFormId] = useState<string | null>(null)
+  const [lateReason, setLateReason] = useState('')
+  const [absenceFormId, setAbsenceFormId] = useState<string | null>(null)
+  const [absenceReason, setAbsenceReason] = useState('')
+  const [attachmentFile, setAttachmentFile] = useState<File | null>(null)
+  const [attachmentUploading, setAttachmentUploading] = useState(false)
+
+  const fetchMyShift = useCallback(async (mid: string) => {
+    if (!mid) return
+    try {
+      const res = await fetch(`/api/employee/attendance?user_id=${mid}&resource=my_shift`)
+      const data = await res.json()
+      if (data.success) setMyShifts(data.myShift?.shifts ?? [])
+    } catch {}
+  }, [])
+
+  const fetchMyRequests = useCallback(async (uid: string) => {
+    if (!uid) return
+    setMyReqLoading(true)
+    setMyReqError('')
+    try {
+      const res = await fetch(`/api/attendance?resource=my_requests&user_id=${uid}`)
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      setMySwaps(data.swaps ?? [])
+      setMyTimeOff(data.time_off ?? [])
+      setMyFixedOff(data.fixed_off ?? [])
+    } catch (err) {
+      setMyReqError(err instanceof Error ? err.message : 'Failed to load requests')
+    } finally { setMyReqLoading(false) }
+  }, [])
+
+  const fetchCompanyMembers = useCallback(async (cid: string) => {
+    if (!cid) return
+    try {
+      const res = await fetch(`/api/company/members?company_id=${cid}`)
+      const data = await res.json()
+      if (data.success) setCompanyMembers(data.members ?? [])
+    } catch {}
+  }, [])
+
+  const handleSubmitSwap = async () => {
+    if (!swapShiftId || !swapReplacementId) { setMyReqError('Select a shift and a replacement.'); return }
+    setSwapSubmitting(true); setMyReqError(''); setMyReqSuccess('')
+    try {
+      const res = await fetch('/api/attendance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'submit_shift_swap', company_id: companyId, shift_assignment_id: swapShiftId, requester_id: managerId, replacement_user_id: swapReplacementId, reason: swapReason || null }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      setMyReqSuccess('Shift swap request submitted successfully.')
+      setSwapFormOpen(false); setSwapShiftId(''); setSwapReplacementId(''); setSwapReason('')
+      void fetchMyRequests(managerId)
+    } catch (err) {
+      setMyReqError(err instanceof Error ? err.message : 'Failed to submit request')
+    } finally { setSwapSubmitting(false) }
+  }
+
+  const handleSubmitLeave = async () => {
+    setLeaveSubmitting(true); setMyReqError(''); setMyReqSuccess('')
+    try {
+      const res = await fetch('/api/attendance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'submit_leave_request', company_id: companyId, requester_id: managerId, request_type: leaveType, reason: leaveReason || null, shift_assignment_id: leaveShiftId || null }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      setMyReqSuccess('Leave request submitted successfully.')
+      setLeaveFormOpen(false); setLeaveShiftId(''); setLeaveReason('')
+      void fetchMyRequests(managerId)
+    } catch (err) {
+      setMyReqError(err instanceof Error ? err.message : 'Failed to submit request')
+    } finally { setLeaveSubmitting(false) }
+  }
+
+  const handleSubmitFixedOff = async () => {
+    setFixedSubmitting(true); setMyReqError(''); setMyReqSuccess('')
+    try {
+      const res = await fetch('/api/attendance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'submit_fixed_off_day', user_id: managerId, company_id: companyId, weekday: fixedWeekday }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      setMyReqSuccess('Fixed day off request submitted successfully.')
+      setFixedFormOpen(false)
+      void fetchMyRequests(managerId)
+    } catch (err) {
+      setMyReqError(err instanceof Error ? err.message : 'Failed to submit request')
+    } finally { setFixedSubmitting(false) }
+  }
+
+  const uploadAttachment = async (): Promise<string | null> => {
+    if (!attachmentFile) return null
+    setAttachmentUploading(true)
+    try {
+      const { createBrowserClient } = await import('@supabase/ssr')
+      const sb = createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
+      const ext = attachmentFile.name.split('.').pop()
+      const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const { error } = await sb.storage.from('attendance-attachments').upload(path, attachmentFile, { upsert: false })
+      if (error) throw error
+      const { data } = sb.storage.from('attendance-attachments').getPublicUrl(path)
+      return data.publicUrl
+    } catch {
+      setClockMessage('File upload failed. Try again.')
+      return null
+    } finally {
+      setAttachmentUploading(false)
+    }
+  }
+
+  const runClockAction = async (shift: MyShift, action: 'clock_in' | 'clock_out' | 'break_in' | 'break_out', extra?: { late_reason?: string; attachment_url?: string | null }) => {
+    setClockBusyId(`${shift.assignment.id}:${action}`)
+    setClockMessage('')
+    try {
+      const body: Record<string, unknown> = { action, user_id: managerId, shift_assignment_id: shift.assignment.id }
+      if (extra?.late_reason) body.late_reason = extra.late_reason
+      if (extra?.attachment_url) body.attachment_url = extra.attachment_url
+      const res = await fetch('/api/employee/attendance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Attendance action failed')
+      await fetchMyShift(managerId)
+      const msgs: Record<string, string> = { clock_in: 'Clocked in successfully.', clock_out: 'Clocked out successfully.', break_in: 'Break started.', break_out: 'Break ended.' }
+      setClockMessage(msgs[action] ?? 'Done.')
+    } catch (err) {
+      setClockMessage(err instanceof Error ? err.message : 'Attendance action failed')
+    } finally {
+      setClockBusyId('')
+    }
+  }
+
+  const handleLateClockIn = async (shift: MyShift) => {
+    if (!lateReason.trim()) { setClockMessage('Please enter a reason for being late.'); return }
+    const url = await uploadAttachment()
+    await runClockAction(shift, 'clock_in', { late_reason: lateReason.trim(), attachment_url: url })
+    setLateFormId(null)
+    setLateReason('')
+    setAttachmentFile(null)
+  }
+
+  const handleAbsence = async (shift: MyShift) => {
+    if (!absenceReason.trim()) { setClockMessage('Please enter a reason for absence.'); return }
+    const url = await uploadAttachment()
+    setClockBusyId(`${shift.assignment.id}:absent`)
+    setClockMessage('')
+    try {
+      const res = await fetch('/api/employee/attendance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'record_absence', user_id: managerId, shift_assignment_id: shift.assignment.id, absence_reason: absenceReason.trim(), attachment_url: url }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      await fetchMyShift(managerId)
+      setClockMessage('Absence reported.')
+    } catch (err) {
+      setClockMessage(err instanceof Error ? err.message : 'Failed to record absence')
+    } finally {
+      setClockBusyId('')
+      setAbsenceFormId(null)
+      setAbsenceReason('')
+      setAttachmentFile(null)
+    }
+  }
+
   // ── Auth init ──
   useEffect(() => {
     let cancelled = false
@@ -116,11 +355,12 @@ export default function ManagerAttendancePage() {
       const meData = await meRes.json()
       if (cancelled || !meData.success) return
       const { id, full_name, company_id } = meData.user
-      if (id) setManagerId(id)
+      if (id) { setManagerId(id); void fetchMyShift(id); void fetchMyRequests(id) }
       if (full_name) setManagerName(full_name)
       const cid = localStorage.getItem(`tasking_company_id_${uid}`) || company_id || ''
       if (!cid) return
       setCompanyId(cid)
+      void fetchCompanyMembers(cid)
       const [compRes, deptRes] = await Promise.all([
         fetch(`/api/company/current?user_id=${uid}&company_id=${cid}`),
         fetch(`/api/manager/departments?manager_id=${id}`),
@@ -135,7 +375,7 @@ export default function ManagerAttendancePage() {
     }
     void run()
     return () => { cancelled = true }
-  }, [router])
+  }, [router, fetchMyShift, fetchMyRequests, fetchCompanyMembers])
 
   const fetchData = useCallback(async (cid: string) => {
     if (!cid) return
@@ -238,10 +478,13 @@ export default function ManagerAttendancePage() {
     } finally { setActionLoading(false) }
   }
 
+  const myPendingCount = mySwaps.filter(r => r.status === 'pending').length + myTimeOff.filter(r => r.status === 'pending').length + myFixedOff.filter(r => r.status === 'pending').length
+
   const tabs: { key: TabKey; label: string; count?: number }[] = [
     { key: 'records', label: 'Attendance Records', count: summary.needs_review > 0 ? summary.needs_review : undefined },
     { key: 'time_off', label: 'Time Off', count: timeOffRequests.filter(r => r.status === 'pending').length || undefined },
     { key: 'swaps', label: 'Shift Swaps', count: swapRequests.filter(r => r.status === 'pending').length || undefined },
+    { key: 'my_requests', label: 'My Requests', count: myPendingCount || undefined },
   ]
 
   return (
@@ -277,6 +520,142 @@ export default function ManagerAttendancePage() {
         </div>
 
         <div style={{ padding: '0 28px 40px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+          {/* My Shift — UC49 Clock In / Clock Out */}
+          {myShifts.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {clockMessage && (
+                <div style={{ padding: '10px 14px', background: clockMessage.includes('successfully') ? '#ECFDF5' : '#FEF2F2', color: clockMessage.includes('successfully') ? '#047857' : '#B91C1C', borderRadius: 8, fontSize: 13, fontWeight: 600 }}>
+                  {clockMessage}
+                </div>
+              )}
+              {myShifts.map(shift => {
+                const clockedIn = !!shift.record?.clock_in_time
+                const clockedOut = !!shift.record?.clock_out_time
+                const clockInWindowOpen = canClockIn(shift.shift)
+                const clockOutWindowOpen = canClockOut(shift.shift)
+                const shiftStart = new Date(`${shift.shift.shift_date}T${shift.shift.start_time}Z`)
+                const isLateNow = Date.now() > shiftStart.getTime() + 10 * 60000
+                const onBreak = !!shift.record?.break_in_time && !shift.record?.break_out_time
+                const breakDone = !!shift.record?.break_in_time && !!shift.record?.break_out_time
+                const isLateForm = lateFormId === shift.assignment.id
+                const isAbsenceForm = absenceFormId === shift.assignment.id
+                return (
+                  <div key={shift.assignment.id} style={{ background: PANEL, borderRadius: 14, padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 10, boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)' }}>
+                    {/* Row 1: shift info + main actions */}
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+                      <div>
+                        <p style={{ margin: 0, fontWeight: 700, fontSize: 14, color: TEXT }}>{shift.shift.title || 'My Shift'}</p>
+                        <p style={{ margin: '2px 0 0', fontSize: 12.5, color: MUTED }}>
+                          {fmtDate(shift.shift.shift_date)} · {fmtTime(shift.shift.start_time)} – {fmtTime(shift.shift.end_time)}
+                          {clockedIn && <> · In {fmtTime(shift.record?.clock_in_time)}</>}
+                          {onBreak && <> · On break since {fmtTime(shift.record?.break_in_time)}</>}
+                          {breakDone && <> · Break {fmtTime(shift.record?.break_in_time)}–{fmtTime(shift.record?.break_out_time)}</>}
+                          {clockedOut && <> · Out {fmtTime(shift.record?.clock_out_time)}</>}
+                        </p>
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
+                        {/* Not clocked in yet */}
+                        {!clockedIn && clockInWindowOpen && !isLateForm && !isAbsenceForm && (
+                          <>
+                            <button onClick={() => {
+                              if (isLateNow) { setLateFormId(shift.assignment.id); setLateReason('') }
+                              else void runClockAction(shift, 'clock_in')
+                            }} disabled={!!clockBusyId}
+                              style={{ height: 34, padding: '0 14px', borderRadius: 8, border: 'none', background: '#16A34A', color: '#fff', fontWeight: 700, fontSize: 12.5, cursor: clockBusyId ? 'default' : 'pointer' }}>
+                              {clockBusyId === `${shift.assignment.id}:clock_in` ? 'Working…' : 'Clock In'}
+                            </button>
+                            <button onClick={() => { setAbsenceFormId(shift.assignment.id); setAbsenceReason('') }}
+                              style={{ height: 34, padding: '0 14px', borderRadius: 8, border: '1.5px solid #EF4444', background: '#FEF2F2', color: '#B91C1C', fontWeight: 700, fontSize: 12.5, cursor: 'pointer' }}>
+                              Not Coming In
+                            </button>
+                          </>
+                        )}
+                        {!clockedIn && !clockInWindowOpen && (
+                          <span style={{ fontSize: 12, color: MUTED, fontStyle: 'italic' }}>Clock In opens 30 min before shift</span>
+                        )}
+                        {/* Clocked in, not yet out */}
+                        {clockedIn && !clockedOut && (
+                          <>
+                            {!onBreak && !breakDone && (
+                              <button onClick={() => runClockAction(shift, 'break_in')} disabled={!!clockBusyId}
+                                style={{ height: 34, padding: '0 14px', borderRadius: 8, border: '1.5px solid #D97706', background: '#FFFBEB', color: '#B45309', fontWeight: 700, fontSize: 12.5, cursor: clockBusyId ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
+                                <Coffee size={12} /> Break In
+                              </button>
+                            )}
+                            {onBreak && (
+                              <button onClick={() => runClockAction(shift, 'break_out')} disabled={!!clockBusyId}
+                                style={{ height: 34, padding: '0 14px', borderRadius: 8, border: '1.5px solid #D97706', background: '#FFF7ED', color: '#B45309', fontWeight: 700, fontSize: 12.5, cursor: clockBusyId ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
+                                <Coffee size={12} /> Break Out
+                              </button>
+                            )}
+                            {clockOutWindowOpen && (
+                              <button onClick={() => runClockAction(shift, 'clock_out')} disabled={!!clockBusyId}
+                                style={{ height: 34, padding: '0 14px', borderRadius: 8, border: 'none', background: '#334155', color: '#fff', fontWeight: 700, fontSize: 12.5, cursor: clockBusyId ? 'default' : 'pointer' }}>
+                                {clockBusyId === `${shift.assignment.id}:clock_out` ? 'Working…' : 'Clock Out'}
+                              </button>
+                            )}
+                            {!clockOutWindowOpen && (
+                              <span style={{ fontSize: 12, color: MUTED, fontStyle: 'italic' }}>Clock Out opens at shift end</span>
+                            )}
+                          </>
+                        )}
+                        {clockedOut && <span style={{ fontSize: 12, fontWeight: 600, color: '#047857' }}>Completed</span>}
+                      </div>
+                    </div>
+
+                    {/* Late reason form */}
+                    {isLateForm && (
+                      <div style={{ background: '#FFFBEB', border: '1.5px solid #FCD34D', borderRadius: 10, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: '#92400E' }}>You are late — please provide a reason</p>
+                        <textarea value={lateReason} onChange={e => setLateReason(e.target.value)} placeholder="Reason for being late…" rows={2}
+                          style={{ resize: 'vertical', fontSize: 13, padding: '8px 10px', borderRadius: 7, border: '1.5px solid #FCD34D', outline: 'none', fontFamily: 'inherit', background: '#fff' }} />
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: '#92400E', cursor: 'pointer' }}>
+                          <Paperclip size={12} />
+                          {attachmentFile ? attachmentFile.name : 'Attach supporting document (optional)'}
+                          <input type="file" accept=".pdf,.jpg,.jpeg,.png" style={{ display: 'none' }} onChange={e => setAttachmentFile(e.target.files?.[0] ?? null)} />
+                        </label>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button onClick={() => handleLateClockIn(shift)} disabled={!!clockBusyId || attachmentUploading}
+                            style={{ height: 32, padding: '0 14px', borderRadius: 7, border: 'none', background: '#16A34A', color: '#fff', fontWeight: 700, fontSize: 12.5, cursor: 'pointer' }}>
+                            {attachmentUploading ? 'Uploading…' : 'Submit & Clock In'}
+                          </button>
+                          <button onClick={() => { setLateFormId(null); setAttachmentFile(null) }}
+                            style={{ height: 32, padding: '0 12px', borderRadius: 7, border: '1.5px solid #D1D5DB', background: '#fff', fontWeight: 600, fontSize: 12.5, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <XCircle size={12} /> Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Absence form */}
+                    {isAbsenceForm && (
+                      <div style={{ background: '#FEF2F2', border: '1.5px solid #FCA5A5', borderRadius: 10, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: '#991B1B' }}>Report absence — please provide a reason</p>
+                        <textarea value={absenceReason} onChange={e => setAbsenceReason(e.target.value)} placeholder="Reason for absence…" rows={2}
+                          style={{ resize: 'vertical', fontSize: 13, padding: '8px 10px', borderRadius: 7, border: '1.5px solid #FCA5A5', outline: 'none', fontFamily: 'inherit', background: '#fff' }} />
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: '#991B1B', cursor: 'pointer' }}>
+                          <Paperclip size={12} />
+                          {attachmentFile ? attachmentFile.name : 'Attach supporting document (optional)'}
+                          <input type="file" accept=".pdf,.jpg,.jpeg,.png" style={{ display: 'none' }} onChange={e => setAttachmentFile(e.target.files?.[0] ?? null)} />
+                        </label>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button onClick={() => handleAbsence(shift)} disabled={!!clockBusyId || attachmentUploading}
+                            style={{ height: 32, padding: '0 14px', borderRadius: 7, border: 'none', background: '#DC2626', color: '#fff', fontWeight: 700, fontSize: 12.5, cursor: 'pointer' }}>
+                            {clockBusyId === `${shift.assignment.id}:absent` ? 'Submitting…' : attachmentUploading ? 'Uploading…' : 'Report Absence'}
+                          </button>
+                          <button onClick={() => { setAbsenceFormId(null); setAttachmentFile(null) }}
+                            style={{ height: 32, padding: '0 12px', borderRadius: 7, border: '1.5px solid #D1D5DB', background: '#fff', fontWeight: 600, fontSize: 12.5, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <XCircle size={12} /> Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
 
           {/* Stats + dept filter */}
           <div style={{ display: 'flex', gap: 12, alignItems: 'stretch', flexWrap: 'wrap', animation: 'fadeSlideUp 0.3s ease both' }}>
@@ -469,6 +848,202 @@ export default function ManagerAttendancePage() {
                   </tbody>
                 </table>
               </div>
+            </div>
+          )}
+
+          {/* ── My Requests tab ── */}
+          {activeTab === 'my_requests' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, animation: 'fadeSlideUp 0.28s ease both' }}>
+
+              {myReqError && <div style={{ padding: '10px 14px', background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 8, fontSize: 13, fontWeight: 700 }}>{myReqError}</div>}
+              {myReqSuccess && <div style={{ padding: '10px 14px', background: '#ECFDF5', border: '1px solid #A7F3D0', color: '#047857', borderRadius: 8, fontSize: 13, fontWeight: 700 }}>{myReqSuccess}</div>}
+
+              {/* Action buttons */}
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <button onClick={() => { setSwapFormOpen(v => !v); setLeaveFormOpen(false); setFixedFormOpen(false) }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 38, padding: '0 16px', background: swapFormOpen ? '#0F172A' : PANEL, color: swapFormOpen ? '#FFFFFF' : TEXT, border: `1.5px solid ${swapFormOpen ? '#0F172A' : BORDER}`, borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                  <ArrowLeftRight size={14} /> Shift Swap
+                </button>
+                <button onClick={() => { setLeaveFormOpen(v => !v); setSwapFormOpen(false); setFixedFormOpen(false) }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 38, padding: '0 16px', background: leaveFormOpen ? '#0F172A' : PANEL, color: leaveFormOpen ? '#FFFFFF' : TEXT, border: `1.5px solid ${leaveFormOpen ? '#0F172A' : BORDER}`, borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                  <ShieldCheck size={14} /> Leave Request
+                </button>
+                <button onClick={() => { setFixedFormOpen(v => !v); setSwapFormOpen(false); setLeaveFormOpen(false) }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 38, padding: '0 16px', background: fixedFormOpen ? '#0F172A' : PANEL, color: fixedFormOpen ? '#FFFFFF' : TEXT, border: `1.5px solid ${fixedFormOpen ? '#0F172A' : BORDER}`, borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                  <Calendar size={14} /> Fixed Day Off
+                </button>
+                <button onClick={() => void fetchMyRequests(managerId)} disabled={myReqLoading || !managerId}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 38, padding: '0 14px', background: PANEL, color: MUTED, border: `1px solid ${BORDER}`, borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', marginLeft: 'auto' }}>
+                  {myReqLoading ? <Spinner /> : <RefreshCw size={13} />} Refresh
+                </button>
+              </div>
+
+              {/* Shift Swap form */}
+              {swapFormOpen && (
+                <div style={{ background: PANEL, border: `1.5px solid #E5E7EB`, borderRadius: 14, padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 13 }}>
+                  <p style={{ margin: 0, fontWeight: 800, fontSize: 14, color: TEXT }}>Submit Shift Swap Request</p>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>My Shift</label>
+                    <select value={swapShiftId} onChange={e => setSwapShiftId(e.target.value)}
+                      style={{ width: '100%', height: 38, padding: '0 10px', border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 13, color: TEXT, background: '#F8FAFC', outline: 'none' }}>
+                      <option value="">Select a shift to swap…</option>
+                      {myShifts.map(s => (
+                        <option key={s.assignment.id} value={s.assignment.id}>{s.shift.title || 'Shift'} — {s.shift.shift_date} {s.shift.start_time}–{s.shift.end_time}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>Replacement Person</label>
+                    <select value={swapReplacementId} onChange={e => setSwapReplacementId(e.target.value)}
+                      style={{ width: '100%', height: 38, padding: '0 10px', border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 13, color: TEXT, background: '#F8FAFC', outline: 'none' }}>
+                      <option value="">Select replacement…</option>
+                      {companyMembers.filter(m => m.id !== managerId).map(m => (
+                        <option key={m.id} value={m.id}>{m.full_name} ({m.role})</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>Reason (optional)</label>
+                    <textarea value={swapReason} onChange={e => setSwapReason(e.target.value)} rows={2}
+                      style={{ width: '100%', padding: '8px 10px', border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 13, color: TEXT, background: '#F8FAFC', outline: 'none', resize: 'vertical', boxSizing: 'border-box', fontFamily: 'inherit' }} />
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={() => setSwapFormOpen(false)} style={{ flex: 1, height: 38, background: 'none', border: `1.5px solid ${BORDER}`, borderRadius: 9, fontWeight: 700, fontSize: 13, color: MUTED, cursor: 'pointer' }}>Cancel</button>
+                    <button onClick={handleSubmitSwap} disabled={swapSubmitting || !swapShiftId || !swapReplacementId}
+                      style={{ flex: 2, height: 38, background: '#0F172A', border: 'none', borderRadius: 9, fontWeight: 700, fontSize: 13, color: '#FFFFFF', cursor: swapSubmitting ? 'default' : 'pointer', opacity: swapSubmitting || !swapShiftId || !swapReplacementId ? 0.55 : 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                      {swapSubmitting ? <Spinner light /> : <ArrowLeftRight size={13} />} Submit Swap Request
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Leave Request form */}
+              {leaveFormOpen && (
+                <div style={{ background: PANEL, border: `1.5px solid #E5E7EB`, borderRadius: 14, padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 13 }}>
+                  <p style={{ margin: 0, fontWeight: 800, fontSize: 14, color: TEXT }}>Submit Leave Request</p>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>Type</label>
+                      <select value={leaveType} onChange={e => setLeaveType(e.target.value as 'leave' | 'time_off')}
+                        style={{ width: '100%', height: 38, padding: '0 10px', border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 13, color: TEXT, background: '#F8FAFC', outline: 'none' }}>
+                        <option value="leave">Leave</option>
+                        <option value="time_off">Time Off</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>Related Shift (optional)</label>
+                      <select value={leaveShiftId} onChange={e => setLeaveShiftId(e.target.value)}
+                        style={{ width: '100%', height: 38, padding: '0 10px', border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 13, color: TEXT, background: '#F8FAFC', outline: 'none' }}>
+                        <option value="">No specific shift</option>
+                        {myShifts.map(s => (
+                          <option key={s.assignment.id} value={s.assignment.id}>{s.shift.title || 'Shift'} — {s.shift.shift_date}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>Reason</label>
+                    <textarea value={leaveReason} onChange={e => setLeaveReason(e.target.value)} rows={3}
+                      style={{ width: '100%', padding: '8px 10px', border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 13, color: TEXT, background: '#F8FAFC', outline: 'none', resize: 'vertical', boxSizing: 'border-box', fontFamily: 'inherit' }} />
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={() => setLeaveFormOpen(false)} style={{ flex: 1, height: 38, background: 'none', border: `1.5px solid ${BORDER}`, borderRadius: 9, fontWeight: 700, fontSize: 13, color: MUTED, cursor: 'pointer' }}>Cancel</button>
+                    <button onClick={handleSubmitLeave} disabled={leaveSubmitting}
+                      style={{ flex: 2, height: 38, background: '#0F172A', border: 'none', borderRadius: 9, fontWeight: 700, fontSize: 13, color: '#FFFFFF', cursor: leaveSubmitting ? 'default' : 'pointer', opacity: leaveSubmitting ? 0.55 : 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                      {leaveSubmitting ? <Spinner light /> : <ShieldCheck size={13} />} Submit Leave Request
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Fixed Day Off form */}
+              {fixedFormOpen && (
+                <div style={{ background: PANEL, border: `1.5px solid #E5E7EB`, borderRadius: 14, padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 13 }}>
+                  <p style={{ margin: 0, fontWeight: 800, fontSize: 14, color: TEXT }}>Request Fixed Day Off</p>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>Preferred Day Off</label>
+                    <select value={fixedWeekday} onChange={e => setFixedWeekday(Number(e.target.value))}
+                      style={{ width: '100%', height: 38, padding: '0 10px', border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 13, color: TEXT, background: '#F8FAFC', outline: 'none' }}>
+                      {WEEKDAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                    </select>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button onClick={() => setFixedFormOpen(false)} style={{ flex: 1, height: 38, background: 'none', border: `1.5px solid ${BORDER}`, borderRadius: 9, fontWeight: 700, fontSize: 13, color: MUTED, cursor: 'pointer' }}>Cancel</button>
+                    <button onClick={handleSubmitFixedOff} disabled={fixedSubmitting}
+                      style={{ flex: 2, height: 38, background: '#0F172A', border: 'none', borderRadius: 9, fontWeight: 700, fontSize: 13, color: '#FFFFFF', cursor: fixedSubmitting ? 'default' : 'pointer', opacity: fixedSubmitting ? 0.55 : 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                      {fixedSubmitting ? <Spinner light /> : <Calendar size={13} />} Request Fixed Day Off
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* History panels */}
+              {myReqLoading ? (
+                <div style={{ padding: '32px 0', textAlign: 'center', color: MUTED, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}><Spinner /> Loading requests…</div>
+              ) : (
+                <>
+                  {/* Shift Swaps history */}
+                  <div style={{ background: PANEL, borderRadius: 12, overflow: 'hidden', border: `1px solid ${BORDER}` }}>
+                    <div style={{ padding: '12px 16px', borderBottom: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <ArrowLeftRight size={14} color="#F97316" />
+                      <span style={{ fontWeight: 700, fontSize: 13, color: TEXT }}>My Shift Swap Requests</span>
+                      <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: MUTED }}>{mySwaps.length} total</span>
+                    </div>
+                    {mySwaps.length === 0 ? (
+                      <div style={{ padding: '20px 16px', color: MUTED, fontSize: 13, textAlign: 'center' }}>No swap requests yet.</div>
+                    ) : mySwaps.map((req, i) => (
+                      <div key={req.id} style={{ padding: '12px 16px', borderBottom: i < mySwaps.length - 1 ? `1px solid #F8FAFC` : 'none', display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: TEXT }}>Swap with {req.replacement_name}</div>
+                          <div style={{ fontSize: 11.5, color: MUTED }}>{req.shift_title ?? 'Shift'} · {req.shift_date ?? '—'} · {fmtTime(req.start_time)}–{fmtTime(req.end_time)}</div>
+                          {req.reason && <div style={{ fontSize: 11.5, color: '#4B5563', marginTop: 2 }}>{req.reason}</div>}
+                        </div>
+                        {statusChip(req.status)}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Leave Requests history */}
+                  <div style={{ background: PANEL, borderRadius: 12, overflow: 'hidden', border: `1px solid ${BORDER}` }}>
+                    <div style={{ padding: '12px 16px', borderBottom: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <ShieldCheck size={14} color="#059669" />
+                      <span style={{ fontWeight: 700, fontSize: 13, color: TEXT }}>My Leave Requests</span>
+                      <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: MUTED }}>{myTimeOff.length} total</span>
+                    </div>
+                    {myTimeOff.length === 0 ? (
+                      <div style={{ padding: '20px 16px', color: MUTED, fontSize: 13, textAlign: 'center' }}>No leave requests yet.</div>
+                    ) : myTimeOff.map((req, i) => (
+                      <div key={req.id} style={{ padding: '12px 16px', borderBottom: i < myTimeOff.length - 1 ? `1px solid #F8FAFC` : 'none', display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: TEXT, textTransform: 'capitalize' }}>{req.request_type === 'leave' ? 'Leave' : 'Time Off'}</div>
+                          <div style={{ fontSize: 11.5, color: MUTED }}>{req.shift_date ?? '—'}{req.shift_title ? ` · ${req.shift_title}` : ''}</div>
+                          {req.reason && <div style={{ fontSize: 11.5, color: '#4B5563', marginTop: 2 }}>{req.reason}</div>}
+                        </div>
+                        {statusChip(req.status)}
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Fixed Day Off history */}
+                  <div style={{ background: PANEL, borderRadius: 12, overflow: 'hidden', border: `1px solid ${BORDER}` }}>
+                    <div style={{ padding: '12px 16px', borderBottom: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Calendar size={14} color="#7C3AED" />
+                      <span style={{ fontWeight: 700, fontSize: 13, color: TEXT }}>My Fixed Day Off Requests</span>
+                      <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: MUTED }}>{myFixedOff.length} total</span>
+                    </div>
+                    {myFixedOff.length === 0 ? (
+                      <div style={{ padding: '20px 16px', color: MUTED, fontSize: 13, textAlign: 'center' }}>No fixed day off requests yet.</div>
+                    ) : myFixedOff.map((req, i) => (
+                      <div key={req.id} style={{ padding: '12px 16px', borderBottom: i < myFixedOff.length - 1 ? `1px solid #F8FAFC` : 'none', display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: TEXT }}>{WEEKDAY_NAMES[req.weekday]}</div>
+                        </div>
+                        {statusChip(req.status)}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           )}
 

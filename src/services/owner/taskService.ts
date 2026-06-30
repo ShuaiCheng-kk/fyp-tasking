@@ -47,6 +47,9 @@ export const taskService = {
       if (!input.assigned_by || parent.assigned_by !== input.assigned_by) {
         throw new Error('Only the user who assigned this task can perform this action')
       }
+      // Sub-tasks inherit the parent's priority/deadline so they stay aligned with the main task
+      // in UI and recurrence flows. They are not scored separately for workload/stalled alerts.
+      input = { ...input, priority: parent.priority, due_at: parent.due_at }
     }
     return taskRepository.createTask(input)
   },
@@ -71,11 +74,15 @@ export const taskService = {
         sequence_order: ordered ? i : null,
         title,
         description: subTasks[i].description ?? null,
-        assigned_user_id: mainTask.assigned_user_id,
+        // AI-distributed sub-tasks (UC20) carry their own assignee/due_at per step; manually
+        // created sub-tasks (UC19) have neither, so they inherit the parent's values.
+        assigned_user_id: subTasks[i].assigned_user_id ?? mainTask.assigned_user_id,
         assigned_by: mainTask.assigned_by,
         status: 'Assigned',
         percentage_complete: 0,
         task_date: mainTask.task_date,
+        priority: mainTask.priority,
+        due_at: subTasks[i].due_at ?? mainTask.due_at,
       })
     }
     return mainTask
@@ -99,7 +106,28 @@ export const taskService = {
         throw new Error('percentage_complete must be between 0 and 100')
       }
     }
-    return taskRepository.updateTask(id, input)
+    const updated = await taskRepository.updateTask(id, input)
+    if (existing.parent_task_id === null) {
+      const cascade: Partial<TaskInput> = {}
+      if (input.assigned_user_id !== undefined && input.assigned_user_id !== existing.assigned_user_id) {
+        cascade.assigned_user_id = input.assigned_user_id
+      }
+      // Sub-tasks mirror the parent's priority/deadline/start date (see assignTask) — keep them
+      // in sync whenever the parent's own values change, not just at creation time.
+      if (input.priority !== undefined && input.priority !== existing.priority) {
+        cascade.priority = input.priority
+      }
+      if (input.due_at !== undefined && input.due_at !== existing.due_at) {
+        cascade.due_at = input.due_at
+      }
+      if (input.task_date !== undefined && input.task_date !== existing.task_date) {
+        cascade.task_date = input.task_date
+      }
+      if (Object.keys(cascade).length > 0) {
+        await taskRepository.updateSubTasksByParent(id, cascade)
+      }
+    }
+    return updated
   },
 
   async deleteTask(id: string, actingUserId?: string | null): Promise<void> {
@@ -226,6 +254,14 @@ export const taskService = {
       const due_at = deadlineRule
         ? computeDeadlineFromRule(nextDate, deadlineRule)
         : original.due_at ? moveIsoDate(original.due_at, nextDate) : null
+      // The original's assignee was only validated to have a shift on the original's own
+      // task_date — each occurrence falls on a different date, so re-check per occurrence
+      // rather than blindly copying the assignment. Occurrences that land on a date the
+      // assignee has no shift go out Unassigned instead of blocking the whole series.
+      const occurrenceAssigneeId = original.assigned_user_id
+        && (await taskRepository.hasShiftOnDate(original.assigned_user_id, original.company_id, nextDate))
+        ? original.assigned_user_id
+        : null
       const copy = await taskRepository.createTask({
         shift_id: original.shift_id,
         company_id: original.company_id,
@@ -233,7 +269,7 @@ export const taskService = {
         parent_task_id: original.parent_task_id,
         title: original.title,
         description: original.description,
-        assigned_user_id: original.assigned_user_id,
+        assigned_user_id: occurrenceAssigneeId,
         assigned_by: input.assigned_by ?? original.assigned_by,
         status: 'Assigned',
         percentage_complete: 0,
@@ -255,7 +291,7 @@ export const taskService = {
           sequence_order: subTask.sequence_order,
           title: subTask.title,
           description: subTask.description,
-          assigned_user_id: subTask.assigned_user_id,
+          assigned_user_id: occurrenceAssigneeId,
           assigned_by: input.assigned_by ?? subTask.assigned_by,
           status: 'Assigned',
           percentage_complete: 0,
@@ -354,6 +390,41 @@ export const taskService = {
     return taskRepository.updateTask(id, { status, percentage_complete })
   },
 
+  // To-do checkbox for a sub-task — only meaningful while the parent is In Progress (the work is
+  // actually happening), only the parent's assignee may tick it (the person doing the work, same
+  // permission as dragging the parent's Kanban card), and only in sequence_order — the previous
+  // sub-task must already be ticked before the next one can be. Ticking the last sub-task in the
+  // chain auto-promotes the parent and every sub-task to Review, mirroring the one-step-forward
+  // drag-and-drop move.
+  async completeSubTask(subTaskId: string, actingUserId?: string | null): Promise<Task[]> {
+    if (!subTaskId) throw new Error('Sub-task id is required')
+    const subTask = await taskRepository.getTaskById(subTaskId)
+    if (!subTask.parent_task_id) throw new Error('Task is not a sub-task')
+    const parent = await taskRepository.getTaskById(subTask.parent_task_id)
+    if (!actingUserId || parent.assigned_user_id !== actingUserId) {
+      throw new Error('Only the user assigned to this task can complete its sub-tasks')
+    }
+    if (parent.status !== 'In Progress') {
+      throw new Error('Sub-tasks can only be completed while the task is In Progress')
+    }
+    if (subTask.is_completed) return [subTask, parent]
+
+    const siblings = await taskRepository.getSubTasks(parent.id)
+    const ordered = [...siblings].sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0))
+    const index = ordered.findIndex(t => t.id === subTaskId)
+    if (index === -1) throw new Error('Sub-task does not belong to this task')
+    const priorIncomplete = ordered.slice(0, index).some(t => !t.is_completed)
+    if (priorIncomplete) throw new Error('Complete the previous sub-tasks first')
+
+    const updatedSubTask = await taskRepository.updateTask(subTaskId, { is_completed: true })
+    const allComplete = ordered.every((t, i) => i === index ? true : t.is_completed)
+    if (!allComplete) return [updatedSubTask, parent]
+
+    const updatedParent = await taskRepository.updateTask(parent.id, { status: 'Review', percentage_complete: 66 })
+    await taskRepository.updateSubTasksByParent(parent.id, { status: 'Review', percentage_complete: 66 })
+    return [updatedSubTask, updatedParent]
+  },
+
   async getKanbanTasks(company_id: string): Promise<KanbanGroup> {
     const tasks = await taskRepository.getTasksByCompany(company_id)
     return {
@@ -423,28 +494,94 @@ export const taskService = {
     return events.slice(0, 20)
   },
 
-  async getWorkloadRebalancingSuggestion(company_id: string, department_id?: string): Promise<TaskWorkloadSuggestion> {
+  // UC21 — workload is weighted by priority x deadline urgency for top-level tasks only. Sub-tasks
+  // are execution steps of their parent, so counting them separately would inflate the parent's
+  // workload just because it was broken down. Rebalancing is department-scoped; each department's
+  // manager pool starts at score 0 so managers with no active tasks can be recommended. A user
+  // must have at least two active main tasks before we suggest moving one away; moving their only
+  // task is not a meaningful rebalance.
+  async getWorkloadRebalancingSuggestions(company_id: string, department_id?: string): Promise<TaskWorkloadSuggestion[]> {
     const activeTasks = (await taskRepository.getTasksByCompany(company_id))
-      .filter(task => task.status !== 'Complete' && task.assigned_user_id)
+      .filter(task => task.status !== 'Complete' && task.parent_task_id === null && task.assigned_user_id)
       .filter(task => !department_id || task.department_id === department_id)
-    const counts = new Map<string, number>()
-    for (const task of activeTasks) {
-      counts.set(task.assigned_user_id!, (counts.get(task.assigned_user_id!) ?? 0) + 1)
+
+    const departmentIds = department_id ? [department_id] : [...new Set(activeTasks.map(task => task.department_id))]
+
+    const suggestions: TaskWorkloadSuggestion[] = []
+    for (const deptId of departmentIds) {
+      const scores = new Map<string, number>()
+      const taskCounts = new Map<string, number>()
+      const managers = await taskRepository.getManagersByDepartment(company_id, deptId)
+      for (const manager of managers) scores.set(manager.id, 0)
+
+      for (const task of activeTasks) {
+        if (task.department_id !== deptId) continue
+        scores.set(task.assigned_user_id!, (scores.get(task.assigned_user_id!) ?? 0) + taskWorkloadWeight(task))
+        taskCounts.set(task.assigned_user_id!, (taskCounts.get(task.assigned_user_id!) ?? 0) + 1)
+      }
+      if (scores.size < 2) continue
+
+      // Compared against the lightest-loaded person, not the group average — averaging in the
+      // overloaded person's own score pulls the average up toward them, which (with only two
+      // people) makes "overloaded > 2x average" algebraically impossible to ever trigger.
+      const ranked = [...scores.entries()].sort((a, b) => b[1] - a[1])
+      const [overloaded_user_id, overloaded_score] = ranked[0]
+      if ((taskCounts.get(overloaded_user_id) ?? 0) < 2) continue
+
+      let suggestedTask: Task | undefined
+      let recommended_user_id = ''
+      let recommended_score = 0
+      let bestPostSpread = Number.POSITIVE_INFINITY
+      const currentSpread = ranked[0][1] - ranked[ranked.length - 1][1]
+      const movableTasks = activeTasks
+        .filter(task => task.department_id === deptId && task.assigned_user_id === overloaded_user_id)
+        .sort((a, b) => taskWorkloadWeight(b) - taskWorkloadWeight(a))
+      for (const [candidateUserId, candidateScore] of ranked.slice(1).reverse()) {
+        if (overloaded_score <= candidateScore * 2) continue
+        for (const task of movableTasks) {
+          if (task.task_date && !(await taskRepository.hasShiftOnDate(candidateUserId, company_id, task.task_date))) continue
+          const taskWeight = taskWorkloadWeight(task)
+          const postScores = new Map(scores)
+          postScores.set(overloaded_user_id, overloaded_score - taskWeight)
+          postScores.set(candidateUserId, candidateScore + taskWeight)
+          const postRanked = [...postScores.values()].sort((a, b) => b - a)
+          const postSpread = postRanked[0] - postRanked[postRanked.length - 1]
+          if (postSpread < currentSpread && postSpread < bestPostSpread) {
+            recommended_user_id = candidateUserId
+            recommended_score = candidateScore
+            suggestedTask = task
+            bestPostSpread = postSpread
+          }
+        }
+      }
+      if (!suggestedTask) continue
+
+      const improvement = currentSpread - bestPostSpread
+      if (improvement <= 0) continue
+      suggestions.push({
+        type: 'rebalance',
+        message: `Move one active task from ${overloaded_user_id} to ${recommended_user_id}.`,
+        department_id: deptId,
+        overloaded_user_id,
+        recommended_user_id,
+        suggested_task_id: suggestedTask.id,
+        suggested_task_title: suggestedTask.title,
+        reason: `This move reduces the workload score gap from ${currentSpread} to ${bestPostSpread}.`,
+        score_gap_before: currentSpread,
+        score_gap_after: bestPostSpread,
+        overloaded_score,
+        recommended_score,
+      })
     }
-    const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1])
-    if (ranked.length < 2 || ranked[0][1] - ranked[ranked.length - 1][1] < 2) {
-      return { type: 'balanced', message: 'Workload is currently balanced across assigned users.' }
-    }
-    const [overloaded_user_id, overloaded_count] = ranked[0]
-    const [recommended_user_id, recommended_count] = ranked[ranked.length - 1]
-    return {
-      type: 'rebalance',
-      message: `Move one active task from ${overloaded_user_id} to ${recommended_user_id}.`,
-      overloaded_user_id,
-      recommended_user_id,
-      overloaded_count,
-      recommended_count,
-    }
+
+    return suggestions
+  },
+
+  async getWorkloadRebalancingSuggestion(company_id: string, department_id?: string): Promise<TaskWorkloadSuggestion> {
+    const suggestions = await this.getWorkloadRebalancingSuggestions(company_id, department_id)
+    return suggestions
+      .sort((a, b) => (b.score_gap_before ?? 0) - (b.score_gap_after ?? 0) - ((a.score_gap_before ?? 0) - (a.score_gap_after ?? 0)))[0]
+      ?? { type: 'balanced', message: 'Workload is currently balanced across assigned users.' }
   },
 
   async getTaskReassignmentSuggestion(id: string): Promise<TaskReassignmentSuggestion> {
@@ -464,29 +601,53 @@ export const taskService = {
     }
   },
 
-  async getStalledTaskAlerts(company_id: string, stale_after_days = 3, department_id?: string): Promise<StalledTaskAlert[]> {
-    const cutoffMs = Date.now() - stale_after_days * 24 * 60 * 60 * 1000
+  // UC22 — flags a top-level task once the time elapsed since it was assigned (created_at) exceeds 50% of
+  // its total assigned-to-deadline window, as long as it hasn't reached Review yet. A task already
+  // in Review or Complete is past the point this alert is meant to catch, so it's excluded
+  // regardless of how much time has elapsed.
+  async getStalledTaskAlerts(company_id: string, department_id?: string): Promise<StalledTaskAlert[]> {
+    const now = Date.now()
     return (await taskRepository.getTasksByCompany(company_id))
-      .filter(task => task.status !== 'Complete')
+      .filter(task => task.status === 'Assigned' || task.status === 'In Progress')
+      .filter(task => task.parent_task_id === null)
       .filter(task => !department_id || task.department_id === department_id)
       .map(task => {
-        const updatedAt = new Date(task.updated_at ?? task.created_at).getTime()
-        return {
-          task,
-          days_since_update: Math.max(0, Math.floor((Date.now() - updatedAt) / (24 * 60 * 60 * 1000))),
-          isStalled: updatedAt <= cutoffMs,
-        }
+        const createdAt = new Date(task.created_at).getTime()
+        const dueAt = new Date(task.due_at!).getTime()
+        const totalWindow = dueAt - createdAt
+        const percentElapsed = totalWindow > 0 ? ((now - createdAt) / totalWindow) * 100 : 100
+        return { task, percentElapsed }
       })
-      .filter(row => row.isStalled)
+      .filter(row => row.percentElapsed > 50)
       .map(row => ({
         task_id: row.task.id,
         title: row.task.title,
         status: row.task.status,
-        days_since_update: row.days_since_update,
-        message: `"${row.task.title}" has not moved for ${row.days_since_update} days.`,
+        percent_elapsed: Math.round(row.percentElapsed),
+        message: row.percentElapsed >= 100
+          ? `"${row.task.title}" is past its deadline and hasn't moved to Review.`
+          : `"${row.task.title}" is past the halfway point to its deadline and hasn't moved to Review.`,
       }))
   },
 
+}
+
+const PRIORITY_WEIGHT: Record<string, number> = { Urgent: 4, High: 3, Medium: 2, Low: 1 }
+
+// UC21 — a task's weight is priority x deadline urgency, so an urgent, overdue task outweighs
+// several low-priority tasks with plenty of time left, instead of every task counting as "1".
+function taskWorkloadWeight(task: Task): number {
+  const priorityWeight = PRIORITY_WEIGHT[task.priority ?? 'Medium'] ?? PRIORITY_WEIGHT.Medium
+  return priorityWeight * deadlineUrgencyWeight(task.due_at)
+}
+
+function deadlineUrgencyWeight(due_at: string | null): number {
+  if (!due_at) return 1
+  const hoursRemaining = (new Date(due_at).getTime() - Date.now()) / (60 * 60 * 1000)
+  if (hoursRemaining < 0) return 4   // overdue
+  if (hoursRemaining <= 24) return 3 // due within a day
+  if (hoursRemaining <= 72) return 2 // due within 3 days
+  return 1                            // plenty of time
 }
 
 // Only the user who originally assigned a task may edit, delete, archive, duplicate, extend its
@@ -556,6 +717,12 @@ async function validateTaskAssignment(input: TaskInput): Promise<void> {
     if (!creator || creator.role === 'Owner' || creator.role === 'Partner') {
       if (assignee.role !== 'Manager') {
         throw new Error('Owner tasks can only be assigned to Managers')
+      }
+      if (input.task_date) {
+        const hasShift = await taskRepository.hasShiftOnDate(assignee.id, input.company_id, input.task_date)
+        if (!hasShift) {
+          throw new Error('Selected manager does not have a shift on the task date')
+        }
       }
     } else if (creator.role === 'Manager') {
       if (!['Employee', 'Casual Worker'].includes(assignee.role)) {

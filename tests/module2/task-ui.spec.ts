@@ -16,6 +16,8 @@ type SeededMember = {
 let seeded: TestOwner
 let departmentId: string
 let shiftId: string
+let createdShiftIds: string[] = []
+let taskUiDate: string
 let managerA: SeededMember
 let managerB: SeededMember
 
@@ -68,6 +70,28 @@ async function signInOwner(page: import('@playwright/test').Page) {
   }, { authUserId: seeded.authUserId, companyId: seeded.companyId })
 }
 
+async function openAssignTaskForManagerA(page: import('@playwright/test').Page) {
+  const backToDepartments = page.getByRole('button', { name: 'Back to all departments' })
+  if (await backToDepartments.count() > 0) {
+    await backToDepartments.click()
+  }
+
+  await page.locator('.task-dept-card').filter({ hasText: 'Operations' }).click()
+  await page.locator('.member-card').filter({ hasText: 'Module 2 UI Manager A' }).getByTitle('Assign Task').click()
+  await expect(page.getByRole('heading', { name: 'Assign Task to Module 2 UI Manager A' })).toBeVisible()
+}
+
+function formatDateKey(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function taskUiDayLabel(): string {
+  return String(new Date(`${taskUiDate}T00:00:00`).getDate())
+}
+
 test.beforeAll(async () => {
   seeded = await seedTestOwnerAndCompany('module2-ui')
 
@@ -81,13 +105,16 @@ test.beforeAll(async () => {
 
   managerA = await createManager('A')
   managerB = await createManager('B')
+  const tomorrow = new Date()
+  tomorrow.setDate(tomorrow.getDate() + 1)
+  taskUiDate = formatDateKey(tomorrow)
 
   const { data: shift, error: shiftError } = await admin
     .from('shifts')
     .insert({
       company_id: seeded.companyId,
       department_id: departmentId,
-      shift_date: '2030-05-10',
+      shift_date: taskUiDate,
       start_time: '09:00',
       end_time: '17:00',
       title: 'Module 2 UI Shift',
@@ -98,6 +125,15 @@ test.beforeAll(async () => {
     .single()
   if (shiftError || !shift) throw new Error(`Failed to create shift: ${shiftError?.message}`)
   shiftId = shift.id as string
+  createdShiftIds.push(shiftId)
+
+  const { error: assignmentError } = await admin
+    .from('shift_assignments')
+    .insert([
+      { shift_id: shiftId, user_id: managerA.userId, assigned_by: seeded.ownerId },
+      { shift_id: shiftId, user_id: managerB.userId, assigned_by: seeded.ownerId },
+    ])
+  if (assignmentError) throw new Error(`Failed to create shift assignments: ${assignmentError.message}`)
 
   const seedTasks = [
     ['Prep opening checklist', 'Assigned', managerA.userId, 'High', 0],
@@ -117,8 +153,8 @@ test.beforeAll(async () => {
       status,
       percentage_complete: percentageComplete,
       priority,
-      task_date: '2030-05-10',
-      due_at: '2030-05-10T18:00:00.000Z',
+      task_date: taskUiDate,
+      due_at: `${taskUiDate}T18:00:00.000Z`,
     })
     if (error) throw new Error(`Failed to seed task: ${error.message}`)
   }
@@ -127,8 +163,10 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await admin.from('task_templates').delete().eq('company_id', seeded.companyId)
   await admin.from('tasks').delete().eq('company_id', seeded.companyId)
-  await admin.from('shift_assignments').delete().eq('shift_id', shiftId)
-  await admin.from('shifts').delete().eq('id', shiftId)
+  if (createdShiftIds.length > 0) {
+    await admin.from('shift_assignments').delete().in('shift_id', createdShiftIds)
+    await admin.from('shifts').delete().in('id', createdShiftIds)
+  }
   await admin.from('manager_departments').delete().eq('company_id', seeded.companyId)
   await admin.from('departments').delete().eq('id', departmentId)
 
@@ -151,16 +189,13 @@ test('owner can use the Module 2 task UI end to end', async ({ page }) => {
   // New Task / AI Assign toolbar buttons were removed — manual assign now happens via
   // the department card's per-person "+" button, and AI Assign lives under Departments.
   await expect(page.getByRole('button', { name: 'New Task' })).toHaveCount(0)
-  await page.getByText('Operations').first().click()
-  const managerARow = page.locator('.member-card').filter({ hasText: 'Module 2 UI Manager A' })
-  await managerARow.getByTitle('Assign Task').click()
-  await expect(page.getByRole('heading', { name: 'Assign Task to Module 2 UI Manager A' })).toBeVisible()
+  await openAssignTaskForManagerA(page)
   await page.getByPlaceholder('Task title...').fill('UI created task')
   await page.getByRole('button', { name: 'Select priority' }).click()
   await page.getByRole('button', { name: 'High' }).click()
   await page.getByRole('button', { name: 'Select deadline' }).click()
-  await page.getByRole('button', { name: '10', exact: true }).click()
-  await page.getByRole('button', { name: 'PM' }).click()
+  await page.getByRole('button', { name: taskUiDayLabel(), exact: true }).and(page.locator('button:visible')).first().click()
+  await page.getByRole('button', { name: 'PM', exact: true }).click()
   await page.getByRole('button', { name: '6:00' }).click()
   await page.getByRole('button', { name: 'Create Task' }).click()
   await expect(page.getByText('UI created task')).toBeVisible({ timeout: 15000 })
@@ -183,9 +218,9 @@ test('owner can use the Module 2 task UI end to end', async ({ page }) => {
   await editedCard.click()
   await page.getByTestId('task-details-panel').getByRole('button', { name: 'Archive' }).click()
   await expect(page.getByText('Task archived.')).toBeVisible()
-  // Archiving auto-opens the Archived Tasks list — close it before continuing.
-  await expect(page.getByRole('heading', { name: 'Archived Tasks' })).toBeVisible()
-  await page.getByRole('heading', { name: 'Archived Tasks' }).locator('../..').getByRole('button').click()
+  // Archiving just closes the Details panel and removes the card from the board — it does not
+  // auto-open the Archived Tasks list (that's a separate, manually-opened modal).
+  await expect(page.getByText('UI edited task')).toHaveCount(0)
 
   await page.getByRole('button', { name: 'Calendar' }).click()
   await expect(page.getByText('Module 2 UI Manager A').first()).toBeVisible()
@@ -200,15 +235,13 @@ test('New Task modal blocks past start dates and the Deadline field selects date
   await signInOwner(page)
   await page.goto('/owner/tasks')
 
-  await page.getByText('Operations').first().click()
-  await page.locator('.member-card').filter({ hasText: 'Module 2 UI Manager A' }).getByTitle('Assign Task').click()
-  await expect(page.getByRole('heading', { name: 'Assign Task to Module 2 UI Manager A' })).toBeVisible()
+  await openAssignTaskForManagerA(page)
 
   // Start Date's calendar floor must be today's month — not a week-aligned date in the past.
   // The field may prefill to a future shift date, so navigate backward and confirm the
   // prev-month chevron disables itself once today's month is reached (it must not go earlier).
   const todayMonthLabel = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-  const todayDay = String(new Date().getDate())
+  const todayDay = taskUiDayLabel()
   await page.locator('label', { hasText: 'Start Date' }).locator('..').getByRole('button').first().click()
   const startMonthLabel = page.locator('span', { hasText: /^[A-Z][a-z]+ \d{4}$/ })
   const startPrevBtn = startMonthLabel.locator('xpath=preceding-sibling::button[1]')
@@ -230,7 +263,7 @@ test('New Task modal blocks past start dates and the Deadline field selects date
 
   // After picking the date, the same popover now shows the time list (with a way back to the date).
   await expect(page.getByRole('button', { name: 'AM', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'PM' }).click()
+  await page.getByRole('button', { name: 'PM', exact: true }).click()
   await page.getByRole('button', { name: '6:00' }).click()
   await expect(page.getByRole('button', { name: /, 6:00 PM$/ })).toBeVisible()
 })
@@ -264,9 +297,7 @@ test('Template button manages task templates and the New Task modal can use one'
 
   // Close, then use the template from the New Task modal via the "+" assign flow.
   await page.getByRole('heading', { name: 'Task Templates' }).locator('xpath=ancestor::div[3]').getByRole('button').first().click()
-  await page.getByText('Operations').first().click()
-  await page.locator('.member-card').filter({ hasText: 'Module 2 UI Manager A' }).getByTitle('Assign Task').click()
-  await expect(page.getByRole('heading', { name: 'Assign Task to Module 2 UI Manager A' })).toBeVisible()
+  await openAssignTaskForManagerA(page)
   await page.getByRole('button', { name: 'Use a template…' }).click()
   await page.getByRole('button', { name: 'Weekly Cleaning Checklist' }).click()
   await expect(page.getByPlaceholder('Task title...')).toHaveValue('Clean front desk')
@@ -285,9 +316,7 @@ test('Description textarea supports Tab for bullets and digit+space for numbered
   await signInOwner(page)
   await page.goto('/owner/tasks')
 
-  await page.getByText('Operations').first().click()
-  await page.locator('.member-card').filter({ hasText: 'Module 2 UI Manager A' }).getByTitle('Assign Task').click()
-  await expect(page.getByRole('heading', { name: 'Assign Task to Module 2 UI Manager A' })).toBeVisible()
+  await openAssignTaskForManagerA(page)
 
   const description = page.getByPlaceholder('Add more context...')
   await description.click()
@@ -306,17 +335,15 @@ test('Kanban collapses a task with sub-tasks and expands them on click', async (
   await signInOwner(page)
   await page.goto('/owner/tasks')
 
-  await page.getByText('Operations').first().click()
-  await page.locator('.member-card').filter({ hasText: 'Module 2 UI Manager A' }).getByTitle('Assign Task').click()
-  await expect(page.getByRole('heading', { name: 'Assign Task to Module 2 UI Manager A' })).toBeVisible()
+  await openAssignTaskForManagerA(page)
 
   await page.getByPlaceholder('Task title...').fill('Prepare opening')
   await page.getByRole('button', { name: 'Select priority' }).click()
   await page.getByRole('button', { name: 'High' }).click()
   await page.getByRole('button', { name: 'Select deadline' }).click()
-  const todayDay = String(new Date().getDate())
+  const todayDay = taskUiDayLabel()
   await page.getByRole('button', { name: todayDay, exact: true }).and(page.locator('button:visible')).first().click()
-  await page.getByRole('button', { name: 'PM' }).click()
+  await page.getByRole('button', { name: 'PM', exact: true }).click()
   await page.getByRole('button', { name: '6:00' }).click()
 
   await page.getByText('Sub Task', { exact: true }).click()
@@ -334,11 +361,14 @@ test('Kanban collapses a task with sub-tasks and expands them on click', async (
   await expect(page.getByText('Unlock doors')).not.toBeVisible()
   await expect(page.getByText('Turn on lights')).not.toBeVisible()
 
-  await parentCard.click()
+  // The sub-task count badge (not the card body, which opens the read-only Details panel)
+  // is what toggles the expand/collapse state.
+  const expandToggle = parentCard.getByRole('button', { name: '2' })
+  await expandToggle.click()
   await expect(page.getByText('Unlock doors')).toBeVisible()
   await expect(page.getByText('Turn on lights')).toBeVisible()
 
-  await parentCard.click()
+  await expandToggle.click()
   await expect(page.getByText('Unlock doors')).not.toBeVisible()
   await expect(page.getByText('Turn on lights')).not.toBeVisible()
 })
@@ -348,24 +378,27 @@ test('Recurring replaces the top Deadline field with a Deadline rule picker', as
   await signInOwner(page)
   await page.goto('/owner/tasks')
 
-  await page.getByText('Operations').first().click()
-  await page.locator('.member-card').filter({ hasText: 'Module 2 UI Manager A' }).getByTitle('Assign Task').click()
-  await expect(page.getByRole('heading', { name: 'Assign Task to Module 2 UI Manager A' })).toBeVisible()
+  await openAssignTaskForManagerA(page)
 
   await expect(page.getByRole('button', { name: 'Select deadline' })).toBeVisible()
   await page.getByText('Recurring', { exact: true }).click()
   await expect(page.getByRole('button', { name: 'Select deadline' })).toHaveCount(0)
 
-  await page.getByRole('button', { name: 'Daily' }).click()
+  await page.locator('label', { hasText: 'Repeats' }).getByRole('button').click()
+  await page.getByRole('button', { name: 'Daily', exact: true }).click()
   await expect(page.getByText('Repeat until')).toBeVisible()
-  await page.getByRole('button', { name: '17', exact: true }).click()
+  await page.locator('label', { hasText: 'Repeat until' }).getByRole('button').click()
+  const repeatUntilDate = new Date(`${taskUiDate}T00:00:00`)
+  repeatUntilDate.setDate(repeatUntilDate.getDate() + 1)
+  await page.getByRole('button', { name: String(repeatUntilDate.getDate()), exact: true }).and(page.locator('button:visible')).first().click()
 
-  // Deadline rule: Fixed day is disabled outside weekly recurrence.
-  await expect(page.getByRole('button', { name: 'Fixed day' })).toBeDisabled()
+  // Deadline rule: Fixed day is only offered for weekly recurrence.
+  await page.locator('label', { hasText: 'Deadline rule' }).getByRole('button').click()
+  await expect(page.getByRole('button', { name: 'Fixed day' })).toHaveCount(0)
 
   // Same day rule
-  await page.getByRole('button', { name: 'Same day' }).click()
-  await page.getByText('Select time').click()
+  await page.getByRole('button', { name: 'Same day', exact: true }).click()
+  await page.locator('label', { hasText: 'Due at' }).getByRole('button').click()
   await page.getByRole('button', { name: '9:00 PM', exact: true }).click()
 
   await page.getByPlaceholder('Task title...').fill('Daily cleaning checklist')
@@ -374,4 +407,49 @@ test('Recurring replaces the top Deadline field with a Deadline rule picker', as
 
   await page.getByRole('button', { name: 'Create Task' }).click()
   await expect(page.getByText('Daily cleaning checklist')).toBeVisible({ timeout: 15000 })
+})
+
+test('Edit Task defers sub-task changes until Save Changes and Recurring starts unselected', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 2000 })
+  await signInOwner(page)
+  await page.goto('/owner/tasks')
+
+  await openAssignTaskForManagerA(page)
+  await page.getByPlaceholder('Task title...').fill('Edit panel sub-task test')
+  await page.getByRole('button', { name: 'Select priority' }).click()
+  await page.getByRole('button', { name: 'High' }).click()
+  await page.getByRole('button', { name: 'Select deadline' }).click()
+  const todayDay = taskUiDayLabel()
+  await page.getByRole('button', { name: todayDay, exact: true }).and(page.locator('button:visible')).first().click()
+  await page.getByRole('button', { name: 'PM', exact: true }).click()
+  await page.getByRole('button', { name: '6:00' }).click()
+  await page.getByRole('button', { name: 'Create Task' }).click()
+  await expect(page.getByText('Edit panel sub-task test')).toBeVisible({ timeout: 15000 })
+
+  // Open the pencil-icon Edit Task form (not the read-only Details panel).
+  const card = page.locator('.task-card').filter({ has: page.getByText('Edit panel sub-task test', { exact: true }) })
+  await card.getByRole('button').first().click()
+  await expect(page.getByRole('heading', { name: 'Edit Task' })).toBeVisible()
+
+  // Recurring must start unchecked/unselected — not defaulted to Weekly + an end date.
+  const recurringToggle = page.getByText('Recurring', { exact: true }).locator('..').getByRole('checkbox')
+  await expect(recurringToggle).not.toBeChecked()
+
+  // Adding a sub-task here must not hit the server immediately (no success toast, no
+  // immediate persistence) — it should stay a local draft until Save Changes is clicked.
+  await page.getByText('Sub Task', { exact: true }).click()
+  const subTaskDraft = page.getByPlaceholder('Sub-task title...')
+  await subTaskDraft.fill('Draft sub-task')
+  await subTaskDraft.press('Enter')
+  await page.locator('label', { hasText: 'Sub Task' }).locator('xpath=..').getByRole('button').click()
+  await expect(page.getByText('Draft sub-task')).toBeVisible()
+  await expect(page.getByText('Sub-task created successfully.')).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'Save Changes' }).click()
+  await expect(page.getByText('Task updated successfully.')).toBeVisible()
+
+  // Confirm the sub-task was actually persisted: the parent card now shows a sub-task
+  // count badge, and expanding it reveals the sub-task as its own card.
+  await card.getByRole('button', { name: '1' }).click()
+  await expect(page.getByText('Draft sub-task')).toBeVisible()
 })

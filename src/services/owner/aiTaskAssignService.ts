@@ -7,10 +7,90 @@ import { taskAssignmentService } from '@/services/owner/taskAssignmentService'
 import { taskRepository } from '@/repositories/owner/taskRepository'
 import { AiAssignDraft, AiAssignSuggestion } from '@/types/AI'
 
+const DEPARTMENT_KEYWORDS: Record<string, string[]> = {
+  marketing: ['marketing', 'promotion', 'poster', 'campaign', 'brand', 'advertis', 'social media', 'flyer', 'content', 'launch', 'event'],
+  finance: ['finance', 'financial', 'report', 'budget', 'invoice', 'payment', 'payroll', 'expense', 'revenue', 'account', 'audit'],
+  accounting: ['finance', 'financial', 'report', 'budget', 'invoice', 'payment', 'payroll', 'expense', 'revenue', 'account', 'audit'],
+  operations: ['operation', 'process', 'inventory', 'logistics', 'schedule', 'workflow', 'supplier', 'facility', 'stock'],
+  engineering: ['engineering', 'build', 'develop', 'software', 'bug', 'technical', 'system', 'deploy', 'feature', 'integration'],
+  support: ['support', 'customer', 'ticket', 'complaint', 'helpdesk', 'service', 'client issue'],
+  sales: ['sales', 'lead', 'prospect', 'deal', 'quote', 'proposal', 'customer outreach'],
+  hr: ['hr', 'human resource', 'hiring', 'recruit', 'onboard', 'training', 'employee'],
+}
+
+function taskText(input: { title: string; description: string }): string {
+  return `${input.title} ${input.description}`.toLowerCase()
+}
+
+function keywordScore(text: string, departmentName: string): number {
+  const normalizedName = departmentName.toLowerCase()
+  const nameTokens = normalizedName.split(/[^a-z0-9]+/).filter(Boolean)
+  let score = nameTokens.reduce((total, token) => total + (text.includes(token) ? 3 : 0), 0)
+
+  for (const [category, keywords] of Object.entries(DEPARTMENT_KEYWORDS)) {
+    if (!normalizedName.includes(category)) continue
+    for (const keyword of keywords) {
+      if (text.includes(keyword)) score += keyword.includes(' ') ? 4 : 2
+    }
+  }
+  return score
+}
+
+function chooseFallbackDepartment(input: {
+  title: string
+  description: string
+  departments: { id: string; name: string }[]
+}): { id: string; name: string } {
+  const text = taskText(input)
+  const scored = input.departments.map((department, index) => ({
+    department,
+    index,
+    score: keywordScore(text, department.name),
+  }))
+  scored.sort((a, b) => b.score - a.score || a.index - b.index)
+  return scored[0]?.department ?? input.departments[0] ?? { id: '', name: 'selected' }
+}
+
+function buildGeneratedDescription(input: { title: string; description: string; priority: string }): string {
+  const existing = input.description.trim()
+  if (existing) return existing
+
+  const title = input.title.trim()
+  const priority = input.priority ? `${input.priority.toLowerCase()} priority` : 'planned'
+  return `Plan and complete "${title}" with clear deliverables, owner review, and any required supporting materials. This is a ${priority} task, so confirm scope early and finish it before the deadline.`
+}
+
+function maxSubTaskCountForTask(input: { title: string; description: string }): number {
+  const text = taskText(input)
+  const complexSignals = ['campaign', 'project', 'launch', 'integration', 'migration', 'event', 'strategy', 'website', 'system', 'multi', 'quarterly']
+  const singleDeliverableSignals = ['video', 'poster', 'flyer', 'bug', 'fix', 'report', 'presentation', 'document']
+  if (complexSignals.some(keyword => text.includes(keyword))) return 4
+  if (singleDeliverableSignals.some(keyword => text.includes(keyword))) return 2
+  return 1
+}
+
+function buildFallbackSteps(title: string, description: string): AiAssignDraft['steps'] {
+  const cleanTitle = title.trim()
+  const maxCount = maxSubTaskCountForTask({ title, description })
+  if (maxCount === 1) return [{ title: cleanTitle }]
+  if (maxCount === 2) {
+    return [
+      { title: `${cleanTitle} Draft` },
+      { title: `${cleanTitle} Final` },
+    ]
+  }
+  return [
+    { title: `${cleanTitle} Draft` },
+    { title: `${cleanTitle} Review` },
+    { title: `${cleanTitle} Final Delivery` },
+  ]
+}
+
 async function generateDraft(input: {
   title: string
   description: string
   priority: string
+  wantSubTasks: boolean
   departments: { id: string; name: string }[]
 }): Promise<AiAssignDraft> {
   let draft: AiAssignDraft
@@ -18,19 +98,26 @@ async function generateDraft(input: {
   try {
     draft = await openAIService.generateStructuredJson<AiAssignDraft>({
       schemaName: 'ai_assign_draft',
-      maxOutputTokens: 700,
+      maxOutputTokens: 500,
       instructions: [
         'You are a workforce task planner for SMEs.',
-        'Given a task title, description, and priority, break the task down into 3 to 6 concrete completion steps.',
-        'Each step needs a short title (under 10 words) and a 1-sentence description.',
         'Pick the single best-fit department for this task from the given list of departments by id - return the exact id from the list, never invent one.',
-        'Estimate due_in_days: how many days from today this task should realistically be completed in, based on priority (Urgent = 1-2 days, High = 2-4 days, Medium = 4-7 days, Low = 7-14 days) and the number/complexity of the steps.',
+        input.description.trim()
+          ? 'Lightly polish the given description for clarity and grammar, keeping its original meaning and length - do not invent new requirements.'
+          : 'No description was given - write a 1-2 sentence description for this task based on its title and priority.',
+        'Give a one-sentence reason for the department choice (e.g. "This task is related to promotion, suited to the Marketing department"). Do not name a specific assignee in this reason - the best-fit assignee is chosen separately from workload data, not by you.',
+        input.wantSubTasks
+          ? 'Return 1 to 4 deliverable-focused sub-tasks only when useful. Simple single-deliverable work such as one video, poster, bug fix, report, or document should have 1 to 2 sub-tasks, not 4. Use 3 to 4 only for genuinely complex campaigns, launches, migrations, integrations, events, or multi-deliverable projects. Sub-tasks are child tasks, not step-by-step instructions. Each sub-task must be an outcome or deliverable title under 10 words. Do not include descriptions.'
+          : 'Return an empty steps array - this task should not be split into sub-tasks.',
       ].join(' '),
-      input,
+      input: { title: input.title, description: input.description, priority: input.priority, departments: input.departments },
       schema: {
         type: 'object',
         additionalProperties: false,
         properties: {
+          department_id: { type: 'string' },
+          description: { type: 'string' },
+          reason: { type: 'string' },
           steps: {
             type: 'array',
             items: {
@@ -38,15 +125,12 @@ async function generateDraft(input: {
               additionalProperties: false,
               properties: {
                 title: { type: 'string' },
-                description: { type: 'string' },
               },
-              required: ['title', 'description'],
+              required: ['title'],
             },
           },
-          department_id: { type: 'string' },
-          due_in_days: { type: 'integer' },
         },
-        required: ['steps', 'department_id', 'due_in_days'],
+        required: ['department_id', 'description', 'reason', 'steps'],
       },
     })
   } catch {
@@ -54,8 +138,14 @@ async function generateDraft(input: {
   }
 
   if (!input.departments.some(d => d.id === draft.department_id)) {
-    draft.department_id = input.departments[0].id
+    draft.department_id = chooseFallbackDepartment(input).id
   }
+  if (!draft.description.trim()) draft.description = buildGeneratedDescription(input)
+  const maxSubTasks = maxSubTaskCountForTask(input)
+  draft.steps = input.wantSubTasks
+    ? draft.steps.filter(step => step.title.trim()).slice(0, maxSubTasks)
+    : []
+  if (input.wantSubTasks && draft.steps.length === 0) draft.steps = buildFallbackSteps(input.title, input.description)
   return draft
 }
 
@@ -63,22 +153,15 @@ function buildFallbackDraft(input: {
   title: string
   description: string
   priority: string
+  wantSubTasks: boolean
   departments: { id: string; name: string }[]
 }): AiAssignDraft {
-  const dueByPriority: Record<string, number> = {
-    Urgent: 1,
-    High: 3,
-    Medium: 5,
-    Low: 10,
-  }
+  const department = chooseFallbackDepartment(input)
   return {
-    department_id: input.departments[0]?.id ?? '',
-    due_in_days: dueByPriority[input.priority] ?? 5,
-    steps: [
-      { title: 'Confirm scope', description: `Review the requirements for ${input.title}.` },
-      { title: 'Assign owner', description: 'Choose the best available manager for delivery.' },
-      { title: 'Track completion', description: 'Move the task through review and completion.' },
-    ],
+    department_id: department.id,
+    description: buildGeneratedDescription(input),
+    reason: `This task best matches the ${department.name} department based on the task title and description.`,
+    steps: input.wantSubTasks ? buildFallbackSteps(input.title, input.description) : [],
   }
 }
 
@@ -88,7 +171,7 @@ export const aiTaskAssignService = {
     title: string
     description: string
     priority: string
-    people_needed: number
+    want_sub_tasks: boolean
     task_date?: string
   }): Promise<AiAssignSuggestion> {
     if (!input.title.trim()) throw new Error('title is required')
@@ -100,11 +183,23 @@ export const aiTaskAssignService = {
       title: input.title,
       description: input.description,
       priority: input.priority,
+      wantSubTasks: input.want_sub_tasks,
       departments: departments.map(d => ({ id: d.id, name: d.name })),
     })
 
     const department = departments.find(d => d.id === draft.department_id) ?? departments[0]
-    const managers = await companyService.getManagersByDepartment(input.company_id, department.id)
+    const allManagers = await companyService.getManagersByDepartment(input.company_id, department.id)
+
+    // Only managers with a published shift on the task's date are real candidates — a draft
+    // shift isn't a commitment, and someone with no shift at all on that date can't be assigned.
+    const managers = input.task_date
+      ? (await Promise.all(allManagers.map(async m => ({
+          manager: m,
+          eligible: await taskRepository.hasShiftOnDate(m.id, input.company_id, input.task_date!),
+        }))))
+          .filter(r => r.eligible)
+          .map(r => r.manager)
+      : allManagers
 
     let candidates: AiAssignSuggestion['candidates'] = []
     if (managers.length > 0) {
@@ -118,19 +213,19 @@ export const aiTaskAssignService = {
       )
     }
 
-    const dueAt = input.task_date ? new Date(`${input.task_date}T00:00:00`) : new Date()
-    dueAt.setDate(dueAt.getDate() + draft.due_in_days)
-    dueAt.setHours(18, 0, 0, 0)
-
-    const peopleNeeded = Math.min(Math.max(input.people_needed, 1), 3)
+    const recommended = candidates[0] ?? null
+    const reason = recommended
+      ? `${draft.reason} ${recommended.full_name} currently has the lightest workload among managers available on this date.`
+      : draft.reason
 
     return {
-      steps: draft.steps,
       department_id: department.id,
       department_name: department.name,
-      due_at: dueAt.toISOString(),
+      description: draft.description,
+      recommended_manager_id: recommended?.id ?? null,
+      reason,
       candidates,
-      suggested_manager_ids: candidates.slice(0, peopleNeeded).map(c => c.id),
+      sub_tasks: draft.steps,
     }
   },
 }

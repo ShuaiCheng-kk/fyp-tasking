@@ -31,6 +31,7 @@ export interface JobPosting {
   shift_end_time: string | null
   break_start_time: string | null
   break_end_time: string | null
+  job_start_time: string | null
   assigned_employee_id: string | null
   rejection_reason: string | null
 }
@@ -59,6 +60,7 @@ export interface JobPostingInput {
   shift_end_time?: string | null
   break_start_time?: string | null
   break_end_time?: string | null
+  job_start_time?: string | null
   assigned_employee_id?: string | null
   form_type?: string | null
 }

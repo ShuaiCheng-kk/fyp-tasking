@@ -112,7 +112,7 @@ test.afterAll(async () => {
   await cleanupTestOwnerAndCompany(seeded)
 })
 
-test('UC62 and UC64 clock in, clock out, and view attendance status', async ({ request }) => {
+test('UC49 clock in, clock out, and view own attendance overview', async ({ request }) => {
   const clockIn = await request.post('/api/casual/attendance', {
     data: {
       action: 'clock_in',
@@ -152,7 +152,7 @@ test('UC62 and UC64 clock in, clock out, and view attendance status', async ({ r
   )
 })
 
-test('UC63 reviews attendance through manager and owner decisions', async ({ request }) => {
+test('UC50 and UC51 view the attendance dashboard, then review a record through manager and owner decisions', async ({ request }) => {
   const dashboard = await request.get(`/api/attendance?company_id=${seeded.companyId}`)
   expect(dashboard.status()).toBe(200)
   const dashboardBody = await dashboard.json()
@@ -183,7 +183,25 @@ test('UC63 reviews attendance through manager and owner decisions', async ({ req
   expect(await ownerReview.json()).toMatchObject({ success: true, record: { owner_status: 'approved', status: 'owner_approved' } })
 })
 
-test('UC65, UC66, UC71, and UC72 submit availability and leave requests', async ({ request }) => {
+test('UC50/UC51 resource=range scopes records to the given date window, for the Past Attendance Record calendar', async ({ request }) => {
+  const inRange = await request.get(`/api/attendance?company_id=${seeded.companyId}&resource=range&from_date=2030-02-01&to_date=2030-02-28`)
+  expect(inRange.status()).toBe(200)
+  const inRangeBody = await inRange.json()
+  expect(inRangeBody.success).toBe(true)
+  const row = inRangeBody.records.find((record: { assignment: { id: string } }) => record.assignment.id === assignmentId)
+  expect(row).toBeTruthy()
+  expect(row.shift.shift_date).toBe('2030-02-01')
+
+  const outOfRange = await request.get(`/api/attendance?company_id=${seeded.companyId}&resource=range&from_date=2031-01-01&to_date=2031-01-31`)
+  expect(outOfRange.status()).toBe(200)
+  const outOfRangeBody = await outOfRange.json()
+  expect(outOfRangeBody.records.find((record: { assignment: { id: string } }) => record.assignment.id === assignmentId)).toBeUndefined()
+
+  const missingParams = await request.get(`/api/attendance?company_id=${seeded.companyId}&resource=range`)
+  expect(missingParams.status()).toBe(400)
+})
+
+test('UC55 and UC57 submit fixed day off and leave requests, all landing as pending', async ({ request }) => {
   const fixed = await request.post('/api/user/fixed-off-days', {
     data: {
       user_id: worker.userId,
@@ -198,6 +216,7 @@ test('UC65, UC66, UC71, and UC72 submit availability and leave requests', async 
   expect(fixedRead.status()).toBe(200)
   const fixedReadBody = await fixedRead.json()
   expect(fixedReadBody.days.map((day: { weekday: number }) => day.weekday).sort()).toEqual([0, 6])
+  expect(fixedReadBody.days.every((day: { status: string }) => day.status === 'pending')).toBe(true)
 
   const timeOff = await request.post('/api/user/leave-requests', {
     data: {
@@ -223,6 +242,18 @@ test('UC65, UC66, UC71, and UC72 submit availability and leave requests', async 
   expect(breakWaiver.status()).toBe(200)
   expect(await breakWaiver.json()).toMatchObject({ success: true, request: { request_type: 'break_waiver', status: 'pending' } })
 
+  const leave = await request.post('/api/user/leave-requests', {
+    data: {
+      user_id: worker.userId,
+      company_id: seeded.companyId,
+      shift_assignment_id: assignmentId,
+      request_type: 'leave',
+      reason: 'Personal leave.',
+    },
+  })
+  expect(leave.status()).toBe(200)
+  expect(await leave.json()).toMatchObject({ success: true, request: { request_type: 'leave', status: 'pending' } })
+
   const requests = await request.get(`/api/user/leave-requests?user_id=${worker.userId}`)
   expect(requests.status()).toBe(200)
   const requestsBody = await requests.json()
@@ -230,11 +261,50 @@ test('UC65, UC66, UC71, and UC72 submit availability and leave requests', async 
     expect.arrayContaining([
       expect.objectContaining({ request_type: 'time_off' }),
       expect.objectContaining({ request_type: 'break_waiver' }),
+      expect.objectContaining({ request_type: 'leave' }),
     ]),
   )
 })
 
-test('UC67 and UC68 submit and approve a shift swap request', async ({ request }) => {
+test('UC56 approves a fixed day off request', async ({ request }) => {
+  const list = await request.get(`/api/attendance?company_id=${seeded.companyId}&resource=fixed_off_days`)
+  expect(list.status()).toBe(200)
+  const listBody = await list.json()
+  const pendingRequest = listBody.requests.find((r: { user_id: string; status: string }) => r.user_id === worker.userId && r.status === 'pending')
+  expect(pendingRequest).toBeTruthy()
+
+  const decide = await request.patch('/api/attendance', {
+    data: {
+      action: 'decide_fixed_off_day',
+      id: pendingRequest.id,
+      reviewer_id: seeded.ownerId,
+      decision: 'approved',
+    },
+  })
+  expect(decide.status()).toBe(200)
+  expect(await decide.json()).toMatchObject({ success: true, request: { status: 'approved' } })
+})
+
+test('UC58 approves a leave request', async ({ request }) => {
+  const list = await request.get(`/api/attendance?company_id=${seeded.companyId}&resource=time_off`)
+  expect(list.status()).toBe(200)
+  const listBody = await list.json()
+  const pendingLeave = listBody.requests.find((r: { request_type: string; status: string }) => r.request_type === 'leave' && r.status === 'pending')
+  expect(pendingLeave).toBeTruthy()
+
+  const decide = await request.patch('/api/attendance', {
+    data: {
+      action: 'decide_time_off',
+      id: pendingLeave.id,
+      reviewer_id: seeded.ownerId,
+      decision: 'approved',
+    },
+  })
+  expect(decide.status()).toBe(200)
+  expect(await decide.json()).toMatchObject({ success: true, request: { status: 'approved' } })
+})
+
+test('UC52 and UC53 submit and approve a shift swap request', async ({ request }) => {
   const submit = await request.post('/api/user/shift-swap-requests', {
     data: {
       company_id: seeded.companyId,
@@ -277,7 +347,7 @@ test('UC67 and UC68 submit and approve a shift swap request', async ({ request }
   expect(assignment!.user_id).toBe(replacement.userId)
 })
 
-test('UC69 and UC70 review timesheets with auto-approval settings', async ({ request }) => {
+test('UC54 generates an AI timesheet auto-approval suggestion', async ({ request }) => {
   const res = await request.post('/api/ai/timesheets', {
     data: {
       company_id: seeded.companyId,
@@ -298,4 +368,190 @@ test('UC69 and UC70 review timesheets with auto-approval settings', async ({ req
   })
   expect(invalid.status()).toBe(400)
   expect(await invalid.json()).toMatchObject({ success: false, message: 'min_confidence must be between 0 and 100' })
+})
+
+// ── Employee / Manager break + absence API tests (UC49 extension) ────────────
+
+let employeeAssignmentId: string
+let employeeAuthId: string
+
+test('setup — create internal employee shift for break/absence tests', async () => {
+  const empEmail = `test-module5-emp-${Date.now()}@tasking-tests.local`
+  const { data: authData } = await admin.auth.admin.createUser({
+    email: empEmail, password: 'Test-Password-123!', email_confirm: true,
+  })
+  employeeAuthId = authData!.user!.id
+
+  const { data: empUser } = await admin.from('users').insert({
+    supabase_auth_id: employeeAuthId,
+    full_name: 'Module5 Employee',
+    email_address: empEmail,
+    phone_number: null,
+    role: 'Employee',
+    company_id: seeded.companyId,
+    worker_status: 'active',
+  }).select().single()
+
+  const { data: empShift } = await admin.from('shifts').insert({
+    company_id: seeded.companyId,
+    department_id: departmentId,
+    shift_date: '2030-03-01',
+    start_time: '09:00',
+    end_time: '17:00',
+    title: 'Employee Break Test Shift',
+    created_by: seeded.ownerId,
+    publication_status: 'published',
+  }).select('id').single()
+
+  const { data: empAssignment } = await admin.from('shift_assignments').insert({
+    shift_id: empShift!.id,
+    user_id: empUser!.id as string,
+    assigned_by: seeded.ownerId,
+  }).select('id').single()
+  employeeAssignmentId = empAssignment!.id as string
+})
+
+test('UC49 employee break_in and break_out via /api/employee/attendance', async ({ request }) => {
+  // Clock in first
+  const clockIn = await request.post('/api/employee/attendance', {
+    data: { action: 'clock_in', user_id: employeeAuthId, shift_assignment_id: employeeAssignmentId, clock_time: '2030-03-01T09:05:00Z' },
+  })
+  expect(clockIn.status()).toBe(201)
+
+  // Break in
+  const breakIn = await request.post('/api/employee/attendance', {
+    data: { action: 'break_in', user_id: employeeAuthId, shift_assignment_id: employeeAssignmentId },
+  })
+  expect(breakIn.status()).toBe(200)
+  const breakInBody = await breakIn.json()
+  expect(breakInBody.success).toBe(true)
+  expect(breakInBody.record.break_in_time).toBeTruthy()
+
+  // Break out
+  const breakOut = await request.post('/api/employee/attendance', {
+    data: { action: 'break_out', user_id: employeeAuthId, shift_assignment_id: employeeAssignmentId },
+  })
+  expect(breakOut.status()).toBe(200)
+  const breakOutBody = await breakOut.json()
+  expect(breakOutBody.success).toBe(true)
+  expect(breakOutBody.record.break_out_time).toBeTruthy()
+})
+
+test('UC49 employee clock_in with late_reason stores reason on record', async ({ request }) => {
+  // Create a new shift/assignment for late clock-in test
+  const { data: lateShift } = await admin.from('shifts').insert({
+    company_id: seeded.companyId,
+    department_id: departmentId,
+    shift_date: '2030-03-02',
+    start_time: '09:00',
+    end_time: '17:00',
+    title: 'Late Clock-In Test',
+    created_by: seeded.ownerId,
+    publication_status: 'published',
+  }).select('id').single()
+
+  const lateEmpEmail = `test-m5-late-${Date.now()}@tasking-tests.local`
+  const { data: lateAuth } = await admin.auth.admin.createUser({
+    email: lateEmpEmail, password: 'Test-Password-123!', email_confirm: true,
+  })
+  const { data: lateUser } = await admin.from('users').insert({
+    supabase_auth_id: lateAuth!.user!.id,
+    full_name: 'Module5 Late Employee',
+    email_address: lateEmpEmail,
+    phone_number: null,
+    role: 'Employee',
+    company_id: seeded.companyId,
+    worker_status: 'active',
+  }).select().single()
+
+  const { data: lateAssign } = await admin.from('shift_assignments').insert({
+    shift_id: lateShift!.id,
+    user_id: lateUser!.id as string,
+    assigned_by: seeded.ownerId,
+  }).select('id').single()
+
+  const clockIn = await request.post('/api/employee/attendance', {
+    data: {
+      action: 'clock_in',
+      user_id: lateAuth!.user!.id,
+      shift_assignment_id: lateAssign!.id as string,
+      clock_time: '2030-03-02T09:25:00Z',
+      late_reason: 'Train delay',
+    },
+  })
+  expect(clockIn.status()).toBe(201)
+  const body = await clockIn.json()
+  expect(body.success).toBe(true)
+  expect(body.record.late_reason).toBe('Train delay')
+})
+
+test('UC49 employee record_absence stores absence_reason', async ({ request }) => {
+  const absEmail = `test-m5-abs-${Date.now()}@tasking-tests.local`
+  const { data: absAuth } = await admin.auth.admin.createUser({
+    email: absEmail, password: 'Test-Password-123!', email_confirm: true,
+  })
+  const { data: absUser } = await admin.from('users').insert({
+    supabase_auth_id: absAuth!.user!.id,
+    full_name: 'Module5 Absent Employee',
+    email_address: absEmail,
+    phone_number: null,
+    role: 'Employee',
+    company_id: seeded.companyId,
+    worker_status: 'active',
+  }).select().single()
+
+  const { data: absShift } = await admin.from('shifts').insert({
+    company_id: seeded.companyId,
+    department_id: departmentId,
+    shift_date: '2030-03-03',
+    start_time: '09:00',
+    end_time: '17:00',
+    title: 'Absence Test',
+    created_by: seeded.ownerId,
+    publication_status: 'published',
+  }).select('id').single()
+
+  const { data: absAssign } = await admin.from('shift_assignments').insert({
+    shift_id: absShift!.id,
+    user_id: absUser!.id as string,
+    assigned_by: seeded.ownerId,
+  }).select('id').single()
+
+  const absence = await request.post('/api/employee/attendance', {
+    data: {
+      action: 'record_absence',
+      user_id: absAuth!.user!.id,
+      shift_assignment_id: absAssign!.id as string,
+      absence_reason: 'Doctor appointment',
+    },
+  })
+  expect(absence.status()).toBe(200)
+  const body = await absence.json()
+  expect(body.success).toBe(true)
+  expect(body.record.absence_reason).toBe('Doctor appointment')
+  expect(body.record.clock_in_time).toBeNull()
+  expect(body.record.status).toBe('submitted')
+})
+
+test('UC54 ai_suggestions resource returns expected shape', async ({ request }) => {
+  const res = await request.get(`/api/attendance?company_id=${seeded.companyId}&resource=ai_suggestions`)
+  expect(res.status()).toBe(200)
+  const body = await res.json()
+  expect(body.success).toBe(true)
+  expect(Array.isArray(body.suggestions)).toBe(true)
+})
+
+test('UC54 apply_ai_approvals action returns decisions array', async ({ request }) => {
+  const res = await request.patch('/api/attendance', {
+    data: {
+      action: 'apply_ai_approvals',
+      company_id: seeded.companyId,
+      owner_id: seeded.ownerId,
+      min_confidence: 95,
+    },
+  })
+  expect(res.status()).toBe(200)
+  const body = await res.json()
+  expect(body.success).toBe(true)
+  expect(Array.isArray(body.decisions)).toBe(true)
 })

@@ -315,6 +315,7 @@ export default function OwnerRecruitmentPage() {
   // oneoff-specific
   const [formJobDate, setFormJobDate] = useState('')
   const [formJobEndDate, setFormJobEndDate] = useState('')
+  const [formJobStartTime, setFormJobStartTime] = useState('09:00')
   const [formEstHours, setFormEstHours] = useState('')
   const [formUrgency, setFormUrgency] = useState('normal')
   // AI builder
@@ -485,7 +486,7 @@ export default function OwnerRecruitmentPage() {
     setFormIsRecurring(false); setFormRecurInterval(1); setFormRecurUnit('week')
     setFormShiftDate(''); setFormAssignedEmployeeId('')
     setShiftDeptEmployees([]); setShiftAvailableDates([]); setShiftDateEmployees([])
-    setFormJobDate(''); setFormJobEndDate(''); setFormEstHours(''); setFormUrgency('normal')
+    setFormJobDate(''); setFormJobEndDate(''); setFormEstHours(''); setFormUrgency('normal'); setFormJobStartTime('09:00')
     setAiPrompt(''); setAiPreview(null); setFormError('')
   }
 
@@ -514,8 +515,10 @@ export default function OwnerRecruitmentPage() {
     const savedEmployeeId = typeof raw.assigned_employee_id === 'string' ? raw.assigned_employee_id : ''
     const savedEstHours = typeof raw.estimated_hours === 'string' ? raw.estimated_hours : ''
     const savedUrgency = typeof raw.urgency === 'string' ? raw.urgency : 'normal'
+    const savedJobStartTime = typeof raw.job_start_time === 'string' ? raw.job_start_time.slice(0, 5) : '09:00'
     setFormEstHours(savedEstHours)
     setFormUrgency(savedUrgency)
+    setFormJobStartTime(savedJobStartTime)
 
     if (p.department_id) {
       setShiftDeptEmployees([]); setShiftAvailableDates([]); setShiftDateEmployees([])
@@ -582,6 +585,7 @@ export default function OwnerRecruitmentPage() {
     shift_end_time: formJobType === 'shift' ? (formShiftEnd || null) : null,
     break_start_time: formJobType === 'shift' ? (formBreakStart || null) : null,
     break_end_time: formJobType === 'shift' ? (formBreakEnd || null) : null,
+    job_start_time: formJobType === 'oneoff' ? (formJobStartTime || null) : null,
     assigned_employee_id: formAssignedEmployeeId || null,
     status,
   })
@@ -590,6 +594,7 @@ export default function OwnerRecruitmentPage() {
     if (!companyId || !internalUserId) return
     if (!formTitle.trim()) { setFormError('Title is required'); return }
     if (status === 'open' && !formDescription.trim()) { setFormError('Description is required to publish'); return }
+    if (status === 'open' && formJobType === 'oneoff' && !formJobStartTime) { setFormError('Start time is required to publish'); return }
     setActionLoading(true); setFormError('')
     try {
       const body = buildBody(status)
@@ -2521,6 +2526,10 @@ export default function OwnerRecruitmentPage() {
                     {formJobType === 'oneoff' && (
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                         <div><label style={lStyle}>Est. Hours</label><input value={formEstHours} onChange={e => setFormEstHours(e.target.value)} placeholder="e.g. 4–6 hours" style={iStyle} /></div>
+                        <div>
+                          <label style={lStyle}>Start Time <span style={{ color: '#F97316' }}>*</span></label>
+                          <input type="time" value={formJobStartTime} onChange={e => setFormJobStartTime(e.target.value)} style={iStyle} />
+                        </div>
                         <div>
                           <label style={lStyle}>Urgency</label>
                           <RDrop value={formUrgency}

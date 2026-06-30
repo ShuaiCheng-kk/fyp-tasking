@@ -4,7 +4,7 @@ import { ShiftAssignment } from './ShiftAssignment'
 export type AttendanceOwnerStatus = 'pending' | 'approved' | 'rejected' | 'modified'
 export type AttendanceExceptionType = 'pending' | 'late' | 'absent' | 'overtime'
 export type AttendanceRequestStatus = 'pending' | 'approved' | 'rejected'
-export type TimeOffRequestType = 'time_off' | 'break_waiver'
+export type TimeOffRequestType = 'time_off' | 'break_waiver' | 'leave'
 
 export interface AttendanceRecord {
   id: string
@@ -12,6 +12,11 @@ export interface AttendanceRecord {
   casual_worker_id: string
   clock_in_time: string | null
   clock_out_time: string | null
+  break_in_time: string | null
+  break_out_time: string | null
+  late_reason: string | null
+  absence_reason: string | null
+  attachment_url: string | null
   confirmed_by_employee_id: string
   submitted_by_employee_id: string
   status: string
@@ -30,6 +35,11 @@ export interface AttendanceRecord {
 export interface AttendanceRecordUpdate {
   clock_in_time?: string | null
   clock_out_time?: string | null
+  break_in_time?: string | null
+  break_out_time?: string | null
+  late_reason?: string | null
+  absence_reason?: string | null
+  attachment_url?: string | null
   confirmed_by_employee_id?: string | null
   submitted_by_employee_id?: string | null
   owner_status?: AttendanceOwnerStatus
@@ -48,6 +58,11 @@ export interface AttendanceRecordCreate {
   casual_worker_id: string
   clock_in_time: string | null
   clock_out_time?: string | null
+  break_in_time?: string | null
+  break_out_time?: string | null
+  late_reason?: string | null
+  absence_reason?: string | null
+  attachment_url?: string | null
   confirmed_by_employee_id: string
   submitted_by_employee_id: string
   status: string
@@ -92,6 +107,9 @@ export interface AttendanceDashboardRecord {
   shift: Shift
   assignee_name: string
   assignee_role: string
+  assignee_profile_photo_url: string | null
+  assignee_worker_status: string | null
+  assignee_hourly_rate: number | null
   supervisor_name: string | null
   department_name: string | null
   record: AttendanceRecord | null
@@ -182,4 +200,25 @@ export interface ShiftSwapRequestView extends ShiftSwapRequest {
   shift_date: string | null
   start_time: string | null
   end_time: string | null
+}
+
+export interface FixedOffDayRequest {
+  id: string
+  user_id: string
+  company_id: string
+  weekday: number
+  status: AttendanceRequestStatus
+  reviewed_by: string | null
+  reviewed_at: string | null
+  created_at: string
+}
+
+export interface FixedOffDayDecisionInput {
+  id: string
+  reviewer_id: string
+  decision: AttendanceRequestStatus
+}
+
+export interface FixedOffDayRequestView extends FixedOffDayRequest {
+  requester_name: string
 }

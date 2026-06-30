@@ -19,10 +19,11 @@ import DropdownField from '@/components/DropdownField'
 
 // ─── Department color picker ────────────────────────────────────────────────
 
-function DepartmentColorPicker({ value, onChange }: { value: string; onChange: (color: string) => void }) {
+function DepartmentColorPicker({ value, onChange, usedColors = [] }: { value: string; onChange: (color: string) => void; usedColors?: string[] }) {
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
+  const normalizedUsed = usedColors.map(c => c.toUpperCase())
 
   useEffect(() => {
     if (!open) return
@@ -77,30 +78,50 @@ function DepartmentColorPicker({ value, onChange }: { value: string; onChange: (
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
               {DEPT_COLORS.map(color => {
-                const active = value === color
+                const active = value.toUpperCase() === color.toUpperCase()
+                const taken = normalizedUsed.includes(color.toUpperCase())
                 return (
-                  <button
-                    key={color}
-                    type="button"
-                    aria-label={`Use color ${color}`}
-                    onClick={() => { onChange(color); setOpen(false) }}
-                    style={{
-                      width: 26,
-                      height: 26,
-                      borderRadius: 999,
-                      border: active ? '2px solid #0F172A' : '1px solid #E5E7EB',
-                      background: color,
-                      cursor: 'pointer',
-                      padding: 0,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      boxShadow: active ? '0 0 0 2px rgba(15,23,42,0.12)' : 'none',
-                      flexShrink: 0,
-                    }}
-                  >
-                    {active && <Check size={13} color="#FFFFFF" strokeWidth={3} />}
-                  </button>
+                  <div key={color} style={{ position: 'relative', flexShrink: 0 }} title={taken ? 'Already used by another department' : undefined}>
+                    <button
+                      type="button"
+                      aria-label={`Use color ${color}${taken ? ' (already used)' : ''}`}
+                      onClick={() => { onChange(color); setOpen(false) }}
+                      style={{
+                        width: 26,
+                        height: 26,
+                        borderRadius: 999,
+                        border: active ? '2px solid #0F172A' : '1px solid #E5E7EB',
+                        background: color,
+                        cursor: 'pointer',
+                        padding: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        boxShadow: active ? '0 0 0 2px rgba(15,23,42,0.12)' : 'none',
+                        opacity: taken && !active ? 0.35 : 1,
+                      }}
+                    >
+                      {active && <Check size={13} color="#FFFFFF" strokeWidth={3} />}
+                    </button>
+                    {taken && !active && (
+                      <span style={{
+                        position: 'absolute',
+                        top: -4,
+                        right: -4,
+                        width: 12,
+                        height: 12,
+                        borderRadius: 999,
+                        background: '#EF4444',
+                        border: '1.5px solid #FFFFFF',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        pointerEvents: 'none',
+                      }}>
+                        <X size={7} color="#FFFFFF" strokeWidth={3} />
+                      </span>
+                    )}
+                  </div>
                 )
               })}
             </div>
@@ -1634,7 +1655,7 @@ export default function TeamPage() {
     try {
       const res = await fetch(`/api/company/departments?company_id=${companyId}`)
       const data = await res.json()
-      if (data.success) setDepartments(data.departments)
+      if (data.success) { setDepartments(data.departments); setDeptColorOverrides(data.departments) }
     } catch {}
   }
 
@@ -3301,7 +3322,7 @@ export default function TeamPage() {
                     <input value={departmentNameInput} onChange={e => setDepartmentNameInput(e.target.value)} style={modalInputStyle} placeholder="Operations" />
                   </div>
 
-                  <DepartmentColorPicker value={departmentColorInput} onChange={setDepartmentColorInput} />
+                  <DepartmentColorPicker value={departmentColorInput} onChange={setDepartmentColorInput} usedColors={companyDepartments.filter(d => d.id !== activeDepartment.id).map(d => d.color ?? deptColor(d.id))} />
                   {departmentActionError && <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>{departmentActionError}</div>}
                 </div>
                 <div style={{ padding: '0 24px 20px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10 }}>
@@ -3342,7 +3363,7 @@ export default function TeamPage() {
                         <label style={modalLabelStyle}>Department name</label>
                         <input value={departmentNameInput} onChange={e => setDepartmentNameInput(e.target.value)} style={modalInputStyle} placeholder="Operations" />
                       </div>
-                      <DepartmentColorPicker value={departmentColorInput} onChange={setDepartmentColorInput} />
+                      <DepartmentColorPicker value={departmentColorInput} onChange={setDepartmentColorInput} usedColors={companyDepartments.map(d => d.color ?? deptColor(d.id))} />
                     </>
                   ) : (
                     <>

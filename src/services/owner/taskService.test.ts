@@ -17,9 +17,12 @@ vi.mock('@/repositories/owner/taskRepository', () => ({
     getTasksByRecurrenceGroupId: vi.fn(),
     getUserById: vi.fn(),
     getManagerDepartmentIds: vi.fn(),
+    getManagersByDepartment: vi.fn(),
     getEmployeeDepartmentIds: vi.fn(),
     getShiftById: vi.fn(),
+    hasShiftOnDate: vi.fn(),
     updateTask: vi.fn(),
+    updateSubTasksByParent: vi.fn(),
     deleteTask: vi.fn(),
     deleteSubTasksByParent: vi.fn(),
     getTaskStatsByCompany: vi.fn(),
@@ -53,6 +56,7 @@ const baseTask: Task = {
   recurrence_group_id: null,
   source_task_id: null,
   is_archived: false,
+  is_completed: false,
   created_at: '2026-06-20T00:00:00.000Z',
   updated_at: '2026-06-20T00:00:00.000Z',
 }
@@ -60,6 +64,8 @@ const baseTask: Task = {
 describe('taskService — Task (UC14-26)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(taskRepository.getManagersByDepartment).mockResolvedValue([])
+    vi.mocked(taskRepository.hasShiftOnDate).mockResolvedValue(true)
   })
 
   describe('assignTask (UC14)', () => {
@@ -110,6 +116,40 @@ describe('taskService — Task (UC14-26)', () => {
 
       const result = await taskService.assignTask({
         company_id: 'company-1', department_id: 'dept-1', title: 'Stock shelves',
+        assigned_by: 'owner-1', assigned_user_id: 'manager-1',
+      })
+
+      expect(result).toEqual(baseTask)
+      expect(taskRepository.createTask).toHaveBeenCalledOnce()
+    })
+
+    it('rejects when Owner assigns to a Manager who has no shift on the task date', async () => {
+      vi.mocked(taskRepository.getUserById).mockImplementation(async (id: string) => {
+        if (id === 'owner-1') return { id: 'owner-1', role: 'Owner', company_id: 'company-1' } as any
+        if (id === 'manager-1') return { id: 'manager-1', role: 'Manager', company_id: 'company-1' } as any
+        return null
+      })
+      vi.mocked(taskRepository.hasShiftOnDate).mockResolvedValue(false)
+
+      await expect(taskService.assignTask({
+        company_id: 'company-1', department_id: 'dept-1', title: 'Task', task_date: '2026-06-25',
+        assigned_by: 'owner-1', assigned_user_id: 'manager-1',
+      })).rejects.toThrow('Selected manager does not have a shift on the task date')
+      expect(taskRepository.hasShiftOnDate).toHaveBeenCalledWith('manager-1', 'company-1', '2026-06-25')
+      expect(taskRepository.createTask).not.toHaveBeenCalled()
+    })
+
+    it('creates a task when Owner assigns to a Manager who has a shift on the task date', async () => {
+      vi.mocked(taskRepository.getUserById).mockImplementation(async (id: string) => {
+        if (id === 'owner-1') return { id: 'owner-1', role: 'Owner', company_id: 'company-1' } as any
+        if (id === 'manager-1') return { id: 'manager-1', role: 'Manager', company_id: 'company-1' } as any
+        return null
+      })
+      vi.mocked(taskRepository.hasShiftOnDate).mockResolvedValue(true)
+      vi.mocked(taskRepository.createTask).mockResolvedValue(baseTask)
+
+      const result = await taskService.assignTask({
+        company_id: 'company-1', department_id: 'dept-1', title: 'Stock shelves', task_date: '2026-06-25',
         assigned_by: 'owner-1', assigned_user_id: 'manager-1',
       })
 
@@ -196,6 +236,129 @@ describe('taskService — Task (UC14-26)', () => {
       vi.mocked(taskRepository.getTaskById).mockResolvedValue(unassignedTask)
       await expect(taskService.editTask('task-1', { status: 'In Progress' }, 'someone-else'))
         .rejects.toThrow('Only the user who assigned this task can perform this action')
+    })
+
+    it('cascades a changed deadline, priority, and start date onto sub-tasks', async () => {
+      vi.mocked(taskRepository.getTaskById).mockResolvedValue(unassignedTask)
+      vi.mocked(taskRepository.updateTask).mockResolvedValue({ ...unassignedTask, due_at: '2026-07-01T10:00:00Z' })
+
+      await taskService.editTask('task-1', {
+        due_at: '2026-07-01T10:00:00Z',
+        priority: 'Urgent',
+        task_date: '2026-07-01',
+      }, 'owner-1')
+
+      expect(taskRepository.updateSubTasksByParent).toHaveBeenCalledWith('task-1', {
+        priority: 'Urgent',
+        due_at: '2026-07-01T10:00:00Z',
+        task_date: '2026-07-01',
+      })
+    })
+
+    it('does not cascade fields that were not changed', async () => {
+      vi.mocked(taskRepository.getTaskById).mockResolvedValue(unassignedTask)
+      vi.mocked(taskRepository.updateTask).mockResolvedValue(unassignedTask)
+
+      await taskService.editTask('task-1', { due_at: unassignedTask.due_at, title: 'Renamed' }, 'owner-1')
+
+      expect(taskRepository.updateSubTasksByParent).not.toHaveBeenCalled()
+    })
+
+    it('does not cascade when editing a sub-task itself', async () => {
+      const subTask: Task = { ...unassignedTask, parent_task_id: 'task-0' }
+      vi.mocked(taskRepository.getTaskById).mockResolvedValue(subTask)
+      vi.mocked(taskRepository.updateTask).mockResolvedValue({ ...subTask, due_at: '2026-07-01T10:00:00Z' })
+
+      await taskService.editTask('task-1', { due_at: '2026-07-01T10:00:00Z' }, 'owner-1')
+
+      expect(taskRepository.updateSubTasksByParent).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('completeSubTask', () => {
+    const parentInProgress: Task = { ...baseTask, id: 'parent-1', status: 'In Progress', assigned_user_id: 'employee-1' }
+    const subA: Task = { ...baseTask, id: 'sub-a', parent_task_id: 'parent-1', sequence_order: 0, is_completed: false }
+    const subB: Task = { ...baseTask, id: 'sub-b', parent_task_id: 'parent-1', sequence_order: 1, is_completed: false }
+    const subC: Task = { ...baseTask, id: 'sub-c', parent_task_id: 'parent-1', sequence_order: 2, is_completed: false }
+
+    it('requires a sub-task id', async () => {
+      await expect(taskService.completeSubTask('')).rejects.toThrow('Sub-task id is required')
+    })
+
+    it('rejects a task with no parent', async () => {
+      vi.mocked(taskRepository.getTaskById).mockResolvedValue({ ...baseTask, parent_task_id: null })
+      await expect(taskService.completeSubTask('task-1', 'employee-1')).rejects.toThrow('Task is not a sub-task')
+    })
+
+    it('rejects when the acting user is not the parent assignee', async () => {
+      vi.mocked(taskRepository.getTaskById).mockImplementation(async id =>
+        id === 'sub-a' ? subA : parentInProgress
+      )
+      await expect(taskService.completeSubTask('sub-a', 'someone-else'))
+        .rejects.toThrow('Only the user assigned to this task can complete its sub-tasks')
+    })
+
+    it('rejects when the parent is not In Progress', async () => {
+      vi.mocked(taskRepository.getTaskById).mockImplementation(async id =>
+        id === 'sub-a' ? subA : { ...parentInProgress, status: 'Assigned' }
+      )
+      await expect(taskService.completeSubTask('sub-a', 'employee-1'))
+        .rejects.toThrow('Sub-tasks can only be completed while the task is In Progress')
+    })
+
+    it('rejects ticking a sub-task before its predecessor is complete', async () => {
+      vi.mocked(taskRepository.getTaskById).mockImplementation(async id =>
+        id === 'sub-b' ? subB : parentInProgress
+      )
+      vi.mocked(taskRepository.getSubTasks).mockResolvedValue([subA, subB, subC])
+      await expect(taskService.completeSubTask('sub-b', 'employee-1'))
+        .rejects.toThrow('Complete the previous sub-tasks first')
+    })
+
+    it('ticks a sub-task in order without promoting the parent if others remain', async () => {
+      vi.mocked(taskRepository.getTaskById).mockImplementation(async id =>
+        id === 'sub-a' ? subA : parentInProgress
+      )
+      vi.mocked(taskRepository.getSubTasks).mockResolvedValue([subA, subB, subC])
+      vi.mocked(taskRepository.updateTask).mockResolvedValue({ ...subA, is_completed: true })
+
+      const [updatedSub, parent] = await taskService.completeSubTask('sub-a', 'employee-1')
+
+      expect(taskRepository.updateTask).toHaveBeenCalledWith('sub-a', { is_completed: true })
+      expect(taskRepository.updateSubTasksByParent).not.toHaveBeenCalled()
+      expect(updatedSub.is_completed).toBe(true)
+      expect(parent.status).toBe('In Progress')
+    })
+
+    it('promotes the parent and all sub-tasks to Review once the last one is ticked', async () => {
+      const completedA = { ...subA, is_completed: true }
+      const completedB = { ...subB, is_completed: true }
+      vi.mocked(taskRepository.getTaskById).mockImplementation(async id =>
+        id === 'sub-c' ? subC : parentInProgress
+      )
+      vi.mocked(taskRepository.getSubTasks).mockResolvedValue([completedA, completedB, subC])
+      vi.mocked(taskRepository.updateTask).mockImplementation(async (id, input) =>
+        id === 'parent-1' ? { ...parentInProgress, ...input } : { ...subC, ...input }
+      )
+
+      const [updatedSub, parent] = await taskService.completeSubTask('sub-c', 'employee-1')
+
+      expect(updatedSub.is_completed).toBe(true)
+      expect(taskRepository.updateTask).toHaveBeenCalledWith('parent-1', { status: 'Review', percentage_complete: 66 })
+      expect(taskRepository.updateSubTasksByParent).toHaveBeenCalledWith('parent-1', { status: 'Review', percentage_complete: 66 })
+      expect(parent.status).toBe('Review')
+    })
+
+    it('is a no-op when the sub-task is already completed', async () => {
+      const alreadyDone = { ...subA, is_completed: true }
+      vi.mocked(taskRepository.getTaskById).mockImplementation(async id =>
+        id === 'sub-a' ? alreadyDone : parentInProgress
+      )
+
+      const [updatedSub] = await taskService.completeSubTask('sub-a', 'employee-1')
+
+      expect(updatedSub.is_completed).toBe(true)
+      expect(taskRepository.updateTask).not.toHaveBeenCalled()
     })
   })
 
@@ -316,6 +479,51 @@ describe('taskService — Task (UC14-26)', () => {
 
       expect(result).toHaveLength(2)
       expect(result.map(t => t.task_date)).toEqual(['2026-07-02', '2026-07-09'])
+    })
+
+    it('keeps the original assignee on occurrences where they have a shift', async () => {
+      vi.mocked(taskRepository.getTaskById).mockResolvedValue(baseTask) // assigned_user_id: 'manager-1'
+      vi.mocked(taskRepository.hasShiftOnDate).mockResolvedValue(true)
+      vi.mocked(taskRepository.createTask).mockImplementation(async (input) => ({
+        ...baseTask, id: `copy-${input.task_date}`, task_date: input.task_date ?? null, assigned_user_id: input.assigned_user_id ?? null,
+      }))
+
+      const result = await taskService.createRecurringTasks('task-1', {
+        recurrence_rule: 'daily', recurrence_end_date: '2026-06-27', assigned_by: 'owner-1',
+      })
+
+      expect(taskRepository.hasShiftOnDate).toHaveBeenCalledWith('manager-1', 'company-1', '2026-06-26')
+      expect(taskRepository.hasShiftOnDate).toHaveBeenCalledWith('manager-1', 'company-1', '2026-06-27')
+      expect(result.every(t => t.assigned_user_id === 'manager-1')).toBe(true)
+    })
+
+    it('sends an occurrence out unassigned when the original assignee has no shift that day', async () => {
+      vi.mocked(taskRepository.getTaskById).mockResolvedValue(baseTask) // assigned_user_id: 'manager-1'
+      vi.mocked(taskRepository.hasShiftOnDate).mockImplementation(async (_userId, _companyId, date) => date !== '2026-06-26')
+      vi.mocked(taskRepository.createTask).mockImplementation(async (input) => ({
+        ...baseTask, id: `copy-${input.task_date}`, task_date: input.task_date ?? null, assigned_user_id: input.assigned_user_id ?? null,
+      }))
+
+      const result = await taskService.createRecurringTasks('task-1', {
+        recurrence_rule: 'daily', recurrence_end_date: '2026-06-27', assigned_by: 'owner-1',
+      })
+
+      expect(result.find(t => t.task_date === '2026-06-26')?.assigned_user_id).toBeNull()
+      expect(result.find(t => t.task_date === '2026-06-27')?.assigned_user_id).toBe('manager-1')
+    })
+
+    it('skips the shift check entirely when the original task has no assignee', async () => {
+      vi.mocked(taskRepository.getTaskById).mockResolvedValue({ ...baseTask, assigned_user_id: null })
+      vi.mocked(taskRepository.createTask).mockImplementation(async (input) => ({
+        ...baseTask, id: `copy-${input.task_date}`, task_date: input.task_date ?? null, assigned_user_id: input.assigned_user_id ?? null,
+      }))
+
+      const result = await taskService.createRecurringTasks('task-1', {
+        recurrence_rule: 'daily', recurrence_end_date: '2026-06-27', assigned_by: 'owner-1',
+      })
+
+      expect(taskRepository.hasShiftOnDate).not.toHaveBeenCalled()
+      expect(result.every(t => t.assigned_user_id === null)).toBe(true)
     })
 
     it('copies the sub-task checklist onto every occurrence, shifted to that occurrence\'s date', async () => {
@@ -649,6 +857,27 @@ describe('taskService — Task (UC14-26)', () => {
 
       expect(taskRepository.createTask).toHaveBeenCalledTimes(1)
     })
+
+    it('uses a per-sub-task assigned_user_id/due_at when provided (UC20 AI step distribution), falling back to the parent otherwise', async () => {
+      vi.mocked(taskRepository.createTask).mockImplementation(async input => ({
+        ...baseTask, ...input, id: input.parent_task_id ? `sub-${input.title}` : 'main-1',
+      }))
+
+      await taskService.assignTaskWithSubTasks(
+        { company_id: 'company-1', department_id: 'dept-1', title: 'Main task', due_at: '2026-07-01T18:00:00.000Z' },
+        [
+          { title: 'Step 1', assigned_user_id: 'manager-2', due_at: '2026-06-30T12:00:00.000Z' },
+          { title: 'Step 2' },
+        ],
+      )
+
+      expect(taskRepository.createTask).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        title: 'Step 1', assigned_user_id: 'manager-2', due_at: '2026-06-30T12:00:00.000Z',
+      }))
+      expect(taskRepository.createTask).toHaveBeenNthCalledWith(3, expect.objectContaining({
+        title: 'Step 2', due_at: '2026-07-01T18:00:00.000Z',
+      }))
+    })
   })
 
   describe('reorderSubTasks (UC28)', () => {
@@ -725,11 +954,17 @@ describe('taskService — Task (UC14-26)', () => {
     })
   })
 
-  describe('getWorkloadRebalancingSuggestion (UC23)', () => {
-    it('reports balanced when the gap between users is small', async () => {
+  describe('getWorkloadRebalancingSuggestion (UC21)', () => {
+    const farOut = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() // plenty of time, lowest urgency weight
+
+    it('reports balanced when scores are close', async () => {
+      vi.mocked(taskRepository.getManagersByDepartment).mockResolvedValue([
+        { id: 'user-1', full_name: 'User One' },
+        { id: 'user-2', full_name: 'User Two' },
+      ])
       vi.mocked(taskRepository.getTasksByCompany).mockResolvedValue([
-        { ...baseTask, id: 't1', assigned_user_id: 'user-1', status: 'Assigned' },
-        { ...baseTask, id: 't2', assigned_user_id: 'user-2', status: 'Assigned' },
+        { ...baseTask, id: 't1', department_id: 'dept-1', assigned_user_id: 'user-1', status: 'Assigned', priority: 'Medium', due_at: farOut },
+        { ...baseTask, id: 't2', department_id: 'dept-1', assigned_user_id: 'user-2', status: 'Assigned', priority: 'Medium', due_at: farOut },
       ])
 
       const result = await taskService.getWorkloadRebalancingSuggestion('company-1')
@@ -737,12 +972,37 @@ describe('taskService — Task (UC14-26)', () => {
       expect(result.type).toBe('balanced')
     })
 
-    it('recommends rebalancing when one user is overloaded', async () => {
+    it('does not rebalance a manager who only has one active main task', async () => {
+      const overdue = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+      vi.mocked(taskRepository.getManagersByDepartment).mockResolvedValue([
+        { id: 'user-1', full_name: 'User One' },
+        { id: 'user-2', full_name: 'User Two' },
+      ])
       vi.mocked(taskRepository.getTasksByCompany).mockResolvedValue([
-        { ...baseTask, id: 't1', assigned_user_id: 'user-1', status: 'Assigned' },
-        { ...baseTask, id: 't2', assigned_user_id: 'user-1', status: 'In Progress' },
-        { ...baseTask, id: 't3', assigned_user_id: 'user-1', status: 'Review' },
-        { ...baseTask, id: 't4', assigned_user_id: 'user-2', status: 'Assigned' },
+        // user-1: one Urgent + overdue task → weight 4 (priority) x 4 (overdue) = 16
+        { ...baseTask, id: 't1', department_id: 'dept-1', assigned_user_id: 'user-1', status: 'Assigned', priority: 'Urgent', due_at: overdue },
+        // user-2: five Low-priority tasks with a month of runway → weight 1 x 1 = 1 each = 5 total
+        { ...baseTask, id: 't2', department_id: 'dept-1', assigned_user_id: 'user-2', status: 'Assigned', priority: 'Low', due_at: farOut },
+        { ...baseTask, id: 't3', department_id: 'dept-1', assigned_user_id: 'user-2', status: 'Assigned', priority: 'Low', due_at: farOut },
+        { ...baseTask, id: 't4', department_id: 'dept-1', assigned_user_id: 'user-2', status: 'Assigned', priority: 'Low', due_at: farOut },
+        { ...baseTask, id: 't5', department_id: 'dept-1', assigned_user_id: 'user-2', status: 'Assigned', priority: 'Low', due_at: farOut },
+        { ...baseTask, id: 't6', department_id: 'dept-1', assigned_user_id: 'user-2', status: 'Assigned', priority: 'Low', due_at: farOut },
+      ])
+
+      const result = await taskService.getWorkloadRebalancingSuggestion('company-1')
+
+      expect(result.type).toBe('balanced')
+    })
+
+    it('rebalances when the overloaded manager has at least two active main tasks', async () => {
+      const overdue = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+      vi.mocked(taskRepository.getManagersByDepartment).mockResolvedValue([
+        { id: 'user-1', full_name: 'User One' },
+        { id: 'user-2', full_name: 'User Two' },
+      ])
+      vi.mocked(taskRepository.getTasksByCompany).mockResolvedValue([
+        { ...baseTask, id: 't1', department_id: 'dept-1', parent_task_id: null, assigned_user_id: 'user-1', status: 'Assigned', priority: 'Urgent', due_at: overdue },
+        { ...baseTask, id: 't2', department_id: 'dept-1', parent_task_id: null, assigned_user_id: 'user-1', status: 'Assigned', priority: 'High', due_at: overdue },
       ])
 
       const result = await taskService.getWorkloadRebalancingSuggestion('company-1')
@@ -752,18 +1012,100 @@ describe('taskService — Task (UC14-26)', () => {
       expect(result.recommended_user_id).toBe('user-2')
     })
 
-    it('scopes the suggestion to the given department only', async () => {
+    it('chooses the task that improves balance instead of flipping the imbalance', async () => {
+      const within24Hours = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+      const within3Days = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString()
+      vi.mocked(taskRepository.getManagersByDepartment).mockResolvedValue([
+        { id: 'user-1', full_name: 'User One' },
+        { id: 'user-2', full_name: 'User Two' },
+      ])
       vi.mocked(taskRepository.getTasksByCompany).mockResolvedValue([
-        { ...baseTask, id: 't1', department_id: 'dept-1', assigned_user_id: 'user-1', status: 'Assigned' },
-        { ...baseTask, id: 't2', department_id: 'dept-1', assigned_user_id: 'user-1', status: 'In Progress' },
-        { ...baseTask, id: 't3', department_id: 'dept-1', assigned_user_id: 'user-1', status: 'Review' },
-        { ...baseTask, id: 't4', department_id: 'dept-1', assigned_user_id: 'user-2', status: 'Assigned' },
-        { ...baseTask, id: 't5', department_id: 'dept-2', assigned_user_id: 'user-3', status: 'Assigned' },
+        // user-1 total: 12 + 6 = 18. Moving t1 would flip to 6 vs 18, so t2 is the useful move.
+        { ...baseTask, id: 't1', department_id: 'dept-1', parent_task_id: null, assigned_user_id: 'user-1', status: 'Assigned', priority: 'Urgent', due_at: within24Hours },
+        { ...baseTask, id: 't2', department_id: 'dept-1', parent_task_id: null, assigned_user_id: 'user-1', status: 'Assigned', priority: 'High', due_at: within3Days },
+        { ...baseTask, id: 't3', department_id: 'dept-1', parent_task_id: null, assigned_user_id: 'user-2', status: 'Assigned', priority: 'High', due_at: within3Days },
+      ])
+
+      const result = await taskService.getWorkloadRebalancingSuggestion('company-1')
+
+      expect(result.type).toBe('rebalance')
+      expect(result.suggested_task_id).toBe('t2')
+    })
+
+    it('returns one workload suggestion card per affected department', async () => {
+      const overdue = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+      vi.mocked(taskRepository.getManagersByDepartment).mockImplementation(async (_companyId, deptId) => (
+        deptId === 'dept-1'
+          ? [{ id: 'user-1', full_name: 'User One' }, { id: 'user-2', full_name: 'User Two' }]
+          : [{ id: 'user-3', full_name: 'User Three' }, { id: 'user-4', full_name: 'User Four' }]
+      ))
+      vi.mocked(taskRepository.getTasksByCompany).mockResolvedValue([
+        { ...baseTask, id: 'd1-t1', department_id: 'dept-1', parent_task_id: null, assigned_user_id: 'user-1', status: 'Assigned', priority: 'Urgent', due_at: overdue },
+        { ...baseTask, id: 'd1-t2', department_id: 'dept-1', parent_task_id: null, assigned_user_id: 'user-1', status: 'Assigned', priority: 'High', due_at: overdue },
+        { ...baseTask, id: 'd2-t1', department_id: 'dept-2', parent_task_id: null, assigned_user_id: 'user-3', status: 'Assigned', priority: 'Urgent', due_at: overdue },
+        { ...baseTask, id: 'd2-t2', department_id: 'dept-2', parent_task_id: null, assigned_user_id: 'user-3', status: 'Assigned', priority: 'High', due_at: overdue },
+      ])
+
+      const result = await taskService.getWorkloadRebalancingSuggestions('company-1')
+
+      expect(result).toHaveLength(2)
+      expect(result.map(item => item.department_id).sort()).toEqual(['dept-1', 'dept-2'])
+      expect(result.every(item => item.type === 'rebalance' && item.suggested_task_id && item.reason)).toBe(true)
+    })
+
+    it('scopes the suggestion to the given department only', async () => {
+      const overdue = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+      vi.mocked(taskRepository.getManagersByDepartment).mockResolvedValue([
+        { id: 'user-3', full_name: 'User Three' },
+        { id: 'user-4', full_name: 'User Four' },
+      ])
+      vi.mocked(taskRepository.getTasksByCompany).mockResolvedValue([
+        { ...baseTask, id: 't1', department_id: 'dept-1', assigned_user_id: 'user-1', status: 'Assigned', priority: 'Urgent', due_at: overdue },
+        { ...baseTask, id: 't2', department_id: 'dept-1', assigned_user_id: 'user-2', status: 'Assigned', priority: 'Low', due_at: farOut },
+        { ...baseTask, id: 't3', department_id: 'dept-2', assigned_user_id: 'user-3', status: 'Assigned', priority: 'Medium', due_at: farOut },
+        { ...baseTask, id: 't4', department_id: 'dept-2', assigned_user_id: 'user-4', status: 'Assigned', priority: 'Medium', due_at: farOut },
       ])
 
       const result = await taskService.getWorkloadRebalancingSuggestion('company-1', 'dept-2')
 
       expect(result.type).toBe('balanced')
+    })
+
+    it('does not count a sub-task as its own scored item', async () => {
+      const overdue = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+      vi.mocked(taskRepository.getManagersByDepartment).mockResolvedValue([
+        { id: 'user-1', full_name: 'User One' },
+        { id: 'user-2', full_name: 'User Two' },
+      ])
+      vi.mocked(taskRepository.getTasksByCompany).mockResolvedValue([
+        { ...baseTask, id: 'parent', department_id: 'dept-1', parent_task_id: null, assigned_user_id: 'user-1', status: 'Assigned', priority: 'Low', due_at: farOut },
+        { ...baseTask, id: 'sub', department_id: 'dept-1', parent_task_id: 'parent', assigned_user_id: 'user-1', status: 'Assigned', priority: 'Urgent', due_at: overdue },
+        { ...baseTask, id: 't2', department_id: 'dept-1', parent_task_id: null, assigned_user_id: 'user-2', status: 'Assigned', priority: 'Low', due_at: farOut },
+      ])
+
+      const result = await taskService.getWorkloadRebalancingSuggestion('company-1')
+
+      // parent (16) + sub (16) = 32 for user-1, vs 1 for user-2 — well past the 2x-average threshold
+      expect(result.type).toBe('balanced')
+    })
+
+    it('can recommend a same-department manager with no active tasks', async () => {
+      const overdue = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+      vi.mocked(taskRepository.getManagersByDepartment).mockResolvedValue([
+        { id: 'user-1', full_name: 'User One' },
+        { id: 'user-2', full_name: 'User Two' },
+      ])
+      vi.mocked(taskRepository.getTasksByCompany).mockResolvedValue([
+        { ...baseTask, id: 't1', department_id: 'dept-1', parent_task_id: null, assigned_user_id: 'user-1', status: 'Assigned', priority: 'Urgent', due_at: overdue },
+        { ...baseTask, id: 't2', department_id: 'dept-1', parent_task_id: null, assigned_user_id: 'user-1', status: 'Assigned', priority: 'High', due_at: overdue },
+      ])
+
+      const result = await taskService.getWorkloadRebalancingSuggestion('company-1')
+
+      expect(result.type).toBe('rebalance')
+      expect(result.overloaded_user_id).toBe('user-1')
+      expect(result.recommended_user_id).toBe('user-2')
+      expect(result.recommended_score).toBe(0)
     })
   })
 
@@ -793,31 +1135,60 @@ describe('taskService — Task (UC14-26)', () => {
     })
   })
 
-  describe('getStalledTaskAlerts (UC25)', () => {
-    it('flags incomplete tasks not updated within the stale window', async () => {
+  describe('getStalledTaskAlerts (UC22)', () => {
+    it('flags a task only after more than half its assigned-to-deadline window has elapsed', async () => {
       const now = Date.now()
-      const staleDate = new Date(now - 5 * 24 * 60 * 60 * 1000).toISOString()
-      const freshDate = new Date(now - 1 * 24 * 60 * 60 * 1000).toISOString()
+      // assigned 4 hours ago, due in 4 hours → 8h total window, 4h elapsed = 50% exactly
+      const pastHalfway = { created_at: new Date(now - 5 * 60 * 60 * 1000).toISOString(), due_at: new Date(now + 3 * 60 * 60 * 1000).toISOString() }
+      const halfwayPast = { created_at: new Date(now - 4 * 60 * 60 * 1000).toISOString(), due_at: new Date(now + 4 * 60 * 60 * 1000).toISOString() }
+      // assigned 1 hour ago, due in 7 hours → 8h total window, 1h elapsed = 12.5%, nowhere near halfway
+      const justAssigned = { created_at: new Date(now - 60 * 60 * 1000).toISOString(), due_at: new Date(now + 7 * 60 * 60 * 1000).toISOString() }
       vi.mocked(taskRepository.getTasksByCompany).mockResolvedValue([
-        { ...baseTask, id: 't1', status: 'In Progress', updated_at: staleDate },
-        { ...baseTask, id: 't2', status: 'In Progress', updated_at: freshDate },
-        { ...baseTask, id: 't3', status: 'Complete', updated_at: staleDate },
+        { ...baseTask, id: 't1', status: 'In Progress', ...pastHalfway },
+        { ...baseTask, id: 't2', status: 'In Progress', ...halfwayPast },
+        { ...baseTask, id: 't3', status: 'In Progress', ...justAssigned },
       ])
 
-      const result = await taskService.getStalledTaskAlerts('company-1', 3)
+      const result = await taskService.getStalledTaskAlerts('company-1')
 
       expect(result.map(a => a.task_id)).toEqual(['t1'])
     })
 
-    it('scopes alerts to the given department only', async () => {
+    it('does not flag a task already in Review or Complete, no matter how much time has elapsed', async () => {
       const now = Date.now()
-      const staleDate = new Date(now - 5 * 24 * 60 * 60 * 1000).toISOString()
+      const wayPastDeadline = { created_at: new Date(now - 10 * 60 * 60 * 1000).toISOString(), due_at: new Date(now - 5 * 60 * 60 * 1000).toISOString() }
       vi.mocked(taskRepository.getTasksByCompany).mockResolvedValue([
-        { ...baseTask, id: 't1', department_id: 'dept-1', status: 'In Progress', updated_at: staleDate },
-        { ...baseTask, id: 't2', department_id: 'dept-2', status: 'In Progress', updated_at: staleDate },
+        { ...baseTask, id: 't1', status: 'Review', ...wayPastDeadline },
+        { ...baseTask, id: 't2', status: 'Complete', ...wayPastDeadline },
       ])
 
-      const result = await taskService.getStalledTaskAlerts('company-1', 3, 'dept-2')
+      const result = await taskService.getStalledTaskAlerts('company-1')
+
+      expect(result).toHaveLength(0)
+    })
+
+    it('does not flag sub-tasks separately from their main task', async () => {
+      const now = Date.now()
+      const pastHalfway = { created_at: new Date(now - 5 * 60 * 60 * 1000).toISOString(), due_at: new Date(now + 3 * 60 * 60 * 1000).toISOString() }
+      vi.mocked(taskRepository.getTasksByCompany).mockResolvedValue([
+        { ...baseTask, id: 'parent', parent_task_id: null, status: 'In Progress', ...pastHalfway },
+        { ...baseTask, id: 'sub', parent_task_id: 'parent', status: 'In Progress', ...pastHalfway },
+      ])
+
+      const result = await taskService.getStalledTaskAlerts('company-1')
+
+      expect(result.map(a => a.task_id)).toEqual(['parent'])
+    })
+
+    it('scopes alerts to the given department only', async () => {
+      const now = Date.now()
+      const pastHalfway = { created_at: new Date(now - 5 * 60 * 60 * 1000).toISOString(), due_at: new Date(now + 3 * 60 * 60 * 1000).toISOString() }
+      vi.mocked(taskRepository.getTasksByCompany).mockResolvedValue([
+        { ...baseTask, id: 't1', department_id: 'dept-1', status: 'In Progress', ...pastHalfway },
+        { ...baseTask, id: 't2', department_id: 'dept-2', status: 'In Progress', ...pastHalfway },
+      ])
+
+      const result = await taskService.getStalledTaskAlerts('company-1', 'dept-2')
 
       expect(result.map(a => a.task_id)).toEqual(['t2'])
     })

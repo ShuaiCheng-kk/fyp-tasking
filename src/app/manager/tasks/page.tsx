@@ -397,7 +397,7 @@ function DeadlineTimePicker({ value, onChange, shiftStart, shiftEnd }: {
 // ─── Task Card ────────────────────────────────────────────────────────────────
 
 function TaskCard({
-  task, members, shiftOptions, onClick, onEdit, onDelete, onDuplicate,
+  task, members, shiftOptions, onClick, onEdit, onDelete, onDuplicate, subTaskCount, expanded, onToggleExpand, isSubTask = false,
 }: {
   task: Task
   members: Member[]
@@ -406,6 +406,10 @@ function TaskCard({
   onEdit: () => void
   onDelete: () => void
   onDuplicate: () => void
+  subTaskCount?: number
+  expanded?: boolean
+  onToggleExpand?: () => void
+  isSubTask?: boolean
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuPos, setMenuPos] = useState({ top: 0, left: 0 })
@@ -447,13 +451,23 @@ function TaskCard({
         marginBottom: 8,
       }}
     >
-      {/* Top row: priority badge + ... menu */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 7 }}>
-        <div>
+      {/* Top row: priority badge + sub-task count + ... menu */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 7, gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           {priority && task.priority && (
             <span style={{ fontSize: '0.75rem', fontWeight: 800, padding: '3px 9px', borderRadius: '99px', background: priority.bg, color: priority.text, letterSpacing: '0.01em' }}>
               {task.priority}
             </span>
+          )}
+          {!!subTaskCount && (
+            <button
+              type="button"
+              onClick={e => { e.stopPropagation(); onToggleExpand?.() }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.65rem', fontWeight: 700, padding: '2px 7px', borderRadius: '99px', background: '#F1F5F9', color: '#475569', border: 'none', cursor: 'pointer' }}
+            >
+              {subTaskCount} steps
+              <ChevronDown size={10} style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+            </button>
           )}
         </div>
         <div ref={menuRef} style={{ position: 'relative', flexShrink: 0 }}>
@@ -505,7 +519,7 @@ function TaskCard({
       </div>
 
       {/* Title */}
-      <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: '0 0 10px', lineHeight: 1.4 }}>
+      <p style={{ fontWeight: 600, fontSize: isSubTask ? '0.8rem' : '0.875rem', color: '#111827', margin: '0 0 10px', lineHeight: 1.4 }}>
         {task.title}
       </p>
 
@@ -556,6 +570,81 @@ export default function ManagerTasksPage() {
   const [kanban,        setKanban]        = useState<KanbanGroup | null>(null)
   const [kanbanLoading, setKanbanLoading] = useState(false)
   const [taskDate,      setTaskDate]      = useState(() => formatDateKey(new Date()))
+
+  // Drag-and-drop status change — this is the page where work actually happens, so dragging a
+  // card is how Manager/Employee move their own tasks forward. Owner only observes status from
+  // their own board (no drag there) — they assign and watch, they don't execute. A card can only
+  // be dragged by the user it's assigned to (or whoever assigned it), and only ever one column
+  // forward (no skipping, no moving backward). Dragging a task with sub-tasks carries every
+  // sub-task to the same status, keeping the chain in sync.
+  const STATUS_PERCENT: Record<Task['status'], number> = { 'Assigned': 0, 'In Progress': 33, 'Review': 66, 'Complete': 100 }
+  const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null)
+  const [dragOverCol, setDragOverCol] = useState<Task['status'] | null>(null)
+  const canDragTask = (task: Task): boolean => {
+    if (!internalUserId) return false
+    if (task.assigned_by === internalUserId) return true
+    return task.assigned_user_id === internalUserId
+  }
+  const handleDropTaskOnColumn = async (task: Task, targetStatus: Task['status']) => {
+    setDragOverCol(null)
+    setDraggingTaskId(null)
+    const currentIdx = COLUMNS.indexOf(task.status)
+    const targetIdx = COLUMNS.indexOf(targetStatus)
+    if (targetIdx !== currentIdx + 1) return
+    const subTasks = kanban ? COLUMNS.flatMap(col => kanban[col] ?? []).filter(t => t.parent_task_id === task.id) : []
+    const affectedIds = new Set([task.id, ...subTasks.map(t => t.id)])
+    setKanban(prev => {
+      if (!prev) return prev
+      const moved = COLUMNS.flatMap(col => prev[col] ?? [])
+        .filter(t => affectedIds.has(t.id))
+        .map(t => ({ ...t, status: targetStatus, percentage_complete: STATUS_PERCENT[targetStatus] }))
+      const next = { ...prev } as KanbanGroup
+      for (const col of COLUMNS) next[col] = (prev[col] ?? []).filter(t => !affectedIds.has(t.id))
+      next[targetStatus] = [...next[targetStatus], ...moved]
+      return next
+    })
+    try {
+      const results = await Promise.all([...affectedIds].map(id => fetch('/api/task', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, status: targetStatus, percentage_complete: STATUS_PERCENT[targetStatus] }),
+      }).then(r => r.json())))
+      if (results.some(r => !r.success)) throw new Error()
+    } catch {
+      fetchKanban(companyId, true)
+    }
+  }
+
+  // Sub-task expand/collapse + to-do checkbox — only meaningful once the parent is In Progress
+  // (see handleDropTaskOnColumn); ticking the last sub-task auto-promotes the parent to Review.
+  const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set())
+  const toggleTaskExpanded = (id: string) => {
+    setExpandedTaskIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+  const handleCompleteSubTask = async (subTask: Task) => {
+    setKanban(prev => {
+      if (!prev) return prev
+      const next = { ...prev } as KanbanGroup
+      for (const col of COLUMNS) next[col] = (prev[col] ?? []).map(t => t.id === subTask.id ? { ...t, is_completed: true } : t)
+      return next
+    })
+    try {
+      const res = await fetch('/api/task', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'complete_subtask', id: subTask.id, assigned_by: internalUserId || undefined }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error()
+      if (data.parent?.status === 'Review') fetchKanban(companyId, true)
+    } catch {
+      fetchKanban(companyId, true)
+    }
+  }
 
   // Task detail/edit panel
   const [selectedTask,  setSelectedTask]  = useState<Task | null>(null)
@@ -1253,6 +1342,15 @@ export default function ManagerTasksPage() {
                   {COLUMNS.map((col, colIdx) => {
                     const cfg = STATUS_CONFIG[col]
                     const tasks = filteredTasks(col)
+                    const topLevelTasks = tasks.filter(t => !t.parent_task_id)
+                    const subTasksByParent = new Map<string, Task[]>()
+                    for (const t of tasks) {
+                      if (!t.parent_task_id) continue
+                      const arr = subTasksByParent.get(t.parent_task_id) ?? []
+                      arr.push(t)
+                      subTasksByParent.set(t.parent_task_id, arr)
+                    }
+                    for (const arr of subTasksByParent.values()) arr.sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0))
                     return (
                       <Fragment key={col}>
                       {colIdx > 0 && (
@@ -1268,28 +1366,115 @@ export default function ManagerTasksPage() {
                         <div style={{ padding: '11px 14px 10px', display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0, borderBottom: '1px solid #ECEEF1' }}>
                           <div style={{ color: cfg.color, display: 'flex', alignItems: 'center' }}>{cfg.icon}</div>
                           <span style={{ fontWeight: 700, fontSize: '0.8125rem', color: cfg.color, flex: 1 }}>{cfg.label}</span>
-                          <span style={{ fontSize: '0.72rem', fontWeight: 700, background: cfg.bg, color: cfg.color, padding: '2px 8px', borderRadius: '99px' }}>{tasks.length}</span>
+                          <span style={{ fontSize: '0.72rem', fontWeight: 700, background: cfg.bg, color: cfg.color, padding: '2px 8px', borderRadius: '99px' }}>{topLevelTasks.length}</span>
                         </div>
                         {/* Scrollable card area */}
-                        <div style={{ flex: 1, overflowY: 'auto', padding: '10px 10px 12px' }}>
-                          {tasks.length === 0 ? (
+                        <div
+                          onDragOver={event => {
+                            if (!draggingTaskId) return
+                            event.preventDefault()
+                            if (dragOverCol !== col) setDragOverCol(col)
+                          }}
+                          onDragLeave={event => {
+                            if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+                            setDragOverCol(current => current === col ? null : current)
+                          }}
+                          onDrop={event => {
+                            event.preventDefault()
+                            const taskId = event.dataTransfer.getData('text/plain')
+                            const draggedTask = COLUMNS.flatMap(c => kanban?.[c] ?? []).find(t => t.id === taskId)
+                            if (draggedTask) handleDropTaskOnColumn(draggedTask, col)
+                          }}
+                          style={{ flex: 1, overflowY: 'auto', padding: '10px 10px 12px', background: dragOverCol === col ? '#EFF6FF' : undefined, outline: dragOverCol === col ? `2px dashed ${TASK_BLUE}` : 'none', outlineOffset: -4, transition: 'background 0.15s' }}
+                        >
+                          {topLevelTasks.length === 0 ? (
                             <div style={{ margin: '8px 0', padding: '32px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
                               {{ Assigned: <Layers size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />, 'In Progress': <Clock size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />, Review: <Eye size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />, Complete: <CheckCircle size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} /> }[col]}
                               <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No {cfg.label.toLowerCase()} tasks</p>
                             </div>
                           ) : (
-                            tasks.map(task => (
-                              <TaskCard
-                                key={task.id}
-                                task={task}
-                                members={members}
-                                shiftOptions={shiftOptions}
-                                onClick={() => openTask(task, true)}
-                                onEdit={() => openTask(task, false)}
-                                onDelete={() => { setDeleteTaskModal(task); setDeleteTaskError('') }}
-                                onDuplicate={() => handleQuickDuplicate(task)}
-                              />
-                            ))
+                            topLevelTasks.map(task => {
+                              const draggable = canDragTask(task)
+                              const subTasks = subTasksByParent.get(task.id) ?? []
+                              const isExpanded = expandedTaskIds.has(task.id)
+                              const canCheckOff = task.status === 'In Progress' && task.assigned_user_id === internalUserId
+                              return (
+                                <div key={task.id}>
+                                  <div
+                                    draggable={draggable}
+                                    onDragStart={event => {
+                                      if (!draggable) { event.preventDefault(); return }
+                                      event.dataTransfer.effectAllowed = 'move'
+                                      event.dataTransfer.setData('text/plain', task.id)
+                                      setDraggingTaskId(task.id)
+                                    }}
+                                    onDragEnd={() => { setDraggingTaskId(null); setDragOverCol(null) }}
+                                    style={{ cursor: draggable ? 'grab' : undefined, opacity: draggingTaskId === task.id ? 0.5 : 1 }}
+                                  >
+                                    <TaskCard
+                                      task={task}
+                                      members={members}
+                                      shiftOptions={shiftOptions}
+                                      onClick={() => openTask(task, true)}
+                                      onEdit={() => openTask(task, false)}
+                                      onDelete={() => { setDeleteTaskModal(task); setDeleteTaskError('') }}
+                                      onDuplicate={() => handleQuickDuplicate(task)}
+                                      subTaskCount={subTasks.length}
+                                      expanded={isExpanded}
+                                      onToggleExpand={() => toggleTaskExpanded(task.id)}
+                                    />
+                                  </div>
+                                  {isExpanded && subTasks.length > 0 && (
+                                    <div style={{ marginTop: -4, marginBottom: 10, paddingLeft: 6, paddingRight: 14 }}>
+                                      {subTasks.map((sub, idx) => {
+                                        const priorComplete = subTasks.slice(0, idx).every(s => s.is_completed)
+                                        const clickable = canCheckOff && priorComplete && !sub.is_completed
+                                        return (
+                                          <div key={sub.id} style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
+                                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+                                              <button
+                                                type="button"
+                                                disabled={!clickable}
+                                                onClick={() => clickable && handleCompleteSubTask(sub)}
+                                                title={sub.is_completed ? 'Completed' : clickable ? 'Mark as done' : 'Complete the previous step first'}
+                                                style={{
+                                                  width: 26, height: 26, marginTop: 10, borderRadius: '50%', flexShrink: 0,
+                                                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                  border: sub.is_completed ? 'none' : `1.5px solid ${clickable ? TASK_BLUE : '#CBD5E1'}`,
+                                                  background: sub.is_completed ? '#16A34A' : '#FFFFFF',
+                                                  color: sub.is_completed ? '#FFFFFF' : clickable ? TASK_BLUE : '#CBD5E1',
+                                                  fontSize: 12, fontWeight: 800, cursor: clickable ? 'pointer' : 'default',
+                                                }}
+                                              >
+                                                {sub.is_completed ? <CheckCircle size={14} /> : idx + 1}
+                                              </button>
+                                              {idx < subTasks.length - 1 && (
+                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1 }}>
+                                                  <div style={{ width: 1, flex: 1, background: '#E2E8F0' }} />
+                                                  <ChevronDown size={12} color="#CBD5E1" style={{ marginTop: -2, flexShrink: 0 }} />
+                                                </div>
+                                              )}
+                                            </div>
+                                            <div style={{ flex: 1, minWidth: 0 }}>
+                                              <TaskCard
+                                                task={sub}
+                                                members={members}
+                                                shiftOptions={shiftOptions}
+                                                onClick={() => {}}
+                                                onEdit={() => openTask(sub, false)}
+                                                onDelete={() => { setDeleteTaskModal(sub); setDeleteTaskError('') }}
+                                                onDuplicate={() => handleQuickDuplicate(sub)}
+                                                isSubTask
+                                              />
+                                            </div>
+                                          </div>
+                                        )
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })
                           )}
                         </div>
                       </div>

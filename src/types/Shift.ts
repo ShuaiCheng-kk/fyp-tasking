@@ -15,6 +15,8 @@ export interface Shift {
   source_shift_id: string | null
   split_group_id: string | null
   template_id: string | null
+  is_open_ended: boolean
+  flat_rate: number | null
   created_by: string
   created_at: string
   updated_at: string
@@ -36,6 +38,7 @@ export interface ShiftInput {
   source_shift_id?: string | null
   split_group_id?: string | null
   template_id?: string | null
+  is_open_ended?: boolean
 }
 
 export interface SplitShiftBlockInput {

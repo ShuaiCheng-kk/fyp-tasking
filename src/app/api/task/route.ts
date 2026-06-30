@@ -52,16 +52,19 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: true, tasks })
     }
     if (suggestion === 'workload') {
-      const workloadSuggestion = await taskService.getWorkloadRebalancingSuggestion(company_id, department_id)
-      return NextResponse.json({ success: true, suggestion: workloadSuggestion })
+      const suggestions = await taskService.getWorkloadRebalancingSuggestions(company_id, department_id)
+      return NextResponse.json({
+        success: true,
+        suggestions,
+        suggestion: suggestions[0] ?? { type: 'balanced', message: 'Workload is currently balanced across assigned users.' },
+      })
     }
     if (suggestion === 'reassignment' && task_id) {
       const reassignmentSuggestion = await taskService.getTaskReassignmentSuggestion(task_id)
       return NextResponse.json({ success: true, suggestion: reassignmentSuggestion })
     }
     if (suggestion === 'stalled') {
-      const staleAfterDays = Number(searchParams.get('stale_after_days') ?? 3)
-      const alerts = await taskService.getStalledTaskAlerts(company_id, staleAfterDays, department_id)
+      const alerts = await taskService.getStalledTaskAlerts(company_id, department_id)
       return NextResponse.json({ success: true, alerts })
     }
     if (shift_id) {
@@ -193,6 +196,16 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ success: true, subTasks })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to reorder sub-tasks'
+      return NextResponse.json({ success: false, message }, { status: 400 })
+    }
+  }
+
+  if (b.action === 'complete_subtask') {
+    try {
+      const [subTask, parent] = await taskService.completeSubTask(b.id, b.assigned_by as string | undefined)
+      return NextResponse.json({ success: true, subTask, parent })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to complete sub-task'
       return NextResponse.json({ success: false, message }, { status: 400 })
     }
   }
