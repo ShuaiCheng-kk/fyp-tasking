@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
-import { Check, ExternalLink, FileText, ImagePlus, MousePointer2, RefreshCcw, Save, Trash2 } from 'lucide-react'
+import { Check, ExternalLink, FileText, ImagePlus, RefreshCcw, Save, Trash2 } from 'lucide-react'
 import AdminSidebar from '@/components/AdminSidebar'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import { createBrowserClient } from '@supabase/ssr'
@@ -2866,18 +2866,15 @@ export default function AdminDashboardPage() {
         loadingPages={loadingPages}
       />
 
-      <section style={{ marginLeft: 64, padding: '28px 32px 44px' }}>
+      <section style={{ marginLeft: 64, padding: '35px 32px 44px' }}>
         <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, marginBottom: 18 }}>
           <div>
-            <p style={{ margin: '0 0 8px', color: ORANGE, fontSize: 12, letterSpacing: 1.4, fontWeight: 800, textTransform: 'uppercase' }}>
-              Marketing Admin
+            <p style={{ margin: '0 0 6px', color: ORANGE, fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+              {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
             </p>
             <h1 style={{ margin: 0, fontFamily: 'var(--font-heading)', fontSize: 34, lineHeight: 1.1, fontWeight: 800, color: TEXT }}>
               Marketing Live Editor
             </h1>
-            <p style={{ margin: '10px 0 0', color: MUTED, fontSize: 14, fontWeight: 600 }}>
-              Click any text in the preview to edit it in-place. This admin only manages marketing content.
-            </p>
           </div>
           {adminUserId && <OwnerUserBadge userId={adminUserId} companyId="" />}
         </header>
@@ -2906,12 +2903,6 @@ export default function AdminDashboardPage() {
                 </p>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, color: dirtyBlocks.length > 0 ? '#C2410C' : '#047857', background: dirtyBlocks.length > 0 ? SOFT_ORANGE : '#ECFDF5', border: `1px solid ${dirtyBlocks.length > 0 ? '#FED7AA' : '#BBF7D0'}`, borderRadius: 999, padding: '8px 11px', fontSize: 12, fontWeight: 900 }}>
-                  <Check size={13} /> {dirtyBlocks.length > 0 ? `${dirtyBlocks.length} unsaved` : 'All saved'}
-                </span>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, color: ORANGE, background: SOFT_ORANGE, border: '1px solid #FED7AA', borderRadius: 999, padding: '8px 11px', fontSize: 12, fontWeight: 900 }}>
-                  <MousePointer2 size={13} /> Click text to edit
-                </span>
                 {selectedSummary ? (
                   <a
                     href={selectedSummary.route_path}
