@@ -120,8 +120,7 @@ export default function AdminDashboardPage() {
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
     )
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED') return
-      if (event === 'USER_DELETED') router.replace('/signin')
+      if (event === 'SIGNED_OUT') router.replace('/signin')
     })
     // Catch invalid refresh token silently and redirect
     supabase.auth.getSession().catch(() => router.replace('/signin'))
