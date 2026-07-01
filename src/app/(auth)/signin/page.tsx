@@ -46,7 +46,7 @@ const ROLE_ROUTES: Record<string, string> = {
   'Casual Worker': '/casual/dashboard',
   'Guest User': '/guest/applications',
   'Marketing Admin': '/admin/dashboard',
-  'User Admin': '/admin/dashboard',
+  'User Admin': '/useradmin/dashboard',
 };
 
 function SignInContent() {
