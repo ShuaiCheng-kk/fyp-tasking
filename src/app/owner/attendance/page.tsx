@@ -5,10 +5,11 @@ import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import {
-  AlertTriangle, ArrowLeftRight, Calendar, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight,
-  Download, RefreshCw, ShieldCheck, UserCog, UserRound, UserX, X,
+  AlertTriangle, ArrowLeftRight, Bot, Calendar, CalendarDays, Check, CheckCheck, ChevronDown, ChevronLeft, ChevronRight,
+  ClipboardList, Clock, Download, FileText, Filter, RefreshCw, ThumbsDown, ThumbsUp, UserCog, UserRound, Users, UserX, X,
 } from 'lucide-react'
 import OwnerSidebar from '@/components/OwnerSidebar'
+import RoleAvatar from '@/components/RoleAvatar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import Spinner from '@/components/Spinner'
@@ -17,11 +18,12 @@ import {
   AttendanceDashboardRecord,
   FixedOffDayRequestView,
   ShiftSwapRequestView,
-  TimeOffRequestView,
 } from '@/types/Attendance'
-import { ModalOverlay, ModalBox, ModalHeader, modalErrorBoxStyle, modalPrimaryButtonStyle } from '@/components/modal'
+import { ModalOverlay, ModalBox, ModalHeader, modalErrorBoxStyle, modalPrimaryButtonStyle, modalInputStyle, modalLabelStyle } from '@/components/modal'
+import DatePickerField from '@/components/DatePickerField'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
+import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 
 const PANEL_BORDER = '#E2E8F0'
 const TEXT_DARK = '#0F172A'
@@ -33,8 +35,35 @@ const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frida
 
 function formatTime(value: string | null | undefined): string {
   if (!value) return '-'
-  if (value.includes('T')) return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  return value.slice(0, 5)
+  const date = value.includes('T') ? new Date(value) : null
+  const [h, m] = date
+    ? [date.getHours(), date.getMinutes()]
+    : value.split(':').map(Number)
+  if (Number.isNaN(h) || Number.isNaN(m)) return value.slice(0, 5)
+  const suffix = h < 12 ? 'AM' : 'PM'
+  const hour12 = h === 0 ? 12 : h > 12 ? h - 12 : h
+  return m === 0 ? `${hour12}${suffix}` : `${hour12}:${String(m).padStart(2, '0')}${suffix}`
+}
+
+function formatSwapDate(value: string | null | undefined): string {
+  if (!value) return '-'
+  const date = new Date(`${value}T00:00:00`)
+  const weekday = date.toLocaleDateString('en-GB', { weekday: 'short' })
+  const dayMonth = date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+  return `${weekday}, ${dayMonth}`
+}
+
+function formatOwnerDecisionTime(value: string | null | undefined): string {
+  if (!value) return '-'
+  const date = new Date(value)
+  const weekday = date.toLocaleDateString('en-GB', { weekday: 'short' })
+  const dayMonth = date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+  const hours = date.getHours()
+  const minutes = date.getMinutes()
+  const suffix = hours < 12 ? 'AM' : 'PM'
+  const hour12 = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours
+  const time = minutes === 0 ? `${hour12}${suffix}` : `${hour12}:${String(minutes).padStart(2, '0')}${suffix}`
+  return `${weekday}, ${dayMonth}, ${time}`
 }
 
 function statusColor(status: string): { bg: string; text: string } {
@@ -43,13 +72,6 @@ function statusColor(status: string): { bg: string; text: string } {
   if (status === 'modified') return { bg: '#FFF7ED', text: '#C2410C' }
   return { bg: '#FFFBEB', text: '#B45309' }
 }
-
-function requestTypeLabel(requestType: string): string {
-  if (requestType === 'leave') return 'Leave Request'
-  if (requestType === 'break_waiver') return 'Break Waiver'
-  return 'Time Off'
-}
-
 
 function addDays(date: Date, n: number): Date {
   const d = new Date(date)
@@ -193,7 +215,7 @@ function CapsuleTabBar<T extends string>({
   active,
   onChange,
 }: {
-  tabs: { key: T; label: string; count?: number }[]
+  tabs: { key: T; label: string; count?: number; dot?: boolean }[]
   active: T
   onChange: (key: T) => void
 }) {
@@ -213,7 +235,7 @@ function CapsuleTabBar<T extends string>({
   return (
     <div
       ref={barRef}
-      style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: 4, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 999, boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden', position: 'relative' }}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: 4, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 999, boxShadow: '0 1px 4px rgba(0,0,0,0.05)', position: 'relative' }}
     >
       <span
         aria-hidden="true"
@@ -245,10 +267,13 @@ function CapsuleTabBar<T extends string>({
             }}
           >
             {tab.label}
-            {tab.count !== undefined && (
+            {tab.count !== undefined && tab.count > 0 && (
               <span style={{ minWidth: 22, height: 22, padding: '0 7px', borderRadius: 999, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: isActive ? 'rgba(255,255,255,0.16)' : '#F1F5F9', color: isActive ? '#FFFFFF' : '#64748B', fontSize: 11, fontWeight: 900 }}>
                 {tab.count}
               </span>
+            )}
+            {tab.dot && (
+              <span style={{ width: 10, height: 10, borderRadius: 999, background: '#EF4444', flexShrink: 0, border: isActive ? '1.5px solid rgba(255,255,255,0.4)' : '1.5px solid #fff' }} />
             )}
           </button>
         )
@@ -285,6 +310,143 @@ const inputStyle: React.CSSProperties = {
 const labelStyle: React.CSSProperties = {
   display: 'block', fontSize: '0.75rem', fontWeight: 900, color: '#6B7280', marginBottom: 6,
   textTransform: 'uppercase', letterSpacing: '0.04em',
+}
+
+// ─── CurrentShiftsBlock ───────────────────────────────────────────────────────
+
+function CurrentShiftsBlock({ show, deptName, rows, loading, panelBorder, highlightRequest }: {
+  show: boolean
+  deptName: string
+  rows: TimelineRow[]
+  loading: boolean
+  panelBorder: string
+  highlightRequest?: ShiftSwapRequestView | null
+}) {
+  if (!show) return null
+  const today = new Date()
+  const dow = (today.getDay() + 6) % 7
+  const mon = new Date(today); mon.setDate(today.getDate() - dow)
+  const csWeekDates: string[] = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(mon); d.setDate(mon.getDate() + i)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  })
+  const todayKey2 = today.toISOString().slice(0, 10)
+  const dc = deptColor(deptName)
+  const sortedRows = [...rows].sort((a, b) => {
+    const ra = a.role === 'Manager' ? 0 : 1
+    const rb = b.role === 'Manager' ? 0 : 1
+    return ra - rb || a.full_name.localeCompare(b.full_name)
+  })
+  const EDGE = '2px solid rgba(15,23,42,0.45)'
+  const isSameClock = (a: string | null, b: string | null) => !!a && !!b && a.slice(0, 5) === b.slice(0, 5)
+  const isHighlightedShift = (row: TimelineRow, shift: TimelineShiftBlock) => {
+    if (!highlightRequest) return false
+    if (
+      shift.assignment_id &&
+      (shift.assignment_id === highlightRequest.requester_assignment_id ||
+       shift.assignment_id === highlightRequest.counterpart_assignment_id)
+    ) return true
+
+    const matchesRequester =
+      row.user_id === highlightRequest.requester_id &&
+      shift.shift_date === highlightRequest.requester_shift_date &&
+      isSameClock(shift.start_time, highlightRequest.requester_start_time) &&
+      isSameClock(shift.end_time, highlightRequest.requester_end_time)
+
+    const matchesCounterpart =
+      row.user_id === highlightRequest.counterpart_id &&
+      shift.shift_date === highlightRequest.counterpart_shift_date &&
+      isSameClock(shift.start_time, highlightRequest.counterpart_start_time) &&
+      isSameClock(shift.end_time, highlightRequest.counterpart_end_time)
+
+    return matchesRequester || matchesCounterpart
+  }
+
+  return (
+    <section style={{ background: '#FFFFFF', border: `1px solid ${panelBorder}`, borderRadius: 14, overflow: 'hidden' }}>
+      <div style={{ padding: '14px 18px', borderBottom: `1px solid ${panelBorder}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <CalendarDays size={15} style={{ color: '#F97316' }} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Current Shifts</span>
+          <span style={{ fontSize: 12, fontWeight: 600, color: dc, background: `${dc}1a`, borderRadius: 999, padding: '2px 10px', marginLeft: 10 }}>{deptName}</span>
+        </div>
+        {loading && <Spinner size={13} dark />}
+      </div>
+      <div style={{ overflowX: 'auto', padding: '22px 18px 28px' }}>
+        {loading ? (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 100, gap: 8, color: '#9CA3AF' }}>
+            <Spinner size={14} dark /> <span style={{ fontSize: 13, fontWeight: 600 }}>Loading…</span>
+          </div>
+        ) : sortedRows.length === 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 100, gap: 10, color: '#9CA3AF' }}>
+            <CalendarDays size={22} strokeWidth={1.5} />
+            <span style={{ fontSize: 13, fontWeight: 600 }}>No shifts this week</span>
+          </div>
+        ) : (
+          <div style={{ minWidth: 700, borderRadius: 12, overflow: 'hidden', border: `1px solid ${panelBorder}` }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '180px repeat(7, 1fr)', background: 'linear-gradient(135deg,#0F172A 0%,#1E293B 100%)', height: 62 }}>
+              <div style={{ padding: '10px 14px', borderRight: '1px solid rgba(255,255,255,0.08)' }} />
+              {csWeekDates.map(date => {
+                const d = new Date(date + 'T00:00:00')
+                const isToday = date === todayKey2
+                return (
+                  <div key={date} style={{ padding: '10px 8px', borderRight: '1px solid rgba(255,255,255,0.08)', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                    <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: isToday ? '#F97316' : 'rgba(255,255,255,0.85)', letterSpacing: '0.01em', lineHeight: 1.2 }}>{String(d.getDate()).padStart(2, '0')} {d.toLocaleDateString('en-AU', { month: 'short' })}</p>
+                    <p style={{ margin: '3px 0 0', fontSize: 12, fontWeight: 500, color: isToday ? '#F97316' : 'rgba(255,255,255,0.5)', letterSpacing: '0.01em', lineHeight: 1.2 }}>{d.toLocaleDateString('en-AU', { weekday: 'long' })}</p>
+                  </div>
+                )
+              })}
+            </div>
+            <div style={{ borderLeft: EDGE, borderRight: EDGE, borderBottom: EDGE }}>
+              {sortedRows.map((row, rowIdx) => {
+                const isManager = row.role === 'Manager'
+                const borderTop = rowIdx > 0 ? `1px solid ${panelBorder}` : 'none'
+                const maxPerDay = Math.max(1, ...csWeekDates.map(d => row.shifts.filter((s: TimelineShiftBlock) => s.shift_date === d).length))
+                const rowH = Math.max(72, maxPerDay * 34 + (maxPerDay - 1) * 6 + 38)
+                return (
+                  <div key={row.user_id} style={{ display: 'grid', gridTemplateColumns: '180px repeat(7, 1fr)', borderTop, background: '#FFFFFF', height: rowH }}>
+                    <div style={{ display: 'flex', alignItems: 'center', borderRight: `1px solid ${panelBorder}`, overflow: 'hidden', height: rowH }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px 0 18px', minWidth: 0, flex: 1 }}>
+                        <div style={{ width: 26, height: 26, borderRadius: 999, background: row.profile_photo_url ? 'transparent' : (isManager ? '#FFF7ED' : '#F3F4F6'), display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
+                          {row.profile_photo_url
+                            ? <img src={row.profile_photo_url} alt={row.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            : isManager ? <UserCog size={13} color="#EA580C" /> : <UserRound size={13} color="#4B5563" />}
+                        </div>
+                        <span style={{ fontSize: '0.9375rem', fontWeight: 600, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.full_name}</span>
+                      </div>
+                    </div>
+                    {csWeekDates.map(date => {
+                      const dayShifts = row.shifts.filter((s: TimelineShiftBlock) => s.shift_date === date)
+                      return (
+                        <div key={date} style={{ padding: '0 8px', borderRight: `1px solid ${panelBorder}`, height: rowH, display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'stretch', justifyContent: 'center', background: 'transparent' }}>
+                          {dayShifts.length === 0 ? (
+                            <div style={{ borderRadius: 999, background: '#E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', height: 32 }}>
+                              <span style={{ fontSize: 12, fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Off</span>
+                            </div>
+                          ) : dayShifts.map((shift: TimelineShiftBlock) => {
+                            const highlighted = isHighlightedShift(row, shift)
+                            return (
+                              <div key={shift.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 8px', height: 32, background: highlighted ? '#FFF7ED' : '#F8FAFC', borderRadius: 999, opacity: shift.publication_status === 'draft' ? 0.72 : 1, border: highlighted ? '1.5px solid #FDBA74' : shift.publication_status === 'draft' ? '1.5px dashed #CBD5E1' : '1px solid #E2E8F0', boxShadow: highlighted ? '0 0 0 3px rgba(249,115,22,0.12)' : 'none' }}>
+                                <span style={{ fontSize: 12.5, fontWeight: 800, color: highlighted ? '#C2410C' : '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                  {formatShiftHour(shift.start_time)}–{formatShiftHour(shift.end_time)}
+                                </span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  )
 }
 
 // ─── main page ────────────────────────────────────────────────────────────────
@@ -324,13 +486,39 @@ export default function OwnerAttendancePage() {
   const [exportFormat, setExportFormat] = useState<'csv' | 'pdf'>('csv')
 
   // ── Requests tab state ───────────────────────────────────────────────────
-  const [reqTab, setReqTab] = useState<'swaps' | 'fixedoff' | 'leave'>('swaps')
-  const [timeOffRequests, setTimeOffRequests] = useState<TimeOffRequestView[]>([])
+  const [reqTab, setReqTab] = useState<'swaps' | 'fixedoff'>('swaps')
   const [swapRequests, setSwapRequests] = useState<ShiftSwapRequestView[]>([])
   const [fixedOffDayRequests, setFixedOffDayRequests] = useState<FixedOffDayRequestView[]>([])
   const [reqLoading, setReqLoading] = useState(false)
+  const [actionIndex, setActionIndex] = useState(0)
+  const [processedDeptFilter, setProcessedDeptFilter] = useState<string>('all')
+  const [processedDeptDropdownOpen, setProcessedDeptDropdownOpen] = useState(false)
+  const processedDeptDropdownRef = useRef<HTMLDivElement>(null)
+  const [newlyProcessedId, setNewlyProcessedId] = useState<string | null>(null)
+  useEffect(() => {
+    if (!processedDeptDropdownOpen) return
+    const handler = (e: MouseEvent) => {
+      if (!processedDeptDropdownRef.current?.contains(e.target as Node)) setProcessedDeptDropdownOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [processedDeptDropdownOpen])
   const [reqActionLoading, setReqActionLoading] = useState(false)
   const [reqError, setReqError] = useState('')
+  const [currentShiftsRows, setCurrentShiftsRows] = useState<TimelineRow[]>([])
+  const [currentShiftsLoading, setCurrentShiftsLoading] = useState(false)
+  const [currentShiftsDept, setCurrentShiftsDept] = useState<string | null>(null)
+  const [aiSwapLoadingId, setAiSwapLoadingId] = useState<string | null>(null)
+  const [aiSwapResults, setAiSwapResults] = useState<Record<string, { recommendation: string; reason: string }>>({})
+  const [aiSwapError, setAiSwapError] = useState<Record<string, string>>({})
+  const [activityLogs, setActivityLogs] = useState<{ id: string; type: 'swaps' | 'fixedoff'; action: 'approved' | 'rejected'; targetName: string; ts: Date }[]>(() => {
+    try {
+      const saved = localStorage.getItem('attendance_activity_logs')
+      if (!saved) return []
+      return (JSON.parse(saved) as { id: string; type: 'swaps' | 'fixedoff'; action: 'approved' | 'rejected'; targetName: string; ts: string }[])
+        .map(l => ({ ...l, ts: new Date(l.ts) }))
+    } catch { return [] }
+  })
   // ── Rolling 7-day window with back-navigation (0 = current, -7 = one week back, etc.) ──
   const [arWindowOffset, setArWindowOffset] = useState(0) // days offset from current rolling window
   const arToday = useMemo(() => {
@@ -364,20 +552,39 @@ export default function OwnerAttendancePage() {
     setReqLoading(true)
     setReqError('')
     try {
-      const [toRes, swapRes, fixedRes] = await Promise.all([
-        fetch(`/api/attendance?company_id=${cid}&resource=time_off`),
+      const [swapRes, fixedRes] = await Promise.all([
         fetch(`/api/attendance?company_id=${cid}&resource=shift_swaps`),
         fetch(`/api/attendance?company_id=${cid}&resource=fixed_off_days`),
       ])
-      const toData = await toRes.json()
       const swapData = await swapRes.json()
       const fixedData = await fixedRes.json()
-      setTimeOffRequests(toData.requests ?? [])
       setSwapRequests(swapData.requests ?? [])
       setFixedOffDayRequests(fixedData.requests ?? [])
     } catch (err) {
       setReqError(err instanceof Error ? err.message : 'Failed to fetch requests')
     } finally { setReqLoading(false) }
+  }, [])
+
+  // ── Fetch current dept shifts for Current Shifts block ───────────────────
+  const fetchCurrentShifts = useCallback(async (cid: string, deptName: string) => {
+    if (!cid || !deptName) return
+    setCurrentShiftsLoading(true)
+    setCurrentShiftsDept(deptName)
+    try {
+      const today = new Date()
+      const dow = (today.getDay() + 6) % 7
+      const mon = new Date(today); mon.setDate(today.getDate() - dow)
+      const sun = new Date(mon); sun.setDate(mon.getDate() + 6)
+      const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+      const res = await fetch(`/api/shift?company_id=${cid}&date_from=${fmt(mon)}&date_to=${fmt(sun)}`)
+      const data = await res.json()
+      const all: TimelineRow[] = data.success ? data.rows ?? [] : []
+      setCurrentShiftsRows(all.filter(r => r.department_name === deptName && r.user_id && (r.role === 'Manager' || r.role === 'Employee')))
+    } catch {
+      setCurrentShiftsRows([])
+    } finally {
+      setCurrentShiftsLoading(false)
+    }
   }, [])
 
   // ── Init ──────────────────────────────────────────────────────────────────
@@ -415,11 +622,48 @@ export default function OwnerAttendancePage() {
     if (companyId) void fetchWeekRecords(companyId, arWindowOffset)
   }, [companyId, arWindowOffset, fetchWeekRecords])
 
+  // fetch current dept shifts whenever the action-needed card changes
+  useEffect(() => {
+    if (!companyId || mainTab !== 'requests' || reqTab !== 'swaps') return
+    const pending = swapRequests
+      .filter(r => r.status === 'pending')
+      .sort((a, b) => new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime())
+    const card = pending[Math.min(actionIndex, pending.length - 1)]
+    if (card?.department_name) void fetchCurrentShifts(companyId, card.department_name)
+  }, [companyId, mainTab, reqTab, swapRequests, actionIndex, fetchCurrentShifts])
+
+  // ── AI analyze shift swap ─────────────────────────────────────────────────
+  const analyzeSwap = async (req: ShiftSwapRequestView) => {
+    setAiSwapLoadingId(req.id)
+    setAiSwapError(prev => ({ ...prev, [req.id]: '' }))
+    try {
+      const res = await fetch('/api/attendance/ai-suggest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          request_type: 'shift_swap',
+          requester_id: req.requester_id,
+          counterpart_id: req.counterpart_id,
+          requester_assignment_id: req.requester_assignment_id,
+          counterpart_assignment_id: req.counterpart_assignment_id,
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'AI analysis failed')
+      setAiSwapResults(prev => ({ ...prev, [req.id]: { recommendation: data.recommendation, reason: data.reason } }))
+    } catch (err) {
+      setAiSwapError(prev => ({ ...prev, [req.id]: err instanceof Error ? err.message : 'AI analysis failed' }))
+    } finally {
+      setAiSwapLoadingId(null)
+    }
+  }
+
   // ── Decide request ────────────────────────────────────────────────────────
   const decideRequest = async (
-    kind: 'decide_time_off' | 'decide_shift_swap' | 'decide_fixed_off_day',
+    kind: 'decide_shift_swap' | 'decide_fixed_off_day',
     id: string,
     decision: 'approved' | 'rejected',
+    targetName?: string,
   ) => {
     if (!internalUserId || !companyId) return
     setReqActionLoading(true)
@@ -432,6 +676,16 @@ export default function OwnerAttendancePage() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to update request')
+      setActivityLogs(prev => {
+        const next = [{ id: `${id}-${Date.now()}`, type: kind === 'decide_shift_swap' ? 'swaps' as const : 'fixedoff' as const, action: decision, targetName: targetName ?? '—', ts: new Date() }, ...prev]
+        try { localStorage.setItem('attendance_activity_logs', JSON.stringify(next)) } catch {}
+        return next
+      })
+      if (kind === 'decide_shift_swap') {
+        setNewlyProcessedId(id)
+        setTimeout(() => setNewlyProcessedId(null), 800)
+        setActionIndex(0)
+      }
       await fetchRequestData(companyId)
     } catch (err) {
       setReqError(err instanceof Error ? err.message : 'Failed to update request')
@@ -821,18 +1075,6 @@ export default function OwnerAttendancePage() {
   }, [companyId, recordsRole, selectedDeptId, casualJobType])
 
   // ── Absence reason lookups ────────────────────────────────────────────────
-  // approved leave: userId+date → label
-  const leaveByUserDate = useMemo(() => {
-    const map = new Map<string, string>()
-    timeOffRequests.forEach(r => {
-      if (r.status === 'approved' && r.shift_date) {
-        const label = r.request_type === 'leave' ? 'On Leave' : 'Time Off'
-        map.set(`${r.requester_id}|${r.shift_date}`, label)
-      }
-    })
-    return map
-  }, [timeOffRequests])
-
   // approved fixed off: userId+weekday (0=Sun…6=Sat) → true
   const fixedOffByUserWeekday = useMemo(() => {
     const map = new Map<string, boolean>()
@@ -844,24 +1086,19 @@ export default function OwnerAttendancePage() {
 
   // ── Pending counts ────────────────────────────────────────────────────────
   const pendingSwapCount = swapRequests.filter(r => r.status === 'pending').length
-  const pendingLeaveCount = timeOffRequests.filter(r => r.status === 'pending').length
   const pendingFixedOffCount = fixedOffDayRequests.filter(r => r.status === 'pending').length
-  const totalPendingRequests = pendingSwapCount + pendingLeaveCount + pendingFixedOffCount
+  const totalPendingRequests = pendingSwapCount + pendingFixedOffCount
+  const activeSwapRequest = useMemo(() => {
+    const pending = swapRequests
+      .filter(r => r.status === 'pending')
+      .sort((a, b) => new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime())
+    return pending[Math.min(actionIndex, pending.length - 1)] ?? null
+  }, [swapRequests, actionIndex])
 
   const mainTabs = [
     { key: 'records' as const, label: 'Records' },
-    { key: 'requests' as const, label: 'Requests', count: reqLoading ? undefined : totalPendingRequests },
+    { key: 'requests' as const, label: 'Requests', dot: !reqLoading && totalPendingRequests > 0 },
   ]
-
-  const reqSubTabs = [
-    { key: 'swaps' as const, label: 'Shift Swaps', count: reqLoading ? undefined : pendingSwapCount },
-    { key: 'fixedoff' as const, label: 'Fixed Day Off', count: reqLoading ? undefined : pendingFixedOffCount },
-    { key: 'leave' as const, label: 'Leave Requests', count: reqLoading ? undefined : pendingLeaveCount },
-  ]
-
-  const sectionHeaderStyle: React.CSSProperties = {
-    padding: '14px 18px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', gap: 10,
-  }
 
   // ── Today's date key for AR status reference ──────────────────────────────
   const todayKey = useMemo(() => new Date().toISOString().slice(0, 10), [])
@@ -872,8 +1109,11 @@ export default function OwnerAttendancePage() {
       <style>{`
         @keyframes fadeSlideUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes deptCardIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-        .att-request-card { transition: box-shadow 0.18s ease, transform 0.18s ease; animation: fadeSlideUp 0.26s ease both; }
+        @keyframes ping { 0% { transform: scale(1); opacity: 1; } 75%, 100% { transform: scale(2); opacity: 0; } }
+        @keyframes slideInFromLeft { from { opacity: 0; transform: translateX(-32px); } to { opacity: 1; transform: translateX(0); } }
+        .att-request-card { transition: box-shadow 0.18s ease, transform 0.18s ease; }
         .att-request-card:hover { box-shadow: 0 8px 22px rgba(15,23,42,0.08); transform: translateY(-2px); }
+        .att-request-card-new { animation: slideInFromLeft 0.38s cubic-bezier(0.22,1,0.36,1) both !important; }
         .ar-row-hover:hover { background: #F8FAFC !important; }
       `}</style>
       <OwnerSidebar />
@@ -905,8 +1145,8 @@ export default function OwnerAttendancePage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <section style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
               <div style={{ padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div style={{ width: 30, height: 30, borderRadius: 9, background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <UserCog size={15} style={{ color: '#2563EB' }} />
+                <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <UserCog size={15} style={{ color: '#F97316' }} />
                 </div>
                 <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Internal Staffs</span>
               </div>
@@ -961,8 +1201,8 @@ export default function OwnerAttendancePage() {
             {/* ── Casual Worker filter panel ── */}
             <section style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
               <div style={{ padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div style={{ width: 30, height: 30, borderRadius: 9, background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <UserRound size={15} style={{ color: '#2563EB' }} />
+                <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <UserRound size={15} style={{ color: '#F97316' }} />
                 </div>
                 <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Casual Workers</span>
               </div>
@@ -973,7 +1213,7 @@ export default function OwnerAttendancePage() {
                   { key: 'one-off' as const,   label: 'One-Off',   desc: 'Single open-ended shifts' },
                 ] as const).map((opt, idx) => {
                   const isActive = casualJobType === opt.key
-                  const BLUE = '#2563EB'
+                  const ORANGE = '#F97316'
                   return (
                     <article
                       key={opt.key}
@@ -989,19 +1229,19 @@ export default function OwnerAttendancePage() {
                       }}
                       style={{
                         display: 'flex', alignItems: 'center', gap: 10,
-                        border: `1px solid ${isActive ? BLUE : PANEL_BORDER}`,
+                        border: `1px solid ${isActive ? ORANGE : PANEL_BORDER}`,
                         borderRadius: 10, padding: '12px 14px',
-                        background: isActive ? '#EFF6FF' : '#F9FAFB',
+                        background: isActive ? '#FFF7ED' : '#F9FAFB',
                         cursor: 'pointer',
                         transition: 'box-shadow 0.18s, transform 0.18s, border-color 0.18s, background 0.18s',
                         animation: `deptCardIn 0.28s ease both ${idx * 55}ms`,
-                        boxShadow: isActive ? `0 4px 16px ${BLUE}22` : undefined,
+                        boxShadow: isActive ? `0 4px 16px ${ORANGE}22` : undefined,
                       }}
-                      onMouseEnter={e => { if (!isActive) { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 20px rgba(15,23,42,0.10)'; e.currentTarget.style.borderColor = BLUE } }}
+                      onMouseEnter={e => { if (!isActive) { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 20px rgba(15,23,42,0.10)'; e.currentTarget.style.borderColor = ORANGE } }}
                       onMouseLeave={e => { if (!isActive) { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.borderColor = PANEL_BORDER } }}
                     >
-                      <span style={{ width: 8, height: 8, borderRadius: 999, background: isActive ? BLUE : '#94A3B8', flexShrink: 0 }} />
-                      <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: isActive ? BLUE : '#374151' }}>{opt.label}</span>
+                      <span style={{ width: 8, height: 8, borderRadius: 999, background: '#94A3B8', flexShrink: 0 }} />
+                      <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#374151' }}>{opt.label}</span>
                     </article>
                   )
                 })}
@@ -1178,14 +1418,7 @@ export default function OwnerAttendancePage() {
                                       {sorted.length === 0 ? (() => {
                                         const d = new Date(date + 'T00:00:00')
                                         const weekday = d.getDay() // 0=Sun…6=Sat
-                                        const leaveLabel = leaveByUserDate.get(`${userId}|${date}`)
                                         const isFixedOff = fixedOffByUserWeekday.get(`${userId}|${weekday}`)
-                                        if (leaveLabel) return (
-                                          <div style={{ borderRadius: 999, background: '#EFF6FF', border: '1.5px solid #93C5FD', display: 'flex', alignItems: 'center', justifyContent: 'center', height: 32, gap: 4 }}>
-                                            <Calendar size={11} color="#2563EB" />
-                                            <span style={{ fontSize: 11, fontWeight: 600, color: '#2563EB', whiteSpace: 'nowrap' }}>{leaveLabel}</span>
-                                          </div>
-                                        )
                                         if (isFixedOff) return (
                                           <div style={{ borderRadius: 999, background: '#F5F3FF', border: '1.5px solid #C4B5FD', display: 'flex', alignItems: 'center', justifyContent: 'center', height: 32, gap: 4 }}>
                                             <Calendar size={11} color="#7C3AED" />
@@ -1252,142 +1485,397 @@ export default function OwnerAttendancePage() {
             REQUESTS TAB
         ══════════════════════════════════════════════════════════════════ */}
         {mainTab === 'requests' && (
-          <div style={{ padding: '0 28px 28px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{ padding: '0 28px 28px', display: 'grid', gridTemplateColumns: 'minmax(260px, 326px) minmax(360px, 1fr) minmax(360px, 640px)', gridTemplateRows: 'auto minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
+            <div style={{ display: 'contents' }}>
 
-            {/* Sub tab bar + refresh */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <CapsuleTabBar tabs={reqSubTabs} active={reqTab} onChange={setReqTab} />
-              <button
-                onClick={() => fetchRequestData(companyId)}
-                disabled={reqLoading || !companyId}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 36, border: '1px solid #E5E7EB', borderRadius: 9, background: '#FFFFFF', color: '#0F172A', padding: '0 13px', fontWeight: 700, fontSize: 13, cursor: reqLoading || !companyId ? 'default' : 'pointer', opacity: reqLoading || !companyId ? 0.55 : 1, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}
-              >
-                {reqLoading ? <Spinner size={14} dark /> : <RefreshCw size={14} />} Refresh
-              </button>
+            {/* ── LEFT: Request Types sidebar ──────────────────────────────── */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <section style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden', height: 260 }}>
+                <div style={{ padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <ArrowLeftRight size={15} style={{ color: '#F97316' }} />
+                  </div>
+                  <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Type</span>
+                </div>
+                <div style={{ padding: '14px 16px', display: 'grid', gap: 14 }}>
+                  {(['swaps', 'fixedoff'] as const).map((tab, idx) => {
+                    const isActive = reqTab === tab
+                    const meta = {
+                      swaps:    { color: '#F97316', label: 'Shift Swaps', subtitle: 'Swap shifts with colleagues', count: pendingSwapCount },
+                      fixedoff: { color: '#F97316', label: 'Fixed Day Off', subtitle: 'Request a fixed day off', count: pendingFixedOffCount },
+                    }[tab]
+                    return (
+                      <article
+                        key={tab}
+                        onClick={() => setReqTab(tab)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 10,
+                          border: `1px solid ${isActive ? meta.color : PANEL_BORDER}`,
+                          borderRadius: 10, padding: '18px 16px',
+                          background: isActive ? '#FFF7ED' : '#F9FAFB',
+                          cursor: 'pointer',
+                          transition: 'box-shadow 0.18s, transform 0.18s, border-color 0.18s, background 0.18s',
+                          animation: `deptCardIn 0.28s ease both ${idx * 55}ms`,
+                          boxShadow: isActive ? `0 4px 16px ${meta.color}22` : undefined,
+                        }}
+                        onMouseEnter={e => { if (!isActive) { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 20px rgba(15,23,42,0.10)'; e.currentTarget.style.borderColor = meta.color } }}
+                        onMouseLeave={e => { if (!isActive) { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.borderColor = PANEL_BORDER } }}
+                      >
+                        <span style={{ position: 'relative', width: 8, height: 8, flexShrink: 0 }}>
+                          {meta.count > 0 && (
+                            <span style={{ position: 'absolute', inset: 0, borderRadius: 999, background: '#F97316', animation: 'ping 1.2s cubic-bezier(0,0,0.2,1) infinite' }} />
+                          )}
+                          <span style={{ position: 'absolute', inset: 0, borderRadius: 999, background: meta.count > 0 ? '#F97316' : '#94A3B8' }} />
+                        </span>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#374151' }}>{meta.label}</div>
+                          <div style={{ fontSize: '0.75rem', color: '#9CA3AF', marginTop: 2 }}>{meta.subtitle}</div>
+                        </div>
+                      </article>
+                    )
+                  })}
+                </div>
+              </section>
             </div>
 
-            {reqError && (
-              <div style={{ padding: 12, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 8, fontSize: '0.84rem', fontWeight: 800 }}>{reqError}</div>
-            )}
+            {/* ── RIGHT: Content ───────────────────────────────────────────── */}
+            <div style={{ gridColumn: reqTab === 'swaps' ? undefined : '2 / 4', minWidth: 0, display: reqTab === 'swaps' ? 'contents' : 'flex', flexDirection: 'column', gap: 16 }}>
 
-            {/* ── Shift Swaps ─────────────────────────────────────────────── */}
-            {reqTab === 'swaps' && (
-              <section style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, overflow: 'hidden' }}>
-                <div style={sectionHeaderStyle}>
-                  <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <ArrowLeftRight size={14} style={{ color: '#F97316' }} />
-                  </div>
-                  <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#111827', flex: 1 }}>Shift Swap Requests</span>
-                </div>
-                {reqLoading ? (
-                  <div style={{ padding: '24px 16px', color: '#9CA3AF', fontSize: '0.875rem', display: 'flex', gap: 8, alignItems: 'center' }}><Spinner size={15} dark /> Loading...</div>
-                ) : swapRequests.length === 0 ? (
-                  <div style={{ padding: '24px 16px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>No shift swap requests.</div>
-                ) : swapRequests.map(req => {
-                  const color = statusColor(req.status)
-                  return (
-                    <div key={req.id} className="att-request-card" style={{ padding: '14px 16px', borderBottom: '1px solid #F8FAFC' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
-                        <div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-                            <strong style={{ fontSize: '0.875rem', color: '#111827' }}>{req.requester_name}</strong>
-                            <ArrowLeftRight size={11} style={{ color: '#9CA3AF' }} />
-                            <strong style={{ fontSize: '0.875rem', color: '#111827' }}>{req.replacement_name}</strong>
+              {reqError && (
+                <div style={{ gridColumn: '2 / 4', padding: 12, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 8, fontSize: '0.84rem', fontWeight: 800 }}>{reqError}</div>
+              )}
+
+              {/* ── Shift Swaps ─────────────────────────────────────────────── */}
+              {reqTab === 'swaps' && (() => {
+                const actionNeeded = swapRequests
+                  .filter(r => r.status === 'pending')
+                  .sort((a, b) => new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime())
+                const processed = swapRequests
+                  .filter(r => r.status !== 'pending')
+                  .sort((a, b) => new Date(b.reviewed_at ?? 0).getTime() - new Date(a.reviewed_at ?? 0).getTime())
+
+                const SwapCard = ({ req, compact }: { req: ShiftSwapRequestView; compact?: boolean }) => {
+                  const isReadyForDecision = req.counterpart_status === 'approved' && req.status === 'pending'
+                  const isAwaitingCounterpart = req.counterpart_status === 'pending' && req.status === 'pending'
+                  const aiResult = aiSwapResults[req.id]
+                  const aiErr = aiSwapError[req.id]
+                  const aiLoading = aiSwapLoadingId === req.id
+                  const aiColor = aiResult?.recommendation === 'approve' ? { bg: '#DCFCE7', text: '#15803D', border: '#BBF7D0' } : aiResult?.recommendation === 'reject' ? { bg: '#FEE2E2', text: '#DC2626', border: '#FECACA' } : { bg: '#FEF9C3', text: '#854D0E', border: '#FDE68A' }
+                  const initials = (name: string) => name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+                  const avatarColors = ['#3B82F6', '#8B5CF6', '#059669', '#F97316', '#EC4899', '#0EA5E9']
+                  const avatarBg = (name: string) => avatarColors[name.charCodeAt(0) % avatarColors.length]
+
+                  if (compact) {
+                    const isNew = req.id === newlyProcessedId
+                    const approved = req.status === 'approved'
+                    const StatusIcon = approved ? Check : X
+                    const statusTone = approved
+                      ? { bg: '#ECFDF5', text: '#047857', border: '#86EFAC', cardBorder: '#BBF7D0' }
+                      : { bg: '#FEF2F2', text: '#B91C1C', border: '#FCA5A5', cardBorder: '#FECACA' }
+                    const miniShiftCard = (
+                      name: string,
+                      role: string,
+                      photoUrl: string | null,
+                      shiftDate: string | null,
+                      startTime: string | null,
+                      endTime: string | null,
+                    ) => (
+                      <div style={{ flex: 1, minWidth: 0, border: '1px solid #E5E7EB', borderRadius: 12, padding: '12px 10px', display: 'flex', alignItems: 'center', gap: 10, background: '#FFFFFF' }}>
+                        <RoleAvatar role={role} size={42} photoUrl={photoUrl} />
+                        <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          <div style={{ fontSize: '0.86rem', fontWeight: 800, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#64748B' }}>
+                            <Calendar size={11} style={{ flexShrink: 0 }} />
+                            <span style={{ fontSize: '0.72rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{formatSwapDate(shiftDate)}</span>
                           </div>
-                          <p style={{ margin: 0, fontSize: '0.775rem', color: '#6B7280' }}>
-                            {req.shift_title ?? 'Shift'} | {req.shift_date ?? '-'} | {formatTime(req.start_time)} - {formatTime(req.end_time)}
-                          </p>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#64748B' }}>
+                            <Clock size={11} style={{ flexShrink: 0 }} />
+                            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#334155', whiteSpace: 'nowrap' }}>{formatTime(startTime)} – {formatTime(endTime)}</span>
+                          </div>
                         </div>
-                        <span style={{ background: color.bg, color: color.text, borderRadius: 999, padding: '2px 9px', fontSize: '0.65rem', fontWeight: 900, flexShrink: 0, height: 'fit-content' }}>{req.status}</span>
                       </div>
-                      {req.reason && <p style={{ margin: '0 0 10px', fontSize: '0.78rem', color: '#4B5563', lineHeight: 1.4 }}>{req.reason}</p>}
-                      {req.status === 'pending' && (
-                        <div style={{ display: 'flex', gap: 8 }}>
-                          <button onClick={() => decideRequest('decide_shift_swap', req.id, 'approved')} disabled={reqActionLoading} style={{ flex: 1, border: 'none', borderRadius: 7, background: '#059669', color: '#FFFFFF', padding: '7px 0', fontSize: '0.76rem', fontWeight: 700, cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.5 : 1 }}>Approve</button>
-                          <button onClick={() => decideRequest('decide_shift_swap', req.id, 'rejected')} disabled={reqActionLoading} style={{ flex: 1, border: 'none', borderRadius: 7, background: '#DC2626', color: '#FFFFFF', padding: '7px 0', fontSize: '0.76rem', fontWeight: 700, cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.5 : 1 }}>Reject</button>
+                    )
+                    return (
+                      <div className={`att-request-card${isNew ? ' att-request-card-new' : ''}`} style={{ background: '#FFFFFF', border: `1.5px solid ${isNew ? '#FED7AA' : statusTone.cardBorder}`, borderRadius: 14, padding: '12px 14px 14px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          {req.department_name && (() => {
+                            const dc = deptColor(req.department_name)
+                            return <span style={{ fontSize: '0.72rem', fontWeight: 800, color: dc, background: `${dc}1a`, borderRadius: 999, padding: '4px 10px' }}>{req.department_name}</span>
+                          })()}
+                          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, minWidth: 0 }}>
+                            <span style={{ fontSize: '0.76rem', fontWeight: 800, color: '#64748B', whiteSpace: 'nowrap' }}>
+                              {formatOwnerDecisionTime(req.reviewed_at)}
+                            </span>
+                            <span title={req.status === 'approved' ? 'Approved' : 'Rejected'} style={{ width: 30, height: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: statusTone.bg, color: statusTone.text, border: `1.5px solid ${statusTone.border}`, borderRadius: 999, flexShrink: 0 }}>
+                              <StatusIcon size={12} strokeWidth={3} />
+                            </span>
+                          </div>
                         </div>
-                      )}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          {miniShiftCard(req.requester_name, req.requester_role, req.requester_photo_url, req.requester_shift_date, req.requester_start_time, req.requester_end_time)}
+                          <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, color: '#94A3B8' }}>
+                            <svg width="24" height="8" viewBox="0 0 24 8" fill="none">
+                              <line x1="1" y1="4" x2="19" y2="4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+                              <polyline points="16,1 22,4 16,7" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                            <svg width="24" height="8" viewBox="0 0 24 8" fill="none">
+                              <line x1="23" y1="4" x2="5" y2="4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+                              <polyline points="8,1 2,4 8,7" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                          </div>
+                          {miniShiftCard(req.counterpart_name, req.counterpart_role, req.counterpart_photo_url, req.counterpart_shift_date, req.counterpart_start_time, req.counterpart_end_time)}
+                        </div>
+                      </div>
+                    )
+                  }
+
+                  return (
+                    <div className="att-request-card" style={{ background: '#FFFFFF', borderRadius: 16, overflow: 'hidden' }}>
+                      {/* Top meta row */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 20px 0' }}>
+                        {req.department_name && (() => {
+                          const dc = deptColor(req.department_name)
+                          return (
+                            <span style={{ fontSize: '0.78rem', fontWeight: 700, color: dc, background: `${dc}1a`, borderRadius: 999, padding: '5px 12px' }}>{req.department_name}</span>
+                          )
+                        })()}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                          <Calendar size={12} style={{ color: '#6B7280' }} />
+                          <span style={{ fontSize: '0.78rem', color: '#374151', fontWeight: 500 }}>
+                            {req.created_at ? new Date(req.created_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
+                          </span>
+                        </div>
+                        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                          {isReadyForDecision && (
+                            <>
+                              <button onClick={() => decideRequest('decide_shift_swap', req.id, 'rejected', req.requester_name)} disabled={reqActionLoading} title="Reject" style={{ width: 32, height: 32, borderRadius: 8, border: '1.5px solid #FECACA', background: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.5 : 1, transition: 'background 0.14s' }} onMouseEnter={e => { e.currentTarget.style.background = '#FEF2F2' }} onMouseLeave={e => { e.currentTarget.style.background = '#FFF' }}>
+                                <X size={15} style={{ color: '#DC2626' }} />
+                              </button>
+                              <button onClick={() => decideRequest('decide_shift_swap', req.id, 'approved', req.requester_name)} disabled={reqActionLoading} title="Approve" style={{ width: 32, height: 32, borderRadius: 8, border: 'none', background: '#F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.5 : 1 }}>
+                                <Check size={15} style={{ color: '#FFFFFF' }} />
+                              </button>
+                            </>
+                          )}
+                          {isAwaitingCounterpart && (
+                            <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#92400E', background: '#FEF3C7', borderRadius: 999, padding: '3px 10px' }}>Awaiting</span>
+                          )}
+                        </div>
+                      </div>
+                      {/* Two sub-cards + arrow */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 0, padding: '14px 20px 20px' }}>
+                        {/* Original Shift card */}
+                        <div style={{ flex: 1, border: '1px solid #E5E7EB', borderRadius: 12, padding: '16px 18px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                            <RoleAvatar role={req.requester_role} size={52} photoUrl={req.requester_photo_url} />
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                              <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#111827' }}>{req.requester_name}</div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                                <Calendar size={11} style={{ color: '#64748B', flexShrink: 0 }} />
+                                <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748B' }}>
+                                  {formatSwapDate(req.requester_shift_date)}
+                                </span>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                                <Clock size={11} style={{ color: '#64748B', flexShrink: 0 }} />
+                                <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#334155' }}>{formatTime(req.requester_start_time)} – {formatTime(req.requester_end_time)}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Arrow */}
+                        <div style={{ flexShrink: 0, padding: '0 18px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                          <svg width="32" height="10" viewBox="0 0 32 10" fill="none">
+                            <line x1="0" y1="5" x2="26" y2="5" stroke="#9CA3AF" strokeWidth="1.5" strokeLinecap="round"/>
+                            <polyline points="22,1 30,5 22,9" fill="none" stroke="#9CA3AF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                          <svg width="32" height="10" viewBox="0 0 32 10" fill="none">
+                            <line x1="32" y1="5" x2="6" y2="5" stroke="#9CA3AF" strokeWidth="1.5" strokeLinecap="round"/>
+                            <polyline points="10,1 2,5 10,9" fill="none" stroke="#9CA3AF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                        </div>
+
+                        {/* Swap With card */}
+                        <div style={{ flex: 1, border: '1px solid #E5E7EB', borderRadius: 12, padding: '16px 18px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                            <RoleAvatar role={req.counterpart_role} size={52} photoUrl={req.counterpart_photo_url} />
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                              <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#111827' }}>{req.counterpart_name}</div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                                <Calendar size={11} style={{ color: '#64748B', flexShrink: 0 }} />
+                                <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748B' }}>
+                                  {formatSwapDate(req.counterpart_shift_date)}
+                                </span>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                                <Clock size={11} style={{ color: '#64748B', flexShrink: 0 }} />
+                                <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#334155' }}>{formatTime(req.counterpart_start_time)} – {formatTime(req.counterpart_end_time)}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
                     </div>
                   )
-                })}
-              </section>
-            )}
+                }
 
-            {/* ── Fixed Day Off ────────────────────────────────────────────── */}
-            {reqTab === 'fixedoff' && (
-              <section style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, overflow: 'hidden' }}>
-                <div style={sectionHeaderStyle}>
-                  <div style={{ width: 30, height: 30, borderRadius: 9, background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <Calendar size={14} style={{ color: '#2563EB' }} />
+                return (
+                  <>
+                    {/* Header row — intentionally empty, no title or refresh needed */}
+
+                    {reqLoading ? (
+                      <div style={{ padding: '32px', textAlign: 'center', color: '#9CA3AF', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}><Spinner size={16} dark /> Loading...</div>
+                    ) : swapRequests.length === 0 ? (
+                      <div style={{ padding: '40px', textAlign: 'center', color: '#9CA3AF', fontSize: '0.875rem' }}>No shift swap requests.</div>
+                    ) : (
+                      <>
+                        <div style={{ display: 'contents' }}>
+                        {/* Action Needed — only shown when there are pending requests */}
+                        {actionNeeded.length > 0 && (
+                        <section style={{ gridColumn: '2', gridRow: '1', background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden', height: 260 }}>
+                          <div style={{ padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                              <ClipboardList size={15} style={{ color: '#F97316' }} />
+                            </div>
+                            <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, flex: 1 }}>Action Needed</span>
+                            {actionNeeded.length > 1 && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <button
+                                  onClick={() => setActionIndex(i => (i - 1 + actionNeeded.length) % actionNeeded.length)}
+                                  style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'background 0.14s, border-color 0.14s' }}
+                                  onMouseEnter={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.borderColor = '#CBD5E1' }}
+                                  onMouseLeave={e => { e.currentTarget.style.background = '#FFFFFF'; e.currentTarget.style.borderColor = '#E5E7EB' }}
+                                >
+                                  <ChevronLeft size={14} style={{ color: '#6B7280' }} />
+                                </button>
+                                <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#9CA3AF' }}>{Math.min(actionIndex, actionNeeded.length - 1) + 1} / {actionNeeded.length}</span>
+                                <button
+                                  onClick={() => setActionIndex(i => (i + 1) % actionNeeded.length)}
+                                  style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'background 0.14s, border-color 0.14s' }}
+                                  onMouseEnter={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.borderColor = '#CBD5E1' }}
+                                  onMouseLeave={e => { e.currentTarget.style.background = '#FFFFFF'; e.currentTarget.style.borderColor = '#E5E7EB' }}
+                                >
+                                  <ChevronRight size={14} style={{ color: '#6B7280' }} />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                          <div style={{ padding: '14px 16px' }}>
+                            <SwapCard key={actionNeeded[Math.min(actionIndex, actionNeeded.length - 1)].id} req={actionNeeded[Math.min(actionIndex, actionNeeded.length - 1)]} />
+                          </div>
+                        </section>
+                        )}
+
+                        {/* Processed */}
+                        {(() => {
+                          const processedDepts = ['all', ...Array.from(new Set(processed.map(r => r.department_name).filter(Boolean)))] as string[]
+                          const filteredProcessed = processedDeptFilter === 'all' ? processed : processed.filter(r => r.department_name === processedDeptFilter)
+                          return (
+                          <section style={{ gridColumn: '3', gridRow: '1 / span 2', alignSelf: 'stretch', background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
+                            <div style={{ padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <div style={{ width: 30, height: 30, borderRadius: 9, background: '#F0FDF4', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                <CheckCheck size={15} style={{ color: '#16A34A' }} />
+                              </div>
+                              <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, flex: 1 }}>Processed Requests</span>
+                              {/* Department filter dropdown */}
+                              <div ref={processedDeptDropdownRef} style={{ position: 'relative' }}>
+                                <button
+                                  type="button"
+                                  onClick={() => setProcessedDeptDropdownOpen(o => !o)}
+                                  style={{ display: 'flex', alignItems: 'center', gap: 5, height: 30, padding: '0 10px', border: `1.5px solid ${processedDeptDropdownOpen ? '#F97316' : '#E5E7EB'}`, borderRadius: 8, background: '#FFFFFF', color: '#374151', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', boxShadow: processedDeptDropdownOpen ? '0 0 0 3px rgba(249,115,22,0.10)' : 'none', transition: 'border-color 0.15s' }}
+                                >
+                                  <Filter size={11} style={{ color: '#9CA3AF', flexShrink: 0 }} />
+                                  {processedDeptFilter === 'all' ? 'All Departments' : processedDeptFilter}
+                                  <ChevronDown size={11} style={{ color: '#9CA3AF', flexShrink: 0, transform: processedDeptDropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+                                </button>
+                                {processedDeptDropdownOpen && (
+                                  <div style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, minWidth: 160, background: '#FFFFFF', border: '1.5px solid #E5E7EB', borderRadius: 10, boxShadow: '0 8px 24px rgba(15,23,42,0.12)', zIndex: 50, padding: '4px 0', overflow: 'hidden' }}>
+                                    {processedDepts.map(dept => {
+                                      const active = processedDeptFilter === dept
+                                      return (
+                                        <button key={dept} type="button"
+                                          onClick={() => { setProcessedDeptFilter(dept); setProcessedDeptDropdownOpen(false) }}
+                                          style={{ display: 'block', width: '100%', padding: '8px 14px', textAlign: 'left', border: 'none', background: active ? '#FFF7ED' : 'transparent', color: active ? '#EA580C' : '#374151', fontWeight: active ? 700 : 400, fontSize: 13, cursor: 'pointer' }}
+                                          onMouseEnter={e => { if (!active) e.currentTarget.style.background = '#F9FAFB' }}
+                                          onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent' }}
+                                        >
+                                          {dept === 'all' ? 'All Departments' : dept}
+                                        </button>
+                                      )
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 'calc(100vh - 260px)', overflowY: 'auto' }}>
+                              {filteredProcessed.length === 0
+                                ? <div style={{ padding: '24px', textAlign: 'center', color: '#9CA3AF', fontSize: '0.875rem' }}>{processedDeptFilter === 'all' ? 'No processed requests.' : `No processed requests for ${processedDeptFilter}.`}</div>
+                                : filteredProcessed.map(req => <SwapCard key={req.id} req={req} compact />)}
+                            </div>
+                          </section>
+                          )
+                        })()}
+                        </div>
+                      </>
+                    )}
+                  </>
+                )
+              })()}
+
+              {/* ── Fixed Day Off ────────────────────────────────────────────── */}
+              {reqTab === 'fixedoff' && (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div>
+                      <h2 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800, color: '#111827' }}>Fixed Day Off Requests</h2>
+                      <p style={{ margin: '2px 0 0', fontSize: '0.78rem', color: '#6B7280' }}>Manage employee fixed day off requests.</p>
+                    </div>
+                    <button onClick={() => fetchRequestData(companyId)} disabled={reqLoading || !companyId} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 36, border: '1px solid #E5E7EB', borderRadius: 9, background: '#FFFFFF', color: '#0F172A', padding: '0 14px', fontWeight: 600, fontSize: '0.82rem', cursor: reqLoading || !companyId ? 'default' : 'pointer', opacity: reqLoading || !companyId ? 0.55 : 1 }}>
+                      {reqLoading ? <Spinner size={13} dark /> : <RefreshCw size={13} />} Refresh
+                    </button>
                   </div>
-                  <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#111827', flex: 1 }}>Fixed Day Off Requests</span>
-                </div>
-                {reqLoading ? (
-                  <div style={{ padding: '24px 16px', color: '#9CA3AF', fontSize: '0.875rem', display: 'flex', gap: 8, alignItems: 'center' }}><Spinner size={15} dark /> Loading...</div>
-                ) : fixedOffDayRequests.length === 0 ? (
-                  <div style={{ padding: '24px 16px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>No fixed day off requests.</div>
-                ) : fixedOffDayRequests.map(req => {
-                  const color = statusColor(req.status)
-                  return (
-                    <div key={req.id} className="att-request-card" style={{ padding: '14px 16px', borderBottom: '1px solid #F8FAFC' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
+                  {reqLoading ? (
+                    <div style={{ padding: '32px', textAlign: 'center', color: '#9CA3AF', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}><Spinner size={16} dark /> Loading...</div>
+                  ) : fixedOffDayRequests.length === 0 ? (
+                    <div style={{ padding: '40px', textAlign: 'center', color: '#9CA3AF', fontSize: '0.875rem' }}>No fixed day off requests.</div>
+                  ) : fixedOffDayRequests.map(req => {
+                    const color = statusColor(req.status)
+                    return (
+                      <div key={req.id} className="att-request-card" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, padding: '14px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
                         <div>
                           <strong style={{ fontSize: '0.875rem', color: '#111827' }}>{req.requester_name}</strong>
                           <p style={{ margin: '3px 0 0', fontSize: '0.775rem', color: '#374151', fontWeight: 600 }}>{WEEKDAYS[req.weekday]}</p>
                         </div>
-                        <span style={{ background: color.bg, color: color.text, borderRadius: 999, padding: '2px 9px', fontSize: '0.65rem', fontWeight: 900, flexShrink: 0, height: 'fit-content' }}>{req.status}</span>
-                      </div>
-                      {req.status === 'pending' && (
-                        <div style={{ display: 'flex', gap: 8 }}>
-                          <button onClick={() => decideRequest('decide_fixed_off_day', req.id, 'approved')} disabled={reqActionLoading} style={{ flex: 1, border: 'none', borderRadius: 7, background: '#059669', color: '#FFFFFF', padding: '7px 0', fontSize: '0.76rem', fontWeight: 700, cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.5 : 1 }}>Approve</button>
-                          <button onClick={() => decideRequest('decide_fixed_off_day', req.id, 'rejected')} disabled={reqActionLoading} style={{ flex: 1, border: 'none', borderRadius: 7, background: '#DC2626', color: '#FFFFFF', padding: '7px 0', fontSize: '0.76rem', fontWeight: 700, cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.5 : 1 }}>Reject</button>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ background: color.bg, color: color.text, borderRadius: 999, padding: '3px 10px', fontSize: '0.66rem', fontWeight: 800 }}>{req.status}</span>
+                          {req.status === 'pending' && (
+                            <>
+                              <button onClick={() => decideRequest('decide_fixed_off_day', req.id, 'rejected', req.requester_name)} disabled={reqActionLoading} style={{ border: '1px solid #FECACA', borderRadius: 7, background: '#FFFFFF', color: '#DC2626', padding: '6px 14px', fontSize: '0.76rem', fontWeight: 700, cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.5 : 1 }}>Reject</button>
+                              <button onClick={() => decideRequest('decide_fixed_off_day', req.id, 'approved', req.requester_name)} disabled={reqActionLoading} style={{ border: 'none', borderRadius: 7, background: '#1E293B', color: '#FFFFFF', padding: '7px 14px', fontSize: '0.76rem', fontWeight: 700, cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.5 : 1 }}>Approve</button>
+                            </>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  )
-                })}
-              </section>
-            )}
+                      </div>
+                    )
+                  })}
+                </>
+              )}
 
-            {/* ── Leave Requests ───────────────────────────────────────────── */}
-            {reqTab === 'leave' && (
-              <section style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, overflow: 'hidden' }}>
-                <div style={sectionHeaderStyle}>
-                  <div style={{ width: 30, height: 30, borderRadius: 9, background: '#F0FDF4', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <ShieldCheck size={14} style={{ color: '#059669' }} />
-                  </div>
-                  <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#111827', flex: 1 }}>Leave Requests</span>
-                </div>
-                {reqLoading ? (
-                  <div style={{ padding: '24px 16px', color: '#9CA3AF', fontSize: '0.875rem', display: 'flex', gap: 8, alignItems: 'center' }}><Spinner size={15} dark /> Loading...</div>
-                ) : timeOffRequests.length === 0 ? (
-                  <div style={{ padding: '24px 16px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center' }}>No leave requests.</div>
-                ) : timeOffRequests.map(req => {
-                  const color = statusColor(req.status)
-                  return (
-                    <div key={req.id} className="att-request-card" style={{ padding: '14px 16px', borderBottom: '1px solid #F8FAFC' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
-                        <div>
-                          <strong style={{ fontSize: '0.875rem', color: '#111827' }}>{requestTypeLabel(req.request_type)}</strong>
-                          <p style={{ margin: '3px 0 0', fontSize: '0.775rem', color: '#374151', fontWeight: 600 }}>{req.requester_name}</p>
-                          <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: '#6B7280' }}>
-                            {req.shift_date ?? '-'} | {formatTime(req.start_time)} - {formatTime(req.end_time)}
-                          </p>
-                        </div>
-                        <span style={{ background: color.bg, color: color.text, borderRadius: 999, padding: '2px 9px', fontSize: '0.65rem', fontWeight: 900, flexShrink: 0, height: 'fit-content' }}>{req.status}</span>
-                      </div>
-                      {req.reason && <p style={{ margin: '0 0 10px', fontSize: '0.78rem', color: '#4B5563', lineHeight: 1.4 }}>{req.reason}</p>}
-                      {req.status === 'pending' && (
-                        <div style={{ display: 'flex', gap: 8 }}>
-                          <button onClick={() => decideRequest('decide_time_off', req.id, 'approved')} disabled={reqActionLoading} style={{ flex: 1, border: 'none', borderRadius: 7, background: '#059669', color: '#FFFFFF', padding: '7px 0', fontSize: '0.76rem', fontWeight: 700, cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.5 : 1 }}>Approve</button>
-                          <button onClick={() => decideRequest('decide_time_off', req.id, 'rejected')} disabled={reqActionLoading} style={{ flex: 1, border: 'none', borderRadius: 7, background: '#DC2626', color: '#FFFFFF', padding: '7px 0', fontSize: '0.76rem', fontWeight: 700, cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.5 : 1 }}>Reject</button>
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
-              </section>
-            )}
+            </div>{/* /right content */}
+            </div>{/* /two-col grid */}
+
+            {/* ── Current Shifts — full-width, below Type + Action Needed ─── */}
+            <div style={{ gridColumn: '1 / 3', gridRow: '2', minWidth: 0 }}>
+              <CurrentShiftsBlock
+                show={reqTab === 'swaps' && !!currentShiftsDept}
+                deptName={currentShiftsDept ?? ''}
+                rows={currentShiftsRows}
+                loading={currentShiftsLoading}
+                panelBorder={PANEL_BORDER}
+                highlightRequest={activeSwapRequest}
+              />
+            </div>
           </div>
         )}
 
@@ -1397,22 +1885,32 @@ export default function OwnerAttendancePage() {
       {exportOpen && (
         <ModalOverlay onClose={() => setExportOpen(false)} maxWidth="420px">
           <ModalBox>
-            <ModalHeader title="Export Attendance" icon={<Download size={15} color="#fff" strokeWidth={2.5} />} onClose={() => setExportOpen(false)} />
+            <ModalHeader title="Export Attendance Records" icon={<Download size={15} color="#fff" strokeWidth={2.5} />} onClose={() => setExportOpen(false)} />
 
             <div style={{ padding: '0 24px', display: 'flex', flexDirection: 'column' }}>
               {/* Date range */}
               <div style={{ padding: '16px 0', borderBottom: '1px solid #F3F4F6' }}>
-                <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: '#6B7280', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Date Range</label>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 600, color: '#9CA3AF', marginBottom: 5 }}>From</label>
-                    <input type="date" value={exportFrom} onChange={e => setExportFrom(e.target.value)}
-                      style={{ width: '100%', padding: '9px 11px', border: '1.5px solid #E5E7EB', borderRadius: 8, fontSize: '0.875rem', color: '#111827', outline: 'none', boxSizing: 'border-box', background: '#FAFAFA' }} />
+                    <label style={{ ...modalLabelStyle, fontSize: '0.8125rem' }}>From</label>
+                    <DatePickerField
+                      value={exportFrom}
+                      onChange={setExportFrom}
+                      placeholder="Select date"
+                      max={exportTo || new Date().toISOString().slice(0, 10)}
+                      clearable={false}
+                    />
                   </div>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.7rem', fontWeight: 600, color: '#9CA3AF', marginBottom: 5 }}>To</label>
-                    <input type="date" value={exportTo} onChange={e => setExportTo(e.target.value)}
-                      style={{ width: '100%', padding: '9px 11px', border: '1.5px solid #E5E7EB', borderRadius: 8, fontSize: '0.875rem', color: '#111827', outline: 'none', boxSizing: 'border-box', background: '#FAFAFA' }} />
+                    <label style={{ ...modalLabelStyle, fontSize: '0.8125rem' }}>To</label>
+                    <DatePickerField
+                      value={exportTo}
+                      onChange={setExportTo}
+                      placeholder="Select date"
+                      min={exportFrom || undefined}
+                      max={new Date().toISOString().slice(0, 10)}
+                      clearable={false}
+                    />
                   </div>
                 </div>
               </div>
@@ -1422,9 +1920,9 @@ export default function OwnerAttendancePage() {
                 <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: '#6B7280', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Format</label>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                   {([
-                    { key: 'csv', label: 'Excel / CSV', icon: '📊' },
-                    { key: 'pdf', label: 'PDF',         icon: '📄' },
-                  ] as const).map(({ key, label, icon }) => (
+                    { key: 'csv', label: 'Excel / CSV' },
+                    { key: 'pdf', label: 'PDF' },
+                  ] as const).map(({ key, label }) => (
                     <button key={key} onClick={() => setExportFormat(key)} style={{
                       padding: '12px 0', borderRadius: 10,
                       border: `1.5px solid ${exportFormat === key ? '#F97316' : '#E5E7EB'}`,
@@ -1434,7 +1932,7 @@ export default function OwnerAttendancePage() {
                       display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                       transition: 'border-color 0.15s, background 0.15s',
                     }}>
-                      <span>{icon}</span> {label}
+                      {label}
                     </button>
                   ))}
                 </div>
@@ -1443,9 +1941,9 @@ export default function OwnerAttendancePage() {
 
             <div style={{ padding: '12px 24px 20px', display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid #F3F4F6' }}>
               <button
-                disabled={exportLoading}
+                disabled={!exportFrom || !exportTo || exportLoading}
                 onClick={async () => { setExportOpen(false); await doExport(exportFrom, exportTo, exportFormat) }}
-                style={modalPrimaryButtonStyle(exportLoading)}>
+                style={modalPrimaryButtonStyle(!exportFrom || !exportTo || exportLoading)}>
                 <Download size={13} /> {exportLoading ? 'Exporting…' : 'Export'}
               </button>
             </div>
@@ -1457,7 +1955,7 @@ export default function OwnerAttendancePage() {
       {reviewOpen && reviewRecord?.record && (
         <ModalOverlay onClose={() => setReviewOpen(false)} maxWidth="420px">
           <ModalBox>
-            <ModalHeader title="Attendance Record" icon={<ShieldCheck size={15} color="#fff" strokeWidth={2.5} />} onClose={() => setReviewOpen(false)} />
+            <ModalHeader title="Attendance Record" icon={<Check size={15} color="#fff" strokeWidth={2.5} />} onClose={() => setReviewOpen(false)} />
 
             {/* Name + role header — matches team profile modal */}
             <div style={{ padding: '16px 24px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', gap: 14 }}>

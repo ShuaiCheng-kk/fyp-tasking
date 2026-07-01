@@ -14,8 +14,6 @@ vi.mock('@/repositories/owner/attendanceRepository', () => ({
     updateAttendanceRecord: vi.fn(),
     getUsersByIds: vi.fn(),
     getDepartmentsByIds: vi.fn(),
-    getTimeOffRequestsByCompany: vi.fn(),
-    updateTimeOffRequest: vi.fn(),
     getShiftSwapRequestsByCompany: vi.fn(),
     getShiftSwapRequestById: vi.fn(),
     updateShiftSwapRequest: vi.fn(),
@@ -176,9 +174,12 @@ describe('attendanceService', () => {
   })
 
   describe('decideShiftSwapRequest (UC53: Approve Shift Swap Request)', () => {
-    it('reassigns the shift to the replacement user on approval', async () => {
+    it('swaps both assignment users on approval', async () => {
       vi.mocked(attendanceRepository.getShiftSwapRequestById).mockResolvedValue({
-        id: 'swap-1', shift_assignment_id: 'asn-1', replacement_user_id: 'user-2',
+        id: 'swap-1',
+        requester_id: 'user-1', requester_assignment_id: 'asn-1',
+        counterpart_id: 'user-2', counterpart_assignment_id: 'asn-2',
+        counterpart_status: 'approved', status: 'pending',
       } as any)
       vi.mocked(attendanceRepository.updateShiftAssignmentUser).mockResolvedValue({} as any)
       vi.mocked(attendanceRepository.updateShiftSwapRequest).mockResolvedValue({ id: 'swap-1', status: 'approved' } as any)
@@ -186,18 +187,32 @@ describe('attendanceService', () => {
       await attendanceService.decideShiftSwapRequest({ id: 'swap-1', reviewer_id: 'owner-1', decision: 'approved' })
 
       expect(attendanceRepository.updateShiftAssignmentUser).toHaveBeenCalledWith('asn-1', 'user-2')
+      expect(attendanceRepository.updateShiftAssignmentUser).toHaveBeenCalledWith('asn-2', 'user-1')
       expect(attendanceRepository.updateShiftSwapRequest).toHaveBeenCalledWith('swap-1', expect.objectContaining({ status: 'approved', reviewed_by: 'owner-1' }))
     })
 
-    it('does not reassign the shift on rejection', async () => {
+    it('does not reassign shifts on rejection', async () => {
       vi.mocked(attendanceRepository.getShiftSwapRequestById).mockResolvedValue({
-        id: 'swap-1', shift_assignment_id: 'asn-1', replacement_user_id: 'user-2',
+        id: 'swap-1',
+        requester_id: 'user-1', requester_assignment_id: 'asn-1',
+        counterpart_id: 'user-2', counterpart_assignment_id: 'asn-2',
+        counterpart_status: 'approved', status: 'pending',
       } as any)
       vi.mocked(attendanceRepository.updateShiftSwapRequest).mockResolvedValue({ id: 'swap-1', status: 'rejected' } as any)
 
       await attendanceService.decideShiftSwapRequest({ id: 'swap-1', reviewer_id: 'owner-1', decision: 'rejected' })
 
       expect(attendanceRepository.updateShiftAssignmentUser).not.toHaveBeenCalled()
+    })
+
+    it('throws if counterpart has not agreed', async () => {
+      vi.mocked(attendanceRepository.getShiftSwapRequestById).mockResolvedValue({
+        id: 'swap-1',
+        counterpart_status: 'pending', status: 'pending',
+      } as any)
+
+      await expect(attendanceService.decideShiftSwapRequest({ id: 'swap-1', reviewer_id: 'owner-1', decision: 'approved' }))
+        .rejects.toThrow('Counterpart has not agreed yet')
     })
   })
 
@@ -242,19 +257,4 @@ describe('attendanceService', () => {
     })
   })
 
-  describe('decideTimeOffRequest (UC58: Approve Leave Request)', () => {
-    it('approves a pending leave/time-off/break-waiver request', async () => {
-      vi.mocked(attendanceRepository.updateTimeOffRequest).mockResolvedValue({ id: 'to-1', status: 'approved' } as any)
-
-      await attendanceService.decideTimeOffRequest({ id: 'to-1', reviewer_id: 'owner-1', decision: 'approved' })
-
-      expect(attendanceRepository.updateTimeOffRequest).toHaveBeenCalledWith('to-1', expect.objectContaining({ status: 'approved', reviewed_by: 'owner-1' }))
-    })
-
-    it('rejects an invalid decision value', async () => {
-      await expect(attendanceService.decideTimeOffRequest({ id: 'to-1', reviewer_id: 'owner-1', decision: 'bogus' as any }))
-        .rejects.toThrow('Invalid request decision')
-      expect(attendanceRepository.updateTimeOffRequest).not.toHaveBeenCalled()
-    })
-  })
 })

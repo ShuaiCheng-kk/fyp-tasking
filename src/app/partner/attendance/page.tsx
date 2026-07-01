@@ -598,10 +598,10 @@ export default function OwnerAttendancePage() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
                           <strong style={{ fontSize: '0.875rem', color: '#111827' }}>{request.requester_name}</strong>
                           <ArrowLeftRight size={11} style={{ color: '#9CA3AF' }} />
-                          <strong style={{ fontSize: '0.875rem', color: '#111827' }}>{request.replacement_name}</strong>
+                          <strong style={{ fontSize: '0.875rem', color: '#111827' }}>{request.counterpart_name}</strong>
                         </div>
                         <p style={{ margin: 0, fontSize: '0.775rem', color: '#6B7280' }}>
-                          {request.shift_title ?? 'Shift'} · {request.shift_date ?? '—'} · {formatTime(request.start_time)}–{formatTime(request.end_time)}
+                          {request.requester_shift_title ?? 'Shift'} · {request.requester_shift_date ?? '—'} · {formatTime(request.requester_start_time)}–{formatTime(request.requester_end_time)}
                         </p>
                       </div>
                       <span style={{ background: color.bg, color: color.text, borderRadius: 999, padding: '2px 9px', fontSize: '0.65rem', fontWeight: 900, flexShrink: 0, height: 'fit-content' }}>{request.status}</span>

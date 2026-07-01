@@ -241,15 +241,6 @@ export default function OwnerCommunicationPage() {
   const commTabButtonRefs = useRef<Record<'chat' | 'announcements' | 'invites', HTMLButtonElement | null>>({ chat: null, announcements: null, invites: null })
   const [commTabIndicator, setCommTabIndicator] = useState({ left: 0, width: 0, opacity: 0 })
 
-  useLayoutEffect(() => {
-    const container = commTabBarRef.current
-    const activeButton = commTabButtonRefs.current[activeTab]
-    if (!container || !activeButton) return
-    const containerRect = container.getBoundingClientRect()
-    const activeRect = activeButton.getBoundingClientRect()
-    setCommTabIndicator({ left: activeRect.left - containerRect.left, width: activeRect.width, opacity: 1 })
-  }, [activeTab])
-
   const [authUserId, setAuthUserId] = useState<string | null>(null)
   const [internalUserId, setInternalUserId] = useState<string | null>(null)
   const [companyId, setCompanyId] = useState<string | null>(null)
@@ -260,6 +251,7 @@ export default function OwnerCommunicationPage() {
   const [userDeptId, setUserDeptId] = useState<string | null>(null)
   const [departments, setDepartments] = useState<Department[]>([])
   const [unreadMessages, setUnreadMessages] = useState(0)
+  const [unreadAnnCountState, setUnreadAnnCountState] = useState(0)
 
   const [announcements, setAnnouncements] = useState<Announcement[]>([])
   const [selectedAnn, setSelectedAnn] = useState<Announcement | null>(null)
@@ -551,6 +543,17 @@ export default function OwnerCommunicationPage() {
   }
 
   const unreadAnnCount = announcements.filter(a => !readIds.has(a.id)).length
+
+  useEffect(() => { setUnreadAnnCountState(unreadAnnCount) }, [unreadAnnCount])
+
+  useLayoutEffect(() => {
+    const container = commTabBarRef.current
+    const activeButton = commTabButtonRefs.current[activeTab]
+    if (!container || !activeButton) return
+    const containerRect = container.getBoundingClientRect()
+    const activeRect = activeButton.getBoundingClientRect()
+    setCommTabIndicator({ left: activeRect.left - containerRect.left, width: activeRect.width, opacity: 1 })
+  }, [activeTab, unreadMessages, unreadAnnCountState])
 
   async function handlePostAnnouncement() {
     if (!internalUserId || !companyId) return
@@ -976,7 +979,6 @@ export default function OwnerCommunicationPage() {
               border: '1px solid #E5E7EB',
               borderRadius: 999,
               boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
-              overflow: 'hidden',
               position: 'relative',
             }}
           >
@@ -1030,14 +1032,7 @@ export default function OwnerCommunicationPage() {
                 >
                   {tab.label}
                   {tab.badge > 0 && (
-                    <span style={{
-                      minWidth: 17, height: 17, padding: '0 4px', borderRadius: 999,
-                      background: '#F97316',
-                      color: '#fff', fontSize: 10, fontWeight: 900,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}>
-                      {tab.badge}
-                    </span>
+                    <span style={{ width: 10, height: 10, borderRadius: 999, background: '#EF4444', flexShrink: 0, border: active ? '1.5px solid rgba(255,255,255,0.4)' : '1.5px solid #fff' }} />
                   )}
                 </button>
               )

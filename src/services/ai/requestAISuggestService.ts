@@ -17,49 +17,88 @@ const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', '
 export const requestAISuggestService = {
   async suggestShiftSwap(request: {
     id: string
+    requester_id: string
+    counterpart_id: string
     requester_name: string
-    replacement_name: string
-    shift_date: string | null
-    shift_title: string | null
-    start_time: string | null
-    end_time: string | null
+    counterpart_name: string
+    requester_role: string
+    department_name: string | null
+    requester_shift_date: string | null
+    requester_start_time: string | null
+    requester_end_time: string | null
+    counterpart_shift_date: string | null
+    counterpart_start_time: string | null
+    counterpart_end_time: string | null
+    requester_task_count: number
+    counterpart_task_count: number
     reason: string | null
     company_id: string
   }): Promise<RequestAISuggestion> {
-    const context: Record<string, unknown> = {
-      request_type: 'Shift Swap',
-      requester: request.requester_name,
-      replacement: request.replacement_name,
-      shift_date: request.shift_date,
-      shift_title: request.shift_title,
-      shift_hours: request.start_time && request.end_time
-        ? `${request.start_time} – ${request.end_time}`
-        : null,
-      reason: request.reason,
+    // 1. Time conflict check — does each person have other shifts that overlap with their new shift?
+    const timeConflicts: string[] = []
+
+    const checkOverlap = (shifts: Awaited<ReturnType<typeof attendanceRepository.getAssignmentsByUserDateRange>>, newDate: string | null, newStart: string | null, newEnd: string | null, personName: string, excludeDate: string | null, excludeStart: string | null) => {
+      if (!newDate || !newStart || !newEnd) return
+      const newStartMs = new Date(`${newDate}T${newStart}Z`).getTime()
+      const newEndMs = new Date(`${newDate}T${newEnd}Z`).getTime()
+      for (const a of shifts) {
+        const s = a.shifts
+        if (!s || s.shift_date !== newDate) continue
+        // Skip the shift being swapped itself
+        if (s.shift_date === excludeDate && s.start_time === excludeStart) continue
+        const sStart = new Date(`${s.shift_date}T${s.start_time}Z`).getTime()
+        const sEnd = new Date(`${s.shift_date}T${s.end_time}Z`).getTime()
+        if (newStartMs < sEnd && newEndMs > sStart) {
+          timeConflicts.push(`${personName} will have a time conflict on ${newDate} (${newStart}–${newEnd} overlaps with existing shift ${s.start_time}–${s.end_time})`)
+        }
+      }
     }
 
-    if (request.shift_date) {
-      const replacementAssignments = await attendanceRepository.getAssignmentsByCompanyAndDateRange(
-        request.company_id,
-        request.shift_date,
-        request.shift_date,
-      )
-      const replacementConflicts = replacementAssignments.filter(a => {
-        const user = a.user_id
-        return user !== request.requester_name
-      })
-      context.same_day_assignments_count = replacementConflicts.length
+    const lookAhead = 30
+    const startDate = new Date(); startDate.setDate(startDate.getDate() - 1)
+    const endDate = new Date(); endDate.setDate(endDate.getDate() + lookAhead)
+    const fromStr = startDate.toISOString().slice(0, 10)
+    const toStr = endDate.toISOString().slice(0, 10)
+
+    const [reqShifts, ctrShifts] = await Promise.all([
+      attendanceRepository.getAssignmentsByUserDateRange(request.requester_id, fromStr, toStr),
+      attendanceRepository.getAssignmentsByUserDateRange(request.counterpart_id, fromStr, toStr),
+    ])
+
+    // Requester will receive counterpart's shift
+    checkOverlap(reqShifts, request.counterpart_shift_date, request.counterpart_start_time, request.counterpart_end_time, request.requester_name, request.requester_shift_date, request.requester_start_time)
+    // Counterpart will receive requester's shift
+    checkOverlap(ctrShifts, request.requester_shift_date, request.requester_start_time, request.requester_end_time, request.counterpart_name, request.counterpart_shift_date, request.counterpart_start_time)
+
+    const availabilityIssues: string[] = []
+
+    const context: Record<string, unknown> = {
+      request_type: 'Shift Swap',
+      department: request.department_name,
+      role: request.requester_role,
+      requester: request.requester_name,
+      counterpart: request.counterpart_name,
+      requester_shift: `${request.requester_shift_date} ${request.requester_start_time}–${request.requester_end_time}`,
+      counterpart_shift: `${request.counterpart_shift_date} ${request.counterpart_start_time}–${request.counterpart_end_time}`,
+      reason: request.reason,
+      time_conflicts: timeConflicts,
+      availability_issues: availabilityIssues,
+      requester_tasks_on_shift: request.requester_task_count,
+      counterpart_tasks_on_shift: request.counterpart_task_count,
+      task_note: (request.requester_task_count + request.counterpart_task_count) > 0
+        ? `Tasks are attached to shifts and will move with them after the swap.`
+        : 'No tasks attached to either shift.',
     }
 
     return openAIService.generateStructuredJson<RequestAISuggestion>({
       schemaName: 'shift_swap_suggestion',
-      maxOutputTokens: 600,
+      maxOutputTokens: 700,
       instructions: [
-        'You are an HR assistant helping a business owner decide whether to approve a shift swap request.',
-        'Assess feasibility, fairness, and operational impact.',
-        'Consider: does the replacement have conflicting shifts on the same day? Is the reason valid?',
+        'You are an HR assistant reviewing a bilateral shift swap request.',
+        'Check 4 things: (1) time conflicts — does either person get overlapping shifts after the swap? (2) availability — does either person have approved leave on their new shift date? (3) role/dept match — both must be same role/dept (already validated, just note it is OK). (4) task impact — how many tasks will move with the shifts.',
+        'If time_conflicts or availability_issues arrays are non-empty, recommend reject. If tasks are involved, mention them as a note.',
         'recommendation must be one of: approve, reject, review.',
-        'confidence is 0–100. concerns is a list of issues (empty array if none). alternatives is a list of suggestions (empty array if none).',
+        'confidence is 0–100. reason is a 2-3 sentence plain-English summary. concerns is a list of bullet issues. alternatives is a list of suggestions (empty if none).',
       ].join(' '),
       input: context,
       schema: {
@@ -124,74 +163,4 @@ export const requestAISuggestService = {
     })
   },
 
-  async suggestLeaveRequest(request: {
-    id: string
-    requester_name: string
-    request_type: string
-    shift_date: string | null
-    shift_title: string | null
-    start_time: string | null
-    end_time: string | null
-    reason: string | null
-    company_id: string
-    requester_id: string
-  }): Promise<RequestAISuggestion> {
-    const context: Record<string, unknown> = {
-      request_type: request.request_type === 'leave' ? 'Leave Request' : 'Time Off Request',
-      requester: request.requester_name,
-      shift_date: request.shift_date,
-      shift_title: request.shift_title,
-      shift_hours: request.start_time && request.end_time
-        ? `${request.start_time} – ${request.end_time}`
-        : null,
-      reason: request.reason,
-    }
-
-    let potentialCovers: string[] = []
-
-    if (request.shift_date) {
-      const dayAssignments = await attendanceRepository.getAssignmentsByCompanyAndDateRange(
-        request.company_id,
-        request.shift_date,
-        request.shift_date,
-      )
-      const otherWorkers = [...new Set(
-        dayAssignments
-          .filter(a => a.user_id !== request.requester_id)
-          .map(a => a.user_id),
-      )]
-      if (otherWorkers.length > 0) {
-        const users = await attendanceRepository.getUsersByIds(otherWorkers)
-        potentialCovers = users.map(u => `${u.full_name} (${u.role})`)
-      }
-      context.other_staff_working_same_day = potentialCovers.length
-      context.potential_cover_staff = potentialCovers.slice(0, 5)
-    }
-
-    return openAIService.generateStructuredJson<RequestAISuggestion>({
-      schemaName: 'leave_request_suggestion',
-      maxOutputTokens: 700,
-      instructions: [
-        'You are an HR assistant helping a business owner decide whether to approve a leave or time-off request.',
-        'Assess operational impact: who else is working that day and could cover the shift if approved?',
-        'If no one else is scheduled, the leave may cause a staffing gap — flag that as a concern.',
-        'If the reason is a clear personal/medical need, lean towards approve.',
-        'recommendation must be one of: approve, reject, review.',
-        'confidence is 0–100. concerns is a list of issues (empty if none). alternatives is a list of suggestions (empty if none).',
-      ].join(' '),
-      input: context,
-      schema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          recommendation: { type: 'string', enum: ['approve', 'reject', 'review'] },
-          confidence: { type: 'number' },
-          reason: { type: 'string' },
-          concerns: { type: 'array', items: { type: 'string' } },
-          alternatives: { type: 'array', items: { type: 'string' } },
-        },
-        required: ['recommendation', 'confidence', 'reason', 'concerns', 'alternatives'],
-      },
-    })
-  },
 }

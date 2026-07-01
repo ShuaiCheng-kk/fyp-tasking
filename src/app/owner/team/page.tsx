@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Plus, X, ChevronDown, Upload, Building2, Network, Crown, UserCog, UserRound, HardHat, Users, UserPlus, Send, Check, Trash2, FileText, BriefcaseBusiness, UsersRound, MapPinned, Pencil, MessageCircle, Search } from 'lucide-react'
+import { Plus, X, ChevronDown, Upload, Building2, Network, Crown, UserCog, UserRound, HardHat, Users, UserPlus, Send, Check, Trash2, FileText, BriefcaseBusiness, UsersRound, MapPinned, Pencil, MessageCircle, Search, Download } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
@@ -670,7 +670,7 @@ function OrgNode({
   return (
     <button
       onClick={onClick}
-      className="org-node-btn"
+      className={`org-node-btn org-node-${member.role.toLowerCase().replace(/\s+/g, '-')}`}
       style={{
         display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
         padding: '12px 16px', borderRadius: 12,
@@ -685,8 +685,11 @@ function OrgNode({
         transition: 'box-shadow 0.22s ease, border-color 0.22s ease, transform 0.22s ease, opacity 0.22s ease, background 0.22s ease',
       }}
     >
-      <RoleAvatar role={member.role} size={36} photoUrl={member.profile_photo_url} />
-      <p style={{ fontWeight: 700, fontSize: '0.8125rem', color: searchHighlighted ? '#111827' : dark ? '#FFFFFF' : '#111827', margin: 0, lineHeight: 1.3, textAlign: 'center' }}>{member.full_name}</p>
+      <span className="org-node-avatar">
+        <RoleAvatar role={member.role} size={36} photoUrl={member.profile_photo_url} />
+      </span>
+      <p className="org-name-export" style={{ fontWeight: 700, fontSize: '0.8125rem', color: searchHighlighted ? '#111827' : dark ? '#FFFFFF' : '#111827', margin: 0, lineHeight: 1.3, textAlign: 'center' }}>{member.full_name}</p>
+      <p className="org-role-export" style={{ fontWeight: 600, fontSize: '0.72rem', color: searchHighlighted ? '#4B5563' : dark ? '#CBD5E1' : '#6B7280', margin: 0, lineHeight: 1.2, textAlign: 'center' }}>{member.role}</p>
     </button>
   )
 }
@@ -775,7 +778,7 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick, onD
 
   return (
     <div style={{ overflowX: 'auto', paddingBottom: 8, paddingTop: 8 }}>
-      <div style={{ width: totalW, margin: '0 auto' }}>
+      <div className="org-chart-capture" style={{ width: totalW + 48, margin: '0 auto', padding: '16px 24px 8px', background: '#FFFFFF', boxSizing: 'border-box' }}>
 
         {/* ── Row 1: Leadership — Owner pinned to totalW/2 ── */}
         <div style={{ position: 'relative', height: 80, flexShrink: 0 }}>
@@ -835,7 +838,7 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick, onD
                 }}>
 
                   {/* Dept header */}
-                  <div style={{
+                  <div className="org-dept-header" style={{
                     width: '100%',
                     padding: '10px 12px',
                     background: deptHighlighted ? '#FFF7ED' : '#F9FAFB',
@@ -847,6 +850,7 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick, onD
                     transition: 'opacity 0.22s ease, background 0.22s ease',
                   }}>
                     <button
+                      className="org-dept-title-btn"
                       type="button"
                       aria-label={`Open ${dept.name} actions`}
                       onClick={(event) => {
@@ -870,8 +874,8 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick, onD
                         gap: 6,
                       }}
                     >
-                      <span style={{ width: 8, height: 8, borderRadius: 999, background: deptColor(dept.id), flexShrink: 0 }} />
-                      <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{dept.name}</span>
+                      <span className="org-dept-dot" style={{ width: 8, height: 8, borderRadius: 999, background: deptColor(dept.id), flexShrink: 0 }} />
+                      <span className="org-dept-title-text" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{dept.name}</span>
                     </button>
                   </div>
 
@@ -1170,6 +1174,8 @@ export default function TeamPage() {
   const [cwSearchQuery, setCwSearchQuery] = useState('')
   const [internalSearchQuery, setInternalSearchQuery] = useState('')
   const [orgSearchQuery, setOrgSearchQuery] = useState('')
+  const orgChartRef = useRef<HTMLDivElement>(null)
+  const [orgExporting, setOrgExporting] = useState(false)
   const tabBarRef = useRef<HTMLDivElement>(null)
   const tabButtonRefs = useRef<Record<'all' | 'org', HTMLButtonElement | null>>({ all: null, org: null })
   const [tabIndicator, setTabIndicator] = useState({ left: 0, width: 0, opacity: 0 })
@@ -1228,6 +1234,41 @@ export default function TeamPage() {
   const normalizedCwSearch = cwSearchQuery.trim().toLowerCase()
   const normalizedInternalSearch = internalSearchQuery.trim().toLowerCase()
   const normalizedOrgSearch = orgSearchQuery.trim().toLowerCase()
+
+  const handleExportOrgChart = async () => {
+    const el = orgChartRef.current
+    if (!el || orgExporting) return
+    setOrgExporting(true)
+    let captureEl: HTMLElement | null = null
+    try {
+      el.classList.add('org-chart-exporting')
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      captureEl = el.querySelector<HTMLElement>('.org-chart-capture') ?? el
+      captureEl.classList.add('org-chart-exporting')
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      await document.fonts?.ready
+      const html2canvas = (await import('html2canvas')).default
+      const canvas = await html2canvas(captureEl, {
+        backgroundColor: '#ffffff',
+        scale: 3,
+        useCORS: true,
+        logging: false,
+        width: captureEl.scrollWidth,
+        height: captureEl.scrollHeight,
+        windowWidth: captureEl.scrollWidth,
+        windowHeight: captureEl.scrollHeight,
+      })
+      const link = document.createElement('a')
+      link.download = 'organisation-chart.png'
+      link.href = canvas.toDataURL('image/png')
+      link.click()
+    } catch {}
+    finally {
+      captureEl?.classList.remove('org-chart-exporting')
+      el.classList.remove('org-chart-exporting')
+      setOrgExporting(false)
+    }
+  }
 
   useEffect(() => {
     setProfileDeptSelectedId(profileMember?.department_id ?? '')
@@ -2283,33 +2324,13 @@ export default function TeamPage() {
           </div>
         )
       case 'activity': {
-        const unreadCount = activityLogs.filter(l => !l.is_read).length
-        const handleMarkAllRead = async () => {
-          if (!companyId) return
-          await fetch('/api/activity-log/mark-read', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ company_id: companyId }),
-          })
-          setActivityLogs(prev => prev.map(l => ({ ...l, is_read: true })))
-        }
         return (
           <div className="all-block-activity" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, padding: '18px 24px 20px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <FileText size={15} style={{ color: '#F97316' }} />
-                </div>
-                <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Activity Log</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+              <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <FileText size={15} style={{ color: '#F97316' }} />
               </div>
-              {unreadCount > 0 && (
-                <button
-                  onClick={handleMarkAllRead}
-                  style={{ fontSize: '0.875rem', fontWeight: 700, color: '#F97316', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
-                >
-                  Mark all read
-                </button>
-              )}
+              <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Activity Log</span>
             </div>
             <div style={{ borderTop: '1px solid #E5E7EB', marginBottom: 14 }} />
             {activityLogs.length === 0 ? (
@@ -2318,10 +2339,10 @@ export default function TeamPage() {
               <div style={{ display: 'flex', flexDirection: 'column', maxHeight: 224, overflowY: 'auto' }}>
                 {activityLogs.map((log, i) => {
                   const actionVerb: Record<string, string> = {
-                    invite_member: 'invited',
-                    remove_member: 'removed',
-                    set_active:    'activated',
-                    set_inactive:  'inactivated',
+                    invite_member: 'Invited',
+                    remove_member: 'Removed',
+                    set_active:    'Activated',
+                    set_inactive:  'Deactivated',
                   }
                   const actionIcon: Record<string, React.ReactNode> = {
                     invite_member: <div style={{ width: 26, height: 26, borderRadius: 7, background: '#DCFCE7', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><UserPlus size={13} style={{ color: '#16A34A' }} /></div>,
@@ -2331,22 +2352,14 @@ export default function TeamPage() {
                   }
                   const verb = actionVerb[log.action] ?? log.action
                   const icon = actionIcon[log.action] ?? <div style={{ width: 26, height: 26, borderRadius: 7, background: '#F1F5F9', flexShrink: 0 }} />
-                  const actor = teamMembers.find(m => m.id === log.actor_id)?.full_name ?? 'Unknown'
                   const date = new Date(log.created_at)
                   const timeStr = date.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })
                   return (
                     <div key={log.id} className="log-row-item" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: i < activityLogs.length - 1 ? '1px solid #F3F4F6' : 'none', animationDelay: `${0.22 + i * 0.06}s` }}>
-                      <div style={{ position: 'relative', flexShrink: 0 }}>
-                        {icon}
-                        {!log.is_read && (
-                          <span style={{ position: 'absolute', top: -2, right: -2, width: 7, height: 7, borderRadius: 999, background: '#F97316', border: '1.5px solid #fff' }} />
-                        )}
-                      </div>
+                      <div style={{ flexShrink: 0 }}>{icon}</div>
                       <div>
                         <p style={{ fontSize: 13, color: '#0F172A', margin: 0, lineHeight: 1.5 }}>
-                          <span style={{ fontWeight: 600 }}>{actor}</span>
-                          {' '}{verb}{' '}
-                          <span style={{ fontWeight: 600 }}>{log.target_name ?? '—'}</span>
+                          {verb} {log.target_name ?? '—'}
                         </p>
                         <p style={{ fontSize: 11, color: '#94A3B8', margin: '2px 0 0', fontWeight: 500 }}>{timeStr}</p>
                       </div>
@@ -2695,6 +2708,81 @@ export default function TeamPage() {
           transform: translateY(-2px) scale(1.02) !important;
           z-index: 10;
         }
+        .org-role-export {
+          display: none;
+        }
+        .org-chart-capture.org-chart-exporting,
+        .org-chart-capture.org-chart-exporting *,
+        .org-chart-exporting .org-chart-capture,
+        .org-chart-exporting .org-chart-capture * {
+          animation: none !important;
+          transition: none !important;
+          font-family: var(--font-heading), "Plus Jakarta Sans", "Inter", "Segoe UI", system-ui, sans-serif !important;
+          letter-spacing: 0 !important;
+          text-rendering: geometricPrecision !important;
+          -webkit-font-smoothing: antialiased !important;
+          -moz-osx-font-smoothing: grayscale !important;
+        }
+        .org-chart-exporting .org-dept-col {
+          opacity: 1 !important;
+          transform: none !important;
+        }
+        .org-chart-exporting .org-dept-header {
+          height: 42px !important;
+          min-height: 42px !important;
+          padding: 0 12px !important;
+          overflow: visible !important;
+          box-sizing: border-box !important;
+          display: flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+        }
+        .org-chart-exporting .org-dept-title-btn {
+          height: 100% !important;
+          min-height: 0 !important;
+          line-height: normal !important;
+          overflow: visible !important;
+          align-items: center !important;
+          justify-content: center !important;
+        }
+        .org-chart-exporting .org-dept-title-text {
+          overflow: visible !important;
+          text-overflow: clip !important;
+          white-space: nowrap !important;
+          line-height: normal !important;
+          font-size: 1rem !important;
+          font-weight: 800 !important;
+          padding: 0 !important;
+        }
+        .org-chart-exporting .org-dept-dot {
+          display: none !important;
+        }
+        .org-chart-exporting .org-node-manager {
+          border-color: #E5E7EB !important;
+        }
+        .org-chart-exporting .org-node-btn {
+          min-height: 84px !important;
+          animation: none !important;
+          transform: none !important;
+          justify-content: center !important;
+          opacity: 1 !important;
+        }
+        .org-chart-exporting .org-node-avatar {
+          display: none !important;
+        }
+        .org-chart-exporting .org-name-export {
+          display: block !important;
+          font-size: 0.875rem !important;
+          font-weight: 800 !important;
+          line-height: 1.22 !important;
+        }
+        .org-chart-exporting .org-role-export {
+          display: block !important;
+          color: #64748B !important;
+          font-size: 0.76rem !important;
+          font-weight: 700 !important;
+          line-height: 1.2 !important;
+        }
         .org-dept-col {
           transition: box-shadow 0.18s ease, transform 0.18s ease, border-color 0.18s ease !important;
         }
@@ -2978,34 +3066,12 @@ export default function TeamPage() {
                   </div>
 
                   {/* Activity Log block */}
-                  {(() => {
-                    const unreadCount = activityLogs.filter(l => !l.is_read).length
-                    const handleMarkAllRead = async () => {
-                      if (!companyId) return
-                      await fetch('/api/activity-log/mark-read', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ company_id: companyId }),
-                      })
-                      setActivityLogs(prev => prev.map(l => ({ ...l, is_read: true })))
-                    }
-                    return (
                   <div className="all-block-activity" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, padding: '18px 24px 20px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                          <FileText size={15} style={{ color: '#F97316' }} />
-                        </div>
-                        <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Activity Log</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                      <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <FileText size={15} style={{ color: '#F97316' }} />
                       </div>
-                      {unreadCount > 0 && (
-                        <button
-                          onClick={handleMarkAllRead}
-                          style={{ fontSize: '0.875rem', fontWeight: 700, color: '#F97316', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
-                        >
-                          Mark all read
-                        </button>
-                      )}
+                      <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Activity Log</span>
                     </div>
                     <div style={{ borderTop: '1px solid #E5E7EB', marginBottom: 14 }} />
                     {activityLogs.length === 0 ? (
@@ -3014,10 +3080,10 @@ export default function TeamPage() {
                       <div style={{ display: 'flex', flexDirection: 'column', maxHeight: 224, overflowY: 'auto' }}>
                         {activityLogs.map((log, i) => {
                           const actionVerb: Record<string, string> = {
-                            invite_member: 'invited',
-                            remove_member: 'removed',
-                            set_active:    'activated',
-                            set_inactive:  'inactivated',
+                            invite_member: 'Invited',
+                            remove_member: 'Removed',
+                            set_active:    'Activated',
+                            set_inactive:  'Deactivated',
                           }
                           const actionIcon: Record<string, React.ReactNode> = {
                             invite_member: <div style={{ width: 26, height: 26, borderRadius: 7, background: '#DCFCE7', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><UserPlus size={13} style={{ color: '#16A34A' }} /></div>,
@@ -3027,22 +3093,14 @@ export default function TeamPage() {
                           }
                           const verb = actionVerb[log.action] ?? log.action
                           const icon = actionIcon[log.action] ?? <div style={{ width: 26, height: 26, borderRadius: 7, background: '#F1F5F9', flexShrink: 0 }} />
-                          const actor = teamMembers.find(m => m.id === log.actor_id)?.full_name ?? 'Unknown'
                           const date = new Date(log.created_at)
                           const timeStr = date.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })
                           return (
                             <div key={log.id} className="log-row-item" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: i < activityLogs.length - 1 ? '1px solid #F3F4F6' : 'none', animationDelay: `${0.22 + i * 0.06}s` }}>
-                              <div style={{ position: 'relative', flexShrink: 0 }}>
-                                {icon}
-                                {!log.is_read && (
-                                  <span style={{ position: 'absolute', top: -2, right: -2, width: 7, height: 7, borderRadius: 999, background: '#F97316', border: '1.5px solid #fff' }} />
-                                )}
-                              </div>
+                              <div style={{ flexShrink: 0 }}>{icon}</div>
                               <div>
                                 <p style={{ fontSize: 13, color: '#0F172A', margin: 0, lineHeight: 1.5 }}>
-                                  <span style={{ fontWeight: 600 }}>{actor}</span>
-                                  {' '}{verb}{' '}
-                                  <span style={{ fontWeight: 600 }}>{log.target_name ?? '—'}</span>
+                                  {verb} {log.target_name ?? '—'}
                                 </p>
                                 <p style={{ fontSize: 11, color: '#94A3B8', margin: '2px 0 0', fontWeight: 500 }}>{timeStr}</p>
                               </div>
@@ -3052,8 +3110,6 @@ export default function TeamPage() {
                       </div>
                     )}
                   </div>
-                    )
-                  })()}
 
                   {/* Departments block */}
                   <div className="all-block-dept" style={{ flex: 1, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, padding: '18px 24px 20px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
@@ -3284,6 +3340,20 @@ export default function TeamPage() {
               className="org-chart-wrap"
               icon={<Network size={15} style={{ color: '#F97316' }} />}
               title="Organisation Chart"
+              actions={
+                <button
+                  type="button"
+                  onClick={handleExportOrgChart}
+                  disabled={orgExporting || teamLoading}
+                  title="Export as image"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', borderRadius: 8, border: '1px solid #E5E7EB', background: orgExporting ? '#F3F4F6' : '#F9FAFB', color: '#374151', fontSize: 13, fontWeight: 600, cursor: orgExporting || teamLoading ? 'default' : 'pointer', opacity: orgExporting || teamLoading ? 0.6 : 1, transition: 'background 0.15s, border-color 0.15s', flexShrink: 0 }}
+                  onMouseEnter={e => { if (!orgExporting && !teamLoading) { e.currentTarget.style.background = '#F3F4F6'; e.currentTarget.style.borderColor = '#D1D5DB' } }}
+                  onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB'; e.currentTarget.style.borderColor = '#E5E7EB' }}
+                >
+                  <Download size={14} />
+                  {orgExporting ? 'Exporting…' : 'Export'}
+                </button>
+              }
               searchValue={orgSearchQuery}
               onSearchChange={setOrgSearchQuery}
               fillHeight
@@ -3293,14 +3363,16 @@ export default function TeamPage() {
                   <Spinner size={16} dark /> Loading…
                 </div>
                 ) : (
-                  <OrgChartTree
-                  topMembers={teamMembers.filter(m => m.role === 'Owner' || m.role === 'Partner')}
-                  departments={companyDepartments}
-                  teamMembers={teamMembers}
-                  onMemberClick={(m) => setProfileMember(m)}
-                  onDepartmentClick={(department) => openEditDepartment(department)}
-                  searchQuery={normalizedOrgSearch}
-                />
+                  <div ref={orgChartRef} style={{ background: '#ffffff', padding: '8px 0' }}>
+                    <OrgChartTree
+                      topMembers={teamMembers.filter(m => m.role === 'Owner' || m.role === 'Partner')}
+                      departments={companyDepartments}
+                      teamMembers={teamMembers}
+                      onMemberClick={(m) => setProfileMember(m)}
+                      onDepartmentClick={(department) => openEditDepartment(department)}
+                      searchQuery={normalizedOrgSearch}
+                    />
+                  </div>
               )}
             </ShowcaseCard>
           )}

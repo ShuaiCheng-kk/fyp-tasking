@@ -2,7 +2,7 @@
 // RULE: Supabase queries only. No business logic.
 
 import { supabase } from '@/lib/supabase'
-import { AttendanceRequestStatus, ShiftSwapRequest, ShiftSwapRequestCreateInput, TimeOffRequestCreateInput } from '@/types/Attendance'
+import { AttendanceRequestStatus, ShiftSwapRequest, ShiftSwapRequestCreateInput } from '@/types/Attendance'
 
 export type FixedOffDay = {
   id: string
@@ -26,6 +26,14 @@ export type LeaveRequest = {
   reviewed_at: string | null
   created_at: string
   updated_at: string
+}
+
+type BreakWaiverCreateInput = {
+  user_id: string
+  company_id: string
+  request_type: 'break_waiver'
+  reason: string | null
+  shift_assignment_id: string | null
 }
 
 export const availabilityRepository = {
@@ -57,17 +65,18 @@ export const availabilityRepository = {
     if (insError) throw new Error(insError.message)
   },
 
-  async getLeaveRequestsByUser(user_id: string): Promise<LeaveRequest[]> {
+  async getBreakWaiverRequestsByUser(user_id: string): Promise<LeaveRequest[]> {
     const { data, error } = await supabase
       .from('time_off_requests')
       .select('id, company_id, requester_id, shift_assignment_id, request_type, reason, status, reviewed_by, reviewed_at, created_at, updated_at')
       .eq('requester_id', user_id)
+      .eq('request_type', 'break_waiver')
       .order('created_at', { ascending: false })
     if (error) throw new Error(error.message)
     return (data ?? []) as LeaveRequest[]
   },
 
-  async createLeaveRequest(input: TimeOffRequestCreateInput): Promise<LeaveRequest> {
+  async createBreakWaiverRequest(input: BreakWaiverCreateInput): Promise<LeaveRequest> {
     const { data, error } = await supabase
       .from('time_off_requests')
       .insert({
@@ -89,13 +98,15 @@ export const availabilityRepository = {
       .from('shift_swap_requests')
       .insert({
         company_id: input.company_id,
-        shift_assignment_id: input.shift_assignment_id,
         requester_id: input.requester_id,
-        replacement_user_id: input.replacement_user_id,
+        requester_assignment_id: input.requester_assignment_id,
+        counterpart_id: input.counterpart_id,
+        counterpart_assignment_id: input.counterpart_assignment_id,
         reason: input.reason,
         status: 'pending',
+        counterpart_status: 'pending',
       })
-      .select('id, company_id, shift_assignment_id, requester_id, replacement_user_id, reason, status, reviewed_by, reviewed_at, created_at, updated_at')
+      .select()
       .single()
     if (error) throw new Error(error.message)
     return data as ShiftSwapRequest

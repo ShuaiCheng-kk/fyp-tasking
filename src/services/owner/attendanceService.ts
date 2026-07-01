@@ -10,10 +10,11 @@ import {
   AttendanceReviewInput,
   FixedOffDayDecisionInput,
   FixedOffDayRequestView,
-  ShiftSwapDecisionInput,
+  ShiftSwapCounterpartDecisionInput,
+  ShiftSwapOwnerDecisionInput,
+  ShiftSwapRequestCreateInput,
   ShiftSwapRequestView,
-  TimeOffRequestDecisionInput,
-  TimeOffRequestView,
+  ShiftSwapWithdrawInput,
 } from '@/types/Attendance'
 
 // shift_date/start_time/end_time are stored as plain UTC-naive strings — without the explicit
@@ -176,68 +177,71 @@ export const attendanceService = {
     })
   },
 
-  async getTimeOffRequests(company_id: string): Promise<TimeOffRequestView[]> {
-    const [requests, assignments] = await Promise.all([
-      attendanceRepository.getTimeOffRequestsByCompany(company_id),
-      attendanceRepository.getAssignmentsByCompany(company_id),
-    ])
-    const users = await attendanceRepository.getUsersByIds([...new Set(requests.map(request => request.requester_id))])
-    const usersById = indexById(users)
-    const assignmentsById = new Map(assignments.map(assignment => [assignment.id, assignment]))
-
-    return requests.map(request => {
-      const assignment = request.shift_assignment_id ? assignmentsById.get(request.shift_assignment_id) : null
-      return {
-        ...request,
-        requester_name: usersById.get(request.requester_id)?.full_name ?? 'Unknown member',
-        shift_title: assignment?.shifts?.title ?? null,
-        shift_date: assignment?.shifts?.shift_date ?? null,
-        start_time: assignment?.shifts?.start_time ?? null,
-        end_time: assignment?.shifts?.end_time ?? null,
-      }
-    })
-  },
-
-  async decideTimeOffRequest(input: TimeOffRequestDecisionInput) {
-    if (!['approved', 'rejected'].includes(input.decision)) throw new Error('Invalid request decision')
-    return attendanceRepository.updateTimeOffRequest(input.id, {
-      status: input.decision,
-      reviewed_by: input.reviewer_id,
-      reviewed_at: new Date().toISOString(),
-    })
-  },
-
   async getShiftSwapRequests(company_id: string): Promise<ShiftSwapRequestView[]> {
-    const [requests, assignments] = await Promise.all([
-      attendanceRepository.getShiftSwapRequestsByCompany(company_id),
-      attendanceRepository.getAssignmentsByCompany(company_id),
-    ])
-    const userIds = [...new Set(requests.flatMap(request => [request.requester_id, request.replacement_user_id]))]
-    const users = await attendanceRepository.getUsersByIds(userIds)
-    const usersById = indexById(users)
-    const assignmentsById = new Map(assignments.map(assignment => [assignment.id, assignment]))
+    const requests = await attendanceRepository.getShiftSwapRequestsByCompany(company_id)
+    if (requests.length === 0) return []
 
-    return requests.map(request => {
-      const assignment = assignmentsById.get(request.shift_assignment_id)
+    const assignmentIds = [...new Set(requests.flatMap(r => [r.requester_assignment_id, r.counterpart_assignment_id]))]
+    const userIds = [...new Set(requests.flatMap(r => [r.requester_id, r.counterpart_id]))]
+
+    const [assignmentsArr, users] = await Promise.all([
+      Promise.all(assignmentIds.map(id => attendanceRepository.getShiftAssignmentById(id))),
+      attendanceRepository.getUsersByIds(userIds),
+    ])
+    const assignmentsById = new Map(assignmentsArr.filter(Boolean).map(a => [a!.id, a!]))
+    const usersById = indexById(users)
+
+    const taskCounts = await Promise.all(
+      assignmentIds.map(id => attendanceRepository.getTasksByShiftAssignment(id).then(t => ({ id, count: t.length }))),
+    )
+    const taskCountById = new Map(taskCounts.map(tc => [tc.id, tc.count]))
+
+    // fetch department names via requester assignment's shift department_id
+    const deptIds = [...new Set(assignmentsArr.filter(Boolean).map(a => a!.shifts?.department_id).filter(Boolean) as string[])]
+    const depts = await attendanceRepository.getDepartmentsByIds(deptIds)
+    const deptsById = new Map(depts.map(d => [d.id, d.name]))
+
+    return requests.map(req => {
+      const reqAss = assignmentsById.get(req.requester_assignment_id)
+      const ctrAss = assignmentsById.get(req.counterpart_assignment_id)
+      const requester = usersById.get(req.requester_id)
+      const counterpart = usersById.get(req.counterpart_id)
+      const deptName = deptsById.get(reqAss?.shifts?.department_id ?? '') ?? null
       return {
-        ...request,
-        requester_name: usersById.get(request.requester_id)?.full_name ?? 'Unknown member',
-        replacement_name: usersById.get(request.replacement_user_id)?.full_name ?? 'Unknown member',
-        shift_title: assignment?.shifts?.title ?? null,
-        shift_date: assignment?.shifts?.shift_date ?? null,
-        start_time: assignment?.shifts?.start_time ?? null,
-        end_time: assignment?.shifts?.end_time ?? null,
+        ...req,
+        requester_name: requester?.full_name ?? 'Unknown',
+        requester_role: requester?.role ?? '',
+        requester_photo_url: requester?.profile_photo_url ?? null,
+        counterpart_name: counterpart?.full_name ?? 'Unknown',
+        counterpart_role: counterpart?.role ?? '',
+        counterpart_photo_url: counterpart?.profile_photo_url ?? null,
+        department_name: deptName,
+        requester_shift_title: reqAss?.shifts?.title ?? null,
+        requester_shift_date: reqAss?.shifts?.shift_date ?? null,
+        requester_start_time: reqAss?.shifts?.start_time ?? null,
+        requester_end_time: reqAss?.shifts?.end_time ?? null,
+        counterpart_shift_title: ctrAss?.shifts?.title ?? null,
+        counterpart_shift_date: ctrAss?.shifts?.shift_date ?? null,
+        counterpart_start_time: ctrAss?.shifts?.start_time ?? null,
+        counterpart_end_time: ctrAss?.shifts?.end_time ?? null,
+        requester_task_count: taskCountById.get(req.requester_assignment_id) ?? 0,
+        counterpart_task_count: taskCountById.get(req.counterpart_assignment_id) ?? 0,
       }
     })
   },
 
-  async decideShiftSwapRequest(input: ShiftSwapDecisionInput) {
+  // Owner/Manager: approve or reject after counterpart has agreed
+  async decideShiftSwapRequest(input: ShiftSwapOwnerDecisionInput) {
     if (!['approved', 'rejected'].includes(input.decision)) throw new Error('Invalid swap decision')
     const request = await attendanceRepository.getShiftSwapRequestById(input.id)
     if (!request) throw new Error('Shift swap request not found')
+    if (request.counterpart_status !== 'approved') throw new Error('Counterpart has not agreed yet')
+    if (request.status !== 'pending') throw new Error('Request is no longer pending')
 
     if (input.decision === 'approved') {
-      await attendanceRepository.updateShiftAssignmentUser(request.shift_assignment_id, request.replacement_user_id)
+      // Swap the two assignments' user_id
+      await attendanceRepository.updateShiftAssignmentUser(request.requester_assignment_id, request.counterpart_id)
+      await attendanceRepository.updateShiftAssignmentUser(request.counterpart_assignment_id, request.requester_id)
     }
 
     return attendanceRepository.updateShiftSwapRequest(input.id, {
@@ -271,30 +275,66 @@ export const attendanceService = {
     })
   },
 
-  // UC52 — Submit Shift Swap Request (M or E)
-  async submitShiftSwapRequest(input: {
-    company_id: string
-    shift_assignment_id: string
-    requester_id: string
-    replacement_user_id: string
-    reason: string | null
-  }) {
-    const assignment = await attendanceRepository.getShiftAssignmentById(input.shift_assignment_id)
-    if (!assignment) throw new Error('Shift assignment not found')
-    if (assignment.user_id !== input.requester_id) throw new Error('You are not assigned to this shift')
+  // UC52 — Submit Shift Swap Request (M or E initiates)
+  async submitShiftSwapRequest(input: ShiftSwapRequestCreateInput) {
+    const [reqAss, ctrAss] = await Promise.all([
+      attendanceRepository.getShiftAssignmentById(input.requester_assignment_id),
+      attendanceRepository.getShiftAssignmentById(input.counterpart_assignment_id),
+    ])
+    if (!reqAss) throw new Error('Your shift assignment not found')
+    if (!ctrAss) throw new Error('Counterpart shift assignment not found')
+    if (reqAss.user_id !== input.requester_id) throw new Error('You are not assigned to this shift')
+    if (ctrAss.user_id !== input.counterpart_id) throw new Error('Counterpart is not assigned to that shift')
+
+    // Validate same department and same role
+    const reqShift = reqAss.shifts
+    const ctrShift = ctrAss.shifts
+    if (!reqShift || !ctrShift) throw new Error('Shift data missing')
+    if (reqShift.department_id !== ctrShift.department_id) throw new Error('Both shifts must be in the same department')
+
+    const users = await attendanceRepository.getUsersByIds([input.requester_id, input.counterpart_id])
+    const requester = users.find(u => u.id === input.requester_id)
+    const counterpart = users.find(u => u.id === input.counterpart_id)
+    if (!requester || !counterpart) throw new Error('User not found')
+    if (requester.role !== counterpart.role) throw new Error('Both users must have the same role to swap shifts')
+
+    // Check no other pending request exists for either assignment
+    const [reqLocks, ctrLocks] = await Promise.all([
+      attendanceRepository.getPendingSwapRequestsByAssignment(input.requester_assignment_id),
+      attendanceRepository.getPendingSwapRequestsByAssignment(input.counterpart_assignment_id),
+    ])
+    if (reqLocks.length > 0) throw new Error('Your shift already has a pending swap request')
+    if (ctrLocks.length > 0) throw new Error('The counterpart shift already has a pending swap request')
+
     return attendanceRepository.createShiftSwapRequest(input)
   },
 
-  // UC57 — Submit Leave Request (M or E)
-  async submitLeaveRequest(input: {
-    company_id: string
-    requester_id: string
-    request_type: string
-    reason: string | null
-    shift_assignment_id: string | null
-  }) {
-    if (!['time_off', 'leave'].includes(input.request_type)) throw new Error('Invalid request type')
-    return attendanceRepository.createTimeOffRequest(input)
+  // Counterpart responds to a swap request
+  async respondShiftSwapRequest(input: ShiftSwapCounterpartDecisionInput) {
+    if (!['approved', 'rejected'].includes(input.decision)) throw new Error('Invalid decision')
+    const request = await attendanceRepository.getShiftSwapRequestById(input.id)
+    if (!request) throw new Error('Shift swap request not found')
+    if (request.counterpart_id !== input.counterpart_id) throw new Error('You are not the counterpart of this request')
+    if (request.status !== 'pending') throw new Error('Request is no longer pending')
+    if (request.counterpart_status !== 'pending') throw new Error('Already responded')
+
+    const fields: Parameters<typeof attendanceRepository.updateShiftSwapRequest>[1] = {
+      counterpart_status: input.decision,
+      counterpart_reviewed_at: new Date().toISOString(),
+    }
+    // If counterpart rejects, close the whole request
+    if (input.decision === 'rejected') fields.status = 'rejected'
+
+    return attendanceRepository.updateShiftSwapRequest(input.id, fields)
+  },
+
+  // Requester withdraws before counterpart responds or before owner decides
+  async withdrawShiftSwapRequest(input: ShiftSwapWithdrawInput) {
+    const request = await attendanceRepository.getShiftSwapRequestById(input.id)
+    if (!request) throw new Error('Shift swap request not found')
+    if (request.requester_id !== input.requester_id) throw new Error('Only the requester can withdraw')
+    if (request.status !== 'pending') throw new Error('Request is no longer pending')
+    return attendanceRepository.updateShiftSwapRequest(input.id, { status: 'withdrawn' })
   },
 
   // UC55 — Submit Fixed Day Off Request (M or E)
@@ -307,68 +347,70 @@ export const attendanceService = {
     return attendanceRepository.createFixedOffDayRequest(input)
   },
 
-  // UC52/55/57 — View own submitted requests (M or E)
+  // UC52/55 — View own submitted requests (M or E) — includes both sides of a swap
   async getMyRequests(user_id: string): Promise<{
     swaps: ShiftSwapRequestView[]
-    time_off: TimeOffRequestView[]
     fixed_off: FixedOffDayRequestView[]
   }> {
-    const [swaps, time_off, fixed_off] = await Promise.all([
+    const [swaps, fixed_off] = await Promise.all([
       attendanceRepository.getShiftSwapRequestsByUser(user_id),
-      attendanceRepository.getTimeOffRequestsByUser(user_id),
       attendanceRepository.getFixedOffDayRequestsByUser(user_id),
     ])
 
-    const assignmentIds = [
-      ...swaps.map(s => s.shift_assignment_id),
-      ...time_off.filter(t => t.shift_assignment_id).map(t => t.shift_assignment_id!),
-    ]
-    const uniqueAssignmentIds = [...new Set(assignmentIds)]
+    // Build swapsView using the same logic as getShiftSwapRequests
+    let swapsView: ShiftSwapRequestView[] = []
+    if (swaps.length > 0) {
+      const assignmentIds = [...new Set(swaps.flatMap(s => [s.requester_assignment_id, s.counterpart_assignment_id]))]
+      const userIds = [...new Set(swaps.flatMap(s => [s.requester_id, s.counterpart_id]))]
+      const [assignmentsArr, users] = await Promise.all([
+        Promise.all(assignmentIds.map(id => attendanceRepository.getShiftAssignmentById(id))),
+        attendanceRepository.getUsersByIds(userIds),
+      ])
+      const assignmentsById = new Map(assignmentsArr.filter(Boolean).map(a => [a!.id, a!]))
+      const usersById = indexById(users)
+      const taskCounts = await Promise.all(
+        assignmentIds.map(id => attendanceRepository.getTasksByShiftAssignment(id).then(t => ({ id, count: t.length }))),
+      )
+      const taskCountById = new Map(taskCounts.map(tc => [tc.id, tc.count]))
+      const deptIds = [...new Set(assignmentsArr.filter(Boolean).map(a => a!.shifts?.department_id).filter(Boolean) as string[])]
+      const depts = await attendanceRepository.getDepartmentsByIds(deptIds)
+      const deptsById = new Map(depts.map(d => [d.id, d.name]))
 
-    const assignmentsArr = await Promise.all(
-      uniqueAssignmentIds.map(id => attendanceRepository.getShiftAssignmentById(id)),
-    )
-    const assignmentsById = new Map(
-      assignmentsArr.filter(Boolean).map(a => [a!.id, a!]),
-    )
+      swapsView = swaps.map(req => {
+        const reqAss = assignmentsById.get(req.requester_assignment_id)
+        const ctrAss = assignmentsById.get(req.counterpart_assignment_id)
+        const requester = usersById.get(req.requester_id)
+        const counterpart = usersById.get(req.counterpart_id)
+        return {
+          ...req,
+          requester_name: requester?.full_name ?? 'Unknown',
+          requester_role: requester?.role ?? '',
+          requester_photo_url: requester?.profile_photo_url ?? null,
+          counterpart_name: counterpart?.full_name ?? 'Unknown',
+          counterpart_role: counterpart?.role ?? '',
+          counterpart_photo_url: counterpart?.profile_photo_url ?? null,
+          department_name: deptsById.get(reqAss?.shifts?.department_id ?? '') ?? null,
+          requester_shift_title: reqAss?.shifts?.title ?? null,
+          requester_shift_date: reqAss?.shifts?.shift_date ?? null,
+          requester_start_time: reqAss?.shifts?.start_time ?? null,
+          requester_end_time: reqAss?.shifts?.end_time ?? null,
+          counterpart_shift_title: ctrAss?.shifts?.title ?? null,
+          counterpart_shift_date: ctrAss?.shifts?.shift_date ?? null,
+          counterpart_start_time: ctrAss?.shifts?.start_time ?? null,
+          counterpart_end_time: ctrAss?.shifts?.end_time ?? null,
+          requester_task_count: taskCountById.get(req.requester_assignment_id) ?? 0,
+          counterpart_task_count: taskCountById.get(req.counterpart_assignment_id) ?? 0,
+        }
+      })
+    }
 
-    const userIds = [...new Set([
-      user_id,
-      ...swaps.map(s => s.replacement_user_id),
-    ])]
-    const users = await attendanceRepository.getUsersByIds(userIds)
-    const usersById = indexById(users)
-
-    const swapsView: ShiftSwapRequestView[] = swaps.map(req => {
-      const assignment = assignmentsById.get(req.shift_assignment_id)
-      return {
-        ...req,
-        requester_name: usersById.get(req.requester_id)?.full_name ?? 'Unknown',
-        replacement_name: usersById.get(req.replacement_user_id)?.full_name ?? 'Unknown',
-        shift_title: assignment?.shifts?.title ?? null,
-        shift_date: assignment?.shifts?.shift_date ?? null,
-        start_time: assignment?.shifts?.start_time ?? null,
-        end_time: assignment?.shifts?.end_time ?? null,
-      }
-    })
-
-    const timeOffView: TimeOffRequestView[] = time_off.map(req => {
-      const assignment = req.shift_assignment_id ? assignmentsById.get(req.shift_assignment_id) : null
-      return {
-        ...req,
-        requester_name: usersById.get(req.requester_id)?.full_name ?? 'Unknown',
-        shift_title: assignment?.shifts?.title ?? null,
-        shift_date: assignment?.shifts?.shift_date ?? null,
-        start_time: assignment?.shifts?.start_time ?? null,
-        end_time: assignment?.shifts?.end_time ?? null,
-      }
-    })
-
+    const foUsers = await attendanceRepository.getUsersByIds([user_id])
+    const foUsersById = indexById(foUsers)
     const fixedOffView: FixedOffDayRequestView[] = fixed_off.map(req => ({
       ...req,
-      requester_name: usersById.get(req.user_id)?.full_name ?? 'Unknown',
+      requester_name: foUsersById.get(req.user_id)?.full_name ?? 'Unknown',
     }))
 
-    return { swaps: swapsView, time_off: timeOffView, fixed_off: fixedOffView }
+    return { swaps: swapsView, fixed_off: fixedOffView }
   },
 }
