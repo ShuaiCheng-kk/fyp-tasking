@@ -324,7 +324,7 @@ export default function UserAdminDashboard() {
 
                   {/* Plan */}
                   <div style={{ borderTop: '1px solid #F3F4F6', paddingTop: 12, marginBottom: 0 }}>
-                    <button onClick={() => toggleCompSection('plan')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '0 0 8px', fontWeight: 600, fontSize: '0.85rem', color: '#F97316', background: 'none' }}>
+                    <button onClick={() => toggleCompSection('plan')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '0 0 8px', fontWeight: 600, fontSize: '0.85rem', color: '#F97316' }}>
                       Plan {planFilters.length > 0 && <span style={{ background: '#F97316', color: '#fff', borderRadius: 999, padding: '1px 7px', fontSize: 11, fontWeight: 700 }}>{planFilters.length}</span>}
                       {compFilterOpen.plan ? <ChevronUp size={14} color="#9CA3AF" /> : <ChevronDown size={14} color="#9CA3AF" />}
                     </button>
@@ -488,7 +488,7 @@ export default function UserAdminDashboard() {
 
                 {/* Company */}
                 <div style={{ borderTop: '1px solid #F3F4F6', paddingTop: 12 }}>
-                  <button onClick={() => toggleUserSection('company')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '0 0 8px', fontWeight: 600, fontSize: '0.85rem', color: '#F97316', background: 'none' }}>
+                  <button onClick={() => toggleUserSection('company')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '0 0 8px', fontWeight: 600, fontSize: '0.85rem', color: '#F97316' }}>
                     Company {companyNameFilters.length > 0 && <span style={{ background: '#F97316', color: '#fff', borderRadius: 999, padding: '1px 7px', fontSize: 11, fontWeight: 700 }}>{companyNameFilters.length}</span>}
                     {userFilterOpen.company ? <ChevronUp size={14} color="#9CA3AF" /> : <ChevronDown size={14} color="#9CA3AF" />}
                   </button>
@@ -517,7 +517,7 @@ export default function UserAdminDashboard() {
 
                 {/* Role */}
                 <div style={{ borderTop: '1px solid #F3F4F6', paddingTop: 12 }}>
-                  <button onClick={() => toggleUserSection('role')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '0 0 8px', fontWeight: 600, fontSize: '0.85rem', color: '#F97316', background: 'none' }}>
+                  <button onClick={() => toggleUserSection('role')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '0 0 8px', fontWeight: 600, fontSize: '0.85rem', color: '#F97316' }}>
                     Role {roleFilters.length > 0 && <span style={{ background: '#F97316', color: '#fff', borderRadius: 999, padding: '1px 7px', fontSize: 11, fontWeight: 700 }}>{roleFilters.length}</span>}
                     {userFilterOpen.role ? <ChevronUp size={14} color="#9CA3AF" /> : <ChevronDown size={14} color="#9CA3AF" />}
                   </button>
@@ -531,7 +531,7 @@ export default function UserAdminDashboard() {
 
                 {/* Status */}
                 <div style={{ borderTop: '1px solid #F3F4F6', paddingTop: 12 }}>
-                  <button onClick={() => toggleUserSection('status')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '0 0 8px', fontWeight: 600, fontSize: '0.85rem', color: '#F97316', background: 'none' }}>
+                  <button onClick={() => toggleUserSection('status')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '0 0 8px', fontWeight: 600, fontSize: '0.85rem', color: '#F97316' }}>
                     Status {statusFilters.length > 0 && <span style={{ background: '#F97316', color: '#fff', borderRadius: 999, padding: '1px 7px', fontSize: 11, fontWeight: 700 }}>{statusFilters.length}</span>}
                     {userFilterOpen.status ? <ChevronUp size={14} color="#9CA3AF" /> : <ChevronDown size={14} color="#9CA3AF" />}
                   </button>
