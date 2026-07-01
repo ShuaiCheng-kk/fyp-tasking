@@ -199,6 +199,17 @@ export interface ShiftSwapRequestView extends ShiftSwapRequest {
   // Task counts (for AI impact report)
   requester_task_count: number
   counterpart_task_count: number
+  // Active (non-Complete, non-archived) tasks that will move to the other party if approved
+  requester_movable_tasks: ShiftSwapMovableTask[]
+  counterpart_movable_tasks: ShiftSwapMovableTask[]
+}
+
+export interface ShiftSwapMovableTask {
+  id: string
+  title: string
+  status: string
+  priority: string | null
+  due_at: string | null
 }
 
 export interface FixedOffDayRequest {

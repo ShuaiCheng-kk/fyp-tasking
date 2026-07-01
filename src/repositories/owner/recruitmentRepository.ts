@@ -147,6 +147,8 @@ export const recruitmentRepository = {
         job_start_time: input.job_start_time ?? null,
         assigned_employee_id: input.assigned_employee_id ?? null,
         form_type: input.form_type ?? null,
+        expires_at: input.expires_at ?? null,
+        expiry_preset: input.expiry_preset ?? null,
       })
       .select()
       .single()
@@ -173,11 +175,11 @@ export const recruitmentRepository = {
   async getApplicantsByJob(job_id: string): Promise<JobApplicant[]> {
     const { data, error } = await supabase
       .from('job_applicants')
-      .select('*')
+      .select('*, users(full_name, email_address)')
       .eq('job_id', job_id)
       .order('applied_at', { ascending: false })
     if (error) throw new Error(error.message)
-    return (data ?? []) as JobApplicant[]
+    return (data ?? []).map(mapApplicantRow)
   },
 
   async getApplicantCounts(job_ids: string[]): Promise<{ job_id: string; status: string }[]> {
@@ -193,11 +195,11 @@ export const recruitmentRepository = {
   async getApplicantById(id: string): Promise<JobApplicant | null> {
     const { data, error } = await supabase
       .from('job_applicants')
-      .select('*')
+      .select('*, users(full_name, email_address)')
       .eq('id', id)
       .single()
     if (error) return null
-    return data as JobApplicant
+    return mapApplicantRow(data)
   },
 
   async updateApplicantStatus(id: string, status: 'accepted' | 'rejected'): Promise<JobApplicant> {
@@ -205,10 +207,10 @@ export const recruitmentRepository = {
       .from('job_applicants')
       .update({ status })
       .eq('id', id)
-      .select()
+      .select('*, users(full_name, email_address)')
       .single()
     if (error) throw new Error(error.message)
-    return data as JobApplicant
+    return mapApplicantRow(data)
   },
 
   async createJobInvitation(input: {
@@ -388,4 +390,14 @@ export const recruitmentRepository = {
     if (error) throw new Error(error.message)
   },
 
+}
+
+function mapApplicantRow(row: Record<string, unknown>): JobApplicant {
+  const user = row.users as { full_name: string; email_address: string } | null
+  const { users: _users, ...rest } = row
+  return {
+    ...(rest as Omit<JobApplicant, 'full_name' | 'email_address'>),
+    full_name: user?.full_name ?? '',
+    email_address: user?.email_address ?? '',
+  }
 }

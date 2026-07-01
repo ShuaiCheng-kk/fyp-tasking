@@ -20,6 +20,7 @@ let departmentId: string
 const createdJobIds: string[] = []
 const createdGuestAuthIds: string[] = []
 const createdGuestUserIds: string[] = []
+const createdTemplateIds: string[] = []
 
 test.beforeAll(async () => {
   seeded = await seedTestOwnerAndCompany('recruitment-api')
@@ -34,6 +35,9 @@ test.beforeAll(async () => {
 })
 
 test.afterAll(async () => {
+  if (createdTemplateIds.length > 0) {
+    await admin.from('job_templates').delete().in('id', createdTemplateIds)
+  }
   if (createdJobIds.length > 0) {
     const { data: shiftRows } = await admin.from('shifts').select('id').eq('company_id', seeded.companyId)
     const shiftIds = (shiftRows ?? []).map(row => row.id as string)
@@ -234,4 +238,164 @@ test('UC49: accepting an invitation to a shift job creates a published shift wit
   expect(shift.start_time.slice(0, 5)).toBe('08:00')
   expect(shift.end_time.slice(0, 5)).toBe('16:00')
   expect(shift.is_open_ended).toBe(false)
+})
+
+test('UC36 creates, lists, edits, and deletes a job template', async ({ request }) => {
+  const createRes = await request.post('/api/job-template', {
+    data: {
+      company_id: seeded.companyId,
+      created_by: seeded.ownerId,
+      name: 'Weekend Cashier Template',
+      title: 'Cashier',
+      description: 'Run the front register',
+      requirements: 'Available weekends',
+      employment_type: 'casual',
+      form_type: 'shift',
+    },
+  })
+  expect(createRes.status()).toBe(201)
+  const created = (await createRes.json()).template
+  createdTemplateIds.push(created.id)
+  expect(created.name).toBe('Weekend Cashier Template')
+
+  const listRes = await request.get(`/api/job-template?company_id=${seeded.companyId}`)
+  expect(listRes.status()).toBe(200)
+  const { templates } = await listRes.json()
+  expect(templates.some((t: { id: string }) => t.id === created.id)).toBe(true)
+
+  const editRes = await request.patch(`/api/job-template/${created.id}`, {
+    data: { name: 'Renamed Template' },
+  })
+  expect(editRes.status()).toBe(200)
+  expect((await editRes.json()).template.name).toBe('Renamed Template')
+
+  const deleteRes = await request.delete(`/api/job-template/${created.id}`)
+  expect(deleteRes.status()).toBe(200)
+  createdTemplateIds.splice(createdTemplateIds.indexOf(created.id), 1)
+
+  const listAfterDeleteRes = await request.get(`/api/job-template?company_id=${seeded.companyId}`)
+  const { templates: templatesAfterDelete } = await listAfterDeleteRes.json()
+  expect(templatesAfterDelete.some((t: { id: string }) => t.id === created.id)).toBe(false)
+})
+
+test('UC43 persists an application deadline on a job posting', async ({ request }) => {
+  const res = await request.post('/api/recruitment', {
+    data: {
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      created_by: seeded.ownerId,
+      title: 'Holiday Warehouse Staff',
+      description: 'Pack and sort seasonal orders.',
+      formType: 'shift',
+      shift_date: '2030-03-05',
+      shift_start_time: '09:00',
+      shift_end_time: '17:00',
+      status: 'open',
+      expires_at: '2030-04-01',
+      expiry_preset: '30d',
+    },
+  })
+  expect(res.status()).toBe(201)
+  const body = await res.json()
+  createdJobIds.push(body.posting.id)
+  expect(body.posting.expires_at).toContain('2030-04-01')
+  expect(body.posting.expiry_preset).toBe('30d')
+
+  const editRes = await request.patch('/api/recruitment', {
+    data: { action: 'edit_posting', job_id: body.posting.id, expires_at: '2030-05-01', expiry_preset: 'custom' },
+  })
+  expect(editRes.status()).toBe(200)
+  const editBody = await editRes.json()
+  expect(editBody.posting.expires_at).toContain('2030-05-01')
+  expect(editBody.posting.expiry_preset).toBe('custom')
+})
+
+test('UC44 view applicant list resolves full_name and email_address from the applicant\'s user account', async ({ request }) => {
+  const jobRes = await request.post('/api/recruitment', {
+    data: {
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      created_by: seeded.ownerId,
+      title: 'Front Desk Assistant',
+      description: 'Greet visitors and manage bookings.',
+      formType: 'oneoff',
+      shift_date: '2030-03-06',
+      job_start_time: '09:00',
+      status: 'open',
+    },
+  })
+  expect(jobRes.status()).toBe(201)
+  const jobId = (await jobRes.json()).posting.id as string
+  createdJobIds.push(jobId)
+
+  const guest = await seedGuest('applicant-identity')
+  const { data: applicant, error: applicantError } = await admin
+    .from('job_applicants')
+    .insert({ job_id: jobId, user_id: guest.userId, status: 'pending' })
+    .select()
+    .single()
+  if (applicantError || !applicant) throw new Error(`Failed to seed applicant: ${applicantError?.message}`)
+
+  const listRes = await request.get(`/api/recruitment?resource=applicants&job_id=${jobId}`)
+  expect(listRes.status()).toBe(200)
+  const { applicants } = await listRes.json()
+  expect(applicants).toHaveLength(1)
+  expect(applicants[0].full_name).toBe(`Test Guest applicant-identity`)
+  expect(applicants[0].email_address).toContain('test-recruitment-guest-applicant-identity')
+})
+
+test('UC41/UC42: manager submits a job for approval, owner approves it', async ({ request }) => {
+  const jobRes = await request.post('/api/recruitment', {
+    data: {
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      created_by: seeded.ownerId,
+      title: 'Pending Review Role',
+      description: 'Needs owner sign-off before going live.',
+      formType: 'oneoff',
+      shift_date: '2030-03-07',
+      job_start_time: '09:00',
+      status: 'pending_approval',
+    },
+  })
+  expect(jobRes.status()).toBe(201)
+  const jobId = (await jobRes.json()).posting.id as string
+  createdJobIds.push(jobId)
+
+  const pendingRes = await request.get(`/api/recruitment?company_id=${seeded.companyId}&resource=pending_approval`)
+  expect(pendingRes.status()).toBe(200)
+  const { pendingPostings } = await pendingRes.json()
+  expect(pendingPostings.some((p: { id: string }) => p.id === jobId)).toBe(true)
+
+  const approveRes = await request.patch('/api/recruitment', {
+    data: { action: 'approve_posting', job_id: jobId },
+  })
+  expect(approveRes.status()).toBe(200)
+  expect((await approveRes.json()).posting.status).toBe('open')
+})
+
+test('UC42: owner rejects a pending job posting with a reason', async ({ request }) => {
+  const jobRes = await request.post('/api/recruitment', {
+    data: {
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      created_by: seeded.ownerId,
+      title: 'Needs More Detail Role',
+      description: 'Missing pay information.',
+      formType: 'oneoff',
+      shift_date: '2030-03-08',
+      job_start_time: '09:00',
+      status: 'pending_approval',
+    },
+  })
+  const jobId = (await jobRes.json()).posting.id as string
+  createdJobIds.push(jobId)
+
+  const rejectRes = await request.patch('/api/recruitment', {
+    data: { action: 'reject_posting', job_id: jobId, rejection_reason: 'Please add the salary details.' },
+  })
+  expect(rejectRes.status()).toBe(200)
+  const rejectBody = await rejectRes.json()
+  expect(rejectBody.posting.status).toBe('rejected')
+  expect(rejectBody.posting.rejection_reason).toBe('Please add the salary details.')
 })

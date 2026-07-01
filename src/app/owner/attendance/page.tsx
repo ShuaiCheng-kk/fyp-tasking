@@ -17,6 +17,7 @@ import { deptColor } from '@/lib/deptColor'
 import {
   AttendanceDashboardRecord,
   FixedOffDayRequestView,
+  ShiftSwapMovableTask,
   ShiftSwapRequestView,
 } from '@/types/Attendance'
 import { ModalOverlay, ModalBox, ModalHeader, modalErrorBoxStyle, modalPrimaryButtonStyle, modalInputStyle, modalLabelStyle } from '@/components/modal'
@@ -40,7 +41,7 @@ function formatTime(value: string | null | undefined): string {
     ? [date.getHours(), date.getMinutes()]
     : value.split(':').map(Number)
   if (Number.isNaN(h) || Number.isNaN(m)) return value.slice(0, 5)
-  const suffix = h < 12 ? 'AM' : 'PM'
+  const suffix = h < 12 ? 'am' : 'pm'
   const hour12 = h === 0 ? 12 : h > 12 ? h - 12 : h
   return m === 0 ? `${hour12}${suffix}` : `${hour12}:${String(m).padStart(2, '0')}${suffix}`
 }
@@ -442,6 +443,116 @@ function CurrentShiftsBlock({ show, deptName, rows, loading, panelBorder, highli
                 )
               })}
             </div>
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
+// ─── TaskChangesBlock ─────────────────────────────────────────────────────────
+// Previews, for the currently-selected pending swap request, which active tasks would move to
+// the other party if the Owner approves — mirrors exactly what decideShiftSwapRequest actually
+// moves (same non-Complete/non-archived filter), so nothing shown here can surprise on approval.
+
+// Same palette/format as the Task Page's TaskCard (src/app/owner/tasks/page.tsx), so a task
+// looks identical whether it's viewed there or previewed here mid-swap.
+const TASK_CHANGES_PRIORITY_COLORS: Record<string, { bg: string; text: string }> = {
+  Low:    { bg: '#F1F5F9', text: '#475569' },
+  Medium: { bg: '#DBEAFE', text: '#1D4ED8' },
+  High:   { bg: '#FFEDD5', text: '#C2410C' },
+  Urgent: { bg: '#FEE2E2', text: '#B91C1C' },
+}
+
+function formatTaskChangeDueDate(value: string | null): string {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const dayMonth = date.toLocaleDateString('en-US', { day: 'numeric', month: 'long' })
+  const hours = date.getHours()
+  const minutes = date.getMinutes()
+  const hour12 = hours % 12 || 12
+  const suffix = hours < 12 ? 'AM' : 'PM'
+  const time = minutes === 0 ? `${hour12}${suffix}` : `${hour12}:${String(minutes).padStart(2, '0')}${suffix}`
+  return `${dayMonth}, ${time}`
+}
+
+function TaskChangesBlock({ show, request, panelBorder }: {
+  show: boolean
+  request: ShiftSwapRequestView | null
+  panelBorder: string
+}) {
+  if (!show || !request) return null
+  const requesterTasks = request.requester_movable_tasks ?? []
+  const counterpartTasks = request.counterpart_movable_tasks ?? []
+  const hasChanges = requesterTasks.length > 0 || counterpartTasks.length > 0
+
+  const taskColumn = (name: string, role: string, photoUrl: string | null, tasks: ShiftSwapMovableTask[], movesTo: string) => (
+    <div style={{ flex: 1, minWidth: 0, border: '1px solid #E5E7EB', borderRadius: 12, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <RoleAvatar role={role} size={36} photoUrl={photoUrl} />
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: '0.86rem', fontWeight: 700, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</div>
+          <div style={{ fontSize: '0.7rem', fontWeight: 600, color: '#9CA3AF' }}>{tasks.length === 0 ? 'No active tasks to move' : `Moves to ${movesTo}`}</div>
+        </div>
+      </div>
+      {tasks.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {tasks.map(task => {
+            const priorityStyle = task.priority ? TASK_CHANGES_PRIORITY_COLORS[task.priority] : null
+            const dueLabel = formatTaskChangeDueDate(task.due_at)
+            return (
+              <div key={task.id} style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 10, padding: '12px 14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+                  {priorityStyle && task.priority && (
+                    <span style={{ fontSize: '0.65rem', fontWeight: 800, padding: '2px 7px', borderRadius: 99, background: priorityStyle.bg, color: priorityStyle.text, letterSpacing: '0.01em' }}>
+                      {task.priority}
+                    </span>
+                  )}
+                  <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '2px 7px', borderRadius: 99, background: '#F1F5F9', color: '#475569' }}>{task.status}</span>
+                </div>
+                <p style={{ fontWeight: 600, fontSize: '0.8rem', color: '#111827', margin: '0 0 10px', lineHeight: 1.4 }}>{task.title}</p>
+                {dueLabel && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <Clock size={11} color="#9CA3AF" />
+                    <span style={{ fontSize: '0.7rem', fontWeight: 600, color: '#9CA3AF' }}>{dueLabel}</span>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+
+  return (
+    <section style={{ background: '#FFFFFF', border: `1px solid ${panelBorder}`, borderRadius: 14, overflow: 'hidden' }}>
+      <div style={{ padding: '14px 18px', borderBottom: `1px solid ${panelBorder}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ width: 30, height: 30, borderRadius: 9, background: '#F5F3FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <ClipboardList size={15} style={{ color: '#7C3AED' }} />
+        </div>
+        <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Task Changes</span>
+      </div>
+      <div style={{ padding: '18px' }}>
+        {!hasChanges ? (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 80, color: '#9CA3AF', fontSize: 13, fontWeight: 600 }}>
+            No tasks will move if this swap is approved
+          </div>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'stretch', gap: 0 }}>
+            {taskColumn(request.requester_name, request.requester_role, request.requester_photo_url, requesterTasks, request.counterpart_name)}
+            <div style={{ flexShrink: 0, width: 56, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, color: '#94A3B8' }}>
+              <svg width="32" height="10" viewBox="0 0 32 10" fill="none">
+                <line x1="0" y1="5" x2="26" y2="5" stroke="#9CA3AF" strokeWidth="1.5" strokeLinecap="round"/>
+                <polyline points="22,1 30,5 22,9" fill="none" stroke="#9CA3AF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              <svg width="32" height="10" viewBox="0 0 32 10" fill="none">
+                <line x1="32" y1="5" x2="6" y2="5" stroke="#9CA3AF" strokeWidth="1.5" strokeLinecap="round"/>
+                <polyline points="10,1 2,5 10,9" fill="none" stroke="#9CA3AF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </div>
+            {taskColumn(request.counterpart_name, request.counterpart_role, request.counterpart_photo_url, counterpartTasks, request.requester_name)}
           </div>
         )}
       </div>
@@ -1554,7 +1665,7 @@ export default function OwnerAttendancePage() {
                   .filter(r => r.status !== 'pending')
                   .sort((a, b) => new Date(b.reviewed_at ?? 0).getTime() - new Date(a.reviewed_at ?? 0).getTime())
 
-                const SwapCard = ({ req, compact }: { req: ShiftSwapRequestView; compact?: boolean }) => {
+                const SwapCard = ({ req, compact, selected, onSelect }: { req: ShiftSwapRequestView; compact?: boolean; selected?: boolean; onSelect?: () => void }) => {
                   const isReadyForDecision = req.counterpart_status === 'approved' && req.status === 'pending'
                   const isAwaitingCounterpart = req.counterpart_status === 'pending' && req.status === 'pending'
                   const aiResult = aiSwapResults[req.id]
@@ -1567,11 +1678,12 @@ export default function OwnerAttendancePage() {
 
                   if (compact) {
                     const isNew = req.id === newlyProcessedId
+                    const isPending = req.status === 'pending'
                     const approved = req.status === 'approved'
                     const StatusIcon = approved ? Check : X
                     const statusTone = approved
-                      ? { bg: '#ECFDF5', text: '#047857', border: '#86EFAC', cardBorder: '#BBF7D0' }
-                      : { bg: '#FEF2F2', text: '#B91C1C', border: '#FCA5A5', cardBorder: '#FECACA' }
+                      ? { bg: '#ECFDF5', text: '#047857', border: '#86EFAC' }
+                      : { bg: '#FEF2F2', text: '#B91C1C', border: '#FCA5A5' }
                     const miniShiftCard = (
                       name: string,
                       role: string,
@@ -1579,24 +1691,51 @@ export default function OwnerAttendancePage() {
                       shiftDate: string | null,
                       startTime: string | null,
                       endTime: string | null,
+                      mirror = false,
                     ) => (
-                      <div style={{ flex: 1, minWidth: 0, border: '1px solid #E5E7EB', borderRadius: 12, padding: '12px 10px', display: 'flex', alignItems: 'center', gap: 10, background: '#FFFFFF' }}>
-                        <RoleAvatar role={role} size={42} photoUrl={photoUrl} />
-                        <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                          <div style={{ fontSize: '0.86rem', fontWeight: 800, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#64748B' }}>
-                            <Calendar size={11} style={{ flexShrink: 0 }} />
-                            <span style={{ fontSize: '0.72rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{formatSwapDate(shiftDate)}</span>
+                      <div style={{ flex: 1, minWidth: 0, border: '1px solid #E5E7EB', borderRadius: 12, padding: '12px 10px', display: 'flex', alignItems: 'center', justifyContent: mirror ? 'flex-end' : undefined, gap: 16, background: '#FFFFFF' }}>
+                        {mirror && (
+                          <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                            <div style={{ fontSize: '1rem', fontWeight: 800, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#64748B', flexDirection: 'row-reverse', minWidth: 0, maxWidth: '100%' }}>
+                              <Calendar size={12} style={{ flexShrink: 0 }} />
+                              <span style={{ fontSize: '0.75rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{formatSwapDate(shiftDate)}</span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#64748B', flexDirection: 'row-reverse', minWidth: 0, maxWidth: '100%' }}>
+                              <Clock size={12} style={{ flexShrink: 0 }} />
+                              <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{formatTime(startTime)} – {formatTime(endTime)}</span>
+                            </div>
                           </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#64748B' }}>
-                            <Clock size={11} style={{ flexShrink: 0 }} />
-                            <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#334155', whiteSpace: 'nowrap' }}>{formatTime(startTime)} – {formatTime(endTime)}</span>
+                        )}
+                        <RoleAvatar role={role} size={54} photoUrl={photoUrl} />
+                        {!mirror && (
+                          <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <div style={{ fontSize: '1rem', fontWeight: 800, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#64748B', minWidth: 0, maxWidth: '100%' }}>
+                              <Calendar size={12} style={{ flexShrink: 0 }} />
+                              <span style={{ fontSize: '0.75rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{formatSwapDate(shiftDate)}</span>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#64748B', minWidth: 0, maxWidth: '100%' }}>
+                              <Clock size={12} style={{ flexShrink: 0 }} />
+                              <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{formatTime(startTime)} – {formatTime(endTime)}</span>
+                            </div>
                           </div>
-                        </div>
+                        )}
                       </div>
                     )
                     return (
-                      <div className={`att-request-card${isNew ? ' att-request-card-new' : ''}`} style={{ background: '#FFFFFF', border: `1.5px solid ${isNew ? '#FED7AA' : statusTone.cardBorder}`, borderRadius: 14, padding: '12px 14px 14px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                      <div
+                        className={`att-request-card${isNew ? ' att-request-card-new' : ''}`}
+                        onClick={isPending ? onSelect : undefined}
+                        style={{
+                          background: selected ? '#FFF7ED' : '#F9FAFB',
+                          border: `1.5px solid ${selected ? '#F97316' : isNew ? '#FED7AA' : PANEL_BORDER}`,
+                          borderRadius: 14, padding: '12px 14px 14px', display: 'flex', flexDirection: 'column', gap: 12,
+                          cursor: isPending && onSelect ? 'pointer' : 'default',
+                          boxShadow: selected ? '0 4px 16px rgba(249,115,22,0.14)' : 'none',
+                          transition: 'border-color 0.15s, background 0.15s, box-shadow 0.15s',
+                        }}
+                      >
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           {req.department_name && (() => {
                             const dc = deptColor(req.department_name)
@@ -1604,15 +1743,33 @@ export default function OwnerAttendancePage() {
                           })()}
                           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, minWidth: 0 }}>
                             <span style={{ fontSize: '0.76rem', fontWeight: 800, color: '#64748B', whiteSpace: 'nowrap' }}>
-                              {formatOwnerDecisionTime(req.reviewed_at)}
+                              {isPending ? (req.created_at ? new Date(req.created_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '-') : formatOwnerDecisionTime(req.reviewed_at)}
                             </span>
-                            <span title={req.status === 'approved' ? 'Approved' : 'Rejected'} style={{ width: 30, height: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: statusTone.bg, color: statusTone.text, border: `1.5px solid ${statusTone.border}`, borderRadius: 999, flexShrink: 0 }}>
-                              <StatusIcon size={12} strokeWidth={3} />
-                            </span>
+                            {isPending ? (
+                              <div onClick={e => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                {req.counterpart_status === 'approved' && (
+                                  <>
+                                    <button onClick={() => decideRequest('decide_shift_swap', req.id, 'rejected', req.requester_name)} disabled={reqActionLoading} title="Reject" style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #FECACA', background: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.5 : 1 }}>
+                                      <X size={13} style={{ color: '#DC2626' }} />
+                                    </button>
+                                    <button onClick={() => decideRequest('decide_shift_swap', req.id, 'approved', req.requester_name)} disabled={reqActionLoading} title="Approve" style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: '#F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.5 : 1 }}>
+                                      <Check size={13} style={{ color: '#FFFFFF' }} />
+                                    </button>
+                                  </>
+                                )}
+                                {req.counterpart_status === 'pending' && (
+                                  <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#92400E', background: '#FEF3C7', borderRadius: 999, padding: '3px 10px', whiteSpace: 'nowrap' }}>Awaiting</span>
+                                )}
+                              </div>
+                            ) : (
+                              <span title={req.status === 'approved' ? 'Approved' : 'Rejected'} style={{ width: 30, height: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: statusTone.bg, color: statusTone.text, border: `1.5px solid ${statusTone.border}`, borderRadius: 999, flexShrink: 0 }}>
+                                <StatusIcon size={12} strokeWidth={3} />
+                              </span>
+                            )}
                           </div>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                          {miniShiftCard(req.requester_name, req.requester_role, req.requester_photo_url, req.requester_shift_date, req.requester_start_time, req.requester_end_time)}
+                          {miniShiftCard(req.requester_name, req.requester_role, req.requester_photo_url, req.requester_shift_date, req.requester_start_time, req.requester_end_time, true)}
                           <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, color: '#94A3B8' }}>
                             <svg width="24" height="8" viewBox="0 0 24 8" fill="none">
                               <line x1="1" y1="4" x2="19" y2="4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
@@ -1663,23 +1820,23 @@ export default function OwnerAttendancePage() {
                       </div>
                       {/* Two sub-cards + arrow */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: 0, padding: '14px 20px 20px' }}>
-                        {/* Original Shift card */}
-                        <div style={{ flex: 1, border: '1px solid #E5E7EB', borderRadius: 12, padding: '16px 18px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                            <RoleAvatar role={req.requester_role} size={52} photoUrl={req.requester_photo_url} />
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                        {/* Original Shift card — mirrored: text on the left, avatar on the right (next to the arrow), so the two cards face each other */}
+                        <div style={{ flex: 1, background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 12, padding: '16px 18px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 14, justifyContent: 'flex-end' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 5 }}>
                               <div style={{ fontSize: '0.95rem', fontWeight: 700, color: '#111827' }}>{req.requester_name}</div>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexDirection: 'row-reverse' }}>
                                 <Calendar size={11} style={{ color: '#64748B', flexShrink: 0 }} />
                                 <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#64748B' }}>
                                   {formatSwapDate(req.requester_shift_date)}
                                 </span>
                               </div>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexDirection: 'row-reverse' }}>
                                 <Clock size={11} style={{ color: '#64748B', flexShrink: 0 }} />
                                 <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#334155' }}>{formatTime(req.requester_start_time)} – {formatTime(req.requester_end_time)}</span>
                               </div>
                             </div>
+                            <RoleAvatar role={req.requester_role} size={52} photoUrl={req.requester_photo_url} />
                           </div>
                         </div>
 
@@ -1696,7 +1853,7 @@ export default function OwnerAttendancePage() {
                         </div>
 
                         {/* Swap With card */}
-                        <div style={{ flex: 1, border: '1px solid #E5E7EB', borderRadius: 12, padding: '16px 18px' }}>
+                        <div style={{ flex: 1, background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 12, padding: '16px 18px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
                             <RoleAvatar role={req.counterpart_role} size={52} photoUrl={req.counterpart_photo_url} />
                             <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
@@ -1731,27 +1888,36 @@ export default function OwnerAttendancePage() {
                     ) : (
                       <>
                         <div style={{ display: 'contents' }}>
-                        {/* Action Needed — only shown when there are pending requests */}
-                        {actionNeeded.length > 0 && (
-                        <section style={{ gridColumn: '2', gridRow: '1', background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden', height: 260 }}>
+                        {/* Action Needed — only shown when there are pending requests. Shows 2 at a
+                            time; clicking a card selects it (driving Current Shifts/Task Changes
+                            below) independently from paging through the rest. */}
+                        {actionNeeded.length > 0 && (() => {
+                          const PAGE_SIZE = 2
+                          const clampedIndex = Math.min(actionIndex, actionNeeded.length - 1)
+                          const totalPages = Math.ceil(actionNeeded.length / PAGE_SIZE)
+                          const currentPage = Math.floor(clampedIndex / PAGE_SIZE)
+                          const pageStart = currentPage * PAGE_SIZE
+                          const visibleItems = actionNeeded.slice(pageStart, pageStart + PAGE_SIZE)
+                          return (
+                        <section style={{ gridColumn: '2', gridRow: '1', background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden', height: 260, display: 'flex', flexDirection: 'column' }}>
                           <div style={{ padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
                             <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                               <ClipboardList size={15} style={{ color: '#F97316' }} />
                             </div>
                             <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, flex: 1 }}>Action Needed</span>
-                            {actionNeeded.length > 1 && (
+                            {totalPages > 1 && (
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                 <button
-                                  onClick={() => setActionIndex(i => (i - 1 + actionNeeded.length) % actionNeeded.length)}
+                                  onClick={() => setActionIndex(((currentPage - 1 + totalPages) % totalPages) * PAGE_SIZE)}
                                   style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'background 0.14s, border-color 0.14s' }}
                                   onMouseEnter={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.borderColor = '#CBD5E1' }}
                                   onMouseLeave={e => { e.currentTarget.style.background = '#FFFFFF'; e.currentTarget.style.borderColor = '#E5E7EB' }}
                                 >
                                   <ChevronLeft size={14} style={{ color: '#6B7280' }} />
                                 </button>
-                                <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#9CA3AF' }}>{Math.min(actionIndex, actionNeeded.length - 1) + 1} / {actionNeeded.length}</span>
+                                <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#9CA3AF' }}>{pageStart + 1}-{Math.min(pageStart + PAGE_SIZE, actionNeeded.length)} / {actionNeeded.length}</span>
                                 <button
-                                  onClick={() => setActionIndex(i => (i + 1) % actionNeeded.length)}
+                                  onClick={() => setActionIndex(((currentPage + 1) % totalPages) * PAGE_SIZE)}
                                   style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'background 0.14s, border-color 0.14s' }}
                                   onMouseEnter={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.borderColor = '#CBD5E1' }}
                                   onMouseLeave={e => { e.currentTarget.style.background = '#FFFFFF'; e.currentTarget.style.borderColor = '#E5E7EB' }}
@@ -1761,11 +1927,21 @@ export default function OwnerAttendancePage() {
                               </div>
                             )}
                           </div>
-                          <div style={{ padding: '14px 16px' }}>
-                            <SwapCard key={actionNeeded[Math.min(actionIndex, actionNeeded.length - 1)].id} req={actionNeeded[Math.min(actionIndex, actionNeeded.length - 1)]} />
+                          <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'row', gap: 10 }}>
+                            {visibleItems.map((item, i) => (
+                              <div key={item.id} style={{ flex: 1, minWidth: 0 }}>
+                                <SwapCard
+                                  req={item}
+                                  compact
+                                  selected={item.id === actionNeeded[clampedIndex]?.id}
+                                  onSelect={() => setActionIndex(pageStart + i)}
+                                />
+                              </div>
+                            ))}
                           </div>
                         </section>
-                        )}
+                          )
+                        })()}
 
                         {/* Processed */}
                         {(() => {
@@ -1865,8 +2041,12 @@ export default function OwnerAttendancePage() {
             </div>{/* /right content */}
             </div>{/* /two-col grid */}
 
-            {/* ── Current Shifts — full-width, below Type + Action Needed ─── */}
-            <div style={{ gridColumn: '1 / 3', gridRow: '2', minWidth: 0 }}>
+            {/* ── Current Shifts + Task Changes — full-width, below Type + Action Needed ───
+                 Stacked in one flex wrapper (not separate grid rows) so they stay flush together
+                 regardless of how tall column 3 (Processed Requests, which spans rows 1-2) makes
+                 the row-2 track — a second grid row would inherit that inflated track height and
+                 leave a large gap above it. ─── */}
+            <div style={{ gridColumn: '1 / 3', gridRow: '2', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
               <CurrentShiftsBlock
                 show={reqTab === 'swaps' && !!currentShiftsDept}
                 deptName={currentShiftsDept ?? ''}
@@ -1874,6 +2054,11 @@ export default function OwnerAttendancePage() {
                 loading={currentShiftsLoading}
                 panelBorder={PANEL_BORDER}
                 highlightRequest={activeSwapRequest}
+              />
+              <TaskChangesBlock
+                show={reqTab === 'swaps' && !!activeSwapRequest}
+                request={activeSwapRequest}
+                panelBorder={PANEL_BORDER}
               />
             </div>
           </div>

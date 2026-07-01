@@ -459,6 +459,7 @@ async function main() {
 
         assignmentInfo.push({
           assignmentId: assignment.id,
+          shiftId: shift.id,
           shiftDate: shiftDateStr,
           startTime,
           endTime,
@@ -643,41 +644,44 @@ async function main() {
   }
   console.log(`  ✓ 生成 ${cwAttCount} 条 CW attendance_records（混合 approved/pending/rejected/late，10% 缺勤）`)
 
-  // ── Step 12: Tasks（每个部门若干条，混合状态）────────────────────────────
-  console.log('\nStep 12: 生成 Tasks...')
+  // ── Step 12: Tasks（每个未来 shift 挂一条 task，保证 Shift Swap 的 Task Changes
+  // 预览、Kanban 等 UI 都能看到真实数据 —— tasks.shift_id 之前完全没设置，导致任何
+  // 依赖 shift_id 关联的功能（如批准 swap 时的 task 转移预览）永远查不到东西）────
+  console.log('\nStep 12: 生成 Tasks（挂在每个未来 shift 上）...')
   let taskCount = 0
-  for (let deptIdx = 0; deptIdx < deptByIndex.length; deptIdx++) {
-    const dept = deptByIndex[deptIdx]
+  const percentByStatus = { Assigned: 0, 'In Progress': 40, Review: 80, Complete: 100 }
+  const futureStaffAssignments = assignmentInfo.filter(a => !a.isPast)
+  for (let i = 0; i < futureStaffAssignments.length; i++) {
+    const a = futureStaffAssignments[i]
+    const dept = deptByIndex[a.deptIdx]
     const titles = TASK_TITLES_BY_DEPT[dept.name] || []
-    const managerEmail = managersByDept[deptIdx][0]
-    const deptEmployees = employeesByDept[deptIdx]
+    if (titles.length === 0) continue
+    const isManager = managerEmails.includes(a.email)
+    // Owner assigns Manager tasks; Manager assigns Employee tasks (one level down, per the
+    // company hierarchy — never skip a level and never self-assign).
+    const assignedByUserId = isManager ? ownerUser.id : userIdMap[managersByDept[a.deptIdx][0]].internalId
+    const title = pick(titles, i)
+    const status = pick(TASK_STATUSES, i)
+    const priority = pick(TASK_PRIORITIES, i)
 
-    for (let i = 0; i < titles.length; i++) {
-      const assigneeEmail = pick(deptEmployees, i)
-      const status = pick(TASK_STATUSES, i)
-      const priority = pick(TASK_PRIORITIES, i)
-      const dueDate = addDays(TODAY, (i % 5) - 1) // spread across near past/future
-      const taskDateStr = dateKey(dueDate)
-      const percentByStatus = { Assigned: 0, 'In Progress': 40, Review: 80, Complete: 100 }
-
-      const { error: taskErr } = await supabase.from('tasks').insert({
-        company_id: company.id,
-        department_id: dept.id,
-        title: titles[i],
-        description: `${titles[i]} for the ${dept.name} team.`,
-        assigned_user_id: userIdMap[assigneeEmail].internalId,
-        assigned_by: userIdMap[managerEmail].internalId,
-        status,
-        percentage_complete: percentByStatus[status],
-        priority,
-        due_at: new Date(`${taskDateStr}T17:00:00Z`).toISOString(),
-        task_date: taskDateStr,
-      })
-      if (taskErr) console.warn(`  ⚠ 创建 task 失败 (${dept.name}, ${titles[i]}): ${taskErr.message}`)
-      else taskCount++
-    }
+    const { error: taskErr } = await supabase.from('tasks').insert({
+      company_id: company.id,
+      department_id: dept.id,
+      shift_id: a.shiftId,
+      title,
+      description: `${title} for the ${dept.name} team.`,
+      assigned_user_id: a.userId,
+      assigned_by: assignedByUserId,
+      status,
+      percentage_complete: percentByStatus[status],
+      priority,
+      due_at: new Date(`${a.shiftDate}T${a.endTime}:00Z`).toISOString(),
+      task_date: a.shiftDate,
+    })
+    if (taskErr) console.warn(`  ⚠ 创建 task 失败 (${a.email}, ${a.shiftDate}): ${taskErr.message}`)
+    else taskCount++
   }
-  console.log(`  ✓ 生成 ${taskCount} 条 tasks（混合 Assigned/In Progress/Review/Complete）`)
+  console.log(`  ✓ 生成 ${taskCount} 条 tasks（每个未来 shift 一条，挂在对应 shift_id 上，混合 Assigned/In Progress/Review/Complete）`)
 
   // ── Step 13: Communication — Announcements ──────────────────────────────
   console.log('\nStep 13: 生成 Announcements...')

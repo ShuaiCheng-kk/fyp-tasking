@@ -92,11 +92,13 @@ export const attendanceRepository = {
   },
 
   async getShiftSwapRequestsByCompany(company_id: string): Promise<ShiftSwapRequest[]> {
+    // No counterpart_status filter — the Owner view needs both requests still awaiting the
+    // counterpart (shown with an "Awaiting" badge) and ones ready for a final decision, plus
+    // already-decided ones for the Processed list.
     const { data, error } = await supabase
       .from('shift_swap_requests')
       .select('*')
       .eq('company_id', company_id)
-      .eq('counterpart_status', 'approved')
       .order('created_at', { ascending: false })
     if (error) throw new Error(error.message)
     return (data ?? []) as ShiftSwapRequest[]
@@ -165,6 +167,28 @@ export const attendanceRepository = {
       .is('parent_task_id', null)
     if (error) throw new Error(error.message)
     return (data ?? []) as Array<{ id: string; title: string; status: string }>
+  },
+
+  // Active (non-Complete, non-archived) tasks currently owned by this assignment's user on this
+  // shift — i.e. exactly the tasks reassignTasksForShiftSwap would move if the swap is approved.
+  async getMovableTasksByShiftAssignment(assignment_id: string): Promise<Array<{ id: string; title: string; status: string; priority: string | null; due_at: string | null }>> {
+    const { data: assignment, error: aErr } = await supabase
+      .from('shift_assignments')
+      .select('shift_id, user_id')
+      .eq('id', assignment_id)
+      .maybeSingle()
+    if (aErr) throw new Error(aErr.message)
+    if (!assignment?.shift_id) return []
+
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('id, title, status, priority, due_at')
+      .eq('shift_id', assignment.shift_id)
+      .eq('assigned_user_id', assignment.user_id)
+      .neq('status', 'Complete')
+      .eq('is_archived', false)
+    if (error) throw new Error(error.message)
+    return (data ?? []) as Array<{ id: string; title: string; status: string; priority: string | null; due_at: string | null }>
   },
 
   async updateShiftAssignmentUser(assignment_id: string, user_id: string): Promise<ShiftAssignment> {

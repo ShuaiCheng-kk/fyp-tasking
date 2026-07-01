@@ -34,6 +34,8 @@ export interface JobPosting {
   job_start_time: string | null
   assigned_employee_id: string | null
   rejection_reason: string | null
+  expires_at: string | null
+  expiry_preset: string | null
 }
 
 export interface JobPostingInput {
@@ -63,6 +65,8 @@ export interface JobPostingInput {
   job_start_time?: string | null
   assigned_employee_id?: string | null
   form_type?: string | null
+  expires_at?: string | null
+  expiry_preset?: string | null
 }
 
 export interface JobPostingSummary extends JobPosting {
