@@ -152,3 +152,224 @@ test('PATCH /api/attendance — decide_shift_swap owner approves and swaps assig
   expect(asn1?.user_id).toBe(managerId2)
   expect(asn2?.user_id).toBe(managerId1)
 })
+
+test.describe('Shift swap — same-day restriction', () => {
+  let seeded2: TestOwner
+  let departmentId2: string
+  let mgrA: string
+  let mgrB: string
+  let todayAssignmentId: string
+  let futureAssignmentId: string
+
+  test.beforeAll(async () => {
+    seeded2 = await seedTestOwnerAndCompany('shift-swap-sameday')
+    const { data: dept } = await admin.from('departments').insert({
+      name: 'Swap Sameday Dept', color: '#3B82F6', company_id: seeded2.companyId,
+    }).select().single()
+    departmentId2 = dept!.id as string
+
+    mgrA = await createManager('SD-A', seeded2.companyId)
+    mgrB = await createManager('SD-B', seeded2.companyId)
+    await admin.from('manager_departments').insert([
+      { manager_id: mgrA, department_id: departmentId2, company_id: seeded2.companyId, assigned_by: seeded2.ownerId },
+      { manager_id: mgrB, department_id: departmentId2, company_id: seeded2.companyId, assigned_by: seeded2.ownerId },
+    ])
+
+    const today = new Date().toISOString().slice(0, 10)
+    const dayAfterTomorrow = new Date(); dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 2)
+    const futureDate = dayAfterTomorrow.toISOString().slice(0, 10)
+
+    const r1 = await createShiftAndAssignment(mgrA, seeded2.companyId, departmentId2, today, '09:00', '17:00')
+    const r2 = await createShiftAndAssignment(mgrB, seeded2.companyId, departmentId2, futureDate, '10:00', '18:00')
+    todayAssignmentId = r1.assignmentId
+    futureAssignmentId = r2.assignmentId
+  })
+
+  test.afterAll(async () => {
+    await cleanupTestOwnerAndCompany(seeded2)
+  })
+
+  test('rejects submit_shift_swap when the requester\'s shift is today', async ({ request }) => {
+    const res = await request.post('/api/attendance', {
+      data: {
+        action: 'submit_shift_swap',
+        company_id: seeded2.companyId,
+        requester_id: mgrA,
+        requester_assignment_id: todayAssignmentId,
+        counterpart_id: mgrB,
+        counterpart_assignment_id: futureAssignmentId,
+        reason: null,
+      },
+    })
+    expect(res.status()).toBe(400)
+    const body = await res.json()
+    expect(body.success).toBe(false)
+  })
+})
+
+test.describe('Shift swap — approval blocked if a shift becomes today before the decision', () => {
+  let seeded3: TestOwner
+  let departmentId3: string
+  let mgrC: string
+  let mgrD: string
+  let assignmentIdC: string
+  let assignmentIdD: string
+  let shiftIdC: string
+  let staleSwapRequestId: string
+
+  test.beforeAll(async () => {
+    seeded3 = await seedTestOwnerAndCompany('shift-swap-stale')
+    const { data: dept } = await admin.from('departments').insert({
+      name: 'Swap Stale Dept', color: '#3B82F6', company_id: seeded3.companyId,
+    }).select().single()
+    departmentId3 = dept!.id as string
+
+    mgrC = await createManager('ST-C', seeded3.companyId)
+    mgrD = await createManager('ST-D', seeded3.companyId)
+    await admin.from('manager_departments').insert([
+      { manager_id: mgrC, department_id: departmentId3, company_id: seeded3.companyId, assigned_by: seeded3.ownerId },
+      { manager_id: mgrD, department_id: departmentId3, company_id: seeded3.companyId, assigned_by: seeded3.ownerId },
+    ])
+
+    const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1)
+    const dayAfter = new Date(); dayAfter.setDate(dayAfter.getDate() + 2)
+    const r1 = await createShiftAndAssignment(mgrC, seeded3.companyId, departmentId3, tomorrow.toISOString().slice(0, 10), '09:00', '17:00')
+    const r2 = await createShiftAndAssignment(mgrD, seeded3.companyId, departmentId3, dayAfter.toISOString().slice(0, 10), '10:00', '18:00')
+    assignmentIdC = r1.assignmentId
+    assignmentIdD = r2.assignmentId
+    shiftIdC = r1.shiftId
+  })
+
+  test.afterAll(async () => {
+    await cleanupTestOwnerAndCompany(seeded3)
+  })
+
+  test('blocks decide_shift_swap once a shift has aged into today, leaving assignments untouched', async ({ request }) => {
+    const submitRes = await request.post('/api/attendance', {
+      data: {
+        action: 'submit_shift_swap',
+        company_id: seeded3.companyId,
+        requester_id: mgrC,
+        requester_assignment_id: assignmentIdC,
+        counterpart_id: mgrD,
+        counterpart_assignment_id: assignmentIdD,
+        reason: 'Stale request test',
+      },
+    })
+    expect(submitRes.status()).toBe(200)
+    staleSwapRequestId = (await submitRes.json()).request.id
+
+    const respondRes = await request.patch('/api/attendance', {
+      data: { action: 'respond_shift_swap', id: staleSwapRequestId, counterpart_id: mgrD, decision: 'approved' },
+    })
+    expect(respondRes.status()).toBe(200)
+
+    // Simulate time passing: the requester's shift, tomorrow at submit time, is now today.
+    await admin.from('shifts').update({ shift_date: new Date().toISOString().slice(0, 10) }).eq('id', shiftIdC)
+
+    const decideRes = await request.patch('/api/attendance', {
+      data: { action: 'decide_shift_swap', id: staleSwapRequestId, reviewer_id: seeded3.ownerId, decision: 'approved' },
+    })
+    expect(decideRes.status()).toBe(400)
+    const decideBody = await decideRes.json()
+    expect(decideBody.success).toBe(false)
+
+    const { data: asnC } = await admin.from('shift_assignments').select('user_id').eq('id', assignmentIdC).single()
+    const { data: asnD } = await admin.from('shift_assignments').select('user_id').eq('id', assignmentIdD).single()
+    expect(asnC?.user_id).toBe(mgrC)
+    expect(asnD?.user_id).toBe(mgrD)
+  })
+})
+
+test.describe('Shift swap — approval moves active tasks but leaves Complete tasks with their original owner', () => {
+  let seeded4: TestOwner
+  let departmentId4: string
+  let mgrE: string
+  let mgrF: string
+  let assignmentIdE: string
+  let assignmentIdF: string
+  let shiftIdE: string
+  let shiftIdF: string
+  let activeTaskOnE: string
+  let completeTaskOnE: string
+
+  test.beforeAll(async () => {
+    seeded4 = await seedTestOwnerAndCompany('shift-swap-tasks')
+    const { data: dept } = await admin.from('departments').insert({
+      name: 'Swap Tasks Dept', color: '#3B82F6', company_id: seeded4.companyId,
+    }).select().single()
+    departmentId4 = dept!.id as string
+
+    mgrE = await createManager('TK-E', seeded4.companyId)
+    mgrF = await createManager('TK-F', seeded4.companyId)
+    await admin.from('manager_departments').insert([
+      { manager_id: mgrE, department_id: departmentId4, company_id: seeded4.companyId, assigned_by: seeded4.ownerId },
+      { manager_id: mgrF, department_id: departmentId4, company_id: seeded4.companyId, assigned_by: seeded4.ownerId },
+    ])
+
+    const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1)
+    const dayAfter = new Date(); dayAfter.setDate(dayAfter.getDate() + 2)
+    const r1 = await createShiftAndAssignment(mgrE, seeded4.companyId, departmentId4, tomorrow.toISOString().slice(0, 10), '09:00', '17:00')
+    const r2 = await createShiftAndAssignment(mgrF, seeded4.companyId, departmentId4, dayAfter.toISOString().slice(0, 10), '10:00', '18:00')
+    assignmentIdE = r1.assignmentId
+    assignmentIdF = r2.assignmentId
+    shiftIdE = r1.shiftId
+    shiftIdF = r2.shiftId
+
+    const { data: activeTask } = await admin.from('tasks').insert({
+      company_id: seeded4.companyId, department_id: departmentId4, shift_id: shiftIdE,
+      title: 'Restock shelves', assigned_user_id: mgrE, assigned_by: seeded4.ownerId, status: 'Assigned',
+    }).select('id').single()
+    activeTaskOnE = activeTask!.id as string
+
+    const { data: doneTask } = await admin.from('tasks').insert({
+      company_id: seeded4.companyId, department_id: departmentId4, shift_id: shiftIdE,
+      title: 'Close register (already done)', assigned_user_id: mgrE, assigned_by: seeded4.ownerId, status: 'Complete',
+    }).select('id').single()
+    completeTaskOnE = doneTask!.id as string
+  })
+
+  test.afterAll(async () => {
+    await cleanupTestOwnerAndCompany(seeded4)
+  })
+
+  test('moves the active task to the new assignee but keeps the Complete task with the original assignee', async ({ request }) => {
+    const submitRes = await request.post('/api/attendance', {
+      data: {
+        action: 'submit_shift_swap',
+        company_id: seeded4.companyId,
+        requester_id: mgrE,
+        requester_assignment_id: assignmentIdE,
+        counterpart_id: mgrF,
+        counterpart_assignment_id: assignmentIdF,
+        reason: 'Task reassignment test',
+      },
+    })
+    expect(submitRes.status()).toBe(200)
+    const swapId = (await submitRes.json()).request.id
+
+    await request.patch('/api/attendance', {
+      data: { action: 'respond_shift_swap', id: swapId, counterpart_id: mgrF, decision: 'approved' },
+    })
+
+    const listRes = await request.get(`/api/attendance?company_id=${seeded4.companyId}&resource=shift_swaps`)
+    expect(listRes.status()).toBe(200)
+    const listBody = await listRes.json()
+    const found = listBody.requests.find((r: { id: string }) => r.id === swapId)
+    expect(found.requester_movable_tasks).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: activeTaskOnE, title: 'Restock shelves', status: 'Assigned' })]),
+    )
+    expect(found.requester_movable_tasks.some((t: { id: string }) => t.id === completeTaskOnE)).toBe(false)
+    expect(found.counterpart_movable_tasks).toEqual([])
+
+    const decideRes = await request.patch('/api/attendance', {
+      data: { action: 'decide_shift_swap', id: swapId, reviewer_id: seeded4.ownerId, decision: 'approved' },
+    })
+    expect(decideRes.status()).toBe(200)
+
+    const { data: activeTask } = await admin.from('tasks').select('assigned_user_id').eq('id', activeTaskOnE).single()
+    const { data: doneTask } = await admin.from('tasks').select('assigned_user_id').eq('id', completeTaskOnE).single()
+    expect(activeTask?.assigned_user_id).toBe(mgrF)
+    expect(doneTask?.assigned_user_id).toBe(mgrE)
+  })
+})

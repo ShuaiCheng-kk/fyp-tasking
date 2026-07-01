@@ -2,6 +2,8 @@
 // RULE: Business logic only. No HTTP handling. No direct DB access.
 
 import { attendanceRepository } from '@/repositories/owner/attendanceRepository'
+import { taskRepository } from '@/repositories/owner/taskRepository'
+import { Shift } from '@/types/Shift'
 import {
   AttendanceDashboard,
   AttendanceDashboardRecord,
@@ -22,6 +24,16 @@ import {
 // already-UTC clock_in_time/clock_out_time timestamps on any server not running in UTC.
 function combineDateTime(date: string, time: string): Date {
   return new Date(`${date}T${time}Z`)
+}
+
+// Same-day/past-day swaps are disallowed — earliest swappable shift is tomorrow. This compares
+// plain calendar-day strings (both shift_date and "today" derived the same UTC-naive way) rather
+// than combineDateTime, since the rule is about calendar days, not exact timestamps.
+function assertShiftIsSwappable(shift: Shift, label: string) {
+  const todayStr = new Date().toISOString().slice(0, 10)
+  if (shift.shift_date <= todayStr) {
+    throw new Error(`${label} shift must be scheduled for tomorrow or later`)
+  }
 }
 
 function minutesAfter(actual: string | null, shiftDate: string, shiftTime: string): number {
@@ -191,10 +203,12 @@ export const attendanceService = {
     const assignmentsById = new Map(assignmentsArr.filter(Boolean).map(a => [a!.id, a!]))
     const usersById = indexById(users)
 
-    const taskCounts = await Promise.all(
-      assignmentIds.map(id => attendanceRepository.getTasksByShiftAssignment(id).then(t => ({ id, count: t.length }))),
-    )
+    const [taskCounts, movableTasks] = await Promise.all([
+      Promise.all(assignmentIds.map(id => attendanceRepository.getTasksByShiftAssignment(id).then(t => ({ id, count: t.length })))),
+      Promise.all(assignmentIds.map(id => attendanceRepository.getMovableTasksByShiftAssignment(id).then(tasks => ({ id, tasks })))),
+    ])
     const taskCountById = new Map(taskCounts.map(tc => [tc.id, tc.count]))
+    const movableTasksById = new Map(movableTasks.map(mt => [mt.id, mt.tasks]))
 
     // fetch department names via requester assignment's shift department_id
     const deptIds = [...new Set(assignmentsArr.filter(Boolean).map(a => a!.shifts?.department_id).filter(Boolean) as string[])]
@@ -226,6 +240,8 @@ export const attendanceService = {
         counterpart_end_time: ctrAss?.shifts?.end_time ?? null,
         requester_task_count: taskCountById.get(req.requester_assignment_id) ?? 0,
         counterpart_task_count: taskCountById.get(req.counterpart_assignment_id) ?? 0,
+        requester_movable_tasks: movableTasksById.get(req.requester_assignment_id) ?? [],
+        counterpart_movable_tasks: movableTasksById.get(req.counterpart_assignment_id) ?? [],
       }
     })
   },
@@ -239,9 +255,24 @@ export const attendanceService = {
     if (request.status !== 'pending') throw new Error('Request is no longer pending')
 
     if (input.decision === 'approved') {
+      // Re-fetch the latest assignment/shift data — the request may have sat pending long enough
+      // that a shift which was tomorrow at submit time has since become today.
+      const [reqAss, ctrAss] = await Promise.all([
+        attendanceRepository.getShiftAssignmentById(request.requester_assignment_id),
+        attendanceRepository.getShiftAssignmentById(request.counterpart_assignment_id),
+      ])
+      if (!reqAss?.shifts) throw new Error('Your shift assignment not found')
+      if (!ctrAss?.shifts) throw new Error('Counterpart shift assignment not found')
+      assertShiftIsSwappable(reqAss.shifts, 'Your')
+      assertShiftIsSwappable(ctrAss.shifts, 'The counterpart')
+
       // Swap the two assignments' user_id
       await attendanceRepository.updateShiftAssignmentUser(request.requester_assignment_id, request.counterpart_id)
       await attendanceRepository.updateShiftAssignmentUser(request.counterpart_assignment_id, request.requester_id)
+
+      // Move each party's active tasks on that shift to whoever now owns the shift
+      await taskRepository.reassignTasksForShiftSwap(reqAss.shift_id, request.requester_id, request.counterpart_id)
+      await taskRepository.reassignTasksForShiftSwap(ctrAss.shift_id, request.counterpart_id, request.requester_id)
     }
 
     return attendanceRepository.updateShiftSwapRequest(input.id, {
@@ -277,6 +308,8 @@ export const attendanceService = {
 
   // UC52 — Submit Shift Swap Request (M or E initiates)
   async submitShiftSwapRequest(input: ShiftSwapRequestCreateInput) {
+    if (input.requester_id === input.counterpart_id) throw new Error('Cannot swap shifts with yourself')
+
     const [reqAss, ctrAss] = await Promise.all([
       attendanceRepository.getShiftAssignmentById(input.requester_assignment_id),
       attendanceRepository.getShiftAssignmentById(input.counterpart_assignment_id),
@@ -297,6 +330,10 @@ export const attendanceService = {
     const counterpart = users.find(u => u.id === input.counterpart_id)
     if (!requester || !counterpart) throw new Error('User not found')
     if (requester.role !== counterpart.role) throw new Error('Both users must have the same role to swap shifts')
+
+    // Neither shift may be today or earlier — earliest swappable shift is tomorrow
+    assertShiftIsSwappable(reqShift, 'Your')
+    assertShiftIsSwappable(ctrShift, 'The counterpart')
 
     // Check no other pending request exists for either assignment
     const [reqLocks, ctrLocks] = await Promise.all([
@@ -368,10 +405,12 @@ export const attendanceService = {
       ])
       const assignmentsById = new Map(assignmentsArr.filter(Boolean).map(a => [a!.id, a!]))
       const usersById = indexById(users)
-      const taskCounts = await Promise.all(
-        assignmentIds.map(id => attendanceRepository.getTasksByShiftAssignment(id).then(t => ({ id, count: t.length }))),
-      )
+      const [taskCounts, movableTasks] = await Promise.all([
+        Promise.all(assignmentIds.map(id => attendanceRepository.getTasksByShiftAssignment(id).then(t => ({ id, count: t.length })))),
+        Promise.all(assignmentIds.map(id => attendanceRepository.getMovableTasksByShiftAssignment(id).then(tasks => ({ id, tasks })))),
+      ])
       const taskCountById = new Map(taskCounts.map(tc => [tc.id, tc.count]))
+      const movableTasksById = new Map(movableTasks.map(mt => [mt.id, mt.tasks]))
       const deptIds = [...new Set(assignmentsArr.filter(Boolean).map(a => a!.shifts?.department_id).filter(Boolean) as string[])]
       const depts = await attendanceRepository.getDepartmentsByIds(deptIds)
       const deptsById = new Map(depts.map(d => [d.id, d.name]))
@@ -400,6 +439,8 @@ export const attendanceService = {
           counterpart_end_time: ctrAss?.shifts?.end_time ?? null,
           requester_task_count: taskCountById.get(req.requester_assignment_id) ?? 0,
           counterpart_task_count: taskCountById.get(req.counterpart_assignment_id) ?? 0,
+          requester_movable_tasks: movableTasksById.get(req.requester_assignment_id) ?? [],
+          counterpart_movable_tasks: movableTasksById.get(req.counterpart_assignment_id) ?? [],
         }
       })
     }

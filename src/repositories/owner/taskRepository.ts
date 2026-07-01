@@ -78,6 +78,19 @@ export const taskRepository = {
     return (data ?? []) as Task[]
   },
 
+  // Bulk-moves a user's active tasks on a shift to another user — used when a shift swap is
+  // approved so task ownership follows the assignee. Completed/archived tasks stay put.
+  async reassignTasksForShiftSwap(shift_id: string, from_user_id: string, to_user_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('tasks')
+      .update({ assigned_user_id: to_user_id })
+      .eq('shift_id', shift_id)
+      .eq('assigned_user_id', from_user_id)
+      .neq('status', 'Complete')
+      .eq('is_archived', false)
+    if (error) throw new Error(error.message)
+  },
+
   async getTasksByShiftForCompany(company_id: string, shift_id: string): Promise<Task[]> {
     const { data, error } = await supabase
       .from('tasks')

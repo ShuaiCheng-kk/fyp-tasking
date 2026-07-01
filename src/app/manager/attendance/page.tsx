@@ -17,6 +17,7 @@ import {
   ShiftSwapRequestView,
   TimeOffRequestView,
 } from '@/types/Attendance'
+import { TimelineRow } from '@/types/Timeline'
 
 // ─── Theme ────────────────────────────────────────────────────────────────────
 const BLUE   = '#2563EB'
@@ -146,7 +147,8 @@ export default function ManagerAttendancePage() {
   // Submit: Shift Swap form
   const [swapFormOpen, setSwapFormOpen] = useState(false)
   const [swapShiftId, setSwapShiftId] = useState('')
-  const [swapReplacementId, setSwapReplacementId] = useState('')
+  const [swapCounterpartId, setSwapCounterpartId] = useState('')
+  const [swapCounterpartAssignmentId, setSwapCounterpartAssignmentId] = useState('')
   const [swapReason, setSwapReason] = useState('')
   const [swapSubmitting, setSwapSubmitting] = useState(false)
 
@@ -162,8 +164,8 @@ export default function ManagerAttendancePage() {
   const [fixedWeekday, setFixedWeekday] = useState(1)
   const [fixedSubmitting, setFixedSubmitting] = useState(false)
 
-  // Company members for replacement picker
-  const [companyMembers, setCompanyMembers] = useState<Array<{ id: string; full_name: string; role: string }>>([])
+  // Swap counterpart candidates (same-department, same-role colleagues with upcoming shifts)
+  const [swapCandidateRows, setSwapCandidateRows] = useState<TimelineRow[]>([])
 
   // Late reason / absence form state (per shift assignment id)
   const [lateFormId, setLateFormId] = useState<string | null>(null)
@@ -198,28 +200,41 @@ export default function ManagerAttendancePage() {
     } finally { setMyReqLoading(false) }
   }, [])
 
-  const fetchCompanyMembers = useCallback(async (cid: string) => {
+  // Swap counterparts must be same-department, same-role colleagues with an upcoming (tomorrow+)
+  // shift — reuses the timeline endpoint (already used by partner/manager shift pages) instead of
+  // introducing a new API just for this picker.
+  const fetchSwapCandidates = useCallback(async (cid: string) => {
     if (!cid) return
     try {
-      const res = await fetch(`/api/company/members?company_id=${cid}`)
+      const from = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+      const to = new Date(Date.now() + 31 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+      const res = await fetch(`/api/shift?company_id=${cid}&date_from=${from}&date_to=${to}&viewer_role=Manager`)
       const data = await res.json()
-      if (data.success) setCompanyMembers(data.members ?? [])
+      if (data.success) setSwapCandidateRows(data.rows ?? [])
     } catch {}
   }, [])
 
   const handleSubmitSwap = async () => {
-    if (!swapShiftId || !swapReplacementId) { setMyReqError('Select a shift and a replacement.'); return }
+    if (!swapShiftId || !swapCounterpartId || !swapCounterpartAssignmentId) { setMyReqError('Select a shift, a colleague, and their shift.'); return }
     setSwapSubmitting(true); setMyReqError(''); setMyReqSuccess('')
     try {
       const res = await fetch('/api/attendance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'submit_shift_swap', company_id: companyId, shift_assignment_id: swapShiftId, requester_id: managerId, replacement_user_id: swapReplacementId, reason: swapReason || null }),
+        body: JSON.stringify({
+          action: 'submit_shift_swap',
+          company_id: companyId,
+          requester_id: managerId,
+          requester_assignment_id: swapShiftId,
+          counterpart_id: swapCounterpartId,
+          counterpart_assignment_id: swapCounterpartAssignmentId,
+          reason: swapReason || null,
+        }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
       setMyReqSuccess('Shift swap request submitted successfully.')
-      setSwapFormOpen(false); setSwapShiftId(''); setSwapReplacementId(''); setSwapReason('')
+      setSwapFormOpen(false); setSwapShiftId(''); setSwapCounterpartId(''); setSwapCounterpartAssignmentId(''); setSwapReason('')
       void fetchMyRequests(managerId)
     } catch (err) {
       setMyReqError(err instanceof Error ? err.message : 'Failed to submit request')
@@ -360,22 +375,24 @@ export default function ManagerAttendancePage() {
       const cid = localStorage.getItem(`tasking_company_id_${uid}`) || company_id || ''
       if (!cid) return
       setCompanyId(cid)
-      void fetchCompanyMembers(cid)
+      void fetchSwapCandidates(cid)
       const [compRes, deptRes] = await Promise.all([
         fetch(`/api/company/current?user_id=${uid}&company_id=${cid}`),
-        fetch(`/api/manager/departments?manager_id=${id}`),
+        fetch(`/api/manager/departments?manager_id=${id}&company_id=${cid}`),
       ])
       const compData = await compRes.json()
       const deptData = await deptRes.json()
       if (cancelled) return
       if (compData.success) setCompanyName(compData.company?.name ?? '')
-      const depts: Department[] = deptData.success ? (deptData.departments ?? []) : []
+      const depts: Department[] = deptData.success
+        ? (deptData.departments ?? []).map((d: { department_id: string; department_name: string }) => ({ id: d.department_id, name: d.department_name }))
+        : []
       setDepartments(depts)
       if (depts.length > 0) setSelectedDeptId(depts[0].id)
     }
     void run()
     return () => { cancelled = true }
-  }, [router, fetchMyShift, fetchMyRequests, fetchCompanyMembers])
+  }, [router, fetchMyShift, fetchMyRequests, fetchSwapCandidates])
 
   const fetchData = useCallback(async (cid: string) => {
     if (!cid) return
@@ -882,26 +899,48 @@ export default function ManagerAttendancePage() {
               {swapFormOpen && (
                 <div style={{ background: PANEL, border: `1.5px solid #E5E7EB`, borderRadius: 14, padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 13 }}>
                   <p style={{ margin: 0, fontWeight: 800, fontSize: 14, color: TEXT }}>Submit Shift Swap Request</p>
-                  <div>
-                    <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>My Shift</label>
-                    <select value={swapShiftId} onChange={e => setSwapShiftId(e.target.value)}
-                      style={{ width: '100%', height: 38, padding: '0 10px', border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 13, color: TEXT, background: '#F8FAFC', outline: 'none' }}>
-                      <option value="">Select a shift to swap…</option>
-                      {myShifts.map(s => (
-                        <option key={s.assignment.id} value={s.assignment.id}>{s.shift.title || 'Shift'} — {s.shift.shift_date} {s.shift.start_time}–{s.shift.end_time}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>Replacement Person</label>
-                    <select value={swapReplacementId} onChange={e => setSwapReplacementId(e.target.value)}
-                      style={{ width: '100%', height: 38, padding: '0 10px', border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 13, color: TEXT, background: '#F8FAFC', outline: 'none' }}>
-                      <option value="">Select replacement…</option>
-                      {companyMembers.filter(m => m.id !== managerId).map(m => (
-                        <option key={m.id} value={m.id}>{m.full_name} ({m.role})</option>
-                      ))}
-                    </select>
-                  </div>
+                  {(() => {
+                    const todayStr = new Date().toISOString().slice(0, 10)
+                    const myDeptIds = new Set(departments.map(d => d.id))
+                    const mySwappableShifts = myShifts.filter(s => s.shift.shift_date > todayStr)
+                    const colleagueRows = swapCandidateRows.filter(r => r.user_id !== managerId && r.role === 'Manager' && myDeptIds.has(r.department_id))
+                    const selectedColleague = colleagueRows.find(r => r.user_id === swapCounterpartId)
+                    const colleagueShifts = (selectedColleague?.shifts ?? []).filter(s => s.shift_date > todayStr && s.assignment_id)
+                    return (
+                      <>
+                        <div>
+                          <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>My Shift</label>
+                          <select value={swapShiftId} onChange={e => setSwapShiftId(e.target.value)}
+                            style={{ width: '100%', height: 38, padding: '0 10px', border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 13, color: TEXT, background: '#F8FAFC', outline: 'none' }}>
+                            <option value="">Select a shift to swap… (tomorrow or later)</option>
+                            {mySwappableShifts.map(s => (
+                              <option key={s.assignment.id} value={s.assignment.id}>{s.shift.title || 'Shift'} — {s.shift.shift_date} {s.shift.start_time}–{s.shift.end_time}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>Swap With</label>
+                          <select value={swapCounterpartId} onChange={e => { setSwapCounterpartId(e.target.value); setSwapCounterpartAssignmentId('') }}
+                            style={{ width: '100%', height: 38, padding: '0 10px', border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 13, color: TEXT, background: '#F8FAFC', outline: 'none' }}>
+                            <option value="">Select a colleague…</option>
+                            {colleagueRows.map(r => (
+                              <option key={r.user_id} value={r.user_id ?? ''}>{r.full_name}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>Their Shift</label>
+                          <select value={swapCounterpartAssignmentId} onChange={e => setSwapCounterpartAssignmentId(e.target.value)} disabled={!swapCounterpartId}
+                            style={{ width: '100%', height: 38, padding: '0 10px', border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 13, color: TEXT, background: swapCounterpartId ? '#F8FAFC' : '#F1F5F9', outline: 'none' }}>
+                            <option value="">{swapCounterpartId ? (colleagueShifts.length === 0 ? 'No upcoming shifts' : 'Select their shift…') : 'Select a colleague first'}</option>
+                            {colleagueShifts.map(s => (
+                              <option key={s.assignment_id} value={s.assignment_id ?? ''}>{s.title || 'Shift'} — {s.shift_date} {s.start_time}–{s.end_time}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </>
+                    )
+                  })()}
                   <div>
                     <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>Reason (optional)</label>
                     <textarea value={swapReason} onChange={e => setSwapReason(e.target.value)} rows={2}
@@ -909,8 +948,8 @@ export default function ManagerAttendancePage() {
                   </div>
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button onClick={() => setSwapFormOpen(false)} style={{ flex: 1, height: 38, background: 'none', border: `1.5px solid ${BORDER}`, borderRadius: 9, fontWeight: 700, fontSize: 13, color: MUTED, cursor: 'pointer' }}>Cancel</button>
-                    <button onClick={handleSubmitSwap} disabled={swapSubmitting || !swapShiftId || !swapReplacementId}
-                      style={{ flex: 2, height: 38, background: '#0F172A', border: 'none', borderRadius: 9, fontWeight: 700, fontSize: 13, color: '#FFFFFF', cursor: swapSubmitting ? 'default' : 'pointer', opacity: swapSubmitting || !swapShiftId || !swapReplacementId ? 0.55 : 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                    <button onClick={handleSubmitSwap} disabled={swapSubmitting || !swapShiftId || !swapCounterpartId || !swapCounterpartAssignmentId}
+                      style={{ flex: 2, height: 38, background: '#0F172A', border: 'none', borderRadius: 9, fontWeight: 700, fontSize: 13, color: '#FFFFFF', cursor: swapSubmitting ? 'default' : 'pointer', opacity: swapSubmitting || !swapShiftId || !swapCounterpartId || !swapCounterpartAssignmentId ? 0.55 : 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                       {swapSubmitting ? <Spinner light /> : <ArrowLeftRight size={13} />} Submit Swap Request
                     </button>
                   </div>
