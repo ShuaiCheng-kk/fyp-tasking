@@ -228,13 +228,23 @@ export default function Navbar() {
   }, [pathname]);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session)
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (error?.message?.toLowerCase().includes('refresh token')) {
+        supabase.auth.signOut()
+        setSession(null)
+      } else {
+        setSession(session)
+      }
       setAuthLoading(false)
     })
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'TOKEN_REFRESHED' && !session) {
+        supabase.auth.signOut()
+        setSession(null)
+      } else {
+        setSession(session)
+      }
       setAuthLoading(false)
     })
 

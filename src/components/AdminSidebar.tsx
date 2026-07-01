@@ -155,7 +155,7 @@ export default function AdminSidebar({ pages = [], selectedSlug = '', onSelectSl
               }}
             >
               <FileText size={18} strokeWidth={2.1} style={{ display: 'block', flexShrink: 0 }} />
-              <span style={{ opacity: expanded ? 1 : 0, transition: 'opacity 0.15s' }}>Marketing Pages</span>
+              <span style={{ opacity: expanded ? 1 : 0, maxWidth: expanded ? 200 : 0, overflow: 'hidden', transition: 'opacity 0.15s' }}>Marketing Pages</span>
             </a>
             {hasPageTree && expanded && (
               <button type="button" onClick={() => toggleGroup('marketingPages')}
@@ -238,14 +238,15 @@ export default function AdminSidebar({ pages = [], selectedSlug = '', onSelectSl
               style={{
                 display: 'flex', alignItems: 'center', gap: '10px',
                 padding: '10px 12px', borderRadius: '8px', marginBottom: 2,
-                background: hoveredKey === label ? THEME.sidebarHoverBg : 'transparent',
-                color: THEME.sidebarText,
-                fontWeight: 500, fontSize: '0.9rem',
+                background: pathname === href ? THEME.sidebarActiveBg : hoveredKey === label ? THEME.sidebarHoverBg : 'transparent',
+                color: pathname === href ? THEME.sidebarActiveText : THEME.sidebarText,
+                fontWeight: pathname === href ? 600 : 500,
+                fontSize: '0.9rem',
                 textDecoration: 'none', whiteSpace: 'nowrap',
               }}
             >
               <Icon size={18} strokeWidth={2.1} style={{ display: 'block', flexShrink: 0 }} />
-              <span style={{ opacity: expanded ? 1 : 0, transition: 'opacity 0.15s' }}>{label}</span>
+              <span style={{ opacity: expanded ? 1 : 0, maxWidth: expanded ? 200 : 0, overflow: 'hidden', transition: 'opacity 0.15s' }}>{label}</span>
             </a>
           ))}
         </div>
@@ -268,7 +269,7 @@ export default function AdminSidebar({ pages = [], selectedSlug = '', onSelectSl
           }}
         >
           <LogOut size={18} strokeWidth={2.1} style={{ display: 'block', flexShrink: 0 }} />
-          <span style={{ opacity: expanded ? 1 : 0, transition: 'opacity 0.15s' }}>Logout</span>
+          <span style={{ opacity: expanded ? 1 : 0, maxWidth: expanded ? 200 : 0, overflow: 'hidden', transition: 'opacity 0.15s' }}>Logout</span>
         </button>
       </div>
     </aside>
