@@ -748,8 +748,8 @@ export default function EmployeeAttendancePage() {
                     ) : mySwaps.map((req, i) => (
                       <div key={req.id} style={{ padding: '12px 16px', borderBottom: i < mySwaps.length - 1 ? `1px solid #F8FAFC` : 'none', display: 'flex', alignItems: 'center', gap: 10 }}>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontSize: 13, fontWeight: 600, color: TEXT }}>Swap with {req.replacement_name}</div>
-                          <div style={{ fontSize: 11.5, color: MUTED }}>{req.shift_title ?? 'Shift'} · {req.shift_date ?? '—'} · {formatTime(req.start_time)}–{formatTime(req.end_time)}</div>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: TEXT }}>Swap with {req.counterpart_name}</div>
+                          <div style={{ fontSize: 11.5, color: MUTED }}>{req.requester_shift_title ?? 'Shift'} · {req.requester_shift_date ?? '—'} · {formatTime(req.requester_start_time)}–{formatTime(req.requester_end_time)}</div>
                           {req.reason && <div style={{ fontSize: 11.5, color: '#4B5563', marginTop: 2 }}>{req.reason}</div>}
                         </div>
                         {statusChip(req.status)}

@@ -7,6 +7,7 @@ export default function ShowcaseCard({
   icon,
   title,
   rightContent,
+  actions,
   searchValue,
   onSearchChange,
   searchPlaceholder,
@@ -17,6 +18,7 @@ export default function ShowcaseCard({
   icon: React.ReactNode
   title: string
   rightContent?: React.ReactNode
+  actions?: React.ReactNode
   searchValue?: string
   onSearchChange?: (value: string) => void
   searchPlaceholder?: string
@@ -37,6 +39,7 @@ export default function ShowcaseCard({
           {rightContent}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexShrink: 0 }}>
+          {actions}
           {onSearchChange && (
             <div style={{ position: 'relative', flexShrink: 0 }}>
               <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />

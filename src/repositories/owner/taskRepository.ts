@@ -35,13 +35,14 @@ export const taskRepository = {
     return data as Task
   },
 
-  async getTasksByCompany(company_id: string): Promise<Task[]> {
-    const { data, error } = await supabase
+  async getTasksByCompany(company_id: string, assigned_by?: string): Promise<Task[]> {
+    let query = supabase
       .from('tasks')
       .select('id, shift_id, company_id, department_id, parent_task_id, sequence_order, title, description, assigned_user_id, assigned_by, status, percentage_complete, priority, due_at, task_date, recurrence_group_id, source_task_id, is_archived, created_at, updated_at, shifts(shift_date)')
       .eq('company_id', company_id)
       .eq('is_archived', false)
-      .order('created_at', { ascending: false })
+    if (assigned_by) query = query.eq('assigned_by', assigned_by)
+    const { data, error } = await query.order('created_at', { ascending: false })
     if (error) throw new Error(error.message)
     return ((data ?? []) as unknown as (Task & { shifts: { shift_date: string }[] | null })[]).map(row => ({
       ...row,

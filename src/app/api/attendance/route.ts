@@ -30,9 +30,14 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    if (resource === 'time_off') {
-      const requests = await attendanceService.getTimeOffRequests(company_id)
-      return NextResponse.json({ success: true, requests })
+    if (resource === 'pending_requests_count') {
+      const [swaps, fixedOff] = await Promise.all([
+        attendanceService.getShiftSwapRequests(company_id),
+        attendanceService.getFixedOffDayRequests(company_id),
+      ])
+      const count = swaps.filter((r: { status: string }) => r.status === 'pending').length
+        + fixedOff.filter((r: { status: string }) => r.status === 'pending').length
+      return NextResponse.json({ success: true, count })
     }
     if (resource === 'shift_swaps') {
       const requests = await attendanceService.getShiftSwapRequests(company_id)
@@ -102,18 +107,6 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ success: true, record })
     }
 
-    if (action === 'decide_time_off') {
-      if (typeof b.id !== 'string' || typeof b.reviewer_id !== 'string' || typeof b.decision !== 'string') {
-        return NextResponse.json({ success: false, message: 'id, reviewer_id and decision are required' }, { status: 400 })
-      }
-      const request = await attendanceService.decideTimeOffRequest({
-        id: b.id,
-        reviewer_id: b.reviewer_id,
-        decision: b.decision as AttendanceRequestStatus,
-      })
-      return NextResponse.json({ success: true, request })
-    }
-
     if (action === 'decide_shift_swap') {
       if (typeof b.id !== 'string' || typeof b.reviewer_id !== 'string' || typeof b.decision !== 'string') {
         return NextResponse.json({ success: false, message: 'id, reviewer_id and decision are required' }, { status: 400 })
@@ -121,7 +114,30 @@ export async function PATCH(req: NextRequest) {
       const request = await attendanceService.decideShiftSwapRequest({
         id: b.id,
         reviewer_id: b.reviewer_id,
-        decision: b.decision as AttendanceRequestStatus,
+        decision: b.decision as 'approved' | 'rejected',
+      })
+      return NextResponse.json({ success: true, request })
+    }
+
+    if (action === 'respond_shift_swap') {
+      if (typeof b.id !== 'string' || typeof b.counterpart_id !== 'string' || typeof b.decision !== 'string') {
+        return NextResponse.json({ success: false, message: 'id, counterpart_id and decision are required' }, { status: 400 })
+      }
+      const request = await attendanceService.respondShiftSwapRequest({
+        id: b.id,
+        counterpart_id: b.counterpart_id,
+        decision: b.decision as 'approved' | 'rejected',
+      })
+      return NextResponse.json({ success: true, request })
+    }
+
+    if (action === 'withdraw_shift_swap') {
+      if (typeof b.id !== 'string' || typeof b.requester_id !== 'string') {
+        return NextResponse.json({ success: false, message: 'id and requester_id are required' }, { status: 400 })
+      }
+      const request = await attendanceService.withdrawShiftSwapRequest({
+        id: b.id,
+        requester_id: b.requester_id,
       })
       return NextResponse.json({ success: true, request })
     }
@@ -169,36 +185,20 @@ export async function POST(req: NextRequest) {
     if (action === 'submit_shift_swap') {
       if (
         typeof b.company_id !== 'string' ||
-        typeof b.shift_assignment_id !== 'string' ||
         typeof b.requester_id !== 'string' ||
-        typeof b.replacement_user_id !== 'string'
+        typeof b.requester_assignment_id !== 'string' ||
+        typeof b.counterpart_id !== 'string' ||
+        typeof b.counterpart_assignment_id !== 'string'
       ) {
-        return NextResponse.json({ success: false, message: 'company_id, shift_assignment_id, requester_id and replacement_user_id are required' }, { status: 400 })
+        return NextResponse.json({ success: false, message: 'company_id, requester_id, requester_assignment_id, counterpart_id and counterpart_assignment_id are required' }, { status: 400 })
       }
       const request = await attendanceService.submitShiftSwapRequest({
         company_id: b.company_id,
-        shift_assignment_id: b.shift_assignment_id,
         requester_id: b.requester_id,
-        replacement_user_id: b.replacement_user_id,
+        requester_assignment_id: b.requester_assignment_id,
+        counterpart_id: b.counterpart_id,
+        counterpart_assignment_id: b.counterpart_assignment_id,
         reason: (b.reason as string | null) ?? null,
-      })
-      return NextResponse.json({ success: true, request })
-    }
-
-    if (action === 'submit_leave_request') {
-      if (
-        typeof b.company_id !== 'string' ||
-        typeof b.requester_id !== 'string' ||
-        typeof b.request_type !== 'string'
-      ) {
-        return NextResponse.json({ success: false, message: 'company_id, requester_id and request_type are required' }, { status: 400 })
-      }
-      const request = await attendanceService.submitLeaveRequest({
-        company_id: b.company_id,
-        requester_id: b.requester_id,
-        request_type: b.request_type,
-        reason: (b.reason as string | null) ?? null,
-        shift_assignment_id: (b.shift_assignment_id as string | null) ?? null,
       })
       return NextResponse.json({ success: true, request })
     }

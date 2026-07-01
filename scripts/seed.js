@@ -760,6 +760,207 @@ async function main() {
   console.log(`  Tasks:       ${taskCount} 条（混合 Assigned/In Progress/Review/Complete）`)
   console.log(`  Announcements: ${announcementCount} 条`)
   console.log(`  Messages:    ${messageCount} 条`)
+
+  // ── Step 15: Shift Swap Requests（大量数据填满 Action Needed + Processed Requests）──
+  console.log('\nStep 15: 生成 Shift Swap Requests...')
+  let swapCount = 0
+  const futureAssignments = assignmentInfo.filter(a => !a.isPast)
+  const futureAssignmentsByEmail = new Map()
+  for (const assignment of futureAssignments) {
+    if (!futureAssignmentsByEmail.has(assignment.email)) futureAssignmentsByEmail.set(assignment.email, [])
+    futureAssignmentsByEmail.get(assignment.email).push(assignment)
+  }
+  for (const list of futureAssignmentsByEmail.values()) {
+    list.sort((a, b) => a.shiftDate.localeCompare(b.shiftDate) || a.startTime.localeCompare(b.startTime))
+  }
+  const pickDifferentDateAndTimeSwap = (requesterEmail, counterpartEmail, seed = 0, excludedCounterpartAssignmentIds = new Set()) => {
+    const requesterAssignments = futureAssignmentsByEmail.get(requesterEmail) ?? []
+    const counterpartAssignments = futureAssignmentsByEmail.get(counterpartEmail) ?? []
+    if (requesterAssignments.length === 0 || counterpartAssignments.length === 0) return null
+
+    const reqAsgn = requesterAssignments[seed % requesterAssignments.length]
+    const cpAsgn =
+      counterpartAssignments.find((assignment, idx) =>
+        idx >= seed &&
+        !excludedCounterpartAssignmentIds.has(assignment.assignmentId) &&
+        assignment.shiftDate !== reqAsgn.shiftDate &&
+        (assignment.startTime !== reqAsgn.startTime || assignment.endTime !== reqAsgn.endTime)
+      ) ??
+      counterpartAssignments.find(assignment =>
+        !excludedCounterpartAssignmentIds.has(assignment.assignmentId) &&
+        assignment.shiftDate !== reqAsgn.shiftDate &&
+        (assignment.startTime !== reqAsgn.startTime || assignment.endTime !== reqAsgn.endTime)
+      ) ??
+      counterpartAssignments.find(assignment =>
+        !excludedCounterpartAssignmentIds.has(assignment.assignmentId) &&
+        assignment.shiftDate !== reqAsgn.shiftDate
+      )
+
+    return cpAsgn ? { reqAsgn, cpAsgn } : null
+  }
+
+  const pendingReasons = [
+    'I have a doctor appointment on that day, can we swap?',
+    'Family event — would really appreciate if we could switch.',
+    'Attending a training course, need to swap this shift.',
+    'Personal commitment on that date, happy to take your slot.',
+    'Need to pick up my kid from school, can we trade?',
+    'Medical check-up scheduled, please consider swapping.',
+    'Have a flight to catch early morning, can we swap shifts?',
+    'Religious observance that day — would love to swap.',
+    'Car in the workshop all day, prefer the later slot.',
+    'Prior booking I forgot about — can we switch?',
+    'Helping a friend move, swap would be much appreciated.',
+    'Government appointment I cannot reschedule.',
+  ]
+
+  const processedReasons = [
+    'Agreed to swap beforehand, just need official approval.',
+    'Both parties confirmed, please approve.',
+    'We already covered each other informally last month.',
+    'Counterpart is fine with it, awaiting your sign-off.',
+    'Mutually agreed swap — kindly approve.',
+  ]
+
+  // ── Action Needed: pending swaps — requester/counterpart use different dates and times ──
+  let reasonIdx = 0
+  const usedPendingCounterpartAssignmentIds = new Set()
+  for (let deptIdx = 0; deptIdx < deptByIndex.length; deptIdx++) {
+    const [mgrEmail1, mgrEmail2] = managersByDept[deptIdx]
+    const mgrId1 = userIdMap[mgrEmail1].internalId
+    const mgrId2 = userIdMap[mgrEmail2].internalId
+    const [empEmail1, empEmail2] = employeesByDept[deptIdx]
+    const empId1 = userIdMap[empEmail1].internalId
+    const empId2 = userIdMap[empEmail2].internalId
+    const pendingPairs = [
+      [mgrEmail1, empEmail1, mgrId1, empId1],
+      [mgrEmail2, empEmail2, mgrId2, empId2],
+      [empEmail1, mgrEmail2, empId1, mgrId2],
+      [empEmail2, mgrEmail1, empId2, mgrId1],
+      [mgrEmail1, empEmail2, mgrId1, empId2],
+    ]
+
+    // 5 pending swaps per dept. Manager shifts are 09:00-17:00 and employee shifts
+    // are 11:00-18:00, so every request highlights a different date and time.
+    for (let k = 0; k < pendingPairs.length; k++) {
+      const [reqEmail, cpEmail, reqId, cpId] = pendingPairs[k]
+      const picked = pickDifferentDateAndTimeSwap(reqEmail, cpEmail, deptIdx * pendingPairs.length + k, usedPendingCounterpartAssignmentIds)
+      if (!picked) continue
+      const { reqAsgn, cpAsgn } = picked
+      const { error } = await supabase.from('shift_swap_requests').insert({
+        company_id: company.id,
+        requester_id: reqId,
+        requester_assignment_id: reqAsgn.assignmentId,
+        counterpart_id: cpId,
+        counterpart_assignment_id: cpAsgn.assignmentId,
+        reason: pendingReasons[reasonIdx++ % pendingReasons.length],
+        status: 'pending',
+        counterpart_status: 'approved',
+        counterpart_reviewed_at: new Date(Date.now() - (k + 1) * 3600000).toISOString(),
+      })
+      if (error) console.warn(`  ⚠ swap pending 失败 (dept${deptIdx} k${k}): ${error.message}`)
+      else {
+        usedPendingCounterpartAssignmentIds.add(cpAsgn.assignmentId)
+        swapCount++
+      }
+    }
+  }
+
+  // ── Processed Requests: 20 approved/rejected swaps ──
+  // Each processed request also pairs a manager with an employee so dates and times differ.
+  const processedPairs = [
+    [managerEmails[0], employeeEmails[0], 'approved',  4],
+    [managerEmails[2], employeeEmails[2], 'rejected',  4],
+    [managerEmails[4], employeeEmails[4], 'approved',  4],
+    [managerEmails[6], employeeEmails[6], 'rejected',  3],
+    [employeeEmails[0], managerEmails[1], 'approved',  2],
+    [employeeEmails[2], managerEmails[3], 'rejected',  3],
+    [employeeEmails[4], managerEmails[5], 'approved',  2],
+    [employeeEmails[6], managerEmails[7], 'rejected',  3],
+    [managerEmails[1], employeeEmails[1], 'approved',  5],
+    [managerEmails[3], employeeEmails[3], 'rejected',  5],
+    [managerEmails[5], employeeEmails[5], 'approved',  5],
+    [managerEmails[7], employeeEmails[7], 'rejected',  5],
+    [employeeEmails[1], managerEmails[0], 'approved',  3],
+    [employeeEmails[3], managerEmails[2], 'rejected',  4],
+    [employeeEmails[5], managerEmails[4], 'approved',  3],
+    [employeeEmails[7], managerEmails[6], 'rejected',  4],
+    [managerEmails[0], employeeEmails[1], 'approved',  6],
+    [managerEmails[2], employeeEmails[3], 'rejected',  6],
+    [employeeEmails[0], managerEmails[1], 'approved',  4],
+    [employeeEmails[2], managerEmails[3], 'rejected',  4],
+  ]
+  let procReasonIdx = 0
+  for (const [reqEmail, cpEmail, finalStatus, seed] of processedPairs) {
+    const reqId = userIdMap[reqEmail].internalId
+    const cpId = userIdMap[cpEmail].internalId
+    const picked = pickDifferentDateAndTimeSwap(reqEmail, cpEmail, seed)
+    if (!picked) continue
+    const { reqAsgn, cpAsgn } = picked
+    const { error } = await supabase.from('shift_swap_requests').insert({
+      company_id: company.id,
+      requester_id: reqId,
+      requester_assignment_id: reqAsgn.assignmentId,
+      counterpart_id: cpId,
+      counterpart_assignment_id: cpAsgn.assignmentId,
+      reason: processedReasons[procReasonIdx++ % processedReasons.length],
+      status: finalStatus,
+      counterpart_status: 'approved',
+      counterpart_reviewed_at: new Date(Date.now() - 6 * 3600000).toISOString(),
+      reviewed_by: ownerUser.id,
+      reviewed_at: new Date(Date.now() - 3 * 3600000).toISOString(),
+    })
+    if (error) console.warn(`  ⚠ swap processed 失败 (${reqEmail}): ${error.message}`)
+    else swapCount++
+  }
+
+  console.log(`  ✓ 生成 ${swapCount} 条 shift_swap_requests（~20 pending Action Needed + 20 processed）`)
+
+  // ── Step 15b: 给 Owner 发未读消息（触发 Chat 红点）─────────────────────────
+  // manager1 和 employee1 各给 Owner 发一条未读消息，让 Owner 的 Communication > Chat
+  // tab 显示红点。
+  console.log('\nStep 15b: 给 Owner 发未读消息...')
+  const ownerMsgSenders = [
+    { email: 'manager1@test.com', content: 'Hi Sarah, can you review the Operations shift schedule for next week?' },
+    { email: 'employee1@test.com', content: 'Just a heads up — I may need to leave early on Friday.' },
+  ]
+  let ownerMsgCount = 0
+  for (const sender of ownerMsgSenders) {
+    const senderId = userIdMap[sender.email].internalId
+    const senderName = accounts.find(a => a.email === sender.email)?.full_name ?? sender.email
+    const { error: msgErr } = await supabase.from('messages').insert({
+      from_user_id: senderId,
+      to_user_id: ownerUser.id,
+      company_id: company.id,
+      content: sender.content,
+      is_read: false,
+      sender_name: senderName,
+    })
+    if (msgErr) console.warn(`  ⚠ 给 Owner 发消息失败 (${sender.email}): ${msgErr.message}`)
+    else { ownerMsgCount++; console.log(`  ✓ ${senderName} → Owner (unread)`) }
+  }
+  console.log(`  ✓ 生成 ${ownerMsgCount} 条发给 Owner 的未读消息`)
+
+  // ── Step 15c: Fixed Off Day Requests（触发 Fixed Day Off 红点）─────────────
+  // employee1（Operations）和 employee3（Marketing）各提交 1 个 pending 的固定休息日申请
+  console.log('\nStep 15c: 生成 Fixed Off Day Requests...')
+  const fixedOffSeeders = [
+    { email: 'employee1@test.com', weekday: 5 }, // Friday
+    { email: 'employee3@test.com', weekday: 3 }, // Wednesday
+  ]
+  let fixedOffCount = 0
+  for (const fo of fixedOffSeeders) {
+    const userId = userIdMap[fo.email].internalId
+    const { error: foErr } = await supabase.from('employee_fixed_off_days').insert({
+      user_id: userId,
+      company_id: company.id,
+      weekday: fo.weekday,
+      status: 'pending',
+    })
+    if (foErr) console.warn(`  ⚠ fixed_off_day 失败 (${fo.email}): ${foErr.message}`)
+    else { fixedOffCount++; console.log(`  ✓ ${fo.email} → weekday ${fo.weekday} (pending)`) }
+  }
+  console.log(`  ✓ 生成 ${fixedOffCount} 条 employee_fixed_off_days（pending）`)
 }
 
 main().catch(err => {

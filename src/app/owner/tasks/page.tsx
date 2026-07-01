@@ -1519,15 +1519,15 @@ export default function OwnerTasksPage() {
   }, [newAssigneeId, newTaskModal, shiftOptions, taskDate])
 
   const fetchKanban = useCallback(async (cid: string, silent = false) => {
-    if (!cid) return
+    if (!cid || !internalUserId) return
     if (!silent) setKanbanLoading(true)
     try {
-      const res = await fetch(`/api/task?company_id=${cid}&kanban=true`)
+      const res = await fetch(`/api/task?company_id=${cid}&kanban=true&assigned_by=${encodeURIComponent(internalUserId)}`)
       const data = await res.json()
       if (data.success) setKanban(data.groups)
     } catch {}
     finally { if (!silent) setKanbanLoading(false) }
-  }, [])
+  }, [internalUserId])
 
   useEffect(() => {
     if (!companyId) return
@@ -1991,13 +1991,14 @@ export default function OwnerTasksPage() {
   }
 
   const refreshTaskInsights = useCallback(async (kind: 'workload' | 'stalled') => {
-    if (!companyId) return
+    if (!companyId || !internalUserId) return
     setInsightLoading(kind); setInsightError('')
     try {
       const deptParam = selectedDeptId ? `&department_id=${selectedDeptId}` : ''
+      const userParam = `&assigned_by=${encodeURIComponent(internalUserId)}`
       const query = kind === 'workload'
-        ? `/api/task?company_id=${companyId}&suggestion=workload`
-        : `/api/task?company_id=${companyId}&suggestion=stalled${deptParam}`
+        ? `/api/task?company_id=${companyId}&suggestion=workload${userParam}`
+        : `/api/task?company_id=${companyId}&suggestion=stalled${deptParam}${userParam}`
       const res = await fetch(query)
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
@@ -2013,11 +2014,12 @@ export default function OwnerTasksPage() {
       }
     } catch (err) { setInsightError(err instanceof Error ? err.message : 'Failed to refresh task insight') }
     finally { setInsightLoading('') }
-  }, [companyId, selectedDeptId])
+  }, [companyId, selectedDeptId, internalUserId])
 
   const refreshAllTaskInsights = useCallback(async () => {
     await refreshTaskInsights('workload')
     await refreshTaskInsights('stalled')
+    window.dispatchEvent(new Event('task-insights-updated'))
   }, [refreshTaskInsights])
 
   // ── Create task ────────────────────────────────────────────────────────────
@@ -2562,7 +2564,7 @@ export default function OwnerTasksPage() {
                       </div>
                     </div>
                     {calendarWeekDates.map((date, i) => (
-                      <div key={date} style={{ gridColumn: i + 2, gridRow: 1, borderRight: i < 6 ? `1px solid ${TASK_BORDER}` : 'none', background: date === todayStr ? '#FFF7ED' : '#FFFFFF' }} />
+                      <div key={date} style={{ gridColumn: i + 2, gridRow: 1, borderRight: i < 6 ? `1px solid ${TASK_BORDER}` : 'none', background: '#FFFFFF' }} />
                     ))}
                     {[...row.items].sort((a, b) => (
                       (PRIORITY_ORDER[a.task.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.task.priority ?? ''] ?? 4) ||
@@ -3099,6 +3101,9 @@ export default function OwnerTasksPage() {
                       <Bell size={15} style={{ color: '#F97316' }} />
                     </div>
                     <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A' }}>Notification</span>
+                    {(stalledAlerts.length > 0 || workloadSuggestions.length > 0) && (
+                      <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#EF4444', border: '1.5px solid #fff', marginLeft: 2, flexShrink: 0 }} />
+                    )}
                   </div>
                   <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
                     {(() => {
@@ -4099,14 +4104,13 @@ export default function OwnerTasksPage() {
                         </button>
                       </div>
 
-                      <div style={{ minWidth: 0, width: 150, justifySelf: 'stretch', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 7 }}>
-                        <p style={{ margin: 0, width: '100%', fontSize: 10, fontWeight: 800, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.02em', lineHeight: 1.15, textAlign: 'center', whiteSpace: 'nowrap' }}>Reassign Suggestion</p>
+                      <div style={{ minWidth: 0, width: 150, justifySelf: 'stretch', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
                         <button
                           type="button"
                           aria-label={`Open ${recommendedName} profile`}
                           onClick={() => { if (recommendedMember) setProfileMember(recommendedMember) }}
                           className="internal-member-card"
-                          style={{ width: 126, height: 128, padding: '10px 8px', borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', boxShadow: '0 1px 3px rgba(15,23,42,0.06)', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', cursor: recommendedMember ? 'pointer' : 'default', textAlign: 'center', transition: 'box-shadow 0.22s ease, border-color 0.22s ease, transform 0.22s ease, background 0.22s ease' }}
+                          style={{ width: 126, height: '100%', padding: '10px 8px', borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', boxShadow: '0 1px 3px rgba(15,23,42,0.06)', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', cursor: recommendedMember ? 'pointer' : 'default', textAlign: 'center', transition: 'box-shadow 0.22s ease, border-color 0.22s ease, transform 0.22s ease, background 0.22s ease' }}
                           onMouseEnter={e => { if (recommendedMember) { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.boxShadow = '0 3px 10px rgba(0,0,0,0.10)'; e.currentTarget.style.background = '#FFFFFF' } }}
                           onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.boxShadow = '0 1px 3px rgba(15,23,42,0.06)'; e.currentTarget.style.background = '#FFFFFF' }}
                         >

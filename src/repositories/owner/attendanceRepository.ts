@@ -7,7 +7,6 @@ import {
   AttendanceRecordUpdate,
   FixedOffDayRequest,
   ShiftSwapRequest,
-  TimeOffRequest,
 } from '@/types/Attendance'
 import { Shift } from '@/types/Shift'
 import { ShiftAssignment } from '@/types/ShiftAssignment'
@@ -92,35 +91,12 @@ export const attendanceRepository = {
     return (data ?? []) as Array<{ id: string; name: string }>
   },
 
-  async getTimeOffRequestsByCompany(company_id: string): Promise<TimeOffRequest[]> {
-    const { data, error } = await supabase
-      .from('time_off_requests')
-      .select('*')
-      .eq('company_id', company_id)
-      .order('created_at', { ascending: false })
-    if (error) throw new Error(error.message)
-    return (data ?? []) as TimeOffRequest[]
-  },
-
-  async updateTimeOffRequest(
-    id: string,
-    fields: Pick<TimeOffRequest, 'status' | 'reviewed_by' | 'reviewed_at'>,
-  ): Promise<TimeOffRequest> {
-    const { data, error } = await supabase
-      .from('time_off_requests')
-      .update(fields)
-      .eq('id', id)
-      .select()
-      .single()
-    if (error) throw new Error(error.message)
-    return data as TimeOffRequest
-  },
-
   async getShiftSwapRequestsByCompany(company_id: string): Promise<ShiftSwapRequest[]> {
     const { data, error } = await supabase
       .from('shift_swap_requests')
       .select('*')
       .eq('company_id', company_id)
+      .eq('counterpart_status', 'approved')
       .order('created_at', { ascending: false })
     if (error) throw new Error(error.message)
     return (data ?? []) as ShiftSwapRequest[]
@@ -138,16 +114,57 @@ export const attendanceRepository = {
 
   async updateShiftSwapRequest(
     id: string,
-    fields: Pick<ShiftSwapRequest, 'status' | 'reviewed_by' | 'reviewed_at'>,
+    fields: Partial<Pick<ShiftSwapRequest, 'status' | 'reviewed_by' | 'reviewed_at' | 'counterpart_status' | 'counterpart_reviewed_at' | 'ai_recommendation' | 'ai_reason'>>,
   ): Promise<ShiftSwapRequest> {
     const { data, error } = await supabase
       .from('shift_swap_requests')
-      .update(fields)
+      .update({ ...fields, updated_at: new Date().toISOString() })
       .eq('id', id)
       .select()
       .single()
     if (error) throw new Error(error.message)
     return data as ShiftSwapRequest
+  },
+
+  async getPendingSwapRequestsByAssignment(assignment_id: string): Promise<ShiftSwapRequest[]> {
+    const { data, error } = await supabase
+      .from('shift_swap_requests')
+      .select('*')
+      .or(`requester_assignment_id.eq.${assignment_id},counterpart_assignment_id.eq.${assignment_id}`)
+      .eq('status', 'pending')
+    if (error) throw new Error(error.message)
+    return (data ?? []) as ShiftSwapRequest[]
+  },
+
+  async getAssignmentsByUserDateRange(user_id: string, from_date: string, to_date: string): Promise<AssignmentWithShift[]> {
+    const { data, error } = await supabase
+      .from('shift_assignments')
+      .select('*, shifts!inner(*)')
+      .eq('user_id', user_id)
+      .gte('shifts.shift_date', from_date)
+      .lte('shifts.shift_date', to_date)
+    if (error) throw new Error(error.message)
+    return (data ?? []) as AssignmentWithShift[]
+  },
+
+  async getTasksByShiftAssignment(assignment_id: string): Promise<Array<{ id: string; title: string; status: string }>> {
+    // Tasks link to a shift via shift_id, not shift_assignment_id.
+    // Resolve assignment → shift_id first, then query tasks.
+    const { data: assignment, error: aErr } = await supabase
+      .from('shift_assignments')
+      .select('shift_id')
+      .eq('id', assignment_id)
+      .maybeSingle()
+    if (aErr) throw new Error(aErr.message)
+    if (!assignment?.shift_id) return []
+
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('id, title, status')
+      .eq('shift_id', assignment.shift_id)
+      .is('parent_task_id', null)
+    if (error) throw new Error(error.message)
+    return (data ?? []) as Array<{ id: string; title: string; status: string }>
   },
 
   async updateShiftAssignmentUser(assignment_id: string, user_id: string): Promise<ShiftAssignment> {
@@ -197,34 +214,19 @@ export const attendanceRepository = {
 
   async createShiftSwapRequest(input: {
     company_id: string
-    shift_assignment_id: string
     requester_id: string
-    replacement_user_id: string
+    requester_assignment_id: string
+    counterpart_id: string
+    counterpart_assignment_id: string
     reason: string | null
   }): Promise<ShiftSwapRequest> {
     const { data, error } = await supabase
       .from('shift_swap_requests')
-      .insert({ ...input, status: 'pending' })
+      .insert({ ...input, status: 'pending', counterpart_status: 'pending' })
       .select()
       .single()
     if (error) throw new Error(error.message)
     return data as ShiftSwapRequest
-  },
-
-  async createTimeOffRequest(input: {
-    company_id: string
-    requester_id: string
-    request_type: string
-    reason: string | null
-    shift_assignment_id: string | null
-  }): Promise<TimeOffRequest> {
-    const { data, error } = await supabase
-      .from('time_off_requests')
-      .insert({ ...input, status: 'pending' })
-      .select()
-      .single()
-    if (error) throw new Error(error.message)
-    return data as TimeOffRequest
   },
 
   async createFixedOffDayRequest(input: {
@@ -245,20 +247,10 @@ export const attendanceRepository = {
     const { data, error } = await supabase
       .from('shift_swap_requests')
       .select('*')
-      .eq('requester_id', user_id)
+      .or(`requester_id.eq.${user_id},counterpart_id.eq.${user_id}`)
       .order('created_at', { ascending: false })
     if (error) throw new Error(error.message)
     return (data ?? []) as ShiftSwapRequest[]
-  },
-
-  async getTimeOffRequestsByUser(user_id: string): Promise<TimeOffRequest[]> {
-    const { data, error } = await supabase
-      .from('time_off_requests')
-      .select('*')
-      .eq('requester_id', user_id)
-      .order('created_at', { ascending: false })
-    if (error) throw new Error(error.message)
-    return (data ?? []) as TimeOffRequest[]
   },
 
   async getFixedOffDayRequestsByUser(user_id: string): Promise<FixedOffDayRequest[]> {

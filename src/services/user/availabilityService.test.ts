@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+﻿import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 vi.mock('@/lib/supabase', () => ({
   supabase: {},
@@ -9,8 +9,8 @@ vi.mock('@/repositories/user/availabilityRepository', () => ({
   availabilityRepository: {
     getFixedOffDaysByUser: vi.fn(),
     setFixedOffDays: vi.fn(),
-    getLeaveRequestsByUser: vi.fn(),
-    createLeaveRequest: vi.fn(),
+    getBreakWaiverRequestsByUser: vi.fn(),
+    createBreakWaiverRequest: vi.fn(),
     createShiftSwapRequest: vi.fn(),
   },
 }))
@@ -33,46 +33,39 @@ describe('availabilityService', () => {
     })
   })
 
-  describe('submitLeaveRequest (UC57: Submit Leave Request)', () => {
-    it('accepts the distinct "leave" request type', async () => {
-      const created = { id: 'req-1', company_id: 'company-1', requester_id: 'user-1', shift_assignment_id: null, request_type: 'leave', reason: null, status: 'pending', reviewed_by: null, reviewed_at: null, created_at: '2026-01-01', updated_at: '2026-01-01' }
-      vi.mocked(availabilityRepository.createLeaveRequest).mockResolvedValue(created)
+  describe('submitBreakWaiverRequest (Break Waiver)', () => {
+    it('accepts the break_waiver request type', async () => {
+      const created = { id: 'req-1', company_id: 'company-1', requester_id: 'user-1', shift_assignment_id: null, request_type: 'break_waiver', reason: null, status: 'pending', reviewed_by: null, reviewed_at: null, created_at: '2026-01-01', updated_at: '2026-01-01' }
+      vi.mocked(availabilityRepository.createBreakWaiverRequest).mockResolvedValue(created)
 
-      const result = await availabilityService.submitLeaveRequest({ user_id: 'user-1', company_id: 'company-1', request_type: 'leave', reason: null })
+      const result = await availabilityService.submitBreakWaiverRequest({ user_id: 'user-1', company_id: 'company-1', request_type: 'break_waiver', reason: null })
 
-      expect(availabilityRepository.createLeaveRequest).toHaveBeenCalledWith(expect.objectContaining({ request_type: 'leave' }))
+      expect(availabilityRepository.createBreakWaiverRequest).toHaveBeenCalledWith(expect.objectContaining({ request_type: 'break_waiver' }))
       expect(result).toEqual(created)
     })
 
-    it('still accepts time_off and break_waiver', async () => {
-      vi.mocked(availabilityRepository.createLeaveRequest).mockResolvedValue({} as any)
-
-      await availabilityService.submitLeaveRequest({ user_id: 'user-1', company_id: 'company-1', request_type: 'time_off', reason: null })
-      await availabilityService.submitLeaveRequest({ user_id: 'user-1', company_id: 'company-1', request_type: 'break_waiver', reason: null })
-
-      expect(availabilityRepository.createLeaveRequest).toHaveBeenCalledTimes(2)
-    })
-
-    it('rejects an unsupported request type before touching the repository', async () => {
-      await expect(availabilityService.submitLeaveRequest({ user_id: 'user-1', company_id: 'company-1', request_type: 'vacation', reason: null }))
-        .rejects.toThrow('Invalid request type')
-      expect(availabilityRepository.createLeaveRequest).not.toHaveBeenCalled()
+    it('rejects request types other than break_waiver before touching the repository', async () => {
+      await expect(availabilityService.submitBreakWaiverRequest({ user_id: 'user-1', company_id: 'company-1', request_type: 'leave', reason: null }))
+        .rejects.toThrow('Invalid request type: only break_waiver is supported')
+      expect(availabilityRepository.createBreakWaiverRequest).not.toHaveBeenCalled()
     })
   })
 
   describe('submitShiftSwapRequest (UC52: Submit Shift Swap Request)', () => {
-    it('blocks a requester from naming themself as the replacement', async () => {
+    it('blocks a requester from swapping with themselves', async () => {
       await expect(availabilityService.submitShiftSwapRequest({
-        company_id: 'company-1', shift_assignment_id: 'asn-1', requester_id: 'user-1', replacement_user_id: 'user-1', reason: null,
-      })).rejects.toThrow('Replacement user must be different from requester')
+        company_id: 'company-1', requester_id: 'user-1', requester_assignment_id: 'asn-1',
+        counterpart_id: 'user-1', counterpart_assignment_id: 'asn-2', reason: null,
+      })).rejects.toThrow('Cannot swap with yourself')
       expect(availabilityRepository.createShiftSwapRequest).not.toHaveBeenCalled()
     })
 
-    it('creates the swap request when requester and replacement differ', async () => {
+    it('creates the swap request when requester and counterpart differ', async () => {
       vi.mocked(availabilityRepository.createShiftSwapRequest).mockResolvedValue({ id: 'swap-1' } as any)
 
       await availabilityService.submitShiftSwapRequest({
-        company_id: 'company-1', shift_assignment_id: 'asn-1', requester_id: 'user-1', replacement_user_id: 'user-2', reason: null,
+        company_id: 'company-1', requester_id: 'user-1', requester_assignment_id: 'asn-1',
+        counterpart_id: 'user-2', counterpart_assignment_id: 'asn-2', reason: null,
       })
 
       expect(availabilityRepository.createShiftSwapRequest).toHaveBeenCalled()
