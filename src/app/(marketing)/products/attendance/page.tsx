@@ -9,8 +9,8 @@ const IcoCamera = () => (<svg width="24" height="24" viewBox="0 0 24 24" fill="n
 const IcoSign = () => (<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M20 14.66V20a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5.34" stroke="#F97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><polygon points="18 2 22 6 12 16 8 16 8 12 18 2" stroke="#F97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>);
 const IcoCheck = () => (<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" stroke="#F97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M22 4L12 14.01l-3-3" stroke="#F97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>);
 const IcoLock = () => (<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="3" y="11" width="18" height="11" rx="2" stroke="#F97316" strokeWidth="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" stroke="#F97316" strokeWidth="2" strokeLinecap="round" /></svg>);
-const IcoStar = () => (<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z" stroke="#F97316" strokeWidth="2" strokeLinejoin="round" /></svg>);
 const IcoShield = () => (<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" stroke="#F97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M9 12l2 2 4-4" stroke="#F97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>);
+const IcoDownload = () => (<svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" stroke="#F97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M7 10l5 5 5-5M12 15V3" stroke="#F97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>);
 
 const IconBox = ({ children }: { children: React.ReactNode }) => (
   <div style={{ width: '48px', height: '48px', background: '#FEF3C7', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '16px' }}>{children}</div>
@@ -45,15 +45,15 @@ export default function AttendancePage() {
     { icon: <IcoSign />, name: 'Attendance Confirmation & Submission', desc: 'Employees confirm the casual worker\'s presence on the ground, sign the record, and submit it to the manager — all within the platform.' },
     { icon: <IcoCheck />, name: 'Review & Approve Records', desc: 'Managers review submitted records with full context — clock-in time, photo, and signature — and approve, reject, or modify as needed.' },
     { icon: <IcoLock />, name: 'Tamper-proof Record Keeping', desc: 'Every modification is tracked. The original record is always preserved alongside any adjusted version for full audit transparency.' },
-    { icon: <IcoStar />, name: 'AI Auto-approve Timesheets', desc: 'Records that check out are approved automatically. Only flagged records land on your desk.' },
     { icon: <IcoShield />, name: 'AI Anomaly Detection', desc: 'The system monitors patterns across all attendance data and surfaces anything suspicious — before it becomes a problem.' },
+    { icon: <IcoDownload />, name: 'Export Attendance Records', desc: 'Pull complete attendance history into a clean export whenever you need it — for payroll, audits, or your own records.' },
   ];
 
   const steps = [
     { n: '01', title: 'Clock In', desc: 'Casual worker clocks in and submits a live photo. Time and photo are recorded instantly.' },
     { n: '02', title: 'Confirm', desc: 'The assigned employee confirms the casual worker was present and carried out their duties.' },
     { n: '03', title: 'Submit', desc: 'Employee signs and submits the attendance record to the manager for review.' },
-    { n: '04', title: 'Review & Approve', desc: 'Manager reviews the record — or lets AI approve it automatically if everything checks out.' },
+    { n: '04', title: 'Review & Approve', desc: 'Manager reviews the record — photo, timestamp, and signature all in one place — and approves, rejects, or flags it for follow-up.' },
   ];
 
   return (
@@ -66,7 +66,7 @@ export default function AttendancePage() {
             Every clock-in. Verified. Every record. Protected.
           </h1>
           <p style={{ fontFamily: 'var(--font-body)', fontSize: '1.0625rem', color: 'rgba(255,255,255,0.65)', lineHeight: 1.75, maxWidth: '540px', margin: '0 auto 36px' }}>
-            Accurate attendance tracking with AI built in — so nothing slips through the cracks.
+            Photo-verified attendance tracking, with AI anomaly detection built in — so nothing slips through the cracks.
           </p>
           <Link href="/get-started" className="btn-press cta-shimmer" style={{ display: 'inline-block', background: '#F97316', color: '#FFFFFF', padding: '13px 30px', borderRadius: '10px', fontFamily: 'var(--font-body)', fontWeight: 600, fontSize: '0.9375rem' }}>
             Get Started Free
@@ -81,7 +81,7 @@ export default function AttendancePage() {
             <h2 className="sub-h2" style={h2style}>Everything you need to track attendance with confidence</h2>
             <p style={subtitleStyle}>From the moment they clock in to the moment the record is approved.</p>
           </div>
-          {/* 6 cards in 3-col grid, last card centered */}
+          {/* 7 cards in 3-col grid, last card centered */}
           <div className="grid-features-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px' }}>
             {features.slice(0, 6).map(f => <FeatureCard key={f.name} {...f} />)}
           </div>
@@ -98,7 +98,7 @@ export default function AttendancePage() {
         <div className="sub-inner" style={inner}>
           <div style={{ textAlign: 'center', marginBottom: '60px' }}>
             <h2 className="sub-h2" style={h2style}>From clock-in to approved record — fully covered.</h2>
-            <p style={subtitleStyle}>A complete attendance flow with verification and AI built into every step.</p>
+            <p style={subtitleStyle}>A complete attendance flow with photo verification at every step.</p>
           </div>
           <div className="grid-steps-4" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0', position: 'relative' }}>
             {steps.map(({ n, title, desc }, i) => (
@@ -120,7 +120,7 @@ export default function AttendancePage() {
       </section>
 
       {/* ========== FINAL CTA ========== */}
-      <CtaBanner headline="No more disputed timesheets." sub="Photo-verified, AI-assisted, and fully auditable — from the first clock-in." />
+      <CtaBanner headline="No more disputed timesheets." sub="Photo-verified, fully auditable, and backed by AI anomaly detection — from the first clock-in." />
     </>
   );
 }

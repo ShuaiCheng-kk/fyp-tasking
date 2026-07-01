@@ -46,6 +46,13 @@ const IcoShield = () => (
     <path d="M9 12l2 2 4-4" stroke="#F97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
   </svg>
 );
+const IcoCalendar = () => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+    <rect x="3" y="5" width="18" height="16" rx="2" stroke="#F97316" strokeWidth="2" />
+    <path d="M3 9.5h18M8 3v4M16 3v4" stroke="#F97316" strokeWidth="2" strokeLinecap="round" />
+    <path d="M8 14.5l2.5 2.5L16 12" stroke="#F97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+);
 
 // ─── Shared components ────────────────────────────────────────────────────────
 
@@ -65,14 +72,14 @@ function FeatureCard({ icon, name, desc }: { icon: React.ReactNode; name: string
   );
 }
 
-function CtaBanner({ headline, sub }: { headline: string; sub: string }) {
+function CtaBanner({ headline, sub, ctaLabel = 'Get Started Free', ctaHref = '/get-started' }: { headline: string; sub: string; ctaLabel?: string; ctaHref?: string }) {
   return (
     <section className="cta-banner" style={{ background: '#F97316', padding: '80px 24px' }}>
       <div style={{ maxWidth: '640px', margin: '0 auto', textAlign: 'center' }}>
         <h2 style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, fontSize: '2.5rem', color: '#FFFFFF', marginBottom: '16px', lineHeight: 1.2 }}>{headline}</h2>
         <p style={{ fontFamily: 'var(--font-body)', fontSize: '1.0625rem', color: 'rgba(255,255,255,0.85)', lineHeight: 1.7, marginBottom: '36px' }}>{sub}</p>
-        <Link href="/get-started" className="btn-press" style={{ display: 'inline-block', background: '#FFFFFF', color: '#F97316', padding: '13px 30px', borderRadius: '10px', fontFamily: 'var(--font-body)', fontWeight: 700, fontSize: '0.9375rem' }}>
-          Get Started Free
+        <Link href={ctaHref} className="btn-press" style={{ display: 'inline-block', background: '#FFFFFF', color: '#F97316', padding: '13px 30px', borderRadius: '10px', fontFamily: 'var(--font-body)', fontWeight: 700, fontSize: '0.9375rem' }}>
+          {ctaLabel}
         </Link>
       </div>
     </section>
@@ -83,9 +90,9 @@ function CtaBanner({ headline, sub }: { headline: string; sub: string }) {
 
 export default function AiFeaturesPage() {
   const steps = [
-    { step: '01', label: 'Recruit', title: 'Post a job', desc: 'AI generates the description and ranks applicants automatically — so you open the list already knowing who to pick.' },
-    { step: '02', label: 'Verify', title: 'Casual worker clocks in', desc: 'AI verifies the photo against the record and flags anything that looks off — before it becomes your problem.' },
-    { step: '03', label: 'Approve', title: 'Shift ends', desc: 'AI reviews the timesheet and approves or escalates instantly — so clean records never sit waiting for manual review.' },
+    { step: '01', label: 'Schedule', title: 'Build the week', desc: 'AI suggests a conflict-free shift schedule based on availability and coverage needs — so you start from a draft, not a blank grid.' },
+    { step: '02', label: 'Recruit', title: 'Post a job', desc: 'AI generates the description and ranks applicants automatically — so you open the list already knowing who to pick.' },
+    { step: '03', label: 'Monitor', title: 'Shift runs', desc: 'AI watches for photo mismatches and unusual clock-in patterns, flagging anything that looks off before it becomes a dispute.' },
   ];
 
   return (
@@ -97,13 +104,13 @@ export default function AiFeaturesPage() {
             AI Features
           </span>
           <h1 className="sub-hero-h1" style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, fontSize: '3rem', lineHeight: 1.15, color: '#FFFFFF', maxWidth: '700px', margin: '0 auto 20px' }}>
-            Enterprise-grade AI. Free for everyone.
+            Enterprise-grade AI. Built into Pro.
           </h1>
           <p style={{ fontFamily: 'var(--font-body)', fontSize: '1.0625rem', color: 'rgba(255,255,255,0.65)', lineHeight: 1.75, maxWidth: '560px', margin: '0 auto 36px' }}>
-            Four intelligent tools built into your workflow from day one — no upgrades, no paywalls, no excuses.
+            Five intelligent tools built into your workflow, included with every Pro plan — no separate add-ons, no per-feature pricing.
           </p>
-          <Link href="/get-started" className="btn-press cta-shimmer" style={{ display: 'inline-block', background: '#F97316', color: '#FFFFFF', padding: '13px 30px', borderRadius: '10px', fontFamily: 'var(--font-body)', fontWeight: 600, fontSize: '0.9375rem' }}>
-            Get Started Free
+          <Link href="/pricing" className="btn-press cta-shimmer" style={{ display: 'inline-block', background: '#F97316', color: '#FFFFFF', padding: '13px 30px', borderRadius: '10px', fontFamily: 'var(--font-body)', fontWeight: 600, fontSize: '0.9375rem' }}>
+            See Pricing
           </Link>
         </div>
       </section>
@@ -113,12 +120,13 @@ export default function AiFeaturesPage() {
         <div className="sub-inner" style={inner}>
           <div style={{ textAlign: 'center', marginBottom: '52px' }}>
             <h2 className="sub-h2" style={h2style}>What&apos;s inside</h2>
-            <p style={subtitleStyle}>Four AI tools. All free. All built in.</p>
+            <p style={subtitleStyle}>Five AI tools. All included with Pro.</p>
           </div>
-          <div className="grid-features-2" style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '20px' }}>
-            <FeatureCard icon={<IcoStar />} name="AI Candidate Recommendation" desc="Stop guessing who's the right fit. Tasking ranks every applicant by skills, availability, and work history — so the best match is always at the top." />
+          <div className="grid-features-3" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px' }}>
+            <FeatureCard icon={<IcoCalendar />} name="AI Schedule Suggestion" desc="Tell Tasking who's available and what coverage you need. Get a conflict-free shift schedule suggested in seconds, ready to publish." />
+            <FeatureCard icon={<IcoCheck />} name="AI Task Assignment Suggestion" desc="Tasking matches the right person to the right task based on skills and current workload — so nothing falls on the wrong desk." />
             <FeatureCard icon={<IcoPen />} name="AI Job Description Generator" desc="Enter a role title and key requirements. Get a ready-to-publish job description in seconds. No more staring at a blank page." />
-            <FeatureCard icon={<IcoCheck />} name="AI Auto-approve Timesheets" desc="Clean records that meet all criteria get approved without you lifting a finger. Only the ones that need your attention ever reach your inbox." />
+            <FeatureCard icon={<IcoStar />} name="AI Candidate Recommendation" desc="Stop guessing who's the right fit. Tasking ranks every applicant by skills, availability, and work history — so the best match is always at the top." />
             <FeatureCard icon={<IcoShield />} name="AI Anomaly Detection" desc="Photo mismatches, unusual clock-in patterns, repeated late arrivals — Tasking catches them automatically before they turn into disputes." />
           </div>
         </div>
@@ -153,7 +161,12 @@ export default function AiFeaturesPage() {
       </section>
 
       {/* ========== FINAL CTA ========== */}
-      <CtaBanner headline="Ready to put AI to work?" sub="All four AI features are free. No upgrade required." />
+      <CtaBanner
+        headline="Ready to put AI to work?"
+        sub="All five AI features are included with the Pro plan, starting at $20/month."
+        ctaLabel="See Pricing"
+        ctaHref="/pricing"
+      />
     </>
   );
 }
