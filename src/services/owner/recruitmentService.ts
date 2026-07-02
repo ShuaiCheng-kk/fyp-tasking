@@ -9,6 +9,13 @@ export const recruitmentService = {
     return recruitmentRepository.getPublicJobPostings()
   },
 
+  // Lets any internal-staff view (e.g. an Owner reviewing a Casual Worker's attendance record)
+  // look up the exact job posting a shift originated from, via Shift.source_job_posting_id.
+  async getJobPostingById(id: string): Promise<JobPosting | null> {
+    if (!id) throw new Error('id is required')
+    return recruitmentRepository.getJobPostingById(id)
+  },
+
   async getJobPostingsByDepartment(company_id: string, department_id: string): Promise<JobPostingSummary[]> {
     if (!company_id || !department_id) throw new Error('company_id and department_id are required')
     const postings = await recruitmentRepository.getJobPostingsByDepartment(company_id, department_id)
@@ -24,6 +31,7 @@ export const recruitmentService = {
       department_name: posting.department_id ? deptMap.get(posting.department_id) ?? null : null,
       applicant_count: applicantRows.filter(row => row.job_id === posting.id).length,
       pending_count: applicantRows.filter(row => row.job_id === posting.id && row.status === 'pending').length,
+      accepted_count: applicantRows.filter(row => row.job_id === posting.id && row.status === 'accepted').length,
       assigned_employee_name: posting.assigned_employee_id ? empMap.get(posting.assigned_employee_id) ?? null : null,
     }))
   },
@@ -46,6 +54,7 @@ export const recruitmentService = {
       department_name: posting.department_id ? deptMap.get(posting.department_id) ?? null : null,
       applicant_count: applicantRows.filter(r => r.job_id === posting.id).length,
       pending_count: applicantRows.filter(r => r.job_id === posting.id && r.status === 'pending').length,
+      accepted_count: applicantRows.filter(r => r.job_id === posting.id && r.status === 'accepted').length,
       assigned_employee_name: posting.assigned_employee_id ? empMap.get(posting.assigned_employee_id) ?? null : null,
     }))
   },
@@ -68,6 +77,7 @@ export const recruitmentService = {
         department_name: posting.department_id ? deptMap.get(posting.department_id) ?? null : null,
         applicant_count: rows.length,
         pending_count: rows.filter(row => row.status === 'pending').length,
+        accepted_count: rows.filter(row => row.status === 'accepted').length,
         assigned_employee_name: posting.assigned_employee_id ? empMap.get(posting.assigned_employee_id) ?? null : null,
       }
     })
@@ -99,6 +109,7 @@ export const recruitmentService = {
       department_name: p.department_id ? deptMap.get(p.department_id) ?? null : null,
       applicant_count: 0,
       pending_count: 0,
+      accepted_count: 0,
       assigned_employee_name: p.assigned_employee_id ? empMap.get(p.assigned_employee_id) ?? null : null,
     }))
   },

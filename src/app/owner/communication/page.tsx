@@ -8,6 +8,8 @@ import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import { createClient } from '@/lib/supabase'
 import { ModalOverlay, ModalBox, ModalHeader, modalInputStyle, modalLabelStyle, modalErrorBoxStyle, modalGhostButtonStyle, modalPrimaryButtonStyle, modalDestructiveButtonStyle } from '@/components/modal'
 import Spinner from '@/components/Spinner'
+import DepartmentBadge from '@/components/DepartmentBadge'
+import { setDeptColorOverrides } from '@/lib/deptColor'
 import {
   Plus, X, Trash2, Pencil, Megaphone,
   Send, Search, SquarePen, Check, Bell, MessageSquare, Crown,
@@ -353,7 +355,7 @@ export default function OwnerCommunicationPage() {
     if (!companyId) return
     fetch(`/api/company/departments?company_id=${companyId}`)
       .then(r => r.json())
-      .then(d => { if (d.success) setDepartments(d.departments ?? []) })
+      .then(d => { if (d.success) { setDepartments(d.departments ?? []); setDeptColorOverrides(d.departments ?? []) } })
       .catch(() => {})
     const uid = localStorage.getItem('tasking_user_id')
     if (uid) {
@@ -1032,7 +1034,7 @@ export default function OwnerCommunicationPage() {
                 >
                   {tab.label}
                   {tab.badge > 0 && (
-                    <span style={{ width: 10, height: 10, borderRadius: 999, background: '#EF4444', flexShrink: 0, border: active ? '1.5px solid rgba(255,255,255,0.4)' : '1.5px solid #fff' }} />
+                    <span style={{ width: 10, height: 10, borderRadius: 999, background: '#EF4444', flexShrink: 0, border: active ? '1.5px solid #111827' : '1.5px solid #fff' }} />
                   )}
                 </button>
               )
@@ -1433,10 +1435,7 @@ export default function OwnerCommunicationPage() {
                           <span style={{ fontSize: 11, color: '#94A3B8', whiteSpace: 'nowrap', flexShrink: 0, fontWeight: 600 }}>{formatTime(ann.created_at)}</span>
                         </div>
                         <div style={{ paddingLeft: 14 }}>
-                          <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 999, display: 'inline-flex', alignItems: 'center', gap: 3, background: deptName ? '#EFF6FF' : '#F1F5F9', color: deptName ? '#2563EB' : '#64748B' }}>
-                            {deptName ? null : <Globe size={9} />}
-                            {deptName ?? 'Company-wide'}
-                          </span>
+                          <DepartmentBadge departmentId={ann.department_id} departmentName={deptName} fallbackIcon={<Globe size={9} />} />
                         </div>
                       </button>
                     )
@@ -1461,10 +1460,11 @@ export default function OwnerCommunicationPage() {
                         </div>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                        <span style={{ height: 28, padding: '0 10px', borderRadius: 999, fontSize: 11, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: 4, background: selectedAnn.department_id ? '#EFF6FF' : '#F1F5F9', color: selectedAnn.department_id ? '#2563EB' : '#64748B' }}>
-                          {selectedAnn.department_id ? null : <Globe size={10} />}
-                          {selectedAnn.department_id ? (departments.find(d => d.id === selectedAnn.department_id)?.name ?? 'Department') : 'Company-wide'}
-                        </span>
+                        <DepartmentBadge
+                          departmentId={selectedAnn.department_id}
+                          departmentName={selectedAnn.department_id ? (departments.find(d => d.id === selectedAnn.department_id)?.name ?? 'Department') : null}
+                          fallbackIcon={<Globe size={10} />}
+                        />
                         {selectedAnn.from_user_id === internalUserId && (
                           <>
                             <button onClick={() => handleOpenEdit(selectedAnn)} title="Edit"

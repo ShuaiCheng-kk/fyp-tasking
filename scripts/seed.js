@@ -120,9 +120,21 @@ const casualWorkers = [
   { email: 'cw10@test.com', full_name: 'Mei Xin Teo',    phone_number: '+65 8100 1010', date_of_birth: '1998-06-18', worker_status: 'inactive', inactivate_reason: 'Unable to meet shift requirements.',     hourly_rate: null },
 ]
 
+// Guest Users — public job-board applicants (role 'Guest User', not scoped to any company yet).
+// These are who job_applicants.user_id points at before an applicant is ever hired.
+const guestApplicants = [
+  { email: 'guest1@test.com', full_name: 'Wei Jie Lim',   phone_number: '+65 8200 2001', date_of_birth: '2000-01-15' },
+  { email: 'guest2@test.com', full_name: 'Priyanka Das',  phone_number: '+65 8200 2002', date_of_birth: '1999-05-22' },
+  { email: 'guest3@test.com', full_name: 'Kai Xuan Ong',  phone_number: '+65 8200 2003', date_of_birth: '2001-09-10' },
+  { email: 'guest4@test.com', full_name: 'Amirah Yusof',  phone_number: '+65 8200 2004', date_of_birth: '1998-12-03' },
+  { email: 'guest5@test.com', full_name: 'Ryan Teo',      phone_number: '+65 8200 2005', date_of_birth: '2002-03-28' },
+  { email: 'guest6@test.com', full_name: 'Sofia Chen',    phone_number: '+65 8200 2006', date_of_birth: '2000-07-19' },
+]
+
 const legacyTestEmailsToDelete = [
   ...accounts.map(a => a.email),
   ...casualWorkers.map(cw => cw.email),
+  ...guestApplicants.map(g => g.email),
 ]
 
 // ─── 业务数据生成参数 ──────────────────────────────────────────────────────────
@@ -173,17 +185,22 @@ async function main() {
     'shift_assignments',
     'shifts',
     'shift_templates',
+    'task_templates',
     'tasks',
     'messages',
+    'announcement_reads',
     'announcements',
     'inbox',
     'job_invitations',
     'job_applicants',
     'job_postings',
+    'job_templates',
     'time_off_requests',
     'employee_fixed_off_days',
     'manager_departments',
     'employee_departments',
+    'casualworker_departments',
+    'company_activity_logs',
   ]
   for (const table of tablesToClear) {
     const { error } = await supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000')
@@ -214,11 +231,11 @@ async function main() {
     }
   }
 
-  // ── Step 3: 创建 auth 账号（internal + CW）──────────────────────────────
+  // ── Step 3: 创建 auth 账号（internal + CW + Guest）──────────────────────
   console.log('\nStep 3: 创建 auth 账号...')
   const userIdMap = {} // email → { authId, internalId }
 
-  const allAuthAccounts = [...accounts, ...casualWorkers]
+  const allAuthAccounts = [...accounts, ...casualWorkers, ...guestApplicants]
   for (const account of allAuthAccounts) {
     const { data, error } = await supabase.auth.admin.createUser({
       email: account.email,
@@ -344,6 +361,29 @@ async function main() {
     if (uErr) { console.error(`  ✗ 插入 CW users 失败 ${cw.email}:`, uErr.message); process.exit(1) }
     userIdMap[cw.email].internalId = u.id
     console.log(`  ✓ CW: ${cw.full_name} (${cw.worker_status}) → ${u.id}`)
+  }
+
+  // ── Step 7b: 插入 Guest Users（求职申请人，尚未受雇，不属于任何 company）───
+  console.log('\nStep 7b: 插入 public.users (Guest Users)...')
+  for (const guest of guestApplicants) {
+    const authId = userIdMap[guest.email].authId
+    const { data: u, error: uErr } = await supabase
+      .from('users')
+      .insert({
+        supabase_auth_id: authId,
+        full_name: guest.full_name,
+        email_address: guest.email,
+        phone_number: guest.phone_number,
+        date_of_birth: guest.date_of_birth,
+        profile_photo_url: DEMO_PHOTO_URL,
+        role: 'Guest User',
+        company_id: null,
+      })
+      .select()
+      .single()
+    if (uErr) { console.error(`  ✗ 插入 Guest users 失败 ${guest.email}:`, uErr.message); process.exit(1) }
+    userIdMap[guest.email].internalId = u.id
+    console.log(`  ✓ Guest: ${guest.full_name} → ${u.id}`)
   }
 
   // ── Step 8: manager_departments ────────────────────────────────────────
@@ -474,7 +514,11 @@ async function main() {
   console.log(`  ✓ 生成 ${assignmentInfo.length} 个 shift + assignment（过去 ${SHIFT_DAYS_PAST} 天 + 未来 ${SHIFT_DAYS_FUTURE} 天，跳过周末）`)
 
   // ── Step 11: Attendance Records（仅对过去的 shift）──────────────────────
-  // 混合比例：70% 准时打卡完成已审批，10% 迟到，10% 仍待审批，5% 被驳回，5% 缺勤（不生成记录）。
+  // 混合比例：65% 准时打卡完成已审批，10% 迟到（未审批), 10% 已经 Manager Review
+  // 等待 Owner 终审，10% 被驳回，5% 缺勤（不生成记录）。Manager Review 这一档此前
+  // 完全没有种子数据 —— managerReviewAttendance 是真实存在的功能（Manager 点 Review
+  // 后 status 会变成 manager_reviewed，owner_status 仍是 pending），不生成会导致
+  // Owner/Manager 页面永远看不到"已经被 Manager 看过、等 Owner 终审"这个真实状态。
   console.log('\nStep 11: 生成 Attendance Records（过去的 shift）...')
   const pastAssignments = assignmentInfo.filter(a => a.isPast)
   let attendanceCount = 0
@@ -500,13 +544,16 @@ async function main() {
     }
     const clockOutTime = new Date(clockOutBase.getTime() + 2 * 60000)
 
-    if (bucket < 5) {
-      status = 'submitted'; ownerStatus = 'pending'
+    if (bucket < 3) {
+      status = 'submitted'; ownerStatus = 'pending' // late, nobody has looked at it yet
+    } else if (bucket < 5) {
+      status = 'manager_reviewed'; ownerStatus = 'pending' // manager already reviewed, awaiting Owner
     } else if (bucket < 7) {
       status = 'owner_rejected'; ownerStatus = 'rejected'
     } else {
       status = 'owner_approved'; ownerStatus = 'approved'
     }
+    const managerNotes = status === 'manager_reviewed' ? 'Times match the schedule — looks good for final approval.' : null
 
     const { error: attErr } = await supabase.from('attendance_records').insert({
       shift_assignment_id: a.assignmentId,
@@ -516,6 +563,7 @@ async function main() {
       clock_in_time: clockInTime.toISOString(),
       clock_out_time: clockOutTime.toISOString(),
       status,
+      manager_notes: managerNotes,
       owner_status: ownerStatus,
       owner_reviewed_by: ownerStatus === 'pending' ? null : ownerUser.id,
       owner_reviewed_at: ownerStatus === 'pending' ? null : new Date().toISOString(),
@@ -523,7 +571,7 @@ async function main() {
     if (attErr) console.warn(`  ⚠ 创建 attendance_record 失败 (${a.email}, ${a.shiftDate}): ${attErr.message}`)
     else attendanceCount++
   }
-  console.log(`  ✓ 生成 ${attendanceCount} 条 attendance_records（混合 approved/pending/rejected/late，~5% 缺勤无记录）`)
+  console.log(`  ✓ 生成 ${attendanceCount} 条 attendance_records（混合 approved/pending/manager_reviewed/rejected/late，~5% 缺勤无记录）`)
 
   // ── Step 11b: Casual Worker Shifts + Attendance Records ─────────────────
   // 每个 active CW 分配到一个部门，过去 7 天生成 shifts（混合 Shift Job / One-Off）
@@ -551,6 +599,16 @@ async function main() {
       const cwId = userIdMap[cwEmail].internalId
       // Alternate: even CW index = Shift Job (is_open_ended=false), odd = One-Off (is_open_ended=true)
       const isOneOff = cwIdx % 2 === 1
+
+      // casualworker_departments mirrors employee_departments/manager_departments — gives this CW
+      // a stable department_id so getTeamByCompany/getTeamByDepartment can resolve it (real usage:
+      // this row is created the moment the CW accepts a job invitation into this department).
+      const { error: cwdErr } = await supabase.from('casualworker_departments').insert({
+        casual_worker_id: cwId,
+        department_id: dept.id,
+        company_id: company.id,
+      })
+      if (cwdErr) console.warn(`  ⚠ casualworker_departments 失败 (${cwEmail}): ${cwdErr.message}`)
 
       for (let dayOffset = -SHIFT_DAYS_PAST; dayOffset <= 0; dayOffset++) {
         const shiftDate = addDays(TODAY, dayOffset)
@@ -596,6 +654,7 @@ async function main() {
         cwShiftCount++
         cwAssignmentInfo.push({
           assignmentId: cwAssignment.id,
+          shiftId: cwShift.id,
           shiftDate: shiftDateStr,
           startTime,
           endTime,
@@ -624,17 +683,28 @@ async function main() {
     const clockInTime  = new Date(clockInBase.getTime()  + (isLate ? 18 : 3) * 60000)
     const clockOutTime = new Date(clockOutBase.getTime() + 2 * 60000)
 
-    const ownerStatus = bucket < 3 ? 'pending' : bucket < 5 ? 'rejected' : 'approved'
-    const status      = bucket < 3 ? 'submitted' : bucket < 5 ? 'owner_rejected' : 'owner_approved'
+    // status/ownerStatus buckets: 1=submitted(pending, untouched), 2=manager_reviewed(pending,
+    // manager already looked at it), 3-4=owner_rejected, 5-9=owner_approved.
+    let status, ownerStatus
+    if (bucket < 2) { status = 'submitted'; ownerStatus = 'pending' }
+    else if (bucket < 3) { status = 'manager_reviewed'; ownerStatus = 'pending' }
+    else if (bucket < 5) { status = 'owner_rejected'; ownerStatus = 'rejected' }
+    else { status = 'owner_approved'; ownerStatus = 'approved' }
+    const managerNotes = status === 'manager_reviewed' ? 'Checked with the shift supervisor — hours look correct.' : null
 
+    // confirmed_by/submitted_by are always the Casual Worker's own id — casualAttendanceService's
+    // clockIn/clockOut both self-attest (there is no separate "supervising Employee confirms"
+    // action in the app today); supervisor_employee_id on the shift_assignment above already
+    // captures the real "Employee supervises this CW" relationship for display purposes.
     const { error: cwAttErr } = await supabase.from('attendance_records').insert({
       shift_assignment_id: a.assignmentId,
       casual_worker_id: a.userId,
-      confirmed_by_employee_id: a.supervisorId,
-      submitted_by_employee_id: a.supervisorId,
+      confirmed_by_employee_id: a.userId,
+      submitted_by_employee_id: a.userId,
       clock_in_time: clockInTime.toISOString(),
       clock_out_time: clockOutTime.toISOString(),
       status,
+      manager_notes: managerNotes,
       owner_status: ownerStatus,
       owner_reviewed_by: ownerStatus === 'pending' ? null : ownerUser.id,
       owner_reviewed_at: ownerStatus === 'pending' ? null : new Date().toISOString(),
@@ -642,7 +712,41 @@ async function main() {
     if (cwAttErr) console.warn(`  ⚠ CW attendance 失败 (${a.email}, ${a.shiftDate}): ${cwAttErr.message}`)
     else cwAttCount++
   }
-  console.log(`  ✓ 生成 ${cwAttCount} 条 CW attendance_records（混合 approved/pending/rejected/late，10% 缺勤）`)
+  console.log(`  ✓ 生成 ${cwAttCount} 条 CW attendance_records（混合 approved/pending/manager_reviewed/rejected/late，10% 缺勤）`)
+
+  // ── Step 11c: Casual Worker Tasks（Employee 分配给 Casual Worker，任务层级的最后一级）──
+  // 完整展示真实的任务分配链：Owner→Manager、Manager→Employee（见 Step 12），
+  // Employee→Casual Worker（这里）。每个 active CW 从负责监督自己的 Employee 那里
+  // 拿到一条挂在自己班次上的任务 —— 这条链路此前后端完全没实现，种子数据也从来
+  // 没生成过，现在 taskService.validateTaskAssignment 已经支持了就一并补上。
+  console.log('\nStep 11c: 生成 Casual Worker Tasks（Employee 分配给 Casual Worker）...')
+  let cwTaskCount = 0
+  const latestCwAssignmentByEmail = new Map()
+  for (const a of cwAssignmentInfo) {
+    const existing = latestCwAssignmentByEmail.get(a.email)
+    if (!existing || a.shiftDate > existing.shiftDate) latestCwAssignmentByEmail.set(a.email, a)
+  }
+  for (const a of latestCwAssignmentByEmail.values()) {
+    const dept = deptByIndex[a.deptIdx]
+    const title = `Assist with ${dept.name.toLowerCase()} floor duties`
+    const { error: cwTaskErr } = await supabase.from('tasks').insert({
+      company_id: company.id,
+      department_id: dept.id,
+      shift_id: a.shiftId,
+      title,
+      description: `${title} during the shift on ${a.shiftDate}.`,
+      assigned_user_id: a.userId,
+      assigned_by: a.supervisorId,
+      status: 'Assigned',
+      percentage_complete: 0,
+      priority: 'Medium',
+      due_at: new Date(`${a.shiftDate}T${a.endTime}:00Z`).toISOString(),
+      task_date: a.shiftDate,
+    })
+    if (cwTaskErr) console.warn(`  ⚠ CW task 失败 (${a.email}): ${cwTaskErr.message}`)
+    else cwTaskCount++
+  }
+  console.log(`  ✓ 生成 ${cwTaskCount} 条 Casual Worker tasks（由负责监督的 Employee 分配）`)
 
   // ── Step 12: Tasks（每个未来 shift 挂一条 task，保证 Shift Swap 的 Task Changes
   // 预览、Kanban 等 UI 都能看到真实数据 —— tasks.shift_id 之前完全没设置，导致任何
@@ -686,6 +790,7 @@ async function main() {
   // ── Step 13: Communication — Announcements ──────────────────────────────
   console.log('\nStep 13: 生成 Announcements...')
   let announcementCount = 0
+  const announcementIds = []
   for (let i = 0; i < ANNOUNCEMENT_TEMPLATES.length; i++) {
     const tpl = ANNOUNCEMENT_TEMPLATES[i]
     // First announcement is company-wide (Owner), rest are per-department (rotating manager)
@@ -694,15 +799,15 @@ async function main() {
     const fromUserId = isCompanyWide ? ownerUser.id : userIdMap[managersByDept[deptIdx][0]].internalId
     const departmentId = isCompanyWide ? null : deptByIndex[deptIdx].id
 
-    const { error: annErr } = await supabase.from('announcements').insert({
+    const { data: ann, error: annErr } = await supabase.from('announcements').insert({
       from_user_id: fromUserId,
       company_id: company.id,
       department_id: departmentId,
       title: tpl.title,
       content: tpl.content,
-    })
+    }).select('id').single()
     if (annErr) console.warn(`  ⚠ 创建 announcement 失败 (${tpl.title}): ${annErr.message}`)
-    else announcementCount++
+    else { announcementCount++; announcementIds.push(ann.id) }
   }
   console.log(`  ✓ 生成 ${announcementCount} 条 announcements`)
 
@@ -747,6 +852,7 @@ async function main() {
   console.log('  Manager:  manager1~8@test.com')
   console.log('  Employee: employee1~8@test.com')
   console.log('  CW:       cw1~10@test.com')
+  console.log('  Guest:    guest1~6@test.com（求职申请人，尚未受雇）')
   console.log('\n公司：Sunrise Hospitality Group')
   console.log('\n部门分配：')
   console.log('  Operations:       manager1,2 / employee1,2')
@@ -758,9 +864,10 @@ async function main() {
   console.log('  Inactive (3): cw8~10@test.com（含 inactivate_reason）')
   console.log(`\n业务数据（基于运行当天 ${dateKey(TODAY)} 动态生成）：`)
   console.log(`  Shifts:      ${assignmentInfo.length} 个（Internal Staff，过去 ${SHIFT_DAYS_PAST} 天 + 未来 ${SHIFT_DAYS_FUTURE} 天，跳过周末）`)
-  console.log(`  Attendance:  ${attendanceCount} 条（Internal Staff，混合 approved/pending/rejected/late，~5% 缺勤）`)
+  console.log(`  Attendance:  ${attendanceCount} 条（Internal Staff，混合 approved/pending/manager_reviewed/rejected/late，~5% 缺勤）`)
   console.log(`  CW Shifts:   ${cwShiftCount} 个（Casual Worker，过去 ${SHIFT_DAYS_PAST} 天，跳过周末，含 Shift Job + One-Off）`)
-  console.log(`  CW Attend.:  ${cwAttCount} 条（Casual Worker，混合 approved/pending/rejected/late，10% 缺勤）`)
+  console.log(`  CW Attend.:  ${cwAttCount} 条（Casual Worker，混合 approved/pending/manager_reviewed/rejected/late，10% 缺勤）`)
+  console.log(`  CW Tasks:    ${cwTaskCount} 条（Employee 分配给自己监督的 Casual Worker）`)
   console.log(`  Tasks:       ${taskCount} 条（混合 Assigned/In Progress/Review/Complete）`)
   console.log(`  Announcements: ${announcementCount} 条`)
   console.log(`  Messages:    ${messageCount} 条`)
@@ -836,12 +943,15 @@ async function main() {
     const [empEmail1, empEmail2] = employeesByDept[deptIdx]
     const empId1 = userIdMap[empEmail1].internalId
     const empId2 = userIdMap[empEmail2].internalId
+    // A swap is only ever valid between two users with the same role in the same department
+    // (see attendanceService.submitShiftSwapRequest) — each dept only has one manager pair and
+    // one employee pair, so we alternate direction across those two valid pairs to fill 5 slots.
     const pendingPairs = [
-      [mgrEmail1, empEmail1, mgrId1, empId1],
-      [mgrEmail2, empEmail2, mgrId2, empId2],
-      [empEmail1, mgrEmail2, empId1, mgrId2],
-      [empEmail2, mgrEmail1, empId2, mgrId1],
-      [mgrEmail1, empEmail2, mgrId1, empId2],
+      [mgrEmail1, mgrEmail2, mgrId1, mgrId2],
+      [empEmail1, empEmail2, empId1, empId2],
+      [mgrEmail2, mgrEmail1, mgrId2, mgrId1],
+      [empEmail2, empEmail1, empId2, empId1],
+      [mgrEmail1, mgrEmail2, mgrId1, mgrId2],
     ]
 
     // 5 pending swaps per dept. Manager shifts are 09:00-17:00 and employee shifts
@@ -871,29 +981,24 @@ async function main() {
   }
 
   // ── Processed Requests: 20 approved/rejected swaps ──
-  // Each processed request also pairs a manager with an employee so dates and times differ.
-  const processedPairs = [
-    [managerEmails[0], employeeEmails[0], 'approved',  4],
-    [managerEmails[2], employeeEmails[2], 'rejected',  4],
-    [managerEmails[4], employeeEmails[4], 'approved',  4],
-    [managerEmails[6], employeeEmails[6], 'rejected',  3],
-    [employeeEmails[0], managerEmails[1], 'approved',  2],
-    [employeeEmails[2], managerEmails[3], 'rejected',  3],
-    [employeeEmails[4], managerEmails[5], 'approved',  2],
-    [employeeEmails[6], managerEmails[7], 'rejected',  3],
-    [managerEmails[1], employeeEmails[1], 'approved',  5],
-    [managerEmails[3], employeeEmails[3], 'rejected',  5],
-    [managerEmails[5], employeeEmails[5], 'approved',  5],
-    [managerEmails[7], employeeEmails[7], 'rejected',  5],
-    [employeeEmails[1], managerEmails[0], 'approved',  3],
-    [employeeEmails[3], managerEmails[2], 'rejected',  4],
-    [employeeEmails[5], managerEmails[4], 'approved',  3],
-    [employeeEmails[7], managerEmails[6], 'rejected',  4],
-    [managerEmails[0], employeeEmails[1], 'approved',  6],
-    [managerEmails[2], employeeEmails[3], 'rejected',  6],
-    [employeeEmails[0], managerEmails[1], 'approved',  4],
-    [employeeEmails[2], managerEmails[3], 'rejected',  4],
-  ]
+  // Same rule as pending: only same-role, same-department pairs are valid, so each dept
+  // contributes 5 entries alternating between its one manager pair and one employee pair.
+  const processedStatusCycle = ['approved', 'rejected', 'approved', 'rejected', 'approved']
+  const processedPairs = []
+  for (let deptIdx = 0; deptIdx < deptByIndex.length; deptIdx++) {
+    const [mgrEmail1, mgrEmail2] = managersByDept[deptIdx]
+    const [empEmail1, empEmail2] = employeesByDept[deptIdx]
+    const deptRolePairs = [
+      [mgrEmail1, mgrEmail2],
+      [empEmail1, empEmail2],
+      [mgrEmail2, mgrEmail1],
+      [empEmail2, empEmail1],
+      [mgrEmail1, mgrEmail2],
+    ]
+    deptRolePairs.forEach(([reqEmail, cpEmail], i) => {
+      processedPairs.push([reqEmail, cpEmail, processedStatusCycle[(deptIdx + i) % processedStatusCycle.length], 20 + deptIdx * 5 + i])
+    })
+  }
   let procReasonIdx = 0
   for (const [reqEmail, cpEmail, finalStatus, seed] of processedPairs) {
     const reqId = userIdMap[reqEmail].internalId
@@ -965,6 +1070,382 @@ async function main() {
     else { fixedOffCount++; console.log(`  ✓ ${fo.email} → weekday ${fo.weekday} (pending)`) }
   }
   console.log(`  ✓ 生成 ${fixedOffCount} 条 employee_fixed_off_days（pending）`)
+
+  // ── Step 16: Job Postings（Recruitment 页面的 Jobs 标签页 + Review 标签页数据）──
+  // Jobs 标签页只显示 status in ('open','closed') 的职位（见 owner/recruitment/page.tsx
+  // 的 jobsPostings 过滤逻辑）；Review 标签页显示 status = 'pending_approval' 的职位，
+  // 由 Manager 提交、Owner 审批（submitter_name 取自 created_by）。
+  console.log('\nStep 16: 生成 Job Postings（Jobs + Review）...')
+  const jobStartDate = addDays(TODAY, 5)
+  const jobPostingDefs = [
+    // ── "All Jobs" tab data: status open/closed, mix of Shift Job / One-Off ──
+    {
+      dept: 0, status: 'open', is_recurring: true, title: 'Warehouse Assistant',
+      description: 'Support day-to-day warehouse operations including stock handling and deliveries.',
+      requirements: 'Able to lift up to 15kg. Prior warehouse experience a plus.',
+      employment_type: 'casual', salary_amount: 15.5, assignedEmployeeIdx: 0,
+      shift_start_time: '09:00', shift_end_time: '17:00', break_start_time: '12:00', break_end_time: '13:00',
+      recurrence_interval: 1, recurrence_unit: 'week', createdBy: 'owner',
+    },
+    {
+      dept: 0, status: 'open', is_recurring: false, title: 'Event Setup Crew',
+      description: 'One-off crew needed to set up and tear down for a corporate event.',
+      requirements: 'Comfortable with physical setup work. Punctual and reliable.',
+      employment_type: 'casual', salary_amount: 130, urgency: 'high', estimated_hours: '5',
+      job_start_time: '08:00', createdBy: 'owner',
+    },
+    {
+      dept: 1, status: 'open', is_recurring: true, title: 'Social Media Assistant',
+      description: 'Help manage the weekly social media content calendar and community replies.',
+      requirements: 'Familiar with Instagram and TikTok. Good written English.',
+      employment_type: 'part-time', salary_amount: 16, assignedEmployeeIdx: 2,
+      shift_start_time: '10:00', shift_end_time: '15:00', break_start_time: '12:30', break_end_time: '13:00',
+      recurrence_interval: 1, recurrence_unit: 'week', createdBy: 'owner',
+    },
+    {
+      dept: 1, status: 'closed', is_recurring: false, title: 'Promo Day Staff',
+      description: 'Promo booth staff for a one-day retail activation.',
+      requirements: 'Outgoing personality, comfortable engaging with the public.',
+      employment_type: 'casual', salary_amount: 110, urgency: 'normal', estimated_hours: '6',
+      job_start_time: '10:00', createdBy: 'owner',
+    },
+    {
+      dept: 2, status: 'open', is_recurring: true, title: 'Junior Support Technician',
+      description: 'Provide first-line technical support and help maintain internal tooling.',
+      requirements: 'Basic troubleshooting skills. Currently studying IT/CS is a plus.',
+      employment_type: 'part-time', salary_amount: 18, assignedEmployeeIdx: 4,
+      shift_start_time: '13:00', shift_end_time: '21:00', break_start_time: '17:00', break_end_time: '17:30',
+      recurrence_interval: 2, recurrence_unit: 'week', createdBy: 'owner',
+    },
+    {
+      dept: 2, status: 'open', is_recurring: false, title: 'IT Setup Helper',
+      description: 'Assist with a one-time office workstation refresh — unboxing and setup.',
+      requirements: 'Comfortable with basic PC hardware.',
+      employment_type: 'casual', salary_amount: 140, urgency: 'urgent', estimated_hours: '4',
+      job_start_time: '09:00', createdBy: 'owner',
+    },
+    {
+      dept: 3, status: 'open', is_recurring: true, title: 'Weekend Support Agent',
+      description: 'Cover weekend customer support tickets and live chat.',
+      requirements: 'Clear written communication. Weekend availability required.',
+      employment_type: 'part-time', salary_amount: 15, assignedEmployeeIdx: 6,
+      shift_start_time: '09:00', shift_end_time: '17:00', break_start_time: '12:00', break_end_time: '13:00',
+      recurrence_interval: 1, recurrence_unit: 'week', createdBy: 'owner',
+    },
+    {
+      dept: 3, status: 'closed', is_recurring: false, title: 'Call Center Backup',
+      description: 'Backup phone support during a planned product launch surge.',
+      requirements: 'Prior call center experience preferred.',
+      employment_type: 'casual', salary_amount: 120, urgency: 'high', estimated_hours: '8',
+      job_start_time: '08:30', createdBy: 'owner',
+    },
+
+    // ── "Review" tab data: status pending_approval, submitted by a Manager ──
+    {
+      dept: 0, status: 'pending_approval', is_recurring: false, title: 'Extra Warehouse Hand',
+      description: 'Need one extra pair of hands for next week\'s stocktake.',
+      requirements: 'Available for a full day, no experience required.',
+      employment_type: 'casual', salary_amount: 100, urgency: 'normal', estimated_hours: '6',
+      job_start_time: '09:00', createdBy: 'manager1@test.com',
+    },
+    {
+      dept: 1, status: 'pending_approval', is_recurring: true, title: 'Weekend Promo Crew',
+      description: 'Recurring weekend booth crew for the new campaign launch.',
+      requirements: 'Friendly, presentable, weekend availability.',
+      employment_type: 'casual', salary_amount: 17, assignedEmployeeIdx: 3,
+      shift_start_time: '11:00', shift_end_time: '19:00', break_start_time: '15:00', break_end_time: '15:30',
+      recurrence_interval: 1, recurrence_unit: 'week', createdBy: 'manager3@test.com',
+    },
+    {
+      dept: 2, status: 'pending_approval', is_recurring: false, title: 'Bug Bash Volunteer',
+      description: 'One-off testing session ahead of the next release.',
+      requirements: 'Comfortable following a test script.',
+      employment_type: 'casual', salary_amount: 90, urgency: 'urgent', estimated_hours: '3',
+      job_start_time: '14:00', createdBy: 'manager5@test.com',
+    },
+    {
+      dept: 3, status: 'pending_approval', is_recurring: true, title: 'Overflow Support Agent',
+      description: 'Additional recurring shift to cover overflow support tickets.',
+      requirements: 'Prior customer service experience preferred.',
+      employment_type: 'part-time', salary_amount: 15.5, assignedEmployeeIdx: 7,
+      shift_start_time: '17:00', shift_end_time: '21:00', break_start_time: null, break_end_time: null,
+      recurrence_interval: 1, recurrence_unit: 'week', createdBy: 'manager7@test.com',
+    },
+    {
+      dept: 0, status: 'pending_approval', is_recurring: false, title: 'Inventory Count Helper',
+      description: 'Support the monthly inventory count across two storage rooms.',
+      requirements: 'Detail-oriented, comfortable with spreadsheets.',
+      employment_type: 'casual', salary_amount: 105, urgency: 'normal', estimated_hours: '5',
+      job_start_time: '09:30', createdBy: 'manager2@test.com',
+    },
+  ]
+
+  let jobPostingCount = 0
+  const allEmployeeEmailsFlat = employeeEmails
+  const postingIdByTitle = new Map()
+  for (const def of jobPostingDefs) {
+    const dept = deptByIndex[def.dept]
+    const createdById = def.createdBy === 'owner' ? ownerUser.id : userIdMap[def.createdBy].internalId
+    const assignedEmployeeId = def.assignedEmployeeIdx != null
+      ? userIdMap[allEmployeeEmailsFlat[def.assignedEmployeeIdx]].internalId
+      : null
+
+    const { data: jp, error: jpErr } = await supabase.from('job_postings').insert({
+      company_id: company.id,
+      department_id: dept.id,
+      created_by: createdById,
+      title: def.title,
+      description: def.description,
+      requirements: def.requirements ?? null,
+      location: company.address,
+      employment_type: def.employment_type ?? null,
+      company_name: company.name,
+      industry: company.industry,
+      status: def.status,
+      is_recurring: def.is_recurring,
+      recurrence_interval: def.recurrence_interval ?? null,
+      recurrence_unit: def.recurrence_unit ?? null,
+      salary_amount: def.salary_amount ?? null,
+      salary_type: def.is_recurring ? 'per hour' : 'flat rate',
+      urgency: def.is_recurring ? null : (def.urgency ?? 'normal'),
+      estimated_hours: def.is_recurring ? null : (def.estimated_hours ?? null),
+      shift_date: dateKey(jobStartDate),
+      shift_start_time: def.is_recurring ? (def.shift_start_time ?? null) : null,
+      shift_end_time: def.is_recurring ? (def.shift_end_time ?? null) : null,
+      break_start_time: def.is_recurring ? (def.break_start_time ?? null) : null,
+      break_end_time: def.is_recurring ? (def.break_end_time ?? null) : null,
+      job_start_time: def.is_recurring ? null : (def.job_start_time ?? null),
+      assigned_employee_id: assignedEmployeeId,
+      expiry_preset: 'none',
+    }).select('id').single()
+    if (jpErr) console.warn(`  ⚠ 创建 job_posting 失败 (${def.title}): ${jpErr.message}`)
+    else { jobPostingCount++; postingIdByTitle.set(def.title, jp.id); console.log(`  ✓ Job Posting: ${def.title} [${def.status}] (${dept.name})`) }
+  }
+  const openClosedCount = jobPostingDefs.filter(d => d.status === 'open' || d.status === 'closed').length
+  const pendingCount = jobPostingDefs.filter(d => d.status === 'pending_approval').length
+  console.log(`  ✓ 生成 ${jobPostingCount} 条 job_postings（Jobs 标签页 ${openClosedCount} 条 open/closed，Review 标签页 ${pendingCount} 条 pending_approval）`)
+
+  // ── Step 16b: Job Applicants（只对 status='open' 的职位投递，跟真实使用场景一致——
+  // 已关闭/待审批的职位不该有公开申请）。混合 pending/accepted/rejected，让 Owner
+  // 的 "All Jobs" 卡片能看到红点（有 pending 申请）和真实的申请人详情。──────────
+  console.log('\nStep 16b: 生成 Job Applicants...')
+  const applicantDefs = [
+    { title: 'Warehouse Assistant',        guest: 'guest1@test.com', status: 'pending' },
+    { title: 'Warehouse Assistant',        guest: 'guest2@test.com', status: 'accepted' },
+    { title: 'Event Setup Crew',           guest: 'guest3@test.com', status: 'pending' },
+    { title: 'Social Media Assistant',     guest: 'guest2@test.com', status: 'pending' },
+    { title: 'Social Media Assistant',     guest: 'guest4@test.com', status: 'pending' },
+    { title: 'Social Media Assistant',     guest: 'guest5@test.com', status: 'rejected' },
+    { title: 'Junior Support Technician',  guest: 'guest1@test.com', status: 'pending' },
+    { title: 'Weekend Support Agent',      guest: 'guest6@test.com', status: 'pending' },
+    { title: 'Weekend Support Agent',      guest: 'guest3@test.com', status: 'rejected' },
+  ]
+  let jobApplicantCount = 0
+  for (let i = 0; i < applicantDefs.length; i++) {
+    const def = applicantDefs[i]
+    const jobId = postingIdByTitle.get(def.title)
+    const guestId = userIdMap[def.guest]?.internalId
+    if (!jobId || !guestId) { console.warn(`  ⚠ 跳过 applicant（找不到 job 或 guest）: ${def.title} / ${def.guest}`); continue }
+
+    const { data: ja, error: jaErr } = await supabase.from('job_applicants').insert({
+      job_id: jobId,
+      user_id: guestId,
+      resume_url: `https://example.com/demo-resumes/${def.guest.split('@')[0]}-resume.pdf`,
+      cover_letter: `https://example.com/demo-cover-letters/${def.guest.split('@')[0]}-cover-letter.pdf`,
+      status: def.status,
+      applied_at: new Date(Date.now() - (i + 1) * 3600000).toISOString(),
+    }).select('id').single()
+    if (jaErr) { console.warn(`  ⚠ 创建 job_applicant 失败 (${def.title} / ${def.guest}): ${jaErr.message}`); continue }
+    jobApplicantCount++
+
+    // Mirrors recruitmentService.decideApplicant: accepting an applicant also sends them a job
+    // invitation — without this row, an 'accepted' applicant would be stuck with no next step.
+    if (def.status === 'accepted') {
+      const { error: jiErr } = await supabase.from('job_invitations').insert({
+        job_id: jobId,
+        applicant_id: ja.id,
+        sent_by: ownerUser.id,
+        message: 'Your application has been accepted. Please wait for onboarding instructions.',
+      })
+      if (jiErr) console.warn(`  ⚠ 创建 job_invitation 失败 (${def.title} / ${def.guest}): ${jiErr.message}`)
+    }
+  }
+  console.log(`  ✓ 生成 ${jobApplicantCount} 条 job_applicants（混合 pending/accepted/rejected，只投给 open 状态的职位）`)
+
+  // ── Step 16c: 给部分 CW 的 shift 补上 source_job_posting_id ──────────────
+  // 演示 Attendance Record 弹窗里点击 "Job Title" 能看到当初发布的 job posting 详情——
+  // 挑每个部门第一个 active CW，把他们所有的 shift 都指回该部门一个 open 状态的 job
+  // posting（模拟"这个 CW 就是从这个招聘广告招进来的"）。其余 CW 保持不关联，因为现实
+  // 中不是每个 CW 都一定是通过发布的 job posting 招进来的。
+  console.log('\nStep 16c: 关联部分 Casual Worker shift 与 Job Posting...')
+  const cwToJobPostingTitle = {
+    'cw1@test.com': 'Warehouse Assistant',
+    'cw3@test.com': 'Social Media Assistant',
+    'cw5@test.com': 'Junior Support Technician',
+    'cw7@test.com': 'Weekend Support Agent',
+  }
+  let cwJobLinkCount = 0
+  for (const a of cwAssignmentInfo) {
+    const jobTitle = cwToJobPostingTitle[a.email]
+    if (!jobTitle) continue
+    const jobId = postingIdByTitle.get(jobTitle)
+    if (!jobId) continue
+    const { error: linkErr } = await supabase.from('shifts').update({ source_job_posting_id: jobId }).eq('id', a.shiftId)
+    if (linkErr) console.warn(`  ⚠ 关联 shift → job_posting 失败 (${a.email}): ${linkErr.message}`)
+    else cwJobLinkCount++
+  }
+  console.log(`  ✓ 关联了 ${cwJobLinkCount} 个 CW shift 到对应的 job_posting`)
+
+  // ── Step 17: Job Templates（Owner 自己配置的可复用招聘模板）──────────────
+  console.log('\nStep 17: 生成 Job Templates...')
+  const jobTemplateDefs = [
+    { name: 'Warehouse Helper Template', title: 'Warehouse Helper', description: 'General warehouse support duties.', requirements: 'Able to lift 15kg.', employment_type: 'casual', form_type: 'oneoff' },
+    { name: 'Weekend Cashier Template', title: 'Weekend Cashier', description: 'Run the register during weekend shifts.', requirements: 'Friendly, detail-oriented.', employment_type: 'part-time', form_type: 'shift' },
+    { name: 'Event Crew Template', title: 'Event Crew', description: 'Setup/teardown crew for one-off events.', requirements: 'Comfortable with physical work.', employment_type: 'casual', form_type: 'oneoff' },
+  ]
+  let jobTemplateCount = 0
+  for (const def of jobTemplateDefs) {
+    const { error } = await supabase.from('job_templates').insert({
+      company_id: company.id,
+      name: def.name,
+      title: def.title,
+      description: def.description,
+      requirements: def.requirements,
+      employment_type: def.employment_type,
+      form_type: def.form_type,
+      created_by: ownerUser.id,
+    })
+    if (error) console.warn(`  ⚠ 创建 job_template 失败 (${def.name}): ${error.message}`)
+    else jobTemplateCount++
+  }
+  console.log(`  ✓ 生成 ${jobTemplateCount} 条 job_templates`)
+
+  // ── Step 18: Shift Templates（Owner 自己配置的可复用班次时段模板）────────
+  console.log('\nStep 18: 生成 Shift Templates...')
+  const shiftTemplateDefs = [
+    { name: 'Morning Shift', start_time: '09:00', end_time: '17:00' },
+    { name: 'Afternoon Shift', start_time: '11:00', end_time: '18:00' },
+    { name: 'Evening Shift', start_time: '13:00', end_time: '21:00' },
+  ]
+  let shiftTemplateCount = 0
+  for (const def of shiftTemplateDefs) {
+    const { error } = await supabase.from('shift_templates').insert({
+      company_id: company.id,
+      name: def.name,
+      start_time: def.start_time,
+      end_time: def.end_time,
+      created_by: ownerUser.id,
+    })
+    if (error) console.warn(`  ⚠ 创建 shift_template 失败 (${def.name}): ${error.message}`)
+    else shiftTemplateCount++
+  }
+  console.log(`  ✓ 生成 ${shiftTemplateCount} 条 shift_templates`)
+
+  // ── Step 19: Task Templates（Owner 自己配置的可复用任务模板）─────────────
+  console.log('\nStep 19: 生成 Task Templates...')
+  const taskTemplateDefs = [
+    { name: 'Weekly Report', title: 'Prepare weekly report', description: 'Compile and submit the weekly department report.', priority: 'Medium' },
+    { name: 'Equipment Check', title: 'Audit equipment checklist', description: 'Walk through and verify equipment condition.', priority: 'Low' },
+    { name: 'Customer Follow-up', title: 'Follow up with customer', description: 'Reach out regarding an open ticket.', priority: 'High' },
+  ]
+  let taskTemplateCount = 0
+  for (const def of taskTemplateDefs) {
+    const { error } = await supabase.from('task_templates').insert({
+      company_id: company.id,
+      name: def.name,
+      title: def.title,
+      description: def.description,
+      priority: def.priority,
+      created_by: ownerUser.id,
+    })
+    if (error) console.warn(`  ⚠ 创建 task_template 失败 (${def.name}): ${error.message}`)
+    else taskTemplateCount++
+  }
+  console.log(`  ✓ 生成 ${taskTemplateCount} 条 task_templates`)
+
+  // ── Step 20: Time Off / Break Waiver Requests ────────────────────────────
+  // time_off_requests 没有被 UC55/UC57 那次重构删掉——它还是 schedulingRuleService
+  // (AI 排班) 判断"这个人这天是不是在请假"的真实数据源，Manager/Employee/CW 的
+  // Attendance 页面也还有提交入口，所以要真种，不能当成废弃表跳过。
+  console.log('\nStep 20: 生成 Time Off / Break Waiver Requests...')
+  const timeOffFutureAssignments = assignmentInfo.filter(a => !a.isPast)
+  const timeOffDefs = [
+    { email: 'employee2@test.com', request_type: 'time_off', reason: 'Family trip out of town.', status: 'approved' },
+    { email: 'employee4@test.com', request_type: 'time_off', reason: 'Medical appointment.', status: 'pending' },
+    { email: 'manager3@test.com', request_type: 'break_waiver', reason: 'Prefer to work through break to leave early.', status: 'pending' },
+    { email: 'employee6@test.com', request_type: 'time_off', reason: 'Personal commitment.', status: 'rejected' },
+  ]
+  let timeOffCount = 0
+  for (const def of timeOffDefs) {
+    const assignment = timeOffFutureAssignments.find(a => a.email === def.email)
+    if (!assignment) { console.warn(`  ⚠ 跳过 time_off_request（找不到 ${def.email} 的未来 shift）`); continue }
+    const isDecided = def.status !== 'pending'
+    const { error } = await supabase.from('time_off_requests').insert({
+      company_id: company.id,
+      requester_id: userIdMap[def.email].internalId,
+      shift_assignment_id: assignment.assignmentId,
+      request_type: def.request_type,
+      reason: def.reason,
+      status: def.status,
+      reviewed_by: isDecided ? ownerUser.id : null,
+      reviewed_at: isDecided ? new Date().toISOString() : null,
+    })
+    if (error) console.warn(`  ⚠ 创建 time_off_request 失败 (${def.email}): ${error.message}`)
+    else timeOffCount++
+  }
+  console.log(`  ✓ 生成 ${timeOffCount} 条 time_off_requests（混合 time_off/break_waiver，pending/approved/rejected）`)
+
+  // ── Step 21: Company Activity Logs ───────────────────────────────────────
+  // 这张表真实场景下是 owner/team 页面在做增删改操作时自动写入的副作用记录，不是用户
+  // 手填的表单——这里直接模拟几条历史操作，让 Owner 一进 Team 页面就有活动记录可看，
+  // 不用先手动操作一遍才有数据。
+  console.log('\nStep 21: 生成 Company Activity Logs...')
+  const activityLogDefs = [
+    { action: 'invite_member', target_name: 'David Lim', detail: 'Manager' },
+    { action: 'change_department', target_name: 'Chloe Yeo', detail: 'Operations' },
+    { action: 'set_inactive', target_name: 'Marcus Lim', detail: 'Repeated no-shows without prior notice.' },
+    { action: 'set_active', target_name: 'Jasper Koh', detail: null },
+  ]
+  let activityLogCount = 0
+  for (const def of activityLogDefs) {
+    const { error } = await supabase.from('company_activity_logs').insert({
+      company_id: company.id,
+      actor_id: ownerUser.id,
+      action: def.action,
+      target_name: def.target_name,
+      detail: def.detail,
+    })
+    if (error) console.warn(`  ⚠ 创建 activity_log 失败 (${def.action}): ${error.message}`)
+    else activityLogCount++
+  }
+  console.log(`  ✓ 生成 ${activityLogCount} 条 company_activity_logs`)
+
+  // ── Step 22: Announcement Reads ──────────────────────────────────────────
+  // 同样是自动产生的副作用记录（用户打开公告时才会写入），这里模拟"部分员工已读"，
+  // 好让 Owner 端看公告时不是每条都显示 0 已读。
+  console.log('\nStep 22: 生成 Announcement Reads...')
+  let announcementReadCount = 0
+  if (announcementIds.length > 0) {
+    const readerEmails = [managersByDept[0][0], employeesByDept[0][0], managersByDept[1][0]]
+    const readRows = []
+    for (const announcementId of announcementIds) {
+      for (const email of readerEmails) {
+        readRows.push({ user_id: userIdMap[email].internalId, announcement_id: announcementId })
+      }
+    }
+    const { error } = await supabase.from('announcement_reads').upsert(readRows, { onConflict: 'user_id,announcement_id', ignoreDuplicates: true })
+    if (error) console.warn(`  ⚠ 创建 announcement_reads 失败: ${error.message}`)
+    else announcementReadCount = readRows.length
+  }
+  console.log(`  ✓ 生成 ${announcementReadCount} 条 announcement_reads`)
+
+  // ── 故意跳过的表 ──────────────────────────────────────────────────────────
+  // scheduling_rule_settings: schedulingRuleService.ts 目前把排班规则写死成内存常量，
+  //   updateRule() 直接 throw 'system-protected'，DB 表虽然存在但服务层完全不读它——
+  //   种进去也不会在任何页面上生效，等这块真正接上 DB 之后再补种子。
+  // reviews: 全项目代码搜不到任何 .from('reviews') 的读写，是张没被使用的表，不种。
+  // marketing_pages / marketing_content_blocks: Module 9 Marketing CMS，CLAUDE.md 里
+  //   明确写了这两个模块归另一个团队负责，不在这次种子范围内。
 }
 
 main().catch(err => {

@@ -2,6 +2,7 @@
 // RULE: Business logic only. No HTTP handling. No direct DB access.
 
 import { attendanceRepository } from '@/repositories/owner/attendanceRepository'
+import { ownerTeamRepository } from '@/repositories/owner/ownerTeamRepository'
 import { taskRepository } from '@/repositories/owner/taskRepository'
 import { Shift } from '@/types/Shift'
 import {
@@ -14,6 +15,7 @@ import {
   FixedOffDayRequestView,
   ShiftSwapCounterpartDecisionInput,
   ShiftSwapOwnerDecisionInput,
+  ShiftSwapRequest,
   ShiftSwapRequestCreateInput,
   ShiftSwapRequestView,
   ShiftSwapWithdrawInput,
@@ -29,11 +31,30 @@ function combineDateTime(date: string, time: string): Date {
 // Same-day/past-day swaps are disallowed — earliest swappable shift is tomorrow. This compares
 // plain calendar-day strings (both shift_date and "today" derived the same UTC-naive way) rather
 // than combineDateTime, since the rule is about calendar days, not exact timestamps.
-function assertShiftIsSwappable(shift: Shift, label: string) {
+function isShiftDateExpired(shiftDate: string | null | undefined): boolean {
+  if (!shiftDate) return false
   const todayStr = new Date().toISOString().slice(0, 10)
-  if (shift.shift_date <= todayStr) {
+  return shiftDate <= todayStr
+}
+
+function assertShiftIsSwappable(shift: Shift, label: string) {
+  if (isShiftDateExpired(shift.shift_date)) {
     throw new Error(`${label} shift must be scheduled for tomorrow or later`)
   }
+}
+
+// A pending swap becomes impossible the moment either side's shift_date arrives (assertShiftIsSwappable
+// would reject the approval anyway) — auto-close it as 'rejected' as soon as anything reads it, instead
+// of letting it sit in the Owner's/requester's pending queue until someone clicks it and hits an error.
+async function autoExpireSwapRequestIfNeeded(request: ShiftSwapRequest): Promise<ShiftSwapRequest> {
+  if (request.status !== 'pending') return request
+  const [reqAss, ctrAss] = await Promise.all([
+    attendanceRepository.getShiftAssignmentById(request.requester_assignment_id),
+    attendanceRepository.getShiftAssignmentById(request.counterpart_assignment_id),
+  ])
+  const expired = isShiftDateExpired(reqAss?.shifts?.shift_date) || isShiftDateExpired(ctrAss?.shifts?.shift_date)
+  if (!expired) return request
+  return attendanceRepository.updateShiftSwapRequest(request.id, { status: 'rejected', reviewed_at: new Date().toISOString() })
 }
 
 function minutesAfter(actual: string | null, shiftDate: string, shiftTime: string): number {
@@ -189,12 +210,16 @@ export const attendanceService = {
     })
   },
 
-  async getShiftSwapRequests(company_id: string): Promise<ShiftSwapRequestView[]> {
-    const requests = await attendanceRepository.getShiftSwapRequestsByCompany(company_id)
-    if (requests.length === 0) return []
+  // options.managerId absent → Owner/Partner queue (Manager<->Manager swaps only).
+  // options.managerId set → that Manager's queue (Employee<->Employee swaps within their
+  // managed departments only). submitShiftSwapRequest enforces both parties share a role, so
+  // the requester's role alone tells us which queue a given swap belongs to.
+  async getShiftSwapRequests(company_id: string, options?: { managerId?: string }): Promise<ShiftSwapRequestView[]> {
+    const allRequests = await attendanceRepository.getShiftSwapRequestsByCompany(company_id)
+    if (allRequests.length === 0) return []
 
-    const assignmentIds = [...new Set(requests.flatMap(r => [r.requester_assignment_id, r.counterpart_assignment_id]))]
-    const userIds = [...new Set(requests.flatMap(r => [r.requester_id, r.counterpart_id]))]
+    const assignmentIds = [...new Set(allRequests.flatMap(r => [r.requester_assignment_id, r.counterpart_assignment_id]))]
+    const userIds = [...new Set(allRequests.flatMap(r => [r.requester_id, r.counterpart_id]))]
 
     const [assignmentsArr, users] = await Promise.all([
       Promise.all(assignmentIds.map(id => attendanceRepository.getShiftAssignmentById(id))),
@@ -203,15 +228,44 @@ export const attendanceService = {
     const assignmentsById = new Map(assignmentsArr.filter(Boolean).map(a => [a!.id, a!]))
     const usersById = indexById(users)
 
+    // Auto-reject any pending request whose shift date has arrived — see autoExpireSwapRequestIfNeeded.
+    // Assignments are already loaded above, so this reuses them instead of refetching per-request.
+    await Promise.all(allRequests.map(async req => {
+      if (req.status !== 'pending') return
+      const expired =
+        isShiftDateExpired(assignmentsById.get(req.requester_assignment_id)?.shifts?.shift_date) ||
+        isShiftDateExpired(assignmentsById.get(req.counterpart_assignment_id)?.shifts?.shift_date)
+      if (!expired) return
+      await attendanceRepository.updateShiftSwapRequest(req.id, { status: 'rejected', reviewed_at: new Date().toISOString() })
+      req.status = 'rejected'
+    }))
+
+    let requests = allRequests
+    if (options?.managerId) {
+      const managedDeptIds = new Set(
+        (await ownerTeamRepository.findManagerDepartments(options.managerId, company_id)).map(d => d.department_id),
+      )
+      requests = allRequests.filter(req => {
+        if (usersById.get(req.requester_id)?.role !== 'Employee') return false
+        const deptId = assignmentsById.get(req.requester_assignment_id)?.shifts?.department_id
+        return !!deptId && managedDeptIds.has(deptId)
+      })
+    } else {
+      requests = allRequests.filter(req => usersById.get(req.requester_id)?.role !== 'Employee')
+    }
+    if (requests.length === 0) return []
+
+    const scopedAssignmentIds = [...new Set(requests.flatMap(r => [r.requester_assignment_id, r.counterpart_assignment_id]))]
+
     const [taskCounts, movableTasks] = await Promise.all([
-      Promise.all(assignmentIds.map(id => attendanceRepository.getTasksByShiftAssignment(id).then(t => ({ id, count: t.length })))),
-      Promise.all(assignmentIds.map(id => attendanceRepository.getMovableTasksByShiftAssignment(id).then(tasks => ({ id, tasks })))),
+      Promise.all(scopedAssignmentIds.map(id => attendanceRepository.getTasksByShiftAssignment(id).then(t => ({ id, count: t.length })))),
+      Promise.all(scopedAssignmentIds.map(id => attendanceRepository.getMovableTasksByShiftAssignment(id).then(tasks => ({ id, tasks })))),
     ])
     const taskCountById = new Map(taskCounts.map(tc => [tc.id, tc.count]))
     const movableTasksById = new Map(movableTasks.map(mt => [mt.id, mt.tasks]))
 
     // fetch department names via requester assignment's shift department_id
-    const deptIds = [...new Set(assignmentsArr.filter(Boolean).map(a => a!.shifts?.department_id).filter(Boolean) as string[])]
+    const deptIds = [...new Set(scopedAssignmentIds.map(id => assignmentsById.get(id)?.shifts?.department_id).filter(Boolean) as string[])]
     const depts = await attendanceRepository.getDepartmentsByIds(deptIds)
     const deptsById = new Map(depts.map(d => [d.id, d.name]))
 
@@ -249,10 +303,11 @@ export const attendanceService = {
   // Owner/Manager: approve or reject after counterpart has agreed
   async decideShiftSwapRequest(input: ShiftSwapOwnerDecisionInput) {
     if (!['approved', 'rejected'].includes(input.decision)) throw new Error('Invalid swap decision')
-    const request = await attendanceRepository.getShiftSwapRequestById(input.id)
+    let request = await attendanceRepository.getShiftSwapRequestById(input.id)
     if (!request) throw new Error('Shift swap request not found')
-    if (request.counterpart_status !== 'approved') throw new Error('Counterpart has not agreed yet')
+    request = await autoExpireSwapRequestIfNeeded(request)
     if (request.status !== 'pending') throw new Error('Request is no longer pending')
+    if (request.counterpart_status !== 'approved') throw new Error('Counterpart has not agreed yet')
 
     if (input.decision === 'approved') {
       // Re-fetch the latest assignment/shift data — the request may have sat pending long enough
@@ -349,9 +404,10 @@ export const attendanceService = {
   // Counterpart responds to a swap request
   async respondShiftSwapRequest(input: ShiftSwapCounterpartDecisionInput) {
     if (!['approved', 'rejected'].includes(input.decision)) throw new Error('Invalid decision')
-    const request = await attendanceRepository.getShiftSwapRequestById(input.id)
+    let request = await attendanceRepository.getShiftSwapRequestById(input.id)
     if (!request) throw new Error('Shift swap request not found')
     if (request.counterpart_id !== input.counterpart_id) throw new Error('You are not the counterpart of this request')
+    request = await autoExpireSwapRequestIfNeeded(request)
     if (request.status !== 'pending') throw new Error('Request is no longer pending')
     if (request.counterpart_status !== 'pending') throw new Error('Already responded')
 
@@ -405,6 +461,18 @@ export const attendanceService = {
       ])
       const assignmentsById = new Map(assignmentsArr.filter(Boolean).map(a => [a!.id, a!]))
       const usersById = indexById(users)
+
+      // Auto-reject any pending request whose shift date has arrived — see autoExpireSwapRequestIfNeeded.
+      await Promise.all(swaps.map(async req => {
+        if (req.status !== 'pending') return
+        const expired =
+          isShiftDateExpired(assignmentsById.get(req.requester_assignment_id)?.shifts?.shift_date) ||
+          isShiftDateExpired(assignmentsById.get(req.counterpart_assignment_id)?.shifts?.shift_date)
+        if (!expired) return
+        await attendanceRepository.updateShiftSwapRequest(req.id, { status: 'rejected', reviewed_at: new Date().toISOString() })
+        req.status = 'rejected'
+      }))
+
       const [taskCounts, movableTasks] = await Promise.all([
         Promise.all(assignmentIds.map(id => attendanceRepository.getTasksByShiftAssignment(id).then(t => ({ id, count: t.length })))),
         Promise.all(assignmentIds.map(id => attendanceRepository.getMovableTasksByShiftAssignment(id).then(tasks => ({ id, tasks })))),

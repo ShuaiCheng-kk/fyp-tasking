@@ -14,6 +14,7 @@ import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
+import DepartmentBadge from '@/components/DepartmentBadge'
 import { Task, TaskInput, KanbanGroup, TaskReassignmentSuggestion, TaskWorkloadSuggestion, StalledTaskAlert } from '@/types/Task'
 import { TaskTemplate } from '@/types/TaskTemplate'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
@@ -96,7 +97,7 @@ function TaskDatePicker({ value, onChange, taskDates, minDate, accentColor, full
     <div ref={popoverRef} style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 9999, background: '#FFFFFF', border: `1px solid ${TASK_BORDER}`, borderRadius: 16, boxShadow: '0 8px 32px rgba(15,23,42,0.14)', padding: '14px 16px', width: pos.width }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
         <button type="button" onClick={goPrev} disabled={!canGoPrev} style={{ width: 26, height: 26, border: `1px solid ${TASK_BORDER}`, borderRadius: 7, background: '#FFFFFF', cursor: canGoPrev ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', color: canGoPrev ? '#64748B' : '#D1D5DB' }}><ChevronLeft size={13} /></button>
-        <span style={{ fontSize: 13, fontWeight: 700, color: TASK_TEXT }}>{monthLabel}</span>
+        <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: TASK_TEXT }}>{monthLabel}</span>
         <button type="button" onClick={goNext} style={{ width: 26, height: 26, border: `1px solid ${TASK_BORDER}`, borderRadius: 7, background: '#FFFFFF', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748B' }}><ChevronRight size={13} /></button>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', marginBottom: 4 }}>
@@ -363,6 +364,13 @@ function kanbanDateKey(task: Task): string {
   return formatDateKey(new Date(task.created_at))
 }
 
+// Assigned/In Progress/Review tasks are still being worked on, so they stay visible on the
+// Kanban board no matter which day is selected — only Complete is anchored to its start date,
+// since a finished task is a historical record of that specific day.
+function isKanbanVisibleOnDate(task: Task, taskDate: string): boolean {
+  return task.status === 'Complete' ? kanbanDateKey(task) === taskDate : true
+}
+
 function addDays(date: Date, days: number): Date {
   const next = new Date(date)
   next.setDate(next.getDate() + days)
@@ -392,11 +400,6 @@ function formatShiftOptionLabel(shift: ShiftOption): string {
 }
 
 import { deptColor, setDeptColorOverrides } from '@/lib/deptColor'
-function deptCardBg(deptId: string): string {
-  const hex = deptColor(deptId)
-  const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16)
-  return `rgba(${r},${g},${b},0.06)`
-}
 function deptCardBorder(deptId: string): string {
   const hex = deptColor(deptId)
   const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16)
@@ -699,7 +702,7 @@ function DeadlinePicker({ dateValue, timeValue, onChange, minDate }: {
     <div style={{ padding: '14px 16px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
         <button type="button" onClick={goPrev} disabled={!canGoPrev} style={{ width: 26, height: 26, border: `1px solid ${TASK_BORDER}`, borderRadius: 7, background: '#FFFFFF', cursor: canGoPrev ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', color: canGoPrev ? '#64748B' : '#D1D5DB' }}><ChevronLeft size={13} /></button>
-        <span style={{ fontSize: 13, fontWeight: 700, color: TASK_TEXT }}>{monthLabel}</span>
+        <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: TASK_TEXT }}>{monthLabel}</span>
         <button type="button" onClick={goNext} style={{ width: 26, height: 26, border: `1px solid ${TASK_BORDER}`, borderRadius: 7, background: '#FFFFFF', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748B' }}><ChevronRight size={13} /></button>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', marginBottom: 4 }}>
@@ -1026,16 +1029,11 @@ function TaskCard({
       {hasTopRowBadges && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12, paddingRight: 24 }}>
           {priority && task.priority && (
-            <span style={{ fontSize: '0.65rem', fontWeight: 800, padding: '2px 7px', borderRadius: '99px', background: priority.bg, color: priority.text, letterSpacing: '0.01em' }}>
+            <span style={{ fontSize: '0.72rem', fontWeight: 800, padding: '4px 10px', borderRadius: '99px', background: priority.bg, color: priority.text, letterSpacing: '0.01em' }}>
               {task.priority}
             </span>
           )}
-          {dept && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.65rem', fontWeight: 700, padding: '2px 7px', borderRadius: '99px', background: deptCardBg(dept.id), color: deptColor(dept.id) }}>
-              <span style={{ width: 5, height: 5, borderRadius: '50%', background: deptColor(dept.id), flexShrink: 0 }} />
-              {dept.name}
-            </span>
-          )}
+          {dept && <DepartmentBadge departmentId={dept.id} departmentName={dept.name} />}
           {!!subTaskCount && (
             <button
               type="button"
@@ -2381,7 +2379,7 @@ export default function OwnerTasksPage() {
     if (!kanban) return []
     return (kanban[col] ?? [])
       .filter(t => !selectedDeptId || t.department_id === selectedDeptId)
-      .filter(t => kanbanDateKey(t) === taskDate)
+      .filter(t => isKanbanVisibleOnDate(t, taskDate))
       .sort((a, b) => (PRIORITY_ORDER[a.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.priority ?? ''] ?? 4))
   }
 
@@ -3114,7 +3112,7 @@ export default function OwnerTasksPage() {
                             <ArrowRightLeft size={14} />
                           </span>
                           <div style={{ minWidth: 0, flex: 1 }}>
-                            <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: TASK_TEXT }}>Workload Suggestion</p>
+                            <p style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700, color: TASK_TEXT }}>Workload Suggestion</p>
                           </div>
                           <button
                             type="button"
@@ -3140,7 +3138,7 @@ export default function OwnerTasksPage() {
                             <Bell size={14} />
                           </span>
                           <div style={{ minWidth: 0, flex: 1 }}>
-                            <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: TASK_TEXT }}>Stalled Tasks</p>
+                            <p style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700, color: TASK_TEXT }}>Stalled Tasks</p>
                           </div>
                           <button
                             type="button"
@@ -3204,7 +3202,7 @@ export default function OwnerTasksPage() {
                           const endDate = t.due_at ? formatDateKey(new Date(t.due_at)) : startDate
                           return endDate >= calendarWeekDates[0] && startDate <= calendarWeekDates[6]
                         }
-                        return kanbanDateKey(t) === taskDate
+                        return isKanbanVisibleOnDate(t, taskDate)
                       })
                       return (
                         <>
@@ -4708,16 +4706,11 @@ export default function OwnerTasksPage() {
                             {hasBadges && (
                               <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12, paddingRight: 58 }}>
                                 {priorityStyle && task.priority && (
-                                  <span style={{ fontSize: '0.65rem', fontWeight: 800, padding: '2px 7px', borderRadius: '99px', background: priorityStyle.bg, color: priorityStyle.text, letterSpacing: '0.01em' }}>
+                                  <span style={{ fontSize: '0.72rem', fontWeight: 800, padding: '4px 10px', borderRadius: '99px', background: priorityStyle.bg, color: priorityStyle.text, letterSpacing: '0.01em' }}>
                                     {task.priority}
                                   </span>
                                 )}
-                                {dept && (
-                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.65rem', fontWeight: 700, padding: '2px 7px', borderRadius: '99px', background: deptCardBg(dept.id), color: deptColor(dept.id), minWidth: 0 }}>
-                                    <span style={{ width: 5, height: 5, borderRadius: '50%', background: deptColor(dept.id), flexShrink: 0 }} />
-                                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dept.name}</span>
-                                  </span>
-                                )}
+                                {dept && <DepartmentBadge departmentId={dept.id} departmentName={dept.name} />}
                                 {subTasks.length > 0 && (
                                   <button
                                     type="button"

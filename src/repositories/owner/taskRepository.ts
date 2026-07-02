@@ -78,15 +78,16 @@ export const taskRepository = {
     return (data ?? []) as Task[]
   },
 
-  // Bulk-moves a user's active tasks on a shift to another user — used when a shift swap is
-  // approved so task ownership follows the assignee. Completed/archived tasks stay put.
+  // Bulk-moves a user's 'Assigned'/'In Progress' tasks on a shift to another user — used when a
+  // shift swap is approved so task ownership follows the assignee. 'Review' tasks are awaiting
+  // sign-off on this person's work and 'Complete'/archived tasks are done, so all three stay put.
   async reassignTasksForShiftSwap(shift_id: string, from_user_id: string, to_user_id: string): Promise<void> {
     const { error } = await supabase
       .from('tasks')
       .update({ assigned_user_id: to_user_id })
       .eq('shift_id', shift_id)
       .eq('assigned_user_id', from_user_id)
-      .neq('status', 'Complete')
+      .in('status', ['Assigned', 'In Progress'])
       .eq('is_archived', false)
     if (error) throw new Error(error.message)
   },
@@ -176,6 +177,21 @@ export const taskRepository = {
       .eq('employee_id', user_id)
     if (error) throw new Error(error.message)
     return (data ?? []).map((row: { department_id: string }) => row.department_id)
+  },
+
+  // Casual Workers this Employee actually supervises within a given department — i.e. the exact
+  // set an Employee is allowed to assign tasks to (one level down, per the company hierarchy).
+  // Supervision is recorded per shift_assignment (supervisor_employee_id), not company/department-
+  // wide, so this only counts CWs the Employee has a real supervising shift relationship with.
+  async getSupervisedCasualWorkerIds(employee_id: string, company_id: string, department_id: string): Promise<string[]> {
+    const { data, error } = await supabase
+      .from('shift_assignments')
+      .select('user_id, shifts!inner(company_id, department_id)')
+      .eq('supervisor_employee_id', employee_id)
+      .eq('shifts.company_id', company_id)
+      .eq('shifts.department_id', department_id)
+    if (error) throw new Error(error.message)
+    return [...new Set((data ?? []).map((row: { user_id: string }) => row.user_id))]
   },
 
   async getShiftById(id: string): Promise<Shift | null> {

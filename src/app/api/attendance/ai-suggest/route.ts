@@ -24,34 +24,6 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    if (request_type === 'shift_swap') {
-      const id = b.id as string
-      if (!id) return NextResponse.json({ success: false, message: 'id is required' }, { status: 400 })
-      const swaps = await attendanceService.getShiftSwapRequests(company_id)
-      const req2 = swaps.find(s => s.id === id)
-      if (!req2) return NextResponse.json({ success: false, message: 'Request not found' }, { status: 404 })
-      const suggestion = await requestAISuggestService.suggestShiftSwap({
-        id,
-        requester_id: req2.requester_id,
-        counterpart_id: req2.counterpart_id,
-        requester_name: req2.requester_name,
-        counterpart_name: req2.counterpart_name,
-        requester_role: req2.requester_role,
-        department_name: req2.department_name,
-        requester_shift_date: req2.requester_shift_date,
-        requester_start_time: req2.requester_start_time,
-        requester_end_time: req2.requester_end_time,
-        counterpart_shift_date: req2.counterpart_shift_date,
-        counterpart_start_time: req2.counterpart_start_time,
-        counterpart_end_time: req2.counterpart_end_time,
-        requester_task_count: req2.requester_task_count,
-        counterpart_task_count: req2.counterpart_task_count,
-        reason: req2.reason,
-        company_id,
-      })
-      return NextResponse.json({ success: true, suggestion })
-    }
-
     if (request_type === 'fixed_off_day') {
       const id = b.id as string
       if (!id) return NextResponse.json({ success: false, message: 'id is required' }, { status: 400 })

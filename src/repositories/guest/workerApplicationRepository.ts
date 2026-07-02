@@ -177,4 +177,16 @@ export const workerApplicationRepository = {
       .eq('role', 'Guest User')
     if (error) throw new Error(error.message)
   },
+
+  // Mirrors employee_departments/manager_departments — gives the newly-promoted Casual Worker a
+  // stable department membership instead of leaving it derivable only from shift history.
+  async addCasualWorkerToDepartment(userId: string, departmentId: string, companyId: string): Promise<void> {
+    const { error } = await supabase
+      .from('casualworker_departments')
+      .upsert(
+        { casual_worker_id: userId, department_id: departmentId, company_id: companyId },
+        { onConflict: 'casual_worker_id,department_id', ignoreDuplicates: true },
+      )
+    if (error) throw new Error(error.message)
+  },
 }

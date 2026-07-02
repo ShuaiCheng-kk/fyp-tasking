@@ -19,6 +19,7 @@ vi.mock('@/repositories/owner/taskRepository', () => ({
     getManagerDepartmentIds: vi.fn(),
     getManagersByDepartment: vi.fn(),
     getEmployeeDepartmentIds: vi.fn(),
+    getSupervisedCasualWorkerIds: vi.fn(),
     getShiftById: vi.fn(),
     hasShiftOnDate: vi.fn(),
     updateTask: vi.fn(),
@@ -169,6 +170,84 @@ describe('taskService — Task (UC14-26)', () => {
         company_id: 'company-1', department_id: 'dept-1', title: 'Task',
         assigned_by: 'manager-1', assigned_user_id: 'employee-1',
       })).rejects.toThrow('Managers can only create tasks for their own departments')
+    })
+
+    it('rejects a Manager assigning directly to a Casual Worker (no skipping the Employee level)', async () => {
+      vi.mocked(taskRepository.getUserById).mockImplementation(async (id: string) => {
+        if (id === 'manager-1') return { id: 'manager-1', role: 'Manager', company_id: 'company-1' } as any
+        if (id === 'cw-1') return { id: 'cw-1', role: 'Casual Worker', company_id: 'company-1' } as any
+        return null
+      })
+      vi.mocked(taskRepository.getManagerDepartmentIds).mockResolvedValue(['dept-1'])
+
+      await expect(taskService.assignTask({
+        company_id: 'company-1', department_id: 'dept-1', title: 'Task',
+        assigned_by: 'manager-1', assigned_user_id: 'cw-1',
+      })).rejects.toThrow('Manager tasks can only be assigned to Employees')
+      expect(taskRepository.createTask).not.toHaveBeenCalled()
+    })
+
+    it('rejects when an Employee tries to assign to someone other than a Casual Worker', async () => {
+      vi.mocked(taskRepository.getUserById).mockImplementation(async (id: string) => {
+        if (id === 'employee-1') return { id: 'employee-1', role: 'Employee', company_id: 'company-1' } as any
+        if (id === 'employee-2') return { id: 'employee-2', role: 'Employee', company_id: 'company-1' } as any
+        return null
+      })
+
+      await expect(taskService.assignTask({
+        company_id: 'company-1', department_id: 'dept-1', title: 'Task',
+        assigned_by: 'employee-1', assigned_user_id: 'employee-2',
+      })).rejects.toThrow('Employee tasks can only be assigned to Casual Workers')
+    })
+
+    it('rejects an Employee assigning outside their own department', async () => {
+      vi.mocked(taskRepository.getUserById).mockImplementation(async (id: string) => {
+        if (id === 'employee-1') return { id: 'employee-1', role: 'Employee', company_id: 'company-1' } as any
+        if (id === 'cw-1') return { id: 'cw-1', role: 'Casual Worker', company_id: 'company-1' } as any
+        return null
+      })
+      vi.mocked(taskRepository.getEmployeeDepartmentIds).mockResolvedValue(['dept-2'])
+
+      await expect(taskService.assignTask({
+        company_id: 'company-1', department_id: 'dept-1', title: 'Task',
+        assigned_by: 'employee-1', assigned_user_id: 'cw-1',
+      })).rejects.toThrow('Employees can only create tasks for their own department')
+    })
+
+    it('rejects an Employee assigning to a Casual Worker they do not supervise', async () => {
+      vi.mocked(taskRepository.getUserById).mockImplementation(async (id: string) => {
+        if (id === 'employee-1') return { id: 'employee-1', role: 'Employee', company_id: 'company-1' } as any
+        if (id === 'cw-1') return { id: 'cw-1', role: 'Casual Worker', company_id: 'company-1' } as any
+        return null
+      })
+      vi.mocked(taskRepository.getEmployeeDepartmentIds).mockResolvedValue(['dept-1'])
+      vi.mocked(taskRepository.getSupervisedCasualWorkerIds).mockResolvedValue(['cw-2'])
+
+      await expect(taskService.assignTask({
+        company_id: 'company-1', department_id: 'dept-1', title: 'Task',
+        assigned_by: 'employee-1', assigned_user_id: 'cw-1',
+      })).rejects.toThrow('Employees can only assign tasks to casual workers they supervise')
+      expect(taskRepository.createTask).not.toHaveBeenCalled()
+    })
+
+    it('creates a task when an Employee assigns to a Casual Worker they supervise in their own department', async () => {
+      vi.mocked(taskRepository.getUserById).mockImplementation(async (id: string) => {
+        if (id === 'employee-1') return { id: 'employee-1', role: 'Employee', company_id: 'company-1' } as any
+        if (id === 'cw-1') return { id: 'cw-1', role: 'Casual Worker', company_id: 'company-1' } as any
+        return null
+      })
+      vi.mocked(taskRepository.getEmployeeDepartmentIds).mockResolvedValue(['dept-1'])
+      vi.mocked(taskRepository.getSupervisedCasualWorkerIds).mockResolvedValue(['cw-1'])
+      vi.mocked(taskRepository.createTask).mockResolvedValue(baseTask)
+
+      const result = await taskService.assignTask({
+        company_id: 'company-1', department_id: 'dept-1', title: 'Restock shelves',
+        assigned_by: 'employee-1', assigned_user_id: 'cw-1',
+      })
+
+      expect(result).toEqual(baseTask)
+      expect(taskRepository.getSupervisedCasualWorkerIds).toHaveBeenCalledWith('employee-1', 'company-1', 'dept-1')
+      expect(taskRepository.createTask).toHaveBeenCalledOnce()
     })
 
     it('rejects when the shift belongs to a different department', async () => {

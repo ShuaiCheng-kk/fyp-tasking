@@ -85,6 +85,9 @@ export const workerApplicationService = {
     const context = await workerApplicationRepository.getInvitationContext(invitationId)
     if (!context) return
     await workerApplicationRepository.promoteGuestToWorker(context.user_id)
+    if (context.job.department_id) {
+      await workerApplicationRepository.addCasualWorkerToDepartment(context.user_id, context.job.department_id, context.job.company_id)
+    }
 
     // UC49 gates Clock In/Out off a real shifts row — the moment the Casual Worker accepts,
     // create that shift (published immediately, since both sides already agreed to the work)
@@ -116,6 +119,7 @@ export const workerApplicationService = {
       publication_status: 'published',
       assigned_user_id: context.user_id,
       is_open_ended,
+      source_job_posting_id: job.id,
     })
   },
 }

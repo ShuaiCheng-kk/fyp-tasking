@@ -28,6 +28,7 @@ export const shiftRepository = {
         source_shift_id: input.source_shift_id ?? null,
         split_group_id: input.split_group_id ?? null,
         template_id: input.template_id ?? null,
+        source_job_posting_id: input.source_job_posting_id ?? null,
         is_open_ended: input.is_open_ended ?? false,
       })
       .select()

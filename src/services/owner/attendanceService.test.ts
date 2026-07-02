@@ -35,9 +35,16 @@ vi.mock('@/repositories/owner/taskRepository', () => ({
   },
 }))
 
+vi.mock('@/repositories/owner/ownerTeamRepository', () => ({
+  ownerTeamRepository: {
+    findManagerDepartments: vi.fn(),
+  },
+}))
+
 import { attendanceService } from './attendanceService'
 import { attendanceRepository } from '@/repositories/owner/attendanceRepository'
 import { taskRepository } from '@/repositories/owner/taskRepository'
+import { ownerTeamRepository } from '@/repositories/owner/ownerTeamRepository'
 
 const tomorrowStr = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
 const dayAfterStr = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
@@ -245,7 +252,10 @@ describe('attendanceService', () => {
         .rejects.toThrow('Counterpart has not agreed yet')
     })
 
-    it('blocks approval and does not touch assignments/tasks if a shift has become today by decision time', async () => {
+    it('auto-rejects and blocks approval if a shift has become today by decision time', async () => {
+      // A pending request that sat unreviewed long enough for one of its two shift dates to
+      // arrive can no longer be approved — it must be closed out as 'rejected' automatically
+      // instead of erroring out while remaining stuck in the pending queue forever.
       vi.mocked(attendanceRepository.getShiftSwapRequestById).mockResolvedValue({
         id: 'swap-1',
         requester_id: 'user-1', requester_assignment_id: 'asn-1',
@@ -258,13 +268,14 @@ describe('attendanceService', () => {
         if (id === 'asn-2') return futureAssignment('asn-2', 'user-2', 'shift-2', dayAfterStr) as any
         return null
       })
+      vi.mocked(attendanceRepository.updateShiftSwapRequest).mockResolvedValue({ id: 'swap-1', status: 'rejected' } as any)
 
       await expect(attendanceService.decideShiftSwapRequest({ id: 'swap-1', reviewer_id: 'owner-1', decision: 'approved' }))
-        .rejects.toThrow('tomorrow or later')
+        .rejects.toThrow('Request is no longer pending')
 
+      expect(attendanceRepository.updateShiftSwapRequest).toHaveBeenCalledWith('swap-1', expect.objectContaining({ status: 'rejected' }))
       expect(attendanceRepository.updateShiftAssignmentUser).not.toHaveBeenCalled()
       expect(taskRepository.reassignTasksForShiftSwap).not.toHaveBeenCalled()
-      expect(attendanceRepository.updateShiftSwapRequest).not.toHaveBeenCalled()
     })
   })
 
@@ -316,6 +327,39 @@ describe('attendanceService', () => {
       expect(attendanceRepository.createShiftSwapRequest).not.toHaveBeenCalled()
     })
 
+    it('rejects when the two shifts belong to different departments', async () => {
+      vi.mocked(attendanceRepository.getShiftAssignmentById).mockImplementation(async (id: string) => {
+        if (id === 'asn-1') return { id: 'asn-1', user_id: 'user-1', shifts: { id: 'shift-1', department_id: 'dept-1', shift_date: tomorrowStr, start_time: '09:00', end_time: '17:00', title: 'Shift' } } as any
+        if (id === 'asn-2') return { id: 'asn-2', user_id: 'user-2', shifts: { id: 'shift-2', department_id: 'dept-2', shift_date: dayAfterStr, start_time: '09:00', end_time: '17:00', title: 'Shift' } } as any
+        return null
+      })
+
+      await expect(attendanceService.submitShiftSwapRequest({
+        company_id: 'company-1', requester_id: 'user-1', requester_assignment_id: 'asn-1',
+        counterpart_id: 'user-2', counterpart_assignment_id: 'asn-2', reason: null,
+      })).rejects.toThrow('same department')
+      expect(attendanceRepository.getUsersByIds).not.toHaveBeenCalled()
+      expect(attendanceRepository.createShiftSwapRequest).not.toHaveBeenCalled()
+    })
+
+    it('rejects when the requester and counterpart have different roles (e.g. Manager vs Employee)', async () => {
+      vi.mocked(attendanceRepository.getShiftAssignmentById).mockImplementation(async (id: string) => {
+        if (id === 'asn-1') return baseAssignment('asn-1', 'user-1', tomorrowStr) as any
+        if (id === 'asn-2') return baseAssignment('asn-2', 'user-2', dayAfterStr) as any
+        return null
+      })
+      vi.mocked(attendanceRepository.getUsersByIds).mockResolvedValue([
+        { id: 'user-1', full_name: 'Alice', role: 'Manager' },
+        { id: 'user-2', full_name: 'Bob', role: 'Employee' },
+      ] as any)
+
+      await expect(attendanceService.submitShiftSwapRequest({
+        company_id: 'company-1', requester_id: 'user-1', requester_assignment_id: 'asn-1',
+        counterpart_id: 'user-2', counterpart_assignment_id: 'asn-2', reason: null,
+      })).rejects.toThrow('same role')
+      expect(attendanceRepository.createShiftSwapRequest).not.toHaveBeenCalled()
+    })
+
     it('accepts shifts scheduled tomorrow or later', async () => {
       vi.mocked(attendanceRepository.getShiftAssignmentById).mockImplementation(async (id: string) => {
         if (id === 'asn-1') return baseAssignment('asn-1', 'user-1', tomorrowStr) as any
@@ -351,8 +395,8 @@ describe('attendanceService', () => {
         return null
       })
       vi.mocked(attendanceRepository.getUsersByIds).mockResolvedValue([
-        { id: 'user-1', full_name: 'Alice', role: 'Employee' },
-        { id: 'user-2', full_name: 'Bob', role: 'Employee' },
+        { id: 'user-1', full_name: 'Alice', role: 'Manager' },
+        { id: 'user-2', full_name: 'Bob', role: 'Manager' },
       ] as any)
       vi.mocked(attendanceRepository.getDepartmentsByIds).mockResolvedValue([{ id: 'dept-1', name: 'Ops' }] as any)
       vi.mocked(attendanceRepository.getTasksByShiftAssignment).mockResolvedValue([])
@@ -366,6 +410,68 @@ describe('attendanceService', () => {
 
       expect(requests[0].requester_movable_tasks).toEqual([{ id: 'task-1', title: 'Restock shelves', status: 'Assigned', priority: 'Medium', due_at: '2026-07-03T17:00:00Z' }])
       expect(requests[0].counterpart_movable_tasks).toEqual([{ id: 'task-2', title: 'Close register', status: 'In Progress', priority: 'Low', due_at: null }])
+    })
+  })
+
+  describe('getShiftSwapRequests (Owner vs Manager queue split)', () => {
+    const twoSwaps = [
+      {
+        id: 'swap-mgr', company_id: 'company-1',
+        requester_id: 'mgr-1', requester_assignment_id: 'asn-mgr-1',
+        counterpart_id: 'mgr-2', counterpart_assignment_id: 'asn-mgr-2',
+        counterpart_status: 'approved', status: 'pending',
+      },
+      {
+        id: 'swap-emp', company_id: 'company-1',
+        requester_id: 'emp-1', requester_assignment_id: 'asn-emp-1',
+        counterpart_id: 'emp-2', counterpart_assignment_id: 'asn-emp-2',
+        counterpart_status: 'approved', status: 'pending',
+      },
+    ]
+
+    beforeEach(() => {
+      vi.mocked(attendanceRepository.getShiftSwapRequestsByCompany).mockResolvedValue(twoSwaps as any)
+      vi.mocked(attendanceRepository.getShiftAssignmentById).mockImplementation(async (id: string) => {
+        const shiftsByAssignment: Record<string, any> = {
+          'asn-mgr-1': { id, user_id: 'mgr-1', shifts: { department_id: 'dept-ops', shift_date: tomorrowStr, start_time: '09:00', end_time: '17:00', title: 'Shift' } },
+          'asn-mgr-2': { id, user_id: 'mgr-2', shifts: { department_id: 'dept-ops', shift_date: dayAfterStr, start_time: '09:00', end_time: '17:00', title: 'Shift' } },
+          'asn-emp-1': { id, user_id: 'emp-1', shifts: { department_id: 'dept-ops', shift_date: tomorrowStr, start_time: '09:00', end_time: '17:00', title: 'Shift' } },
+          'asn-emp-2': { id, user_id: 'emp-2', shifts: { department_id: 'dept-ops', shift_date: dayAfterStr, start_time: '09:00', end_time: '17:00', title: 'Shift' } },
+        }
+        return shiftsByAssignment[id] ?? null
+      })
+      vi.mocked(attendanceRepository.getUsersByIds).mockResolvedValue([
+        { id: 'mgr-1', full_name: 'Manager One', role: 'Manager' },
+        { id: 'mgr-2', full_name: 'Manager Two', role: 'Manager' },
+        { id: 'emp-1', full_name: 'Employee One', role: 'Employee' },
+        { id: 'emp-2', full_name: 'Employee Two', role: 'Employee' },
+      ] as any)
+      vi.mocked(attendanceRepository.getDepartmentsByIds).mockResolvedValue([{ id: 'dept-ops', name: 'Ops' }] as any)
+      vi.mocked(attendanceRepository.getTasksByShiftAssignment).mockResolvedValue([])
+      vi.mocked(attendanceRepository.getMovableTasksByShiftAssignment).mockResolvedValue([])
+    })
+
+    it('Owner queue (no managerId) only returns the Manager<->Manager swap', async () => {
+      const requests = await attendanceService.getShiftSwapRequests('company-1')
+
+      expect(requests.map(r => r.id)).toEqual(['swap-mgr'])
+      expect(ownerTeamRepository.findManagerDepartments).not.toHaveBeenCalled()
+    })
+
+    it('Manager queue only returns the Employee<->Employee swap within a department they manage', async () => {
+      vi.mocked(ownerTeamRepository.findManagerDepartments).mockResolvedValue([{ department_id: 'dept-ops', department_name: 'Ops' }])
+
+      const requests = await attendanceService.getShiftSwapRequests('company-1', { managerId: 'mgr-1' })
+
+      expect(requests.map(r => r.id)).toEqual(['swap-emp'])
+    })
+
+    it('Manager queue excludes an Employee<->Employee swap outside their managed departments', async () => {
+      vi.mocked(ownerTeamRepository.findManagerDepartments).mockResolvedValue([{ department_id: 'dept-other', department_name: 'Other' }])
+
+      const requests = await attendanceService.getShiftSwapRequests('company-1', { managerId: 'mgr-1' })
+
+      expect(requests).toEqual([])
     })
   })
 

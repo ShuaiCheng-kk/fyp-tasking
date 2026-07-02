@@ -5,9 +5,9 @@ import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import {
-  Archive, ArchiveRestore, Briefcase, Building2, CalendarDays, Check, CheckCircle, ChevronLeft, ChevronRight,
-  ClipboardList, Clock, Coffee, Copy, Crown, DollarSign, FileText, LayoutGrid, MapPin,
-  MoreHorizontal, Pencil, Repeat, Send, Sparkles, Timer, Trash2, UserCheck, UserX,
+  Archive, ArchiveRestore, Briefcase, Building2, CalendarDays, Check, CheckCircle, ChevronDown, ChevronLeft, ChevronRight,
+  ClipboardList, Clock, Coffee, Copy, Crown, DollarSign, Filter, FileText, LayoutGrid, MapPin,
+  MoreHorizontal, Pencil, Repeat, Send, Sparkles, Timer, Trash2, UserCheck, UserX, Users,
   X, XCircle, Zap,
 } from 'lucide-react'
 import OwnerSidebar from '@/components/OwnerSidebar'
@@ -23,6 +23,9 @@ import Toast from '@/components/Toast'
 import { CandidateRecommendation } from '@/types/AI'
 import { JobApplicant, JobPostingPendingApproval, JobPostingSummary } from '@/types/Recruitment'
 import { JobTemplate } from '@/types/JobTemplate'
+import { deptColor, setDeptColorOverrides } from '@/lib/deptColor'
+import DepartmentBadge from '@/components/DepartmentBadge'
+import RoleAvatar from '@/components/RoleAvatar'
 
 type Tab = 'jobs' | 'archived' | 'drafts' | 'review'
 type Department = { id: string; name: string }
@@ -51,10 +54,30 @@ const labelStyle: React.CSSProperties = {
   letterSpacing: '0.04em',
 }
 
-const cardShadow = '0 1px 3px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04)'
+const PANEL_BORDER = '#E2E8F0'
+const cardShadow = '0 1px 3px rgba(15,23,42,0.06), 0 8px 24px rgba(15,23,42,0.04)'
+
+// Posted/submitted timestamp shown on job posting cards, e.g. "Thu, 2 Jul, 10:59AM"
+function formatPostedAt(iso: string): string {
+  const d = new Date(iso)
+  const weekday = d.toLocaleDateString('en-GB', { weekday: 'short' })
+  const month = d.toLocaleDateString('en-GB', { month: 'short' })
+  const hours24 = d.getHours()
+  const minutes = String(d.getMinutes()).padStart(2, '0')
+  const ampm = hours24 >= 12 ? 'PM' : 'AM'
+  const hours12 = hours24 % 12 || 12
+  return `${weekday}, ${d.getDate()} ${month}, ${hours12}:${minutes}${ampm}`
+}
 
 const pageKeyframes = `
   @keyframes blockSlideUp  { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
+  @keyframes tabContentIn  { from { opacity: 0; transform: translateY(8px) scale(0.99) } to { opacity: 1; transform: translateY(0) scale(1) } }
+  @keyframes deptCardIn    { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: translateY(0) } }
+  .recruitment-panel { border: 1px solid ${PANEL_BORDER}; }
+  .recruitment-grid { display: grid; grid-template-columns: 440px minmax(0, 1fr); gap: 16px; align-items: start; }
+  @media (max-width: 1100px) {
+    .recruitment-grid { grid-template-columns: minmax(0, 1fr); }
+  }
 `
 
 // ─── Custom dropdown matching Task modal DropdownField style ─────────────────
@@ -278,6 +301,27 @@ export default function OwnerRecruitmentPage() {
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null)
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // department filter dropdowns — Jobs tab + Review tab (each panel filters independently)
+  const [jobsDeptFilter, setJobsDeptFilter] = useState<string>('all')
+  const [jobsDeptDropdownOpen, setJobsDeptDropdownOpen] = useState(false)
+  const jobsDeptDropdownRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!jobsDeptDropdownOpen) return
+    const handler = (e: MouseEvent) => { if (!jobsDeptDropdownRef.current?.contains(e.target as Node)) setJobsDeptDropdownOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [jobsDeptDropdownOpen])
+
+  const [reviewDeptFilter, setReviewDeptFilter] = useState<string>('all')
+  const [reviewDeptDropdownOpen, setReviewDeptDropdownOpen] = useState(false)
+  const reviewDeptDropdownRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!reviewDeptDropdownOpen) return
+    const handler = (e: MouseEvent) => { if (!reviewDeptDropdownRef.current?.contains(e.target as Node)) setReviewDeptDropdownOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [reviewDeptDropdownOpen])
+
   // form modal
   const [formOpen, setFormOpen] = useState(false)
   const [editingId, setEditingId] = useState('')
@@ -386,7 +430,7 @@ export default function OwnerRecruitmentPage() {
       setLivePostings(liveData.postings ?? [])
       setPendingPostings(pendingData.pendingPostings ?? [])
       setDrafts(draftsData.drafts ?? [])
-      if (deptData.success) setDepartments(deptData.departments ?? [])
+      if (deptData.success) { setDepartments(deptData.departments ?? []); setDeptColorOverrides(deptData.departments ?? []) }
       if (templatesData.success) setTemplates(templatesData.templates ?? [])
       setSelectedLiveId(prev => {
         const list = liveData.postings ?? []
@@ -501,8 +545,6 @@ export default function OwnerRecruitmentPage() {
     setFormJobDate(''); setFormJobEndDate(''); setFormEstHours(''); setFormUrgency('normal'); setFormJobStartTime('09:00')
     setAiPrompt(''); setAiPreview(null); setFormError('')
   }
-
-  const openNewForm = () => { resetForm(); setFormOpen(true) }
 
   const openEditForm = async (p: JobPostingSummary, isDraft = false) => {
     const raw = p as unknown as Record<string, unknown>
@@ -1043,13 +1085,19 @@ export default function OwnerRecruitmentPage() {
   const jobsPostings    = useMemo(() => livePostings.filter(p => ['open','closed'].includes(p.status)), [livePostings])
   const archivedPostings = useMemo(() => livePostings.filter(p => p.status === 'archived'), [livePostings])
 
+  const jobsDepts = useMemo(() => ['all', ...Array.from(new Set(jobsPostings.map(p => p.department_name).filter(Boolean)))] as string[], [jobsPostings])
+  const filteredJobsPostings = useMemo(() => jobsDeptFilter === 'all' ? jobsPostings : jobsPostings.filter(p => p.department_name === jobsDeptFilter), [jobsPostings, jobsDeptFilter])
+
+  const reviewDepts = useMemo(() => ['all', ...Array.from(new Set(pendingPostings.map(p => p.department_name).filter(Boolean)))] as string[], [pendingPostings])
+  const filteredPendingPostings = useMemo(() => reviewDeptFilter === 'all' ? pendingPostings : pendingPostings.filter(p => p.department_name === reviewDeptFilter), [pendingPostings, reviewDeptFilter])
+
   // ── render ───────────────────────────────────────────────────────────────────
 
   return (
-    <div style={{ display: 'flex', height: '100vh', background: '#F7F8FA' }}>
+    <div style={{ display: 'flex', height: '100vh', background: '#F1F5F9' }}>
       <style>{pageKeyframes}</style>
       <OwnerSidebar />
-      <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', scrollbarGutter: 'stable' }}>
+      <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', scrollbarGutter: 'stable', animation: 'blockSlideUp 0.38s ease both 0.04s' }}>
 
         {/* ── Page header ── */}
         <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
@@ -1065,35 +1113,33 @@ export default function OwnerRecruitmentPage() {
         </div>
 
         {/* ── Card wrapper (tab bar + content) ── */}
-        <div style={{ padding: '0 28px 28px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, animation: 'blockSlideUp 0.38s ease both 0.06s' }}>
-        <div style={{ background: '#FFFFFF', borderRadius: 16, border: '1px solid #E5E7EB', boxShadow: '0 1px 6px rgba(0,0,0,0.06)', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
+        <div style={{ padding: '0 28px 28px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
 
         {/* ── Tab bar ── */}
-        <div style={{ padding: '14px 20px', borderBottom: '1px solid #F3F4F6', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <div style={{ padding: '0 0 16px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: 4, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 999, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
             {([
-              { key: 'jobs' as Tab,     label: 'Jobs',    Icon: Briefcase    },
-              { key: 'archived' as Tab, label: 'Archived', Icon: Archive     },
-              { key: 'drafts' as Tab,   label: 'Drafts',   Icon: FileText    },
-              { key: 'review' as Tab,   label: 'Review',   Icon: ClipboardList },
+              { key: 'jobs' as Tab,   label: 'Posted Jobs' },
+              { key: 'review' as Tab, label: 'Review Requests' },
             ]).map(tab => {
               const active = activeTab === tab.key
               return (
                 <button
                   key={tab.key}
-                  onClick={() => { setActiveTab(tab.key); setSelectedArchivedId(''); setArchivedSelected(new Set()); setSelectedDraftId(''); setSelectedPendingId(''); setJobsSelected(new Set()); if (tab.key === 'review') window.dispatchEvent(new CustomEvent('recruitment-review-opened')) }}
+                  onClick={() => { setActiveTab(tab.key); setSelectedArchivedId(''); setArchivedSelected(new Set()); setSelectedDraftId(''); setSelectedPendingId(''); setJobsSelected(new Set()) }}
                   style={{
-                    padding: '5px 13px', borderRadius: '99px', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem',
-                    border: active ? '2px solid #F97316' : '2px solid #E5E7EB',
-                    background: active ? '#F97316' : 'transparent',
-                    color: active ? '#FFFFFF' : '#374151',
+                    height: 36, padding: '0 16px', borderRadius: '99px', cursor: 'pointer', fontWeight: 700, fontSize: '0.8125rem',
+                    border: 'none',
+                    background: active ? 'linear-gradient(180deg, #0F172A 0%, #111827 100%)' : 'transparent',
+                    color: active ? '#FFFFFF' : '#475569',
                     display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
                     position: 'relative',
+                    boxShadow: active ? '0 6px 18px rgba(15,23,42,0.18)' : 'none',
                   }}
                 >
-                  <tab.Icon size={13} />
                   {tab.label}
-                  {tab.key === 'review' && pendingPostings.length > 0 && activeTab !== 'review' && (
+                  {tab.key === 'review' && pendingPostings.length > 0 && (
                     <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#EF4444', flexShrink: 0 }} />
                   )}
                 </button>
@@ -1103,23 +1149,23 @@ export default function OwnerRecruitmentPage() {
         </div>
 
         {/* ── Tab content ── */}
-        <div style={{ padding: '16px 20px 20px', flex: 1, minHeight: 0, overflowY: 'auto' }}>
+        <div style={{ padding: 0, flex: 1, minHeight: 0, overflowY: 'auto', animation: 'tabContentIn 0.22s ease-out both' }}>
           {error && (
             <div style={{ marginBottom: 12, padding: '11px 14px', background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 10, fontSize: '0.84rem', fontWeight: 600 }}>{error}</div>
           )}
 
           {/* ══ JOBS tab (Open / Closed / Expired) ════════════════════════════ */}
           {activeTab === 'jobs' && (
-            <div style={{ display: 'grid', gridTemplateColumns: '340px 1fr', gap: 16, alignItems: 'start' }}>
+            <div className="recruitment-grid">
 
               {/* Left: job list */}
-              <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden' }}>
-                <div style={{ padding: '14px 18px 12px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 14, overflow: 'hidden' }}>
+                <div style={{ padding: '14px 18px', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', gap: 8 }}>
                   <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <Briefcase size={15} style={{ color: '#F97316' }} />
                   </div>
-                  <span className="font-heading" style={{ fontSize: 15, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.3px', flex: 1 }}>All Jobs</span>
-                  {jobsSelected.size > 0 ? (
+                  <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, flex: 1 }}>All Jobs</span>
+                  {jobsSelected.size > 0 && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <button
                         onClick={archiveJobsSelected}
@@ -1142,71 +1188,81 @@ export default function OwnerRecruitmentPage() {
                         {actionLoading ? <Spinner size={12} dark /> : <Trash2 size={14} />}
                       </button>
                     </div>
-                  ) : (
-                    <button
-                      onClick={openNewForm}
-                      style={{
-                        height: 36, padding: '0 16px', background: '#F97316', color: '#fff', border: 'none', borderRadius: 9,
-                        cursor: 'pointer',
-                        display: 'flex', alignItems: 'center', gap: 7, fontWeight: 700, fontSize: 13, flexShrink: 0,
-                      }}
-                      onMouseEnter={e => { e.currentTarget.style.background = '#EA580C' }}
-                      onMouseLeave={e => { e.currentTarget.style.background = '#F97316' }}
-                    >
-                      <Sparkles size={14} /> AI Post Job
-                    </button>
+                  )}
+                  {jobsSelected.size === 0 && (
+                    <div ref={jobsDeptDropdownRef} style={{ position: 'relative' }}>
+                      <button
+                        type="button"
+                        onClick={() => setJobsDeptDropdownOpen(o => !o)}
+                        style={{ display: 'flex', alignItems: 'center', gap: 5, height: 36, padding: '0 10px', border: `1.5px solid ${jobsDeptDropdownOpen ? '#F97316' : '#E5E7EB'}`, borderRadius: 8, background: '#FFFFFF', color: '#374151', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', boxShadow: jobsDeptDropdownOpen ? '0 0 0 3px rgba(249,115,22,0.10)' : 'none', transition: 'border-color 0.15s' }}
+                      >
+                        <Filter size={11} style={{ color: '#9CA3AF', flexShrink: 0 }} />
+                        {jobsDeptFilter === 'all' ? 'All Departments' : jobsDeptFilter}
+                        <ChevronDown size={11} style={{ color: '#9CA3AF', flexShrink: 0, transform: jobsDeptDropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+                      </button>
+                      {jobsDeptDropdownOpen && (
+                        <div style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, minWidth: 160, background: '#FFFFFF', border: '1.5px solid #E5E7EB', borderRadius: 10, boxShadow: '0 8px 24px rgba(15,23,42,0.12)', zIndex: 50, padding: '4px 0', overflow: 'hidden' }}>
+                          {jobsDepts.map(dept => {
+                            const active = jobsDeptFilter === dept
+                            return (
+                              <button key={dept} type="button"
+                                onClick={() => { setJobsDeptFilter(dept); setJobsDeptDropdownOpen(false) }}
+                                style={{ display: 'block', width: '100%', padding: '8px 14px', textAlign: 'left', border: 'none', background: active ? '#FFF7ED' : 'transparent', color: active ? '#EA580C' : '#374151', fontWeight: active ? 700 : 400, fontSize: 13, cursor: 'pointer' }}
+                                onMouseEnter={e => { if (!active) e.currentTarget.style.background = '#F9FAFB' }}
+                                onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent' }}
+                              >
+                                {dept === 'all' ? 'All Departments' : dept}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
+                <div style={{ padding: '12px 14px' }}>
                 {loading ? (
-                  <div style={{ padding: '24px 18px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '24px 0', color: '#9CA3AF', fontSize: '0.875rem' }}>
                     <Spinner size={14} dark /> Loading...
                   </div>
-                ) : jobsPostings.length === 0 ? (
-                  <div style={{ margin: '12px 14px', padding: '28px 16px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                ) : filteredJobsPostings.length === 0 ? (
+                  <div style={{ padding: '28px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
                     <Briefcase size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
-                    <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No job postings yet.</p>
+                    <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>{jobsDeptFilter === 'all' ? 'No job postings yet.' : `No job postings for ${jobsDeptFilter}.`}</p>
                   </div>
                 ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '14px 16px' }}>
-                  {jobsPostings.map((p, idx) => {
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {filteredJobsPostings.map((p, idx) => {
                   const isSelected = selectedLiveId === p.id
                   const checked = jobsSelected.has(p.id)
+                  const active = isSelected || checked
+                  const dc = p.department_id ? deptColor(p.department_id) : '#94A3B8'
                   return (
-                    <div
+                    <article
                       key={p.id}
-                      className="dept-card"
                       onClick={() => setSelectedLiveId(p.id)}
                       style={{
-                        animationDelay: `${idx * 55}ms`,
-                        border: (isSelected || checked) ? '2px solid #F97316' : '2px solid #E5E7EB',
-                        borderRadius: 14,
-                        padding: '16px 16px 14px',
-                        background: '#FFFFFF',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        cursor: 'pointer',
-                        boxShadow: (isSelected || checked) ? '0 0 0 3px rgba(249,115,22,0.10)' : '0 1px 3px rgba(0,0,0,0.06)',
-                        transition: 'border-color 0.15s, box-shadow 0.15s, transform 0.15s',
+                        display: 'flex', flexDirection: 'column', gap: 12,
+                        border: `1px solid ${active ? dc : PANEL_BORDER}`,
+                        borderRadius: 10, padding: '16px 18px',
+                        background: active ? `${dc}0d` : '#F9FAFB',
+                        cursor: 'pointer', overflow: 'hidden',
+                        transition: 'box-shadow 0.18s, transform 0.18s, border-color 0.18s, background 0.18s',
+                        animation: `deptCardIn 0.28s ease both ${idx * 55}ms`,
+                        boxShadow: active ? `0 4px 16px ${dc}22` : undefined,
                       }}
-                      onMouseEnter={e => {
-                        if (isSelected || checked) return
-                        e.currentTarget.style.transform = 'translateY(-2px)'
-                        e.currentTarget.style.boxShadow = '0 6px 18px rgba(0,0,0,0.10)'
-                        e.currentTarget.style.borderColor = '#FDBA74'
-                      }}
-                      onMouseLeave={e => {
-                        if (isSelected || checked) return
-                        e.currentTarget.style.transform = 'none'
-                        e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.06)'
-                        e.currentTarget.style.borderColor = '#E5E7EB'
-                      }}
+                      onMouseEnter={e => { if (!active) { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.boxShadow = '0 10px 28px rgba(15,23,42,0.11)'; e.currentTarget.style.borderColor = dc } }}
+                      onMouseLeave={e => { if (!active) { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.borderColor = PANEL_BORDER } }}
                     >
-                      {/* Badge row above title */}
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                        {p.department_name
-                          ? <span style={{ fontSize: '0.7rem', background: '#FFF7ED', color: '#C2410C', borderRadius: 6, padding: '2px 8px', fontWeight: 600 }}>{p.department_name}</span>
-                          : <span style={{ fontSize: '0.7rem', background: '#F1F5F9', color: '#64748B', borderRadius: 6, padding: '2px 8px', fontWeight: 600 }}>Company-wide</span>
-                        }
+                      {/* Department + job type badge row */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                          <DepartmentBadge departmentId={p.department_id} departmentName={p.department_name} />
+                          {p.is_recurring
+                            ? <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', whiteSpace: 'nowrap', flexShrink: 0 }}>Shift Job</span>
+                            : <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE', whiteSpace: 'nowrap', flexShrink: 0 }}>One-Off Job</span>
+                          }
+                        </div>
                         <button
                           type="button"
                           onClick={e => { e.stopPropagation(); setJobsSelected(prev => { const s = new Set(prev); checked ? s.delete(p.id) : s.add(p.id); return s }) }}
@@ -1215,20 +1271,44 @@ export default function OwnerRecruitmentPage() {
                           {checked && <Check size={11} color="#FFFFFF" strokeWidth={3} />}
                         </button>
                       </div>
-                      {/* Title + date row */}
-                      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10 }}>
-                        <strong style={{ fontSize: '0.9rem', color: '#1C1C1E', lineHeight: 1.4, flex: 1, minWidth: 0 }}>{p.title}</strong>
-                        <span style={{ fontSize: '0.75rem', color: '#C4C9D4', flexShrink: 0 }}>{new Date(p.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                      {/* Title row */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                        <h3 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{p.title}</h3>
+                        {p.pending_count > 0 && (
+                          <span
+                            title={`${p.pending_count} new application${p.pending_count > 1 ? 's' : ''}`}
+                            style={{ width: 7, height: 7, borderRadius: '50%', background: '#EF4444', flexShrink: 0 }}
+                          />
+                        )}
                       </div>
-                    </div>
+                      {/* Applicant / confirmed count + posted date row */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 18, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }} title="Applicants">
+                            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 999, background: '#FFF7ED', color: '#EA580C', flexShrink: 0 }}>
+                              <Users size={15} />
+                            </span>
+                            <span style={{ color: '#111827', fontSize: 15, fontWeight: 700 }}>{p.applicant_count}</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }} title="Confirmed">
+                            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 999, background: '#ECFDF5', color: '#059669', flexShrink: 0 }}>
+                              <UserCheck size={15} />
+                            </span>
+                            <span style={{ color: '#111827', fontSize: 15, fontWeight: 700 }}>{p.accepted_count}</span>
+                          </div>
+                        </div>
+                        <span style={{ fontSize: '0.78rem', color: '#94A3B8', flexShrink: 0 }}>{formatPostedAt(p.created_at)}</span>
+                      </div>
+                    </article>
                   )
                   })}
                   </div>
                 )}
+                </div>
               </div>
 
               {/* Right: posting detail + applicants */}
-              <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+              <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                 {!selectedLive ? (
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, padding: '32px 24px' }}>
                     <div style={{ padding: '40px 48px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14, width: '100%' }}>
@@ -1508,10 +1588,10 @@ export default function OwnerRecruitmentPage() {
 
           {/* ══ ARCHIVED tab ══════════════════════════════════════════════════ */}
           {activeTab === 'archived' && (
-            <div style={{ display: 'grid', gridTemplateColumns: '340px 1fr', gap: 16, alignItems: 'start' }}>
+            <div className="recruitment-grid">
 
               {/* Left: archived list */}
-              <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden' }}>
+              <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden' }}>
                 <div style={{ padding: '14px 18px 12px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', gap: 8 }}>
                   <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <Archive size={15} style={{ color: '#F97316' }} />
@@ -1597,7 +1677,7 @@ export default function OwnerRecruitmentPage() {
                         </button>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                        <span style={{ fontSize: '0.725rem', color: '#C4C9D4' }}>{new Date(p.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                        <span style={{ fontSize: '0.725rem', color: '#C4C9D4' }}>{formatPostedAt(p.created_at)}</span>
                       </div>
                     </div>
                   )
@@ -1607,7 +1687,7 @@ export default function OwnerRecruitmentPage() {
               </div>
 
               {/* Right: archived detail (view-only) */}
-              <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+              <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                 {!selectedArchived ? (
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, padding: '32px 24px' }}>
                     <div style={{ padding: '40px 48px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14, width: '100%' }}>
@@ -1809,110 +1889,104 @@ export default function OwnerRecruitmentPage() {
 
           {/* ══ REVIEW tab ════════════════════════════════════════════════════ */}
           {activeTab === 'review' && (
-            <div style={{ display: 'grid', gridTemplateColumns: '340px 1fr', gap: 16, alignItems: 'start' }}>
+            <div className="recruitment-grid">
 
               {/* Left: pending list */}
-              <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden' }}>
-                <div style={{ padding: '14px 18px 12px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 14, overflow: 'hidden' }}>
+                <div style={{ padding: '14px 18px', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', gap: 8 }}>
                   <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <ClipboardList size={15} style={{ color: '#F97316' }} />
                   </div>
-                  <span className="font-heading" style={{ fontSize: 15, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.3px', flex: 1 }}>Review Jobs</span>
-                  <button
-                    onClick={async () => {
-                      if (actionLoading || pendingPostings.length === 0) return
-                      setActionLoading(true); setError('')
-                      try {
-                        await Promise.all(pendingPostings.map(p =>
-                          fetch('/api/recruitment', {
-                            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ action: 'approve_posting', job_id: p.id }),
-                          })
-                        ))
-                        setSelectedPendingId('')
-                        await fetchAll(companyId, internalUserId)
-                        showToast(`${pendingPostings.length} job${pendingPostings.length === 1 ? '' : 's'} approved`)
-                      } catch {
-                        setError('Failed to approve all postings')
-                      } finally { setActionLoading(false) }
-                    }}
-                    disabled={actionLoading}
-                    style={{ height: 36, padding: '0 16px', background: '#F97316', color: '#fff', border: 'none', borderRadius: 9, cursor: actionLoading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontWeight: 700, fontSize: 13, flexShrink: 0, opacity: actionLoading ? 0.65 : 1 }}
-                    onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#EA580C' }}
-                    onMouseLeave={e => { e.currentTarget.style.background = '#F97316' }}
-                  >
-                    {actionLoading ? <Spinner size={14} /> : <Sparkles size={14} />} AI Review
-                  </button>
+                  <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, flex: 1 }}>Review Jobs</span>
+                  <div ref={reviewDeptDropdownRef} style={{ position: 'relative' }}>
+                    <button
+                      type="button"
+                      onClick={() => setReviewDeptDropdownOpen(o => !o)}
+                      style={{ display: 'flex', alignItems: 'center', gap: 5, height: 36, padding: '0 10px', border: `1.5px solid ${reviewDeptDropdownOpen ? '#F97316' : '#E5E7EB'}`, borderRadius: 8, background: '#FFFFFF', color: '#374151', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', boxShadow: reviewDeptDropdownOpen ? '0 0 0 3px rgba(249,115,22,0.10)' : 'none', transition: 'border-color 0.15s' }}
+                    >
+                      <Filter size={11} style={{ color: '#9CA3AF', flexShrink: 0 }} />
+                      {reviewDeptFilter === 'all' ? 'All Departments' : reviewDeptFilter}
+                      <ChevronDown size={11} style={{ color: '#9CA3AF', flexShrink: 0, transform: reviewDeptDropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
+                    </button>
+                    {reviewDeptDropdownOpen && (
+                      <div style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, minWidth: 160, background: '#FFFFFF', border: '1.5px solid #E5E7EB', borderRadius: 10, boxShadow: '0 8px 24px rgba(15,23,42,0.12)', zIndex: 50, padding: '4px 0', overflow: 'hidden' }}>
+                        {reviewDepts.map(dept => {
+                          const active = reviewDeptFilter === dept
+                          return (
+                            <button key={dept} type="button"
+                              onClick={() => { setReviewDeptFilter(dept); setReviewDeptDropdownOpen(false) }}
+                              style={{ display: 'block', width: '100%', padding: '8px 14px', textAlign: 'left', border: 'none', background: active ? '#FFF7ED' : 'transparent', color: active ? '#EA580C' : '#374151', fontWeight: active ? 700 : 400, fontSize: 13, cursor: 'pointer' }}
+                              onMouseEnter={e => { if (!active) e.currentTarget.style.background = '#F9FAFB' }}
+                              onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent' }}
+                            >
+                              {dept === 'all' ? 'All Departments' : dept}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
                 </div>
+                <div style={{ padding: '12px 14px' }}>
                 {loading ? (
-                  <div style={{ padding: '24px 18px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '24px 0', color: '#9CA3AF', fontSize: '0.875rem' }}>
                     <Spinner size={14} dark /> Loading...
                   </div>
-                ) : pendingPostings.length === 0 ? (
-                  <div style={{ margin: '12px 14px', padding: '28px 16px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                ) : filteredPendingPostings.length === 0 ? (
+                  <div style={{ padding: '28px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
                     <CheckCircle size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
-                    <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>All caught up.</p>
+                    <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>{reviewDeptFilter === 'all' ? 'All caught up.' : `No pending reviews for ${reviewDeptFilter}.`}</p>
                   </div>
                 ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '12px 14px' }}>
-                  {pendingPostings.map((p, idx) => {
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {filteredPendingPostings.map((p, idx) => {
                   const isSelected = selectedPendingId === p.id
+                  const dc = p.department_id ? deptColor(p.department_id) : '#94A3B8'
                   return (
-                    <div
+                    <article
                       key={p.id}
-                      className="dept-card"
                       onClick={() => setSelectedPendingId(p.id)}
                       style={{
-                        animationDelay: `${idx * 55}ms`,
-                        border: isSelected ? '2px solid #F97316' : '2px solid #E5E7EB',
-                        borderRadius: 14,
-                        padding: '14px 14px 12px',
-                        background: '#FFFFFF',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        cursor: 'pointer',
-                        boxShadow: isSelected ? '0 0 0 3px rgba(249,115,22,0.10)' : '0 1px 3px rgba(0,0,0,0.06)',
-                        transition: 'border-color 0.15s, box-shadow 0.15s, transform 0.15s',
-                        position: 'relative',
+                        display: 'flex', flexDirection: 'column', gap: 12,
+                        border: `1px solid ${isSelected ? dc : PANEL_BORDER}`,
+                        borderRadius: 10, padding: '16px 18px',
+                        background: isSelected ? `${dc}0d` : '#F9FAFB',
+                        cursor: 'pointer', overflow: 'hidden',
+                        transition: 'box-shadow 0.18s, transform 0.18s, border-color 0.18s, background 0.18s',
+                        animation: `deptCardIn 0.28s ease both ${idx * 55}ms`,
+                        boxShadow: isSelected ? `0 4px 16px ${dc}22` : undefined,
                       }}
-                      onMouseEnter={e => {
-                        if (isSelected) return
-                        e.currentTarget.style.transform = 'translateY(-2px)'
-                        e.currentTarget.style.boxShadow = '0 6px 18px rgba(0,0,0,0.10)'
-                        e.currentTarget.style.borderColor = '#FDBA74'
-                      }}
-                      onMouseLeave={e => {
-                        if (isSelected) return
-                        e.currentTarget.style.transform = 'none'
-                        e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.06)'
-                        e.currentTarget.style.borderColor = '#E5E7EB'
-                      }}
+                      onMouseEnter={e => { if (!isSelected) { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.boxShadow = '0 10px 28px rgba(15,23,42,0.11)'; e.currentTarget.style.borderColor = dc } }}
+                      onMouseLeave={e => { if (!isSelected) { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.borderColor = PANEL_BORDER } }}
                     >
-                      {/* Red dot indicator */}
-                      {!isSelected && (
-                        <span style={{ position: 'absolute', top: 10, right: 10, width: 8, height: 8, borderRadius: '50%', background: '#EF4444', border: '1.5px solid #fff' }} />
-                      )}
-                      {/* Badge row */}
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                        {p.department_name
-                          ? <span style={{ fontSize: '0.7rem', background: '#FFF7ED', color: '#C2410C', borderRadius: 6, padding: '2px 8px', fontWeight: 600 }}>{p.department_name}</span>
-                          : <span style={{ fontSize: '0.7rem', background: '#F1F5F9', color: '#64748B', borderRadius: 6, padding: '2px 8px', fontWeight: 600 }}>Company-wide</span>
+                      {/* Department + job type badge row */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                        <DepartmentBadge departmentId={p.department_id} departmentName={p.department_name} />
+                        {p.is_recurring
+                          ? <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', whiteSpace: 'nowrap', flexShrink: 0 }}>Shift Job</span>
+                          : <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE', whiteSpace: 'nowrap', flexShrink: 0 }}>One-Off Job</span>
                         }
                       </div>
-                      {/* Title + date row */}
-                      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10 }}>
-                        <strong style={{ fontSize: '0.9rem', color: '#1C1C1E', lineHeight: 1.4, flex: 1, minWidth: 0 }}>{p.title}</strong>
-                        <span style={{ fontSize: '0.75rem', color: '#C4C9D4', flexShrink: 0 }}>{new Date(p.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                      {/* Title row */}
+                      <h3 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.title}</h3>
+                      {/* Submitter + posted date row */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                          <RoleAvatar role="Manager" size={22} photoUrl={p.submitter_photo_url} />
+                          <span style={{ color: '#111827', fontSize: 13, fontWeight: 600 }}>{p.submitter_name ?? 'Manager'}</span>
+                        </div>
+                        <span style={{ fontSize: '0.78rem', color: '#94A3B8', flexShrink: 0 }}>{formatPostedAt(p.created_at)}</span>
                       </div>
-                    </div>
+                    </article>
                   )
                   })}
                   </div>
                 )}
+                </div>
               </div>
 
               {/* Right: pending detail */}
-              <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden' }}>
+              <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden' }}>
                 {!selectedPending ? (
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, padding: '32px 24px' }}>
                     <div style={{ padding: '40px 48px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14, width: '100%' }}>
@@ -2070,10 +2144,10 @@ export default function OwnerRecruitmentPage() {
 
           {/* ══ DRAFTS tab ════════════════════════════════════════════════════ */}
           {activeTab === 'drafts' && (
-            <div style={{ display: 'grid', gridTemplateColumns: '340px 1fr', gap: 16, alignItems: 'start' }}>
+            <div className="recruitment-grid">
 
               {/* Left: draft list */}
-              <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden' }}>
+              <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden' }}>
                 <div style={{ padding: '14px 18px 12px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', gap: 8 }}>
                   <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <FileText size={15} style={{ color: '#F97316' }} />
@@ -2168,7 +2242,7 @@ export default function OwnerRecruitmentPage() {
                       {/* Title + date row */}
                       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10 }}>
                         <strong style={{ fontSize: '0.9rem', color: '#1C1C1E', lineHeight: 1.4, flex: 1, minWidth: 0 }}>{p.title}</strong>
-                        <span style={{ fontSize: '0.75rem', color: '#C4C9D4', flexShrink: 0 }}>{new Date(p.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                        <span style={{ fontSize: '0.75rem', color: '#C4C9D4', flexShrink: 0 }}>{formatPostedAt(p.created_at)}</span>
                       </div>
                     </div>
                   )
@@ -2178,7 +2252,7 @@ export default function OwnerRecruitmentPage() {
               </div>
 
               {/* Right: draft detail */}
-              <div style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+              <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                 {!selectedDraft ? (
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, padding: '32px 24px' }}>
                     <div style={{ padding: '40px 48px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14, width: '100%' }}>

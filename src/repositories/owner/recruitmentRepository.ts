@@ -71,17 +71,18 @@ export const recruitmentRepository = {
       ...postings.map(p => p.created_by),
       ...postings.map(p => p.assigned_employee_id).filter((id): id is string => Boolean(id)),
     ].filter(Boolean))]
-    let userMap = new Map<string, string>()
+    let userMap = new Map<string, { full_name: string; profile_photo_url: string | null }>()
     if (allUserIds.length > 0) {
-      const { data: users } = await supabase.from('users').select('id, full_name').in('id', allUserIds)
-      userMap = new Map((users ?? []).map((u: { id: string; full_name: string }) => [u.id, u.full_name]))
+      const { data: users } = await supabase.from('users').select('id, full_name, profile_photo_url').in('id', allUserIds)
+      userMap = new Map((users ?? []).map((u: { id: string; full_name: string; profile_photo_url: string | null }) => [u.id, { full_name: u.full_name, profile_photo_url: u.profile_photo_url }]))
     }
 
     return postings.map(p => ({
       ...p,
       department_name: p.department_id ? deptMap.get(p.department_id) ?? null : null,
-      submitter_name: userMap.get(p.created_by) ?? null,
-      assigned_employee_name: p.assigned_employee_id ? userMap.get(p.assigned_employee_id) ?? null : null,
+      submitter_name: userMap.get(p.created_by)?.full_name ?? null,
+      submitter_photo_url: userMap.get(p.created_by)?.profile_photo_url ?? null,
+      assigned_employee_name: p.assigned_employee_id ? userMap.get(p.assigned_employee_id)?.full_name ?? null : null,
     }))
   },
 

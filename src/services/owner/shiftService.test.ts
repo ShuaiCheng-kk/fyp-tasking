@@ -61,6 +61,7 @@ const baseShift = {
   source_shift_id: null,
   split_group_id: null,
   template_id: null,
+  source_job_posting_id: null,
   is_open_ended: false,
   flat_rate: null,
   created_by: 'owner-1',
