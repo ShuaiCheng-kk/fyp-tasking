@@ -78,26 +78,25 @@ export default function AdminSettingsPage() {
   }
 
   return (
-    <main style={{ display: 'flex', minHeight: '100vh', background: '#F8F9FA', fontFamily: 'Inter, system-ui, sans-serif' }}>
+    <main style={{ display: 'flex', minHeight: '100vh', background: '#27272A', fontFamily: 'Inter, system-ui, sans-serif' }}>
       <AdminSidebar />
-      <section style={{ marginLeft: 64, padding: '36px 40px', flex: 1 }}>
+      <section style={{ marginLeft: 64, padding: '36px 40px', flex: 1, background: 'transparent' }}>
         <header style={{ marginBottom: 28 }}>
-          <p style={{ margin: '0 0 6px', color: '#6B7280', fontSize: 11, letterSpacing: 1.4, fontWeight: 700, textTransform: 'uppercase' }}>Marketing Admin</p>
-          <h1 style={{ margin: 0, fontSize: 28, fontWeight: 900, color: TEXT, fontFamily: 'var(--font-heading)' }}>Settings</h1>
+          <p style={{ margin: '0 0 6px', color: '#64748B', fontSize: 11, letterSpacing: 1.4, fontWeight: 700, textTransform: 'uppercase' }}>Marketing Admin</p>
+          <h1 style={{ margin: 0, fontSize: 28, fontWeight: 900, color: '#F1F5F9', fontFamily: 'var(--font-heading)' }}>Settings</h1>
         </header>
 
-        {notice && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20, background: '#ECFDF5', border: '1px solid #BBF7D0', color: '#047857', borderRadius: 10, padding: '12px 16px', fontSize: 13, fontWeight: 700, maxWidth: 520 }}>
-            <Check size={15} /> {notice}
-          </div>
-        )}
-        {error && (
-          <div style={{ marginBottom: 20, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 10, padding: '12px 16px', fontSize: 13, fontWeight: 700, maxWidth: 520 }}>
-            {error}
-          </div>
-        )}
-
         <div style={{ maxWidth: 520 }}>
+          {notice && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, background: '#ECFDF5', border: '1px solid #BBF7D0', color: '#047857', borderRadius: 10, padding: '12px 16px', fontSize: 13, fontWeight: 700 }}>
+              <Check size={15} /> {notice}
+            </div>
+          )}
+          {error && (
+            <div style={{ marginBottom: 16, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 10, padding: '12px 16px', fontSize: 13, fontWeight: 700 }}>
+              {error}
+            </div>
+          )}
           {/* Password */}
           <div style={{ ...cardStyle }}>
             <h2 style={{ margin: '0 0 20px', fontSize: 16, fontWeight: 800, color: TEXT }}>Change password</h2>

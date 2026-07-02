@@ -6,13 +6,13 @@ import { LogOut, LayoutDashboard, BarChart2 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 
 const THEME = {
-  sidebarBg:         '#FFFFFF',
-  sidebarText:       '#6B7280',
-  sidebarActiveBg:   '#F3F4F6',
-  sidebarActiveText: '#111827',
-  sidebarHoverBg:    '#F9FAFB',
-  sidebarBorder:     '#E5E7EB',
-  logoBorder:        '#E5E7EB',
+  sidebarBg:         '#27272A',
+  sidebarText:       '#A1A1AA',
+  sidebarActiveBg:   '#3F3F46',
+  sidebarActiveText: '#FAFAFA',
+  sidebarHoverBg:    'rgba(255,255,255,0.06)',
+  sidebarBorder:     'rgba(255,255,255,0.1)',
+  logoBorder:        '#27272A',
 }
 
 const NAV = [
@@ -66,7 +66,7 @@ export default function UserAdminSidebar() {
         }}
       >
         <svg width="28" height="28" viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
-          <rect width="32" height="32" rx="8" fill="#374151" />
+          <rect width="32" height="32" rx="8" fill="#F97316" />
           <rect x="8" y="9" width="9" height="2.5" rx="1.25" fill="white" />
           <rect x="8" y="14.75" width="16" height="2.5" rx="1.25" fill="white" />
           <rect x="8" y="20.5" width="12" height="2.5" rx="1.25" fill="white" />
@@ -74,7 +74,7 @@ export default function UserAdminSidebar() {
           <path d="M20.3 10.25L21.5 11.5L23.8 9" stroke="white" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
         <span style={{
-          fontWeight: 700, fontSize: '1.0625rem', color: THEME.sidebarText,
+          fontWeight: 700, fontSize: '1.0625rem', color: '#FFFFFF',
           letterSpacing: '-0.01em', whiteSpace: 'nowrap',
           opacity: expanded ? 1 : 0, transition: 'opacity 0.15s',
         }}>

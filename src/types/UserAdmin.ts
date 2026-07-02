@@ -63,6 +63,9 @@ export interface UAReportStats {
   newUsersLast7Days: number
   newCompaniesLast30Days: number
   newUsersLast30Days: number
+  avgUsersPerCompany: number
+  pendingInvitationCount: number
+  topCompaniesByMemberCount: { name: string; count: number }[]
   planBreakdown: Record<string, number>
   roleBreakdown: Record<string, number>
   industryBreakdown: Record<string, number>

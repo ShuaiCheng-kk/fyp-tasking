@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import {
   Building2, Users, ShieldOff, ShieldCheck,
   TrendingUp, CalendarDays, Briefcase, BarChart2,
-  RefreshCw, Download,
+  RefreshCw, Download, Mail,
 } from 'lucide-react'
 import UserAdminSidebar from '@/components/UserAdminSidebar'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
@@ -13,13 +13,13 @@ import { UAReportStats } from '@/types/UserAdmin'
 const SIDEBAR_WIDTH = 64
 
 const T = {
-  bg:        '#F8F9FA',
+  bg:        '#27272A',
   surface:   '#FFFFFF',
-  surfaceHi: '#F3F4F6',
-  border:    '#E5E7EB',
-  text1:     '#111827',
-  text2:     '#6B7280',
-  text3:     '#9CA3AF',
+  surfaceHi: '#F1F5F9',
+  border:    '#E2E8F0',
+  text1:     '#0F172A',
+  text2:     '#475569',
+  text3:     '#94A3B8',
   danger:    '#DC2626',
   dangerBg:  '#FEF2F2',
   dangerMid: '#FECACA',
@@ -34,7 +34,7 @@ const T = {
   amberBg:   '#FFFBEB',
 }
 
-type ReportTab = 'overview' | 'company' | 'user'
+type ReportTab = 'company' | 'user'
 
 const ROLE_ORDER = ['Owner', 'Partner', 'Manager', 'Employee', 'Casual Worker', 'Marketing Admin', 'User Admin']
 const ROLE_COLORS: Record<string, string> = {
@@ -133,11 +133,13 @@ function GrowthChart({ data }: { data: { month: string; companies: number; users
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function UserAdminReports() {
-  const [tab, setTab] = useState<ReportTab>('overview')
+  const [tab, setTab] = useState<ReportTab>('company')
   const [stats, setStats] = useState<UAReportStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [userId, setUserId] = useState<string | null>(null)
   const [refreshed, setRefreshed] = useState<Date | null>(null)
+  const [showAllIndustries, setShowAllIndustries] = useState(false)
+  const [showAllCompanies, setShowAllCompanies] = useState(false)
 
   useEffect(() => {
     const id = localStorage.getItem('tasking_user_id')
@@ -161,7 +163,12 @@ export default function UserAdminReports() {
   const totalByRole = stats ? Object.values(stats.roleBreakdown).reduce((a, b) => a + b, 0) : 0
   const totalByIndustry = stats ? Object.values(stats.industryBreakdown).reduce((a, b) => a + b, 0) : 0
   const totalBySize = stats ? Object.values(stats.companySizeBreakdown).reduce((a, b) => a + b, 0) : 0
-  const topIndustries = stats ? Object.entries(stats.industryBreakdown).sort((a, b) => b[1] - a[1]).slice(0, 8) : []
+  const allIndustries = stats ? Object.entries(stats.industryBreakdown).sort((a, b) => b[1] - a[1]) : []
+  const industryRows: [string, number][] = showAllIndustries
+    ? allIndustries
+    : allIndustries.length > 5
+      ? [...allIndustries.slice(0, 5), ['Others', allIndustries.slice(5).reduce((s, [, n]) => s + n, 0)] as [string, number]]
+      : allIndustries
   const sizeOrder = ['1–10', '11–50', '51–200', '201–500', '500+']
   const sizeEntries = stats
     ? sizeOrder.filter(s => stats.companySizeBreakdown[s]).map(s => [s, stats.companySizeBreakdown[s]] as [string, number])
@@ -170,7 +177,6 @@ export default function UserAdminReports() {
   const industryColors = ['#111827','#374151','#4B5563','#6B7280','#2563EB','#16A34A','#D97706','#7C3AED']
 
   const TABS: { key: ReportTab; label: string }[] = [
-    { key: 'overview', label: 'Overview' },
     { key: 'company', label: 'Company Analytics' },
     { key: 'user', label: 'User Analytics' },
   ]
@@ -178,31 +184,33 @@ export default function UserAdminReports() {
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: T.bg, fontFamily: 'Inter, system-ui, sans-serif' }}>
       <UserAdminSidebar />
-      <div style={{ marginLeft: SIDEBAR_WIDTH, flex: 1, minWidth: 0 }}>
+      <div style={{ marginLeft: SIDEBAR_WIDTH, flex: 1, minWidth: 0, background: 'transparent' }}>
 
         {/* Header */}
-        <div style={{ padding: '28px 32px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <h1 style={{ fontWeight: 800, fontSize: '1.75rem', color: T.text1, margin: 0, letterSpacing: '-0.025em' }}>Report</h1>
+        <div style={{ padding: '24px 32px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <h1 style={{ fontWeight: 800, fontSize: '1.75rem', color: '#F1F5F9', margin: 0, letterSpacing: '-0.025em' }}>Report</h1>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             {userId && <OwnerUserBadge userId={userId} companyId="" />}
           </div>
         </div>
 
         {/* Tabs */}
-        <div style={{ padding: '0 32px', display: 'flex', gap: 0, borderBottom: `1px solid ${T.border}`, marginTop: 18 }}>
-          {TABS.map(t => (
-            <button key={t.key} onClick={() => setTab(t.key)} style={{
-              padding: '10px 20px', border: 'none', background: 'transparent', cursor: 'pointer',
-              fontWeight: 600, fontSize: '0.88rem',
-              color: tab === t.key ? T.text1 : T.text3,
-              borderBottom: tab === t.key ? `2px solid ${T.text1}` : '2px solid transparent',
-              marginBottom: -1, transition: 'all 0.15s',
-            }}>{t.label}</button>
-          ))}
+        <div style={{ padding: '0 32px' }}>
+          <div style={{ background: '#FFFFFF', borderRadius: 10, boxShadow: '0 2px 8px rgba(15,23,42,0.2)', padding: 3, display: 'inline-flex' }}>
+            {TABS.map(t => (
+              <button key={t.key} onClick={() => setTab(t.key)} style={{
+                padding: '8px 18px', border: 'none', cursor: 'pointer',
+                borderRadius: 8, fontWeight: 600, fontSize: '0.88rem',
+                background: tab === t.key ? T.surfaceHi : 'transparent',
+                color: tab === t.key ? T.text1 : T.text3,
+                transition: 'all 0.15s',
+              }}>{t.label}</button>
+            ))}
+          </div>
         </div>
 
         {/* Toolbar */}
-        <div style={{ padding: '16px 32px', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ padding: '20px 32px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
           <button
             onClick={fetchStats} disabled={loading}
             style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 16px', borderRadius: 8, border: `1px solid ${T.border}`, background: T.text1, color: '#fff', fontSize: '0.82rem', fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1 }}
@@ -231,73 +239,17 @@ export default function UserAdminReports() {
             <div style={{ textAlign: 'center', padding: 80, color: T.danger, fontSize: '0.9rem' }}>Failed to load report data.</div>
           ) : (
             <>
-              {/* ── Overview tab ── */}
-              {tab === 'overview' && (
-                <>
-                  {/* Stat cards — 4 per row, 2 rows */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 14 }}>
-                    <StatCard label="Total Companies" value={stats.totalCompanies} icon={<Building2 size={18} />} color={T.text1} colorBg={T.surfaceHi} />
-                    <StatCard label="Total Users" value={stats.totalUsers} icon={<Users size={18} />} color={T.blue} colorBg={T.blueBg} />
-                    <StatCard label="Active Companies" value={stats.activeCompanies} sub={`${stats.totalCompanies > 0 ? Math.round(stats.activeCompanies / stats.totalCompanies * 100) : 0}% of total`} icon={<Building2 size={18} />} color={T.success} colorBg={T.successBg} />
-                    <StatCard label="Active Users" value={stats.activeUsers} sub={`${stats.totalUsers > 0 ? Math.round(stats.activeUsers / stats.totalUsers * 100) : 0}% of total`} icon={<Users size={18} />} color={T.success} colorBg={T.successBg} />
-                    <StatCard label="Suspended Companies" value={stats.suspendedCompanies} icon={<ShieldOff size={18} />} color={T.danger} colorBg={T.dangerBg} />
-                    <StatCard label="Suspended Users" value={stats.suspendedUsers} icon={<ShieldCheck size={18} />} color={T.amber} colorBg={T.amberBg} />
-                    <StatCard label="New Companies (7d)" value={stats.newCompaniesLast7Days} sub={`${stats.newCompaniesLast30Days} in last 30 days`} icon={<CalendarDays size={18} />} color={T.violet} colorBg={T.violetBg} />
-                    <StatCard label="New Users (7d)" value={stats.newUsersLast7Days} sub={`${stats.newUsersLast30Days} in last 30 days`} icon={<TrendingUp size={18} />} color={T.violet} colorBg={T.violetBg} />
-                  </div>
-
-                  {/* Growth chart — full width */}
-                  <SectionCard title="Growth — Last 6 Months" icon={<TrendingUp size={14} />} style={{ marginBottom: 14 }}>
-                    <GrowthChart data={stats.growthByMonth} />
-                  </SectionCard>
-
-                  {/* 3-column breakdown grid */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14, alignItems: 'start' }}>
-                    <SectionCard title="Plan Breakdown" icon={<BarChart2 size={14} />}>
-                      {Object.entries(stats.planBreakdown).map(([plan, count]) => (
-                        <BarRow key={plan} label={plan} value={count} total={stats.totalCompanies} color={plan === 'Paid' ? T.success : T.text3} />
-                      ))}
-                      {Object.keys(stats.planBreakdown).length === 0 && <div style={{ fontSize: '0.82rem', color: T.text3 }}>No data</div>}
-                    </SectionCard>
-                    <SectionCard title="Companies by Size" icon={<Building2 size={14} />}>
-                      {sizeEntries.length > 0
-                        ? sizeEntries.map(([size, count]) => <BarRow key={size} label={size} value={count} total={totalBySize} color="#374151" />)
-                        : <div style={{ fontSize: '0.82rem', color: T.text3 }}>No data</div>}
-                    </SectionCard>
-                    <SectionCard title="Companies by Industry" icon={<Briefcase size={14} />}>
-                      {topIndustries.length > 0
-                        ? topIndustries.map(([ind, count], i) => <BarRow key={ind} label={ind} value={count} total={totalByIndustry} color={industryColors[i % industryColors.length]} />)
-                        : <div style={{ fontSize: '0.82rem', color: T.text3 }}>No data</div>}
-                    </SectionCard>
-                    <SectionCard title="Users by Role" icon={<Users size={14} />} style={{ gridColumn: '1 / -1' }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0 32px' }}>
-                        {ROLE_ORDER.filter(r => stats.roleBreakdown[r]).map(role => (
-                          <BarRow key={role} label={role} value={stats.roleBreakdown[role]} total={totalByRole} color={ROLE_COLORS[role] ?? T.text2} />
-                        ))}
-                        {totalByRole === 0 && <div style={{ fontSize: '0.82rem', color: T.text3 }}>No data</div>}
-                      </div>
-                    </SectionCard>
-                  </div>
-                </>
-              )}
-
               {/* ── Company Analytics tab ── */}
               {tab === 'company' && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                  <SectionCard title="Suspension Summary" icon={<ShieldOff size={14} />}>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
-                      {[
-                        { label: 'Total Companies', value: stats.totalCompanies, color: T.text1, bg: T.surfaceHi },
-                        { label: 'Active', value: stats.activeCompanies, color: T.success, bg: T.successBg },
-                        { label: 'Suspended', value: stats.suspendedCompanies, color: T.danger, bg: T.dangerBg },
-                      ].map(({ label, value, color, bg }) => (
-                        <div key={label} style={{ background: bg, borderRadius: 10, padding: '14px 18px' }}>
-                          <div style={{ fontSize: '1.5rem', fontWeight: 800, color }}>{value}</div>
-                          <div style={{ fontSize: '0.78rem', color: T.text2, marginTop: 2 }}>{label}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </SectionCard>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
+                    <StatCard label="Total Companies" value={stats.totalCompanies} icon={<Building2 size={18} />} color={T.text1} colorBg={T.surfaceHi} />
+                    <StatCard label="Active Companies" value={stats.activeCompanies} sub={`${stats.totalCompanies > 0 ? Math.round(stats.activeCompanies / stats.totalCompanies * 100) : 0}% of total`} icon={<Building2 size={18} />} color={T.success} colorBg={T.successBg} />
+                    <StatCard label="Suspended Companies" value={stats.suspendedCompanies} icon={<ShieldOff size={18} />} color={T.danger} colorBg={T.dangerBg} />
+                    <StatCard label="New Companies (30d)" value={stats.newCompaniesLast30Days} icon={<CalendarDays size={18} />} color={T.violet} colorBg={T.violetBg} />
+                    <StatCard label="Avg Users / Company" value={stats.avgUsersPerCompany} icon={<Users size={18} />} color={T.blue} colorBg={T.blueBg} />
+                    <StatCard label="Pending Invitations" value={stats.pendingInvitationCount} icon={<Mail size={18} />} color={T.amber} colorBg={T.amberBg} />
+                  </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
                     <SectionCard title="Plan Breakdown" icon={<BarChart2 size={14} />}>
                       {Object.entries(stats.planBreakdown).map(([plan, count]) => (
@@ -311,9 +263,41 @@ export default function UserAdminReports() {
                         : <div style={{ fontSize: '0.82rem', color: T.text3 }}>No data</div>}
                     </SectionCard>
                     <SectionCard title="Companies by Industry" icon={<Briefcase size={14} />}>
-                      {topIndustries.length > 0
-                        ? topIndustries.map(([ind, count], i) => <BarRow key={ind} label={ind} value={count} total={totalByIndustry} color={industryColors[i % industryColors.length]} />)
+                      {industryRows.length > 0
+                        ? <>
+                            {industryRows.map(([ind, count], i) => <BarRow key={ind} label={ind} value={count} total={totalByIndustry} color={ind === 'Others' ? T.text3 : industryColors[i % industryColors.length]} />)}
+                            {allIndustries.length > 5 && (
+                              <button onClick={() => setShowAllIndustries(v => !v)} style={{ marginTop: 6, background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.78rem', color: T.blue, fontWeight: 600, padding: 0 }}>
+                                {showAllIndustries ? 'Show less' : `Show all ${allIndustries.length}`}
+                              </button>
+                            )}
+                          </>
                         : <div style={{ fontSize: '0.82rem', color: T.text3 }}>No data</div>}
+                    </SectionCard>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                    <SectionCard title="Top Companies by Member Count" icon={<Users size={14} />}>
+                      {stats.topCompaniesByMemberCount.length > 0 ? (
+                        <>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {(showAllCompanies ? stats.topCompaniesByMemberCount : stats.topCompaniesByMemberCount.slice(0, 5)).map(({ name, count }, i) => (
+                              <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                <div style={{ width: 22, height: 22, borderRadius: 6, background: T.surfaceHi, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.72rem', fontWeight: 700, color: T.text2, flexShrink: 0 }}>{i + 1}</div>
+                                <span style={{ flex: 1, fontSize: '0.84rem', color: T.text1, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+                                <span style={{ fontSize: '0.84rem', fontWeight: 700, color: T.text1 }}>{count}</span>
+                              </div>
+                            ))}
+                          </div>
+                          {stats.topCompaniesByMemberCount.length > 5 && (
+                            <button onClick={() => setShowAllCompanies(v => !v)} style={{ marginTop: 8, background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.78rem', color: T.blue, fontWeight: 600, padding: 0 }}>
+                              {showAllCompanies ? 'Show less' : `Show all ${stats.topCompaniesByMemberCount.length}`}
+                            </button>
+                          )}
+                        </>
+                      ) : <div style={{ fontSize: '0.82rem', color: T.text3 }}>No data</div>}
+                    </SectionCard>
+                    <SectionCard title="Growth — Last 6 Months" icon={<TrendingUp size={14} />}>
+                      <GrowthChart data={stats.growthByMonth} />
                     </SectionCard>
                   </div>
                 </div>
@@ -321,43 +305,20 @@ export default function UserAdminReports() {
 
               {/* ── User Analytics tab ── */}
               {tab === 'user' && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
+                    <StatCard label="Total Users" value={stats.totalUsers} icon={<Users size={18} />} color={T.blue} colorBg={T.blueBg} />
+                    <StatCard label="Active Users" value={stats.activeUsers} sub={`${stats.totalUsers > 0 ? Math.round(stats.activeUsers / stats.totalUsers * 100) : 0}% of total`} icon={<Users size={18} />} color={T.success} colorBg={T.successBg} />
+                    <StatCard label="Suspended Users" value={stats.suspendedUsers} icon={<ShieldCheck size={18} />} color={T.amber} colorBg={T.amberBg} />
+                    <StatCard label="New Users (7d)" value={stats.newUsersLast7Days} icon={<TrendingUp size={18} />} color={T.violet} colorBg={T.violetBg} />
+                    <StatCard label="New Users (30d)" value={stats.newUsersLast30Days} icon={<CalendarDays size={18} />} color={T.violet} colorBg={T.violetBg} />
+                  </div>
                   <SectionCard title="Users by Role" icon={<Users size={14} />}>
-                    {ROLE_ORDER.filter(r => stats.roleBreakdown[r]).map(role => (
-                      <BarRow key={role} label={role} value={stats.roleBreakdown[role]} total={totalByRole} color={ROLE_COLORS[role] ?? T.text2} />
-                    ))}
-                    {totalByRole === 0 && <div style={{ fontSize: '0.82rem', color: T.text3 }}>No data</div>}
-                  </SectionCard>
-                  <SectionCard title="Suspension Summary" icon={<ShieldCheck size={14} />}>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                      {[
-                        { label: 'Total Users', value: stats.totalUsers, color: T.text1, bg: T.surfaceHi },
-                        { label: 'Active Users', value: stats.activeUsers, color: T.success, bg: T.successBg },
-                        { label: 'Suspended Users', value: stats.suspendedUsers, color: T.danger, bg: T.dangerBg },
-                      ].map(({ label, value, color, bg }) => (
-                        <div key={label} style={{ background: bg, borderRadius: 10, padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span style={{ fontSize: '0.82rem', color: T.text2, fontWeight: 500 }}>{label}</span>
-                          <span style={{ fontSize: '1.2rem', fontWeight: 800, color }}>{value}</span>
-                        </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0 32px' }}>
+                      {ROLE_ORDER.filter(r => stats.roleBreakdown[r]).map(role => (
+                        <BarRow key={role} label={role} value={stats.roleBreakdown[role]} total={totalByRole} color={ROLE_COLORS[role] ?? T.text2} />
                       ))}
-                    </div>
-                  </SectionCard>
-                  <SectionCard title="Growth — Last 6 Months" icon={<TrendingUp size={14} />} style={{ gridColumn: '1 / -1' }}>
-                    <GrowthChart data={stats.growthByMonth} />
-                  </SectionCard>
-                  <SectionCard title="New Registrations" icon={<CalendarDays size={14} />} style={{ gridColumn: '1 / -1' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
-                      {[
-                        { label: 'New Users (7d)', value: stats.newUsersLast7Days },
-                        { label: 'New Users (30d)', value: stats.newUsersLast30Days },
-                        { label: 'New Companies (7d)', value: stats.newCompaniesLast7Days },
-                        { label: 'New Companies (30d)', value: stats.newCompaniesLast30Days },
-                      ].map(({ label, value }) => (
-                        <div key={label} style={{ background: T.surfaceHi, borderRadius: 10, padding: '14px 16px' }}>
-                          <div style={{ fontSize: '1.5rem', fontWeight: 800, color: T.text1 }}>{value}</div>
-                          <div style={{ fontSize: '0.75rem', color: T.text2, marginTop: 2 }}>{label}</div>
-                        </div>
-                      ))}
+                      {totalByRole === 0 && <div style={{ fontSize: '0.82rem', color: T.text3 }}>No data</div>}
                     </div>
                   </SectionCard>
                 </div>

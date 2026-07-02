@@ -120,9 +120,10 @@ export async function unsuspendUser(userId: string): Promise<void> {
 }
 
 export async function getReportStats(): Promise<UAReportStats> {
-  const [{ data: companies, error: ce }, { data: users, error: ue }] = await Promise.all([
-    supabase.from('companies').select('id,plan,industry,size,is_suspended,created_at'),
-    supabase.from('users').select('id,role,is_suspended,created_at'),
+  const [{ data: companies, error: ce }, { data: users, error: ue }, { count: pendingInvitations }] = await Promise.all([
+    supabase.from('companies').select('id,name,plan,industry,size,is_suspended,created_at'),
+    supabase.from('users').select('id,role,company_id,is_suspended,created_at'),
+    supabase.from('invitation_code').select('id', { count: 'exact', head: true }).eq('status', 'Active'),
   ])
   if (ce) throw new Error(ce.message)
   if (ue) throw new Error(ue.message)
@@ -166,6 +167,18 @@ export async function getReportStats(): Promise<UAReportStats> {
     })
   }
 
+  // Top companies by member count
+  const memberCountMap: Record<string, number> = {}
+  for (const u of usr) {
+    if (u.company_id) memberCountMap[u.company_id] = (memberCountMap[u.company_id] ?? 0) + 1
+  }
+  const companyNameMap: Record<string, string> = Object.fromEntries(cos.map((c: { id: string; name: string }) => [c.id, c.name]))
+  const topCompaniesByMemberCount = Object.entries(memberCountMap)
+    .map(([id, count]) => ({ name: companyNameMap[id] ?? 'Unknown', count }))
+    .sort((a, b) => b.count - a.count)
+
+  const avgUsersPerCompany = cos.length > 0 ? Math.round((usr.length / cos.length) * 10) / 10 : 0
+
   return {
     totalCompanies: cos.length,
     totalUsers: usr.length,
@@ -177,6 +190,9 @@ export async function getReportStats(): Promise<UAReportStats> {
     newUsersLast7Days: usr.filter((u: { created_at: string }) => u.created_at >= ago7).length,
     newCompaniesLast30Days: cos.filter((c: { created_at: string }) => c.created_at >= ago30).length,
     newUsersLast30Days: usr.filter((u: { created_at: string }) => u.created_at >= ago30).length,
+    avgUsersPerCompany,
+    pendingInvitationCount: pendingInvitations ?? 0,
+    topCompaniesByMemberCount,
     planBreakdown,
     roleBreakdown,
     industryBreakdown,
