@@ -10,17 +10,17 @@ const SIDEBAR_WIDTH = 64
 
 // ── Design tokens ──────────────────────────────────────────────────────────────
 const T = {
-  bg:        '#F8F9FA',
+  bg:        '#27272A',
   surface:   '#FFFFFF',
-  surfaceHi: '#F3F4F6',
-  border:    '#E5E7EB',
-  borderMid: '#D1D5DB',
-  accent:    '#111827',
-  accentBg:  '#F3F4F6',
-  accentMid: '#9CA3AF',
-  text1:     '#111827',
-  text2:     '#6B7280',
-  text3:     '#9CA3AF',
+  surfaceHi: '#F1F5F9',
+  border:    '#E2E8F0',
+  borderMid: '#CBD5E1',
+  accent:    '#1E293B',
+  accentBg:  '#F1F5F9',
+  accentMid: '#94A3B8',
+  text1:     '#0F172A',
+  text2:     '#475569',
+  text3:     '#94A3B8',
   danger:    '#EF4444',
   dangerBg:  '#FEF2F2',
   dangerMid: '#FECACA',
@@ -397,23 +397,22 @@ export default function UserAdminDashboard() {
     <div style={{ display: 'flex', minHeight: '100vh', background: T.bg, fontFamily: 'Inter, system-ui, sans-serif' }}>
       <UserAdminSidebar />
 
-      <div style={{ marginLeft: SIDEBAR_WIDTH, flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+      <div style={{ marginLeft: SIDEBAR_WIDTH, flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh', background: 'transparent' }}>
 
         <div style={{ padding: '28px 32px', flex: 1 }}>
           {/* Page heading */}
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 28 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24 }}>
             <div>
-              <div style={{ fontSize: '0.7rem', fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 4 }}>
+              <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 4 }}>
                 {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).toUpperCase()}
               </div>
-              <h1 style={{ fontWeight: 800, fontSize: '1.75rem', color: T.text1, margin: 0, letterSpacing: '-0.025em', lineHeight: 1.1 }}>Dashboard</h1>
+              <h1 style={{ fontWeight: 800, fontSize: '1.75rem', color: '#F1F5F9', margin: 0, letterSpacing: '-0.025em', lineHeight: 1.1 }}>Dashboard</h1>
             </div>
             {userId && <OwnerUserBadge userId={userId} companyId="" />}
           </div>
 
-
           {/* Toggle */}
-          <div style={{ display: 'inline-flex', background: T.surfaceHi, borderRadius: 10, padding: 3, marginBottom: 20 }}>
+          <div style={{ display: 'inline-flex', background: '#FFFFFF', borderRadius: 10, padding: 3, marginBottom: 20 }}>
             {(['companies', 'users'] as Tab[]).map(t => (
               <button key={t} onClick={() => setTab(t)} style={{
                 display: 'flex', alignItems: 'center', gap: 6,
@@ -506,7 +505,7 @@ export default function UserAdminDashboard() {
                   </FilterSection>
 
                   <FilterSection label="Industry" count={industryFilters.length} open={compFilterOpen.industry} onToggle={() => toggleCompSection('industry')}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6, padding: '5px 8px', marginBottom: 7 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 6, padding: '5px 8px', marginBottom: 7 }}>
                       <Search size={11} color={T.text3} style={{ flexShrink: 0 }} />
                       <input value={industrySearch} onChange={e => setIndustrySearch(e.target.value)} placeholder="Search…" style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: '0.75rem', color: T.text1, flex: 1, minWidth: 0 }} />
                       {industrySearch && <button onClick={() => setIndustrySearch('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T.text3, padding: 0, display: 'flex' }}><X size={10} /></button>}
@@ -609,7 +608,7 @@ export default function UserAdminDashboard() {
                   </div>
 
                   <FilterSection label="Company" count={companyNameFilters.length} open={userFilterOpen.company} onToggle={() => toggleUserSection('company')}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6, padding: '5px 8px', marginBottom: 7 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 6, padding: '5px 8px', marginBottom: 7 }}>
                       <Search size={11} color={T.text3} style={{ flexShrink: 0 }} />
                       <input value={companySearch} onChange={e => setCompanySearch(e.target.value)} placeholder="Search…" style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: '0.75rem', color: T.text1, flex: 1, minWidth: 0 }} />
                       {companySearch && <button onClick={() => setCompanySearch('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T.text3, padding: 0, display: 'flex' }}><X size={10} /></button>}
@@ -738,7 +737,7 @@ export default function UserAdminDashboard() {
               </p>
               <label style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: T.text3, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>Reason *</label>
               <textarea value={suspendReason} onChange={e => setSuspendReason(e.target.value)} rows={3} placeholder="Enter suspension reason…"
-                style={{ width: '100%', border: `1px solid ${T.border}`, borderRadius: 8, padding: '10px 12px', fontSize: '0.875rem', resize: 'vertical', outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit', background: T.bg, color: T.text1 }} />
+                style={{ width: '100%', border: `1px solid ${T.border}`, borderRadius: 8, padding: '10px 12px', fontSize: '0.875rem', resize: 'vertical', outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit', background: T.surface, color: T.text1 }} />
               <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 16 }}>
                 <button onClick={() => { setSuspendModal(null); setSuspendReason('') }}
                   style={{ padding: '8px 16px', borderRadius: 8, border: `1px solid ${T.border}`, background: T.surface, cursor: 'pointer', color: T.text2, fontWeight: 600, fontSize: '0.85rem' }}>

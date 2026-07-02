@@ -2846,7 +2846,7 @@ export default function AdminDashboardPage() {
   const dirtyBlocks = selectedPage?.blocks.filter(block => (drafts[block.id] ?? '') !== block.value) ?? []
   return (
   <>
-    <main style={{ minHeight: '100vh', background: '#F8F9FA', color: TEXT, fontFamily: 'Inter, system-ui, sans-serif' }}>
+    <main style={{ minHeight: '100vh', background: '#27272A', color: TEXT, fontFamily: 'Inter, system-ui, sans-serif' }}>
       <input
         ref={imageInputRef}
         type="file"
@@ -2878,13 +2878,13 @@ export default function AdminDashboardPage() {
         loadingPages={loadingPages}
       />
 
-      <section style={{ marginLeft: 64, padding: '35px 32px 44px' }}>
-        <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, marginBottom: 18 }}>
+      <section style={{ marginLeft: 64, padding: '35px 32px 44px', background: 'transparent' }}>
+        <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, marginBottom: 24 }}>
           <div>
-            <p style={{ margin: '0 0 6px', color: '#6B7280', fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+            <p style={{ margin: '0 0 6px', color: '#64748B', fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
               {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
             </p>
-            <h1 style={{ margin: 0, fontFamily: 'var(--font-heading)', fontSize: 34, lineHeight: 1.1, fontWeight: 800, color: TEXT }}>
+            <h1 style={{ margin: 0, fontFamily: 'var(--font-heading)', fontSize: 34, lineHeight: 1.1, fontWeight: 800, color: '#F1F5F9' }}>
               Marketing Live Editor
             </h1>
           </div>
@@ -2904,7 +2904,7 @@ export default function AdminDashboardPage() {
         ) : null}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-          <section style={{ background: 'rgba(255,255,255,0.92)', border: `1px solid ${BORDER}`, borderRadius: 20, minHeight: 720, overflow: 'hidden', boxShadow: '0 22px 52px rgba(15,23,42,0.09)' }}>
+          <section style={{ background: 'rgba(255,255,255,0.92)', border: `1px solid ${BORDER}`, borderRadius: 20, minHeight: 720, overflow: 'hidden', boxShadow: '0 8px 32px rgba(15,23,42,0.14)' }}>
             <div style={{ padding: '15px 18px', borderBottom: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, background: '#FFFFFF' }}>
               <div>
                 <h2 style={{ margin: 0, fontSize: 17, fontWeight: 900, color: TEXT }}>
