@@ -1032,6 +1032,10 @@ export default function ManagerTasksPage() {
       .filter(t => visibleDeptIds.has(t.department_id))
       .filter(t => !selectedEmployeeId || t.assigned_user_id === selectedEmployeeId)
       .filter(t => {
+        // Assigned/In Progress/Review tasks are still being worked on, so they stay visible no
+        // matter which day is selected — only Complete is anchored to its date, since a finished
+        // task is a historical record of that specific day.
+        if (col !== 'Complete') return true
         if (t.shift_id) {
           const date = t.shift_date ?? shiftOptions.find(s => s.id === t.shift_id)?.shift_date ?? null
           return date === taskDate

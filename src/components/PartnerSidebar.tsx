@@ -21,7 +21,7 @@ const NAV_ITEMS = [
   { label: 'Dashboard',     Icon: LayoutDashboard, href: '/partner/dashboard',       dot: null as 'messages' | 'announcements' | 'review' | null },
   { label: 'Shifts',        Icon: CalendarDays,    href: '/partner/shifts',          dot: null },
   { label: 'Tasks',         Icon: CheckSquare,     href: '/partner/tasks',           dot: null },
-  { label: 'Team',          Icon: Users,            href: '/partner/team',            dot: null },
+  { label: 'Company',       Icon: Users,            href: '/partner/team',            dot: null },
   { label: 'Communication', Icon: MessageCircle,    href: '/partner/communication',   dot: 'messages' as const },
   { label: 'Recruitment',   Icon: UserPlus,         href: '/partner/recruitment',     dot: 'review' as const },
   { label: 'Attendance',    Icon: ClipboardList,    href: '/partner/attendance',      dot: null },
@@ -162,13 +162,6 @@ export default function PartnerSidebar({
         }
       })
       .catch(() => {})
-  }, [])
-
-  // Clear review dot when user opens the Review tab (event from the page)
-  useEffect(() => {
-    const handler = () => setReviewCount(0)
-    window.addEventListener('recruitment-review-opened', handler)
-    return () => window.removeEventListener('recruitment-review-opened', handler)
   }, [])
 
   // When user opens communication page, mark all announcements as read in localStorage

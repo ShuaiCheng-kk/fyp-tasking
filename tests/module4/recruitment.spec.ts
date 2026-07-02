@@ -182,6 +182,9 @@ test('UC49: accepting an invitation to a one-off job creates a published, open-e
   expect(shift.end_time.slice(0, 5)).toBe('10:00')
   expect(shift.is_open_ended).toBe(true)
   expect(shift.publication_status).toBe('published')
+  // Links the shift back to the job posting it was hired from — lets an Owner reviewing this
+  // CW's attendance later open the exact posting (description, requirements, etc.) that was advertised.
+  expect(shift.source_job_posting_id).toBe(jobId)
 })
 
 test('UC49: accepting an invitation to a shift job creates a published shift with the real end time, not open-ended', async ({ request }) => {
@@ -238,6 +241,46 @@ test('UC49: accepting an invitation to a shift job creates a published shift wit
   expect(shift.start_time.slice(0, 5)).toBe('08:00')
   expect(shift.end_time.slice(0, 5)).toBe('16:00')
   expect(shift.is_open_ended).toBe(false)
+  expect(shift.source_job_posting_id).toBe(jobId)
+})
+
+test('GET /api/recruitment?resource=job_posting returns the full posting a shift was hired from', async ({ request }) => {
+  const jobRes = await request.post('/api/recruitment', {
+    data: {
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      created_by: seeded.ownerId,
+      title: 'Stockroom Assistant',
+      description: 'Organize incoming deliveries in the stockroom.',
+      requirements: 'Able to lift boxes up to 10kg.',
+      formType: 'oneoff',
+      shift_date: '2030-03-04',
+      job_start_time: '09:00',
+      status: 'open',
+    },
+  })
+  expect(jobRes.status()).toBe(201)
+  const jobBody = await jobRes.json()
+  const jobId = jobBody.posting.id as string
+  createdJobIds.push(jobId)
+
+  const getRes = await request.get(`/api/recruitment?resource=job_posting&job_id=${jobId}`)
+  expect(getRes.status()).toBe(200)
+  const getBody = await getRes.json()
+  expect(getBody.success).toBe(true)
+  expect(getBody.posting).toMatchObject({
+    id: jobId,
+    title: 'Stockroom Assistant',
+    description: 'Organize incoming deliveries in the stockroom.',
+    requirements: 'Able to lift boxes up to 10kg.',
+  })
+})
+
+test('GET /api/recruitment?resource=job_posting 404s for an unknown job id', async ({ request }) => {
+  const getRes = await request.get('/api/recruitment?resource=job_posting&job_id=00000000-0000-0000-0000-000000000000')
+  expect(getRes.status()).toBe(404)
+  const getBody = await getRes.json()
+  expect(getBody.success).toBe(false)
 })
 
 test('UC36 creates, lists, edits, and deletes a job template', async ({ request }) => {

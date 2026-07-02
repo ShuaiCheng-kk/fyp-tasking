@@ -17,8 +17,8 @@ let swapRequestId: string
 
 test.describe.configure({ mode: 'serial' })
 
-async function createManager(label: string, companyId: string): Promise<string> {
-  const email = `test-swap-mgr-${label}-${Date.now()}@tasking-tests.local`
+async function createUser(label: string, companyId: string, role: 'Manager' | 'Employee' = 'Manager'): Promise<string> {
+  const email = `test-swap-${role.toLowerCase()}-${label}-${Date.now()}@tasking-tests.local`
   const { data: authData, error: authErr } = await admin.auth.admin.createUser({
     email, password: 'Test-Password-123!', email_confirm: true,
   })
@@ -26,13 +26,17 @@ async function createManager(label: string, companyId: string): Promise<string> 
 
   const { data: user, error: userErr } = await admin.from('users').insert({
     supabase_auth_id: authData.user.id,
-    full_name: `Swap Manager ${label}`,
+    full_name: `Swap ${role} ${label}`,
     email_address: email,
-    role: 'Manager',
+    role,
     company_id: companyId,
   }).select().single()
   if (userErr || !user) throw new Error(`User insert failed: ${userErr?.message}`)
   return user.id as string
+}
+
+async function createManager(label: string, companyId: string): Promise<string> {
+  return createUser(label, companyId, 'Manager')
 }
 
 async function createShiftAndAssignment(userId: string, companyId: string, deptId: string, shiftDate: string, startTime: string, endTime: string): Promise<{ shiftId: string; assignmentId: string }> {
@@ -278,6 +282,77 @@ test.describe('Shift swap — approval blocked if a shift becomes today before t
     const { data: asnD } = await admin.from('shift_assignments').select('user_id').eq('id', assignmentIdD).single()
     expect(asnC?.user_id).toBe(mgrC)
     expect(asnD?.user_id).toBe(mgrD)
+
+    // The blocked decision should have auto-closed the request as 'rejected' rather than leaving
+    // it stuck as 'pending' forever with no way to ever approve it.
+    const { data: swapRow } = await admin.from('shift_swap_requests').select('status').eq('id', staleSwapRequestId).single()
+    expect(swapRow?.status).toBe('rejected')
+  })
+})
+
+test.describe('Shift swap — request list auto-rejects a pending swap once a shift date arrives', () => {
+  let seeded5: TestOwner
+  let departmentId5: string
+  let mgrG: string
+  let mgrH: string
+  let assignmentIdG: string
+  let assignmentIdH: string
+  let shiftIdG: string
+
+  test.beforeAll(async () => {
+    seeded5 = await seedTestOwnerAndCompany('shift-swap-expire')
+    const { data: dept } = await admin.from('departments').insert({
+      name: 'Swap Expire Dept', color: '#3B82F6', company_id: seeded5.companyId,
+    }).select().single()
+    departmentId5 = dept!.id as string
+
+    mgrG = await createManager('EXP-G', seeded5.companyId)
+    mgrH = await createManager('EXP-H', seeded5.companyId)
+    await admin.from('manager_departments').insert([
+      { manager_id: mgrG, department_id: departmentId5, company_id: seeded5.companyId, assigned_by: seeded5.ownerId },
+      { manager_id: mgrH, department_id: departmentId5, company_id: seeded5.companyId, assigned_by: seeded5.ownerId },
+    ])
+
+    const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1)
+    const dayAfter = new Date(); dayAfter.setDate(dayAfter.getDate() + 2)
+    const r1 = await createShiftAndAssignment(mgrG, seeded5.companyId, departmentId5, tomorrow.toISOString().slice(0, 10), '09:00', '17:00')
+    const r2 = await createShiftAndAssignment(mgrH, seeded5.companyId, departmentId5, dayAfter.toISOString().slice(0, 10), '10:00', '18:00')
+    assignmentIdG = r1.assignmentId
+    assignmentIdH = r2.assignmentId
+    shiftIdG = r1.shiftId
+  })
+
+  test.afterAll(async () => {
+    await cleanupTestOwnerAndCompany(seeded5)
+  })
+
+  test('GET resource=shift_swaps flips an expired pending request to rejected without anyone deciding it', async ({ request }) => {
+    const submitRes = await request.post('/api/attendance', {
+      data: {
+        action: 'submit_shift_swap',
+        company_id: seeded5.companyId,
+        requester_id: mgrG,
+        requester_assignment_id: assignmentIdG,
+        counterpart_id: mgrH,
+        counterpart_assignment_id: assignmentIdH,
+        reason: 'Expiry test',
+      },
+    })
+    expect(submitRes.status()).toBe(200)
+    const expiredSwapRequestId = (await submitRes.json()).request.id as string
+
+    // Simulate time passing: the requester's shift, tomorrow at submit time, is now today —
+    // this swap can never be approved anymore and should not still show as 'pending'.
+    await admin.from('shifts').update({ shift_date: new Date().toISOString().slice(0, 10) }).eq('id', shiftIdG)
+
+    const listRes = await request.get(`/api/attendance?company_id=${seeded5.companyId}&resource=shift_swaps`)
+    expect(listRes.status()).toBe(200)
+    const listBody = await listRes.json()
+    const found = listBody.requests.find((r: { id: string }) => r.id === expiredSwapRequestId)
+    expect(found?.status).toBe('rejected')
+
+    const { data: swapRow } = await admin.from('shift_swap_requests').select('status').eq('id', expiredSwapRequestId).single()
+    expect(swapRow?.status).toBe('rejected')
   })
 })
 
@@ -292,6 +367,7 @@ test.describe('Shift swap — approval moves active tasks but leaves Complete ta
   let shiftIdF: string
   let activeTaskOnE: string
   let completeTaskOnE: string
+  let reviewTaskOnE: string
 
   test.beforeAll(async () => {
     seeded4 = await seedTestOwnerAndCompany('shift-swap-tasks')
@@ -327,13 +403,19 @@ test.describe('Shift swap — approval moves active tasks but leaves Complete ta
       title: 'Close register (already done)', assigned_user_id: mgrE, assigned_by: seeded4.ownerId, status: 'Complete',
     }).select('id').single()
     completeTaskOnE = doneTask!.id as string
+
+    const { data: reviewTask } = await admin.from('tasks').insert({
+      company_id: seeded4.companyId, department_id: departmentId4, shift_id: shiftIdE,
+      title: 'Cash count (awaiting sign-off)', assigned_user_id: mgrE, assigned_by: seeded4.ownerId, status: 'Review',
+    }).select('id').single()
+    reviewTaskOnE = reviewTask!.id as string
   })
 
   test.afterAll(async () => {
     await cleanupTestOwnerAndCompany(seeded4)
   })
 
-  test('moves the active task to the new assignee but keeps the Complete task with the original assignee', async ({ request }) => {
+  test('moves the active task to the new assignee but keeps Review/Complete tasks with the original assignee', async ({ request }) => {
     const submitRes = await request.post('/api/attendance', {
       data: {
         action: 'submit_shift_swap',
@@ -360,6 +442,7 @@ test.describe('Shift swap — approval moves active tasks but leaves Complete ta
       expect.arrayContaining([expect.objectContaining({ id: activeTaskOnE, title: 'Restock shelves', status: 'Assigned' })]),
     )
     expect(found.requester_movable_tasks.some((t: { id: string }) => t.id === completeTaskOnE)).toBe(false)
+    expect(found.requester_movable_tasks.some((t: { id: string }) => t.id === reviewTaskOnE)).toBe(false)
     expect(found.counterpart_movable_tasks).toEqual([])
 
     const decideRes = await request.patch('/api/attendance', {
@@ -369,7 +452,177 @@ test.describe('Shift swap — approval moves active tasks but leaves Complete ta
 
     const { data: activeTask } = await admin.from('tasks').select('assigned_user_id').eq('id', activeTaskOnE).single()
     const { data: doneTask } = await admin.from('tasks').select('assigned_user_id').eq('id', completeTaskOnE).single()
+    const { data: reviewTask } = await admin.from('tasks').select('assigned_user_id').eq('id', reviewTaskOnE).single()
     expect(activeTask?.assigned_user_id).toBe(mgrF)
     expect(doneTask?.assigned_user_id).toBe(mgrE)
+    expect(reviewTask?.assigned_user_id).toBe(mgrE)
+  })
+})
+
+test.describe('Shift swap — Employee<->Employee swaps route to the department Manager, not the Owner', () => {
+  let seeded6: TestOwner
+  let departmentId6: string
+  let mgrI: string
+  let empJ: string
+  let empK: string
+  let assignmentIdJ: string
+  let assignmentIdK: string
+
+  test.beforeAll(async () => {
+    seeded6 = await seedTestOwnerAndCompany('shift-swap-emp-routing')
+    const { data: dept } = await admin.from('departments').insert({
+      name: 'Swap Routing Dept', color: '#3B82F6', company_id: seeded6.companyId,
+    }).select().single()
+    departmentId6 = dept!.id as string
+
+    mgrI = await createUser('RT-I', seeded6.companyId, 'Manager')
+    empJ = await createUser('RT-J', seeded6.companyId, 'Employee')
+    empK = await createUser('RT-K', seeded6.companyId, 'Employee')
+    await admin.from('manager_departments').insert({
+      manager_id: mgrI, department_id: departmentId6, company_id: seeded6.companyId, assigned_by: seeded6.ownerId,
+    })
+    await admin.from('employee_departments').insert([
+      { employee_id: empJ, department_id: departmentId6 },
+      { employee_id: empK, department_id: departmentId6 },
+    ])
+
+    const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1)
+    const dayAfter = new Date(); dayAfter.setDate(dayAfter.getDate() + 2)
+    const r1 = await createShiftAndAssignment(empJ, seeded6.companyId, departmentId6, tomorrow.toISOString().slice(0, 10), '09:00', '17:00')
+    const r2 = await createShiftAndAssignment(empK, seeded6.companyId, departmentId6, dayAfter.toISOString().slice(0, 10), '10:00', '18:00')
+    assignmentIdJ = r1.assignmentId
+    assignmentIdK = r2.assignmentId
+  })
+
+  test.afterAll(async () => {
+    await cleanupTestOwnerAndCompany(seeded6)
+  })
+
+  test('is hidden from the Owner queue but visible + decidable in the department Manager queue', async ({ request }) => {
+    const submitRes = await request.post('/api/attendance', {
+      data: {
+        action: 'submit_shift_swap',
+        company_id: seeded6.companyId,
+        requester_id: empJ,
+        requester_assignment_id: assignmentIdJ,
+        counterpart_id: empK,
+        counterpart_assignment_id: assignmentIdK,
+        reason: 'Routing test',
+      },
+    })
+    expect(submitRes.status()).toBe(200)
+    const swapId = (await submitRes.json()).request.id as string
+
+    const respondRes = await request.patch('/api/attendance', {
+      data: { action: 'respond_shift_swap', id: swapId, counterpart_id: empK, decision: 'approved' },
+    })
+    expect(respondRes.status()).toBe(200)
+
+    // Owner queue (no manager_id) must not surface an Employee<->Employee swap.
+    const ownerListRes = await request.get(`/api/attendance?company_id=${seeded6.companyId}&resource=shift_swaps`)
+    expect(ownerListRes.status()).toBe(200)
+    const ownerListBody = await ownerListRes.json()
+    expect(ownerListBody.requests.some((r: { id: string }) => r.id === swapId)).toBe(false)
+
+    // The department's Manager queue must surface it.
+    const mgrListRes = await request.get(`/api/attendance?company_id=${seeded6.companyId}&resource=shift_swaps&manager_id=${mgrI}`)
+    expect(mgrListRes.status()).toBe(200)
+    const mgrListBody = await mgrListRes.json()
+    expect(mgrListBody.requests.some((r: { id: string }) => r.id === swapId)).toBe(true)
+
+    // That Manager can decide it.
+    const decideRes = await request.patch('/api/attendance', {
+      data: { action: 'decide_shift_swap', id: swapId, reviewer_id: mgrI, decision: 'approved' },
+    })
+    expect(decideRes.status()).toBe(200)
+    const decideBody = await decideRes.json()
+    expect(decideBody.request.status).toBe('approved')
+
+    const { data: asnJ } = await admin.from('shift_assignments').select('user_id').eq('id', assignmentIdJ).single()
+    const { data: asnK } = await admin.from('shift_assignments').select('user_id').eq('id', assignmentIdK).single()
+    expect(asnJ?.user_id).toBe(empK)
+    expect(asnK?.user_id).toBe(empJ)
+  })
+})
+
+test.describe('Shift swap — same-department and same-role restrictions', () => {
+  let seeded7: TestOwner
+  let deptA: string
+  let deptB: string
+  let mgrL: string
+  let mgrM: string
+  let empN: string
+  let assignmentIdL: string
+  let assignmentIdM: string
+  let assignmentIdN: string
+
+  test.beforeAll(async () => {
+    seeded7 = await seedTestOwnerAndCompany('shift-swap-restrictions')
+    const { data: dA } = await admin.from('departments').insert({
+      name: 'Restrictions Dept A', color: '#3B82F6', company_id: seeded7.companyId,
+    }).select().single()
+    const { data: dB } = await admin.from('departments').insert({
+      name: 'Restrictions Dept B', color: '#10B981', company_id: seeded7.companyId,
+    }).select().single()
+    deptA = dA!.id as string
+    deptB = dB!.id as string
+
+    mgrL = await createUser('RS-L', seeded7.companyId, 'Manager')
+    mgrM = await createUser('RS-M', seeded7.companyId, 'Manager')
+    empN = await createUser('RS-N', seeded7.companyId, 'Employee')
+    await admin.from('manager_departments').insert([
+      { manager_id: mgrL, department_id: deptA, company_id: seeded7.companyId, assigned_by: seeded7.ownerId },
+      { manager_id: mgrM, department_id: deptB, company_id: seeded7.companyId, assigned_by: seeded7.ownerId },
+    ])
+    await admin.from('employee_departments').insert({ employee_id: empN, department_id: deptA })
+
+    const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1)
+    const dayAfter = new Date(); dayAfter.setDate(dayAfter.getDate() + 2)
+    const rL = await createShiftAndAssignment(mgrL, seeded7.companyId, deptA, tomorrow.toISOString().slice(0, 10), '09:00', '17:00')
+    const rM = await createShiftAndAssignment(mgrM, seeded7.companyId, deptB, dayAfter.toISOString().slice(0, 10), '10:00', '18:00')
+    const rN = await createShiftAndAssignment(empN, seeded7.companyId, deptA, dayAfter.toISOString().slice(0, 10), '10:00', '18:00')
+    assignmentIdL = rL.assignmentId
+    assignmentIdM = rM.assignmentId
+    assignmentIdN = rN.assignmentId
+  })
+
+  test.afterAll(async () => {
+    await cleanupTestOwnerAndCompany(seeded7)
+  })
+
+  test('rejects a swap between two Managers in different departments', async ({ request }) => {
+    const res = await request.post('/api/attendance', {
+      data: {
+        action: 'submit_shift_swap',
+        company_id: seeded7.companyId,
+        requester_id: mgrL,
+        requester_assignment_id: assignmentIdL,
+        counterpart_id: mgrM,
+        counterpart_assignment_id: assignmentIdM,
+        reason: 'Cross-department attempt',
+      },
+    })
+    expect(res.status()).toBe(400)
+    const body = await res.json()
+    expect(body.success).toBe(false)
+    expect(body.message).toContain('same department')
+  })
+
+  test('rejects a swap between a Manager and an Employee even within the same department', async ({ request }) => {
+    const res = await request.post('/api/attendance', {
+      data: {
+        action: 'submit_shift_swap',
+        company_id: seeded7.companyId,
+        requester_id: mgrL,
+        requester_assignment_id: assignmentIdL,
+        counterpart_id: empN,
+        counterpart_assignment_id: assignmentIdN,
+        reason: 'Cross-role attempt',
+      },
+    })
+    expect(res.status()).toBe(400)
+    const body = await res.json()
+    expect(body.success).toBe(false)
+    expect(body.message).toContain('same role')
   })
 })

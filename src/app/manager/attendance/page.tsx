@@ -394,7 +394,7 @@ export default function ManagerAttendancePage() {
     return () => { cancelled = true }
   }, [router, fetchMyShift, fetchMyRequests, fetchSwapCandidates])
 
-  const fetchData = useCallback(async (cid: string) => {
+  const fetchData = useCallback(async (cid: string, mid: string) => {
     if (!cid) return
     setLoading(true)
     setError('')
@@ -402,7 +402,9 @@ export default function ManagerAttendancePage() {
       const [dashRes, toRes, swapRes] = await Promise.all([
         fetch(`/api/attendance?company_id=${cid}`),
         fetch(`/api/attendance?company_id=${cid}&resource=time_off`),
-        fetch(`/api/attendance?company_id=${cid}&resource=shift_swaps`),
+        // manager_id scopes this to Employee<->Employee swaps within departments this manager
+        // manages — Manager<->Manager swaps go to the Owner's queue instead, not here.
+        fetch(`/api/attendance?company_id=${cid}&resource=shift_swaps&manager_id=${mid}`),
       ])
       const dashData = await dashRes.json()
       const toData   = await toRes.json()
@@ -416,7 +418,7 @@ export default function ManagerAttendancePage() {
     } finally { setLoading(false) }
   }, [])
 
-  useEffect(() => { if (companyId) void fetchData(companyId) }, [companyId, fetchData])
+  useEffect(() => { if (companyId) void fetchData(companyId, managerId) }, [companyId, managerId, fetchData])
 
   // Filter records by selected department
   const deptRecords = useMemo<AttendanceDashboardRecord[]>(() => {
@@ -455,7 +457,7 @@ export default function ManagerAttendancePage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message ?? 'Failed to submit review')
       setReviewOpen(false)
-      void fetchData(companyId)
+      void fetchData(companyId, managerId)
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to submit review')
     } finally { setActionLoading(false) }
@@ -472,7 +474,7 @@ export default function ManagerAttendancePage() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
-      void fetchData(companyId)
+      void fetchData(companyId, managerId)
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed')
     } finally { setActionLoading(false) }
@@ -489,7 +491,7 @@ export default function ManagerAttendancePage() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
-      void fetchData(companyId)
+      void fetchData(companyId, managerId)
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed')
     } finally { setActionLoading(false) }
@@ -529,7 +531,7 @@ export default function ManagerAttendancePage() {
                 <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{managerName}</span>
               </div>
             )}
-            <button onClick={() => void fetchData(companyId)} disabled={loading || !companyId}
+            <button onClick={() => void fetchData(companyId, managerId)} disabled={loading || !companyId}
               style={{ height: 34, width: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 9, cursor: 'pointer', color: MUTED }}>
               {loading ? <Spinner /> : <RefreshCw size={14} />}
             </button>

@@ -169,8 +169,10 @@ export const attendanceRepository = {
     return (data ?? []) as Array<{ id: string; title: string; status: string }>
   },
 
-  // Active (non-Complete, non-archived) tasks currently owned by this assignment's user on this
-  // shift — i.e. exactly the tasks reassignTasksForShiftSwap would move if the swap is approved.
+  // Movable tasks currently owned by this assignment's user on this shift — only 'Assigned' and
+  // 'In Progress' truly transfer on a swap; 'Review' work is awaiting sign-off on what THIS person
+  // did and 'Complete' is done, so both stay with the original owner. Non-archived only. This is
+  // exactly the set reassignTasksForShiftSwap moves if the swap is approved.
   async getMovableTasksByShiftAssignment(assignment_id: string): Promise<Array<{ id: string; title: string; status: string; priority: string | null; due_at: string | null }>> {
     const { data: assignment, error: aErr } = await supabase
       .from('shift_assignments')
@@ -185,7 +187,7 @@ export const attendanceRepository = {
       .select('id, title, status, priority, due_at')
       .eq('shift_id', assignment.shift_id)
       .eq('assigned_user_id', assignment.user_id)
-      .neq('status', 'Complete')
+      .in('status', ['Assigned', 'In Progress'])
       .eq('is_archived', false)
     if (error) throw new Error(error.message)
     return (data ?? []) as Array<{ id: string; title: string; status: string; priority: string | null; due_at: string | null }>

@@ -40,7 +40,8 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: true, count })
     }
     if (resource === 'shift_swaps') {
-      const requests = await attendanceService.getShiftSwapRequests(company_id)
+      const manager_id = searchParams.get('manager_id') ?? undefined
+      const requests = await attendanceService.getShiftSwapRequests(company_id, { managerId: manager_id })
       return NextResponse.json({ success: true, requests })
     }
     if (resource === 'fixed_off_days') {

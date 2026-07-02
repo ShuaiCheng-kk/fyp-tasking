@@ -20,6 +20,7 @@ import {
   ShiftSwapMovableTask,
   ShiftSwapRequestView,
 } from '@/types/Attendance'
+import { JobPosting } from '@/types/Recruitment'
 import { ModalOverlay, ModalBox, ModalHeader, modalErrorBoxStyle, modalPrimaryButtonStyle, modalInputStyle, modalLabelStyle } from '@/components/modal'
 import DatePickerField from '@/components/DatePickerField'
 import jsPDF from 'jspdf'
@@ -31,6 +32,15 @@ const TEXT_DARK = '#0F172A'
 
 
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+
+// Shape returned by POST /api/attendance/ai-suggest for request_type: 'fixed_off_day'
+interface FixedOffDayAISuggestion {
+  recommendation: 'approve' | 'reject' | 'review'
+  confidence: number
+  reason: string
+  concerns: string[]
+  alternatives: string[]
+}
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -274,7 +284,7 @@ function CapsuleTabBar<T extends string>({
               </span>
             )}
             {tab.dot && (
-              <span style={{ width: 10, height: 10, borderRadius: 999, background: '#EF4444', flexShrink: 0, border: isActive ? '1.5px solid rgba(255,255,255,0.4)' : '1.5px solid #fff' }} />
+              <span style={{ width: 10, height: 10, borderRadius: 999, background: '#EF4444', flexShrink: 0, border: isActive ? '1.5px solid #111827' : '1.5px solid #fff' }} />
             )}
           </button>
         )
@@ -315,23 +325,30 @@ const labelStyle: React.CSSProperties = {
 
 // ─── CurrentShiftsBlock ───────────────────────────────────────────────────────
 
-function CurrentShiftsBlock({ show, deptName, rows, loading, panelBorder, highlightRequest }: {
+function CurrentShiftsBlock({ show, deptName, rows, loading, panelBorder, highlightRequest, anchorDate, onNavigateDay }: {
   show: boolean
   deptName: string
   rows: TimelineRow[]
   loading: boolean
   panelBorder: string
   highlightRequest?: ShiftSwapRequestView | null
+  anchorDate: string
+  onNavigateDay: (dir: number) => void
 }) {
   if (!show) return null
   const today = new Date()
-  const dow = (today.getDay() + 6) % 7
-  const mon = new Date(today); mon.setDate(today.getDate() - dow)
+  // Rolling 7-day window starting exactly at anchorDate (not snapped to Mon-Sun) — a swap can
+  // straddle a calendar-week boundary, so the window must be free to start on any weekday.
+  const mon = new Date(`${anchorDate}T00:00:00`)
   const csWeekDates: string[] = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(mon); d.setDate(mon.getDate() + i)
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   })
   const todayKey2 = today.toISOString().slice(0, 10)
+  const csIconButtonStyle: React.CSSProperties = {
+    width: 34, height: 34, borderRadius: 8, border: `1px solid ${panelBorder}`,
+    background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: 'pointer', color: TEXT_DARK, flexShrink: 0,
+  }
   const dc = deptColor(deptName)
   const sortedRows = [...rows].sort((a, b) => {
     const ra = a.role === 'Manager' ? 0 : 1
@@ -373,6 +390,10 @@ function CurrentShiftsBlock({ show, deptName, rows, loading, panelBorder, highli
           <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Current Shifts</span>
           <span style={{ fontSize: 12, fontWeight: 600, color: dc, background: `${dc}1a`, borderRadius: 999, padding: '2px 10px', marginLeft: 10 }}>{deptName}</span>
         </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          <button type="button" onClick={() => onNavigateDay(-1)} aria-label="Shift window back one day" style={csIconButtonStyle}><ChevronLeft size={15} /></button>
+          <button type="button" onClick={() => onNavigateDay(1)} aria-label="Shift window forward one day" style={csIconButtonStyle}><ChevronRight size={15} /></button>
+        </div>
         {loading && <Spinner size={13} dark />}
       </div>
       <div style={{ overflowX: 'auto', padding: '22px 18px 28px' }}>
@@ -383,7 +404,7 @@ function CurrentShiftsBlock({ show, deptName, rows, loading, panelBorder, highli
         ) : sortedRows.length === 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 100, gap: 10, color: '#9CA3AF' }}>
             <CalendarDays size={22} strokeWidth={1.5} />
-            <span style={{ fontSize: 13, fontWeight: 600 }}>No shifts this week</span>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>No shifts for this week</span>
           </div>
         ) : (
           <div style={{ minWidth: 700, borderRadius: 12, overflow: 'hidden', border: `1px solid ${panelBorder}` }}>
@@ -589,6 +610,13 @@ export default function OwnerAttendancePage() {
   const [cwWorkerStatus, setCwWorkerStatus] = useState<string | null>(null)
   const [cwStatusLoading, setCwStatusLoading] = useState(false)
 
+  // job posting detail modal — opened from the "Job Title" field of a CW attendance record,
+  // via Shift.source_job_posting_id (the posting that CW was actually hired from)
+  const [jobPostingDetailOpen, setJobPostingDetailOpen] = useState(false)
+  const [jobPostingDetail, setJobPostingDetail] = useState<JobPosting | null>(null)
+  const [jobPostingDetailLoading, setJobPostingDetailLoading] = useState(false)
+  const [jobPostingDetailError, setJobPostingDetailError] = useState('')
+
   // ── Export modal state ────────────────────────────────────────────────────
   const [exportOpen, setExportOpen] = useState(false)
   const [exportLoading, setExportLoading] = useState(false)
@@ -619,9 +647,17 @@ export default function OwnerAttendancePage() {
   const [currentShiftsRows, setCurrentShiftsRows] = useState<TimelineRow[]>([])
   const [currentShiftsLoading, setCurrentShiftsLoading] = useState(false)
   const [currentShiftsDept, setCurrentShiftsDept] = useState<string | null>(null)
-  const [aiSwapLoadingId, setAiSwapLoadingId] = useState<string | null>(null)
-  const [aiSwapResults, setAiSwapResults] = useState<Record<string, { recommendation: string; reason: string }>>({})
-  const [aiSwapError, setAiSwapError] = useState<Record<string, string>>({})
+  const [csAnchorDate, setCsAnchorDate] = useState<string>(() => toISODate(new Date()))
+  const navigateCurrentShiftsDay = useCallback((dir: number) => {
+    setCsAnchorDate(prev => {
+      const d = new Date(`${prev}T00:00:00`)
+      d.setDate(d.getDate() + dir)
+      return toISODate(d)
+    })
+  }, [])
+  const [aiFixedOffLoadingId, setAiFixedOffLoadingId] = useState<string | null>(null)
+  const [aiFixedOffResults, setAiFixedOffResults] = useState<Record<string, FixedOffDayAISuggestion>>({})
+  const [aiFixedOffError, setAiFixedOffError] = useState<Record<string, string>>({})
   const [activityLogs, setActivityLogs] = useState<{ id: string; type: 'swaps' | 'fixedoff'; action: 'approved' | 'rejected'; targetName: string; ts: Date }[]>(() => {
     try {
       const saved = localStorage.getItem('attendance_activity_logs')
@@ -677,14 +713,15 @@ export default function OwnerAttendancePage() {
   }, [])
 
   // ── Fetch current dept shifts for Current Shifts block ───────────────────
-  const fetchCurrentShifts = useCallback(async (cid: string, deptName: string) => {
+  const fetchCurrentShifts = useCallback(async (cid: string, deptName: string, anchorDate: string) => {
     if (!cid || !deptName) return
     setCurrentShiftsLoading(true)
     setCurrentShiftsDept(deptName)
     try {
-      const today = new Date()
-      const dow = (today.getDay() + 6) % 7
-      const mon = new Date(today); mon.setDate(today.getDate() - dow)
+      // Rolling 7-day window starting exactly at anchorDate — must match the CurrentShiftsBlock
+      // display window (which is not Mon-Sun snapped) or a swap that crosses a week boundary
+      // would fetch a range that doesn't cover both sides of it.
+      const mon = new Date(`${anchorDate}T00:00:00`)
       const sun = new Date(mon); sun.setDate(mon.getDate() + 6)
       const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
       const res = await fetch(`/api/shift?company_id=${cid}&date_from=${fmt(mon)}&date_to=${fmt(sun)}`)
@@ -733,39 +770,52 @@ export default function OwnerAttendancePage() {
     if (companyId) void fetchWeekRecords(companyId, arWindowOffset)
   }, [companyId, arWindowOffset, fetchWeekRecords])
 
-  // fetch current dept shifts whenever the action-needed card changes
-  useEffect(() => {
-    if (!companyId || mainTab !== 'requests' || reqTab !== 'swaps') return
+  const activeSwapRequest = useMemo(() => {
     const pending = swapRequests
       .filter(r => r.status === 'pending')
       .sort((a, b) => new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime())
-    const card = pending[Math.min(actionIndex, pending.length - 1)]
-    if (card?.department_name) void fetchCurrentShifts(companyId, card.department_name)
-  }, [companyId, mainTab, reqTab, swapRequests, actionIndex, fetchCurrentShifts])
+    return pending[Math.min(actionIndex, pending.length - 1)] ?? null
+  }, [swapRequests, actionIndex])
 
-  // ── AI analyze shift swap ─────────────────────────────────────────────────
-  const analyzeSwap = async (req: ShiftSwapRequestView) => {
-    setAiSwapLoadingId(req.id)
-    setAiSwapError(prev => ({ ...prev, [req.id]: '' }))
+  // Auto-focus the Current Shifts window on the swap's own two dates whenever a new request
+  // becomes active — a swap can straddle a week boundary (e.g. Sun 5 Jul <-> Mon 6 Jul), so
+  // anchoring on whichever date comes first (rather than snapping to a Mon-Sun calendar week)
+  // is the only way both sides of the swap are guaranteed to land inside the same 7-day window.
+  useEffect(() => {
+    if (!activeSwapRequest) return
+    const dates = [activeSwapRequest.requester_shift_date, activeSwapRequest.counterpart_shift_date]
+      .filter((d): d is string => !!d)
+    if (dates.length === 0) return
+    setCsAnchorDate(dates.reduce((a, b) => (a < b ? a : b)))
+  }, [activeSwapRequest?.id, activeSwapRequest?.requester_shift_date, activeSwapRequest?.counterpart_shift_date])
+
+  // fetch current dept shifts whenever the action-needed card or the viewed window changes
+  useEffect(() => {
+    if (!companyId || mainTab !== 'requests' || reqTab !== 'swaps' || !activeSwapRequest?.department_name) return
+    void fetchCurrentShifts(companyId, activeSwapRequest.department_name, csAnchorDate)
+  }, [companyId, mainTab, reqTab, activeSwapRequest?.department_name, csAnchorDate, fetchCurrentShifts])
+
+  // ── AI analyze fixed day off request ────────────────────────────────────────
+  const analyzeFixedOffDay = async (req: FixedOffDayRequestView) => {
+    setAiFixedOffLoadingId(req.id)
+    setAiFixedOffError(prev => ({ ...prev, [req.id]: '' }))
     try {
       const res = await fetch('/api/attendance/ai-suggest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          request_type: 'shift_swap',
-          requester_id: req.requester_id,
-          counterpart_id: req.counterpart_id,
-          requester_assignment_id: req.requester_assignment_id,
-          counterpart_assignment_id: req.counterpart_assignment_id,
+          request_type: 'fixed_off_day',
+          id: req.id,
+          company_id: companyId,
         }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'AI analysis failed')
-      setAiSwapResults(prev => ({ ...prev, [req.id]: { recommendation: data.recommendation, reason: data.reason } }))
+      setAiFixedOffResults(prev => ({ ...prev, [req.id]: data.suggestion }))
     } catch (err) {
-      setAiSwapError(prev => ({ ...prev, [req.id]: err instanceof Error ? err.message : 'AI analysis failed' }))
+      setAiFixedOffError(prev => ({ ...prev, [req.id]: err instanceof Error ? err.message : 'AI analysis failed' }))
     } finally {
-      setAiSwapLoadingId(null)
+      setAiFixedOffLoadingId(null)
     }
   }
 
@@ -836,6 +886,23 @@ export default function OwnerAttendancePage() {
     setCwWorkerStatus(row.assignee_worker_status ?? 'active')
     setReviewError('')
     setReviewOpen(true)
+  }
+
+  const openJobPostingDetail = async (jobId: string) => {
+    setJobPostingDetailOpen(true)
+    setJobPostingDetailLoading(true)
+    setJobPostingDetailError('')
+    setJobPostingDetail(null)
+    try {
+      const res = await fetch(`/api/recruitment?resource=job_posting&job_id=${jobId}`)
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to load job posting')
+      setJobPostingDetail(data.posting)
+    } catch (err) {
+      setJobPostingDetailError(err instanceof Error ? err.message : 'Failed to load job posting')
+    } finally {
+      setJobPostingDetailLoading(false)
+    }
   }
 
   const toggleCwStatus = async () => {
@@ -1199,12 +1266,6 @@ export default function OwnerAttendancePage() {
   const pendingSwapCount = swapRequests.filter(r => r.status === 'pending').length
   const pendingFixedOffCount = fixedOffDayRequests.filter(r => r.status === 'pending').length
   const totalPendingRequests = pendingSwapCount + pendingFixedOffCount
-  const activeSwapRequest = useMemo(() => {
-    const pending = swapRequests
-      .filter(r => r.status === 'pending')
-      .sort((a, b) => new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime())
-    return pending[Math.min(actionIndex, pending.length - 1)] ?? null
-  }, [swapRequests, actionIndex])
 
   const mainTabs = [
     { key: 'records' as const, label: 'Records' },
@@ -1668,10 +1729,6 @@ export default function OwnerAttendancePage() {
                 const SwapCard = ({ req, compact, selected, onSelect }: { req: ShiftSwapRequestView; compact?: boolean; selected?: boolean; onSelect?: () => void }) => {
                   const isReadyForDecision = req.counterpart_status === 'approved' && req.status === 'pending'
                   const isAwaitingCounterpart = req.counterpart_status === 'pending' && req.status === 'pending'
-                  const aiResult = aiSwapResults[req.id]
-                  const aiErr = aiSwapError[req.id]
-                  const aiLoading = aiSwapLoadingId === req.id
-                  const aiColor = aiResult?.recommendation === 'approve' ? { bg: '#DCFCE7', text: '#15803D', border: '#BBF7D0' } : aiResult?.recommendation === 'reject' ? { bg: '#FEE2E2', text: '#DC2626', border: '#FECACA' } : { bg: '#FEF9C3', text: '#854D0E', border: '#FDE68A' }
                   const initials = (name: string) => name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
                   const avatarColors = ['#3B82F6', '#8B5CF6', '#059669', '#F97316', '#EC4899', '#0EA5E9']
                   const avatarBg = (name: string) => avatarColors[name.charCodeAt(0) % avatarColors.length]
@@ -1743,7 +1800,7 @@ export default function OwnerAttendancePage() {
                           })()}
                           <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, minWidth: 0 }}>
                             <span style={{ fontSize: '0.76rem', fontWeight: 800, color: '#64748B', whiteSpace: 'nowrap' }}>
-                              {isPending ? (req.created_at ? new Date(req.created_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '-') : formatOwnerDecisionTime(req.reviewed_at)}
+                              {isPending ? formatOwnerDecisionTime(req.created_at) : formatOwnerDecisionTime(req.reviewed_at)}
                             </span>
                             {isPending ? (
                               <div onClick={e => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -1888,14 +1945,16 @@ export default function OwnerAttendancePage() {
                     ) : (
                       <>
                         <div style={{ display: 'contents' }}>
-                        {/* Action Needed — only shown when there are pending requests. Shows 2 at a
-                            time; clicking a card selects it (driving Current Shifts/Task Changes
-                            below) independently from paging through the rest. */}
-                        {actionNeeded.length > 0 && (() => {
+                        {/* Action Needed — always rendered at a fixed size so the grid layout never
+                            shifts; shows an empty state in place of the cards once nothing is
+                            pending. Shows 2 at a time; clicking a card selects it (driving Current
+                            Shifts/Task Changes below) independently from paging through the rest. */}
+                        {(() => {
                           const PAGE_SIZE = 2
-                          const clampedIndex = Math.min(actionIndex, actionNeeded.length - 1)
+                          const hasActionNeeded = actionNeeded.length > 0
+                          const clampedIndex = Math.min(actionIndex, Math.max(actionNeeded.length - 1, 0))
                           const totalPages = Math.ceil(actionNeeded.length / PAGE_SIZE)
-                          const currentPage = Math.floor(clampedIndex / PAGE_SIZE)
+                          const currentPage = hasActionNeeded ? Math.floor(clampedIndex / PAGE_SIZE) : 0
                           const pageStart = currentPage * PAGE_SIZE
                           const visibleItems = actionNeeded.slice(pageStart, pageStart + PAGE_SIZE)
                           return (
@@ -1927,18 +1986,25 @@ export default function OwnerAttendancePage() {
                               </div>
                             )}
                           </div>
-                          <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'row', gap: 10 }}>
-                            {visibleItems.map((item, i) => (
-                              <div key={item.id} style={{ flex: 1, minWidth: 0 }}>
-                                <SwapCard
-                                  req={item}
-                                  compact
-                                  selected={item.id === actionNeeded[clampedIndex]?.id}
-                                  onSelect={() => setActionIndex(pageStart + i)}
-                                />
-                              </div>
-                            ))}
-                          </div>
+                          {hasActionNeeded ? (
+                            <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'row', gap: 10 }}>
+                              {visibleItems.map((item, i) => (
+                                <div key={item.id} style={{ flex: '0 0 calc(50% - 5px)', minWidth: 0 }}>
+                                  <SwapCard
+                                    req={item}
+                                    compact
+                                    selected={item.id === actionNeeded[clampedIndex]?.id}
+                                    onSelect={() => setActionIndex(pageStart + i)}
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, color: '#9CA3AF' }}>
+                              <CheckCheck size={22} strokeWidth={1.5} />
+                              <span style={{ fontSize: 13, fontWeight: 600 }}>All caught up — nothing needs action</span>
+                            </div>
+                          )}
                         </section>
                           )
                         })()}
@@ -1959,7 +2025,7 @@ export default function OwnerAttendancePage() {
                                 <button
                                   type="button"
                                   onClick={() => setProcessedDeptDropdownOpen(o => !o)}
-                                  style={{ display: 'flex', alignItems: 'center', gap: 5, height: 30, padding: '0 10px', border: `1.5px solid ${processedDeptDropdownOpen ? '#F97316' : '#E5E7EB'}`, borderRadius: 8, background: '#FFFFFF', color: '#374151', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', boxShadow: processedDeptDropdownOpen ? '0 0 0 3px rgba(249,115,22,0.10)' : 'none', transition: 'border-color 0.15s' }}
+                                  style={{ display: 'flex', alignItems: 'center', gap: 5, height: 36, padding: '0 10px', border: `1.5px solid ${processedDeptDropdownOpen ? '#F97316' : '#E5E7EB'}`, borderRadius: 8, background: '#FFFFFF', color: '#374151', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', boxShadow: processedDeptDropdownOpen ? '0 0 0 3px rgba(249,115,22,0.10)' : 'none', transition: 'border-color 0.15s' }}
                                 >
                                   <Filter size={11} style={{ color: '#9CA3AF', flexShrink: 0 }} />
                                   {processedDeptFilter === 'all' ? 'All Departments' : processedDeptFilter}
@@ -2017,21 +2083,49 @@ export default function OwnerAttendancePage() {
                     <div style={{ padding: '40px', textAlign: 'center', color: '#9CA3AF', fontSize: '0.875rem' }}>No fixed day off requests.</div>
                   ) : fixedOffDayRequests.map(req => {
                     const color = statusColor(req.status)
+                    const aiResult = aiFixedOffResults[req.id]
+                    const aiErr = aiFixedOffError[req.id]
+                    const aiLoading = aiFixedOffLoadingId === req.id
+                    const aiColor = aiResult?.recommendation === 'approve' ? { bg: '#DCFCE7', text: '#15803D', border: '#BBF7D0' } : aiResult?.recommendation === 'reject' ? { bg: '#FEE2E2', text: '#DC2626', border: '#FECACA' } : { bg: '#FEF9C3', text: '#854D0E', border: '#FDE68A' }
                     return (
-                      <div key={req.id} className="att-request-card" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, padding: '14px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-                        <div>
-                          <strong style={{ fontSize: '0.875rem', color: '#111827' }}>{req.requester_name}</strong>
-                          <p style={{ margin: '3px 0 0', fontSize: '0.775rem', color: '#374151', fontWeight: 600 }}>{WEEKDAYS[req.weekday]}</p>
+                      <div key={req.id} className="att-request-card" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                          <div>
+                            <strong style={{ fontSize: '0.875rem', color: '#111827' }}>{req.requester_name}</strong>
+                            <p style={{ margin: '3px 0 0', fontSize: '0.775rem', color: '#374151', fontWeight: 600 }}>{WEEKDAYS[req.weekday]}</p>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ background: color.bg, color: color.text, borderRadius: 999, padding: '3px 10px', fontSize: '0.66rem', fontWeight: 800 }}>{req.status}</span>
+                            {req.status === 'pending' && (
+                              <>
+                                <button onClick={() => analyzeFixedOffDay(req)} disabled={aiLoading} title="Analyze with AI" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, border: 'none', borderRadius: 7, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', padding: '6px 12px', fontSize: '0.76rem', fontWeight: 700, cursor: aiLoading ? 'default' : 'pointer', opacity: aiLoading ? 0.7 : 1 }}>
+                                  {aiLoading ? <Spinner size={12} /> : <Bot size={13} />} {aiLoading ? 'Analyzing...' : 'Analyze with AI'}
+                                </button>
+                                <button onClick={() => decideRequest('decide_fixed_off_day', req.id, 'rejected', req.requester_name)} disabled={reqActionLoading} style={{ border: '1px solid #FECACA', borderRadius: 7, background: '#FFFFFF', color: '#DC2626', padding: '6px 14px', fontSize: '0.76rem', fontWeight: 700, cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.5 : 1 }}>Reject</button>
+                                <button onClick={() => decideRequest('decide_fixed_off_day', req.id, 'approved', req.requester_name)} disabled={reqActionLoading} style={{ border: 'none', borderRadius: 7, background: '#1E293B', color: '#FFFFFF', padding: '7px 14px', fontSize: '0.76rem', fontWeight: 700, cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.5 : 1 }}>Approve</button>
+                              </>
+                            )}
+                          </div>
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ background: color.bg, color: color.text, borderRadius: 999, padding: '3px 10px', fontSize: '0.66rem', fontWeight: 800 }}>{req.status}</span>
-                          {req.status === 'pending' && (
-                            <>
-                              <button onClick={() => decideRequest('decide_fixed_off_day', req.id, 'rejected', req.requester_name)} disabled={reqActionLoading} style={{ border: '1px solid #FECACA', borderRadius: 7, background: '#FFFFFF', color: '#DC2626', padding: '6px 14px', fontSize: '0.76rem', fontWeight: 700, cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.5 : 1 }}>Reject</button>
-                              <button onClick={() => decideRequest('decide_fixed_off_day', req.id, 'approved', req.requester_name)} disabled={reqActionLoading} style={{ border: 'none', borderRadius: 7, background: '#1E293B', color: '#FFFFFF', padding: '7px 14px', fontSize: '0.76rem', fontWeight: 700, cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.5 : 1 }}>Approve</button>
-                            </>
-                          )}
-                        </div>
+                        {aiErr && (
+                          <div style={{ fontSize: '0.75rem', color: '#DC2626', fontWeight: 600 }}>{aiErr}</div>
+                        )}
+                        {aiResult && (
+                          <div style={{ border: `1px solid ${aiColor.border}`, background: aiColor.bg, borderRadius: 10, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <Bot size={13} style={{ color: aiColor.text, flexShrink: 0 }} />
+                              <span style={{ fontSize: '0.72rem', fontWeight: 800, color: aiColor.text, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                                AI suggests: {aiResult.recommendation} ({aiResult.confidence}% confidence)
+                              </span>
+                            </div>
+                            <p style={{ margin: 0, fontSize: '0.8rem', color: '#374151', lineHeight: 1.5 }}>{aiResult.reason}</p>
+                            {aiResult.concerns.length > 0 && (
+                              <ul style={{ margin: 0, paddingLeft: 18, fontSize: '0.76rem', color: '#4B5563' }}>
+                                {aiResult.concerns.map((concern, i) => <li key={i}>{concern}</li>)}
+                              </ul>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )
                   })}
@@ -2054,6 +2148,8 @@ export default function OwnerAttendancePage() {
                 loading={currentShiftsLoading}
                 panelBorder={PANEL_BORDER}
                 highlightRequest={activeSwapRequest}
+                anchorDate={csAnchorDate}
+                onNavigateDay={navigateCurrentShiftsDay}
               />
               <TaskChangesBlock
                 show={reqTab === 'swaps' && !!activeSwapRequest}
@@ -2137,7 +2233,7 @@ export default function OwnerAttendancePage() {
       )}
 
       {/* ── Attendance Record modal ───────────────────────────────────────── */}
-      {reviewOpen && reviewRecord?.record && (
+      {reviewOpen && reviewRecord && (
         <ModalOverlay onClose={() => setReviewOpen(false)} maxWidth="420px">
           <ModalBox>
             <ModalHeader title="Attendance Record" icon={<Check size={15} color="#fff" strokeWidth={2.5} />} onClose={() => setReviewOpen(false)} />
@@ -2159,6 +2255,7 @@ export default function OwnerAttendancePage() {
                     const status = getARStatus(reviewRecord)
                     if (status === 'late') return <span style={{ display: 'inline-block', padding: '3px 10px', borderRadius: 999, fontSize: '0.6875rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', background: '#FEF9C3', color: '#A16207' }}>Late</span>
                     if (status === 'present') return <span style={{ display: 'inline-block', padding: '3px 10px', borderRadius: 999, fontSize: '0.6875rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', background: '#DCFCE7', color: '#15803D' }}>Present</span>
+                    if (status === 'absent') return <span style={{ display: 'inline-block', padding: '3px 10px', borderRadius: 999, fontSize: '0.6875rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', background: '#FEF2F2', color: '#B91C1C' }}>Absent</span>
                     return null
                   })()}
                 </div>
@@ -2167,11 +2264,17 @@ export default function OwnerAttendancePage() {
 
             {/* Read-only fields */}
             <div style={{ padding: '0 24px', display: 'flex', flexDirection: 'column' }}>
-              {[
+              {([
                 ...(reviewRecord.assignee_role === 'Casual Worker'
                   ? [
                       { label: 'Job Type', value: reviewRecord.shift.is_open_ended ? 'One-off Job' : 'Shift Job' },
-                      { label: 'Job Title', value: reviewRecord.shift.title ?? '—' },
+                      {
+                        label: 'Job Title',
+                        value: reviewRecord.shift.title ?? '—',
+                        onClick: reviewRecord.shift.source_job_posting_id
+                          ? () => openJobPostingDetail(reviewRecord.shift.source_job_posting_id!)
+                          : undefined,
+                      },
                     ]
                   : [
                       { label: 'Department', value: reviewRecord.department_name ?? '—' },
@@ -2182,36 +2285,51 @@ export default function OwnerAttendancePage() {
                   ? [{ label: 'Start Time', value: formatShiftHour(reviewRecord.shift.start_time) }]
                   : [{ label: 'Shift Time', value: `${formatShiftHour(reviewRecord.shift.start_time)} – ${formatShiftHour(reviewRecord.shift.end_time)}` }]
                 ),
-              ].map(field => (
+              ] as { label: string; value: string; onClick?: () => void }[]).map(field => (
                 <div key={field.label} style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
                   <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: '#6B7280', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.04em' }}>{field.label}</label>
-                  <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{field.value}</p>
+                  {field.onClick ? (
+                    <button
+                      type="button"
+                      onClick={field.onClick}
+                      title="View job posting details"
+                      style={{ fontSize: '0.9375rem', color: '#F97316', margin: 0, background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontWeight: 700, textDecoration: 'underline', textUnderlineOffset: 3 }}
+                    >
+                      {field.value}
+                    </button>
+                  ) : (
+                    <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{field.value}</p>
+                  )}
                 </div>
               ))}
 
-              {/* Editable clock times */}
-              <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: '#6B7280', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Clock In</label>
-                  <div style={{ position: 'relative' }}>
-                    <select value={reviewClockIn} onChange={e => setReviewClockIn(e.target.value)} style={selectStyle}>
-                      <option value="">-- select --</option>
-                      {TIME_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
-                    </select>
-                    <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: '#6B7280', fontSize: 12 }}>▾</span>
+              {/* Editable clock times — only meaningful if a clock-in/out record actually exists.
+                  A genuine no-show (absent, never clocked in) has no attendance_records row at
+                  all, so there is nothing here to edit or save. */}
+              {reviewRecord.record && (
+                <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: '#6B7280', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Clock In</label>
+                    <div style={{ position: 'relative' }}>
+                      <select value={reviewClockIn} onChange={e => setReviewClockIn(e.target.value)} style={selectStyle}>
+                        <option value="">-- select --</option>
+                        {TIME_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                      <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: '#6B7280', fontSize: 12 }}>▾</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: '#6B7280', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Clock Out</label>
+                    <div style={{ position: 'relative' }}>
+                      <select value={reviewClockOut} onChange={e => setReviewClockOut(e.target.value)} style={selectStyle}>
+                        <option value="">-- select --</option>
+                        {TIME_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                      <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: '#6B7280', fontSize: 12 }}>▾</span>
+                    </div>
                   </div>
                 </div>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: '#6B7280', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Clock Out</label>
-                  <div style={{ position: 'relative' }}>
-                    <select value={reviewClockOut} onChange={e => setReviewClockOut(e.target.value)} style={selectStyle}>
-                      <option value="">-- select --</option>
-                      {TIME_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
-                    </select>
-                    <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: '#6B7280', fontSize: 12 }}>▾</span>
-                  </div>
-                </div>
-              </div>
+              )}
             </div>
 
             {reviewError && <div style={modalErrorBoxStyle}>{reviewError}</div>}
@@ -2232,11 +2350,77 @@ export default function OwnerAttendancePage() {
                   {cwStatusLoading ? '...' : cwWorkerStatus === 'active' ? 'Set Inactive' : 'Set Active'}
                 </button>
               )}
-              <div style={{ marginLeft: 'auto' }}>
-                <button onClick={submitReview} disabled={reviewActionLoading} style={modalPrimaryButtonStyle(reviewActionLoading)}>
-                  {reviewActionLoading ? <Spinner size={13} /> : <Check size={13} />} Save
-                </button>
-              </div>
+              {reviewRecord.record && (
+                <div style={{ marginLeft: 'auto' }}>
+                  <button onClick={submitReview} disabled={reviewActionLoading} style={modalPrimaryButtonStyle(reviewActionLoading)}>
+                    {reviewActionLoading ? <Spinner size={13} /> : <Check size={13} />} Save
+                  </button>
+                </div>
+              )}
+            </div>
+          </ModalBox>
+        </ModalOverlay>
+      )}
+
+      {/* ── Job Posting detail modal — opened from the "Job Title" field above ──────── */}
+      {jobPostingDetailOpen && (
+        <ModalOverlay onClose={() => setJobPostingDetailOpen(false)} maxWidth="480px">
+          <ModalBox>
+            <ModalHeader title="Job Posting" icon={<ClipboardList size={15} color="#fff" strokeWidth={2.5} />} onClose={() => setJobPostingDetailOpen(false)} />
+            <div style={{ padding: '20px 24px 24px', display: 'flex', flexDirection: 'column', gap: 16, maxHeight: '70vh', overflowY: 'auto' }}>
+              {jobPostingDetailLoading ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '24px 0', color: '#9CA3AF' }}>
+                  <Spinner size={16} dark /> Loading…
+                </div>
+              ) : jobPostingDetailError ? (
+                <div style={modalErrorBoxStyle}>{jobPostingDetailError}</div>
+              ) : jobPostingDetail ? (
+                <>
+                  <div>
+                    <p style={{ margin: '0 0 6px', fontWeight: 800, fontSize: '1.05rem', color: '#0F172A' }}>{jobPostingDetail.title}</p>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.7rem', fontWeight: 700, background: jobPostingDetail.is_recurring ? '#FFF7ED' : '#F5F3FF', color: jobPostingDetail.is_recurring ? '#C2410C' : '#7C3AED', border: `1px solid ${jobPostingDetail.is_recurring ? '#FED7AA' : '#DDD6FE'}` }}>
+                        {jobPostingDetail.is_recurring ? 'Shift Job' : 'One-Off Job'}
+                      </span>
+                      <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#6B7280', textTransform: 'capitalize' }}>{jobPostingDetail.status}</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label style={modalLabelStyle}>Description</label>
+                    <p style={{ margin: '4px 0 0', fontSize: '0.85rem', color: '#374151', lineHeight: 1.6 }}>{jobPostingDetail.description}</p>
+                  </div>
+                  {jobPostingDetail.requirements && (
+                    <div>
+                      <label style={modalLabelStyle}>Requirements</label>
+                      <p style={{ margin: '4px 0 0', fontSize: '0.85rem', color: '#374151', lineHeight: 1.6 }}>{jobPostingDetail.requirements}</p>
+                    </div>
+                  )}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                    <div>
+                      <label style={modalLabelStyle}>Location</label>
+                      <p style={{ margin: '4px 0 0', fontSize: '0.85rem', color: '#111827' }}>{jobPostingDetail.location ?? '—'}</p>
+                    </div>
+                    <div>
+                      <label style={modalLabelStyle}>Employment Type</label>
+                      <p style={{ margin: '4px 0 0', fontSize: '0.85rem', color: '#111827', textTransform: 'capitalize' }}>{jobPostingDetail.employment_type ?? '—'}</p>
+                    </div>
+                    <div>
+                      <label style={modalLabelStyle}>Salary</label>
+                      <p style={{ margin: '4px 0 0', fontSize: '0.85rem', color: '#111827' }}>
+                        {jobPostingDetail.salary_amount != null ? `$${jobPostingDetail.salary_amount} ${jobPostingDetail.salary_type ?? ''}` : '—'}
+                      </p>
+                    </div>
+                    <div>
+                      <label style={modalLabelStyle}>{jobPostingDetail.is_recurring ? 'Shift Time' : 'Job Start'}</label>
+                      <p style={{ margin: '4px 0 0', fontSize: '0.85rem', color: '#111827' }}>
+                        {jobPostingDetail.is_recurring
+                          ? (jobPostingDetail.shift_start_time && jobPostingDetail.shift_end_time ? `${formatShiftHour(jobPostingDetail.shift_start_time)} – ${formatShiftHour(jobPostingDetail.shift_end_time)}` : '—')
+                          : (jobPostingDetail.job_start_time ? formatShiftHour(jobPostingDetail.job_start_time) : '—')}
+                      </p>
+                    </div>
+                  </div>
+                </>
+              ) : null}
             </div>
           </ModalBox>
         </ModalOverlay>

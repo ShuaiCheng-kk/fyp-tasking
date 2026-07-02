@@ -73,6 +73,7 @@ export interface JobPostingSummary extends JobPosting {
   department_name: string | null
   applicant_count: number
   pending_count: number
+  accepted_count: number
   assigned_employee_name: string | null
 }
 
@@ -101,6 +102,7 @@ export interface JobInvitation {
 export interface JobPostingPendingApproval extends JobPosting {
   department_name: string | null
   submitter_name: string | null
+  submitter_photo_url: string | null
   assigned_employee_name: string | null
 }
 

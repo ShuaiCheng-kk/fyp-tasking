@@ -21,7 +21,7 @@ const NAV_ITEMS = [
   { label: 'Dashboard',     Icon: LayoutDashboard, href: '/owner/dashboard',       dot: null as 'messages' | 'announcements' | 'review' | 'tasks' | null },
   { label: 'Shifts',        Icon: CalendarDays,    href: '/owner/shifts',          dot: null },
   { label: 'Tasks',         Icon: CheckSquare,     href: '/owner/tasks',           dot: 'tasks' as const },
-  { label: 'Team',          Icon: Users,            href: '/owner/team',            dot: null },
+  { label: 'Company',       Icon: Users,            href: '/owner/team',            dot: null },
   { label: 'Communication', Icon: MessageCircle,    href: '/owner/communication',   dot: 'messages' as const },
   { label: 'Recruitment',   Icon: UserPlus,         href: '/owner/recruitment',     dot: 'review' as const },
   { label: 'Attendance',    Icon: ClipboardList,    href: '/owner/attendance',      dot: 'attendance' as const },
@@ -257,12 +257,6 @@ export default function OwnerSidebar({
         }
       })
       .catch(() => {})
-  }, [])
-
-  useEffect(() => {
-    const handler = () => setReviewCount(0)
-    window.addEventListener('recruitment-review-opened', handler)
-    return () => window.removeEventListener('recruitment-review-opened', handler)
   }, [])
 
   useEffect(() => {

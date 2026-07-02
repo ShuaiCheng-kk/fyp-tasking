@@ -17,6 +17,12 @@ export async function GET(req: NextRequest) {
       const applicants = await recruitmentService.getApplicants(job_id)
       return NextResponse.json({ success: true, applicants })
     }
+    if (resource === 'job_posting') {
+      if (!job_id) return NextResponse.json({ success: false, message: 'job_id is required' }, { status: 400 })
+      const posting = await recruitmentService.getJobPostingById(job_id)
+      if (!posting) return NextResponse.json({ success: false, message: 'Job posting not found' }, { status: 404 })
+      return NextResponse.json({ success: true, posting })
+    }
     if (resource === 'workers') {
       if (!company_id) return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
       const assigned_employee_id = searchParams.get('assigned_employee_id')
