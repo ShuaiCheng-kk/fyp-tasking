@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase'
-import { UACompany, UACompanyDetail, UAUser } from '@/types/UserAdmin'
+import { UACompany, UACompanyDetail, UAUser, UAReportStats } from '@/types/UserAdmin'
 
 export async function getAllCompanies(search?: string): Promise<UACompany[]> {
   let query = supabase
@@ -117,4 +117,70 @@ export async function unsuspendUser(userId: string): Promise<void> {
     .update({ is_suspended: false, suspended_at: null, suspended_reason: null })
     .eq('id', userId)
   if (error) throw new Error(error.message)
+}
+
+export async function getReportStats(): Promise<UAReportStats> {
+  const [{ data: companies, error: ce }, { data: users, error: ue }] = await Promise.all([
+    supabase.from('companies').select('id,plan,industry,size,is_suspended,created_at'),
+    supabase.from('users').select('id,role,is_suspended,created_at'),
+  ])
+  if (ce) throw new Error(ce.message)
+  if (ue) throw new Error(ue.message)
+
+  const now = new Date()
+  const ago7 = new Date(now.getTime() - 7 * 86400000).toISOString()
+  const ago30 = new Date(now.getTime() - 30 * 86400000).toISOString()
+
+  const cos = companies ?? []
+  const usr = users ?? []
+
+  const planBreakdown: Record<string, number> = {}
+  const industryBreakdown: Record<string, number> = {}
+  const companySizeBreakdown: Record<string, number> = {}
+  for (const c of cos) {
+    const p = c.plan ?? 'Unknown'
+    planBreakdown[p] = (planBreakdown[p] ?? 0) + 1
+    const ind = c.industry ?? 'Other'
+    industryBreakdown[ind] = (industryBreakdown[ind] ?? 0) + 1
+    const sz = c.size ?? 'Unknown'
+    companySizeBreakdown[sz] = (companySizeBreakdown[sz] ?? 0) + 1
+  }
+
+  const roleBreakdown: Record<string, number> = {}
+  for (const u of usr) {
+    const r = u.role ?? 'Unknown'
+    roleBreakdown[r] = (roleBreakdown[r] ?? 0) + 1
+  }
+
+  // Last 6 months growth
+  const months: { month: string; companies: number; users: number }[] = []
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+    const start = new Date(d.getFullYear(), d.getMonth(), 1).toISOString()
+    const end = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59).toISOString()
+    const label = d.toLocaleDateString('en-US', { month: 'short', year: '2-digit' })
+    months.push({
+      month: label,
+      companies: cos.filter((c: { created_at: string }) => c.created_at >= start && c.created_at <= end).length,
+      users: usr.filter((u: { created_at: string }) => u.created_at >= start && u.created_at <= end).length,
+    })
+  }
+
+  return {
+    totalCompanies: cos.length,
+    totalUsers: usr.length,
+    activeCompanies: cos.filter((c: { is_suspended: boolean }) => !c.is_suspended).length,
+    activeUsers: usr.filter((u: { is_suspended: boolean }) => !u.is_suspended).length,
+    suspendedCompanies: cos.filter((c: { is_suspended: boolean }) => c.is_suspended).length,
+    suspendedUsers: usr.filter((u: { is_suspended: boolean }) => u.is_suspended).length,
+    newCompaniesLast7Days: cos.filter((c: { created_at: string }) => c.created_at >= ago7).length,
+    newUsersLast7Days: usr.filter((u: { created_at: string }) => u.created_at >= ago7).length,
+    newCompaniesLast30Days: cos.filter((c: { created_at: string }) => c.created_at >= ago30).length,
+    newUsersLast30Days: usr.filter((u: { created_at: string }) => u.created_at >= ago30).length,
+    planBreakdown,
+    roleBreakdown,
+    industryBreakdown,
+    companySizeBreakdown,
+    growthByMonth: months,
+  }
 }

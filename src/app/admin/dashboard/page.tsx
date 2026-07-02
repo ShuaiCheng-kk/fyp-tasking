@@ -2846,7 +2846,7 @@ export default function AdminDashboardPage() {
   const dirtyBlocks = selectedPage?.blocks.filter(block => (drafts[block.id] ?? '') !== block.value) ?? []
   return (
   <>
-    <main style={{ minHeight: '100vh', background: `radial-gradient(circle at top left, rgba(249,115,22,0.10), transparent 34%), ${BG}`, color: TEXT, fontFamily: 'var(--font-body)' }}>
+    <main style={{ minHeight: '100vh', background: '#F8F9FA', color: TEXT, fontFamily: 'Inter, system-ui, sans-serif' }}>
       <input
         ref={imageInputRef}
         type="file"
@@ -2881,7 +2881,7 @@ export default function AdminDashboardPage() {
       <section style={{ marginLeft: 64, padding: '35px 32px 44px' }}>
         <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, marginBottom: 18 }}>
           <div>
-            <p style={{ margin: '0 0 6px', color: ORANGE, fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
+            <p style={{ margin: '0 0 6px', color: '#6B7280', fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
               {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
             </p>
             <h1 style={{ margin: 0, fontFamily: 'var(--font-heading)', fontSize: 34, lineHeight: 1.1, fontWeight: 800, color: TEXT }}>

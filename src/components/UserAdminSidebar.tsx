@@ -2,21 +2,22 @@
 
 import { useState } from 'react'
 import { usePathname } from 'next/navigation'
-import { LogOut, LayoutDashboard } from 'lucide-react'
+import { LogOut, LayoutDashboard, BarChart2 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 
 const THEME = {
-  sidebarBg:         '#1C1C1E',
-  sidebarText:       '#FFFFFF',
-  sidebarActiveBg:   '#F97316',
-  sidebarActiveText: '#FFFFFF',
-  sidebarHoverBg:    'rgba(255,255,255,0.1)',
-  sidebarBorder:     'rgba(255,255,255,0.08)',
-  logoBorder:        'rgba(255,255,255,0.08)',
+  sidebarBg:         '#FFFFFF',
+  sidebarText:       '#6B7280',
+  sidebarActiveBg:   '#F3F4F6',
+  sidebarActiveText: '#111827',
+  sidebarHoverBg:    '#F9FAFB',
+  sidebarBorder:     '#E5E7EB',
+  logoBorder:        '#E5E7EB',
 }
 
 const NAV = [
   { label: 'Dashboard', Icon: LayoutDashboard, href: '/useradmin/dashboard' },
+  { label: 'Reports', Icon: BarChart2, href: '/useradmin/reports' },
 ]
 
 export default function UserAdminSidebar() {
@@ -65,7 +66,7 @@ export default function UserAdminSidebar() {
         }}
       >
         <svg width="28" height="28" viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
-          <rect width="32" height="32" rx="8" fill="#F97316" />
+          <rect width="32" height="32" rx="8" fill="#374151" />
           <rect x="8" y="9" width="9" height="2.5" rx="1.25" fill="white" />
           <rect x="8" y="14.75" width="16" height="2.5" rx="1.25" fill="white" />
           <rect x="8" y="20.5" width="12" height="2.5" rx="1.25" fill="white" />

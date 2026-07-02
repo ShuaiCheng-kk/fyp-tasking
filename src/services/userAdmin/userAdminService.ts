@@ -2,6 +2,7 @@ import {
   UACompany,
   UACompanyDetail,
   UAUser,
+  UAReportStats,
   SuspendCompanyInput,
   UnsuspendCompanyInput,
   SuspendUserInput,
@@ -42,4 +43,8 @@ export async function suspendUser(input: SuspendUserInput): Promise<void> {
 export async function unsuspendUser(input: UnsuspendUserInput): Promise<void> {
   if (!input.user_id) throw new Error('User ID is required')
   await repo.unsuspendUser(input.user_id)
+}
+
+export async function getReportStats(): Promise<UAReportStats> {
+  return repo.getReportStats()
 }

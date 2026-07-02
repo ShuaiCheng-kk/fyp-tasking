@@ -8,16 +8,16 @@ import { createBrowserClient } from '@supabase/ssr'
 import { MarketingPageSummary } from '@/types/MarketingPage'
 
 const THEME = {
-  sidebarBg:         '#1C1C1E',
-  sidebarText:       '#FFFFFF',
-  sidebarActiveBg:   '#F97316',
-  sidebarActiveText: '#FFFFFF',
-  sidebarHoverBg:    'rgba(255,255,255,0.1)',
-  sidebarBorder:     'rgba(255,255,255,0.08)',
-  logoBorder:        'rgba(255,255,255,0.08)',
-  subText:           'rgba(255,255,255,0.45)',
-  subActive:         '#F97316',
-  subHover:          'rgba(255,255,255,0.08)',
+  sidebarBg:         '#FFFFFF',
+  sidebarText:       '#6B7280',
+  sidebarActiveBg:   '#F3F4F6',
+  sidebarActiveText: '#111827',
+  sidebarHoverBg:    '#F9FAFB',
+  sidebarBorder:     '#E5E7EB',
+  logoBorder:        '#E5E7EB',
+  subText:           '#9CA3AF',
+  subActive:         '#111827',
+  subHover:          '#F3F4F6',
 }
 
 interface Props {
@@ -73,7 +73,7 @@ export default function AdminSidebar({ pages = [], selectedSlug = '', onSelectSl
           display: 'flex', alignItems: 'center', gap: 6,
           padding: indent ? '6px 8px 6px 28px' : '6px 8px',
           borderRadius: 7, border: 'none', cursor: 'pointer',
-          background: active ? 'rgba(249,115,22,0.18)' : 'transparent',
+          background: active ? THEME.sidebarActiveBg : 'transparent',
           color: active ? THEME.subActive : THEME.sidebarText,
           fontWeight: active ? 700 : 400,
           fontSize: indent ? 12 : 13,
@@ -119,7 +119,7 @@ export default function AdminSidebar({ pages = [], selectedSlug = '', onSelectSl
         }}
       >
         <svg width="28" height="28" viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
-          <rect width="32" height="32" rx="8" fill="#F97316" />
+          <rect width="32" height="32" rx="8" fill="#374151" />
           <rect x="8" y="9" width="9" height="2.5" rx="1.25" fill="white" />
           <rect x="8" y="14.75" width="16" height="2.5" rx="1.25" fill="white" />
           <rect x="8" y="20.5" width="12" height="2.5" rx="1.25" fill="white" />
@@ -172,7 +172,7 @@ export default function AdminSidebar({ pages = [], selectedSlug = '', onSelectSl
               transition: 'opacity 0.15s',
               pointerEvents: expanded ? 'auto' : 'none',
               paddingLeft: 8,
-              borderLeft: `1.5px solid rgba(255,255,255,0.1)`,
+              borderLeft: `1.5px solid ${THEME.sidebarBorder}`,
               marginLeft: 20,
               marginBottom: 8,
             }}>
