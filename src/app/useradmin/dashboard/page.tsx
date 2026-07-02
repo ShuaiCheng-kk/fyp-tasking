@@ -1,14 +1,165 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Search, Building2, Users, X, AlertTriangle, CheckCircle, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react'
+import { Search, Building2, Users, X, AlertTriangle, CheckCircle, ChevronRight, ChevronDown, ChevronUp, ChevronLeft } from 'lucide-react'
 import UserAdminSidebar from '@/components/UserAdminSidebar'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import { UACompany, UACompanyDetail, UAUser } from '@/types/UserAdmin'
 
 const SIDEBAR_WIDTH = 64
 
+// ── Design tokens ──────────────────────────────────────────────────────────────
+const T = {
+  bg:        '#F8F9FA',
+  surface:   '#FFFFFF',
+  surfaceHi: '#F3F4F6',
+  border:    '#E5E7EB',
+  borderMid: '#D1D5DB',
+  accent:    '#111827',
+  accentBg:  '#F3F4F6',
+  accentMid: '#9CA3AF',
+  text1:     '#111827',
+  text2:     '#6B7280',
+  text3:     '#9CA3AF',
+  danger:    '#EF4444',
+  dangerBg:  '#FEF2F2',
+  dangerMid: '#FECACA',
+  success:   '#10B981',
+  successBg: '#F0FDF4',
+  successMid:'#BBF7D0',
+}
+
 type Tab = 'companies' | 'users'
+
+const CAL_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+
+function CalendarRangePicker({ from, to, onChange }: {
+  from: string; to: string
+  onChange: (from: string, to: string) => void
+}) {
+  const today = new Date()
+  const [view, setView] = useState(() => {
+    const d = from ? new Date(from) : today
+    return { year: d.getFullYear(), month: d.getMonth() }
+  })
+  const [hovered, setHovered] = useState<string | null>(null)
+  const [picker, setPicker] = useState<'day' | 'month' | 'year'>('day')
+
+  const daysInMonth = (y: number, m: number) => new Date(y, m + 1, 0).getDate()
+  const firstDayOfMonth = (y: number, m: number) => new Date(y, m, 1).getDay()
+  const toISO = (y: number, m: number, d: number) =>
+    `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+
+  const prevMonth = () => setView(v => v.month === 0 ? { year: v.year - 1, month: 11 } : { year: v.year, month: v.month - 1 })
+  const nextMonth = () => setView(v => v.month === 11 ? { year: v.year + 1, month: 0 } : { year: v.year, month: v.month + 1 })
+
+  // Derive intent from props: no from → set from; from but no to → set to; both set → reset and set new from
+  const handleDayClick = (iso: string) => {
+    if (!from || (from && to)) {
+      onChange(iso, '')
+    } else {
+      if (iso < from) onChange(iso, from)
+      else if (iso === from) onChange('', '')
+      else onChange(from, iso)
+    }
+  }
+
+  const total = daysInMonth(view.year, view.month)
+  const startOffset = firstDayOfMonth(view.year, view.month)
+  const monthLabel = new Date(view.year, view.month).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+  const yearBase = Math.floor(view.year / 12) * 12
+
+  return (
+    <div style={{ userSelect: 'none' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+        <button
+          onClick={picker === 'day' ? prevMonth : picker === 'month' ? () => setView(v => ({ ...v, year: v.year - 1 })) : () => setView(v => ({ ...v, year: v.year - 12 }))}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: '#6B7280', display: 'flex' }}
+        ><ChevronLeft size={14} /></button>
+        <button
+          onClick={() => setPicker(p => p === 'day' ? 'month' : p === 'month' ? 'year' : 'day')}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 700, color: '#111827', padding: '2px 6px', borderRadius: 4 }}
+        >
+          {picker === 'day' ? monthLabel : picker === 'month' ? view.year : `${yearBase} – ${yearBase + 11}`}
+        </button>
+        <button
+          onClick={picker === 'day' ? nextMonth : picker === 'month' ? () => setView(v => ({ ...v, year: v.year + 1 })) : () => setView(v => ({ ...v, year: v.year + 12 }))}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: '#6B7280', display: 'flex' }}
+        ><ChevronRight size={14} /></button>
+      </div>
+
+      {picker === 'month' && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4, marginBottom: 6 }}>
+          {CAL_MONTHS.map((m, i) => (
+            <button key={m} onClick={() => { setView(v => ({ ...v, month: i })); setPicker('day') }}
+              style={{ padding: '6px 4px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600,
+                background: view.month === i ? '#111827' : '#F3F4F6', color: view.month === i ? '#fff' : '#111827' }}>
+              {m}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {picker === 'year' && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 4, marginBottom: 6 }}>
+          {Array.from({ length: 12 }).map((_, i) => {
+            const y = yearBase + i
+            return (
+              <button key={y} onClick={() => { setView(v => ({ ...v, year: y })); setPicker('month') }}
+                style={{ padding: '6px 4px', borderRadius: 6, border: 'none', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600,
+                  background: view.year === y ? '#111827' : '#F3F4F6', color: view.year === y ? '#fff' : '#111827' }}>
+                {y}
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {picker === 'day' && <>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 1, marginBottom: 2 }}>
+          {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d => (
+            <div key={d} style={{ textAlign: 'center', fontSize: '0.62rem', fontWeight: 700, color: '#9CA3AF', padding: '2px 0' }}>{d}</div>
+          ))}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 1 }}>
+          {Array.from({ length: startOffset }).map((_, i) => <div key={`e${i}`} />)}
+          {Array.from({ length: total }).map((_, i) => {
+            const day = i + 1
+            const iso = toISO(view.year, view.month, day)
+            const isFrom = iso === from
+            const isTo = iso === to
+            const isSelected = isFrom || isTo
+            const isInRange = from && to && iso > from && iso < to
+            const isHovered = hovered === iso
+            const isHoverRange = from && !to && hovered && iso > from && iso < hovered
+            return (
+              <div key={day}
+                onClick={() => handleDayClick(iso)}
+                onMouseEnter={() => setHovered(iso)}
+                onMouseLeave={() => setHovered(null)}
+                style={{
+                  textAlign: 'center', padding: '4px 0', fontSize: '0.72rem',
+                  fontWeight: isSelected ? 700 : 400,
+                  borderRadius: isSelected ? 99 : (isInRange || isHoverRange) ? 0 : 4,
+                  background: isSelected ? '#111827' : (isInRange || isHoverRange) ? '#F3F4F6' : isHovered ? '#F3F4F6' : 'transparent',
+                  color: isSelected ? '#fff' : '#111827',
+                  cursor: 'pointer',
+                }}
+              >{day}</div>
+            )
+          })}
+        </div>
+      </>}
+
+      {(from || to) && (
+        <button onClick={() => onChange('', '')}
+          style={{ marginTop: 8, background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: '#9CA3AF', padding: 0 }}>
+          Clear dates
+        </button>
+      )}
+    </div>
+  )
+}
 
 export default function UserAdminDashboard() {
   const [tab, setTab] = useState<Tab>('companies')
@@ -90,9 +241,14 @@ export default function UserAdminDashboard() {
 
   useEffect(() => { fetchCompanies() }, [fetchCompanies])
   useEffect(() => { fetchUsers() }, [fetchUsers])
+
   useEffect(() => {
-    fetch('/api/useradmin/companies').then(r => r.json()).then(d => setTotalCompanyCount(d.companies?.length ?? 0))
-    fetch('/api/useradmin/users').then(r => r.json()).then(d => setTotalUserCount(d.users?.length ?? 0))
+    fetch('/api/useradmin/companies').then(r => r.json()).then(d => {
+      setTotalCompanyCount((d.companies ?? []).length)
+    })
+    fetch('/api/useradmin/users').then(r => r.json()).then(d => {
+      setTotalUserCount((d.users ?? []).length)
+    })
   }, [])
 
   useEffect(() => {
@@ -107,12 +263,11 @@ export default function UserAdminDashboard() {
 
   const toggleRole = (role: string) =>
     setRoleFilters(prev => prev.includes(role) ? prev.filter(r => r !== role) : [...prev, role])
-
   const toggleStatus = (s: string) =>
     setStatusFilters(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])
 
-  const [userFilterOpen, setUserFilterOpen] = useState<Record<string, boolean>>({ company: true, role: true, status: true, date: true })
-  const [compFilterOpen, setCompFilterOpen] = useState<Record<string, boolean>>({ plan: true, industry: true, status: true, date: true })
+  const [userFilterOpen, setUserFilterOpen] = useState<Record<string, boolean>>({ company: true, role: true, status: true, date: false })
+  const [compFilterOpen, setCompFilterOpen] = useState<Record<string, boolean>>({ plan: true, industry: true, status: true, date: false })
   const toggleUserSection = (k: string) => setUserFilterOpen(p => ({ ...p, [k]: !p[k] }))
   const toggleCompSection = (k: string) => setCompFilterOpen(p => ({ ...p, [k]: !p[k] }))
 
@@ -177,17 +332,12 @@ export default function UserAdminDashboard() {
       const data = await res.json()
       if (!res.ok) { showToast(data.error ?? 'Failed'); return }
       showToast(`${suspendModal.name} suspended`)
-      setSuspendModal(null)
-      setSuspendReason('')
+      setSuspendModal(null); setSuspendReason('')
       if (suspendModal.type === 'company') {
         fetchCompanies(compSearch)
         if (detailCompany?.id === suspendModal.id) openDetail(suspendModal.id)
-      } else {
-        fetchUsers(userSearch)
-      }
-    } finally {
-      setSuspending(false)
-    }
+      } else { fetchUsers(userSearch) }
+    } finally { setSuspending(false) }
   }
 
   const doUnsuspend = async (type: 'company' | 'user', id: string, name: string) => {
@@ -196,116 +346,145 @@ export default function UserAdminDashboard() {
     const res = await fetch('/api/useradmin/suspend', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     const data = await res.json()
     if (!res.ok) { showToast(data.error ?? 'Failed'); return }
-    showToast(`${name} unsuspended`)
-    if (type === 'company') {
-      fetchCompanies(compSearch)
-      if (detailCompany?.id === id) openDetail(id)
-    } else {
-      fetchUsers(userSearch)
-    }
+    showToast(`${name} reinstated`)
+    if (type === 'company') { fetchCompanies(compSearch); if (detailCompany?.id === id) openDetail(id) }
+    else { fetchUsers(userSearch) }
   }
 
-  const CARD: React.CSSProperties = {
-    background: '#fff', borderRadius: 12, border: '1px solid #E5E7EB',
-    boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
-  }
+  // ── Sub-components ─────────────────────────────────────────────────────────
 
-  const BADGE = (suspended: boolean): React.CSSProperties => ({
-    display: 'inline-flex', alignItems: 'center', gap: 4,
-    padding: '2px 9px', borderRadius: 999, fontSize: 12, fontWeight: 600,
-    background: suspended ? '#FEF2F2' : '#F0FDF4',
-    color: suspended ? '#DC2626' : '#16A34A',
-  })
+  const StatusDot = ({ suspended }: { suspended: boolean }) => (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5,
+      padding: '3px 9px', borderRadius: 6, fontSize: 11.5, fontWeight: 600, letterSpacing: '0.01em',
+      background: suspended ? T.dangerBg : T.successBg,
+      color: suspended ? '#DC2626' : '#16A34A',
+      border: `1px solid ${suspended ? T.dangerMid : T.successMid}`,
+    }}>
+      <span style={{ width: 5, height: 5, borderRadius: '50%', background: suspended ? T.danger : T.success, display: 'inline-block' }} />
+      {suspended ? 'Suspended' : 'Active'}
+    </span>
+  )
+
+  const FilterSection = ({ label, count, pill, open, onToggle, children }: { label: string; count?: number; pill?: React.ReactNode; open: boolean; onToggle: () => void; children: React.ReactNode }) => (
+    <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 10, marginTop: 2 }}>
+      <button onClick={onToggle} style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '0 0 8px', gap: 4 }}>
+        <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+          <span style={{ fontWeight: 600, fontSize: '0.78rem', color: T.text2, textTransform: 'uppercase', letterSpacing: '0.06em', whiteSpace: 'nowrap' }}>{label}</span>
+          {!!count && <span style={{ background: T.accent, color: '#fff', borderRadius: 4, padding: '1px 6px', fontSize: 10, fontWeight: 700 }}>{count}</span>}
+          {open ? <ChevronUp size={13} color={T.text3} /> : <ChevronDown size={13} color={T.text3} />}
+        </span>
+        {pill && <span style={{ display: 'block' }}>{pill}</span>}
+      </button>
+      {open && <div style={{ paddingBottom: 4 }}>{children}</div>}
+    </div>
+  )
+
+  const CheckRow = ({ label, checked, onChange }: { label: string; checked: boolean; onChange: () => void }) => (
+    <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5, cursor: 'pointer', padding: '3px 6px', borderRadius: 6, background: checked ? T.surfaceHi : 'transparent', transition: 'background 0.1s' }}>
+      <input type="checkbox" checked={checked} onChange={onChange} style={{ width: 13, height: 13, accentColor: T.accent, cursor: 'pointer', flexShrink: 0 }} />
+      <span style={{ fontSize: '0.78rem', color: checked ? T.text1 : T.text2, fontWeight: checked ? 600 : 400 }}>{label}</span>
+    </label>
+  )
+
+  const DateRangePill = ({ from, to }: { from: string; to: string }) =>
+    (from || to) ? (
+      <span style={{ fontSize: 10, fontWeight: 500, color: T.text2, background: T.surfaceHi, border: `1px solid ${T.border}`, borderRadius: 4, padding: '1px 6px', flexShrink: 0, whiteSpace: 'nowrap' }}>
+        {from ? new Date(from).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '…'} – {to ? new Date(to).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '…'}
+      </span>
+    ) : null
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: '#F9FAFB', fontFamily: 'Inter, sans-serif' }}>
+    <div style={{ display: 'flex', minHeight: '100vh', background: T.bg, fontFamily: 'Inter, system-ui, sans-serif' }}>
       <UserAdminSidebar />
 
-      <div style={{ marginLeft: SIDEBAR_WIDTH, flex: 1, display: 'flex', flexDirection: 'column' }}>
-        {/* Header */}
-        <div style={{ background: '#fff', borderBottom: '1px solid #E5E7EB', padding: '0 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: 64, flexShrink: 0 }}>
-          <h1 style={{ fontWeight: 700, fontSize: '1.15rem', color: '#111827', margin: 0 }}>User Admin</h1>
-          {userId && <OwnerUserBadge userId={userId} companyId="" />}
-        </div>
+      <div style={{ marginLeft: SIDEBAR_WIDTH, flex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
 
-        <div style={{ padding: '32px', flex: 1 }}>
-          {/* Tabs */}
-          <div style={{ display: 'flex', gap: 4, marginBottom: 28, background: '#F3F4F6', borderRadius: 10, padding: 4, width: 'fit-content' }}>
+        <div style={{ padding: '28px 32px', flex: 1 }}>
+          {/* Page heading */}
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 28 }}>
+            <div>
+              <div style={{ fontSize: '0.7rem', fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 4 }}>
+                {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }).toUpperCase()}
+              </div>
+              <h1 style={{ fontWeight: 800, fontSize: '1.75rem', color: T.text1, margin: 0, letterSpacing: '-0.025em', lineHeight: 1.1 }}>Dashboard</h1>
+            </div>
+            {userId && <OwnerUserBadge userId={userId} companyId="" />}
+          </div>
+
+
+          {/* Toggle */}
+          <div style={{ display: 'inline-flex', background: T.surfaceHi, borderRadius: 10, padding: 3, marginBottom: 20 }}>
             {(['companies', 'users'] as Tab[]).map(t => (
-              <button
-                key={t}
-                onClick={() => setTab(t)}
-                style={{
-                  padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', fontWeight: 600,
-                  fontSize: '0.875rem', transition: 'all 0.15s',
-                  background: tab === t ? '#fff' : 'transparent',
-                  color: tab === t ? '#F97316' : '#6B7280',
-                  boxShadow: tab === t ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
-                  display: 'flex', alignItems: 'center', gap: 6,
-                }}
-              >
-                {t === 'companies' ? <Building2 size={15} /> : <Users size={15} />}
+              <button key={t} onClick={() => setTab(t)} style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '7px 16px', border: 'none', cursor: 'pointer',
+                borderRadius: 8, fontWeight: 600, fontSize: '0.875rem',
+                background: tab === t ? T.surface : 'transparent',
+                color: tab === t ? T.text1 : T.text3,
+                boxShadow: tab === t ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+                borderTop: 'none', borderRight: 'none', borderBottom: 'none', borderLeft: 'none',
+                transition: 'all 0.15s',
+              }}>
+                {t === 'companies' ? <Building2 size={14} /> : <Users size={14} />}
                 {t === 'companies' ? 'Companies' : 'Users'}
+                <span style={{
+                  fontSize: 11, fontWeight: 700, padding: '1px 7px', borderRadius: 99,
+                  background: tab === t ? T.surfaceHi : 'transparent',
+                  color: tab === t ? T.text2 : T.text3,
+                }}>
+                  {t === 'companies' ? totalCompanyCount : totalUserCount}
+                </span>
               </button>
             ))}
           </div>
 
+          {/* ── Companies tab ─────────────────────────────────────────────── */}
           {tab === 'companies' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              {/* Full-width search */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#fff', border: '1px solid #E5E7EB', borderRadius: 10, padding: '11px 16px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
-                <Search size={17} color="#9CA3AF" style={{ flexShrink: 0 }} />
-                <input
-                  value={compSearch}
-                  onChange={e => setCompSearch(e.target.value)}
-                  placeholder="Search by company name…"
-                  style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: '0.9375rem', color: '#111827', flex: 1 }}
-                />
-                {compSearch && <button onClick={() => setCompSearch('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', padding: 0, display: 'flex' }}><X size={16} /></button>}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 9, padding: '10px 16px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+                <Search size={15} color={T.text3} style={{ flexShrink: 0 }} />
+                <input value={compSearch} onChange={e => setCompSearch(e.target.value)} placeholder="Search companies…"
+                  style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: '0.9rem', color: T.text1, flex: 1 }} />
+                {compSearch && <button onClick={() => setCompSearch('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T.text3, padding: 0, display: 'flex' }}><X size={14} /></button>}
               </div>
 
-              <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
+              <div style={{ display: 'flex', gap: 18, alignItems: 'flex-start' }}>
                 {/* Table */}
-                <div style={{ ...CARD, flex: 1, minWidth: 0 }}>
-                  <div style={{ padding: '16px 24px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center' }}>
-                    <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, flex: 1 }}>
-                      All Companies
-                    </h2>
-                    <span style={{ fontSize: '0.8rem', color: '#9CA3AF' }}>
-                      {displayedCompanies.length} of {totalCompanyCount} companies
+                <div style={{ flex: 1, minWidth: 0, background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, boxShadow: '0 1px 3px rgba(0,0,0,0.04)', overflow: 'hidden' }}>
+                  <div style={{ padding: '14px 20px', borderBottom: `1px solid ${T.border}`, display: 'flex', alignItems: 'center', background: '#FAFBFC' }}>
+                    <span style={{ fontWeight: 700, fontSize: '0.875rem', color: T.text1, flex: 1 }}>All Companies</span>
+                    <span style={{ fontSize: '0.75rem', color: T.text3, fontVariantNumeric: 'tabular-nums' }}>
+                      {displayedCompanies.length} / {totalCompanyCount}
                     </span>
                   </div>
                   <div style={{ overflowX: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                       <thead>
-                        <tr style={{ background: '#F9FAFB' }}>
+                        <tr style={{ background: '#FAFBFC' }}>
                           {['Company', 'Plan', 'Industry', 'Status', 'Created', ''].map(h => (
-                            <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 600, color: '#6B7280', fontSize: 12, borderBottom: '1px solid #F3F4F6', whiteSpace: 'nowrap' }}>{h}</th>
+                            <th key={h} style={{ padding: '9px 16px', textAlign: 'left', fontWeight: 600, color: T.text3, fontSize: 11, borderBottom: `1px solid ${T.border}`, whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
                         {compLoading ? (
-                          <tr><td colSpan={6} style={{ padding: 32, textAlign: 'center', color: '#9CA3AF' }}>Loading…</td></tr>
+                          <tr><td colSpan={6} style={{ padding: 40, textAlign: 'center', color: T.text3 }}>Loading…</td></tr>
                         ) : displayedCompanies.length === 0 ? (
-                          <tr><td colSpan={6} style={{ padding: 32, textAlign: 'center', color: '#9CA3AF' }}>No companies found</td></tr>
-                        ) : displayedCompanies.map(c => (
-                          <tr key={c.id} style={{ borderBottom: '1px solid #F9FAFB', transition: 'background 0.1s' }}
-                            onMouseEnter={e => (e.currentTarget.style.background = '#FFFBF7')}
+                          <tr><td colSpan={6} style={{ padding: 40, textAlign: 'center', color: T.text3 }}>No companies found</td></tr>
+                        ) : displayedCompanies.map((c, i) => (
+                          <tr key={c.id} style={{ borderBottom: `1px solid ${i === displayedCompanies.length - 1 ? 'transparent' : T.border}`, transition: 'background 0.1s', cursor: 'default' }}
+                            onMouseEnter={e => (e.currentTarget.style.background = '#F9FAFB')}
                             onMouseLeave={e => (e.currentTarget.style.background = '')}>
-                            <td style={{ padding: '12px 16px', fontWeight: 600, color: '#111827' }}>{c.name}</td>
-                            <td style={{ padding: '12px 16px', color: '#374151' }}>{c.plan}</td>
-                            <td style={{ padding: '12px 16px', color: '#6B7280' }}>{c.industry ?? '—'}</td>
-                            <td style={{ padding: '12px 16px' }}>
-                              <span style={BADGE(c.is_suspended)}>{c.is_suspended ? 'Suspended' : 'Active'}</span>
+                            <td style={{ padding: '11px 16px', fontWeight: 600, color: T.text1 }}>{c.name}</td>
+                            <td style={{ padding: '11px 16px' }}>
+                              <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 5, background: c.plan === 'Paid' ? '#F0FDF4' : T.surfaceHi, color: c.plan === 'Paid' ? '#16A34A' : T.text3, border: `1px solid ${c.plan === 'Paid' ? '#BBF7D0' : T.border}` }}>{c.plan}</span>
                             </td>
-                            <td style={{ padding: '12px 16px', color: '#6B7280' }}>{new Date(c.created_at).toLocaleDateString()}</td>
-                            <td style={{ padding: '12px 16px' }}>
-                              <button
-                                onClick={() => openDetail(c.id)}
-                                style={{ display: 'flex', alignItems: 'center', gap: 2, background: 'none', border: 'none', cursor: 'pointer', color: '#F97316', fontWeight: 600, fontSize: 12 }}
-                              >
-                                Details <ChevronRight size={14} />
+                            <td style={{ padding: '11px 16px', color: T.text2, fontSize: '0.82rem' }}>{c.industry ?? '—'}</td>
+                            <td style={{ padding: '11px 16px' }}><StatusDot suspended={c.is_suspended} /></td>
+                            <td style={{ padding: '11px 16px', color: T.text3, fontSize: '0.8rem', fontVariantNumeric: 'tabular-nums' }}>{new Date(c.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
+                            <td style={{ padding: '11px 16px' }}>
+                              <button onClick={() => openDetail(c.id)} style={{ display: 'flex', alignItems: 'center', gap: 3, background: T.accentBg, border: `1px solid ${T.accentMid}`, borderRadius: 6, cursor: 'pointer', color: T.accent, fontWeight: 600, fontSize: 11.5, padding: '4px 10px' }}>
+                                View <ChevronRight size={13} />
                               </button>
                             </td>
                           </tr>
@@ -315,255 +494,151 @@ export default function UserAdminDashboard() {
                   </div>
                 </div>
 
-                {/* Filter panel — right side */}
-                <div style={{ ...CARD, width: 220, flexShrink: 0, padding: '16px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-                    <span style={{ fontWeight: 700, fontSize: '0.8rem', color: '#374151', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Filters</span>
-                    {hasCompFilters && <button onClick={clearCompFilters} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: '#F97316', fontWeight: 600 }}>Clear all</button>}
+                {/* Filter panel */}
+                <div style={{ width: 210, flexShrink: 0, background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, padding: '14px 14px 10px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                    <span style={{ fontWeight: 700, fontSize: '0.7rem', color: T.text3, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Filters</span>
+                    {hasCompFilters && <button onClick={clearCompFilters} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: T.accent, fontWeight: 600 }}>Clear all</button>}
                   </div>
 
-                  {/* Plan */}
-                  <div style={{ borderTop: '1px solid #F3F4F6', paddingTop: 12, marginBottom: 0 }}>
-                    <button onClick={() => toggleCompSection('plan')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '0 0 8px', fontWeight: 600, fontSize: '0.85rem', color: '#F97316' }}>
-                      Plan {planFilters.length > 0 && <span style={{ background: '#F97316', color: '#fff', borderRadius: 999, padding: '1px 7px', fontSize: 11, fontWeight: 700 }}>{planFilters.length}</span>}
-                      {compFilterOpen.plan ? <ChevronUp size={14} color="#9CA3AF" /> : <ChevronDown size={14} color="#9CA3AF" />}
-                    </button>
-                    {compFilterOpen.plan && ALL_PLANS.map(plan => (
-                      <label key={plan} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, cursor: 'pointer' }}>
-                        <input type="checkbox" checked={planFilters.includes(plan)} onChange={() => togglePlan(plan)} style={{ width: 15, height: 15, accentColor: '#F97316', cursor: 'pointer' }} />
-                        <span style={{ fontSize: '0.8rem', color: '#374151' }}>{plan}</span>
-                      </label>
-                    ))}
-                  </div>
+                  <FilterSection label="Plan" count={planFilters.length} open={compFilterOpen.plan} onToggle={() => toggleCompSection('plan')}>
+                    {ALL_PLANS.map(plan => <CheckRow key={plan} label={plan} checked={planFilters.includes(plan)} onChange={() => togglePlan(plan)} />)}
+                  </FilterSection>
 
-                  {/* Industry */}
-                  <div style={{ borderTop: '1px solid #F3F4F6', paddingTop: 12 }}>
-                    <button onClick={() => toggleCompSection('industry')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '0 0 8px', fontWeight: 600, fontSize: '0.85rem', color: '#F97316' }}>
-                      Industry {industryFilters.length > 0 && <span style={{ background: '#F97316', color: '#fff', borderRadius: 999, padding: '1px 7px', fontSize: 11, fontWeight: 700 }}>{industryFilters.length}</span>}
-                      {compFilterOpen.industry ? <ChevronUp size={14} color="#9CA3AF" /> : <ChevronDown size={14} color="#9CA3AF" />}
-                    </button>
-                    {compFilterOpen.industry && (
-                      <>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 7, padding: '6px 10px', marginBottom: 8 }}>
-                          <Search size={12} color="#9CA3AF" style={{ flexShrink: 0 }} />
-                          <input value={industrySearch} onChange={e => setIndustrySearch(e.target.value)} placeholder="Search industry…" style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: '0.78rem', color: '#111827', flex: 1, minWidth: 0 }} />
-                          {industrySearch && <button onClick={() => setIndustrySearch('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', padding: 0, display: 'flex' }}><X size={11} /></button>}
-                        </div>
-                        {allIndustryNames.length === 0 ? (
-                          <span style={{ fontSize: '0.75rem', color: '#9CA3AF' }}>No industries</span>
-                        ) : (
-                          <div style={{ maxHeight: 160, overflowY: 'auto', marginBottom: 4 }}>
-                            {allIndustryNames.filter(n => n.toLowerCase().includes(industrySearch.toLowerCase())).map(ind => (
-                              <label key={ind} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, cursor: 'pointer' }}>
-                                <input type="checkbox" checked={industryFilters.includes(ind)} onChange={() => toggleIndustry(ind)} style={{ width: 15, height: 15, accentColor: '#F97316', cursor: 'pointer', flexShrink: 0 }} />
-                                <span style={{ fontSize: '0.8rem', color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ind}</span>
-                              </label>
-                            ))}
-                          </div>
+                  <FilterSection label="Industry" count={industryFilters.length} open={compFilterOpen.industry} onToggle={() => toggleCompSection('industry')}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6, padding: '5px 8px', marginBottom: 7 }}>
+                      <Search size={11} color={T.text3} style={{ flexShrink: 0 }} />
+                      <input value={industrySearch} onChange={e => setIndustrySearch(e.target.value)} placeholder="Search…" style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: '0.75rem', color: T.text1, flex: 1, minWidth: 0 }} />
+                      {industrySearch && <button onClick={() => setIndustrySearch('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T.text3, padding: 0, display: 'flex' }}><X size={10} /></button>}
+                    </div>
+                    {allIndustryNames.length === 0 ? (
+                      <span style={{ fontSize: '0.73rem', color: T.text3 }}>No industries</span>
+                    ) : (
+                      <div style={{ maxHeight: 150, overflowY: 'auto' }}>
+                        {allIndustryNames.filter(n => n.toLowerCase().includes(industrySearch.toLowerCase())).map(ind =>
+                          <CheckRow key={ind} label={ind} checked={industryFilters.includes(ind)} onChange={() => toggleIndustry(ind)} />
                         )}
-                      </>
-                    )}
-                  </div>
-
-                  {/* Status */}
-                  <div style={{ borderTop: '1px solid #F3F4F6', paddingTop: 12 }}>
-                    <button onClick={() => toggleCompSection('status')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '0 0 8px', fontWeight: 600, fontSize: '0.85rem', color: '#F97316' }}>
-                      Status {compStatusFilters.length > 0 && <span style={{ background: '#F97316', color: '#fff', borderRadius: 999, padding: '1px 7px', fontSize: 11, fontWeight: 700 }}>{compStatusFilters.length}</span>}
-                      {compFilterOpen.status ? <ChevronUp size={14} color="#9CA3AF" /> : <ChevronDown size={14} color="#9CA3AF" />}
-                    </button>
-                    {compFilterOpen.status && [{ label: 'Active', value: 'active' }, { label: 'Suspended', value: 'suspended' }].map(({ label, value }) => (
-                      <label key={value} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, cursor: 'pointer' }}>
-                        <input type="checkbox" checked={compStatusFilters.includes(value)} onChange={() => toggleCompStatus(value)} style={{ width: 15, height: 15, accentColor: '#F97316', cursor: 'pointer' }} />
-                        <span style={{ fontSize: '0.8rem', color: '#374151' }}>{label}</span>
-                      </label>
-                    ))}
-                  </div>
-
-                  {/* Date created */}
-                  <div style={{ borderTop: '1px solid #F3F4F6', paddingTop: 12 }}>
-                    <button onClick={() => toggleCompSection('date')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '0 0 8px', fontWeight: 600, fontSize: '0.85rem', color: '#F97316' }}>
-                      Date Created {(compDateFrom || compDateTo) && <span style={{ background: '#F97316', color: '#fff', borderRadius: 999, padding: '1px 7px', fontSize: 11, fontWeight: 700 }}>●</span>}
-                      {compFilterOpen.date ? <ChevronUp size={14} color="#9CA3AF" /> : <ChevronDown size={14} color="#9CA3AF" />}
-                    </button>
-                    {compFilterOpen.date && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        <div>
-                          <div style={{ fontSize: '0.75rem', color: '#6B7280', marginBottom: 4 }}>From</div>
-                          <input type="date" value={compDateFrom} onChange={e => setCompDateFrom(e.target.value)} style={{ width: '100%', border: '1px solid #E5E7EB', borderRadius: 7, padding: '6px 10px', fontSize: '0.8rem', color: '#111827', outline: 'none', boxSizing: 'border-box' }} />
-                        </div>
-                        <div>
-                          <div style={{ fontSize: '0.75rem', color: '#6B7280', marginBottom: 4 }}>To</div>
-                          <input type="date" value={compDateTo} onChange={e => setCompDateTo(e.target.value)} style={{ width: '100%', border: '1px solid #E5E7EB', borderRadius: 7, padding: '6px 10px', fontSize: '0.8rem', color: '#111827', outline: 'none', boxSizing: 'border-box' }} />
-                        </div>
-                        {(compDateFrom || compDateTo) && <button onClick={() => { setCompDateFrom(''); setCompDateTo('') }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: '#9CA3AF', textAlign: 'left', padding: 0 }}>Clear dates</button>}
                       </div>
                     )}
-                  </div>
+                  </FilterSection>
+
+                  <FilterSection label="Status" count={compStatusFilters.length} open={compFilterOpen.status} onToggle={() => toggleCompSection('status')}>
+                    {[{ label: 'Active', value: 'active' }, { label: 'Suspended', value: 'suspended' }].map(({ label, value }) =>
+                      <CheckRow key={value} label={label} checked={compStatusFilters.includes(value)} onChange={() => toggleCompStatus(value)} />
+                    )}
+                  </FilterSection>
+
+                  <FilterSection label="Date Created" pill={<DateRangePill from={compDateFrom} to={compDateTo} />} open={compFilterOpen.date} onToggle={() => toggleCompSection('date')}>
+                    <CalendarRangePicker from={compDateFrom} to={compDateTo} onChange={(f, t) => { setCompDateFrom(f); setCompDateTo(t) }} />
+                  </FilterSection>
                 </div>
               </div>
             </div>
           )}
 
+          {/* ── Users tab ─────────────────────────────────────────────────── */}
           {tab === 'users' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              {/* Full-width search bar */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: '#fff', border: '1px solid #E5E7EB', borderRadius: 10, padding: '11px 16px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
-                <Search size={17} color="#9CA3AF" style={{ flexShrink: 0 }} />
-                <input
-                  value={userSearch}
-                  onChange={e => setUserSearch(e.target.value)}
-                  placeholder="Search by name or email…"
-                  style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: '0.9375rem', color: '#111827', flex: 1 }}
-                />
-                {userSearch && <button onClick={() => setUserSearch('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', padding: 0, display: 'flex' }}><X size={16} /></button>}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 9, padding: '10px 16px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+                <Search size={15} color={T.text3} style={{ flexShrink: 0 }} />
+                <input value={userSearch} onChange={e => setUserSearch(e.target.value)} placeholder="Search by name or email…"
+                  style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: '0.9rem', color: T.text1, flex: 1 }} />
+                {userSearch && <button onClick={() => setUserSearch('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T.text3, padding: 0, display: 'flex' }}><X size={14} /></button>}
               </div>
 
-              <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
-              {/* Table */}
-              <div style={{ ...CARD, flex: 1, minWidth: 0 }}>
-                <div style={{ padding: '16px 24px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center' }}>
-                  <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, flex: 1 }}>
-                    All Users
-                  </h2>
-                  <span style={{ fontSize: '0.8rem', color: '#9CA3AF' }}>
-                    {displayedUsers.length} of {totalUserCount} users
-                  </span>
-                </div>
-                <div style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
-                    <thead>
-                      <tr style={{ background: '#F9FAFB' }}>
-                        {['Name', 'Email', 'Role', 'Company', 'Status', 'Joined', ''].map(h => (
-                          <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 600, color: '#6B7280', fontSize: 12, borderBottom: '1px solid #F3F4F6', whiteSpace: 'nowrap' }}>{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {userLoading ? (
-                        <tr><td colSpan={7} style={{ padding: 32, textAlign: 'center', color: '#9CA3AF' }}>Loading…</td></tr>
-                      ) : displayedUsers.length === 0 ? (
-                        <tr><td colSpan={7} style={{ padding: 32, textAlign: 'center', color: '#9CA3AF' }}>No users found</td></tr>
-                      ) : displayedUsers.map(u => (
-                        <tr key={u.id} style={{ borderBottom: '1px solid #F9FAFB', transition: 'background 0.1s' }}
-                          onMouseEnter={e => (e.currentTarget.style.background = '#FFFBF7')}
-                          onMouseLeave={e => (e.currentTarget.style.background = '')}>
-                          <td style={{ padding: '12px 16px', fontWeight: 600, color: '#111827' }}>{u.full_name}</td>
-                          <td style={{ padding: '12px 16px', color: '#374151' }}>{u.email_address}</td>
-                          <td style={{ padding: '12px 16px', color: '#6B7280' }}>{u.role}</td>
-                          <td style={{ padding: '12px 16px', color: '#6B7280' }}>{u.company_name ?? '—'}</td>
-                          <td style={{ padding: '12px 16px' }}>
-                            <span style={BADGE(u.is_suspended)}>{u.is_suspended ? 'Suspended' : 'Active'}</span>
-                          </td>
-                          <td style={{ padding: '12px 16px', color: '#6B7280' }}>{new Date(u.created_at).toLocaleDateString()}</td>
-                          <td style={{ padding: '12px 16px' }}>
-                            {u.is_suspended ? (
-                              <button
-                                onClick={() => doUnsuspend('user', u.id, u.full_name)}
-                                style={{ display: 'flex', alignItems: 'center', gap: 4, background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 6, cursor: 'pointer', color: '#16A34A', fontWeight: 600, fontSize: 12, padding: '4px 10px' }}
-                              >
-                                <CheckCircle size={13} /> Reinstate
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() => setSuspendModal({ type: 'user', id: u.id, name: u.full_name })}
-                                style={{ display: 'flex', alignItems: 'center', gap: 4, background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 6, cursor: 'pointer', color: '#DC2626', fontWeight: 600, fontSize: 12, padding: '4px 10px' }}
-                              >
-                                <AlertTriangle size={13} /> Suspend
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* Filter panel — right side */}
-              <div style={{ ...CARD, width: 220, flexShrink: 0, padding: '16px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-                  <span style={{ fontWeight: 700, fontSize: '0.8rem', color: '#374151', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Filters</span>
-                  {hasUserFilters && <button onClick={clearUserFilters} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: '#F97316', fontWeight: 600 }}>Clear all</button>}
-                </div>
-
-                {/* Company */}
-                <div style={{ borderTop: '1px solid #F3F4F6', paddingTop: 12 }}>
-                  <button onClick={() => toggleUserSection('company')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '0 0 8px', fontWeight: 600, fontSize: '0.85rem', color: '#F97316' }}>
-                    Company {companyNameFilters.length > 0 && <span style={{ background: '#F97316', color: '#fff', borderRadius: 999, padding: '1px 7px', fontSize: 11, fontWeight: 700 }}>{companyNameFilters.length}</span>}
-                    {userFilterOpen.company ? <ChevronUp size={14} color="#9CA3AF" /> : <ChevronDown size={14} color="#9CA3AF" />}
-                  </button>
-                  {userFilterOpen.company && (
-                    <>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 7, padding: '6px 10px', marginBottom: 8 }}>
-                        <Search size={12} color="#9CA3AF" style={{ flexShrink: 0 }} />
-                        <input value={companySearch} onChange={e => setCompanySearch(e.target.value)} placeholder="Search company…" style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: '0.78rem', color: '#111827', flex: 1, minWidth: 0 }} />
-                        {companySearch && <button onClick={() => setCompanySearch('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', padding: 0, display: 'flex' }}><X size={11} /></button>}
-                      </div>
-                      {allCompanyNames.length === 0 ? (
-                        <span style={{ fontSize: '0.75rem', color: '#9CA3AF' }}>No companies</span>
-                      ) : (
-                        <div style={{ maxHeight: 160, overflowY: 'auto', marginBottom: 4 }}>
-                          {allCompanyNames.filter(n => n.toLowerCase().includes(companySearch.toLowerCase())).map(name => (
-                            <label key={name} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, cursor: 'pointer' }}>
-                              <input type="checkbox" checked={companyNameFilters.includes(name)} onChange={() => toggleCompanyName(name)} style={{ width: 15, height: 15, accentColor: '#F97316', cursor: 'pointer', flexShrink: 0 }} />
-                              <span style={{ fontSize: '0.8rem', color: '#374151', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
-                            </label>
+              <div style={{ display: 'flex', gap: 18, alignItems: 'flex-start' }}>
+                {/* Table */}
+                <div style={{ flex: 1, minWidth: 0, background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, boxShadow: '0 1px 3px rgba(0,0,0,0.04)', overflow: 'hidden' }}>
+                  <div style={{ padding: '14px 20px', borderBottom: `1px solid ${T.border}`, display: 'flex', alignItems: 'center', background: '#FAFBFC' }}>
+                    <span style={{ fontWeight: 700, fontSize: '0.875rem', color: T.text1, flex: 1 }}>All Users</span>
+                    <span style={{ fontSize: '0.75rem', color: T.text3, fontVariantNumeric: 'tabular-nums' }}>
+                      {displayedUsers.length} / {totalUserCount}
+                    </span>
+                  </div>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                      <thead>
+                        <tr style={{ background: '#FAFBFC' }}>
+                          {['Name', 'Email', 'Role', 'Company', 'Status', 'Joined', ''].map(h => (
+                            <th key={h} style={{ padding: '9px 16px', textAlign: 'left', fontWeight: 600, color: T.text3, fontSize: 11, borderBottom: `1px solid ${T.border}`, whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
                           ))}
-                        </div>
-                      )}
-                    </>
-                  )}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {userLoading ? (
+                          <tr><td colSpan={7} style={{ padding: 40, textAlign: 'center', color: T.text3 }}>Loading…</td></tr>
+                        ) : displayedUsers.length === 0 ? (
+                          <tr><td colSpan={7} style={{ padding: 40, textAlign: 'center', color: T.text3 }}>No users found</td></tr>
+                        ) : displayedUsers.map((u, i) => (
+                          <tr key={u.id} style={{ borderBottom: `1px solid ${i === displayedUsers.length - 1 ? 'transparent' : T.border}`, transition: 'background 0.1s' }}
+                            onMouseEnter={e => (e.currentTarget.style.background = '#F9FAFB')}
+                            onMouseLeave={e => (e.currentTarget.style.background = '')}>
+                            <td style={{ padding: '11px 16px', fontWeight: 600, color: T.text1 }}>{u.full_name}</td>
+                            <td style={{ padding: '11px 16px', color: T.text2, fontSize: '0.82rem' }}>{u.email_address}</td>
+                            <td style={{ padding: '11px 16px' }}>
+                              <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 5, background: T.surfaceHi, color: T.text1, border: `1px solid ${T.border}`, whiteSpace: 'nowrap' }}>{u.role}</span>
+                            </td>
+                            <td style={{ padding: '11px 16px', color: T.text2, fontSize: '0.82rem' }}>{u.company_name ?? '—'}</td>
+                            <td style={{ padding: '11px 16px' }}><StatusDot suspended={u.is_suspended} /></td>
+                            <td style={{ padding: '11px 16px', color: T.text3, fontSize: '0.8rem', fontVariantNumeric: 'tabular-nums' }}>{new Date(u.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
+                            <td style={{ padding: '11px 16px' }}>
+                              {u.is_suspended ? (
+                                <button onClick={() => doUnsuspend('user', u.id, u.full_name)}
+                                  style={{ display: 'flex', alignItems: 'center', gap: 4, background: T.successBg, border: `1px solid ${T.successMid}`, borderRadius: 6, cursor: 'pointer', color: T.success, fontWeight: 600, fontSize: 11.5, padding: '4px 10px' }}>
+                                  <CheckCircle size={12} /> Reinstate
+                                </button>
+                              ) : (
+                                <button onClick={() => setSuspendModal({ type: 'user', id: u.id, name: u.full_name })}
+                                  style={{ display: 'flex', alignItems: 'center', gap: 4, background: T.dangerBg, border: `1px solid ${T.dangerMid}`, borderRadius: 6, cursor: 'pointer', color: T.danger, fontWeight: 600, fontSize: 11.5, padding: '4px 10px' }}>
+                                  <AlertTriangle size={12} /> Suspend
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
 
-                {/* Role */}
-                <div style={{ borderTop: '1px solid #F3F4F6', paddingTop: 12 }}>
-                  <button onClick={() => toggleUserSection('role')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '0 0 8px', fontWeight: 600, fontSize: '0.85rem', color: '#F97316' }}>
-                    Role {roleFilters.length > 0 && <span style={{ background: '#F97316', color: '#fff', borderRadius: 999, padding: '1px 7px', fontSize: 11, fontWeight: 700 }}>{roleFilters.length}</span>}
-                    {userFilterOpen.role ? <ChevronUp size={14} color="#9CA3AF" /> : <ChevronDown size={14} color="#9CA3AF" />}
-                  </button>
-                  {userFilterOpen.role && ALL_ROLES.map(role => (
-                    <label key={role} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, cursor: 'pointer' }}>
-                      <input type="checkbox" checked={roleFilters.includes(role)} onChange={() => toggleRole(role)} style={{ width: 15, height: 15, accentColor: '#F97316', cursor: 'pointer' }} />
-                      <span style={{ fontSize: '0.8rem', color: '#374151' }}>{role}</span>
-                    </label>
-                  ))}
-                </div>
+                {/* Filter panel */}
+                <div style={{ width: 210, flexShrink: 0, background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, padding: '14px 14px 10px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                    <span style={{ fontWeight: 700, fontSize: '0.7rem', color: T.text3, textTransform: 'uppercase', letterSpacing: '0.08em' }}>Filters</span>
+                    {hasUserFilters && <button onClick={clearUserFilters} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: T.accent, fontWeight: 600 }}>Clear all</button>}
+                  </div>
 
-                {/* Status */}
-                <div style={{ borderTop: '1px solid #F3F4F6', paddingTop: 12 }}>
-                  <button onClick={() => toggleUserSection('status')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '0 0 8px', fontWeight: 600, fontSize: '0.85rem', color: '#F97316' }}>
-                    Status {statusFilters.length > 0 && <span style={{ background: '#F97316', color: '#fff', borderRadius: 999, padding: '1px 7px', fontSize: 11, fontWeight: 700 }}>{statusFilters.length}</span>}
-                    {userFilterOpen.status ? <ChevronUp size={14} color="#9CA3AF" /> : <ChevronDown size={14} color="#9CA3AF" />}
-                  </button>
-                  {userFilterOpen.status && [{ label: 'Active', value: 'active' }, { label: 'Suspended', value: 'suspended' }].map(({ label, value }) => (
-                    <label key={value} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, cursor: 'pointer' }}>
-                      <input type="checkbox" checked={statusFilters.includes(value)} onChange={() => toggleStatus(value)} style={{ width: 15, height: 15, accentColor: '#F97316', cursor: 'pointer' }} />
-                      <span style={{ fontSize: '0.8rem', color: '#374151' }}>{label}</span>
-                    </label>
-                  ))}
-                </div>
-
-                {/* Date joined */}
-                <div style={{ borderTop: '1px solid #F3F4F6', paddingTop: 12 }}>
-                  <button onClick={() => toggleUserSection('date')} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', background: 'none', border: 'none', cursor: 'pointer', padding: '0 0 8px', fontWeight: 600, fontSize: '0.85rem', color: '#F97316' }}>
-                    Date Joined {(userDateFrom || userDateTo) && <span style={{ background: '#F97316', color: '#fff', borderRadius: 999, padding: '1px 7px', fontSize: 11, fontWeight: 700 }}>●</span>}
-                    {userFilterOpen.date ? <ChevronUp size={14} color="#9CA3AF" /> : <ChevronDown size={14} color="#9CA3AF" />}
-                  </button>
-                  {userFilterOpen.date && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      <div>
-                        <div style={{ fontSize: '0.75rem', color: '#6B7280', marginBottom: 4 }}>From</div>
-                        <input type="date" value={userDateFrom} onChange={e => setUserDateFrom(e.target.value)} style={{ width: '100%', border: '1px solid #E5E7EB', borderRadius: 7, padding: '6px 10px', fontSize: '0.8rem', color: '#111827', outline: 'none', boxSizing: 'border-box' }} />
-                      </div>
-                      <div>
-                        <div style={{ fontSize: '0.75rem', color: '#6B7280', marginBottom: 4 }}>To</div>
-                        <input type="date" value={userDateTo} onChange={e => setUserDateTo(e.target.value)} style={{ width: '100%', border: '1px solid #E5E7EB', borderRadius: 7, padding: '6px 10px', fontSize: '0.8rem', color: '#111827', outline: 'none', boxSizing: 'border-box' }} />
-                      </div>
-                      {(userDateFrom || userDateTo) && <button onClick={() => { setUserDateFrom(''); setUserDateTo('') }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: '#9CA3AF', textAlign: 'left', padding: 0 }}>Clear dates</button>}
+                  <FilterSection label="Company" count={companyNameFilters.length} open={userFilterOpen.company} onToggle={() => toggleUserSection('company')}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6, padding: '5px 8px', marginBottom: 7 }}>
+                      <Search size={11} color={T.text3} style={{ flexShrink: 0 }} />
+                      <input value={companySearch} onChange={e => setCompanySearch(e.target.value)} placeholder="Search…" style={{ border: 'none', background: 'transparent', outline: 'none', fontSize: '0.75rem', color: T.text1, flex: 1, minWidth: 0 }} />
+                      {companySearch && <button onClick={() => setCompanySearch('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T.text3, padding: 0, display: 'flex' }}><X size={10} /></button>}
                     </div>
-                  )}
+                    {allCompanyNames.length === 0 ? (
+                      <span style={{ fontSize: '0.73rem', color: T.text3 }}>No companies</span>
+                    ) : (
+                      <div style={{ maxHeight: 150, overflowY: 'auto' }}>
+                        {allCompanyNames.filter(n => n.toLowerCase().includes(companySearch.toLowerCase())).map(name =>
+                          <CheckRow key={name} label={name} checked={companyNameFilters.includes(name)} onChange={() => toggleCompanyName(name)} />
+                        )}
+                      </div>
+                    )}
+                  </FilterSection>
+
+                  <FilterSection label="Role" count={roleFilters.length} open={userFilterOpen.role} onToggle={() => toggleUserSection('role')}>
+                    {ALL_ROLES.map(role => <CheckRow key={role} label={role} checked={roleFilters.includes(role)} onChange={() => toggleRole(role)} />)}
+                  </FilterSection>
+
+                  <FilterSection label="Status" count={statusFilters.length} open={userFilterOpen.status} onToggle={() => toggleUserSection('status')}>
+                    {[{ label: 'Active', value: 'active' }, { label: 'Suspended', value: 'suspended' }].map(({ label, value }) =>
+                      <CheckRow key={value} label={label} checked={statusFilters.includes(value)} onChange={() => toggleStatus(value)} />
+                    )}
+                  </FilterSection>
+
+                  <FilterSection label="Date Joined" pill={<DateRangePill from={userDateFrom} to={userDateTo} />} open={userFilterOpen.date} onToggle={() => toggleUserSection('date')}>
+                    <CalendarRangePicker from={userDateFrom} to={userDateTo} onChange={(f, t) => { setUserDateFrom(f); setUserDateTo(t) }} />
+                  </FilterSection>
                 </div>
-              </div>
               </div>
             </div>
           )}
@@ -572,30 +647,31 @@ export default function UserAdminDashboard() {
 
       {/* Company Detail Modal */}
       {detailOpen && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
           onClick={() => { setDetailOpen(false); setDetailCompany(null) }}>
-          <div style={{ background: '#fff', borderRadius: 16, maxWidth: 540, width: '100%', maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}
+          <div style={{ background: T.surface, borderRadius: 16, maxWidth: 560, width: '100%', maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 24px 80px rgba(0,0,0,0.25)', border: `1px solid ${T.border}` }}
             onClick={e => e.stopPropagation()}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px', borderBottom: '1px solid #F3F4F6' }}>
-              <h2 style={{ fontWeight: 700, fontSize: '1.1rem', color: '#111827', margin: 0 }}>Company Details</h2>
-              <button onClick={() => { setDetailOpen(false); setDetailCompany(null) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6B7280', padding: 4 }}>
-                <X size={20} />
-              </button>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 24px', borderBottom: `1px solid ${T.border}`, background: '#FAFBFC' }}>
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>Company Record</div>
+                <h2 style={{ fontWeight: 700, fontSize: '1rem', color: T.text1, margin: 0 }}>Company Details</h2>
+              </div>
+              <button onClick={() => { setDetailOpen(false); setDetailCompany(null) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T.text3, padding: 4 }}><X size={18} /></button>
             </div>
 
             {detailLoading ? (
-              <div style={{ padding: 48, textAlign: 'center', color: '#9CA3AF' }}>Loading…</div>
+              <div style={{ padding: 48, textAlign: 'center', color: T.text3 }}>Loading…</div>
             ) : detailCompany ? (
               <div style={{ padding: 24 }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
                   <div>
-                    <h3 style={{ fontWeight: 700, fontSize: '1.25rem', color: '#111827', margin: '0 0 4px' }}>{detailCompany.name}</h3>
-                    {detailCompany.description && <p style={{ color: '#6B7280', margin: 0, fontSize: '0.875rem' }}>{detailCompany.description}</p>}
+                    <h3 style={{ fontWeight: 700, fontSize: '1.2rem', color: T.text1, margin: '0 0 4px' }}>{detailCompany.name}</h3>
+                    {detailCompany.description && <p style={{ color: T.text2, margin: 0, fontSize: '0.85rem' }}>{detailCompany.description}</p>}
                   </div>
-                  <span style={BADGE(detailCompany.is_suspended)}>{detailCompany.is_suspended ? 'Suspended' : 'Active'}</span>
+                  <StatusDot suspended={detailCompany.is_suspended} />
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 24px', marginBottom: 20 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 24px', marginBottom: 20, background: T.bg, borderRadius: 10, padding: 16 }}>
                   {[
                     ['Plan', detailCompany.plan],
                     ['Members', String(detailCompany.member_count)],
@@ -605,38 +681,36 @@ export default function UserAdminDashboard() {
                     ['Website', detailCompany.website ?? '—'],
                     ['Owner', detailCompany.owner_name ?? '—'],
                     ['Owner Email', detailCompany.owner_email ?? '—'],
-                    ['Created', new Date(detailCompany.created_at).toLocaleDateString()],
+                    ['Created', new Date(detailCompany.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })],
                   ].map(([label, value]) => (
                     <div key={label}>
-                      <div style={{ fontSize: 11, fontWeight: 600, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2 }}>{label}</div>
-                      <div style={{ fontSize: '0.875rem', color: '#111827', fontWeight: 500 }}>{value}</div>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 3 }}>{label}</div>
+                      <div style={{ fontSize: '0.85rem', color: T.text1, fontWeight: 500 }}>{value}</div>
                     </div>
                   ))}
                 </div>
 
                 {detailCompany.is_suspended && detailCompany.suspended_reason && (
-                  <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', marginBottom: 16 }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: '#DC2626', marginBottom: 2 }}>Suspension Reason</div>
-                    <div style={{ fontSize: '0.875rem', color: '#B91C1C' }}>{detailCompany.suspended_reason}</div>
+                  <div style={{ background: T.dangerBg, border: `1px solid ${T.dangerMid}`, borderRadius: 8, padding: '10px 14px', marginBottom: 16 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: T.danger, marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Suspension Reason</div>
+                    <div style={{ fontSize: '0.85rem', color: '#B91C1C' }}>{detailCompany.suspended_reason}</div>
                   </div>
                 )}
 
-                <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', paddingTop: 8, borderTop: '1px solid #F3F4F6' }}>
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', paddingTop: 12, borderTop: `1px solid ${T.border}` }}>
                   <button onClick={() => { setDetailOpen(false); setDetailCompany(null) }}
-                    style={{ padding: '9px 18px', borderRadius: 8, border: '1px solid #E5E7EB', background: '#fff', cursor: 'pointer', color: '#374151', fontWeight: 600, fontSize: '0.875rem' }}>
+                    style={{ padding: '8px 16px', borderRadius: 8, border: `1px solid ${T.border}`, background: T.surface, cursor: 'pointer', color: T.text2, fontWeight: 600, fontSize: '0.85rem' }}>
                     Close
                   </button>
                   {detailCompany.is_suspended ? (
-                    <button
-                      onClick={() => doUnsuspend('company', detailCompany.id, detailCompany.name)}
-                      style={{ padding: '9px 18px', borderRadius: 8, border: 'none', background: '#16A34A', cursor: 'pointer', color: '#fff', fontWeight: 600, fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <CheckCircle size={15} /> Reinstate Company
+                    <button onClick={() => doUnsuspend('company', detailCompany.id, detailCompany.name)}
+                      style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: T.success, cursor: 'pointer', color: '#fff', fontWeight: 600, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <CheckCircle size={14} /> Reinstate Company
                     </button>
                   ) : (
-                    <button
-                      onClick={() => { setSuspendModal({ type: 'company', id: detailCompany.id, name: detailCompany.name }) }}
-                      style={{ padding: '9px 18px', borderRadius: 8, border: 'none', background: '#DC2626', cursor: 'pointer', color: '#fff', fontWeight: 600, fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <AlertTriangle size={15} /> Suspend Company
+                    <button onClick={() => setSuspendModal({ type: 'company', id: detailCompany.id, name: detailCompany.name })}
+                      style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: T.danger, cursor: 'pointer', color: '#fff', fontWeight: 600, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <AlertTriangle size={14} /> Suspend Company
                     </button>
                   )}
                 </div>
@@ -648,39 +722,30 @@ export default function UserAdminDashboard() {
 
       {/* Suspend Modal */}
       {suspendModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
           onClick={() => { setSuspendModal(null); setSuspendReason('') }}>
-          <div style={{ background: '#fff', borderRadius: 16, maxWidth: 420, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}
+          <div style={{ background: T.surface, borderRadius: 14, maxWidth: 420, width: '100%', boxShadow: '0 24px 80px rgba(0,0,0,0.25)', border: `1px solid ${T.border}` }}
             onClick={e => e.stopPropagation()}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px', borderBottom: '1px solid #F3F4F6' }}>
-              <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#DC2626', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <AlertTriangle size={18} /> Suspend {suspendModal.type === 'company' ? 'Company' : 'User'}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 22px', borderBottom: `1px solid ${T.border}` }}>
+              <h2 style={{ fontWeight: 700, fontSize: '0.95rem', color: T.danger, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <AlertTriangle size={16} /> Suspend {suspendModal.type === 'company' ? 'Company' : 'User'}
               </h2>
-              <button onClick={() => { setSuspendModal(null); setSuspendReason('') }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6B7280', padding: 4 }}>
-                <X size={18} />
-              </button>
+              <button onClick={() => { setSuspendModal(null); setSuspendReason('') }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T.text3, padding: 4 }}><X size={16} /></button>
             </div>
-            <div style={{ padding: 24 }}>
-              <p style={{ color: '#374151', fontSize: '0.875rem', margin: '0 0 16px' }}>
-                You are about to suspend <strong>{suspendModal.name}</strong>. Please provide a reason.
+            <div style={{ padding: 22 }}>
+              <p style={{ color: T.text2, fontSize: '0.875rem', margin: '0 0 16px' }}>
+                You are about to suspend <strong style={{ color: T.text1 }}>{suspendModal.name}</strong>. Please provide a reason.
               </p>
-              <label style={{ display: 'block', fontWeight: 600, fontSize: '0.8rem', color: '#374151', marginBottom: 6 }}>Reason *</label>
-              <textarea
-                value={suspendReason}
-                onChange={e => setSuspendReason(e.target.value)}
-                rows={3}
-                placeholder="Enter suspension reason…"
-                style={{ width: '100%', border: '1px solid #D1D5DB', borderRadius: 8, padding: '10px 12px', fontSize: '0.875rem', resize: 'vertical', outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit' }}
-              />
+              <label style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: T.text3, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>Reason *</label>
+              <textarea value={suspendReason} onChange={e => setSuspendReason(e.target.value)} rows={3} placeholder="Enter suspension reason…"
+                style={{ width: '100%', border: `1px solid ${T.border}`, borderRadius: 8, padding: '10px 12px', fontSize: '0.875rem', resize: 'vertical', outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit', background: T.bg, color: T.text1 }} />
               <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 16 }}>
                 <button onClick={() => { setSuspendModal(null); setSuspendReason('') }}
-                  style={{ padding: '9px 18px', borderRadius: 8, border: '1px solid #E5E7EB', background: '#fff', cursor: 'pointer', color: '#374151', fontWeight: 600, fontSize: '0.875rem' }}>
+                  style={{ padding: '8px 16px', borderRadius: 8, border: `1px solid ${T.border}`, background: T.surface, cursor: 'pointer', color: T.text2, fontWeight: 600, fontSize: '0.85rem' }}>
                   Cancel
                 </button>
-                <button
-                  onClick={doSuspend}
-                  disabled={!suspendReason.trim() || suspending}
-                  style={{ padding: '9px 18px', borderRadius: 8, border: 'none', background: suspendReason.trim() ? '#DC2626' : '#E5E7EB', cursor: suspendReason.trim() ? 'pointer' : 'not-allowed', color: suspendReason.trim() ? '#fff' : '#9CA3AF', fontWeight: 600, fontSize: '0.875rem' }}>
+                <button onClick={doSuspend} disabled={!suspendReason.trim() || suspending}
+                  style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: suspendReason.trim() ? T.danger : T.border, cursor: suspendReason.trim() ? 'pointer' : 'not-allowed', color: suspendReason.trim() ? '#fff' : T.text3, fontWeight: 600, fontSize: '0.85rem' }}>
                   {suspending ? 'Suspending…' : 'Confirm Suspend'}
                 </button>
               </div>
@@ -691,7 +756,8 @@ export default function UserAdminDashboard() {
 
       {/* Toast */}
       {toast && (
-        <div style={{ position: 'fixed', bottom: 24, right: 24, background: '#111827', color: '#fff', borderRadius: 10, padding: '12px 20px', fontSize: '0.875rem', fontWeight: 500, zIndex: 100, boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
+        <div style={{ position: 'fixed', bottom: 24, right: 24, background: T.text1, color: '#fff', borderRadius: 9, padding: '11px 18px', fontSize: '0.85rem', fontWeight: 500, zIndex: 100, boxShadow: '0 4px 24px rgba(0,0,0,0.25)', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: T.accentMid, display: 'inline-block' }} />
           {toast}
         </div>
       )}

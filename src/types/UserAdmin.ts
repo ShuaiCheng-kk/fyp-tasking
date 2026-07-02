@@ -51,3 +51,21 @@ export interface SuspendUserInput {
 export interface UnsuspendUserInput {
   user_id: string
 }
+
+export interface UAReportStats {
+  totalCompanies: number
+  totalUsers: number
+  activeCompanies: number
+  activeUsers: number
+  suspendedCompanies: number
+  suspendedUsers: number
+  newCompaniesLast7Days: number
+  newUsersLast7Days: number
+  newCompaniesLast30Days: number
+  newUsersLast30Days: number
+  planBreakdown: Record<string, number>
+  roleBreakdown: Record<string, number>
+  industryBreakdown: Record<string, number>
+  companySizeBreakdown: Record<string, number>
+  growthByMonth: { month: string; companies: number; users: number }[]
+}

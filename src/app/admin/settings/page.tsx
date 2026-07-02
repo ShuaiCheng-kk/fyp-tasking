@@ -78,11 +78,11 @@ export default function AdminSettingsPage() {
   }
 
   return (
-    <main style={{ display: 'flex', minHeight: '100vh', background: '#F8FAFC', fontFamily: 'var(--font-body)' }}>
+    <main style={{ display: 'flex', minHeight: '100vh', background: '#F8F9FA', fontFamily: 'Inter, system-ui, sans-serif' }}>
       <AdminSidebar />
       <section style={{ marginLeft: 64, padding: '36px 40px', flex: 1 }}>
         <header style={{ marginBottom: 28 }}>
-          <p style={{ margin: '0 0 6px', color: ORANGE, fontSize: 11, letterSpacing: 1.4, fontWeight: 900, textTransform: 'uppercase' }}>Marketing Admin</p>
+          <p style={{ margin: '0 0 6px', color: '#6B7280', fontSize: 11, letterSpacing: 1.4, fontWeight: 700, textTransform: 'uppercase' }}>Marketing Admin</p>
           <h1 style={{ margin: 0, fontSize: 28, fontWeight: 900, color: TEXT, fontFamily: 'var(--font-heading)' }}>Settings</h1>
         </header>
 

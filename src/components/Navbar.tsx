@@ -203,6 +203,7 @@ const DASHBOARD_ROUTE_BY_ROLE: Record<string, string> = {
   'Casual Worker': '/casual/dashboard',
   'Guest User': '/guest/applications',
   'Marketing Admin': '/admin/dashboard',
+  'User Admin': '/useradmin/dashboard',
 }
 
 // ─── Navbar ──────────────────────────────────────────────────────────────────
