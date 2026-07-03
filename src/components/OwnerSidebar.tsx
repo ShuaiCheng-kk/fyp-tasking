@@ -6,7 +6,7 @@ import Link from 'next/link'
 import {
   LayoutDashboard,
   BarChart2,
-  Users,
+  Building2,
   MessageCircle,
   LogOut,
   UserPlus,
@@ -21,7 +21,7 @@ const NAV_ITEMS = [
   { label: 'Dashboard',     Icon: LayoutDashboard, href: '/owner/dashboard',       dot: null as 'messages' | 'announcements' | 'review' | 'tasks' | null },
   { label: 'Shifts',        Icon: CalendarDays,    href: '/owner/shifts',          dot: null },
   { label: 'Tasks',         Icon: CheckSquare,     href: '/owner/tasks',           dot: 'tasks' as const },
-  { label: 'Company',       Icon: Users,            href: '/owner/team',            dot: null },
+  { label: 'Company',       Icon: Building2,       href: '/owner/team',            dot: null },
   { label: 'Communication', Icon: MessageCircle,    href: '/owner/communication',   dot: 'messages' as const },
   { label: 'Recruitment',   Icon: UserPlus,         href: '/owner/recruitment',     dot: 'review' as const },
   { label: 'Attendance',    Icon: ClipboardList,    href: '/owner/attendance',      dot: 'attendance' as const },
@@ -250,10 +250,31 @@ export default function OwnerSidebar({
             refreshAnnCount)
           .subscribe()
 
+        const refreshAttendanceCount = () => {
+          fetch(`/api/attendance?resource=pending_requests_count&company_id=${cid}`)
+            .then(r => r.json())
+            .then(data => { if (data.success) setAttendanceCount(data.count ?? 0) })
+            .catch(() => {})
+        }
+
+        const swapChannel = supabase
+          .channel('owner-sidebar-swaps')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'shift_swap_requests', filter: `company_id=eq.${cid}` },
+            refreshAttendanceCount)
+          .subscribe()
+
+        const offDayChannel = supabase
+          .channel('owner-sidebar-off-day')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'employee_off_day_requests', filter: `company_id=eq.${cid}` },
+            refreshAttendanceCount)
+          .subscribe()
+
         return () => {
           supabase.removeChannel(msgChannel)
           supabase.removeChannel(annChannel)
           supabase.removeChannel(reviewChannel)
+          supabase.removeChannel(swapChannel)
+          supabase.removeChannel(offDayChannel)
         }
       })
       .catch(() => {})

@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { attendanceService } from '@/services/owner/attendanceService'
 import { timesheetAutoApprovalService } from '@/services/owner/timesheetAutoApprovalService'
+import { availabilityService } from '@/services/user/availabilityService'
 import { AttendanceOwnerStatus, AttendanceRequestStatus } from '@/types/Attendance'
 
 // CHANGE TYPE: Code only
@@ -44,8 +45,13 @@ export async function GET(req: NextRequest) {
       const requests = await attendanceService.getShiftSwapRequests(company_id, { managerId: manager_id })
       return NextResponse.json({ success: true, requests })
     }
+    if (resource === 'time_off') {
+      const requests = await attendanceService.getTimeOffRequests(company_id)
+      return NextResponse.json({ success: true, requests })
+    }
     if (resource === 'fixed_off_days') {
-      const requests = await attendanceService.getFixedOffDayRequests(company_id)
+      const manager_id = searchParams.get('manager_id') ?? undefined
+      const requests = await attendanceService.getFixedOffDayRequests(company_id, { managerId: manager_id })
       return NextResponse.json({ success: true, requests })
     }
     if (resource === 'range') {
@@ -120,6 +126,18 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ success: true, request })
     }
 
+    if (action === 'decide_time_off') {
+      if (typeof b.id !== 'string' || typeof b.reviewer_id !== 'string' || typeof b.decision !== 'string') {
+        return NextResponse.json({ success: false, message: 'id, reviewer_id and decision are required' }, { status: 400 })
+      }
+      const request = await attendanceService.decideTimeOffRequest({
+        id: b.id,
+        reviewer_id: b.reviewer_id,
+        decision: b.decision as 'approved' | 'rejected',
+      })
+      return NextResponse.json({ success: true, request })
+    }
+
     if (action === 'respond_shift_swap') {
       if (typeof b.id !== 'string' || typeof b.counterpart_id !== 'string' || typeof b.decision !== 'string') {
         return NextResponse.json({ success: false, message: 'id, counterpart_id and decision are required' }, { status: 400 })
@@ -144,8 +162,22 @@ export async function PATCH(req: NextRequest) {
     }
 
     if (action === 'decide_fixed_off_day') {
-      if (typeof b.id !== 'string' || typeof b.reviewer_id !== 'string' || typeof b.decision !== 'string') {
-        return NextResponse.json({ success: false, message: 'id, reviewer_id and decision are required' }, { status: 400 })
+      if (typeof b.reviewer_id !== 'string' || typeof b.decision !== 'string') {
+        return NextResponse.json({ success: false, message: 'reviewer_id and decision are required' }, { status: 400 })
+      }
+      if (Array.isArray(b.ids)) {
+        if (!b.ids.every((id): id is string => typeof id === 'string')) {
+          return NextResponse.json({ success: false, message: 'ids must be an array of strings' }, { status: 400 })
+        }
+        const requests = await attendanceService.decideFixedOffDayRequestGroup({
+          ids: b.ids,
+          reviewer_id: b.reviewer_id,
+          decision: b.decision as AttendanceRequestStatus,
+        })
+        return NextResponse.json({ success: true, requests })
+      }
+      if (typeof b.id !== 'string') {
+        return NextResponse.json({ success: false, message: 'id or ids is required' }, { status: 400 })
       }
       const request = await attendanceService.decideFixedOffDayRequest({
         id: b.id,
@@ -208,14 +240,33 @@ export async function POST(req: NextRequest) {
       if (
         typeof b.user_id !== 'string' ||
         typeof b.company_id !== 'string' ||
-        typeof b.weekday !== 'number'
+        !Array.isArray(b.dates) ||
+        !b.dates.every((d): d is string => typeof d === 'string')
       ) {
-        return NextResponse.json({ success: false, message: 'user_id, company_id and weekday are required' }, { status: 400 })
+        return NextResponse.json({ success: false, message: 'user_id, company_id and dates (string[]) are required' }, { status: 400 })
       }
       const request = await attendanceService.submitFixedOffDayRequest({
         user_id: b.user_id,
         company_id: b.company_id,
-        weekday: b.weekday,
+        dates: b.dates,
+      })
+      return NextResponse.json({ success: true, request })
+    }
+
+    if (action === 'submit_leave_request') {
+      if (
+        typeof b.company_id !== 'string' ||
+        typeof b.requester_id !== 'string' ||
+        typeof b.request_type !== 'string'
+      ) {
+        return NextResponse.json({ success: false, message: 'company_id, requester_id and request_type are required' }, { status: 400 })
+      }
+      const request = await availabilityService.submitBreakWaiverRequest({
+        user_id: b.requester_id,
+        company_id: b.company_id,
+        request_type: b.request_type,
+        reason: (b.reason as string | null) ?? null,
+        shift_assignment_id: (b.shift_assignment_id as string | null) ?? null,
       })
       return NextResponse.json({ success: true, request })
     }

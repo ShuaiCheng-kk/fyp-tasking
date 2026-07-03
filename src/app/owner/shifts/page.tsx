@@ -77,7 +77,7 @@ type UserProfileSummary = {
   weekly_working_hours: number
   max_weekly_hours: number
   contracted_weekly_hours: number
-  fixed_off_days: number[]
+  fixed_off_days: string[]
   leave_requests: Array<{ id: string; request_type: string; reason: string | null; status: string; created_at: string }>
 }
 
@@ -405,7 +405,7 @@ const CLOPENING_MIN_REST_HOURS = 5
 
 const AI_SCHEDULE_RULE_STEPS = [
   'Checking approved leave for the selected departments…',
-  'Checking fixed off days…',
+  'Checking weekly days off…',
   'Calculating weekly working hour limits (44h/week)…',
   'Ensuring at least 1 manager and 1 employee per department each day…',
   'Limiting consecutive working days (max 3)…',
@@ -870,7 +870,7 @@ export default function OwnerShiftsPage() {
   const [aiShiftCreateLoading, setAiShiftCreateLoading] = useState(false)
   const [aiShiftCreateError, setAiShiftCreateError] = useState('')
   const [aiResultWeekOffset, setAiResultWeekOffset] = useState(0)
-  const [aiStaffAvailability, setAiStaffAvailability] = useState<Map<string, { fixedOffWeekdays: Set<number>; approvedLeaveDates: Set<string> }>>(new Map())
+  const [aiStaffAvailability, setAiStaffAvailability] = useState<Map<string, { fixedOffDates: Set<string>; approvedLeaveDates: Set<string> }>>(new Map())
   const [aiShiftKnownRows, setAiShiftKnownRows] = useState<Map<string, { name: string; deptId: string; deptName: string; isUnassigned: boolean }>>(new Map())
 
   const [bulkEditModalOpen, setBulkEditModalOpen] = useState(false)
@@ -1769,11 +1769,11 @@ export default function OwnerShiftsPage() {
         const contextRes = await fetch(`/api/owner/scheduling-rules/context?company_id=${companyId}&user_id=${internalUserId}&date_from=${normalizedDateFrom}&date_to=${normalizedDateTo}`)
         const contextData = await contextRes.json()
         if (contextData.success) {
-          const staff = contextData.context.staff as { id: string; fixed_off_days: number[]; leave_requests: { date: string | null; leave_type: string; status: string }[] }[]
-          const nextAvailability = new Map<string, { fixedOffWeekdays: Set<number>; approvedLeaveDates: Set<string> }>()
+          const staff = contextData.context.staff as { id: string; fixed_off_days: string[]; leave_requests: { date: string | null; leave_type: string; status: string }[] }[]
+          const nextAvailability = new Map<string, { fixedOffDates: Set<string>; approvedLeaveDates: Set<string> }>()
           for (const member of staff) {
             nextAvailability.set(member.id, {
-              fixedOffWeekdays: new Set(member.fixed_off_days),
+              fixedOffDates: new Set(member.fixed_off_days),
               approvedLeaveDates: new Set(member.leave_requests.filter(r => r.status === 'approved' && r.date).map(r => r.date as string)),
             })
           }
@@ -3860,19 +3860,16 @@ export default function OwnerShiftsPage() {
 
                   {/* Fixed Off Days */}
                   <div>
-                    <p style={{ margin: '0 0 8px', fontSize: 11, fontWeight: 800, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Fixed Off Days</p>
+                    <p style={{ margin: '0 0 8px', fontSize: 11, fontWeight: 800, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Weekly Days Off</p>
                     {profileSummary.fixed_off_days.length === 0 ? (
-                      <p style={{ margin: 0, fontSize: 13, color: MUTED }}>No fixed off days set.</p>
+                      <p style={{ margin: 0, fontSize: 13, color: MUTED }}>No approved weekly day off dates.</p>
                     ) : (
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                        {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map((day, i) => {
-                          const isOff = profileSummary.fixed_off_days.includes(i)
-                          return (
-                            <span key={day} style={{ height: 28, padding: '0 12px', borderRadius: 999, fontSize: 12, fontWeight: 700, display: 'inline-flex', alignItems: 'center', background: isOff ? '#FEF2F2' : '#F1F5F9', color: isOff ? '#B91C1C' : '#94A3B8', border: `1px solid ${isOff ? '#FECACA' : '#E2E8F0'}` }}>
-                              {day}
-                            </span>
-                          )
-                        })}
+                        {profileSummary.fixed_off_days.map(date => (
+                          <span key={date} style={{ height: 28, padding: '0 12px', borderRadius: 999, fontSize: 12, fontWeight: 700, display: 'inline-flex', alignItems: 'center', background: '#FEF2F2', color: '#B91C1C', border: '1px solid #FECACA' }}>
+                            {new Date(`${date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' })}
+                          </span>
+                        ))}
                       </div>
                     )}
                   </div>
@@ -4272,8 +4269,7 @@ export default function OwnerShiftsPage() {
                                         const cells = cellsFor(row.key, date)
                                         const cellDropKey = `${row.key}_${date}`
                                         const availability = row.isUnassigned ? undefined : aiStaffAvailability.get(row.key)
-                                        const weekday = new Date(`${date}T00:00:00`).getDay()
-                                        const isFixedOff = availability?.fixedOffWeekdays.has(weekday) ?? false
+                                        const isFixedOff = availability?.fixedOffDates.has(date) ?? false
                                         const isOnLeave = availability?.approvedLeaveDates.has(date) ?? false
                                         const isUnavailable = isFixedOff || isOnLeave
                                         const isDragOver = aiDragOverCell === cellDropKey && aiDraggingSlot
@@ -4304,10 +4300,10 @@ export default function OwnerShiftsPage() {
                                           >
                                             {cells.length === 0 ? (
                                               isUnavailable ? (
-                                                <div title={isOnLeave ? 'Approved Leave' : 'Fixed Day Off'} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, borderRadius: 999, background: isOnLeave ? '#FEE2E2' : '#F3F4F6', height: 24, padding: '0 6px' }}>
+                                                <div title={isOnLeave ? 'Approved Leave' : 'Weekly Day Off'} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, borderRadius: 999, background: isOnLeave ? '#FEE2E2' : '#F3F4F6', height: 24, padding: '0 6px' }}>
                                                   {isOnLeave ? <CalendarDays size={11} color="#DC2626" /> : <AlertTriangle size={11} color="#9CA3AF" />}
                                                   <span style={{ fontSize: 9.5, fontWeight: 700, color: isOnLeave ? '#DC2626' : '#6B7280', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                                    {isOnLeave ? 'Approved Leave' : 'Fixed Day Off'}
+                                                    {isOnLeave ? 'Approved Leave' : 'Weekly Day Off'}
                                                   </span>
                                                 </div>
                                               ) : (

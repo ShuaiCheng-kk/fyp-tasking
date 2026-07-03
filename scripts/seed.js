@@ -44,12 +44,24 @@ const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
 // ─── 日期工具（全部基于"今天"动态推算，禁止写死绝对日期）──────────────────────
 
 function dateKey(d) {
-  return d.toISOString().slice(0, 10)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
 function addDays(d, n) {
   const next = new Date(d)
   next.setDate(next.getDate() + n)
   return next
+}
+function startOfWeekMonday(d) {
+  const next = new Date(d)
+  const offset = (next.getDay() + 6) % 7
+  next.setDate(next.getDate() - offset)
+  return next
+}
+function dateInWeek(weekStart, weekday) {
+  return addDays(weekStart, (weekday + 6) % 7)
 }
 function isWeekend(d) {
   const day = d.getDay()
@@ -182,6 +194,7 @@ async function main() {
     'attendance_records',
     'shift_action_history',
     'shift_swap_requests',
+    'time_off_requests',
     'shift_assignments',
     'shifts',
     'shift_templates',
@@ -195,7 +208,8 @@ async function main() {
     'job_applicants',
     'job_postings',
     'job_templates',
-    'time_off_requests',
+    'employee_off_day_requests',
+    'off_day_quota_settings',
     'employee_fixed_off_days',
     'manager_departments',
     'employee_departments',
@@ -210,6 +224,9 @@ async function main() {
   const { error: icErr } = await supabase.from('invitation_code').delete().neq('code', '')
   if (icErr) console.warn(`  ⚠ 清空 invitation_code 失败: ${icErr.message}`)
   else console.log('  ✓ 清空 invitation_code')
+  const { error: offDayDeadlineErr } = await supabase.from('off_day_submission_deadline').delete().neq('company_id', '00000000-0000-0000-0000-000000000000')
+  if (offDayDeadlineErr) console.warn(`  ! clear off_day_submission_deadline failed: ${offDayDeadlineErr.message}`)
+  else console.log('  ok clear off_day_submission_deadline')
   const { error: uErr } = await supabase.from('users').delete().neq('id', '00000000-0000-0000-0000-000000000000')
   if (uErr) console.warn(`  ⚠ 清空 users 失败: ${uErr.message}`)
   else console.log('  ✓ 清空 users')
@@ -1051,25 +1068,87 @@ async function main() {
   console.log(`  ✓ 生成 ${ownerMsgCount} 条发给 Owner 的未读消息`)
 
   // ── Step 15c: Fixed Off Day Requests（触发 Fixed Day Off 红点）─────────────
-  // employee1（Operations）和 employee3（Marketing）各提交 1 个 pending 的固定休息日申请
+  // Managers seed Owner queue; Employees seed Manager queues.
   console.log('\nStep 15c: 生成 Fixed Off Day Requests...')
+  const fixedOffWeekStart = startOfWeekMonday(addDays(TODAY, 7))
+  const fixedOffWeekStartKey = dateKey(fixedOffWeekStart)
+  const { error: offDayDeadlineSeedErr } = await supabase.from('off_day_submission_deadline').insert({
+    company_id: company.id,
+    deadline_weekday: 5,
+    updated_by: ownerUser.id,
+  })
+  if (offDayDeadlineSeedErr) console.warn(`  ! off_day_submission_deadline failed: ${offDayDeadlineSeedErr.message}`)
+  else console.log('  ok off_day_submission_deadline default Friday')
+
+  const ownerQueueManagers = Array.from({ length: 8 }, (_, i) => `manager${i + 1}@test.com`)
+  const offDayQuotaRows = [
+    { company_id: company.id, user_id: null, max_days_per_week: 3, updated_by: ownerUser.id },
+    ...ownerQueueManagers.map(email => ({
+      company_id: company.id,
+      user_id: userIdMap[email].internalId,
+      max_days_per_week: 3,
+      updated_by: ownerUser.id,
+    })),
+  ]
+  const { error: offDayQuotaSeedErr } = await supabase.from('off_day_quota_settings').insert(offDayQuotaRows)
+  if (offDayQuotaSeedErr) console.warn(`  ! off_day_quota_settings failed: ${offDayQuotaSeedErr.message}`)
+  else console.log(`  ok off_day_quota_settings default (3/week) + ${ownerQueueManagers.length} manager overrides`)
+
+  // Owner queue: Managers submit weekly day-off requests, Owner decides. Spread across 8 weeks
+  // (matching the Weekly Day Off Calendar's week pager) so both the calendar strip and the
+  // Action Needed / Processed panels have enough pages to page through, like the real product.
+  const ownerWeekdays = [1, 2, 3, 4, 5]
+  const ownerPendingFixedOffSeeders = Array.from({ length: 20 }, (_, i) => ({
+    email: ownerQueueManagers[i % ownerQueueManagers.length],
+    weekday: ownerWeekdays[i % ownerWeekdays.length],
+    weekOffset: Math.floor(i / ownerWeekdays.length),
+    queue: 'Owner',
+    status: 'pending',
+  }))
+  const ownerProcessedFixedOffSeeders = Array.from({ length: 23 }, (_, i) => ({
+    email: ownerQueueManagers[(i + 2) % ownerQueueManagers.length],
+    weekday: ownerWeekdays[(i + 1) % ownerWeekdays.length],
+    weekOffset: 4 + Math.floor(i / ownerWeekdays.length),
+    queue: 'Owner',
+    status: i % 3 === 2 ? 'rejected' : 'approved',
+    source: i % 4 === 0 ? 'auto_assigned' : 'submitted',
+    reviewedHoursAgo: 3 + i,
+  }))
+  // Manager queue: Employees submit weekly day-off requests, their Manager decides — one pending
+  // per department so every Manager account has something to review, not just the two seeded before.
+  const managerQueueFixedOffSeeders = employeesByDept.map(([empEmail], deptIdx) => ({
+    email: empEmail,
+    weekday: [1, 2, 3, 4][deptIdx % 4],
+    weekOffset: 0,
+    queue: 'Manager',
+    status: 'pending',
+  }))
   const fixedOffSeeders = [
-    { email: 'employee1@test.com', weekday: 5 }, // Friday
-    { email: 'employee3@test.com', weekday: 3 }, // Wednesday
+    ...ownerPendingFixedOffSeeders,
+    ...ownerProcessedFixedOffSeeders,
+    ...managerQueueFixedOffSeeders,
   ]
   let fixedOffCount = 0
   for (const fo of fixedOffSeeders) {
     const userId = userIdMap[fo.email].internalId
-    const { error: foErr } = await supabase.from('employee_fixed_off_days').insert({
+    const requestWeekStart = addDays(fixedOffWeekStart, (fo.weekOffset ?? 0) * 7)
+    const requestWeekStartKey = dateKey(requestWeekStart)
+    const requestDate = dateKey(dateInWeek(requestWeekStart, fo.weekday))
+    const isDecided = fo.status !== 'pending'
+    const { error: foErr } = await supabase.from('employee_off_day_requests').insert({
       user_id: userId,
       company_id: company.id,
-      weekday: fo.weekday,
-      status: 'pending',
+      request_date: requestDate,
+      week_start: requestWeekStartKey,
+      status: fo.status,
+      source: fo.source ?? 'submitted',
+      reviewed_by: isDecided ? ownerUser.id : null,
+      reviewed_at: isDecided ? new Date(Date.now() - (fo.reviewedHoursAgo ?? 1) * 3600000).toISOString() : null,
     })
-    if (foErr) console.warn(`  ⚠ fixed_off_day 失败 (${fo.email}): ${foErr.message}`)
-    else { fixedOffCount++; console.log(`  ✓ ${fo.email} → weekday ${fo.weekday} (pending)`) }
+    if (foErr) console.warn(`  ! employee_off_day_requests failed (${fo.email}): ${foErr.message}`)
+    else { fixedOffCount++; console.log(`  ok ${fo.email} -> ${requestDate} ${fo.status} (${fo.queue} queue)`) }
   }
-  console.log(`  ✓ 生成 ${fixedOffCount} 条 employee_fixed_off_days（pending）`)
+  console.log(`  ok seeded ${fixedOffCount} employee_off_day_requests across 8 weeks starting ${fixedOffWeekStartKey}`)
 
   // ── Step 16: Job Postings（Recruitment 页面的 Jobs 标签页 + Review 标签页数据）──
   // Jobs 标签页只显示 status in ('open','closed') 的职位（见 owner/recruitment/page.tsx

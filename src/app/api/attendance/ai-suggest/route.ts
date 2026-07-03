@@ -25,17 +25,22 @@ export async function POST(req: NextRequest) {
 
   try {
     if (request_type === 'fixed_off_day') {
-      const id = b.id as string
-      if (!id) return NextResponse.json({ success: false, message: 'id is required' }, { status: 400 })
-      const fixedOff = await attendanceService.getFixedOffDayRequests(company_id)
-      const req2 = fixedOff.find(r => r.id === id)
-      if (!req2) return NextResponse.json({ success: false, message: 'Request not found' }, { status: 404 })
-      const suggestion = await requestAISuggestService.suggestFixedOffDay({
-        id,
-        requester_name: req2.requester_name,
-        weekday: req2.weekday,
+      const ids = b.ids as unknown
+      const manager_id = b.manager_id as string | undefined
+      if (!Array.isArray(ids) || ids.length === 0 || !ids.every((id): id is string => typeof id === 'string')) {
+        return NextResponse.json({ success: false, message: 'ids (non-empty string array) is required' }, { status: 400 })
+      }
+      const fixedOff = await attendanceService.getFixedOffDayRequests(company_id, { managerId: manager_id })
+      const group = fixedOff.filter(r => ids.includes(r.id))
+      if (group.length === 0) return NextResponse.json({ success: false, message: 'Request not found' }, { status: 404 })
+      const first = group[0]
+      const suggestion = await requestAISuggestService.suggestFixedOffDayGroup({
+        requester_name: first.requester_name,
+        requester_role: first.requester_role,
+        request_dates: group.map(r => r.request_date),
+        department_id: first.department_id,
         company_id,
-        user_id: req2.user_id,
+        user_id: first.user_id,
       })
       return NextResponse.json({ success: true, suggestion })
     }

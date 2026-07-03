@@ -7,10 +7,8 @@ vi.mock('@/lib/supabase', () => ({
 
 vi.mock('@/repositories/user/availabilityRepository', () => ({
   availabilityRepository: {
-    getFixedOffDaysByUser: vi.fn(),
-    setFixedOffDays: vi.fn(),
-    getBreakWaiverRequestsByUser: vi.fn(),
-    createBreakWaiverRequest: vi.fn(),
+    getLeaveRequestsByUser: vi.fn(),
+    createLeaveRequest: vi.fn(),
     createShiftSwapRequest: vi.fn(),
   },
 }))
@@ -23,31 +21,21 @@ describe('availabilityService', () => {
     vi.clearAllMocks()
   })
 
-  describe('setFixedOffDays (UC55: Submit Fixed Day Off)', () => {
-    it('passes the deduplicated, validated weekday set through to the repository', async () => {
-      vi.mocked(availabilityRepository.setFixedOffDays).mockResolvedValue(undefined)
+  describe('submitBreakWaiverRequest (Leave Requests)', () => {
+    it.each(['time_off', 'break_waiver', 'leave'])('accepts the %s request type', async requestType => {
+      const created = { id: 'req-1', company_id: 'company-1', requester_id: 'user-1', shift_assignment_id: null, request_type: requestType, reason: null, status: 'pending', reviewed_by: null, reviewed_at: null, created_at: '2026-01-01', updated_at: '2026-01-01' }
+      vi.mocked(availabilityRepository.createLeaveRequest).mockResolvedValue(created)
 
-      await availabilityService.setFixedOffDays('user-1', 'company-1', [1, 1, 3, 9, -1])
+      const result = await availabilityService.submitBreakWaiverRequest({ user_id: 'user-1', company_id: 'company-1', request_type: requestType, reason: null })
 
-      expect(availabilityRepository.setFixedOffDays).toHaveBeenCalledWith('user-1', 'company-1', [1, 3])
-    })
-  })
-
-  describe('submitBreakWaiverRequest (Break Waiver)', () => {
-    it('accepts the break_waiver request type', async () => {
-      const created = { id: 'req-1', company_id: 'company-1', requester_id: 'user-1', shift_assignment_id: null, request_type: 'break_waiver', reason: null, status: 'pending', reviewed_by: null, reviewed_at: null, created_at: '2026-01-01', updated_at: '2026-01-01' }
-      vi.mocked(availabilityRepository.createBreakWaiverRequest).mockResolvedValue(created)
-
-      const result = await availabilityService.submitBreakWaiverRequest({ user_id: 'user-1', company_id: 'company-1', request_type: 'break_waiver', reason: null })
-
-      expect(availabilityRepository.createBreakWaiverRequest).toHaveBeenCalledWith(expect.objectContaining({ request_type: 'break_waiver' }))
+      expect(availabilityRepository.createLeaveRequest).toHaveBeenCalledWith(expect.objectContaining({ request_type: requestType }))
       expect(result).toEqual(created)
     })
 
-    it('rejects request types other than break_waiver before touching the repository', async () => {
-      await expect(availabilityService.submitBreakWaiverRequest({ user_id: 'user-1', company_id: 'company-1', request_type: 'leave', reason: null }))
-        .rejects.toThrow('Invalid request type: only break_waiver is supported')
-      expect(availabilityRepository.createBreakWaiverRequest).not.toHaveBeenCalled()
+    it('rejects unsupported request types before touching the repository', async () => {
+      await expect(availabilityService.submitBreakWaiverRequest({ user_id: 'user-1', company_id: 'company-1', request_type: 'vacation', reason: null }))
+        .rejects.toThrow('Invalid request type')
+      expect(availabilityRepository.createLeaveRequest).not.toHaveBeenCalled()
     })
   })
 

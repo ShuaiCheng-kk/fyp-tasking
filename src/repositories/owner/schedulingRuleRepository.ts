@@ -174,16 +174,18 @@ export const schedulingRuleRepository = {
     })) as TimeOffContextRow[]
   },
 
-  async getFixedOffDays(company_id: string): Promise<Array<{ user_id: string; weekday: number }>> {
+  async getOffDayRequests(company_id: string, date_from: string, date_to: string): Promise<Array<{ user_id: string; request_date: string }>> {
     const { data, error } = await supabase
-      .from('employee_fixed_off_days')
-      .select('user_id, weekday')
+      .from('employee_off_day_requests')
+      .select('user_id, request_date')
       .eq('company_id', company_id)
       .eq('status', 'approved')
+      .gte('request_date', date_from)
+      .lte('request_date', date_to)
     if (error) {
-      if (/employee_fixed_off_days|does not exist|schema cache/i.test(error.message)) return []
+      if (/employee_off_day_requests|does not exist|schema cache/i.test(error.message)) return []
       throw new Error(error.message)
     }
-    return (data ?? []) as Array<{ user_id: string; weekday: number }>
+    return (data ?? []) as Array<{ user_id: string; request_date: string }>
   },
 }
