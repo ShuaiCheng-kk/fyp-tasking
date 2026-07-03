@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { AlertTriangle, CalendarOff, Check, Clock, Plus, RefreshCw, User } from 'lucide-react'
+import { AlertTriangle, Check, Clock, Plus, RefreshCw, User } from 'lucide-react'
 import CasualSidebar from '@/components/CasualSidebar'
 
 type LeaveRequest = {
@@ -13,7 +13,6 @@ type LeaveRequest = {
   created_at: string
 }
 
-const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const LEAVE_TYPES = [
   { value: 'time_off', label: 'Time Off' },
   { value: 'break_waiver', label: 'Break Waiver' },
@@ -26,7 +25,6 @@ const BORDER = '#E5E7EB'
 const TEXT = '#111827'
 const MUTED = '#6B7280'
 const SLATE = '#334155'
-const GREEN = '#16A34A'
 const ORANGE = '#F97316'
 
 function statusChip(status: string) {
@@ -41,13 +39,10 @@ function statusChip(status: string) {
 
 export default function CasualAvailabilityPage() {
   const router = useRouter()
-  const [authId, setAuthId] = useState('')
   const [userId, setUserId] = useState('')
   const [companyId, setCompanyId] = useState('')
   const [userName, setUserName] = useState('')
   const [loading, setLoading] = useState(true)
-  const [fixedOffDays, setFixedOffDays] = useState<number[]>([])
-  const [fixedOffDayStatus, setFixedOffDayStatus] = useState<Record<number, string>>({})
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([])
   const [leaveType, setLeaveType] = useState<'time_off' | 'break_waiver' | 'leave'>('time_off')
   const [reason, setReason] = useState('')
@@ -72,17 +67,8 @@ export default function CasualAvailabilityPage() {
       setCompanyId(meData.user.company_id ?? '')
       setUserName(availabilityData.availability.user.full_name ?? 'Casual Worker')
 
-      const [daysRes, leaveRes] = await Promise.all([
-        fetch(`/api/user/fixed-off-days?user_id=${internalUserId}`),
-        fetch(`/api/user/leave-requests?user_id=${internalUserId}`),
-      ])
-      const daysData = await daysRes.json()
+      const leaveRes = await fetch(`/api/user/leave-requests?user_id=${internalUserId}`)
       const leaveData = await leaveRes.json()
-      if (daysData.success) {
-        const days = (daysData.days ?? []) as { weekday: number; status: string }[]
-        setFixedOffDays(days.map(day => day.weekday))
-        setFixedOffDayStatus(Object.fromEntries(days.map(day => [day.weekday, day.status])))
-      }
       if (leaveData.success) setLeaveRequests(leaveData.requests ?? [])
     } catch (err) {
       setMessage({ type: 'err', text: err instanceof Error ? err.message : 'Failed to load availability' })
@@ -97,35 +83,8 @@ export default function CasualAvailabilityPage() {
       router.replace('/signin')
       return
     }
-    setAuthId(uid)
     void load(uid)
   }, [load, router])
-
-  const toggleDay = (day: number) => {
-    setFixedOffDays(prev => prev.includes(day) ? prev.filter(value => value !== day) : [...prev, day].sort())
-    setMessage(null)
-  }
-
-  const saveFixedOffDays = async () => {
-    if (!userId || !companyId) return
-    setBusy('days')
-    setMessage(null)
-    try {
-      const res = await fetch('/api/user/fixed-off-days', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: userId, company_id: companyId, weekdays: fixedOffDays }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to save fixed off days')
-      setFixedOffDayStatus(Object.fromEntries(fixedOffDays.map(day => [day, 'pending'])))
-      setMessage({ type: 'ok', text: 'Submitted for approval. Your supervisor will review it.' })
-    } catch (err) {
-      setMessage({ type: 'err', text: err instanceof Error ? err.message : 'Failed to save fixed off days' })
-    } finally {
-      setBusy('')
-    }
-  }
 
   const submitLeave = async () => {
     if (!userId || !companyId) return
@@ -162,7 +121,6 @@ export default function CasualAvailabilityPage() {
         <div style={headerStyle}>
           <div>
             <h1 style={titleStyle}>Availability</h1>
-            <p style={subtitleStyle}>Set regular off days and submit leave requests for scheduling.</p>
           </div>
           {!loading && (
             <div style={userBadgeStyle}>
@@ -182,91 +140,42 @@ export default function CasualAvailabilityPage() {
         {loading ? (
           <section style={emptyBoxStyle}>Loading availability...</section>
         ) : (
-          <div style={gridStyle}>
-            <section style={cardStyle}>
-              <div style={sectionHeaderStyle}>
-                <span style={{ ...iconBoxStyle, background: '#DCFCE7', color: GREEN }}><CalendarOff size={17} /></span>
-                <div>
-                  <h2 style={sectionTitleStyle}>Fixed Off Days</h2>
-                  <p style={sectionTextStyle}>AI scheduling will avoid these regular days.</p>
-                </div>
-              </div>
+          <section style={cardStyle}>
+            <div style={sectionHeaderStyle}>
+              <span style={{ ...iconBoxStyle, background: '#FFF7ED', color: ORANGE }}><Clock size={17} /></span>
+              <h2 style={sectionTitleStyle}>Leave Requests</h2>
+            </div>
 
-              <div style={weekdayGridStyle}>
-                {WEEKDAYS.map((day, index) => {
-                  const selected = fixedOffDays.includes(index)
-                  const status = fixedOffDayStatus[index]
-                  const pending = selected && status === 'pending'
-                  const rejected = selected && status === 'rejected'
-                  return (
-                    <button
-                      key={day}
-                      type="button"
-                      onClick={() => toggleDay(index)}
-                      style={{
-                        ...weekdayButtonStyle,
-                        borderColor: rejected ? '#FCA5A5' : pending ? '#FCD34D' : selected ? GREEN : BORDER,
-                        background: rejected ? '#FEF2F2' : pending ? '#FFFBEB' : selected ? '#DCFCE7' : PANEL,
-                        color: rejected ? '#B91C1C' : pending ? '#B45309' : selected ? '#166534' : SLATE,
-                        display: 'inline-flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        gap: 2,
-                      }}
-                    >
-                      {day}
-                      {selected && <span style={{ fontSize: 9, fontWeight: 800, textTransform: 'uppercase' }}>{status ?? 'pending'}</span>}
-                    </button>
-                  )
-                })}
-              </div>
+            <div style={formRowStyle}>
+              <select value={leaveType} onChange={event => setLeaveType(event.target.value as 'time_off' | 'break_waiver' | 'leave')} style={inputStyle}>
+                {LEAVE_TYPES.map(type => <option key={type.value} value={type.value}>{type.label}</option>)}
+              </select>
+              <input value={reason} onChange={event => setReason(event.target.value)} placeholder="Reason" style={{ ...inputStyle, flex: 1 }} />
+            </div>
 
-              <button type="button" onClick={saveFixedOffDays} disabled={busy === 'days'} style={{ ...primaryButtonStyle, background: GREEN }}>
-                {busy === 'days' ? <RefreshCw size={14} /> : <Check size={14} />}
-                {busy === 'days' ? 'Saving...' : 'Save Fixed Off Days'}
-              </button>
-            </section>
+            <button type="button" onClick={submitLeave} disabled={busy === 'leave'} style={{ ...primaryButtonStyle, background: ORANGE }}>
+              {busy === 'leave' ? <RefreshCw size={14} /> : <Plus size={14} />}
+              {busy === 'leave' ? 'Submitting...' : 'Submit Request'}
+            </button>
 
-            <section style={cardStyle}>
-              <div style={sectionHeaderStyle}>
-                <span style={{ ...iconBoxStyle, background: '#FFF7ED', color: ORANGE }}><Clock size={17} /></span>
-                <div>
-                  <h2 style={sectionTitleStyle}>Leave Requests</h2>
-                  <p style={sectionTextStyle}>Submit time off or break waiver requests.</p>
-                </div>
-              </div>
-
-              <div style={formRowStyle}>
-                <select value={leaveType} onChange={event => setLeaveType(event.target.value as 'time_off' | 'break_waiver')} style={inputStyle}>
-                  {LEAVE_TYPES.map(type => <option key={type.value} value={type.value}>{type.label}</option>)}
-                </select>
-                <input value={reason} onChange={event => setReason(event.target.value)} placeholder="Reason" style={{ ...inputStyle, flex: 1 }} />
-              </div>
-
-              <button type="button" onClick={submitLeave} disabled={busy === 'leave'} style={{ ...primaryButtonStyle, background: ORANGE }}>
-                {busy === 'leave' ? <RefreshCw size={14} /> : <Plus size={14} />}
-                {busy === 'leave' ? 'Submitting...' : 'Submit Request'}
-              </button>
-
-              <div style={historyStyle}>
-                <h3 style={historyTitleStyle}>History</h3>
-                {leaveRequests.length === 0 ? (
-                  <p style={emptyTextStyle}>No requests submitted yet.</p>
-                ) : (
-                  leaveRequests.map(request => (
-                    <div key={request.id} style={historyItemStyle}>
-                      <div style={{ minWidth: 0 }}>
-                        <p style={historyItemTitleStyle}>{LEAVE_TYPES.find(type => type.value === request.request_type)?.label ?? request.request_type}</p>
-                        {request.reason && <p style={historyReasonStyle}>{request.reason}</p>}
-                        <p style={historyDateStyle}>{new Date(request.created_at).toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' })}</p>
-                      </div>
-                      {statusChip(request.status)}
+            <div style={historyStyle}>
+              <h3 style={historyTitleStyle}>History</h3>
+              {leaveRequests.length === 0 ? (
+                <p style={emptyTextStyle}>No requests submitted yet.</p>
+              ) : (
+                leaveRequests.map(request => (
+                  <div key={request.id} style={historyItemStyle}>
+                    <div style={{ minWidth: 0 }}>
+                      <p style={historyItemTitleStyle}>{LEAVE_TYPES.find(type => type.value === request.request_type)?.label ?? request.request_type}</p>
+                      {request.reason && <p style={historyReasonStyle}>{request.reason}</p>}
+                      <p style={historyDateStyle}>{new Date(request.created_at).toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' })}</p>
                     </div>
-                  ))
-                )}
-              </div>
-            </section>
-          </div>
+                    {statusChip(request.status)}
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
         )}
       </main>
     </div>
@@ -277,19 +186,14 @@ const pageStyle: React.CSSProperties = { display: 'flex', minHeight: '100vh', ba
 const mainStyle: React.CSSProperties = { marginLeft: 64, flex: 1, minHeight: '100vh', padding: '24px 32px', minWidth: 0 }
 const headerStyle: React.CSSProperties = { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 18, paddingBottom: 20, borderBottom: `1px solid ${BORDER}`, marginBottom: 18 }
 const titleStyle: React.CSSProperties = { margin: 0, fontSize: '1.75rem', fontWeight: 800, color: TEXT }
-const subtitleStyle: React.CSSProperties = { margin: '5px 0 0', color: MUTED, fontSize: 14 }
 const userBadgeStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, padding: '5px 12px 5px 7px', borderRadius: 999, background: PANEL, border: `1px solid ${BORDER}`, color: TEXT, fontSize: 13, fontWeight: 800, flexShrink: 0 }
 const userIconStyle: React.CSSProperties = { width: 22, height: 22, borderRadius: 999, background: SLATE, color: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center' }
 const alertStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', border: '1px solid', borderRadius: 8, fontSize: 13, fontWeight: 700, marginBottom: 14 }
 const emptyBoxStyle: React.CSSProperties = { background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 28, color: MUTED, fontSize: 14, textAlign: 'center' }
-const gridStyle: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16, alignItems: 'start' }
-const cardStyle: React.CSSProperties = { background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 18, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 16 }
+const cardStyle: React.CSSProperties = { background: PANEL, border: `1px solid ${BORDER}`, borderRadius: 10, padding: 18, maxWidth: 720, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 16 }
 const sectionHeaderStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 11 }
 const iconBoxStyle: React.CSSProperties = { width: 36, height: 36, borderRadius: 9, display: 'grid', placeItems: 'center', flexShrink: 0 }
 const sectionTitleStyle: React.CSSProperties = { margin: 0, color: TEXT, fontSize: 15, fontWeight: 850 }
-const sectionTextStyle: React.CSSProperties = { margin: '2px 0 0', color: MUTED, fontSize: 12.5 }
-const weekdayGridStyle: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(7, minmax(42px, 1fr))', gap: 8 }
-const weekdayButtonStyle: React.CSSProperties = { height: 40, border: '1.5px solid', borderRadius: 8, fontWeight: 850, cursor: 'pointer' }
 const primaryButtonStyle: React.CSSProperties = { height: 38, border: 'none', borderRadius: 8, color: '#FFFFFF', fontWeight: 850, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, cursor: 'pointer' }
 const formRowStyle: React.CSSProperties = { display: 'flex', gap: 8, flexWrap: 'wrap' }
 const inputStyle: React.CSSProperties = { height: 38, border: `1px solid ${BORDER}`, borderRadius: 8, background: PANEL, color: TEXT, padding: '0 10px', fontSize: 13, minWidth: 150, outline: 'none' }

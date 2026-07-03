@@ -207,17 +207,23 @@ export interface ShiftSwapRequestView extends ShiftSwapRequest {
 export interface ShiftSwapMovableTask {
   id: string
   title: string
+  description: string | null
   status: string
   priority: string | null
   due_at: string | null
+  created_at: string
 }
+
+export type FixedOffDaySource = 'submitted' | 'auto_assigned'
 
 export interface FixedOffDayRequest {
   id: string
   user_id: string
   company_id: string
-  weekday: number
+  request_date: string
+  week_start: string
   status: AttendanceRequestStatus
+  source: FixedOffDaySource
   reviewed_by: string | null
   reviewed_at: string | null
   created_at: string
@@ -229,8 +235,53 @@ export interface FixedOffDayDecisionInput {
   decision: AttendanceRequestStatus
 }
 
+// One weekly submission (a Manager/Employee's set of requested off-days for one week) is stored
+// as one row per date, but is decided on as a single unit — approving/rejecting applies to every
+// pending row in the group at once.
+export interface FixedOffDayDecisionGroupInput {
+  ids: string[]
+  reviewer_id: string
+  decision: AttendanceRequestStatus
+}
+
+export interface FixedOffDayCreateInput {
+  user_id: string
+  company_id: string
+  dates: string[]
+}
+
 export interface FixedOffDayRequestView extends FixedOffDayRequest {
   requester_name: string
+  requester_role: string
+  department_id: string | null
+}
+
+export interface OffDayQuotaSetting {
+  company_id: string
+  user_id: string | null
+  max_days_per_week: number
+  updated_by: string | null
+  updated_at: string
+}
+
+export interface OffDayQuotaUpsertInput {
+  company_id: string
+  user_id: string | null
+  max_days_per_week: number
+  updated_by: string
+}
+
+export interface OffDaySubmissionDeadline {
+  company_id: string
+  deadline_weekday: number
+  updated_by: string | null
+  updated_at: string
+}
+
+export interface OffDaySubmissionDeadlineUpsertInput {
+  company_id: string
+  deadline_weekday: number
+  updated_by: string
 }
 
 // Kept for page.tsx type annotations; leave/time_off functionality has been removed.

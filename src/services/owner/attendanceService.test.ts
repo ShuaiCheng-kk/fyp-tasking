@@ -23,9 +23,26 @@ vi.mock('@/repositories/owner/attendanceRepository', () => ({
     createShiftSwapRequest: vi.fn(),
     getTasksByShiftAssignment: vi.fn(),
     getMovableTasksByShiftAssignment: vi.fn(),
-    getFixedOffDayRequestsByCompany: vi.fn(),
+    getOffDayRequestsByCompany: vi.fn(),
     getFixedOffDayRequestById: vi.fn(),
     updateFixedOffDayRequest: vi.fn(),
+    createFixedOffDayRequests: vi.fn(),
+    deleteFixedOffDayRequestsByUserAndWeek: vi.fn(),
+    getFixedOffDayRequestsByUser: vi.fn(),
+    getFixedOffDayRequestsByUserAndWeek: vi.fn(),
+    getOffDayRequestsByCompanyAndWeek: vi.fn(),
+    getEmployeeIdsByDepartments: vi.fn(),
+    getEmployeesByCompany: vi.fn(),
+    getManagersByCompany: vi.fn(),
+    getScheduledHeadcountForDeptDate: vi.fn(),
+  },
+}))
+
+vi.mock('@/repositories/owner/offDaySettingsRepository', () => ({
+  offDaySettingsRepository: {
+    getQuotaForUser: vi.fn(),
+    getCompanyDefaultQuota: vi.fn(),
+    getDeadline: vi.fn(),
   },
 }))
 
@@ -43,6 +60,7 @@ vi.mock('@/repositories/owner/ownerTeamRepository', () => ({
 
 import { attendanceService } from './attendanceService'
 import { attendanceRepository } from '@/repositories/owner/attendanceRepository'
+import { offDaySettingsRepository } from '@/repositories/owner/offDaySettingsRepository'
 import { taskRepository } from '@/repositories/owner/taskRepository'
 import { ownerTeamRepository } from '@/repositories/owner/ownerTeamRepository'
 
@@ -401,15 +419,15 @@ describe('attendanceService', () => {
       vi.mocked(attendanceRepository.getDepartmentsByIds).mockResolvedValue([{ id: 'dept-1', name: 'Ops' }] as any)
       vi.mocked(attendanceRepository.getTasksByShiftAssignment).mockResolvedValue([])
       vi.mocked(attendanceRepository.getMovableTasksByShiftAssignment).mockImplementation(async (id: string) => {
-        if (id === 'asn-1') return [{ id: 'task-1', title: 'Restock shelves', status: 'Assigned', priority: 'Medium', due_at: '2026-07-03T17:00:00Z' }]
-        if (id === 'asn-2') return [{ id: 'task-2', title: 'Close register', status: 'In Progress', priority: 'Low', due_at: null }]
+        if (id === 'asn-1') return [{ id: 'task-1', title: 'Restock shelves', description: null, status: 'Assigned', priority: 'Medium', due_at: '2026-07-03T17:00:00Z', created_at: '2026-07-01T09:00:00Z' }]
+        if (id === 'asn-2') return [{ id: 'task-2', title: 'Close register', description: null, status: 'In Progress', priority: 'Low', due_at: null, created_at: '2026-07-01T09:00:00Z' }]
         return []
       })
 
       const requests = await attendanceService.getShiftSwapRequests('company-1')
 
-      expect(requests[0].requester_movable_tasks).toEqual([{ id: 'task-1', title: 'Restock shelves', status: 'Assigned', priority: 'Medium', due_at: '2026-07-03T17:00:00Z' }])
-      expect(requests[0].counterpart_movable_tasks).toEqual([{ id: 'task-2', title: 'Close register', status: 'In Progress', priority: 'Low', due_at: null }])
+      expect(requests[0].requester_movable_tasks).toEqual([{ id: 'task-1', title: 'Restock shelves', description: null, status: 'Assigned', priority: 'Medium', due_at: '2026-07-03T17:00:00Z', created_at: '2026-07-01T09:00:00Z' }])
+      expect(requests[0].counterpart_movable_tasks).toEqual([{ id: 'task-2', title: 'Close register', description: null, status: 'In Progress', priority: 'Low', due_at: null, created_at: '2026-07-01T09:00:00Z' }])
     })
   })
 
@@ -478,7 +496,7 @@ describe('attendanceService', () => {
   describe('decideFixedOffDayRequest (UC56: Approve Fixed Day Off)', () => {
     it('approves a pending fixed day off request', async () => {
       vi.mocked(attendanceRepository.getFixedOffDayRequestById).mockResolvedValue({
-        id: 'fod-1', user_id: 'user-1', company_id: 'company-1', weekday: 1, status: 'pending', reviewed_by: null, reviewed_at: null, created_at: '2026-01-01',
+        id: 'fod-1', user_id: 'user-1', company_id: 'company-1', request_date: '2026-07-10', week_start: '2026-07-06', status: 'pending', source: 'submitted', reviewed_by: null, reviewed_at: null, created_at: '2026-01-01',
       } as any)
       vi.mocked(attendanceRepository.updateFixedOffDayRequest).mockResolvedValue({ id: 'fod-1', status: 'approved' } as any)
 
@@ -497,22 +515,238 @@ describe('attendanceService', () => {
       vi.mocked(attendanceRepository.getFixedOffDayRequestById).mockResolvedValue(null)
 
       await expect(attendanceService.decideFixedOffDayRequest({ id: 'missing', reviewer_id: 'owner-1', decision: 'approved' }))
-        .rejects.toThrow('Fixed day off request not found')
+        .rejects.toThrow('Weekly day off request not found')
+    })
+
+    it('throws when trying to decide an already-approved auto-assigned row', async () => {
+      vi.mocked(attendanceRepository.getFixedOffDayRequestById).mockResolvedValue({
+        id: 'fod-auto', user_id: 'user-1', company_id: 'company-1', request_date: '2026-07-10', week_start: '2026-07-06', status: 'approved', source: 'auto_assigned', reviewed_by: null, reviewed_at: '2026-01-01', created_at: '2026-01-01',
+      } as any)
+
+      await expect(attendanceService.decideFixedOffDayRequest({ id: 'fod-auto', reviewer_id: 'owner-1', decision: 'approved' }))
+        .rejects.toThrow('auto-assigned')
+      expect(attendanceRepository.updateFixedOffDayRequest).not.toHaveBeenCalled()
     })
   })
 
-  describe('getFixedOffDayRequests (UC56)', () => {
-    it('resolves requester names from real user lookups', async () => {
-      vi.mocked(attendanceRepository.getFixedOffDayRequestsByCompany).mockResolvedValue([
-        { id: 'fod-1', user_id: 'user-1', company_id: 'company-1', weekday: 1, status: 'pending', reviewed_by: null, reviewed_at: null, created_at: '2026-01-01' },
+  describe('decideFixedOffDayRequestGroup (batch approve/reject a weekly submission)', () => {
+    const rowFor = (id: string, date: string) => ({
+      id, user_id: 'user-1', company_id: 'company-1', request_date: date, week_start: '2026-07-06', status: 'pending', source: 'submitted', reviewed_by: null, reviewed_at: null, created_at: '2026-01-01',
+    })
+
+    it('approves every id in the group with the same reviewer and timestamp', async () => {
+      vi.mocked(attendanceRepository.getFixedOffDayRequestById).mockImplementation(async (id: string) =>
+        (id === 'fod-1' ? rowFor('fod-1', '2026-07-06') : rowFor('fod-2', '2026-07-08')) as any)
+      vi.mocked(attendanceRepository.updateFixedOffDayRequest).mockResolvedValue({} as any)
+
+      await attendanceService.decideFixedOffDayRequestGroup({ ids: ['fod-1', 'fod-2'], reviewer_id: 'mgr-1', decision: 'approved' })
+
+      expect(attendanceRepository.updateFixedOffDayRequest).toHaveBeenCalledTimes(2)
+      expect(attendanceRepository.updateFixedOffDayRequest).toHaveBeenCalledWith('fod-1', expect.objectContaining({ status: 'approved', reviewed_by: 'mgr-1' }))
+      expect(attendanceRepository.updateFixedOffDayRequest).toHaveBeenCalledWith('fod-2', expect.objectContaining({ status: 'approved', reviewed_by: 'mgr-1' }))
+    })
+
+    it('rejects an invalid decision value before touching the repository', async () => {
+      await expect(attendanceService.decideFixedOffDayRequestGroup({ ids: ['fod-1'], reviewer_id: 'mgr-1', decision: 'bogus' as any }))
+        .rejects.toThrow('Invalid request decision')
+      expect(attendanceRepository.getFixedOffDayRequestById).not.toHaveBeenCalled()
+    })
+
+    it('rejects an empty ids array', async () => {
+      await expect(attendanceService.decideFixedOffDayRequestGroup({ ids: [], reviewer_id: 'mgr-1', decision: 'approved' }))
+        .rejects.toThrow('No requests to decide')
+    })
+
+    it('throws and updates nothing if any id in the group does not exist', async () => {
+      vi.mocked(attendanceRepository.getFixedOffDayRequestById).mockImplementation(async (id: string) =>
+        (id === 'fod-1' ? rowFor('fod-1', '2026-07-06') : null) as any)
+
+      await expect(attendanceService.decideFixedOffDayRequestGroup({ ids: ['fod-1', 'missing'], reviewer_id: 'mgr-1', decision: 'approved' }))
+        .rejects.toThrow('Weekly day off request not found')
+      expect(attendanceRepository.updateFixedOffDayRequest).not.toHaveBeenCalled()
+    })
+
+    it('throws if any row in the group is already an approved auto-assigned row', async () => {
+      vi.mocked(attendanceRepository.getFixedOffDayRequestById).mockImplementation(async (id: string) =>
+        (id === 'fod-auto'
+          ? { ...rowFor('fod-auto', '2026-07-06'), status: 'approved', source: 'auto_assigned' }
+          : rowFor('fod-2', '2026-07-08')) as any)
+
+      await expect(attendanceService.decideFixedOffDayRequestGroup({ ids: ['fod-auto', 'fod-2'], reviewer_id: 'mgr-1', decision: 'approved' }))
+        .rejects.toThrow('auto-assigned')
+      expect(attendanceRepository.updateFixedOffDayRequest).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('getFixedOffDayRequests (UC56, Owner vs Manager queue split)', () => {
+    beforeEach(() => {
+      vi.mocked(offDaySettingsRepository.getDeadline).mockResolvedValue(null)
+      vi.mocked(attendanceRepository.getEmployeeIdsByDepartments).mockResolvedValue(['emp-1'])
+    })
+
+    it('Owner queue (no managerId) only returns Manager-submitted requests', async () => {
+      vi.mocked(attendanceRepository.getOffDayRequestsByCompany).mockResolvedValue([
+        { id: 'fod-mgr', user_id: 'mgr-1', company_id: 'company-1', request_date: '2026-07-10', week_start: '2026-07-06', status: 'pending', source: 'submitted', reviewed_by: null, reviewed_at: null, created_at: '2026-01-01' },
+        { id: 'fod-emp', user_id: 'emp-1', company_id: 'company-1', request_date: '2026-07-10', week_start: '2026-07-06', status: 'pending', source: 'submitted', reviewed_by: null, reviewed_at: null, created_at: '2026-01-01' },
       ] as any)
-      vi.mocked(attendanceRepository.getUsersByIds).mockResolvedValue([{ id: 'user-1', full_name: 'Bob', role: 'Employee' }] as any)
+      vi.mocked(attendanceRepository.getUsersByIds).mockResolvedValue([
+        { id: 'mgr-1', full_name: 'Manager One', role: 'Manager' },
+        { id: 'emp-1', full_name: 'Employee One', role: 'Employee' },
+      ] as any)
+      vi.mocked(ownerTeamRepository.findManagerDepartments).mockResolvedValue([{ department_id: 'dept-ops', department_name: 'Ops' }])
+      vi.mocked(attendanceRepository.getEmployeesByCompany).mockResolvedValue([])
 
       const requests = await attendanceService.getFixedOffDayRequests('company-1')
 
-      expect(requests).toEqual([
-        expect.objectContaining({ id: 'fod-1', requester_name: 'Bob' }),
-      ])
+      expect(requests.map(r => r.id)).toEqual(['fod-mgr'])
+      expect(requests[0]).toEqual(expect.objectContaining({ requester_name: 'Manager One', requester_role: 'Manager' }))
+    })
+
+    it('Manager queue only returns Employee-submitted requests within their managed departments', async () => {
+      vi.mocked(attendanceRepository.getOffDayRequestsByCompany).mockResolvedValue([
+        { id: 'fod-mgr', user_id: 'mgr-1', company_id: 'company-1', request_date: '2026-07-10', week_start: '2026-07-06', status: 'pending', source: 'submitted', reviewed_by: null, reviewed_at: null, created_at: '2026-01-01' },
+        { id: 'fod-emp', user_id: 'emp-1', company_id: 'company-1', request_date: '2026-07-10', week_start: '2026-07-06', status: 'pending', source: 'submitted', reviewed_by: null, reviewed_at: null, created_at: '2026-01-01' },
+      ] as any)
+      vi.mocked(attendanceRepository.getUsersByIds).mockResolvedValue([
+        { id: 'mgr-1', full_name: 'Manager One', role: 'Manager' },
+        { id: 'emp-1', full_name: 'Employee One', role: 'Employee' },
+      ] as any)
+      vi.mocked(ownerTeamRepository.findManagerDepartments).mockResolvedValue([{ department_id: 'dept-ops', department_name: 'Ops' }])
+      vi.mocked(attendanceRepository.getEmployeeIdsByDepartments).mockResolvedValue(['emp-1'])
+      vi.mocked(attendanceRepository.getEmployeesByCompany).mockResolvedValue([{ id: 'emp-1', full_name: 'Employee One', department_id: 'dept-ops' }])
+
+      const requests = await attendanceService.getFixedOffDayRequests('company-1', { managerId: 'mgr-1' })
+
+      expect(requests.map(r => r.id)).toEqual(['fod-emp'])
+    })
+
+    it('Manager queue excludes an Employee request outside their managed departments', async () => {
+      vi.mocked(attendanceRepository.getOffDayRequestsByCompany).mockResolvedValue([
+        { id: 'fod-emp', user_id: 'emp-1', company_id: 'company-1', request_date: '2026-07-10', week_start: '2026-07-06', status: 'pending', source: 'submitted', reviewed_by: null, reviewed_at: null, created_at: '2026-01-01' },
+      ] as any)
+      vi.mocked(attendanceRepository.getUsersByIds).mockResolvedValue([
+        { id: 'emp-1', full_name: 'Employee One', role: 'Employee' },
+      ] as any)
+      vi.mocked(ownerTeamRepository.findManagerDepartments).mockResolvedValue([{ department_id: 'dept-other', department_name: 'Other' }])
+      vi.mocked(attendanceRepository.getEmployeeIdsByDepartments).mockResolvedValue([])
+
+      const requests = await attendanceService.getFixedOffDayRequests('company-1', { managerId: 'mgr-1' })
+
+      expect(requests).toEqual([])
+    })
+  })
+
+  describe('submitFixedOffDayRequest (UC55)', () => {
+    // Mirrors weekStart()/addDays() in attendanceService.ts exactly: local-time Date parsing (no
+    // 'Z' suffix) and formatting back out via local getters (never toISOString(), which converts
+    // to UTC and would silently reintroduce the same skew this test is guarding against).
+    const localDateKey = (d: Date): string => {
+      const year = d.getFullYear()
+      const month = String(d.getMonth() + 1).padStart(2, '0')
+      const day = String(d.getDate()).padStart(2, '0')
+      return `${year}-${month}-${day}`
+    }
+    const now = new Date()
+    const todayKeyLocal = localDateKey(now)
+    const upcomingMonday = (() => {
+      const d = new Date(`${todayKeyLocal}T00:00:00`)
+      const dow = (d.getDay() + 6) % 7
+      d.setDate(d.getDate() - dow + 7)
+      return localDateKey(d)
+    })()
+    const upcomingTuesday = (() => {
+      const d = new Date(`${upcomingMonday}T00:00:00`)
+      d.setDate(d.getDate() + 1)
+      return localDateKey(d)
+    })()
+
+    beforeEach(() => {
+      vi.mocked(offDaySettingsRepository.getDeadline).mockResolvedValue(null)
+      vi.mocked(offDaySettingsRepository.getQuotaForUser).mockResolvedValue(null)
+      vi.mocked(offDaySettingsRepository.getCompanyDefaultQuota).mockResolvedValue({ company_id: 'company-1', user_id: null, max_days_per_week: 2, updated_by: null, updated_at: '2026-01-01' } as any)
+      vi.mocked(attendanceRepository.getFixedOffDayRequestsByUserAndWeek).mockResolvedValue([])
+      vi.mocked(attendanceRepository.deleteFixedOffDayRequestsByUserAndWeek).mockResolvedValue(undefined)
+      vi.mocked(attendanceRepository.createFixedOffDayRequests).mockResolvedValue([] as any)
+    })
+
+    it('rejects a date that is not in the future', async () => {
+      await expect(attendanceService.submitFixedOffDayRequest({ user_id: 'user-1', company_id: 'company-1', dates: [todayKeyLocal] }))
+        .rejects.toThrow('not in the future')
+    })
+
+    it('rejects dates spanning two different weeks', async () => {
+      const nextWeekStart = (() => {
+        const d = new Date(`${upcomingMonday}T00:00:00`)
+        d.setDate(d.getDate() + 7)
+        return localDateKey(d)
+      })()
+      await expect(attendanceService.submitFixedOffDayRequest({ user_id: 'user-1', company_id: 'company-1', dates: [upcomingMonday, nextWeekStart] }))
+        .rejects.toThrow('same week')
+    })
+
+    it('rejects dates not in the upcoming week', async () => {
+      const farFuture = (() => {
+        const d = new Date(`${upcomingMonday}T00:00:00`)
+        d.setDate(d.getDate() + 21)
+        return localDateKey(d)
+      })()
+      await expect(attendanceService.submitFixedOffDayRequest({ user_id: 'user-1', company_id: 'company-1', dates: [farFuture] }))
+        .rejects.toThrow('upcoming week')
+    })
+
+    it('rejects submission past the deadline', async () => {
+      const todayDow = now.getDay()
+      const pastDeadlineDow = (todayDow + 6) % 7 // yesterday's weekday — guaranteed already passed
+      vi.mocked(offDaySettingsRepository.getDeadline).mockResolvedValue({ company_id: 'company-1', deadline_weekday: pastDeadlineDow, updated_by: null, updated_at: '2026-01-01' } as any)
+
+      await expect(attendanceService.submitFixedOffDayRequest({ user_id: 'user-1', company_id: 'company-1', dates: [upcomingMonday] }))
+        .rejects.toThrow('deadline')
+    })
+
+    it('rejects submission exceeding the resolved quota', async () => {
+      vi.mocked(offDaySettingsRepository.getCompanyDefaultQuota).mockResolvedValue({ company_id: 'company-1', user_id: null, max_days_per_week: 1, updated_by: null, updated_at: '2026-01-01' } as any)
+
+      await expect(attendanceService.submitFixedOffDayRequest({ user_id: 'user-1', company_id: 'company-1', dates: [upcomingMonday, upcomingTuesday] }))
+        .rejects.toThrow('at most 1')
+    })
+
+    it('uses a per-Manager quota override instead of the company default', async () => {
+      vi.mocked(offDaySettingsRepository.getQuotaForUser).mockResolvedValue({ company_id: 'company-1', user_id: 'mgr-1', max_days_per_week: 3, updated_by: 'owner-1', updated_at: '2026-01-01' } as any)
+
+      await attendanceService.submitFixedOffDayRequest({ user_id: 'mgr-1', company_id: 'company-1', dates: [upcomingMonday, upcomingTuesday] })
+
+      expect(offDaySettingsRepository.getCompanyDefaultQuota).not.toHaveBeenCalled()
+      expect(attendanceRepository.createFixedOffDayRequests).toHaveBeenCalledWith(expect.objectContaining({ source: 'submitted' }))
+    })
+
+    it('rejects resubmission for a week already auto-assigned', async () => {
+      vi.mocked(attendanceRepository.getFixedOffDayRequestsByUserAndWeek).mockResolvedValue([
+        { id: 'fod-auto', user_id: 'user-1', company_id: 'company-1', request_date: upcomingMonday, week_start: upcomingMonday, status: 'approved', source: 'auto_assigned', reviewed_by: null, reviewed_at: '2026-01-01', created_at: '2026-01-01' },
+      ] as any)
+
+      await expect(attendanceService.submitFixedOffDayRequest({ user_id: 'user-1', company_id: 'company-1', dates: [upcomingTuesday] }))
+        .rejects.toThrow('closed')
+    })
+
+    it('succeeds and replaces prior pending rows for the week on the happy path', async () => {
+      await attendanceService.submitFixedOffDayRequest({ user_id: 'user-1', company_id: 'company-1', dates: [upcomingMonday] })
+
+      expect(attendanceRepository.deleteFixedOffDayRequestsByUserAndWeek).toHaveBeenCalledWith('user-1', 'company-1', upcomingMonday, ['pending', 'rejected'])
+      expect(attendanceRepository.createFixedOffDayRequests).toHaveBeenCalledWith({
+        user_id: 'user-1', company_id: 'company-1', dates: [upcomingMonday], week_start: upcomingMonday, source: 'submitted',
+      })
+    })
+  })
+
+  describe('resolveDeadlineDateForWeek', () => {
+    it('converts a Sunday-start deadline weekday into the correct Monday-start-week date', async () => {
+      const { resolveDeadlineDateForWeek } = await import('./attendanceService')
+      // Week starting Monday 2026-07-06. deadline_weekday=2 (Tuesday) -> 2026-07-07.
+      expect(resolveDeadlineDateForWeek('2026-07-06', 2)).toBe('2026-07-07')
+      // deadline_weekday=0 (Sunday) -> last day of that Monday-start week -> 2026-07-12.
+      expect(resolveDeadlineDateForWeek('2026-07-06', 0)).toBe('2026-07-12')
+      // deadline_weekday=1 (Monday) -> the week_start itself.
+      expect(resolveDeadlineDateForWeek('2026-07-06', 1)).toBe('2026-07-06')
     })
   })
 

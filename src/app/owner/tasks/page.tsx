@@ -7,7 +7,7 @@ import {
   Plus, X, ChevronDown, Calendar, AlertCircle,
   CheckCircle, Clock, Eye, Layers, Users,
   Crown, UserCog, UserRound, Pencil, Trash2, CalendarDays, ChevronLeft, ChevronRight,
-  Sparkles, Check, Archive, ArchiveRestore, Repeat, Copy, GitBranch, Bell, ArrowRightLeft, LayoutTemplate, AlertTriangle,
+  Sparkles, Check, Archive, ArchiveRestore, Repeat, Copy, GitBranch, Bell, ArrowRightLeft, LayoutTemplate, AlertTriangle, RefreshCw,
 } from 'lucide-react'
 import { AiAssignSuggestion } from '@/types/AI'
 import { createBrowserClient } from '@supabase/ssr'
@@ -2046,6 +2046,17 @@ export default function OwnerTasksPage() {
     void refreshTaskInsights('stalled')
   }, [companyId, selectedDeptId, refreshTaskInsights])
 
+  // Stalled-task status is time-based (percent elapsed toward due_at), so a task can cross the
+  // alert threshold purely from time passing while the page sits open with no user interaction.
+  // Poll periodically so the notification reflects that without requiring a manual refresh.
+  useEffect(() => {
+    if (!companyId) return
+    const interval = setInterval(() => {
+      void refreshTaskInsights('stalled')
+    }, 5 * 60 * 1000)
+    return () => clearInterval(interval)
+  }, [companyId, refreshTaskInsights])
+
   const handleCreateSubTask = () => {
     if (!subTaskTitle.trim()) return
     setEditSubTasks(prev => [...prev, { id: crypto.randomUUID(), title: subTaskTitle.trim() }])
@@ -3102,6 +3113,15 @@ export default function OwnerTasksPage() {
                     {(stalledAlerts.length > 0 || workloadSuggestions.length > 0) && (
                       <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#EF4444', border: '1.5px solid #fff', marginLeft: 2, flexShrink: 0 }} />
                     )}
+                    <button
+                      type="button"
+                      onClick={() => void refreshAllTaskInsights()}
+                      disabled={!!insightLoading}
+                      title="Refresh notifications"
+                      style={{ width: 26, height: 26, border: 'none', borderRadius: 999, background: 'transparent', color: '#9CA3AF', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginLeft: 'auto', cursor: insightLoading ? 'default' : 'pointer' }}
+                    >
+                      {insightLoading ? <Spinner size={13} dark /> : <RefreshCw size={14} />}
+                    </button>
                   </div>
                   <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
                     {(() => {

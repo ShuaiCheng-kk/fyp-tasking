@@ -1142,6 +1142,9 @@ export default function OwnerRecruitmentPage() {
                   {tab.key === 'review' && pendingPostings.length > 0 && (
                     <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#EF4444', flexShrink: 0 }} />
                   )}
+                  {tab.key === 'jobs' && livePostings.some(p => p.pending_count > 0) && (
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#EF4444', flexShrink: 0 }} />
+                  )}
                 </button>
               )
             })}
@@ -1973,7 +1976,7 @@ export default function OwnerRecruitmentPage() {
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                           <RoleAvatar role="Manager" size={22} photoUrl={p.submitter_photo_url} />
-                          <span style={{ color: '#111827', fontSize: 13, fontWeight: 600 }}>{p.submitter_name ?? 'Manager'}</span>
+                          <span style={{ color: '#111827', fontSize: 13, fontWeight: 400 }}>{p.submitter_name ?? 'Manager'}</span>
                         </div>
                         <span style={{ fontSize: '0.78rem', color: '#94A3B8', flexShrink: 0 }}>{formatPostedAt(p.created_at)}</span>
                       </div>

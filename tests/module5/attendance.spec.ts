@@ -201,23 +201,7 @@ test('UC50/UC51 resource=range scopes records to the given date window, for the 
   expect(missingParams.status()).toBe(400)
 })
 
-test('UC55 and UC57 submit fixed day off and leave requests, all landing as pending', async ({ request }) => {
-  const fixed = await request.post('/api/user/fixed-off-days', {
-    data: {
-      user_id: worker.userId,
-      company_id: seeded.companyId,
-      weekdays: [0, 6, 6],
-    },
-  })
-  expect(fixed.status()).toBe(200)
-  expect(await fixed.json()).toMatchObject({ success: true })
-
-  const fixedRead = await request.get(`/api/user/fixed-off-days?user_id=${worker.userId}`)
-  expect(fixedRead.status()).toBe(200)
-  const fixedReadBody = await fixedRead.json()
-  expect(fixedReadBody.days.map((day: { weekday: number }) => day.weekday).sort()).toEqual([0, 6])
-  expect(fixedReadBody.days.every((day: { status: string }) => day.status === 'pending')).toBe(true)
-
+test('UC57 submit leave requests, all landing as pending', async ({ request }) => {
   const timeOff = await request.post('/api/user/leave-requests', {
     data: {
       user_id: worker.userId,
@@ -264,25 +248,6 @@ test('UC55 and UC57 submit fixed day off and leave requests, all landing as pend
       expect.objectContaining({ request_type: 'leave' }),
     ]),
   )
-})
-
-test('UC56 approves a fixed day off request', async ({ request }) => {
-  const list = await request.get(`/api/attendance?company_id=${seeded.companyId}&resource=fixed_off_days`)
-  expect(list.status()).toBe(200)
-  const listBody = await list.json()
-  const pendingRequest = listBody.requests.find((r: { user_id: string; status: string }) => r.user_id === worker.userId && r.status === 'pending')
-  expect(pendingRequest).toBeTruthy()
-
-  const decide = await request.patch('/api/attendance', {
-    data: {
-      action: 'decide_fixed_off_day',
-      id: pendingRequest.id,
-      reviewer_id: seeded.ownerId,
-      decision: 'approved',
-    },
-  })
-  expect(decide.status()).toBe(200)
-  expect(await decide.json()).toMatchObject({ success: true, request: { status: 'approved' } })
 })
 
 test('UC58 approves a leave request', async ({ request }) => {

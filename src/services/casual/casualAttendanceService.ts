@@ -58,7 +58,7 @@ export const casualAttendanceService = {
     if (new Date(rawNow).getTime() < earliestClockIn.getTime()) {
       throw new Error('Too early to clock in for this shift')
     }
-    if (new Date(rawNow).getTime() >= shiftEnd.getTime()) {
+    if (!assignment.shifts.is_open_ended && new Date(rawNow).getTime() >= shiftEnd.getTime()) {
       throw new Error('Shift has already ended — cannot clock in')
     }
     const now = applyClockInGracePeriod(rawNow, assignment.shifts.shift_date, assignment.shifts.start_time)

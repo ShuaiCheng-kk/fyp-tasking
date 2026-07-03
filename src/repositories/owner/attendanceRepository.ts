@@ -13,6 +13,20 @@ import { ShiftAssignment } from '@/types/ShiftAssignment'
 
 type AssignmentWithShift = ShiftAssignment & { shifts: Shift | null }
 
+export type TimeOffRequestRow = {
+  id: string
+  company_id: string
+  requester_id: string
+  shift_assignment_id: string | null
+  request_type: string
+  reason: string | null
+  status: string
+  reviewed_by: string | null
+  reviewed_at: string | null
+  created_at: string
+  updated_at: string
+}
+
 export const attendanceRepository = {
   async getAssignmentsByCompany(company_id: string): Promise<AssignmentWithShift[]> {
     const { data, error } = await supabase
@@ -104,6 +118,37 @@ export const attendanceRepository = {
     return (data ?? []) as ShiftSwapRequest[]
   },
 
+  async getTimeOffRequestsByCompany(company_id: string): Promise<TimeOffRequestRow[]> {
+    const { data, error } = await supabase
+      .from('time_off_requests')
+      .select('id, company_id, requester_id, shift_assignment_id, request_type, reason, status, reviewed_by, reviewed_at, created_at, updated_at')
+      .eq('company_id', company_id)
+      .order('created_at', { ascending: false })
+    if (error) throw new Error(error.message)
+    return (data ?? []) as TimeOffRequestRow[]
+  },
+
+  async getTimeOffRequestsByUser(user_id: string): Promise<TimeOffRequestRow[]> {
+    const { data, error } = await supabase
+      .from('time_off_requests')
+      .select('id, company_id, requester_id, shift_assignment_id, request_type, reason, status, reviewed_by, reviewed_at, created_at, updated_at')
+      .eq('requester_id', user_id)
+      .order('created_at', { ascending: false })
+    if (error) throw new Error(error.message)
+    return (data ?? []) as TimeOffRequestRow[]
+  },
+
+  async updateTimeOffRequest(id: string, fields: Partial<Pick<TimeOffRequestRow, 'status' | 'reviewed_by' | 'reviewed_at'>>): Promise<TimeOffRequestRow> {
+    const { data, error } = await supabase
+      .from('time_off_requests')
+      .update({ ...fields, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select('id, company_id, requester_id, shift_assignment_id, request_type, reason, status, reviewed_by, reviewed_at, created_at, updated_at')
+      .single()
+    if (error) throw new Error(error.message)
+    return data as TimeOffRequestRow
+  },
+
   async getShiftSwapRequestById(id: string): Promise<ShiftSwapRequest | null> {
     const { data, error } = await supabase
       .from('shift_swap_requests')
@@ -173,7 +218,7 @@ export const attendanceRepository = {
   // 'In Progress' truly transfer on a swap; 'Review' work is awaiting sign-off on what THIS person
   // did and 'Complete' is done, so both stay with the original owner. Non-archived only. This is
   // exactly the set reassignTasksForShiftSwap moves if the swap is approved.
-  async getMovableTasksByShiftAssignment(assignment_id: string): Promise<Array<{ id: string; title: string; status: string; priority: string | null; due_at: string | null }>> {
+  async getMovableTasksByShiftAssignment(assignment_id: string): Promise<Array<{ id: string; title: string; description: string | null; status: string; priority: string | null; due_at: string | null; created_at: string }>> {
     const { data: assignment, error: aErr } = await supabase
       .from('shift_assignments')
       .select('shift_id, user_id')
@@ -184,13 +229,13 @@ export const attendanceRepository = {
 
     const { data, error } = await supabase
       .from('tasks')
-      .select('id, title, status, priority, due_at')
+      .select('id, title, description, status, priority, due_at, created_at')
       .eq('shift_id', assignment.shift_id)
       .eq('assigned_user_id', assignment.user_id)
       .in('status', ['Assigned', 'In Progress'])
       .eq('is_archived', false)
     if (error) throw new Error(error.message)
-    return (data ?? []) as Array<{ id: string; title: string; status: string; priority: string | null; due_at: string | null }>
+    return (data ?? []) as Array<{ id: string; title: string; description: string | null; status: string; priority: string | null; due_at: string | null; created_at: string }>
   },
 
   async updateShiftAssignmentUser(assignment_id: string, user_id: string): Promise<ShiftAssignment> {
@@ -204,10 +249,10 @@ export const attendanceRepository = {
     return data as ShiftAssignment
   },
 
-  async getFixedOffDayRequestsByCompany(company_id: string): Promise<FixedOffDayRequest[]> {
+  async getOffDayRequestsByCompany(company_id: string): Promise<FixedOffDayRequest[]> {
     const { data, error } = await supabase
-      .from('employee_fixed_off_days')
-      .select('id, user_id, company_id, weekday, status, reviewed_by, reviewed_at, created_at')
+      .from('employee_off_day_requests')
+      .select('id, user_id, company_id, request_date, week_start, status, source, reviewed_by, reviewed_at, created_at')
       .eq('company_id', company_id)
       .order('created_at', { ascending: false })
     if (error) throw new Error(error.message)
@@ -216,8 +261,8 @@ export const attendanceRepository = {
 
   async getFixedOffDayRequestById(id: string): Promise<FixedOffDayRequest | null> {
     const { data, error } = await supabase
-      .from('employee_fixed_off_days')
-      .select('id, user_id, company_id, weekday, status, reviewed_by, reviewed_at, created_at')
+      .from('employee_off_day_requests')
+      .select('id, user_id, company_id, request_date, week_start, status, source, reviewed_by, reviewed_at, created_at')
       .eq('id', id)
       .maybeSingle()
     if (error) throw new Error(error.message)
@@ -229,10 +274,10 @@ export const attendanceRepository = {
     fields: Pick<FixedOffDayRequest, 'status' | 'reviewed_by' | 'reviewed_at'>,
   ): Promise<FixedOffDayRequest> {
     const { data, error } = await supabase
-      .from('employee_fixed_off_days')
+      .from('employee_off_day_requests')
       .update(fields)
       .eq('id', id)
-      .select('id, user_id, company_id, weekday, status, reviewed_by, reviewed_at, created_at')
+      .select('id, user_id, company_id, request_date, week_start, status, source, reviewed_by, reviewed_at, created_at')
       .single()
     if (error) throw new Error(error.message)
     return data as FixedOffDayRequest
@@ -255,18 +300,40 @@ export const attendanceRepository = {
     return data as ShiftSwapRequest
   },
 
-  async createFixedOffDayRequest(input: {
+  async createFixedOffDayRequests(input: {
     user_id: string
     company_id: string
-    weekday: number
-  }): Promise<FixedOffDayRequest> {
+    dates: string[]
+    week_start: string
+    source: 'submitted' | 'auto_assigned'
+  }): Promise<FixedOffDayRequest[]> {
+    const rows = input.dates.map(request_date => ({
+      user_id: input.user_id,
+      company_id: input.company_id,
+      request_date,
+      week_start: input.week_start,
+      source: input.source,
+      status: input.source === 'auto_assigned' ? 'approved' : 'pending',
+      reviewed_by: input.source === 'auto_assigned' ? null : undefined,
+      reviewed_at: input.source === 'auto_assigned' ? new Date().toISOString() : undefined,
+    }))
     const { data, error } = await supabase
-      .from('employee_fixed_off_days')
-      .insert({ ...input, status: 'pending' })
-      .select('id, user_id, company_id, weekday, status, reviewed_by, reviewed_at, created_at')
-      .single()
+      .from('employee_off_day_requests')
+      .insert(rows)
+      .select('id, user_id, company_id, request_date, week_start, status, source, reviewed_by, reviewed_at, created_at')
     if (error) throw new Error(error.message)
-    return data as FixedOffDayRequest
+    return (data ?? []) as FixedOffDayRequest[]
+  },
+
+  async deleteFixedOffDayRequestsByUserAndWeek(user_id: string, company_id: string, week_start: string, statuses: string[]): Promise<void> {
+    const { error } = await supabase
+      .from('employee_off_day_requests')
+      .delete()
+      .eq('user_id', user_id)
+      .eq('company_id', company_id)
+      .eq('week_start', week_start)
+      .in('status', statuses)
+    if (error) throw new Error(error.message)
   },
 
   async getShiftSwapRequestsByUser(user_id: string): Promise<ShiftSwapRequest[]> {
@@ -281,10 +348,31 @@ export const attendanceRepository = {
 
   async getFixedOffDayRequestsByUser(user_id: string): Promise<FixedOffDayRequest[]> {
     const { data, error } = await supabase
-      .from('employee_fixed_off_days')
-      .select('id, user_id, company_id, weekday, status, reviewed_by, reviewed_at, created_at')
+      .from('employee_off_day_requests')
+      .select('id, user_id, company_id, request_date, week_start, status, source, reviewed_by, reviewed_at, created_at')
       .eq('user_id', user_id)
       .order('created_at', { ascending: false })
+    if (error) throw new Error(error.message)
+    return (data ?? []) as FixedOffDayRequest[]
+  },
+
+  async getFixedOffDayRequestsByUserAndWeek(user_id: string, company_id: string, week_start: string): Promise<FixedOffDayRequest[]> {
+    const { data, error } = await supabase
+      .from('employee_off_day_requests')
+      .select('id, user_id, company_id, request_date, week_start, status, source, reviewed_by, reviewed_at, created_at')
+      .eq('user_id', user_id)
+      .eq('company_id', company_id)
+      .eq('week_start', week_start)
+    if (error) throw new Error(error.message)
+    return (data ?? []) as FixedOffDayRequest[]
+  },
+
+  async getOffDayRequestsByCompanyAndWeek(company_id: string, week_start: string): Promise<FixedOffDayRequest[]> {
+    const { data, error } = await supabase
+      .from('employee_off_day_requests')
+      .select('id, user_id, company_id, request_date, week_start, status, source, reviewed_by, reviewed_at, created_at')
+      .eq('company_id', company_id)
+      .eq('week_start', week_start)
     if (error) throw new Error(error.message)
     return (data ?? []) as FixedOffDayRequest[]
   },
@@ -309,17 +397,6 @@ export const attendanceRepository = {
     return (data ?? []) as AssignmentWithShift[]
   },
 
-  async getFixedOffDaysByCompanyAndWeekday(company_id: string, weekday: number): Promise<FixedOffDayRequest[]> {
-    const { data, error } = await supabase
-      .from('employee_fixed_off_days')
-      .select('id, user_id, company_id, weekday, status, reviewed_by, reviewed_at, created_at')
-      .eq('company_id', company_id)
-      .eq('weekday', weekday)
-      .in('status', ['pending', 'approved'])
-    if (error) throw new Error(error.message)
-    return (data ?? []) as FixedOffDayRequest[]
-  },
-
   async getUserCompanyId(user_id: string): Promise<string | null> {
     const { data, error } = await supabase
       .from('users')
@@ -340,21 +417,66 @@ export const attendanceRepository = {
     return (data ?? []) as AssignmentWithShift[]
   },
 
-  async getApprovedFixedOffDaysByDept(company_id: string, department_id: string): Promise<Array<{ user_id: string; weekday: number }>> {
-    const { data: members, error: memberError } = await supabase
+  async getEmployeeIdsByDepartments(department_ids: string[]): Promise<string[]> {
+    if (department_ids.length === 0) return []
+    const { data, error } = await supabase
       .from('employee_departments')
       .select('employee_id')
-      .eq('department_id', department_id)
-    if (memberError) throw new Error(memberError.message)
-    const employeeIds = (members ?? []).map((m: { employee_id: string }) => m.employee_id)
-    if (employeeIds.length === 0) return []
-    const { data, error } = await supabase
-      .from('employee_fixed_off_days')
-      .select('user_id, weekday')
-      .eq('company_id', company_id)
-      .in('user_id', employeeIds)
-      .eq('status', 'approved')
+      .in('department_id', department_ids)
     if (error) throw new Error(error.message)
-    return (data ?? []) as Array<{ user_id: string; weekday: number }>
+    return [...new Set((data ?? []).map((m: { employee_id: string }) => m.employee_id))]
+  },
+
+  async getManagersByCompany(company_id: string): Promise<Array<{ id: string; full_name: string }>> {
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, full_name')
+      .eq('company_id', company_id)
+      .eq('role', 'Manager')
+    if (error) throw new Error(error.message)
+    return (data ?? []) as Array<{ id: string; full_name: string }>
+  },
+
+  async getEmployeesByCompany(company_id: string): Promise<Array<{ id: string; full_name: string; department_id: string | null }>> {
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, full_name, employee_departments(department_id)')
+      .eq('company_id', company_id)
+      .eq('role', 'Employee')
+    if (error) throw new Error(error.message)
+    return (data ?? []).map((row: any) => ({
+      id: row.id,
+      full_name: row.full_name,
+      department_id: row.employee_departments?.[0]?.department_id ?? null,
+    }))
+  },
+
+  async getScheduledHeadcountForDeptDate(company_id: string, department_id: string, date: string): Promise<{ managers: number; employees: number }> {
+    const { data: shifts, error: shiftError } = await supabase
+      .from('shifts')
+      .select('id')
+      .eq('company_id', company_id)
+      .eq('department_id', department_id)
+      .eq('shift_date', date)
+    if (shiftError) throw new Error(shiftError.message)
+    const shiftIds = (shifts ?? []).map((s: { id: string }) => s.id)
+    if (shiftIds.length === 0) return { managers: 0, employees: 0 }
+
+    const { data: assignments, error: assignError } = await supabase
+      .from('shift_assignments')
+      .select('user_id')
+      .in('shift_id', shiftIds)
+    if (assignError) throw new Error(assignError.message)
+    const userIds = [...new Set((assignments ?? []).map((a: { user_id: string }) => a.user_id))]
+    if (userIds.length === 0) return { managers: 0, employees: 0 }
+
+    const { data: users, error: userError } = await supabase
+      .from('users')
+      .select('id, role')
+      .in('id', userIds)
+    if (userError) throw new Error(userError.message)
+    const managers = (users ?? []).filter((u: { role: string }) => u.role === 'Manager').length
+    const employees = (users ?? []).filter((u: { role: string }) => u.role === 'Employee').length
+    return { managers, employees }
   },
 }

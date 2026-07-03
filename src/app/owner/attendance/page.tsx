@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import {
   AlertTriangle, ArrowLeftRight, Bot, Calendar, CalendarDays, Check, CheckCheck, ChevronDown, ChevronLeft, ChevronRight,
-  ClipboardList, Clock, Download, FileText, Filter, RefreshCw, ThumbsDown, ThumbsUp, UserCog, UserRound, Users, UserX, X,
+  ClipboardList, Clock, Download, Eye, FileText, Filter, RefreshCw, Settings, ThumbsDown, ThumbsUp, Trash2, UserCog, UserRound, Users, UserX, X,
 } from 'lucide-react'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import RoleAvatar from '@/components/RoleAvatar'
@@ -16,13 +16,17 @@ import Spinner from '@/components/Spinner'
 import { deptColor } from '@/lib/deptColor'
 import {
   AttendanceDashboardRecord,
+  AttendanceRequestStatus,
+  FixedOffDaySource,
   FixedOffDayRequestView,
   ShiftSwapMovableTask,
   ShiftSwapRequestView,
 } from '@/types/Attendance'
 import { JobPosting } from '@/types/Recruitment'
 import { ModalOverlay, ModalBox, ModalHeader, modalErrorBoxStyle, modalPrimaryButtonStyle, modalInputStyle, modalLabelStyle } from '@/components/modal'
+import { ShowcaseCard } from '@/components/panel'
 import DatePickerField from '@/components/DatePickerField'
+import DropdownField from '@/components/DropdownField'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
@@ -30,8 +34,6 @@ import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 const PANEL_BORDER = '#E2E8F0'
 const TEXT_DARK = '#0F172A'
 
-
-const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
 // Shape returned by POST /api/attendance/ai-suggest for request_type: 'fixed_off_day'
 interface FixedOffDayAISuggestion {
@@ -388,11 +390,13 @@ function CurrentShiftsBlock({ show, deptName, rows, loading, panelBorder, highli
         </div>
         <div style={{ flex: 1 }}>
           <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Current Shifts</span>
-          <span style={{ fontSize: 12, fontWeight: 600, color: dc, background: `${dc}1a`, borderRadius: 999, padding: '2px 10px', marginLeft: 10 }}>{deptName}</span>
+          {deptName && (
+            <span style={{ fontSize: 12, fontWeight: 600, color: dc, background: `${dc}1a`, borderRadius: 999, padding: '2px 10px', marginLeft: 10 }}>{deptName}</span>
+          )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-          <button type="button" onClick={() => onNavigateDay(-1)} aria-label="Shift window back one day" style={csIconButtonStyle}><ChevronLeft size={15} /></button>
-          <button type="button" onClick={() => onNavigateDay(1)} aria-label="Shift window forward one day" style={csIconButtonStyle}><ChevronRight size={15} /></button>
+          <button type="button" onClick={() => onNavigateDay(-1)} aria-label="Shift window back one day" disabled={!deptName} style={{ ...csIconButtonStyle, opacity: deptName ? 1 : 0.4, cursor: deptName ? 'pointer' : 'default' }}><ChevronLeft size={15} /></button>
+          <button type="button" onClick={() => onNavigateDay(1)} aria-label="Shift window forward one day" disabled={!deptName} style={{ ...csIconButtonStyle, opacity: deptName ? 1 : 0.4, cursor: deptName ? 'pointer' : 'default' }}><ChevronRight size={15} /></button>
         </div>
         {loading && <Spinner size={13} dark />}
       </div>
@@ -400,6 +404,11 @@ function CurrentShiftsBlock({ show, deptName, rows, loading, panelBorder, highli
         {loading ? (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 100, gap: 8, color: '#9CA3AF' }}>
             <Spinner size={14} dark /> <span style={{ fontSize: 13, fontWeight: 600 }}>Loading…</span>
+          </div>
+        ) : !deptName ? (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 100, gap: 10, color: '#9CA3AF' }}>
+            <CalendarDays size={22} strokeWidth={1.5} />
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Select a request to preview shifts</span>
           </div>
         ) : sortedRows.length === 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 100, gap: 10, color: '#9CA3AF' }}>
@@ -471,7 +480,7 @@ function CurrentShiftsBlock({ show, deptName, rows, loading, panelBorder, highli
   )
 }
 
-// ─── TaskChangesBlock ─────────────────────────────────────────────────────────
+// ─── TaskChangeBlock ──────────────────────────────────────────────────────────
 // Previews, for the currently-selected pending swap request, which active tasks would move to
 // the other party if the Owner approves — mirrors exactly what decideShiftSwapRequest actually
 // moves (same non-Complete/non-archived filter), so nothing shown here can surprise on approval.
@@ -483,6 +492,14 @@ const TASK_CHANGES_PRIORITY_COLORS: Record<string, { bg: string; text: string }>
   Medium: { bg: '#DBEAFE', text: '#1D4ED8' },
   High:   { bg: '#FFEDD5', text: '#C2410C' },
   Urgent: { bg: '#FEE2E2', text: '#B91C1C' },
+}
+
+// Same status palette as the Task Page's Kanban columns (STATUS_CONFIG in src/app/owner/tasks/page.tsx)
+const TASK_CHANGES_STATUS_COLORS: Record<string, { bg: string; text: string }> = {
+  'Assigned':    { bg: '#E2E8F0', text: '#475569' },
+  'In Progress': { bg: '#DBEAFE', text: '#2563EB' },
+  'Review':      { bg: '#FED7AA', text: '#EA580C' },
+  'Complete':    { bg: '#BBF7D0', text: '#16A34A' },
 }
 
 function formatTaskChangeDueDate(value: string | null): string {
@@ -498,85 +515,137 @@ function formatTaskChangeDueDate(value: string | null): string {
   return `${dayMonth}, ${time}`
 }
 
-function TaskChangesBlock({ show, request, panelBorder }: {
-  show: boolean
-  request: ShiftSwapRequestView | null
-  panelBorder: string
-}) {
-  if (!show || !request) return null
-  const requesterTasks = request.requester_movable_tasks ?? []
-  const counterpartTasks = request.counterpart_movable_tasks ?? []
-  const hasChanges = requesterTasks.length > 0 || counterpartTasks.length > 0
-
-  const taskColumn = (name: string, role: string, photoUrl: string | null, tasks: ShiftSwapMovableTask[], movesTo: string) => (
-    <div style={{ flex: 1, minWidth: 0, border: '1px solid #E5E7EB', borderRadius: 12, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <RoleAvatar role={role} size={36} photoUrl={photoUrl} />
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: '0.86rem', fontWeight: 700, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</div>
-          <div style={{ fontSize: '0.7rem', fontWeight: 600, color: '#9CA3AF' }}>{tasks.length === 0 ? 'No active tasks to move' : `Moves to ${movesTo}`}</div>
-        </div>
+// Mirrors the Task Page's TaskCard layout (top-row priority badge, title, due date) with one
+// addition: a status badge next to priority, since this preview has no Kanban column to imply
+// status from. No assignee footer — the person column header above already identifies who.
+function TaskChangeCard({ task, onSelect }: { task: ShiftSwapMovableTask; onSelect: () => void }) {
+  const priorityStyle = task.priority ? TASK_CHANGES_PRIORITY_COLORS[task.priority] : null
+  const statusStyle = TASK_CHANGES_STATUS_COLORS[task.status]
+  const dueLabel = formatTaskChangeDueDate(task.due_at)
+  return (
+    <div
+      className="task-card"
+      onClick={onSelect}
+      style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 10, padding: '16px 16px', cursor: 'pointer' }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12 }}>
+        {priorityStyle && task.priority && (
+          <span style={{ fontSize: '0.72rem', fontWeight: 800, padding: '4px 10px', borderRadius: 99, background: priorityStyle.bg, color: priorityStyle.text, letterSpacing: '0.01em' }}>
+            {task.priority}
+          </span>
+        )}
+        {statusStyle && (
+          <span style={{ fontSize: '0.72rem', fontWeight: 800, padding: '4px 10px', borderRadius: 99, background: statusStyle.bg, color: statusStyle.text, letterSpacing: '0.01em' }}>
+            {task.status}
+          </span>
+        )}
       </div>
-      {tasks.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {tasks.map(task => {
-            const priorityStyle = task.priority ? TASK_CHANGES_PRIORITY_COLORS[task.priority] : null
-            const dueLabel = formatTaskChangeDueDate(task.due_at)
-            return (
-              <div key={task.id} style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 10, padding: '12px 14px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
-                  {priorityStyle && task.priority && (
-                    <span style={{ fontSize: '0.65rem', fontWeight: 800, padding: '2px 7px', borderRadius: 99, background: priorityStyle.bg, color: priorityStyle.text, letterSpacing: '0.01em' }}>
-                      {task.priority}
-                    </span>
-                  )}
-                  <span style={{ fontSize: '0.65rem', fontWeight: 700, padding: '2px 7px', borderRadius: 99, background: '#F1F5F9', color: '#475569' }}>{task.status}</span>
-                </div>
-                <p style={{ fontWeight: 600, fontSize: '0.8rem', color: '#111827', margin: '0 0 10px', lineHeight: 1.4 }}>{task.title}</p>
-                {dueLabel && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <Clock size={11} color="#9CA3AF" />
-                    <span style={{ fontSize: '0.7rem', fontWeight: 600, color: '#9CA3AF' }}>{dueLabel}</span>
-                  </div>
-                )}
-              </div>
-            )
-          })}
+      <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: 0, lineHeight: 1.4 }}>{task.title}</p>
+      {dueLabel && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 12 }}>
+          <Clock size={11} color="#9CA3AF" />
+          <span style={{ fontSize: '0.7rem', fontWeight: 600, color: '#9CA3AF', whiteSpace: 'nowrap' }}>{dueLabel}</span>
         </div>
       )}
     </div>
   )
+}
+
+function TaskChangePersonColumn({ name, role, photoUrl, tasks, onSelectTask }: {
+  name: string
+  role: string
+  photoUrl: string | null
+  tasks: ShiftSwapMovableTask[]
+  onSelectTask: (task: ShiftSwapMovableTask) => void
+}) {
+  const [index, setIndex] = useState(0)
+  const clampedIndex = Math.min(index, Math.max(tasks.length - 1, 0))
+  const activeTask = tasks[clampedIndex]
 
   return (
-    <section style={{ background: '#FFFFFF', border: `1px solid ${panelBorder}`, borderRadius: 14, overflow: 'hidden' }}>
+    <div style={{ flex: 1, minWidth: 0, border: '1px solid #E5E7EB', borderRadius: 12, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <RoleAvatar role={role} size={36} photoUrl={photoUrl} />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: '0.86rem', fontWeight: 700, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</div>
+        </div>
+        {tasks.length > 1 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+            <button
+              type="button"
+              onClick={() => setIndex((clampedIndex - 1 + tasks.length) % tasks.length)}
+              aria-label="Previous task"
+              style={{ width: 22, height: 22, borderRadius: 6, border: '1px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+            >
+              <ChevronLeft size={12} style={{ color: '#6B7280' }} />
+            </button>
+            <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#9CA3AF', whiteSpace: 'nowrap' }}>{clampedIndex + 1}/{tasks.length}</span>
+            <button
+              type="button"
+              onClick={() => setIndex((clampedIndex + 1) % tasks.length)}
+              aria-label="Next task"
+              style={{ width: 22, height: 22, borderRadius: 6, border: '1px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+            >
+              <ChevronRight size={12} style={{ color: '#6B7280' }} />
+            </button>
+          </div>
+        )}
+      </div>
+      {activeTask ? (
+        <TaskChangeCard task={activeTask} onSelect={() => onSelectTask(activeTask)} />
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, minHeight: 80, border: '1px dashed #E5E7EB', borderRadius: 10, color: '#9CA3AF' }}>
+          <ClipboardList size={18} strokeWidth={1.5} />
+          <span style={{ fontSize: '0.72rem', fontWeight: 600 }}>No task to move</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Two independent, side-by-side panels (same pattern as Action Needed) — one showing each
+// party's task as it stands today, the other previewing what decideShiftSwapRequest will move
+// it to if the Owner approves.
+function TaskChangeBlock({ title, show, request, panelBorder, useCounterpartTasksForRequester, onSelectTask }: {
+  title: string
+  show: boolean
+  request: ShiftSwapRequestView | null
+  panelBorder: string
+  useCounterpartTasksForRequester: boolean
+  onSelectTask: (task: ShiftSwapMovableTask) => void
+}) {
+  if (!show) return null
+  const requesterMovableTasks = request?.requester_movable_tasks ?? []
+  const counterpartMovableTasks = request?.counterpart_movable_tasks ?? []
+  const hasChanges = requesterMovableTasks.length > 0 || counterpartMovableTasks.length > 0
+
+  const requesterTasks = useCounterpartTasksForRequester ? counterpartMovableTasks : requesterMovableTasks
+  const counterpartTasks = useCounterpartTasksForRequester ? requesterMovableTasks : counterpartMovableTasks
+
+  return (
+    <section style={{ flex: 1, minWidth: 0, background: '#FFFFFF', border: `1px solid ${panelBorder}`, borderRadius: 14, overflow: 'hidden' }}>
       <div style={{ padding: '14px 18px', borderBottom: `1px solid ${panelBorder}`, display: 'flex', alignItems: 'center', gap: 8 }}>
         <div style={{ width: 30, height: 30, borderRadius: 9, background: '#F5F3FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
           <ClipboardList size={15} style={{ color: '#7C3AED' }} />
         </div>
-        <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Task Changes</span>
+        <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>{title}</span>
       </div>
-      <div style={{ padding: '18px' }}>
-        {!hasChanges ? (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 80, color: '#9CA3AF', fontSize: 13, fontWeight: 600 }}>
-            No tasks will move if this swap is approved
-          </div>
-        ) : (
-          <div style={{ display: 'flex', alignItems: 'stretch', gap: 0 }}>
-            {taskColumn(request.requester_name, request.requester_role, request.requester_photo_url, requesterTasks, request.counterpart_name)}
-            <div style={{ flexShrink: 0, width: 56, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, color: '#94A3B8' }}>
-              <svg width="32" height="10" viewBox="0 0 32 10" fill="none">
-                <line x1="0" y1="5" x2="26" y2="5" stroke="#9CA3AF" strokeWidth="1.5" strokeLinecap="round"/>
-                <polyline points="22,1 30,5 22,9" fill="none" stroke="#9CA3AF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-              <svg width="32" height="10" viewBox="0 0 32 10" fill="none">
-                <line x1="32" y1="5" x2="6" y2="5" stroke="#9CA3AF" strokeWidth="1.5" strokeLinecap="round"/>
-                <polyline points="10,1 2,5 10,9" fill="none" stroke="#9CA3AF" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </div>
-            {taskColumn(request.counterpart_name, request.counterpart_role, request.counterpart_photo_url, counterpartTasks, request.requester_name)}
-          </div>
-        )}
-      </div>
+      {!request ? (
+        <div style={{ padding: '18px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 80, gap: 10, color: '#9CA3AF' }}>
+          <ClipboardList size={22} strokeWidth={1.5} />
+          <span style={{ fontSize: 13, fontWeight: 600 }}>Select a request to preview task changes</span>
+        </div>
+      ) : !hasChanges ? (
+        <div style={{ padding: '18px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 80, gap: 10, color: '#9CA3AF' }}>
+          <ClipboardList size={22} strokeWidth={1.5} />
+          <span style={{ fontSize: 13, fontWeight: 600 }}>No tasks will move if this swap is approved</span>
+        </div>
+      ) : (
+        <div style={{ padding: '18px', display: 'flex', alignItems: 'stretch', gap: 14 }}>
+          <TaskChangePersonColumn name={request.requester_name} role={request.requester_role} photoUrl={request.requester_photo_url} tasks={requesterTasks} onSelectTask={onSelectTask} />
+          <TaskChangePersonColumn name={request.counterpart_name} role={request.counterpart_role} photoUrl={request.counterpart_photo_url} tasks={counterpartTasks} onSelectTask={onSelectTask} />
+        </div>
+      )}
     </section>
   )
 }
@@ -617,6 +686,9 @@ export default function OwnerAttendancePage() {
   const [jobPostingDetailLoading, setJobPostingDetailLoading] = useState(false)
   const [jobPostingDetailError, setJobPostingDetailError] = useState('')
 
+  // task-change detail modal — opened from a task card in the Current Task / After Change panels
+  const [taskChangeDetail, setTaskChangeDetail] = useState<ShiftSwapMovableTask | null>(null)
+
   // ── Export modal state ────────────────────────────────────────────────────
   const [exportOpen, setExportOpen] = useState(false)
   const [exportLoading, setExportLoading] = useState(false)
@@ -624,13 +696,26 @@ export default function OwnerAttendancePage() {
   const [exportTo, setExportTo] = useState('')
   const [exportFormat, setExportFormat] = useState<'csv' | 'pdf'>('csv')
 
+  // ── Off Day Settings block state ─────────────────────────────────────────
+  const [offDaySettingsLoading, setOffDaySettingsLoading] = useState(false)
+  const [offDaySettingsError, setOffDaySettingsError] = useState('')
+  const [offDaySettingsSaving, setOffDaySettingsSaving] = useState(false)
+  const [companyManagers, setCompanyManagers] = useState<{ id: string; full_name: string }[]>([])
+  const [companyDefaultQuota, setCompanyDefaultQuota] = useState(2)
+  const [managerQuotaOverrides, setManagerQuotaOverrides] = useState<Record<string, number>>({})
+  const [deadlineWeekday, setDeadlineWeekday] = useState(2)
+
   // ── Requests tab state ───────────────────────────────────────────────────
   const [reqTab, setReqTab] = useState<'swaps' | 'fixedoff'>('swaps')
   const [swapRequests, setSwapRequests] = useState<ShiftSwapRequestView[]>([])
   const [fixedOffDayRequests, setFixedOffDayRequests] = useState<FixedOffDayRequestView[]>([])
   const [reqLoading, setReqLoading] = useState(false)
   const [actionIndex, setActionIndex] = useState(0)
+  const [fixedOffActionIndex, setFixedOffActionIndex] = useState(0)
+  const [fixedOffProcessedPage, setFixedOffProcessedPage] = useState(0)
+  const [fixedOffCalendarWeekIndex, setFixedOffCalendarWeekIndex] = useState(0)
   const [processedDeptFilter, setProcessedDeptFilter] = useState<string>('all')
+  const [processedPage, setProcessedPage] = useState(0)
   const [processedDeptDropdownOpen, setProcessedDeptDropdownOpen] = useState(false)
   const processedDeptDropdownRef = useRef<HTMLDivElement>(null)
   const [newlyProcessedId, setNewlyProcessedId] = useState<string | null>(null)
@@ -796,26 +881,133 @@ export default function OwnerAttendancePage() {
   }, [companyId, mainTab, reqTab, activeSwapRequest?.department_name, csAnchorDate, fetchCurrentShifts])
 
   // ── AI analyze fixed day off request ────────────────────────────────────────
-  const analyzeFixedOffDay = async (req: FixedOffDayRequestView) => {
-    setAiFixedOffLoadingId(req.id)
-    setAiFixedOffError(prev => ({ ...prev, [req.id]: '' }))
+  // Analyzes every date in one weekly submission together — groupKey is `${user_id}_${week_start}`.
+  const analyzeFixedOffGroup = async (groupKey: string, ids: string[]) => {
+    setAiFixedOffLoadingId(groupKey)
+    setAiFixedOffError(prev => ({ ...prev, [groupKey]: '' }))
     try {
       const res = await fetch('/api/attendance/ai-suggest', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           request_type: 'fixed_off_day',
-          id: req.id,
+          ids,
           company_id: companyId,
         }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'AI analysis failed')
-      setAiFixedOffResults(prev => ({ ...prev, [req.id]: data.suggestion }))
+      setAiFixedOffResults(prev => ({ ...prev, [groupKey]: data.suggestion }))
     } catch (err) {
-      setAiFixedOffError(prev => ({ ...prev, [req.id]: err instanceof Error ? err.message : 'AI analysis failed' }))
+      setAiFixedOffError(prev => ({ ...prev, [groupKey]: err instanceof Error ? err.message : 'AI analysis failed' }))
     } finally {
       setAiFixedOffLoadingId(null)
+    }
+  }
+
+  // ── Off Day Settings (quota + deadline) ─────────────────────────────────────
+  const loadOffDaySettings = useCallback(async () => {
+    if (!companyId || !internalUserId) return
+    setOffDaySettingsLoading(true)
+    setOffDaySettingsError('')
+    try {
+      const [membersRes, quotaRes, deadlineRes] = await Promise.all([
+        fetch(`/api/team/members?company_id=${companyId}`),
+        fetch(`/api/attendance/off-day-settings?company_id=${companyId}&owner_id=${internalUserId}&resource=quota`),
+        fetch(`/api/attendance/off-day-settings?company_id=${companyId}&owner_id=${internalUserId}&resource=deadline`),
+      ])
+      const membersData = await membersRes.json()
+      const quotaData = await quotaRes.json()
+      const deadlineData = await deadlineRes.json()
+      if (!quotaData.success) throw new Error(quotaData.message || 'Failed to load quota settings')
+      if (!deadlineData.success) throw new Error(deadlineData.message || 'Failed to load deadline settings')
+
+      const managers = (membersData.members ?? []).filter((m: { role: string }) => m.role === 'Manager')
+      setCompanyManagers(managers)
+
+      const settings: Array<{ user_id: string | null; max_days_per_week: number }> = quotaData.settings ?? []
+      const defaultRow = settings.find(s => s.user_id === null)
+      setCompanyDefaultQuota(defaultRow?.max_days_per_week ?? 2)
+      const overrides: Record<string, number> = {}
+      settings.filter(s => s.user_id !== null).forEach(s => { overrides[s.user_id as string] = s.max_days_per_week })
+      setManagerQuotaOverrides(overrides)
+
+      setDeadlineWeekday(deadlineData.deadline?.deadline_weekday ?? 2)
+    } catch (err) {
+      setOffDaySettingsError(err instanceof Error ? err.message : 'Failed to load off day settings')
+    } finally {
+      setOffDaySettingsLoading(false)
+    }
+  }, [companyId, internalUserId])
+
+  useEffect(() => {
+    if (mainTab === 'requests' && reqTab === 'fixedoff') void loadOffDaySettings()
+  }, [mainTab, reqTab, loadOffDaySettings])
+
+  const saveManagerQuotaOverride = async (managerId: string, value: number) => {
+    if (!companyId || !internalUserId) return
+    setOffDaySettingsSaving(true)
+    setOffDaySettingsError('')
+    try {
+      const res = await fetch('/api/attendance/off-day-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'set_manager_quota_override', company_id: companyId, owner_id: internalUserId, manager_id: managerId, max_days_per_week: value }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to save override')
+      setManagerQuotaOverrides(prev => ({ ...prev, [managerId]: value }))
+    } catch (err) {
+      setOffDaySettingsError(err instanceof Error ? err.message : 'Failed to save override')
+    } finally {
+      setOffDaySettingsSaving(false)
+    }
+  }
+
+  const resetManagerQuotaOverride = async (managerId: string) => {
+    if (!companyId || !internalUserId) return
+    setOffDaySettingsSaving(true)
+    setOffDaySettingsError('')
+    try {
+      const res = await fetch('/api/attendance/off-day-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'remove_manager_quota_override', company_id: companyId, owner_id: internalUserId, manager_id: managerId }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to reset override')
+      setManagerQuotaOverrides(prev => { const next = { ...prev }; delete next[managerId]; return next })
+    } catch (err) {
+      setOffDaySettingsError(err instanceof Error ? err.message : 'Failed to reset override')
+    } finally {
+      setOffDaySettingsSaving(false)
+    }
+  }
+
+  const saveCompanyDefaultAndDeadline = async () => {
+    if (!companyId || !internalUserId) return
+    setOffDaySettingsSaving(true)
+    setOffDaySettingsError('')
+    try {
+      const [quotaRes, deadlineRes] = await Promise.all([
+        fetch('/api/attendance/off-day-settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'set_company_quota', company_id: companyId, owner_id: internalUserId, max_days_per_week: companyDefaultQuota }),
+        }),
+        fetch('/api/attendance/off-day-settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'set_deadline', company_id: companyId, owner_id: internalUserId, deadline_weekday: deadlineWeekday }),
+        }),
+      ])
+      const [quotaData, deadlineData] = await Promise.all([quotaRes.json(), deadlineRes.json()])
+      if (!quotaData.success) throw new Error(quotaData.message || 'Failed to save default quota')
+      if (!deadlineData.success) throw new Error(deadlineData.message || 'Failed to save deadline')
+    } catch (err) {
+      setOffDaySettingsError(err instanceof Error ? err.message : 'Failed to save settings')
+    } finally {
+      setOffDaySettingsSaving(false)
     }
   }
 
@@ -847,6 +1039,31 @@ export default function OwnerAttendancePage() {
         setTimeout(() => setNewlyProcessedId(null), 800)
         setActionIndex(0)
       }
+      await fetchRequestData(companyId)
+    } catch (err) {
+      setReqError(err instanceof Error ? err.message : 'Failed to update request')
+    } finally { setReqActionLoading(false) }
+  }
+
+  // A weekly Fixed Day Off submission is stored as one row per date but decided as a single
+  // unit — approve/reject applies the same decision to every date in the group at once.
+  const decideFixedOffGroup = async (ids: string[], decision: 'approved' | 'rejected', targetName?: string) => {
+    if (!internalUserId || !companyId || ids.length === 0) return
+    setReqActionLoading(true)
+    setReqError('')
+    try {
+      const res = await fetch('/api/attendance', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'decide_fixed_off_day', ids, reviewer_id: internalUserId, decision }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to update request')
+      setActivityLogs(prev => {
+        const next = [{ id: `${ids[0]}-${Date.now()}`, type: 'fixedoff' as const, action: decision, targetName: targetName ?? '—', ts: new Date() }, ...prev]
+        try { localStorage.setItem('attendance_activity_logs', JSON.stringify(next)) } catch {}
+        return next
+      })
       await fetchRequestData(companyId)
     } catch (err) {
       setReqError(err instanceof Error ? err.message : 'Failed to update request')
@@ -1253,11 +1470,11 @@ export default function OwnerAttendancePage() {
   }, [companyId, recordsRole, selectedDeptId, casualJobType])
 
   // ── Absence reason lookups ────────────────────────────────────────────────
-  // approved fixed off: userId+weekday (0=Sun…6=Sat) → true
-  const fixedOffByUserWeekday = useMemo(() => {
+  // approved fixed off: userId+request_date (YYYY-MM-DD) → true
+  const fixedOffByUserDate = useMemo(() => {
     const map = new Map<string, boolean>()
     fixedOffDayRequests.forEach(r => {
-      if (r.status === 'approved') map.set(`${r.user_id}|${r.weekday}`, true)
+      if (r.status === 'approved') map.set(`${r.user_id}|${r.request_date}`, true)
     })
     return map
   }, [fixedOffDayRequests])
@@ -1588,9 +1805,7 @@ export default function OwnerAttendancePage() {
                                       }}
                                     >
                                       {sorted.length === 0 ? (() => {
-                                        const d = new Date(date + 'T00:00:00')
-                                        const weekday = d.getDay() // 0=Sun…6=Sat
-                                        const isFixedOff = fixedOffByUserWeekday.get(`${userId}|${weekday}`)
+                                        const isFixedOff = fixedOffByUserDate.get(`${userId}|${date}`)
                                         if (isFixedOff) return (
                                           <div style={{ borderRadius: 999, background: '#F5F3FF', border: '1.5px solid #C4B5FD', display: 'flex', alignItems: 'center', justifyContent: 'center', height: 32, gap: 4 }}>
                                             <Calendar size={11} color="#7C3AED" />
@@ -1674,7 +1889,7 @@ export default function OwnerAttendancePage() {
                     const isActive = reqTab === tab
                     const meta = {
                       swaps:    { color: '#F97316', label: 'Shift Swaps', subtitle: 'Swap shifts with colleagues', count: pendingSwapCount },
-                      fixedoff: { color: '#F97316', label: 'Fixed Day Off', subtitle: 'Request a fixed day off', count: pendingFixedOffCount },
+                      fixedoff: { color: '#F97316', label: 'Weekly Day Off', subtitle: 'Request a weekly day off', count: pendingFixedOffCount },
                     }[tab]
                     return (
                       <article
@@ -1708,10 +1923,86 @@ export default function OwnerAttendancePage() {
                   })}
                 </div>
               </section>
+              {reqTab === 'fixedoff' && (
+                <section style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
+                  <div style={{ padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <Settings size={15} style={{ color: '#F97316' }} />
+                    </div>
+                    <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, flex: 1 }}>Settings</span>
+                    {offDaySettingsLoading && <Spinner size={13} dark />}
+                  </div>
+                  <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 24 }}>
+                    {offDaySettingsError && (
+                      <div style={{ padding: '10px 12px', borderRadius: 10, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', fontSize: 12, fontWeight: 700 }}>{offDaySettingsError}</div>
+                    )}
+
+                    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
+                      <div style={{ width: 64, flexShrink: 0 }}>
+                        <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: '0 0 6px' }}>Days</label>
+                        <input
+                          type="number"
+                          min={1}
+                          max={7}
+                          value={companyDefaultQuota}
+                          onChange={e => setCompanyDefaultQuota(Number(e.target.value))}
+                          style={{ ...inputStyle, width: '100%', height: 40, padding: '0 12px', boxSizing: 'border-box' }}
+                        />
+                      </div>
+                      <div style={{ width: 140, flexShrink: 0 }}>
+                        <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: '0 0 6px' }}>Deadline</label>
+                        <DropdownField
+                          value={String(deadlineWeekday)}
+                          onChange={v => setDeadlineWeekday(Number(v))}
+                          options={['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((day, i) => ({ value: String(i), label: day }))}
+                        />
+                      </div>
+                      <button onClick={() => void saveCompanyDefaultAndDeadline()} disabled={offDaySettingsSaving} title="Save default and deadline" style={{ width: 36, height: 36, borderRadius: 8, border: 'none', background: '#F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: offDaySettingsSaving ? 'default' : 'pointer', opacity: offDaySettingsSaving ? 0.7 : 1, flexShrink: 0 }}>
+                        {offDaySettingsSaving ? <Spinner size={13} /> : <Check size={16} style={{ color: '#FFFFFF' }} />}
+                      </button>
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: '0 0 6px' }}>Manager overrides</label>
+                      {companyManagers.length === 0 ? (
+                        <div style={{ padding: '10px 0', color: '#9CA3AF', fontSize: '0.8125rem', fontWeight: 600 }}>No Managers yet.</div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxHeight: 320, overflowY: 'auto', paddingRight: 8 }}>
+                          {companyManagers.map(mgr => {
+                            const hasOverride = managerQuotaOverrides[mgr.id] !== undefined
+                            const value = managerQuotaOverrides[mgr.id] ?? companyDefaultQuota
+                            return (
+                              <div key={mgr.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                <span style={{ flex: 1, minWidth: 0, fontSize: '0.875rem', fontWeight: 700, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={mgr.full_name}>{mgr.full_name}</span>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={7}
+                                  value={value}
+                                  onChange={e => setManagerQuotaOverrides(prev => ({ ...prev, [mgr.id]: Number(e.target.value) }))}
+                                  style={{ ...inputStyle, width: 60, padding: '10px 8px', textAlign: 'center', flexShrink: 0 }}
+                                />
+                                <button onClick={() => void saveManagerQuotaOverride(mgr.id, value)} disabled={offDaySettingsSaving} title="Save override" style={{ width: 34, height: 34, borderRadius: 8, border: 'none', background: '#F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: offDaySettingsSaving ? 'default' : 'pointer', opacity: offDaySettingsSaving ? 0.7 : 1, flexShrink: 0 }}>
+                                  <Check size={14} style={{ color: '#FFFFFF' }} />
+                                </button>
+                                {hasOverride ? (
+                                  <button onClick={() => void resetManagerQuotaOverride(mgr.id)} disabled={offDaySettingsSaving} title="Reset to company default" style={{ width: 24, height: 34, border: 'none', background: 'transparent', color: '#9CA3AF', cursor: offDaySettingsSaving ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>
+                                    <Trash2 size={13} />
+                                  </button>
+                                ) : <span style={{ width: 24, flexShrink: 0 }} />}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </section>
+              )}
             </div>
 
             {/* ── RIGHT: Content ───────────────────────────────────────────── */}
-            <div style={{ gridColumn: reqTab === 'swaps' ? undefined : '2 / 4', minWidth: 0, display: reqTab === 'swaps' ? 'contents' : 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={{ minWidth: 0, display: 'contents' }}>
 
               {reqError && (
                 <div style={{ gridColumn: '2 / 4', padding: 12, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 8, fontSize: '0.84rem', fontWeight: 800 }}>{reqError}</div>
@@ -1940,8 +2231,6 @@ export default function OwnerAttendancePage() {
 
                     {reqLoading ? (
                       <div style={{ padding: '32px', textAlign: 'center', color: '#9CA3AF', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}><Spinner size={16} dark /> Loading...</div>
-                    ) : swapRequests.length === 0 ? (
-                      <div style={{ padding: '40px', textAlign: 'center', color: '#9CA3AF', fontSize: '0.875rem' }}>No shift swap requests.</div>
                     ) : (
                       <>
                         <div style={{ display: 'contents' }}>
@@ -2009,10 +2298,15 @@ export default function OwnerAttendancePage() {
                           )
                         })()}
 
-                        {/* Processed */}
+                        {/* Processed — paginated 6 per page, same pager pattern as Action Needed */}
                         {(() => {
+                          const PROCESSED_PAGE_SIZE = 6
                           const processedDepts = ['all', ...Array.from(new Set(processed.map(r => r.department_name).filter(Boolean)))] as string[]
                           const filteredProcessed = processedDeptFilter === 'all' ? processed : processed.filter(r => r.department_name === processedDeptFilter)
+                          const totalPages = Math.max(1, Math.ceil(filteredProcessed.length / PROCESSED_PAGE_SIZE))
+                          const currentPage = Math.min(processedPage, totalPages - 1)
+                          const pageStart = currentPage * PROCESSED_PAGE_SIZE
+                          const visibleProcessed = filteredProcessed.slice(pageStart, pageStart + PROCESSED_PAGE_SIZE)
                           return (
                           <section style={{ gridColumn: '3', gridRow: '1 / span 2', alignSelf: 'stretch', background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
                             <div style={{ padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -2020,6 +2314,27 @@ export default function OwnerAttendancePage() {
                                 <CheckCheck size={15} style={{ color: '#16A34A' }} />
                               </div>
                               <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, flex: 1 }}>Processed Requests</span>
+                              {totalPages > 1 && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  <button
+                                    onClick={() => setProcessedPage((currentPage - 1 + totalPages) % totalPages)}
+                                    style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'background 0.14s, border-color 0.14s' }}
+                                    onMouseEnter={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.borderColor = '#CBD5E1' }}
+                                    onMouseLeave={e => { e.currentTarget.style.background = '#FFFFFF'; e.currentTarget.style.borderColor = '#E5E7EB' }}
+                                  >
+                                    <ChevronLeft size={14} style={{ color: '#6B7280' }} />
+                                  </button>
+                                  <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#9CA3AF' }}>{pageStart + 1}-{Math.min(pageStart + PROCESSED_PAGE_SIZE, filteredProcessed.length)} / {filteredProcessed.length}</span>
+                                  <button
+                                    onClick={() => setProcessedPage((currentPage + 1) % totalPages)}
+                                    style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'background 0.14s, border-color 0.14s' }}
+                                    onMouseEnter={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.borderColor = '#CBD5E1' }}
+                                    onMouseLeave={e => { e.currentTarget.style.background = '#FFFFFF'; e.currentTarget.style.borderColor = '#E5E7EB' }}
+                                  >
+                                    <ChevronRight size={14} style={{ color: '#6B7280' }} />
+                                  </button>
+                                </div>
+                              )}
                               {/* Department filter dropdown */}
                               <div ref={processedDeptDropdownRef} style={{ position: 'relative' }}>
                                 <button
@@ -2037,7 +2352,7 @@ export default function OwnerAttendancePage() {
                                       const active = processedDeptFilter === dept
                                       return (
                                         <button key={dept} type="button"
-                                          onClick={() => { setProcessedDeptFilter(dept); setProcessedDeptDropdownOpen(false) }}
+                                          onClick={() => { setProcessedDeptFilter(dept); setProcessedPage(0); setProcessedDeptDropdownOpen(false) }}
                                           style={{ display: 'block', width: '100%', padding: '8px 14px', textAlign: 'left', border: 'none', background: active ? '#FFF7ED' : 'transparent', color: active ? '#EA580C' : '#374151', fontWeight: active ? 700 : 400, fontSize: 13, cursor: 'pointer' }}
                                           onMouseEnter={e => { if (!active) e.currentTarget.style.background = '#F9FAFB' }}
                                           onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent' }}
@@ -2050,10 +2365,10 @@ export default function OwnerAttendancePage() {
                                 )}
                               </div>
                             </div>
-                            <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 'calc(100vh - 260px)', overflowY: 'auto' }}>
-                              {filteredProcessed.length === 0
+                            <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                              {visibleProcessed.length === 0
                                 ? <div style={{ padding: '24px', textAlign: 'center', color: '#9CA3AF', fontSize: '0.875rem' }}>{processedDeptFilter === 'all' ? 'No processed requests.' : `No processed requests for ${processedDeptFilter}.`}</div>
-                                : filteredProcessed.map(req => <SwapCard key={req.id} req={req} compact />)}
+                                : visibleProcessed.map(req => <SwapCard key={req.id} req={req} compact />)}
                             </div>
                           </section>
                           )
@@ -2066,71 +2381,335 @@ export default function OwnerAttendancePage() {
               })()}
 
               {/* ── Fixed Day Off ────────────────────────────────────────────── */}
-              {reqTab === 'fixedoff' && (
-                <>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <div>
-                      <h2 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 800, color: '#111827' }}>Fixed Day Off Requests</h2>
-                      <p style={{ margin: '2px 0 0', fontSize: '0.78rem', color: '#6B7280' }}>Manage employee fixed day off requests.</p>
-                    </div>
-                    <button onClick={() => fetchRequestData(companyId)} disabled={reqLoading || !companyId} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 36, border: '1px solid #E5E7EB', borderRadius: 9, background: '#FFFFFF', color: '#0F172A', padding: '0 14px', fontWeight: 600, fontSize: '0.82rem', cursor: reqLoading || !companyId ? 'default' : 'pointer', opacity: reqLoading || !companyId ? 0.55 : 1 }}>
-                      {reqLoading ? <Spinner size={13} dark /> : <RefreshCw size={13} />} Refresh
-                    </button>
-                  </div>
-                  {reqLoading ? (
-                    <div style={{ padding: '32px', textAlign: 'center', color: '#9CA3AF', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}><Spinner size={16} dark /> Loading...</div>
-                  ) : fixedOffDayRequests.length === 0 ? (
-                    <div style={{ padding: '40px', textAlign: 'center', color: '#9CA3AF', fontSize: '0.875rem' }}>No fixed day off requests.</div>
-                  ) : fixedOffDayRequests.map(req => {
-                    const color = statusColor(req.status)
-                    const aiResult = aiFixedOffResults[req.id]
-                    const aiErr = aiFixedOffError[req.id]
-                    const aiLoading = aiFixedOffLoadingId === req.id
-                    const aiColor = aiResult?.recommendation === 'approve' ? { bg: '#DCFCE7', text: '#15803D', border: '#BBF7D0' } : aiResult?.recommendation === 'reject' ? { bg: '#FEE2E2', text: '#DC2626', border: '#FECACA' } : { bg: '#FEF9C3', text: '#854D0E', border: '#FDE68A' }
-                    return (
-                      <div key={req.id} className="att-request-card" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-                          <div>
-                            <strong style={{ fontSize: '0.875rem', color: '#111827' }}>{req.requester_name}</strong>
-                            <p style={{ margin: '3px 0 0', fontSize: '0.775rem', color: '#374151', fontWeight: 600 }}>{WEEKDAYS[req.weekday]}</p>
+              {reqTab === 'fixedoff' && (() => {
+                // A Manager/Employee submits one weekly request (e.g. "off Mon + Wed next week"),
+                // stored as one row per date but decided as a single unit — group by requester +
+                // week so Action Needed shows one card per weekly submission, not one per date.
+                type FixedOffGroup = {
+                  key: string
+                  user_id: string
+                  requester_name: string
+                  requester_role: string
+                  department_id: string | null
+                  week_start: string
+                  status: AttendanceRequestStatus
+                  source: FixedOffDaySource
+                  created_at: string
+                  reviewed_at: string | null
+                  requests: FixedOffDayRequestView[]
+                }
+                const groupFixedOff = (rows: FixedOffDayRequestView[]): FixedOffGroup[] => {
+                  const byKey = new Map<string, FixedOffGroup>()
+                  for (const req of rows) {
+                    const key = `${req.user_id}_${req.week_start}`
+                    const existing = byKey.get(key)
+                    if (existing) {
+                      existing.requests.push(req)
+                      if (new Date(req.created_at ?? 0).getTime() < new Date(existing.created_at ?? 0).getTime()) existing.created_at = req.created_at
+                      if (new Date(req.reviewed_at ?? req.created_at ?? 0).getTime() > new Date(existing.reviewed_at ?? existing.created_at ?? 0).getTime()) existing.reviewed_at = req.reviewed_at ?? req.created_at
+                    } else {
+                      byKey.set(key, {
+                        key, user_id: req.user_id, requester_name: req.requester_name, requester_role: req.requester_role,
+                        department_id: req.department_id, week_start: req.week_start, status: req.status, source: req.source,
+                        created_at: req.created_at, reviewed_at: req.reviewed_at ?? req.created_at, requests: [req],
+                      })
+                    }
+                  }
+                  for (const group of byKey.values()) {
+                    group.requests.sort((a, b) => a.request_date.localeCompare(b.request_date))
+                  }
+                  return [...byKey.values()]
+                }
+                const fixedOffGroups = groupFixedOff(fixedOffDayRequests)
+                const actionNeeded = fixedOffGroups
+                  .filter(g => g.status === 'pending')
+                  .sort((a, b) => new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime())
+                const processed = fixedOffGroups
+                  .filter(g => g.status !== 'pending')
+                  .sort((a, b) => new Date(b.reviewed_at ?? b.created_at ?? 0).getTime() - new Date(a.reviewed_at ?? a.created_at ?? 0).getTime())
+                const calendarWeeks = Array.from(new Set(fixedOffDayRequests.map(r => r.week_start).filter(Boolean))).sort()
+                const calendarWeekIndex = Math.min(fixedOffCalendarWeekIndex, Math.max(calendarWeeks.length - 1, 0))
+                const calendarWeekStart = calendarWeeks[calendarWeekIndex] ?? ''
+                const calendarDates = calendarWeekStart
+                  ? Array.from({ length: 7 }, (_, i) => toISODate(addDays(new Date(`${calendarWeekStart}T00:00:00`), i)))
+                  : []
+                const fixedOffByDate = new Map<string, FixedOffDayRequestView[]>()
+                fixedOffDayRequests.forEach(req => {
+                  const list = fixedOffByDate.get(req.request_date) ?? []
+                  list.push(req)
+                  fixedOffByDate.set(req.request_date, list)
+                })
+                const fixedOffStatusTone = (status: string) => {
+                  if (status === 'approved') return { bg: '#ECFDF5', text: '#047857', border: '#86EFAC', label: 'Approved' }
+                  if (status === 'rejected') return { bg: '#FEF2F2', text: '#B91C1C', border: '#FCA5A5', label: 'Rejected' }
+                  return { bg: '#FFF7ED', text: '#EA580C', border: '#FED7AA', label: 'Pending' }
+                }
+
+                const FixedOffCard = ({ group, selected, onSelect }: { group: FixedOffGroup; selected?: boolean; onSelect?: () => void }) => {
+                  const isPending = group.status === 'pending'
+                  const isApproved = group.status === 'approved'
+                  const StatusIcon = isApproved ? Check : X
+                  const statusTone = isApproved
+                    ? { bg: '#ECFDF5', text: '#047857', border: '#86EFAC' }
+                    : { bg: '#FEF2F2', text: '#B91C1C', border: '#FCA5A5' }
+                  const aiResult = aiFixedOffResults[group.key]
+                  const aiErr = aiFixedOffError[group.key]
+                  const aiLoading = aiFixedOffLoadingId === group.key
+                  const aiColor = aiResult?.recommendation === 'approve'
+                    ? { bg: '#DCFCE7', text: '#15803D', border: '#BBF7D0' }
+                    : aiResult?.recommendation === 'reject'
+                      ? { bg: '#FEE2E2', text: '#DC2626', border: '#FECACA' }
+                      : { bg: '#FEF9C3', text: '#854D0E', border: '#FDE68A' }
+                  const ids = group.requests.map(r => r.id)
+
+                  return (
+                    <div
+                      className="att-request-card"
+                      onClick={isPending ? onSelect : undefined}
+                      style={{
+                        background: selected ? '#FFF7ED' : '#F9FAFB',
+                        border: `1.5px solid ${selected ? '#F97316' : PANEL_BORDER}`,
+                        borderRadius: 14,
+                        padding: '12px 14px 14px',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 12,
+                        cursor: isPending && onSelect ? 'pointer' : 'default',
+                        boxShadow: selected ? '0 4px 16px rgba(249,115,22,0.14)' : 'none',
+                        transition: 'border-color 0.15s, background 0.15s, box-shadow 0.15s',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontSize: '0.72rem', fontWeight: 800, color: '#F97316', background: '#FFF7ED', borderRadius: 999, padding: '4px 10px' }}>
+                          {group.requester_role || 'Manager'}
+                        </span>
+                        {group.source === 'auto_assigned' && (
+                          <span style={{ fontSize: '0.68rem', fontWeight: 800, color: '#4338CA', background: '#EEF2FF', borderRadius: 999, padding: '4px 10px' }}>Auto-assigned</span>
+                        )}
+                        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, minWidth: 0 }}>
+                          <span style={{ fontSize: '0.76rem', fontWeight: 800, color: '#64748B', whiteSpace: 'nowrap' }}>
+                            {isPending ? formatOwnerDecisionTime(group.created_at) : formatOwnerDecisionTime(group.reviewed_at ?? group.created_at)}
+                          </span>
+                          {isPending ? (
+                            <div onClick={e => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <button onClick={() => analyzeFixedOffGroup(group.key, ids)} disabled={aiLoading} title="Analyze with AI" style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: '#7C3AED', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: aiLoading ? 'default' : 'pointer', opacity: aiLoading ? 0.7 : 1 }}>
+                                {aiLoading ? <Spinner size={12} /> : <Bot size={13} style={{ color: '#FFFFFF' }} />}
+                              </button>
+                              <button onClick={() => decideFixedOffGroup(ids, 'rejected', group.requester_name)} disabled={reqActionLoading} title="Reject" style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #FECACA', background: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.5 : 1 }}>
+                                <X size={13} style={{ color: '#DC2626' }} />
+                              </button>
+                              <button onClick={() => decideFixedOffGroup(ids, 'approved', group.requester_name)} disabled={reqActionLoading} title="Approve" style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: '#F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.5 : 1 }}>
+                                <Check size={13} style={{ color: '#FFFFFF' }} />
+                              </button>
+                            </div>
+                          ) : (
+                            <span title={isApproved ? 'Approved' : 'Rejected'} style={{ width: 30, height: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: statusTone.bg, color: statusTone.text, border: `1.5px solid ${statusTone.border}`, borderRadius: 999, flexShrink: 0 }}>
+                              <StatusIcon size={12} strokeWidth={3} />
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div style={{ border: '1px solid #E5E7EB', borderRadius: 12, padding: '12px 10px', display: 'flex', alignItems: 'center', gap: 14, background: '#FFFFFF', minWidth: 0 }}>
+                        <RoleAvatar role={group.requester_role || 'Manager'} size={54} photoUrl={null} />
+                        <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
+                          <div style={{ fontSize: '1rem', fontWeight: 800, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{group.requester_name}</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#64748B', minWidth: 0, maxWidth: '100%' }}>
+                            <CalendarDays size={12} style={{ flexShrink: 0 }} />
+                            <span style={{ fontSize: '0.75rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>Week of {formatSwapDate(group.week_start)}</span>
                           </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ background: color.bg, color: color.text, borderRadius: 999, padding: '3px 10px', fontSize: '0.66rem', fontWeight: 800 }}>{req.status}</span>
-                            {req.status === 'pending' && (
-                              <>
-                                <button onClick={() => analyzeFixedOffDay(req)} disabled={aiLoading} title="Analyze with AI" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, border: 'none', borderRadius: 7, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', padding: '6px 12px', fontSize: '0.76rem', fontWeight: 700, cursor: aiLoading ? 'default' : 'pointer', opacity: aiLoading ? 0.7 : 1 }}>
-                                  {aiLoading ? <Spinner size={12} /> : <Bot size={13} />} {aiLoading ? 'Analyzing...' : 'Analyze with AI'}
-                                </button>
-                                <button onClick={() => decideRequest('decide_fixed_off_day', req.id, 'rejected', req.requester_name)} disabled={reqActionLoading} style={{ border: '1px solid #FECACA', borderRadius: 7, background: '#FFFFFF', color: '#DC2626', padding: '6px 14px', fontSize: '0.76rem', fontWeight: 700, cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.5 : 1 }}>Reject</button>
-                                <button onClick={() => decideRequest('decide_fixed_off_day', req.id, 'approved', req.requester_name)} disabled={reqActionLoading} style={{ border: 'none', borderRadius: 7, background: '#1E293B', color: '#FFFFFF', padding: '7px 14px', fontSize: '0.76rem', fontWeight: 700, cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.5 : 1 }}>Approve</button>
-                              </>
-                            )}
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 2 }}>
+                            {group.requests.map(r => (
+                              <span key={r.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 700, color: '#334155', background: '#F1F5F9', borderRadius: 999, padding: '3px 9px' }}>
+                                <Calendar size={10} style={{ flexShrink: 0 }} />
+                                {formatSwapDate(r.request_date)}
+                              </span>
+                            ))}
                           </div>
                         </div>
-                        {aiErr && (
-                          <div style={{ fontSize: '0.75rem', color: '#DC2626', fontWeight: 600 }}>{aiErr}</div>
-                        )}
-                        {aiResult && (
-                          <div style={{ border: `1px solid ${aiColor.border}`, background: aiColor.bg, borderRadius: 10, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <Bot size={13} style={{ color: aiColor.text, flexShrink: 0 }} />
-                              <span style={{ fontSize: '0.72rem', fontWeight: 800, color: aiColor.text, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                                AI suggests: {aiResult.recommendation} ({aiResult.confidence}% confidence)
-                              </span>
+                      </div>
+
+                      {aiErr && <div style={{ fontSize: '0.75rem', color: '#DC2626', fontWeight: 600 }}>{aiErr}</div>}
+                      {aiResult && (
+                        <div style={{ border: `1px solid ${aiColor.border}`, background: aiColor.bg, borderRadius: 10, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <Bot size={13} style={{ color: aiColor.text, flexShrink: 0 }} />
+                            <span style={{ fontSize: '0.72rem', fontWeight: 800, color: aiColor.text, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                              AI suggests: {aiResult.recommendation} ({aiResult.confidence}% confidence)
+                            </span>
+                          </div>
+                          <p style={{ margin: 0, fontSize: '0.8rem', color: '#374151', lineHeight: 1.5 }}>{aiResult.reason}</p>
+                          {aiResult.concerns.length > 0 && (
+                            <ul style={{ margin: 0, paddingLeft: 18, fontSize: '0.76rem', color: '#4B5563' }}>
+                              {aiResult.concerns.map((concern, i) => <li key={i}>{concern}</li>)}
+                            </ul>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                }
+
+                return (
+                  <>
+                    {reqLoading ? (
+                      <div style={{ gridColumn: '2 / 4', padding: '32px', textAlign: 'center', color: '#9CA3AF', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}><Spinner size={16} dark /> Loading...</div>
+                    ) : (
+                      <>
+                        {(() => {
+                          const PAGE_SIZE = 2
+                          const hasActionNeeded = actionNeeded.length > 0
+                          const clampedIndex = Math.min(fixedOffActionIndex, Math.max(actionNeeded.length - 1, 0))
+                          const totalPages = Math.ceil(actionNeeded.length / PAGE_SIZE)
+                          const currentPage = hasActionNeeded ? Math.floor(clampedIndex / PAGE_SIZE) : 0
+                          const pageStart = currentPage * PAGE_SIZE
+                          const visibleItems = actionNeeded.slice(pageStart, pageStart + PAGE_SIZE)
+                          return (
+                            <section style={{ gridColumn: '2', gridRow: '1', background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden', height: 260, display: 'flex', flexDirection: 'column' }}>
+                              <div style={{ padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                  <ClipboardList size={15} style={{ color: '#F97316' }} />
+                                </div>
+                                <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, flex: 1 }}>Action Needed</span>
+                                <button onClick={() => fetchRequestData(companyId)} disabled={reqLoading || !companyId} title="Refresh" style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: reqLoading || !companyId ? 'default' : 'pointer', opacity: reqLoading || !companyId ? 0.55 : 1 }}>
+                                  {reqLoading ? <Spinner size={13} dark /> : <RefreshCw size={13} style={{ color: '#64748B' }} />}
+                                </button>
+                                {totalPages > 1 && (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <button onClick={() => setFixedOffActionIndex(((currentPage - 1 + totalPages) % totalPages) * PAGE_SIZE)} style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                                      <ChevronLeft size={14} style={{ color: '#6B7280' }} />
+                                    </button>
+                                    <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#9CA3AF' }}>{pageStart + 1}-{Math.min(pageStart + PAGE_SIZE, actionNeeded.length)} / {actionNeeded.length}</span>
+                                    <button onClick={() => setFixedOffActionIndex(((currentPage + 1) % totalPages) * PAGE_SIZE)} style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                                      <ChevronRight size={14} style={{ color: '#6B7280' }} />
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                              {hasActionNeeded ? (
+                                <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'row', gap: 10 }}>
+                                  {visibleItems.map((item, i) => (
+                                    <div key={item.key} style={{ flex: '0 0 calc(50% - 5px)', minWidth: 0 }}>
+                                      <FixedOffCard group={item} selected={item.key === actionNeeded[clampedIndex]?.key} onSelect={() => setFixedOffActionIndex(pageStart + i)} />
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div style={{ flex: 1, minHeight: 170, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, color: '#9CA3AF' }}>
+                                  <CheckCheck size={22} strokeWidth={1.5} />
+                                  <span style={{ fontSize: 13, fontWeight: 600 }}>All caught up — nothing needs action</span>
+                                </div>
+                              )}
+                            </section>
+                          )
+                        })()}
+
+                        {/* ── Fixed Off Day Calendar — lightweight weekly strip: one dot per person per day, full
+                             detail lives in Action Needed / Processed Requests, not duplicated here. ── */}
+                        <section style={{ gridColumn: '2', gridRow: '2', background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
+                          <div style={{ padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div style={{ width: 30, height: 30, borderRadius: 9, background: '#EEF2FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                              <CalendarDays size={15} style={{ color: '#4F46E5' }} />
                             </div>
-                            <p style={{ margin: 0, fontSize: '0.8rem', color: '#374151', lineHeight: 1.5 }}>{aiResult.reason}</p>
-                            {aiResult.concerns.length > 0 && (
-                              <ul style={{ margin: 0, paddingLeft: 18, fontSize: '0.76rem', color: '#4B5563' }}>
-                                {aiResult.concerns.map((concern, i) => <li key={i}>{concern}</li>)}
-                              </ul>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Weekly Day Off Calendar</span>
+                              {calendarWeekStart && (
+                                <span style={{ marginLeft: 10, fontSize: 12, fontWeight: 700, color: '#4F46E5', background: '#EEF2FF', borderRadius: 999, padding: '3px 10px' }}>
+                                  Week of {formatSwapDate(calendarWeekStart)}
+                                </span>
+                              )}
+                            </div>
+                            {calendarWeeks.length > 1 && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <button onClick={() => setFixedOffCalendarWeekIndex((calendarWeekIndex - 1 + calendarWeeks.length) % calendarWeeks.length)} style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                                  <ChevronLeft size={14} style={{ color: '#6B7280' }} />
+                                </button>
+                                <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#9CA3AF' }}>{calendarWeekIndex + 1} / {calendarWeeks.length}</span>
+                                <button onClick={() => setFixedOffCalendarWeekIndex((calendarWeekIndex + 1) % calendarWeeks.length)} style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                                  <ChevronRight size={14} style={{ color: '#6B7280' }} />
+                                </button>
+                              </div>
                             )}
                           </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </>
-              )}
+
+                          {calendarDates.length === 0 ? (
+                            <div style={{ minHeight: 140, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, color: '#9CA3AF' }}>
+                              <CalendarDays size={22} strokeWidth={1.5} />
+                              <span style={{ fontSize: 13, fontWeight: 600 }}>No weekly days off to show</span>
+                            </div>
+                          ) : (
+                            <div style={{ padding: '12px 16px 16px', overflowX: 'auto' }}>
+                              <div style={{ minWidth: 560, display: 'grid', gridTemplateColumns: 'repeat(7, minmax(76px, 1fr))', gap: 6 }}>
+                                {calendarDates.map(date => {
+                                  const day = new Date(`${date}T00:00:00`)
+                                  const requests = [...(fixedOffByDate.get(date) ?? [])].sort((a, b) => a.requester_name.localeCompare(b.requester_name))
+                                  const isToday = date === todayKey
+                                  return (
+                                    <div key={date} style={{ border: `1.5px solid ${isToday ? '#F97316' : '#E5E7EB'}`, borderRadius: 10, background: isToday ? '#FFF7ED' : '#F9FAFB', padding: '8px 8px 10px', display: 'flex', flexDirection: 'column', gap: 5, minHeight: 74 }}>
+                                      <div style={{ fontSize: 11, fontWeight: 800, color: isToday ? '#EA580C' : '#64748B' }}>
+                                        {day.toLocaleDateString('en-GB', { weekday: 'short' })} <span style={{ fontWeight: 600, color: '#9CA3AF' }}>{day.getDate()}</span>
+                                      </div>
+                                      {requests.length === 0 ? (
+                                        <span style={{ fontSize: 10.5, color: '#CBD5E1', fontWeight: 600 }}>—</span>
+                                      ) : (
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                                          {requests.map(req => {
+                                            const tone = fixedOffStatusTone(req.status)
+                                            return (
+                                              <span key={req.id} title={`${req.requester_name} — ${tone.label}`} style={{ width: 9, height: 9, borderRadius: 999, background: tone.text, flexShrink: 0 }} />
+                                            )
+                                          })}
+                                        </div>
+                                      )}
+                                      {requests.length > 0 && (
+                                        <span style={{ fontSize: 10, fontWeight: 700, color: '#64748B' }}>{requests.length} request{requests.length > 1 ? 's' : ''}</span>
+                                      )}
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </section>
+
+                        {(() => {
+                          const PROCESSED_PAGE_SIZE = 6
+                          const totalPages = Math.max(1, Math.ceil(processed.length / PROCESSED_PAGE_SIZE))
+                          const currentPage = Math.min(fixedOffProcessedPage, totalPages - 1)
+                          const pageStart = currentPage * PROCESSED_PAGE_SIZE
+                          const visibleProcessed = processed.slice(pageStart, pageStart + PROCESSED_PAGE_SIZE)
+                          return (
+                            <section style={{ gridColumn: '3', gridRow: '1 / span 2', alignSelf: 'stretch', background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
+                              <div style={{ padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <div style={{ width: 30, height: 30, borderRadius: 9, background: '#F0FDF4', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                  <CheckCheck size={15} style={{ color: '#16A34A' }} />
+                                </div>
+                                <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, flex: 1 }}>Processed Requests</span>
+                                {processed.length > PROCESSED_PAGE_SIZE && (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                    <button onClick={() => setFixedOffProcessedPage((currentPage - 1 + totalPages) % totalPages)} style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                                      <ChevronLeft size={14} style={{ color: '#6B7280' }} />
+                                    </button>
+                                    <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#9CA3AF' }}>{pageStart + 1}-{Math.min(pageStart + PROCESSED_PAGE_SIZE, processed.length)} / {processed.length}</span>
+                                    <button onClick={() => setFixedOffProcessedPage((currentPage + 1) % totalPages)} style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                                      <ChevronRight size={14} style={{ color: '#6B7280' }} />
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                              <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                {visibleProcessed.length === 0
+                                  ? <div style={{ padding: '24px', textAlign: 'center', color: '#9CA3AF', fontSize: '0.875rem' }}>No processed requests.</div>
+                                  : visibleProcessed.map(group => <FixedOffCard key={group.key} group={group} />)}
+                              </div>
+                            </section>
+                          )
+                        })()}
+                      </>
+                    )}
+                  </>
+                )
+              })()}
 
             </div>{/* /right content */}
             </div>{/* /two-col grid */}
@@ -2142,7 +2721,7 @@ export default function OwnerAttendancePage() {
                  leave a large gap above it. ─── */}
             <div style={{ gridColumn: '1 / 3', gridRow: '2', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
               <CurrentShiftsBlock
-                show={reqTab === 'swaps' && !!currentShiftsDept}
+                show={reqTab === 'swaps'}
                 deptName={currentShiftsDept ?? ''}
                 rows={currentShiftsRows}
                 loading={currentShiftsLoading}
@@ -2151,11 +2730,24 @@ export default function OwnerAttendancePage() {
                 anchorDate={csAnchorDate}
                 onNavigateDay={navigateCurrentShiftsDay}
               />
-              <TaskChangesBlock
-                show={reqTab === 'swaps' && !!activeSwapRequest}
-                request={activeSwapRequest}
-                panelBorder={PANEL_BORDER}
-              />
+              <div style={{ display: 'flex', alignItems: 'stretch', gap: 16 }}>
+                <TaskChangeBlock
+                  title="Current Task"
+                  show={reqTab === 'swaps'}
+                  request={activeSwapRequest}
+                  panelBorder={PANEL_BORDER}
+                  useCounterpartTasksForRequester={false}
+                  onSelectTask={setTaskChangeDetail}
+                />
+                <TaskChangeBlock
+                  title="After Change"
+                  show={reqTab === 'swaps'}
+                  request={activeSwapRequest}
+                  panelBorder={PANEL_BORDER}
+                  useCounterpartTasksForRequester={true}
+                  onSelectTask={setTaskChangeDetail}
+                />
+              </div>
             </div>
           </div>
         )}
@@ -2425,6 +3017,55 @@ export default function OwnerAttendancePage() {
           </ModalBox>
         </ModalOverlay>
       )}
+
+      {/* ── Task Change detail modal — opened from a task card in Current Task / After Change ── */}
+      {taskChangeDetail && (() => {
+        const task = taskChangeDetail
+        const priorityStyle = task.priority ? TASK_CHANGES_PRIORITY_COLORS[task.priority] : null
+        const statusStyle = TASK_CHANGES_STATUS_COLORS[task.status]
+        const viewFieldValue: React.CSSProperties = { ...modalInputStyle, display: 'flex', alignItems: 'center' }
+        const viewEmpty: React.CSSProperties = { ...viewFieldValue, color: '#9CA3AF', fontStyle: 'italic' }
+        return (
+          <ModalOverlay onClose={() => setTaskChangeDetail(null)} maxWidth="440px">
+            <ModalBox>
+              <ModalHeader title={`${task.title}'s Details`} icon={<Eye size={15} color="#fff" strokeWidth={2.5} />} onClose={() => setTaskChangeDetail(null)} />
+              <div style={{ padding: '20px 24px 24px', display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 'calc(90vh - 130px)', overflowY: 'auto' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  {priorityStyle && task.priority && (
+                    <span style={{ fontSize: '0.72rem', fontWeight: 800, padding: '4px 10px', borderRadius: 99, background: priorityStyle.bg, color: priorityStyle.text, letterSpacing: '0.01em' }}>
+                      {task.priority}
+                    </span>
+                  )}
+                  {statusStyle && (
+                    <span style={{ fontSize: '0.72rem', fontWeight: 800, padding: '4px 10px', borderRadius: 99, background: statusStyle.bg, color: statusStyle.text, letterSpacing: '0.01em' }}>
+                      {task.status}
+                    </span>
+                  )}
+                </div>
+                <div>
+                  <label style={modalLabelStyle}>Description</label>
+                  {task.description
+                    ? <div style={{ ...viewFieldValue, alignItems: 'flex-start', whiteSpace: 'pre-wrap', lineHeight: 1.55 }}>{task.description}</div>
+                    : <div style={viewEmpty}>No description</div>
+                  }
+                </div>
+                <div>
+                  <label style={modalLabelStyle}>Assigned Time</label>
+                  <div style={viewFieldValue}>
+                    {new Date(task.created_at).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                </div>
+                {task.due_at && (
+                  <div>
+                    <label style={modalLabelStyle}>Due</label>
+                    <div style={viewFieldValue}>{formatTaskChangeDueDate(task.due_at)}</div>
+                  </div>
+                )}
+              </div>
+            </ModalBox>
+          </ModalOverlay>
+        )
+      })()}
 
     </div>
   )

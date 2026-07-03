@@ -19,17 +19,32 @@ export async function POST(req: NextRequest) {
   if (typeof b.requester_id !== 'string' || !b.requester_id) {
     return NextResponse.json({ success: false, message: 'requester_id is required' }, { status: 400 })
   }
-  if (typeof b.requester_assignment_id !== 'string' || !b.requester_assignment_id) {
-    return NextResponse.json({ success: false, message: 'requester_assignment_id is required' }, { status: 400 })
-  }
-  if (typeof b.counterpart_id !== 'string' || !b.counterpart_id) {
-    return NextResponse.json({ success: false, message: 'counterpart_id is required' }, { status: 400 })
-  }
-  if (typeof b.counterpart_assignment_id !== 'string' || !b.counterpart_assignment_id) {
-    return NextResponse.json({ success: false, message: 'counterpart_assignment_id is required' }, { status: 400 })
-  }
 
   try {
+    if (
+      typeof b.shift_assignment_id === 'string' &&
+      typeof b.replacement_user_id === 'string'
+    ) {
+      const request = await availabilityService.submitLegacyShiftSwapRequest({
+        company_id: b.company_id,
+        requester_id: b.requester_id,
+        shift_assignment_id: b.shift_assignment_id,
+        replacement_user_id: b.replacement_user_id,
+        reason: typeof b.reason === 'string' ? b.reason : null,
+      })
+      return NextResponse.json({ success: true, request }, { status: 201 })
+    }
+
+    if (typeof b.requester_assignment_id !== 'string' || !b.requester_assignment_id) {
+      return NextResponse.json({ success: false, message: 'requester_assignment_id is required' }, { status: 400 })
+    }
+    if (typeof b.counterpart_id !== 'string' || !b.counterpart_id) {
+      return NextResponse.json({ success: false, message: 'counterpart_id is required' }, { status: 400 })
+    }
+    if (typeof b.counterpart_assignment_id !== 'string' || !b.counterpart_assignment_id) {
+      return NextResponse.json({ success: false, message: 'counterpart_assignment_id is required' }, { status: 400 })
+    }
+
     const request = await availabilityService.submitShiftSwapRequest({
       company_id: b.company_id,
       requester_id: b.requester_id,

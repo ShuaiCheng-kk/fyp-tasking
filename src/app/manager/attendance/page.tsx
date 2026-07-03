@@ -81,10 +81,22 @@ function Spinner({ light = false }: { light?: boolean }) {
   )
 }
 
-const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+function getUpcomingWeekDates(): string[] {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const day = today.getDay()
+  const daysUntilNextMonday = ((8 - day) % 7) || 7
+  const monday = new Date(today)
+  monday.setDate(today.getDate() + daysUntilNextMonday)
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(monday)
+    date.setDate(monday.getDate() + index)
+    return date.toISOString().slice(0, 10)
+  })
+}
 
 type Department = { id: string; name: string }
-type TabKey = 'records' | 'time_off' | 'swaps' | 'my_requests'
+type TabKey = 'records' | 'time_off' | 'swaps' | 'fixed_off' | 'my_requests'
 
 type MyShiftRecord = { id: string; clock_in_time: string | null; clock_out_time: string | null; break_in_time: string | null; break_out_time: string | null; status: string }
 type MyShift = {
@@ -122,6 +134,7 @@ export default function ManagerAttendancePage() {
   const [dashboard, setDashboard] = useState<AttendanceDashboard | null>(null)
   const [timeOffRequests, setTimeOffRequests] = useState<TimeOffRequestView[]>([])
   const [swapRequests, setSwapRequests] = useState<ShiftSwapRequestView[]>([])
+  const [fixedOffRequests, setFixedOffRequests] = useState<FixedOffDayRequestView[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -161,7 +174,8 @@ export default function ManagerAttendancePage() {
 
   // Submit: Fixed Day Off form
   const [fixedFormOpen, setFixedFormOpen] = useState(false)
-  const [fixedWeekday, setFixedWeekday] = useState(1)
+  const [selectedFixedOffDates, setSelectedFixedOffDates] = useState<string[]>([])
+  const [fixedOffQuota, setFixedOffQuota] = useState(1)
   const [fixedSubmitting, setFixedSubmitting] = useState(false)
 
   // Swap counterpart candidates (same-department, same-role colleagues with upcoming shifts)
@@ -198,6 +212,15 @@ export default function ManagerAttendancePage() {
     } catch (err) {
       setMyReqError(err instanceof Error ? err.message : 'Failed to load requests')
     } finally { setMyReqLoading(false) }
+  }, [])
+
+  const fetchFixedOffQuota = useCallback(async (cid: string, uid: string) => {
+    if (!cid || !uid) return
+    try {
+      const res = await fetch(`/api/attendance/off-day-settings?company_id=${cid}&user_id=${uid}&resource=my_quota`)
+      const data = await res.json()
+      if (data.success && typeof data.max_days_per_week === 'number') setFixedOffQuota(data.max_days_per_week)
+    } catch {}
   }, [])
 
   // Swap counterparts must be same-department, same-role colleagues with an upcoming (tomorrow+)
@@ -260,21 +283,35 @@ export default function ManagerAttendancePage() {
   }
 
   const handleSubmitFixedOff = async () => {
+    if (selectedFixedOffDates.length === 0) { setMyReqError('Select at least one date.'); return }
     setFixedSubmitting(true); setMyReqError(''); setMyReqSuccess('')
     try {
       const res = await fetch('/api/attendance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'submit_fixed_off_day', user_id: managerId, company_id: companyId, weekday: fixedWeekday }),
+        body: JSON.stringify({ action: 'submit_fixed_off_day', user_id: managerId, company_id: companyId, dates: selectedFixedOffDates }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
-      setMyReqSuccess('Fixed day off request submitted successfully.')
+      setMyReqSuccess('Weekly day off request submitted successfully.')
       setFixedFormOpen(false)
+      setSelectedFixedOffDates([])
       void fetchMyRequests(managerId)
     } catch (err) {
       setMyReqError(err instanceof Error ? err.message : 'Failed to submit request')
     } finally { setFixedSubmitting(false) }
+  }
+
+  const toggleFixedOffDate = (date: string) => {
+    setMyReqError('')
+    setSelectedFixedOffDates(prev => {
+      if (prev.includes(date)) return prev.filter(value => value !== date)
+      if (prev.length >= fixedOffQuota) {
+        setMyReqError(`You can select up to ${fixedOffQuota} day(s).`)
+        return prev
+      }
+      return [...prev, date].sort()
+    })
   }
 
   const uploadAttachment = async (): Promise<string | null> => {
@@ -376,6 +413,7 @@ export default function ManagerAttendancePage() {
       if (!cid) return
       setCompanyId(cid)
       void fetchSwapCandidates(cid)
+      if (id) void fetchFixedOffQuota(cid, id)
       const [compRes, deptRes] = await Promise.all([
         fetch(`/api/company/current?user_id=${uid}&company_id=${cid}`),
         fetch(`/api/manager/departments?manager_id=${id}&company_id=${cid}`),
@@ -392,27 +430,30 @@ export default function ManagerAttendancePage() {
     }
     void run()
     return () => { cancelled = true }
-  }, [router, fetchMyShift, fetchMyRequests, fetchSwapCandidates])
+  }, [router, fetchMyShift, fetchMyRequests, fetchSwapCandidates, fetchFixedOffQuota])
 
   const fetchData = useCallback(async (cid: string, mid: string) => {
     if (!cid) return
     setLoading(true)
     setError('')
     try {
-      const [dashRes, toRes, swapRes] = await Promise.all([
+      const [dashRes, toRes, swapRes, fixedOffRes] = await Promise.all([
         fetch(`/api/attendance?company_id=${cid}`),
         fetch(`/api/attendance?company_id=${cid}&resource=time_off`),
         // manager_id scopes this to Employee<->Employee swaps within departments this manager
         // manages — Manager<->Manager swaps go to the Owner's queue instead, not here.
         fetch(`/api/attendance?company_id=${cid}&resource=shift_swaps&manager_id=${mid}`),
+        fetch(`/api/attendance?company_id=${cid}&resource=fixed_off_days&manager_id=${mid}`),
       ])
       const dashData = await dashRes.json()
       const toData   = await toRes.json()
       const swapData = await swapRes.json()
+      const fixedOffData = await fixedOffRes.json()
       if (!dashData.success) throw new Error(dashData.message ?? 'Failed to fetch')
       setDashboard(dashData.dashboard)
       if (toData.success)   setTimeOffRequests(toData.requests ?? [])
       if (swapData.success) setSwapRequests(swapData.requests ?? [])
+      if (fixedOffData.success) setFixedOffRequests(fixedOffData.requests ?? [])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch attendance')
     } finally { setLoading(false) }
@@ -497,12 +538,32 @@ export default function ManagerAttendancePage() {
     } finally { setActionLoading(false) }
   }
 
+  // A weekly Fixed Day Off submission is stored as one row per date but decided as a single
+  // unit — approve/reject applies the same decision to every date in the group at once.
+  async function handleDecideFixedOffGroup(ids: string[], decision: 'approved' | 'rejected') {
+    if (!managerId || ids.length === 0) return
+    setActionLoading(true)
+    try {
+      const res = await fetch('/api/attendance', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'decide_fixed_off_day', ids, reviewer_id: managerId, decision }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      void fetchData(companyId, managerId)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed')
+    } finally { setActionLoading(false) }
+  }
+
   const myPendingCount = mySwaps.filter(r => r.status === 'pending').length + myTimeOff.filter(r => r.status === 'pending').length + myFixedOff.filter(r => r.status === 'pending').length
 
   const tabs: { key: TabKey; label: string; count?: number }[] = [
     { key: 'records', label: 'Attendance Records', count: summary.needs_review > 0 ? summary.needs_review : undefined },
     { key: 'time_off', label: 'Time Off', count: timeOffRequests.filter(r => r.status === 'pending').length || undefined },
     { key: 'swaps', label: 'Shift Swaps', count: swapRequests.filter(r => r.status === 'pending').length || undefined },
+    { key: 'fixed_off', label: 'Weekly Day Off', count: fixedOffRequests.filter(r => r.status === 'pending').length || undefined },
     { key: 'my_requests', label: 'My Requests', count: myPendingCount || undefined },
   ]
 
@@ -871,6 +932,73 @@ export default function ManagerAttendancePage() {
           )}
 
           {/* ── My Requests tab ── */}
+          {activeTab === 'fixed_off' && (() => {
+            // An Employee submits one weekly request (e.g. "off Mon + Wed next week"), stored as
+            // one row per date but decided as a single unit — group by requester + week so this
+            // table shows one row per weekly submission, not one per date.
+            const groups = new Map<string, { key: string; requester_name: string; week_start: string; source: string; status: string; requests: FixedOffDayRequestView[] }>()
+            for (const req of fixedOffRequests) {
+              const key = `${req.user_id}_${req.week_start}`
+              const existing = groups.get(key)
+              if (existing) existing.requests.push(req)
+              else groups.set(key, { key, requester_name: req.requester_name, week_start: req.week_start, source: req.source, status: req.status, requests: [req] })
+            }
+            for (const group of groups.values()) group.requests.sort((a, b) => a.request_date.localeCompare(b.request_date))
+            const fixedOffGroups = [...groups.values()]
+
+            return (
+              <div style={{ background: PANEL, borderRadius: 16, overflow: 'hidden', boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)', animation: 'fadeSlideUp 0.28s ease both' }}>
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ background: '#F8FAFC' }}>
+                        {['Employee', 'Week', 'Days Off', 'Source', 'Status', 'Actions'].map(col => (
+                          <th key={col} style={{ padding: '10px 14px', textAlign: col === 'Employee' ? 'left' : 'center', fontSize: 10.5, fontWeight: 700, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.06em', borderBottom: `1px solid ${BORDER}`, whiteSpace: 'nowrap' }}>{col}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {fixedOffGroups.length === 0 ? (
+                        <tr><td colSpan={6} style={{ padding: '32px 20px', textAlign: 'center', color: MUTED, fontSize: 13 }}>No weekly day off requests</td></tr>
+                      ) : fixedOffGroups.map((group, i) => {
+                        const ids = group.requests.map(r => r.id)
+                        return (
+                          <tr key={group.key} className="mgr-att-row" style={{ background: i % 2 === 0 ? PANEL : '#FAFBFC' }}>
+                            <td style={{ padding: '12px 14px', borderBottom: `1px solid ${BORDER}`, fontSize: 13, fontWeight: 700, color: TEXT }}>{group.requester_name}</td>
+                            <td style={{ padding: '12px 14px', borderBottom: `1px solid ${BORDER}`, fontSize: 12.5, color: MUTED, fontWeight: 600, textAlign: 'center', whiteSpace: 'nowrap' }}>Week of {fmtDate(group.week_start)}</td>
+                            <td style={{ padding: '12px 14px', borderBottom: `1px solid ${BORDER}`, textAlign: 'center' }}>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'center' }}>
+                                {group.requests.map(r => (
+                                  <span key={r.id} style={{ fontSize: 11.5, fontWeight: 700, color: '#334155', background: '#F1F5F9', borderRadius: 999, padding: '2px 8px', whiteSpace: 'nowrap' }}>{fmtDate(r.request_date)}</span>
+                                ))}
+                              </div>
+                            </td>
+                            <td style={{ padding: '12px 14px', borderBottom: `1px solid ${BORDER}`, fontSize: 12, color: MUTED, textAlign: 'center' }}>{group.source === 'auto_assigned' ? 'Auto assigned' : 'Submitted'}</td>
+                            <td style={{ padding: '12px 14px', borderBottom: `1px solid ${BORDER}`, textAlign: 'center' }}>{statusChip(group.status)}</td>
+                            <td style={{ padding: '12px 14px', borderBottom: `1px solid ${BORDER}`, textAlign: 'center' }}>
+                              {group.status === 'pending' && (
+                                <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
+                                  <button onClick={() => handleDecideFixedOffGroup(ids, 'approved')} disabled={actionLoading}
+                                    style={{ height: 28, padding: '0 10px', background: '#ECFDF5', color: '#047857', border: '1px solid #A7F3D0', borderRadius: 7, fontSize: 11.5, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                                    <Check size={11} /> Approve
+                                  </button>
+                                  <button onClick={() => handleDecideFixedOffGroup(ids, 'rejected')} disabled={actionLoading}
+                                    style={{ height: 28, padding: '0 10px', background: '#FEF2F2', color: '#B91C1C', border: '1px solid #FECACA', borderRadius: 7, fontSize: 11.5, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                                    <X size={11} /> Reject
+                                  </button>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )
+          })()}
+
           {activeTab === 'my_requests' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14, animation: 'fadeSlideUp 0.28s ease both' }}>
 
@@ -889,7 +1017,7 @@ export default function ManagerAttendancePage() {
                 </button>
                 <button onClick={() => { setFixedFormOpen(v => !v); setSwapFormOpen(false); setLeaveFormOpen(false) }}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 38, padding: '0 16px', background: fixedFormOpen ? '#0F172A' : PANEL, color: fixedFormOpen ? '#FFFFFF' : TEXT, border: `1.5px solid ${fixedFormOpen ? '#0F172A' : BORDER}`, borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
-                  <Calendar size={14} /> Fixed Day Off
+                  <Calendar size={14} /> Weekly Day Off
                 </button>
                 <button onClick={() => void fetchMyRequests(managerId)} disabled={myReqLoading || !managerId}
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 38, padding: '0 14px', background: PANEL, color: MUTED, border: `1px solid ${BORDER}`, borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', marginLeft: 'auto' }}>
@@ -1000,19 +1128,49 @@ export default function ManagerAttendancePage() {
               {/* Fixed Day Off form */}
               {fixedFormOpen && (
                 <div style={{ background: PANEL, border: `1.5px solid #E5E7EB`, borderRadius: 14, padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 13 }}>
-                  <p style={{ margin: 0, fontWeight: 800, fontSize: 14, color: TEXT }}>Request Fixed Day Off</p>
-                  <div>
-                    <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>Preferred Day Off</label>
-                    <select value={fixedWeekday} onChange={e => setFixedWeekday(Number(e.target.value))}
-                      style={{ width: '100%', height: 38, padding: '0 10px', border: `1px solid ${BORDER}`, borderRadius: 8, fontSize: 13, color: TEXT, background: '#F8FAFC', outline: 'none' }}>
-                      {WEEKDAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
-                    </select>
+                  <p style={{ margin: 0, fontWeight: 800, fontSize: 14, color: TEXT }}>Request Weekly Day Off</p>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, color: MUTED, fontSize: 12.5, fontWeight: 700 }}>
+                    <span>Upcoming week</span>
+                    <span>{selectedFixedOffDates.length}/{fixedOffQuota} selected</span>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(108px, 1fr))', gap: 8 }}>
+                    {getUpcomingWeekDates().map(date => {
+                      const selected = selectedFixedOffDates.includes(date)
+                      const atLimit = !selected && selectedFixedOffDates.length >= fixedOffQuota
+                      return (
+                        <button
+                          key={date}
+                          type="button"
+                          onClick={() => toggleFixedOffDate(date)}
+                          disabled={atLimit}
+                          style={{
+                            minHeight: 58,
+                            padding: '8px 10px',
+                            borderRadius: 10,
+                            border: selected ? '1.5px solid #7C3AED' : `1px solid ${BORDER}`,
+                            background: selected ? '#F5F3FF' : '#FFFFFF',
+                            color: selected ? '#6D28D9' : TEXT,
+                            opacity: atLimit ? 0.45 : 1,
+                            cursor: atLimit ? 'not-allowed' : 'pointer',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            alignItems: 'flex-start',
+                            justifyContent: 'center',
+                            gap: 3,
+                            fontWeight: 800,
+                          }}
+                        >
+                          <span style={{ fontSize: 12 }}>{new Date(`${date}T00:00:00`).toLocaleDateString('en-AU', { weekday: 'short' })}</span>
+                          <span style={{ fontSize: 13 }}>{fmtDate(date)}</span>
+                        </button>
+                      )
+                    })}
                   </div>
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button onClick={() => setFixedFormOpen(false)} style={{ flex: 1, height: 38, background: 'none', border: `1.5px solid ${BORDER}`, borderRadius: 9, fontWeight: 700, fontSize: 13, color: MUTED, cursor: 'pointer' }}>Cancel</button>
-                    <button onClick={handleSubmitFixedOff} disabled={fixedSubmitting}
-                      style={{ flex: 2, height: 38, background: '#0F172A', border: 'none', borderRadius: 9, fontWeight: 700, fontSize: 13, color: '#FFFFFF', cursor: fixedSubmitting ? 'default' : 'pointer', opacity: fixedSubmitting ? 0.55 : 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                      {fixedSubmitting ? <Spinner light /> : <Calendar size={13} />} Request Fixed Day Off
+                    <button onClick={handleSubmitFixedOff} disabled={fixedSubmitting || selectedFixedOffDates.length === 0}
+                      style={{ flex: 2, height: 38, background: '#0F172A', border: 'none', borderRadius: 9, fontWeight: 700, fontSize: 13, color: '#FFFFFF', cursor: fixedSubmitting ? 'default' : 'pointer', opacity: fixedSubmitting || selectedFixedOffDates.length === 0 ? 0.55 : 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                      {fixedSubmitting ? <Spinner light /> : <Calendar size={13} />} Request Weekly Day Off
                     </button>
                   </div>
                 </div>
@@ -1069,15 +1227,16 @@ export default function ManagerAttendancePage() {
                   <div style={{ background: PANEL, borderRadius: 12, overflow: 'hidden', border: `1px solid ${BORDER}` }}>
                     <div style={{ padding: '12px 16px', borderBottom: `1px solid ${BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
                       <Calendar size={14} color="#7C3AED" />
-                      <span style={{ fontWeight: 700, fontSize: 13, color: TEXT }}>My Fixed Day Off Requests</span>
+                      <span style={{ fontWeight: 700, fontSize: 13, color: TEXT }}>My Weekly Day Off Requests</span>
                       <span style={{ marginLeft: 'auto', fontSize: 11, fontWeight: 700, color: MUTED }}>{myFixedOff.length} total</span>
                     </div>
                     {myFixedOff.length === 0 ? (
-                      <div style={{ padding: '20px 16px', color: MUTED, fontSize: 13, textAlign: 'center' }}>No fixed day off requests yet.</div>
+                      <div style={{ padding: '20px 16px', color: MUTED, fontSize: 13, textAlign: 'center' }}>No weekly day off requests yet.</div>
                     ) : myFixedOff.map((req, i) => (
                       <div key={req.id} style={{ padding: '12px 16px', borderBottom: i < myFixedOff.length - 1 ? `1px solid #F8FAFC` : 'none', display: 'flex', alignItems: 'center', gap: 10 }}>
                         <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 13, fontWeight: 600, color: TEXT }}>{WEEKDAY_NAMES[req.weekday]}</div>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: TEXT }}>{fmtDate(req.request_date)}</div>
+                          {req.source === 'auto_assigned' && <div style={{ fontSize: 11.5, color: MUTED, marginTop: 2 }}>Auto assigned</div>}
                         </div>
                         {statusChip(req.status)}
                       </div>

@@ -2,17 +2,7 @@
 // RULE: Supabase queries only. No business logic.
 
 import { supabase } from '@/lib/supabase'
-import { AttendanceRequestStatus, ShiftSwapRequest, ShiftSwapRequestCreateInput } from '@/types/Attendance'
-
-export type FixedOffDay = {
-  id: string
-  user_id: string
-  company_id: string
-  weekday: number
-  status: AttendanceRequestStatus
-  reviewed_by: string | null
-  reviewed_at: string | null
-}
+import { ShiftSwapRequest, ShiftSwapRequestCreateInput } from '@/types/Attendance'
 
 export type LeaveRequest = {
   id: string
@@ -28,55 +18,26 @@ export type LeaveRequest = {
   updated_at: string
 }
 
-type BreakWaiverCreateInput = {
+type LeaveRequestCreateInput = {
   user_id: string
   company_id: string
-  request_type: 'break_waiver'
+  request_type: 'time_off' | 'break_waiver' | 'leave'
   reason: string | null
   shift_assignment_id: string | null
 }
 
 export const availabilityRepository = {
-  async getFixedOffDaysByUser(user_id: string): Promise<FixedOffDay[]> {
-    const { data, error } = await supabase
-      .from('employee_fixed_off_days')
-      .select('id, user_id, company_id, weekday, status, reviewed_by, reviewed_at')
-      .eq('user_id', user_id)
-    if (error) throw new Error(error.message)
-    return (data ?? []) as FixedOffDay[]
-  },
-
-  // UC55: submitting fixed days off no longer takes effect immediately — it (re)submits
-  // the full set as pending requests for the supervising role to approve (UC56).
-  async setFixedOffDays(user_id: string, company_id: string, weekdays: number[]): Promise<void> {
-    const { error: delError } = await supabase
-      .from('employee_fixed_off_days')
-      .delete()
-      .eq('user_id', user_id)
-      .eq('company_id', company_id)
-    if (delError) throw new Error(delError.message)
-
-    if (weekdays.length === 0) return
-
-    const rows = weekdays.map(weekday => ({ user_id, company_id, weekday, status: 'pending' }))
-    const { error: insError } = await supabase
-      .from('employee_fixed_off_days')
-      .insert(rows)
-    if (insError) throw new Error(insError.message)
-  },
-
-  async getBreakWaiverRequestsByUser(user_id: string): Promise<LeaveRequest[]> {
+  async getLeaveRequestsByUser(user_id: string): Promise<LeaveRequest[]> {
     const { data, error } = await supabase
       .from('time_off_requests')
       .select('id, company_id, requester_id, shift_assignment_id, request_type, reason, status, reviewed_by, reviewed_at, created_at, updated_at')
       .eq('requester_id', user_id)
-      .eq('request_type', 'break_waiver')
       .order('created_at', { ascending: false })
     if (error) throw new Error(error.message)
     return (data ?? []) as LeaveRequest[]
   },
 
-  async createBreakWaiverRequest(input: BreakWaiverCreateInput): Promise<LeaveRequest> {
+  async createLeaveRequest(input: LeaveRequestCreateInput): Promise<LeaveRequest> {
     const { data, error } = await supabase
       .from('time_off_requests')
       .insert({
@@ -93,7 +54,7 @@ export const availabilityRepository = {
     return data as LeaveRequest
   },
 
-  async createShiftSwapRequest(input: ShiftSwapRequestCreateInput): Promise<ShiftSwapRequest> {
+  async createShiftSwapRequest(input: ShiftSwapRequestCreateInput & { counterpart_status?: 'pending' | 'approved' | 'rejected'; counterpart_reviewed_at?: string | null }): Promise<ShiftSwapRequest> {
     const { data, error } = await supabase
       .from('shift_swap_requests')
       .insert({
@@ -104,11 +65,43 @@ export const availabilityRepository = {
         counterpart_assignment_id: input.counterpart_assignment_id,
         reason: input.reason,
         status: 'pending',
-        counterpart_status: 'pending',
+        counterpart_status: input.counterpart_status ?? 'pending',
+        counterpart_reviewed_at: input.counterpart_reviewed_at ?? null,
       })
       .select()
       .single()
     if (error) throw new Error(error.message)
     return data as ShiftSwapRequest
+  },
+
+  async getShiftAssignmentById(id: string): Promise<{ id: string; shift_id: string; user_id: string; assigned_by: string | null } | null> {
+    const { data, error } = await supabase
+      .from('shift_assignments')
+      .select('id, shift_id, user_id, assigned_by')
+      .eq('id', id)
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    return data as { id: string; shift_id: string; user_id: string; assigned_by: string | null } | null
+  },
+
+  async getShiftAssignmentForUser(shift_id: string, user_id: string): Promise<{ id: string; shift_id: string; user_id: string } | null> {
+    const { data, error } = await supabase
+      .from('shift_assignments')
+      .select('id, shift_id, user_id')
+      .eq('shift_id', shift_id)
+      .eq('user_id', user_id)
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    return data as { id: string; shift_id: string; user_id: string } | null
+  },
+
+  async createShiftAssignment(input: { shift_id: string; user_id: string; assigned_by: string | null }): Promise<{ id: string; shift_id: string; user_id: string }> {
+    const { data, error } = await supabase
+      .from('shift_assignments')
+      .insert({ shift_id: input.shift_id, user_id: input.user_id, assigned_by: input.assigned_by })
+      .select('id, shift_id, user_id')
+      .single()
+    if (error) throw new Error(error.message)
+    return data as { id: string; shift_id: string; user_id: string }
   },
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 vi.mock('@/lib/supabase', () => ({
   supabase: {},
@@ -1215,6 +1215,15 @@ describe('taskService — Task (UC14-26)', () => {
   })
 
   describe('getStalledTaskAlerts (UC22)', () => {
+    beforeEach(() => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date('2026-01-15T12:00:00.000Z'))
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
     it('flags a task only after more than half its assigned-to-deadline window has elapsed', async () => {
       const now = Date.now()
       // assigned 4 hours ago, due in 4 hours → 8h total window, 4h elapsed = 50% exactly
