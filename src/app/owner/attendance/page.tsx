@@ -5,8 +5,8 @@ import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import {
-  AlertTriangle, ArrowLeftRight, Bot, Calendar, CalendarDays, Check, CheckCheck, ChevronDown, ChevronLeft, ChevronRight,
-  ClipboardList, Clock, Download, Eye, FileText, Filter, RefreshCw, Settings, ThumbsDown, ThumbsUp, Trash2, UserCog, UserRound, Users, UserX, X,
+  AlertTriangle, ArrowLeftRight, BarChart3, Calendar, CalendarDays, Check, CheckCheck, ChevronDown, ChevronLeft, ChevronRight,
+  ClipboardList, Clock, Download, Eye, FileText, Filter, Pencil, Plus, RefreshCw, Search, Settings, Sparkles, ThumbsDown, ThumbsUp, Trash2, UserCog, UserRound, UserX, X,
 } from 'lucide-react'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import RoleAvatar from '@/components/RoleAvatar'
@@ -23,10 +23,11 @@ import {
   ShiftSwapRequestView,
 } from '@/types/Attendance'
 import { JobPosting } from '@/types/Recruitment'
-import { ModalOverlay, ModalBox, ModalHeader, modalErrorBoxStyle, modalPrimaryButtonStyle, modalInputStyle, modalLabelStyle } from '@/components/modal'
+import { ModalOverlay, ModalBox, ModalHeader, modalErrorBoxStyle, modalPrimaryButtonStyle, modalGhostButtonStyle, modalInputStyle, modalLabelStyle } from '@/components/modal'
 import { ShowcaseCard } from '@/components/panel'
 import DatePickerField from '@/components/DatePickerField'
 import DropdownField from '@/components/DropdownField'
+import Toast from '@/components/Toast'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
@@ -34,14 +35,53 @@ import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 const PANEL_BORDER = '#E2E8F0'
 const TEXT_DARK = '#0F172A'
 
-
 // Shape returned by POST /api/attendance/ai-suggest for request_type: 'fixed_off_day'
 interface FixedOffDayAISuggestion {
-  recommendation: 'approve' | 'reject' | 'review'
+  recommendation: 'approve' | 'modify'
   confidence: number
   reason: string
   concerns: string[]
   alternatives: string[]
+}
+
+// A Manager/Employee submits one weekly request (e.g. "off Mon + Wed next week"), stored as one
+// row per date but decided as a single unit — group by requester + week so Action Needed shows
+// one card per weekly submission, not one per date.
+interface FixedOffGroup {
+  key: string
+  user_id: string
+  requester_name: string
+  requester_role: string
+  department_id: string | null
+  week_start: string
+  status: AttendanceRequestStatus
+  source: FixedOffDaySource
+  created_at: string
+  reviewed_at: string | null
+  requests: FixedOffDayRequestView[]
+}
+
+function groupFixedOff(rows: FixedOffDayRequestView[]): FixedOffGroup[] {
+  const byKey = new Map<string, FixedOffGroup>()
+  for (const req of rows) {
+    const key = `${req.user_id}_${req.week_start}`
+    const existing = byKey.get(key)
+    if (existing) {
+      existing.requests.push(req)
+      if (new Date(req.created_at ?? 0).getTime() < new Date(existing.created_at ?? 0).getTime()) existing.created_at = req.created_at
+      if (new Date(req.reviewed_at ?? req.created_at ?? 0).getTime() > new Date(existing.reviewed_at ?? existing.created_at ?? 0).getTime()) existing.reviewed_at = req.reviewed_at ?? req.created_at
+    } else {
+      byKey.set(key, {
+        key, user_id: req.user_id, requester_name: req.requester_name, requester_role: req.requester_role,
+        department_id: req.department_id, week_start: req.week_start, status: req.status, source: req.source,
+        created_at: req.created_at, reviewed_at: req.reviewed_at ?? req.created_at, requests: [req],
+      })
+    }
+  }
+  for (const group of byKey.values()) {
+    group.requests.sort((a, b) => a.request_date.localeCompare(b.request_date))
+  }
+  return [...byKey.values()]
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -64,6 +104,22 @@ function formatSwapDate(value: string | null | undefined): string {
   const weekday = date.toLocaleDateString('en-GB', { weekday: 'short' })
   const dayMonth = date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
   return `${weekday}, ${dayMonth}`
+}
+
+// "Tuesday [07 Jul]" — full weekday name + bracketed date, for a Fixed Off Day request's day list.
+function formatFixedOffRequestDay(value: string): string {
+  const date = new Date(`${value}T00:00:00`)
+  const weekday = date.toLocaleDateString('en-GB', { weekday: 'long' })
+  const dayMonth = date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+  return `${weekday} [${dayMonth}]`
+}
+
+function formatWeekDateRange(weekStart: string | null | undefined): string {
+  if (!weekStart) return ''
+  const start = new Date(`${weekStart}T00:00:00`)
+  const end = addDays(start, 6)
+  const formatDateOnly = (date: Date) => date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+  return `${formatDateOnly(start)} - ${formatDateOnly(end)}`
 }
 
 function formatOwnerDecisionTime(value: string | null | undefined): string {
@@ -97,6 +153,29 @@ function toISODate(date: Date): string {
   const m = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
   return `${y}-${m}-${day}`
+}
+
+function computeWeekStartKey(dateKey: string): string {
+  const date = new Date(`${dateKey}T00:00:00`)
+  const dow = (date.getDay() + 6) % 7
+  return toISODate(addDays(date, -dow))
+}
+
+// Mirrors attendanceService.resolveActiveSubmissionWeekStart exactly (same toISOString()-based
+// todayKey, same Monday-offset math, same UTC deadline moment) — the week currently open for
+// submission shifts forward each time a window's own deadline passes, so the header always names
+// whichever week a fresh submission would actually land in, not a stale/already-closed one.
+function resolveActiveSubmissionWeekStart(deadlineWeekday: number, deadlineTime: string): string {
+  const todayKey = new Date().toISOString().slice(0, 10)
+  let candidateWeekStart = computeWeekStartKey(todayKey)
+  for (;;) {
+    const targetWeek = toISODate(addDays(new Date(`${candidateWeekStart}T00:00:00`), 7))
+    const offsetFromMonday = (deadlineWeekday + 6) % 7
+    const deadlineDate = toISODate(addDays(new Date(`${candidateWeekStart}T00:00:00`), offsetFromMonday))
+    const deadlineMoment = new Date(`${deadlineDate}T${deadlineTime}:00.000Z`)
+    if (Date.now() <= deadlineMoment.getTime()) return targetWeek
+    candidateWeekStart = targetWeek
+  }
 }
 
 function fmt(d: Date): string {
@@ -305,6 +384,20 @@ const TIME_OPTIONS: string[] = (() => {
       const ampm = h < 12 ? 'AM' : 'PM'
       const displayH = h % 12 === 0 ? 12 : h % 12
       opts.push(`${displayH}:${String(m).padStart(2, '0')} ${ampm}`)
+    }
+  }
+  return opts
+})()
+
+// Every 30-minute slot for 24h, value stored as 24h "HH:MM" (matches shifts.start_time convention),
+// label shown as 12h "h:mm AM/PM" for the Submission Deadline time picker.
+const DEADLINE_TIME_OPTIONS: { value: string; label: string }[] = (() => {
+  const opts: { value: string; label: string }[] = []
+  for (let h = 0; h < 24; h++) {
+    for (let m = 0; m < 60; m += 30) {
+      const ampm = h < 12 ? 'AM' : 'PM'
+      const displayH = h % 12 === 0 ? 12 : h % 12
+      opts.push({ value: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`, label: `${displayH}:${String(m).padStart(2, '0')} ${ampm}` })
     }
   }
   return opts
@@ -700,10 +793,37 @@ export default function OwnerAttendancePage() {
   const [offDaySettingsLoading, setOffDaySettingsLoading] = useState(false)
   const [offDaySettingsError, setOffDaySettingsError] = useState('')
   const [offDaySettingsSaving, setOffDaySettingsSaving] = useState(false)
-  const [companyManagers, setCompanyManagers] = useState<{ id: string; full_name: string }[]>([])
-  const [companyDefaultQuota, setCompanyDefaultQuota] = useState(2)
-  const [managerQuotaOverrides, setManagerQuotaOverrides] = useState<Record<string, number>>({})
+  // Shared page-wide toast pair — every action handler on this page reports success/failure
+  // through these two instead of each growing its own ad-hoc toast state.
+  const [successToast, setSuccessToast] = useState('')
+  const [errorToast, setErrorToast] = useState('')
+  const showSuccessToast = useCallback((message: string) => {
+    setSuccessToast(message)
+    setTimeout(() => setSuccessToast(''), 3000)
+  }, [])
+  const showErrorToast = useCallback((message: string) => {
+    setErrorToast(message)
+    setTimeout(() => setErrorToast(''), 3000)
+  }, [])
+  const [managerOverridesModalOpen, setManagerOverridesModalOpen] = useState(false)
+  const [companyStaff, setCompanyStaff] = useState<{ id: string; full_name: string; role: string; department_id: string | null; profile_photo_url: string | null }[]>([])
+  const [companyDepartments, setCompanyDepartments] = useState<{ id: string; name: string }[]>([])
+  const [managerDefaultQuota, setManagerDefaultQuota] = useState(2)
+  const [employeeDefaultQuota, setEmployeeDefaultQuota] = useState(2)
+  const [individualQuotaOverrides, setIndividualQuotaOverrides] = useState<Record<string, number>>({})
+  const [overrideDrafts, setOverrideDrafts] = useState<Record<string, number>>({})
+  const [revealedOverrideInputs, setRevealedOverrideInputs] = useState<Set<string>>(new Set())
+  const [overrideInputText, setOverrideInputText] = useState<Record<string, string>>({})
+  // Separate from the modal's batched-draft editing (overrideDrafts/revealedOverrideInputs) —
+  // this inline preview on the Settings block commits immediately on blur, no Save button.
+  const [revealedInlineOverrides, setRevealedInlineOverrides] = useState<Set<string>>(new Set())
+  const [inlineOverrideInputText, setInlineOverrideInputText] = useState<Record<string, string>>({})
+  const [overrideSearch, setOverrideSearch] = useState('')
+  const [overrideRoleFilter, setOverrideRoleFilter] = useState('all')
+  const [overrideDeptFilter, setOverrideDeptFilter] = useState('all')
+  const [overrideSearchPanelOpen, setOverrideSearchPanelOpen] = useState(false)
   const [deadlineWeekday, setDeadlineWeekday] = useState(2)
+  const [deadlineTime, setDeadlineTime] = useState('17:00')
 
   // ── Requests tab state ───────────────────────────────────────────────────
   const [reqTab, setReqTab] = useState<'swaps' | 'fixedoff'>('swaps')
@@ -711,9 +831,23 @@ export default function OwnerAttendancePage() {
   const [fixedOffDayRequests, setFixedOffDayRequests] = useState<FixedOffDayRequestView[]>([])
   const [reqLoading, setReqLoading] = useState(false)
   const [actionIndex, setActionIndex] = useState(0)
+  // Narrow desktop windows (laptop-width, ~<1500px) don't have room to show 2 Action Needed
+  // swap cards side by side without truncating the requester/counterpart names — drop to 1 per
+  // page there instead of squeezing both.
+  const [isNarrowViewport, setIsNarrowViewport] = useState(false)
+  useEffect(() => {
+    const check = () => setIsNarrowViewport(window.innerWidth < 1500)
+    check()
+    window.addEventListener('resize', check)
+    return () => window.removeEventListener('resize', check)
+  }, [])
   const [fixedOffActionIndex, setFixedOffActionIndex] = useState(0)
-  const [fixedOffProcessedPage, setFixedOffProcessedPage] = useState(0)
-  const [fixedOffCalendarWeekIndex, setFixedOffCalendarWeekIndex] = useState(0)
+  const [fixedOffCalendarMonthAnchor, setFixedOffCalendarMonthAnchor] = useState(() => {
+    const d = new Date()
+    d.setDate(1)
+    return toISODate(d)
+  })
+  const [dayOffDetailDate, setDayOffDetailDate] = useState<string | null>(null)
   const [processedDeptFilter, setProcessedDeptFilter] = useState<string>('all')
   const [processedPage, setProcessedPage] = useState(0)
   const [processedDeptDropdownOpen, setProcessedDeptDropdownOpen] = useState(false)
@@ -740,14 +874,20 @@ export default function OwnerAttendancePage() {
       return toISODate(d)
     })
   }, [])
-  const [aiFixedOffLoadingId, setAiFixedOffLoadingId] = useState<string | null>(null)
-  const [aiFixedOffResults, setAiFixedOffResults] = useState<Record<string, FixedOffDayAISuggestion>>({})
-  const [aiFixedOffError, setAiFixedOffError] = useState<Record<string, string>>({})
-  const [activityLogs, setActivityLogs] = useState<{ id: string; type: 'swaps' | 'fixedoff'; action: 'approved' | 'rejected'; targetName: string; ts: Date }[]>(() => {
+  // Owner's "Modify" action — reassign a pending request's day(s) to different dates in the same
+  // week. Only one card's picker is open at a time. The manual pick-any-day flow stays intact for
+  // later Free-tier gating; "Suggestion" (below) is the AI-assisted entry point that drives it.
+  const [modifyingFixedOffKey, setModifyingFixedOffKey] = useState<string | null>(null)
+  const [fixedOffModifySelection, setFixedOffModifySelection] = useState<string[]>([])
+  const [requestAiKey, setRequestAiKey] = useState<string | null>(null)
+  const [requestAiResult, setRequestAiResult] = useState<FixedOffDayAISuggestion | null>(null)
+  const [requestAiLoading, setRequestAiLoading] = useState(false)
+  const [requestAiError, setRequestAiError] = useState('')
+  const [activityLogs, setActivityLogs] = useState<{ id: string; type: 'swaps' | 'fixedoff'; action: 'approved' | 'rejected' | 'modified'; targetName: string; ts: Date }[]>(() => {
     try {
       const saved = localStorage.getItem('attendance_activity_logs')
       if (!saved) return []
-      return (JSON.parse(saved) as { id: string; type: 'swaps' | 'fixedoff'; action: 'approved' | 'rejected'; targetName: string; ts: string }[])
+      return (JSON.parse(saved) as { id: string; type: 'swaps' | 'fixedoff'; action: 'approved' | 'rejected' | 'modified'; targetName: string; ts: string }[])
         .map(l => ({ ...l, ts: new Date(l.ts) }))
     } catch { return [] }
   })
@@ -874,66 +1014,78 @@ export default function OwnerAttendancePage() {
     setCsAnchorDate(dates.reduce((a, b) => (a < b ? a : b)))
   }, [activeSwapRequest?.id, activeSwapRequest?.requester_shift_date, activeSwapRequest?.counterpart_shift_date])
 
-  // fetch current dept shifts whenever the action-needed card or the viewed window changes
+  // fetch current dept shifts whenever the action-needed card or the viewed window changes —
+  // guarded so merely switching tabs away and back (mainTab/reqTab) doesn't re-fetch the same
+  // department/window that's already loaded.
+  const currentShiftsFetchedForRef = useRef<string | null>(null)
   useEffect(() => {
     if (!companyId || mainTab !== 'requests' || reqTab !== 'swaps' || !activeSwapRequest?.department_name) return
+    const key = `${companyId}_${activeSwapRequest.department_name}_${csAnchorDate}`
+    if (currentShiftsFetchedForRef.current === key) return
+    currentShiftsFetchedForRef.current = key
     void fetchCurrentShifts(companyId, activeSwapRequest.department_name, csAnchorDate)
   }, [companyId, mainTab, reqTab, activeSwapRequest?.department_name, csAnchorDate, fetchCurrentShifts])
 
-  // ── AI analyze fixed day off request ────────────────────────────────────────
-  // Analyzes every date in one weekly submission together — groupKey is `${user_id}_${week_start}`.
-  const analyzeFixedOffGroup = async (groupKey: string, ids: string[]) => {
-    setAiFixedOffLoadingId(groupKey)
-    setAiFixedOffError(prev => ({ ...prev, [groupKey]: '' }))
-    try {
-      const res = await fetch('/api/attendance/ai-suggest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          request_type: 'fixed_off_day',
-          ids,
-          company_id: companyId,
-        }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'AI analysis failed')
-      setAiFixedOffResults(prev => ({ ...prev, [groupKey]: data.suggestion }))
-    } catch (err) {
-      setAiFixedOffError(prev => ({ ...prev, [groupKey]: err instanceof Error ? err.message : 'AI analysis failed' }))
-    } finally {
-      setAiFixedOffLoadingId(null)
-    }
-  }
+  const fixedOffGroupsAll = useMemo(() => groupFixedOff(fixedOffDayRequests), [fixedOffDayRequests])
+  const fixedOffActionNeeded = useMemo(
+    () => fixedOffGroupsAll.filter(g => g.status === 'pending').sort((a, b) => new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime()),
+    [fixedOffGroupsAll],
+  )
+  const currentFixedOffItem = useMemo(() => {
+    const clamped = Math.min(fixedOffActionIndex, Math.max(fixedOffActionNeeded.length - 1, 0))
+    return fixedOffActionNeeded[clamped] ?? null
+  }, [fixedOffActionNeeded, fixedOffActionIndex])
+  // Deadline passing only ever stops new submissions for that week — it does NOT by itself end the
+  // week for display purposes. A week is only "published"/done once every one of its pending requests
+  // has been Approved or Modified, so this stays on the oldest week that still has something to
+  // decide, and only falls back to the next open-for-submission week once the queue is empty.
+  const displayWeekStart = useMemo(
+    () => currentFixedOffItem?.week_start ?? resolveActiveSubmissionWeekStart(deadlineWeekday, deadlineTime),
+    [currentFixedOffItem, deadlineWeekday, deadlineTime],
+  )
 
   // ── Off Day Settings (quota + deadline) ─────────────────────────────────────
-  const loadOffDaySettings = useCallback(async () => {
+  // Tracks which companyId this data has already been fetched for, so revisiting the tab doesn't
+  // re-fire all 4 requests every time — save handlers below patch local state directly on success,
+  // so a refetch is never needed after a mutation, only on first load / company switch.
+  const offDaySettingsLoadedForRef = useRef<string | null>(null)
+  const loadOffDaySettings = useCallback(async (force = false) => {
     if (!companyId || !internalUserId) return
+    if (!force && offDaySettingsLoadedForRef.current === companyId) return
+    offDaySettingsLoadedForRef.current = companyId
     setOffDaySettingsLoading(true)
     setOffDaySettingsError('')
     try {
-      const [membersRes, quotaRes, deadlineRes] = await Promise.all([
+      const [membersRes, deptRes, quotaRes, deadlineRes] = await Promise.all([
         fetch(`/api/team/members?company_id=${companyId}`),
+        fetch(`/api/company/departments?company_id=${companyId}`),
         fetch(`/api/attendance/off-day-settings?company_id=${companyId}&owner_id=${internalUserId}&resource=quota`),
         fetch(`/api/attendance/off-day-settings?company_id=${companyId}&owner_id=${internalUserId}&resource=deadline`),
       ])
       const membersData = await membersRes.json()
+      const deptData = await deptRes.json()
       const quotaData = await quotaRes.json()
       const deadlineData = await deadlineRes.json()
       if (!quotaData.success) throw new Error(quotaData.message || 'Failed to load quota settings')
       if (!deadlineData.success) throw new Error(deadlineData.message || 'Failed to load deadline settings')
 
-      const managers = (membersData.members ?? []).filter((m: { role: string }) => m.role === 'Manager')
-      setCompanyManagers(managers)
+      const staff = (membersData.members ?? []).filter((m: { role: string }) => m.role === 'Manager' || m.role === 'Employee')
+      setCompanyStaff(staff)
+      if (deptData.success) setCompanyDepartments(deptData.departments ?? [])
 
-      const settings: Array<{ user_id: string | null; max_days_per_week: number }> = quotaData.settings ?? []
-      const defaultRow = settings.find(s => s.user_id === null)
-      setCompanyDefaultQuota(defaultRow?.max_days_per_week ?? 2)
+      const settings: Array<{ user_id: string | null; max_days_per_week: number; role: 'Manager' | 'Employee' | null }> = quotaData.settings ?? []
+      const managerDefaultRow = settings.find(s => s.user_id === null && s.role === 'Manager')
+      const employeeDefaultRow = settings.find(s => s.user_id === null && s.role === 'Employee')
+      setManagerDefaultQuota(managerDefaultRow?.max_days_per_week ?? 2)
+      setEmployeeDefaultQuota(employeeDefaultRow?.max_days_per_week ?? 2)
       const overrides: Record<string, number> = {}
       settings.filter(s => s.user_id !== null).forEach(s => { overrides[s.user_id as string] = s.max_days_per_week })
-      setManagerQuotaOverrides(overrides)
+      setIndividualQuotaOverrides(overrides)
 
       setDeadlineWeekday(deadlineData.deadline?.deadline_weekday ?? 2)
+      setDeadlineTime(deadlineData.deadline?.deadline_time ?? '17:00')
     } catch (err) {
+      offDaySettingsLoadedForRef.current = null
       setOffDaySettingsError(err instanceof Error ? err.message : 'Failed to load off day settings')
     } finally {
       setOffDaySettingsLoading(false)
@@ -944,7 +1096,7 @@ export default function OwnerAttendancePage() {
     if (mainTab === 'requests' && reqTab === 'fixedoff') void loadOffDaySettings()
   }, [mainTab, reqTab, loadOffDaySettings])
 
-  const saveManagerQuotaOverride = async (managerId: string, value: number) => {
+  const saveIndividualQuotaOverride = async (userId: string, value: number) => {
     if (!companyId || !internalUserId) return
     setOffDaySettingsSaving(true)
     setOffDaySettingsError('')
@@ -952,19 +1104,22 @@ export default function OwnerAttendancePage() {
       const res = await fetch('/api/attendance/off-day-settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'set_manager_quota_override', company_id: companyId, owner_id: internalUserId, manager_id: managerId, max_days_per_week: value }),
+        body: JSON.stringify({ action: 'set_user_quota_override', company_id: companyId, owner_id: internalUserId, user_id: userId, max_days_per_week: value }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to save override')
-      setManagerQuotaOverrides(prev => ({ ...prev, [managerId]: value }))
+      setIndividualQuotaOverrides(prev => ({ ...prev, [userId]: value }))
+      showSuccessToast('Override saved.')
     } catch (err) {
-      setOffDaySettingsError(err instanceof Error ? err.message : 'Failed to save override')
+      const message = err instanceof Error ? err.message : 'Failed to save override'
+      setOffDaySettingsError(message)
+      showErrorToast(message)
     } finally {
       setOffDaySettingsSaving(false)
     }
   }
 
-  const resetManagerQuotaOverride = async (managerId: string) => {
+  const resetIndividualQuotaOverride = async (userId: string) => {
     if (!companyId || !internalUserId) return
     setOffDaySettingsSaving(true)
     setOffDaySettingsError('')
@@ -972,13 +1127,81 @@ export default function OwnerAttendancePage() {
       const res = await fetch('/api/attendance/off-day-settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'remove_manager_quota_override', company_id: companyId, owner_id: internalUserId, manager_id: managerId }),
+        body: JSON.stringify({ action: 'remove_user_quota_override', company_id: companyId, owner_id: internalUserId, user_id: userId }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to reset override')
-      setManagerQuotaOverrides(prev => { const next = { ...prev }; delete next[managerId]; return next })
+      setIndividualQuotaOverrides(prev => { const next = { ...prev }; delete next[userId]; return next })
+      showSuccessToast('Override reset to default.')
     } catch (err) {
-      setOffDaySettingsError(err instanceof Error ? err.message : 'Failed to reset override')
+      const message = err instanceof Error ? err.message : 'Failed to reset override'
+      setOffDaySettingsError(message)
+      showErrorToast(message)
+    } finally {
+      setOffDaySettingsSaving(false)
+    }
+  }
+
+  // Batches every unsaved row in the "Set Override" search panel into one Save action — a draft
+  // equal to the person's role default clears an existing override; otherwise it's set/updated.
+  // Runs all requests in parallel (rather than one-by-one) so saving several people at once
+  // doesn't feel like a stutter of sequential round-trips.
+  const saveOverrideDrafts = async () => {
+    const entries = Object.entries(overrideDrafts)
+    if (!companyId || !internalUserId || entries.length === 0) return
+
+    setOffDaySettingsSaving(true)
+    setOffDaySettingsError('')
+
+    try {
+      const nextOverrides = { ...individualQuotaOverrides }
+      const requests = entries
+        .map(([personId, draftValue]) => {
+          const person = companyStaff.find(s => s.id === personId)
+          if (!person) return null
+          const roleDefault = person.role === 'Manager' ? managerDefaultQuota : employeeDefaultQuota
+          const hasExisting = individualQuotaOverrides[personId] !== undefined
+          const shouldRemove = draftValue === roleDefault
+          const shouldSave = draftValue !== (individualQuotaOverrides[personId] ?? roleDefault)
+          if (shouldRemove) {
+            if (!hasExisting) return null
+            delete nextOverrides[personId]
+            return fetch('/api/attendance/off-day-settings', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'remove_user_quota_override', company_id: companyId, owner_id: internalUserId, user_id: personId }),
+            })
+          }
+          if (!shouldSave) return null
+          nextOverrides[personId] = draftValue
+          return fetch('/api/attendance/off-day-settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'set_user_quota_override', company_id: companyId, owner_id: internalUserId, user_id: personId, max_days_per_week: draftValue }),
+          })
+        })
+        .filter((p): p is Promise<Response> => p !== null)
+
+      const responses = await Promise.all(requests)
+      await Promise.all(responses.map(async res => {
+        const data = await res.json()
+        if (!res.ok || !data.success) throw new Error(data.message || 'Failed to save override')
+        return data
+      }))
+
+      setIndividualQuotaOverrides(nextOverrides)
+      setOverrideDrafts({})
+      setOverrideSearch('')
+      setOverrideRoleFilter('all')
+      setOverrideDeptFilter('all')
+      setRevealedOverrideInputs(new Set())
+      setOverrideInputText({})
+      setOverrideSearchPanelOpen(false)
+      showSuccessToast('Individual overrides saved.')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to save override'
+      setOffDaySettingsError(message)
+      showErrorToast(message)
     } finally {
       setOffDaySettingsSaving(false)
     }
@@ -989,23 +1212,32 @@ export default function OwnerAttendancePage() {
     setOffDaySettingsSaving(true)
     setOffDaySettingsError('')
     try {
-      const [quotaRes, deadlineRes] = await Promise.all([
+      const [managerQuotaRes, employeeQuotaRes, deadlineRes] = await Promise.all([
         fetch('/api/attendance/off-day-settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'set_company_quota', company_id: companyId, owner_id: internalUserId, max_days_per_week: companyDefaultQuota }),
+          body: JSON.stringify({ action: 'set_default_quota', company_id: companyId, owner_id: internalUserId, role: 'Manager', max_days_per_week: managerDefaultQuota }),
         }),
         fetch('/api/attendance/off-day-settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'set_deadline', company_id: companyId, owner_id: internalUserId, deadline_weekday: deadlineWeekday }),
+          body: JSON.stringify({ action: 'set_default_quota', company_id: companyId, owner_id: internalUserId, role: 'Employee', max_days_per_week: employeeDefaultQuota }),
+        }),
+        fetch('/api/attendance/off-day-settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'set_deadline', company_id: companyId, owner_id: internalUserId, deadline_weekday: deadlineWeekday, deadline_time: deadlineTime }),
         }),
       ])
-      const [quotaData, deadlineData] = await Promise.all([quotaRes.json(), deadlineRes.json()])
-      if (!quotaData.success) throw new Error(quotaData.message || 'Failed to save default quota')
+      const [managerQuotaData, employeeQuotaData, deadlineData] = await Promise.all([managerQuotaRes.json(), employeeQuotaRes.json(), deadlineRes.json()])
+      if (!managerQuotaData.success) throw new Error(managerQuotaData.message || 'Failed to save manager default quota')
+      if (!employeeQuotaData.success) throw new Error(employeeQuotaData.message || 'Failed to save employee default quota')
       if (!deadlineData.success) throw new Error(deadlineData.message || 'Failed to save deadline')
+      showSuccessToast('Settings saved successfully.')
     } catch (err) {
-      setOffDaySettingsError(err instanceof Error ? err.message : 'Failed to save settings')
+      const message = err instanceof Error ? err.message : 'Failed to save settings'
+      setOffDaySettingsError(message)
+      showErrorToast(message)
     } finally {
       setOffDaySettingsSaving(false)
     }
@@ -1013,7 +1245,7 @@ export default function OwnerAttendancePage() {
 
   // ── Decide request ────────────────────────────────────────────────────────
   const decideRequest = async (
-    kind: 'decide_shift_swap' | 'decide_fixed_off_day',
+    kind: 'decide_shift_swap',
     id: string,
     decision: 'approved' | 'rejected',
     targetName?: string,
@@ -1030,24 +1262,25 @@ export default function OwnerAttendancePage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to update request')
       setActivityLogs(prev => {
-        const next = [{ id: `${id}-${Date.now()}`, type: kind === 'decide_shift_swap' ? 'swaps' as const : 'fixedoff' as const, action: decision, targetName: targetName ?? '—', ts: new Date() }, ...prev]
+        const next = [{ id: `${id}-${Date.now()}`, type: 'swaps' as const, action: decision, targetName: targetName ?? '—', ts: new Date() }, ...prev]
         try { localStorage.setItem('attendance_activity_logs', JSON.stringify(next)) } catch {}
         return next
       })
-      if (kind === 'decide_shift_swap') {
-        setNewlyProcessedId(id)
-        setTimeout(() => setNewlyProcessedId(null), 800)
-        setActionIndex(0)
-      }
+      setNewlyProcessedId(id)
+      setTimeout(() => setNewlyProcessedId(null), 800)
+      setActionIndex(0)
       await fetchRequestData(companyId)
+      showSuccessToast(decision === 'approved' ? 'Shift swap approved.' : 'Shift swap rejected.')
     } catch (err) {
-      setReqError(err instanceof Error ? err.message : 'Failed to update request')
+      const message = err instanceof Error ? err.message : 'Failed to update request'
+      setReqError(message)
+      showErrorToast(message)
     } finally { setReqActionLoading(false) }
   }
 
   // A weekly Fixed Day Off submission is stored as one row per date but decided as a single
   // unit — approve/reject applies the same decision to every date in the group at once.
-  const decideFixedOffGroup = async (ids: string[], decision: 'approved' | 'rejected', targetName?: string) => {
+  const decideFixedOffGroup = async (ids: string[], decision: 'approved' | 'modified', targetName?: string, newDates?: string[]) => {
     if (!internalUserId || !companyId || ids.length === 0) return
     setReqActionLoading(true)
     setReqError('')
@@ -1055,7 +1288,7 @@ export default function OwnerAttendancePage() {
       const res = await fetch('/api/attendance', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'decide_fixed_off_day', ids, reviewer_id: internalUserId, decision }),
+        body: JSON.stringify({ action: 'decide_fixed_off_day', ids, reviewer_id: internalUserId, decision, new_dates: newDates }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to update request')
@@ -1064,10 +1297,50 @@ export default function OwnerAttendancePage() {
         try { localStorage.setItem('attendance_activity_logs', JSON.stringify(next)) } catch {}
         return next
       })
+      setModifyingFixedOffKey(null)
+      setFixedOffModifySelection([])
       await fetchRequestData(companyId)
+      showSuccessToast(decision === 'approved' ? 'Day off request approved.' : 'Day off request modified.')
     } catch (err) {
-      setReqError(err instanceof Error ? err.message : 'Failed to update request')
+      const message = err instanceof Error ? err.message : 'Failed to update request'
+      setReqError(message)
+      showErrorToast(message)
     } finally { setReqActionLoading(false) }
+  }
+
+  // "Suggestion" — AI reviews one weekly request against everyone else's requests/scheduled
+  // headcount that week and recommends Approve or Modify. On Modify it seeds the existing manual
+  // day-picker with the AI's suggested replacement day(s) so the Owner just needs to confirm (or
+  // still override manually before confirming).
+  const analyzeFixedOffRequest = async (groupKey: string, ids: string[], requestedCount: number) => {
+    setRequestAiKey(groupKey)
+    setRequestAiResult(null)
+    setRequestAiError('')
+    setRequestAiLoading(true)
+    try {
+      const res = await fetch('/api/attendance/ai-suggest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ request_type: 'fixed_off_day', ids, company_id: companyId }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'AI analysis failed')
+      setRequestAiResult(data.suggestion)
+      if (data.suggestion.recommendation === 'modify') {
+        // Only pre-select AI-vetted alternatives — never fall back to the original requested dates,
+        // since those are exactly what triggered the "modify" recommendation in the first place.
+        // If the AI found fewer safe alternatives than needed, the Owner picks the rest manually
+        // (the Confirm button already stays disabled until the full count is selected).
+        setFixedOffModifySelection((data.suggestion.alternatives ?? []).slice(0, requestedCount))
+        setModifyingFixedOffKey(groupKey)
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'AI analysis failed'
+      setRequestAiError(message)
+      showErrorToast(message)
+    } finally {
+      setRequestAiLoading(false)
+    }
   }
 
   // ── Edit AR times (owner can adjust clock in/out) ─────────────────────────
@@ -1135,8 +1408,11 @@ export default function OwnerAttendancePage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to update status')
       setCwWorkerStatus(newStatus)
+      showSuccessToast(newStatus === 'active' ? 'Casual worker reactivated.' : 'Casual worker deactivated.')
     } catch (err) {
-      setReviewError(err instanceof Error ? err.message : 'Failed to update status')
+      const message = err instanceof Error ? err.message : 'Failed to update status'
+      setReviewError(message)
+      showErrorToast(message)
     } finally { setCwStatusLoading(false) }
   }
 
@@ -1164,8 +1440,11 @@ export default function OwnerAttendancePage() {
       if (!data.success) throw new Error(data.message || 'Failed to update attendance')
       setReviewOpen(false)
       void fetchWeekRecords(companyId, arWindowOffset)
+      showSuccessToast('Attendance record updated.')
     } catch (err) {
-      setReviewError(err instanceof Error ? err.message : 'Failed to update attendance')
+      const message = err instanceof Error ? err.message : 'Failed to update attendance'
+      setReviewError(message)
+      showErrorToast(message)
     } finally { setReviewActionLoading(false) }
   }
 
@@ -1464,10 +1743,13 @@ export default function OwnerAttendancePage() {
         a.href = url; a.download = `${suffix}.csv`; a.click()
         URL.revokeObjectURL(url)
       }
+      showSuccessToast('Export ready — check your downloads.')
+    } catch (err) {
+      showErrorToast(err instanceof Error ? err.message : 'Failed to export records')
     } finally {
       setExportLoading(false)
     }
-  }, [companyId, recordsRole, selectedDeptId, casualJobType])
+  }, [companyId, recordsRole, selectedDeptId, casualJobType, showSuccessToast, showErrorToast])
 
   // ── Absence reason lookups ────────────────────────────────────────────────
   // approved fixed off: userId+request_date (YYYY-MM-DD) → true
@@ -1937,64 +2219,161 @@ export default function OwnerAttendancePage() {
                       <div style={{ padding: '10px 12px', borderRadius: 10, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', fontSize: 12, fontWeight: 700 }}>{offDaySettingsError}</div>
                     )}
 
-                    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
-                      <div style={{ width: 64, flexShrink: 0 }}>
-                        <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: '0 0 6px' }}>Days</label>
-                        <input
-                          type="number"
-                          min={1}
-                          max={7}
-                          value={companyDefaultQuota}
-                          onChange={e => setCompanyDefaultQuota(Number(e.target.value))}
-                          style={{ ...inputStyle, width: '100%', height: 40, padding: '0 12px', boxSizing: 'border-box' }}
-                        />
-                      </div>
-                      <div style={{ width: 140, flexShrink: 0 }}>
-                        <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: '0 0 6px' }}>Deadline</label>
-                        <DropdownField
-                          value={String(deadlineWeekday)}
-                          onChange={v => setDeadlineWeekday(Number(v))}
-                          options={['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((day, i) => ({ value: String(i), label: day }))}
-                        />
-                      </div>
-                      <button onClick={() => void saveCompanyDefaultAndDeadline()} disabled={offDaySettingsSaving} title="Save default and deadline" style={{ width: 36, height: 36, borderRadius: 8, border: 'none', background: '#F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: offDaySettingsSaving ? 'default' : 'pointer', opacity: offDaySettingsSaving ? 0.7 : 1, flexShrink: 0 }}>
-                        {offDaySettingsSaving ? <Spinner size={13} /> : <Check size={16} style={{ color: '#FFFFFF' }} />}
-                      </button>
-                    </div>
-
-                    <div>
-                      <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: '0 0 6px' }}>Manager overrides</label>
-                      {companyManagers.length === 0 ? (
-                        <div style={{ padding: '10px 0', color: '#9CA3AF', fontSize: '0.8125rem', fontWeight: 600 }}>No Managers yet.</div>
-                      ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxHeight: 320, overflowY: 'auto', paddingRight: 8 }}>
-                          {companyManagers.map(mgr => {
-                            const hasOverride = managerQuotaOverrides[mgr.id] !== undefined
-                            const value = managerQuotaOverrides[mgr.id] ?? companyDefaultQuota
-                            return (
-                              <div key={mgr.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                <span style={{ flex: 1, minWidth: 0, fontSize: '0.875rem', fontWeight: 700, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={mgr.full_name}>{mgr.full_name}</span>
-                                <input
-                                  type="number"
-                                  min={1}
-                                  max={7}
-                                  value={value}
-                                  onChange={e => setManagerQuotaOverrides(prev => ({ ...prev, [mgr.id]: Number(e.target.value) }))}
-                                  style={{ ...inputStyle, width: 60, padding: '10px 8px', textAlign: 'center', flexShrink: 0 }}
-                                />
-                                <button onClick={() => void saveManagerQuotaOverride(mgr.id, value)} disabled={offDaySettingsSaving} title="Save override" style={{ width: 34, height: 34, borderRadius: 8, border: 'none', background: '#F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: offDaySettingsSaving ? 'default' : 'pointer', opacity: offDaySettingsSaving ? 0.7 : 1, flexShrink: 0 }}>
-                                  <Check size={14} style={{ color: '#FFFFFF' }} />
-                                </button>
-                                {hasOverride ? (
-                                  <button onClick={() => void resetManagerQuotaOverride(mgr.id)} disabled={offDaySettingsSaving} title="Reset to company default" style={{ width: 24, height: 34, border: 'none', background: 'transparent', color: '#9CA3AF', cursor: offDaySettingsSaving ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}>
-                                    <Trash2 size={13} />
-                                  </button>
-                                ) : <span style={{ width: 24, flexShrink: 0 }} />}
-                              </div>
-                            )
-                          })}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: '0 0 6px' }}>Manager Off Days</label>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, border: '1.5px solid #E5E7EB', borderRadius: 8, minHeight: 40, padding: '10px 12px', background: '#FFFFFF', boxSizing: 'border-box' }}>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={managerDefaultQuota}
+                            onChange={e => {
+                              const digits = e.target.value.replace(/\D/g, '')
+                              if (digits === '') { setManagerDefaultQuota(0); return }
+                              setManagerDefaultQuota(Math.min(7, Math.max(1, Number(digits))))
+                            }}
+                            style={{ width: `${String(managerDefaultQuota).length}ch`, minWidth: 10, border: 'none', outline: 'none', padding: 0, fontSize: '0.9375rem', color: '#111827', background: 'transparent' }}
+                          />
+                          <span style={{ fontSize: '0.9375rem', color: '#111827' }}>days per week</span>
                         </div>
-                      )}
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: '0 0 6px' }}>Employee Off Days</label>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, border: '1.5px solid #E5E7EB', borderRadius: 8, minHeight: 40, padding: '10px 12px', background: '#FFFFFF', boxSizing: 'border-box' }}>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={employeeDefaultQuota}
+                            onChange={e => {
+                              const digits = e.target.value.replace(/\D/g, '')
+                              if (digits === '') { setEmployeeDefaultQuota(0); return }
+                              setEmployeeDefaultQuota(Math.min(7, Math.max(1, Number(digits))))
+                            }}
+                            style={{ width: `${String(employeeDefaultQuota).length}ch`, minWidth: 10, border: 'none', outline: 'none', padding: 0, fontSize: '0.9375rem', color: '#111827', background: 'transparent' }}
+                          />
+                          <span style={{ fontSize: '0.9375rem', color: '#111827' }}>days per week</span>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: '0 0 6px' }}>Submission Deadline</label>
+                        <div style={{ display: 'flex', gap: 10 }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <DropdownField
+                              value={String(deadlineWeekday)}
+                              onChange={v => setDeadlineWeekday(Number(v))}
+                              options={['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((day, i) => ({ value: String(i), label: day }))}
+                            />
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <DropdownField
+                              value={deadlineTime}
+                              onChange={setDeadlineTime}
+                              options={DEADLINE_TIME_OPTIONS}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                        <button onClick={() => { setOverrideSearchPanelOpen(false); setOverrideSearch(''); setOverrideRoleFilter('all'); setOverrideDeptFilter('all'); setManagerOverridesModalOpen(true) }} style={{ ...modalGhostButtonStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <UserCog size={13} />
+                          Customization
+                        </button>
+                        <button onClick={() => void saveCompanyDefaultAndDeadline()} disabled={offDaySettingsSaving || offDaySettingsLoading} style={modalPrimaryButtonStyle(offDaySettingsSaving || offDaySettingsLoading)}>
+                          {offDaySettingsSaving ? <Spinner size={13} /> : <Check size={14} />}
+                          Save
+                        </button>
+                      </div>
+
+                      {(() => {
+                        const deptNameById = new Map(companyDepartments.map(d => [d.id, d.name]))
+                        const overrideStaff = companyStaff.filter(person => {
+                          const overrideValue = individualQuotaOverrides[person.id]
+                          if (overrideValue === undefined) return false
+                          const roleDefault = person.role === 'Manager' ? managerDefaultQuota : employeeDefaultQuota
+                          return overrideValue !== roleDefault
+                        })
+                        if (overrideStaff.length === 0) return null
+
+                        return (
+                          <div style={{ borderTop: '1px solid #E5E7EB', paddingTop: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
+                            <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 700, color: '#374151', margin: 0 }}>Individual Override</label>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                              {overrideStaff.map(person => {
+                                const overrideValue = individualQuotaOverrides[person.id]
+                                const roleDefault = person.role === 'Manager' ? managerDefaultQuota : employeeDefaultQuota
+                                const deptName = person.department_id ? deptNameById.get(person.department_id) : undefined
+                                const dc = deptName ? deptColor(deptName) : null
+                                const isRevealed = revealedInlineOverrides.has(person.id)
+                                return (
+                                  <div key={person.id} style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: '16px 12px', display: 'flex', alignItems: 'center', gap: 10, background: '#FFFFFF' }}>
+                                    <RoleAvatar role={person.role} size={34} photoUrl={person.profile_photo_url} />
+                                    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 7 }}>
+                                      {dc && (
+                                        <span style={{ alignSelf: 'flex-start', fontSize: '0.62rem', fontWeight: 800, color: dc, background: `${dc}1a`, borderRadius: 999, padding: '2px 8px' }}>{deptName}</span>
+                                      )}
+                                      <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={person.full_name}>{person.full_name}</span>
+                                    </div>
+                                    {isRevealed ? (
+                                      <input
+                                        type="text"
+                                        inputMode="numeric"
+                                        autoFocus
+                                        value={inlineOverrideInputText[person.id] ?? String(overrideValue)}
+                                        onFocus={e => e.target.select()}
+                                        onChange={e => {
+                                          // Same 1-7-only, single-digit rule as the Customization modal.
+                                          const digit = e.target.value.replace(/\D/g, '').slice(-1)
+                                          if (digit !== '' && !/^[1-7]$/.test(digit)) return
+                                          setInlineOverrideInputText(prev => ({ ...prev, [person.id]: digit }))
+                                        }}
+                                        onBlur={async () => {
+                                          const raw = inlineOverrideInputText[person.id]
+                                          setInlineOverrideInputText(prev => { const next = { ...prev }; delete next[person.id]; return next })
+                                          setRevealedInlineOverrides(prev => { const next = new Set(prev); next.delete(person.id); return next })
+                                          if (raw === undefined) return
+                                          const parsed = raw === '' ? roleDefault : Math.min(7, Math.max(1, Number(raw)))
+                                          if (parsed === overrideValue) return
+                                          if (parsed === roleDefault) await resetIndividualQuotaOverride(person.id)
+                                          else await saveIndividualQuotaOverride(person.id, parsed)
+                                        }}
+                                        style={{ ...inputStyle, width: 54, padding: '6px 4px', fontSize: '0.78rem', textAlign: 'center', flexShrink: 0, fontWeight: 700, color: '#111827' }}
+                                      />
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onDoubleClick={() => setRevealedInlineOverrides(prev => new Set(prev).add(person.id))}
+                                        title="Double-click to edit"
+                                        style={{ ...inputStyle, width: 54, padding: '6px 4px', fontSize: '0.78rem', textAlign: 'center', flexShrink: 0, fontWeight: 700, color: '#111827', cursor: 'pointer', userSelect: 'none' }}
+                                      >
+                                        {overrideValue}
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => void resetIndividualQuotaOverride(person.id)}
+                                      disabled={offDaySettingsSaving}
+                                      title="Remove override"
+                                      style={{ width: 28, height: 28, border: 'none', background: 'transparent', color: '#DC2626', cursor: offDaySettingsSaving ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0 }}
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => { setOverrideSearch(''); setOverrideRoleFilter('all'); setOverrideDeptFilter('all'); setManagerOverridesModalOpen(true); setOverrideSearchPanelOpen(true) }}
+                              style={{ alignSelf: 'center', marginTop: 2, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 'none', borderRadius: 10, background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                            >
+                              <Plus size={15} strokeWidth={2.5} /> Add Override
+                            </button>
+                          </div>
+                        )
+                      })()}
                     </div>
                   </div>
                 </section>
@@ -2043,13 +2422,13 @@ export default function OwnerAttendancePage() {
                     ) => (
                       <div style={{ flex: 1, minWidth: 0, border: '1px solid #E5E7EB', borderRadius: 12, padding: '12px 10px', display: 'flex', alignItems: 'center', justifyContent: mirror ? 'flex-end' : undefined, gap: 16, background: '#FFFFFF' }}>
                         {mirror && (
-                          <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-                            <div style={{ fontSize: '1rem', fontWeight: 800, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#64748B', flexDirection: 'row-reverse', minWidth: 0, maxWidth: '100%' }}>
+                          <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
+                            <div style={{ fontSize: '1rem', fontWeight: 800, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}>{name}</div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#64748B', minWidth: 0, maxWidth: '100%' }}>
                               <Calendar size={12} style={{ flexShrink: 0 }} />
                               <span style={{ fontSize: '0.75rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{formatSwapDate(shiftDate)}</span>
                             </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#64748B', flexDirection: 'row-reverse', minWidth: 0, maxWidth: '100%' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#64748B', minWidth: 0, maxWidth: '100%' }}>
                               <Clock size={12} style={{ flexShrink: 0 }} />
                               <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{formatTime(startTime)} – {formatTime(endTime)}</span>
                             </div>
@@ -2082,14 +2461,15 @@ export default function OwnerAttendancePage() {
                           cursor: isPending && onSelect ? 'pointer' : 'default',
                           boxShadow: selected ? '0 4px 16px rgba(249,115,22,0.14)' : 'none',
                           transition: 'border-color 0.15s, background 0.15s, box-shadow 0.15s',
+                          overflow: 'hidden',
                         }}
                       >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', rowGap: 6 }}>
                           {req.department_name && (() => {
                             const dc = deptColor(req.department_name)
-                            return <span style={{ fontSize: '0.72rem', fontWeight: 800, color: dc, background: `${dc}1a`, borderRadius: 999, padding: '4px 10px' }}>{req.department_name}</span>
+                            return <span style={{ fontSize: '0.72rem', fontWeight: 800, color: dc, background: `${dc}1a`, borderRadius: 999, padding: '4px 10px', flexShrink: 0 }}>{req.department_name}</span>
                           })()}
-                          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, minWidth: 0 }}>
+                          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, minWidth: 0, flexWrap: 'wrap', rowGap: 6 }}>
                             <span style={{ fontSize: '0.76rem', fontWeight: 800, color: '#64748B', whiteSpace: 'nowrap' }}>
                               {isPending ? formatOwnerDecisionTime(req.created_at) : formatOwnerDecisionTime(req.reviewed_at)}
                             </span>
@@ -2239,7 +2619,7 @@ export default function OwnerAttendancePage() {
                             pending. Shows 2 at a time; clicking a card selects it (driving Current
                             Shifts/Task Changes below) independently from paging through the rest. */}
                         {(() => {
-                          const PAGE_SIZE = 2
+                          const PAGE_SIZE = isNarrowViewport ? 1 : 2
                           const hasActionNeeded = actionNeeded.length > 0
                           const clampedIndex = Math.min(actionIndex, Math.max(actionNeeded.length - 1, 0))
                           const totalPages = Math.ceil(actionNeeded.length / PAGE_SIZE)
@@ -2278,7 +2658,7 @@ export default function OwnerAttendancePage() {
                           {hasActionNeeded ? (
                             <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'row', gap: 10 }}>
                               {visibleItems.map((item, i) => (
-                                <div key={item.id} style={{ flex: '0 0 calc(50% - 5px)', minWidth: 0 }}>
+                                <div key={item.id} style={{ flex: PAGE_SIZE === 1 ? '1 1 100%' : '0 0 calc(50% - 5px)', minWidth: 0 }}>
                                   <SwapCard
                                     req={item}
                                     compact
@@ -2382,57 +2762,21 @@ export default function OwnerAttendancePage() {
 
               {/* ── Fixed Day Off ────────────────────────────────────────────── */}
               {reqTab === 'fixedoff' && (() => {
-                // A Manager/Employee submits one weekly request (e.g. "off Mon + Wed next week"),
-                // stored as one row per date but decided as a single unit — group by requester +
-                // week so Action Needed shows one card per weekly submission, not one per date.
-                type FixedOffGroup = {
-                  key: string
-                  user_id: string
-                  requester_name: string
-                  requester_role: string
-                  department_id: string | null
-                  week_start: string
-                  status: AttendanceRequestStatus
-                  source: FixedOffDaySource
-                  created_at: string
-                  reviewed_at: string | null
-                  requests: FixedOffDayRequestView[]
-                }
-                const groupFixedOff = (rows: FixedOffDayRequestView[]): FixedOffGroup[] => {
-                  const byKey = new Map<string, FixedOffGroup>()
-                  for (const req of rows) {
-                    const key = `${req.user_id}_${req.week_start}`
-                    const existing = byKey.get(key)
-                    if (existing) {
-                      existing.requests.push(req)
-                      if (new Date(req.created_at ?? 0).getTime() < new Date(existing.created_at ?? 0).getTime()) existing.created_at = req.created_at
-                      if (new Date(req.reviewed_at ?? req.created_at ?? 0).getTime() > new Date(existing.reviewed_at ?? existing.created_at ?? 0).getTime()) existing.reviewed_at = req.reviewed_at ?? req.created_at
-                    } else {
-                      byKey.set(key, {
-                        key, user_id: req.user_id, requester_name: req.requester_name, requester_role: req.requester_role,
-                        department_id: req.department_id, week_start: req.week_start, status: req.status, source: req.source,
-                        created_at: req.created_at, reviewed_at: req.reviewed_at ?? req.created_at, requests: [req],
-                      })
-                    }
-                  }
-                  for (const group of byKey.values()) {
-                    group.requests.sort((a, b) => a.request_date.localeCompare(b.request_date))
-                  }
-                  return [...byKey.values()]
-                }
-                const fixedOffGroups = groupFixedOff(fixedOffDayRequests)
-                const actionNeeded = fixedOffGroups
-                  .filter(g => g.status === 'pending')
-                  .sort((a, b) => new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime())
-                const processed = fixedOffGroups
-                  .filter(g => g.status !== 'pending')
-                  .sort((a, b) => new Date(b.reviewed_at ?? b.created_at ?? 0).getTime() - new Date(a.reviewed_at ?? a.created_at ?? 0).getTime())
-                const calendarWeeks = Array.from(new Set(fixedOffDayRequests.map(r => r.week_start).filter(Boolean))).sort()
-                const calendarWeekIndex = Math.min(fixedOffCalendarWeekIndex, Math.max(calendarWeeks.length - 1, 0))
-                const calendarWeekStart = calendarWeeks[calendarWeekIndex] ?? ''
-                const calendarDates = calendarWeekStart
-                  ? Array.from({ length: 7 }, (_, i) => toISODate(addDays(new Date(`${calendarWeekStart}T00:00:00`), i)))
-                  : []
+                const actionNeeded = fixedOffActionNeeded
+                const clampedIndex = Math.min(fixedOffActionIndex, Math.max(actionNeeded.length - 1, 0))
+                const currentItem = currentFixedOffItem
+                // displayWeekStart (outer scope) — the oldest week that still has a pending request,
+                // falling back to the next submission-open week once nothing is left pending.
+                const displayWeekEnd = toISODate(addDays(new Date(`${displayWeekStart}T00:00:00`), 6))
+                // Full month grid (not just the currently-open week) — shows every day, past and
+                // future, so the Owner can spot at a glance which day historically had the most
+                // people off, alongside where the upcoming week's requests are landing.
+                const monthAnchorDate = new Date(`${fixedOffCalendarMonthAnchor}T00:00:00`)
+                const monthLabel = monthAnchorDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })
+                const firstOfMonth = new Date(monthAnchorDate.getFullYear(), monthAnchorDate.getMonth(), 1)
+                const firstGridDow = (firstOfMonth.getDay() + 6) % 7 // Monday-start offset
+                const monthGridStart = addDays(firstOfMonth, -firstGridDow)
+                const monthGridDates = Array.from({ length: 42 }, (_, i) => toISODate(addDays(monthGridStart, i)))
                 const fixedOffByDate = new Map<string, FixedOffDayRequestView[]>()
                 fixedOffDayRequests.forEach(req => {
                   const list = fixedOffByDate.get(req.request_date) ?? []
@@ -2441,109 +2785,183 @@ export default function OwnerAttendancePage() {
                 })
                 const fixedOffStatusTone = (status: string) => {
                   if (status === 'approved') return { bg: '#ECFDF5', text: '#047857', border: '#86EFAC', label: 'Approved' }
+                  if (status === 'modified') return { bg: '#FFF7ED', text: '#C2410C', border: '#FED7AA', label: 'Modified' }
                   if (status === 'rejected') return { bg: '#FEF2F2', text: '#B91C1C', border: '#FCA5A5', label: 'Rejected' }
                   return { bg: '#FFF7ED', text: '#EA580C', border: '#FED7AA', label: 'Pending' }
                 }
+                const fixedOffStaffById = new Map(companyStaff.map(person => [person.id, person]))
+                const fixedOffDeptNameById = new Map(companyDepartments.map(dept => [dept.id, dept.name]))
 
-                const FixedOffCard = ({ group, selected, onSelect }: { group: FixedOffGroup; selected?: boolean; onSelect?: () => void }) => {
+                const FixedOffCard = ({ group }: { group: FixedOffGroup }) => {
                   const isPending = group.status === 'pending'
                   const isApproved = group.status === 'approved'
-                  const StatusIcon = isApproved ? Check : X
-                  const statusTone = isApproved
-                    ? { bg: '#ECFDF5', text: '#047857', border: '#86EFAC' }
-                    : { bg: '#FEF2F2', text: '#B91C1C', border: '#FCA5A5' }
-                  const aiResult = aiFixedOffResults[group.key]
-                  const aiErr = aiFixedOffError[group.key]
-                  const aiLoading = aiFixedOffLoadingId === group.key
-                  const aiColor = aiResult?.recommendation === 'approve'
-                    ? { bg: '#DCFCE7', text: '#15803D', border: '#BBF7D0' }
-                    : aiResult?.recommendation === 'reject'
-                      ? { bg: '#FEE2E2', text: '#DC2626', border: '#FECACA' }
-                      : { bg: '#FEF9C3', text: '#854D0E', border: '#FDE68A' }
+                  const isModifying = modifyingFixedOffKey === group.key
+                  const requester = fixedOffStaffById.get(group.user_id)
+                  const departmentId = group.department_id ?? requester?.department_id ?? null
+                  const departmentName = departmentId ? fixedOffDeptNameById.get(departmentId) : null
+                  const departmentLabel = departmentName ?? 'Unassigned'
+                  const departmentColor = departmentName ? deptColor(departmentName) : '#64748B'
+                  const StatusIcon = isApproved ? Check : group.status === 'modified' ? Pencil : X
+                  const statusTone = fixedOffStatusTone(group.status)
                   const ids = group.requests.map(r => r.id)
+                  const weekDates = Array.from({ length: 7 }, (_, i) => toISODate(addDays(new Date(`${group.week_start}T00:00:00`), i)))
+                  const requestedCount = group.requests.length
+                  const aiResult = requestAiKey === group.key ? requestAiResult : null
+                  const aiLoading = requestAiLoading && requestAiKey === group.key
+                  const aiErr = requestAiKey === group.key ? requestAiError : ''
+
+                  const toggleModifyDate = (date: string) => {
+                    setFixedOffModifySelection(prev => {
+                      if (prev.includes(date)) return prev.filter(d => d !== date)
+                      if (prev.length >= requestedCount) return prev
+                      return [...prev, date]
+                    })
+                  }
 
                   return (
                     <div
                       className="att-request-card"
-                      onClick={isPending ? onSelect : undefined}
                       style={{
-                        background: selected ? '#FFF7ED' : '#F9FAFB',
-                        border: `1.5px solid ${selected ? '#F97316' : PANEL_BORDER}`,
-                        borderRadius: 14,
-                        padding: '12px 14px 14px',
+                        width: '100%',
+                        boxSizing: 'border-box',
+                        background: '#FFFFFF',
+                        border: `1.5px solid ${PANEL_BORDER}`,
+                        borderRadius: 16,
+                        padding: '16px 20px',
                         display: 'flex',
                         flexDirection: 'column',
-                        gap: 12,
-                        cursor: isPending && onSelect ? 'pointer' : 'default',
-                        boxShadow: selected ? '0 4px 16px rgba(249,115,22,0.14)' : 'none',
-                        transition: 'border-color 0.15s, background 0.15s, box-shadow 0.15s',
+                        gap: 14,
                       }}
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ fontSize: '0.72rem', fontWeight: 800, color: '#F97316', background: '#FFF7ED', borderRadius: 999, padding: '4px 10px' }}>
-                          {group.requester_role || 'Manager'}
-                        </span>
-                        {group.source === 'auto_assigned' && (
-                          <span style={{ fontSize: '0.68rem', fontWeight: 800, color: '#4338CA', background: '#EEF2FF', borderRadius: 999, padding: '4px 10px' }}>Auto-assigned</span>
-                        )}
-                        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, minWidth: 0 }}>
-                          <span style={{ fontSize: '0.76rem', fontWeight: 800, color: '#64748B', whiteSpace: 'nowrap' }}>
-                            {isPending ? formatOwnerDecisionTime(group.created_at) : formatOwnerDecisionTime(group.reviewed_at ?? group.created_at)}
-                          </span>
-                          {isPending ? (
-                            <div onClick={e => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                              <button onClick={() => analyzeFixedOffGroup(group.key, ids)} disabled={aiLoading} title="Analyze with AI" style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: '#7C3AED', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: aiLoading ? 'default' : 'pointer', opacity: aiLoading ? 0.7 : 1 }}>
-                                {aiLoading ? <Spinner size={12} /> : <Bot size={13} style={{ color: '#FFFFFF' }} />}
-                              </button>
-                              <button onClick={() => decideFixedOffGroup(ids, 'rejected', group.requester_name)} disabled={reqActionLoading} title="Reject" style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #FECACA', background: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.5 : 1 }}>
-                                <X size={13} style={{ color: '#DC2626' }} />
-                              </button>
-                              <button onClick={() => decideFixedOffGroup(ids, 'approved', group.requester_name)} disabled={reqActionLoading} title="Approve" style={{ width: 28, height: 28, borderRadius: 8, border: 'none', background: '#F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.5 : 1 }}>
-                                <Check size={13} style={{ color: '#FFFFFF' }} />
-                              </button>
-                            </div>
-                          ) : (
-                            <span title={isApproved ? 'Approved' : 'Rejected'} style={{ width: 30, height: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: statusTone.bg, color: statusTone.text, border: `1.5px solid ${statusTone.border}`, borderRadius: 999, flexShrink: 0 }}>
-                              <StatusIcon size={12} strokeWidth={3} />
-                            </span>
-                          )}
-                        </div>
-                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 44 }}>
+                        <RoleAvatar role={group.requester_role || 'Manager'} size={72} photoUrl={requester?.profile_photo_url ?? null} />
 
-                      <div style={{ border: '1px solid #E5E7EB', borderRadius: 12, padding: '12px 10px', display: 'flex', alignItems: 'center', gap: 14, background: '#FFFFFF', minWidth: 0 }}>
-                        <RoleAvatar role={group.requester_role || 'Manager'} size={54} photoUrl={null} />
-                        <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
-                          <div style={{ fontSize: '1rem', fontWeight: 800, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{group.requester_name}</div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: '#64748B', minWidth: 0, maxWidth: '100%' }}>
-                            <CalendarDays size={12} style={{ flexShrink: 0 }} />
-                            <span style={{ fontSize: '0.75rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>Week of {formatSwapDate(group.week_start)}</span>
-                          </div>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 2 }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
+                          <span style={{ alignSelf: 'flex-start', fontSize: '0.72rem', fontWeight: 800, color: departmentColor, background: `${departmentColor}1a`, borderRadius: 999, padding: '3px 10px', whiteSpace: 'nowrap' }}>
+                            {departmentLabel}
+                          </span>
+                          <span style={{ fontSize: '1.05rem', fontWeight: 800, color: '#111827', whiteSpace: 'nowrap' }}>{group.requester_name}</span>
+                        </div>
+
+                        <div style={{ width: 1, alignSelf: 'stretch', background: '#E5E7EB', flexShrink: 0 }} />
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
+                          <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: 0 }}>Requested Off Days</label>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                             {group.requests.map(r => (
-                              <span key={r.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 700, color: '#334155', background: '#F1F5F9', borderRadius: 999, padding: '3px 9px' }}>
-                                <Calendar size={10} style={{ flexShrink: 0 }} />
-                                {formatSwapDate(r.request_date)}
+                              <span key={r.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.76rem', fontWeight: 700, color: '#C2410C', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 999, padding: '4px 10px', whiteSpace: 'nowrap' }}>
+                                <Calendar size={11} style={{ flexShrink: 0 }} />
+                                {formatFixedOffRequestDay(r.request_date)}
                               </span>
                             ))}
                           </div>
                         </div>
+
+                        <div style={{ width: 1, alignSelf: 'stretch', background: '#E5E7EB', flexShrink: 0 }} />
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
+                          <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: 0 }}>Submitted</label>
+                          <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#374151', whiteSpace: 'nowrap' }}>
+                            {isPending ? formatOwnerDecisionTime(group.created_at) : formatOwnerDecisionTime(group.reviewed_at ?? group.created_at)}
+                          </span>
+                        </div>
+
+                        {isPending ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginLeft: 'auto', flexShrink: 0 }}>
+                            <button
+                              onClick={() => decideFixedOffGroup(ids, 'approved', group.requester_name)}
+                              disabled={reqActionLoading}
+                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#15803D', background: '#F0FDF4', border: '1.5px solid #BBF7D0', borderRadius: 999, padding: '6px 16px', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.6 : 1, transition: 'background 0.15s, border-color 0.15s' }}
+                            >
+                              <Check size={13} /> Approve
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (isModifying || aiResult) {
+                                  setModifyingFixedOffKey(null)
+                                  setRequestAiKey(null)
+                                  setRequestAiResult(null)
+                                } else {
+                                  void analyzeFixedOffRequest(group.key, ids, requestedCount)
+                                }
+                              }}
+                              disabled={reqActionLoading || aiLoading}
+                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#C2410C', background: (isModifying || aiResult) ? '#FFEDD5' : '#FFF7ED', border: `1.5px solid ${(isModifying || aiResult) ? '#FDBA74' : '#FED7AA'}`, borderRadius: 999, padding: '6px 16px', cursor: (reqActionLoading || aiLoading) ? 'default' : 'pointer', opacity: (reqActionLoading || aiLoading) ? 0.6 : 1, transition: 'background 0.15s, border-color 0.15s' }}
+                            >
+                              {aiLoading ? <Spinner size={13} /> : <Sparkles size={13} />} Suggestion
+                            </button>
+                          </div>
+                        ) : (
+                          <span title={statusTone.label} style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: statusTone.text, background: statusTone.bg, border: `1.5px solid ${statusTone.border}`, borderRadius: 999, padding: '6px 16px', flexShrink: 0 }}>
+                            <StatusIcon size={13} strokeWidth={3} /> {statusTone.label}
+                          </span>
+                        )}
                       </div>
 
                       {aiErr && <div style={{ fontSize: '0.75rem', color: '#DC2626', fontWeight: 600 }}>{aiErr}</div>}
-                      {aiResult && (
-                        <div style={{ border: `1px solid ${aiColor.border}`, background: aiColor.bg, borderRadius: 10, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <Bot size={13} style={{ color: aiColor.text, flexShrink: 0 }} />
-                            <span style={{ fontSize: '0.72rem', fontWeight: 800, color: aiColor.text, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                              AI suggests: {aiResult.recommendation} ({aiResult.confidence}% confidence)
+
+                      {aiResult && aiResult.recommendation === 'approve' && (
+                        <div style={{ width: '100%', boxSizing: 'border-box', border: '1px solid #BBF7D0', background: '#F0FDF4', borderRadius: 12, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <span style={{ width: 28, height: 28, borderRadius: '50%', background: '#DCFCE7', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            <Check size={14} strokeWidth={3} style={{ color: '#15803D' }} />
+                          </span>
+                          <p style={{ margin: 0, fontSize: '0.82rem', color: '#374151', lineHeight: 1.4 }}>{aiResult.reason}</p>
+                        </div>
+                      )}
+
+                      {isModifying && (
+                        <div onClick={e => e.stopPropagation()} style={{ width: '100%', boxSizing: 'border-box', border: '1.5px solid #FED7AA', borderRadius: 12, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                              {aiResult && aiResult.recommendation === 'modify' && (
+                                <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#C2410C', lineHeight: 1.4 }}>{aiResult.reason}</span>
+                              )}
+                              <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: 0 }}>
+                                Select {requestedCount} replacement day{requestedCount > 1 ? 's' : ''} for the week of {formatSwapDate(group.week_start)}
+                              </label>
+                            </div>
+                            <span style={{ fontSize: '0.75rem', fontWeight: 700, color: fixedOffModifySelection.length === requestedCount ? '#15803D' : '#9CA3AF' }}>
+                              {fixedOffModifySelection.length}/{requestedCount}
                             </span>
                           </div>
-                          <p style={{ margin: 0, fontSize: '0.8rem', color: '#374151', lineHeight: 1.5 }}>{aiResult.reason}</p>
-                          {aiResult.concerns.length > 0 && (
-                            <ul style={{ margin: 0, paddingLeft: 18, fontSize: '0.76rem', color: '#4B5563' }}>
-                              {aiResult.concerns.map((concern, i) => <li key={i}>{concern}</li>)}
-                            </ul>
-                          )}
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                            {weekDates.map(date => {
+                              const isSelected = fixedOffModifySelection.includes(date)
+                              return (
+                                <button
+                                  key={date}
+                                  type="button"
+                                  onClick={() => toggleModifyDate(date)}
+                                  style={{
+                                    display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 700,
+                                    color: isSelected ? '#FFFFFF' : '#334155',
+                                    background: isSelected ? '#F97316' : '#FFFFFF',
+                                    border: `1.5px solid ${isSelected ? '#F97316' : '#E5E7EB'}`,
+                                    borderRadius: 999, padding: '5px 10px', cursor: 'pointer',
+                                  }}
+                                >
+                                  {formatFixedOffRequestDay(date)}
+                                </button>
+                              )
+                            })}
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                            <button
+                              type="button"
+                              onClick={() => setModifyingFixedOffKey(null)}
+                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#6B7280', background: '#FFFFFF', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '6px 16px', cursor: 'pointer' }}
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => decideFixedOffGroup(ids, 'modified', group.requester_name, fixedOffModifySelection)}
+                              disabled={fixedOffModifySelection.length !== requestedCount || reqActionLoading}
+                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#FFFFFF', background: (fixedOffModifySelection.length !== requestedCount || reqActionLoading) ? '#FDBA74' : '#F97316', border: 'none', borderRadius: 999, padding: '6px 16px', cursor: (fixedOffModifySelection.length !== requestedCount || reqActionLoading) ? 'default' : 'pointer', opacity: (fixedOffModifySelection.length !== requestedCount || reqActionLoading) ? 0.7 : 1 }}
+                            >
+                              {reqActionLoading ? <Spinner size={13} /> : <Check size={13} />} Confirm Modification
+                            </button>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -2556,43 +2974,41 @@ export default function OwnerAttendancePage() {
                       <div style={{ gridColumn: '2 / 4', padding: '32px', textAlign: 'center', color: '#9CA3AF', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}><Spinner size={16} dark /> Loading...</div>
                     ) : (
                       <>
+                        {/* Request card + Calendar share one grid cell (col 2, spanning both rows)
+                             so their combined natural height never has to be forced to match the
+                             AI Insights column — splitting them into separate row-1/row-2 grid items
+                             let the grid's row-track sizing inflate row 1 to fit AI Insights, leaving
+                             a dead gap above the Calendar. ── */}
+                        <div style={{ gridColumn: '2', gridRow: '1 / span 2', display: 'flex', flexDirection: 'column', gap: 16 }}>
                         {(() => {
-                          const PAGE_SIZE = 2
                           const hasActionNeeded = actionNeeded.length > 0
-                          const clampedIndex = Math.min(fixedOffActionIndex, Math.max(actionNeeded.length - 1, 0))
-                          const totalPages = Math.ceil(actionNeeded.length / PAGE_SIZE)
-                          const currentPage = hasActionNeeded ? Math.floor(clampedIndex / PAGE_SIZE) : 0
-                          const pageStart = currentPage * PAGE_SIZE
-                          const visibleItems = actionNeeded.slice(pageStart, pageStart + PAGE_SIZE)
+                          // displayWeekStart (outer scope) — the oldest week that still has a pending
+                          // request, falling back to the next submission-open week once nothing is
+                          // left pending, so the header never jumps ahead of unfinished reviews.
+                          const requestWeekRange = formatWeekDateRange(displayWeekStart)
+                          const actionTitle = requestWeekRange ? `Off Day Request For Next Week ${requestWeekRange}` : 'Off Day Request'
                           return (
-                            <section style={{ gridColumn: '2', gridRow: '1', background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden', height: 260, display: 'flex', flexDirection: 'column' }}>
+                            <section style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                               <div style={{ padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
                                 <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                                   <ClipboardList size={15} style={{ color: '#F97316' }} />
                                 </div>
-                                <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, flex: 1 }}>Action Needed</span>
-                                <button onClick={() => fetchRequestData(companyId)} disabled={reqLoading || !companyId} title="Refresh" style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: reqLoading || !companyId ? 'default' : 'pointer', opacity: reqLoading || !companyId ? 0.55 : 1 }}>
-                                  {reqLoading ? <Spinner size={13} dark /> : <RefreshCw size={13} style={{ color: '#64748B' }} />}
-                                </button>
-                                {totalPages > 1 && (
+                                <span title={actionTitle} style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{actionTitle}</span>
+                                {actionNeeded.length > 1 && (
                                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                    <button onClick={() => setFixedOffActionIndex(((currentPage - 1 + totalPages) % totalPages) * PAGE_SIZE)} style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                                    <button onClick={() => setFixedOffActionIndex((clampedIndex - 1 + actionNeeded.length) % actionNeeded.length)} style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
                                       <ChevronLeft size={14} style={{ color: '#6B7280' }} />
                                     </button>
-                                    <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#9CA3AF' }}>{pageStart + 1}-{Math.min(pageStart + PAGE_SIZE, actionNeeded.length)} / {actionNeeded.length}</span>
-                                    <button onClick={() => setFixedOffActionIndex(((currentPage + 1) % totalPages) * PAGE_SIZE)} style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
+                                    <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#9CA3AF' }}>{clampedIndex + 1} / {actionNeeded.length}</span>
+                                    <button onClick={() => setFixedOffActionIndex((clampedIndex + 1) % actionNeeded.length)} style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
                                       <ChevronRight size={14} style={{ color: '#6B7280' }} />
                                     </button>
                                   </div>
                                 )}
                               </div>
-                              {hasActionNeeded ? (
-                                <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'row', gap: 10 }}>
-                                  {visibleItems.map((item, i) => (
-                                    <div key={item.key} style={{ flex: '0 0 calc(50% - 5px)', minWidth: 0 }}>
-                                      <FixedOffCard group={item} selected={item.key === actionNeeded[clampedIndex]?.key} onSelect={() => setFixedOffActionIndex(pageStart + i)} />
-                                    </div>
-                                  ))}
+                              {currentItem ? (
+                                <div style={{ padding: '14px 16px' }}>
+                                  <FixedOffCard group={currentItem} />
                                 </div>
                               ) : (
                                 <div style={{ flex: 1, minHeight: 170, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, color: '#9CA3AF' }}>
@@ -2604,107 +3020,259 @@ export default function OwnerAttendancePage() {
                           )
                         })()}
 
-                        {/* ── Fixed Off Day Calendar — lightweight weekly strip: one dot per person per day, full
-                             detail lives in Action Needed / Processed Requests, not duplicated here. ── */}
-                        <section style={{ gridColumn: '2', gridRow: '2', background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
+                        {/* ── Weekly Day Off Calendar — full month grid, every day past and future,
+                             so the Owner can spot at a glance which day historically had the most
+                             people off, alongside where the currently-open week's requests land. ── */}
+                        <section style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
                           <div style={{ padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <div style={{ width: 30, height: 30, borderRadius: 9, background: '#EEF2FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                              <CalendarDays size={15} style={{ color: '#4F46E5' }} />
+                            <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                              <CalendarDays size={15} style={{ color: '#F97316' }} />
                             </div>
                             <div style={{ flex: 1, minWidth: 0 }}>
-                              <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Weekly Day Off Calendar</span>
-                              {calendarWeekStart && (
-                                <span style={{ marginLeft: 10, fontSize: 12, fontWeight: 700, color: '#4F46E5', background: '#EEF2FF', borderRadius: 999, padding: '3px 10px' }}>
-                                  Week of {formatSwapDate(calendarWeekStart)}
-                                </span>
-                              )}
+                              <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Off Day Calendar For {monthLabel}</span>
                             </div>
-                            {calendarWeeks.length > 1 && (
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                <button onClick={() => setFixedOffCalendarWeekIndex((calendarWeekIndex - 1 + calendarWeeks.length) % calendarWeeks.length)} style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-                                  <ChevronLeft size={14} style={{ color: '#6B7280' }} />
-                                </button>
-                                <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#9CA3AF' }}>{calendarWeekIndex + 1} / {calendarWeeks.length}</span>
-                                <button onClick={() => setFixedOffCalendarWeekIndex((calendarWeekIndex + 1) % calendarWeeks.length)} style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-                                  <ChevronRight size={14} style={{ color: '#6B7280' }} />
-                                </button>
-                              </div>
-                            )}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <button
+                                onClick={() => setFixedOffCalendarMonthAnchor(toISODate(new Date(monthAnchorDate.getFullYear(), monthAnchorDate.getMonth() - 1, 1)))}
+                                style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+                              >
+                                <ChevronLeft size={14} style={{ color: '#6B7280' }} />
+                              </button>
+                              <button
+                                onClick={() => setFixedOffCalendarMonthAnchor(toISODate(new Date(monthAnchorDate.getFullYear(), monthAnchorDate.getMonth() + 1, 1)))}
+                                style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+                              >
+                                <ChevronRight size={14} style={{ color: '#6B7280' }} />
+                              </button>
+                            </div>
                           </div>
 
-                          {calendarDates.length === 0 ? (
-                            <div style={{ minHeight: 140, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, color: '#9CA3AF' }}>
-                              <CalendarDays size={22} strokeWidth={1.5} />
-                              <span style={{ fontSize: 13, fontWeight: 600 }}>No weekly days off to show</span>
-                            </div>
-                          ) : (
-                            <div style={{ padding: '12px 16px 16px', overflowX: 'auto' }}>
-                              <div style={{ minWidth: 560, display: 'grid', gridTemplateColumns: 'repeat(7, minmax(76px, 1fr))', gap: 6 }}>
-                                {calendarDates.map(date => {
+                          <div style={{ padding: '12px 16px 16px', overflowX: 'auto' }}>
+                            <div style={{ minWidth: 560, border: '1px solid #1E293B', borderRadius: 10, overflow: 'hidden' }}>
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(76px, 1fr))', background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', height: 44 }}>
+                                {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((label, i) => (
+                                  <div
+                                    key={label}
+                                    style={{
+                                      fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.85)', textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.05em',
+                                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                      borderRight: i !== 6 ? '1px solid rgba(255,255,255,0.08)' : 'none',
+                                    }}
+                                  >
+                                    {label}
+                                  </div>
+                                ))}
+                              </div>
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(76px, 1fr))' }}>
+                                {monthGridDates.map((date, i) => {
                                   const day = new Date(`${date}T00:00:00`)
-                                  const requests = [...(fixedOffByDate.get(date) ?? [])].sort((a, b) => a.requester_name.localeCompare(b.requester_name))
+                                  const inCurrentMonth = day.getMonth() === monthAnchorDate.getMonth()
                                   const isToday = date === todayKey
-                                  return (
-                                    <div key={date} style={{ border: `1.5px solid ${isToday ? '#F97316' : '#E5E7EB'}`, borderRadius: 10, background: isToday ? '#FFF7ED' : '#F9FAFB', padding: '8px 8px 10px', display: 'flex', flexDirection: 'column', gap: 5, minHeight: 74 }}>
-                                      <div style={{ fontSize: 11, fontWeight: 800, color: isToday ? '#EA580C' : '#64748B' }}>
-                                        {day.toLocaleDateString('en-GB', { weekday: 'short' })} <span style={{ fontWeight: 600, color: '#9CA3AF' }}>{day.getDate()}</span>
+                                  const isActiveWeek = date >= displayWeekStart && date <= displayWeekEnd
+                                  const requests = fixedOffByDate.get(date) ?? []
+                                  const activeRequests = requests.filter(r => r.status !== 'rejected')
+                                  const pendingCount = activeRequests.filter(r => r.status === 'pending').length
+                                  const decidedCount = activeRequests.length - pendingCount
+                                  const tooltip = requests.length > 0
+                                    ? requests.map(r => `${r.requester_name} — ${fixedOffStatusTone(r.status).label}`).join('\n')
+                                    : undefined
+                                  const isLastCol = i % 7 === 6
+                                  const isLastRow = i >= monthGridDates.length - 7
+                                  const hasDetails = activeRequests.length > 0
+                                  const cellBg = !inCurrentMonth ? '#FAFAFA' : isToday ? '#FFF7ED' : isActiveWeek ? '#EFF6FF' : '#FFFFFF'
+                                  return [
+                                    <div
+                                      key={date}
+                                      title={tooltip}
+                                      onClick={() => { if (hasDetails) setDayOffDetailDate(date) }}
+                                      onMouseEnter={e => { if (hasDetails) e.currentTarget.style.background = '#F8FAFC' }}
+                                      onMouseLeave={e => { e.currentTarget.style.background = cellBg }}
+                                      style={{
+                                        borderRight: isLastCol ? 'none' : '1px solid #1E293B',
+                                        borderBottom: isLastRow ? 'none' : '1px solid #1E293B',
+                                        background: cellBg,
+                                        padding: '8px 10px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, minHeight: 108,
+                                        opacity: inCurrentMonth ? 1 : 0.4, position: 'relative',
+                                        cursor: hasDetails ? 'pointer' : 'default', transition: 'background 0.14s ease',
+                                      }}
+                                    >
+                                      <div style={{ position: 'absolute', top: 16, right: 16, fontSize: 15, fontWeight: 800, color: '#64748B' }}>
+                                        {day.getDate()}
                                       </div>
-                                      {requests.length === 0 ? (
-                                        <span style={{ fontSize: 10.5, color: '#CBD5E1', fontWeight: 600 }}>—</span>
+                                      {isActiveWeek ? (
+                                        (decidedCount > 0 || pendingCount > 0) && (
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                            {decidedCount > 0 && (
+                                              <span style={{ width: 36, height: 36, borderRadius: '50%', background: '#DCFCE7', color: '#15803D', fontSize: 16, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                                {decidedCount}
+                                              </span>
+                                            )}
+                                            {pendingCount > 0 && (
+                                              <span style={{ width: 36, height: 36, borderRadius: '50%', background: '#DBEAFE', color: '#1D4ED8', fontSize: 16, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                                {pendingCount}
+                                              </span>
+                                            )}
+                                          </div>
+                                        )
                                       ) : (
-                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                                          {requests.map(req => {
-                                            const tone = fixedOffStatusTone(req.status)
-                                            return (
-                                              <span key={req.id} title={`${req.requester_name} — ${tone.label}`} style={{ width: 9, height: 9, borderRadius: 999, background: tone.text, flexShrink: 0 }} />
-                                            )
-                                          })}
-                                        </div>
+                                        activeRequests.length > 0 && (
+                                          <span style={{ width: 36, height: 36, borderRadius: '50%', background: '#FFEDD5', color: '#C2410C', fontSize: 16, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                            {activeRequests.length}
+                                          </span>
+                                        )
                                       )}
-                                      {requests.length > 0 && (
-                                        <span style={{ fontSize: 10, fontWeight: 700, color: '#64748B' }}>{requests.length} request{requests.length > 1 ? 's' : ''}</span>
-                                      )}
+                                    </div>,
+                                    isLastCol && isActiveWeek && (
+                                      <div
+                                        key={`${date}-week-label`}
+                                        style={{
+                                          gridColumn: '1 / -1', textAlign: 'center', padding: '6px 0', fontSize: 12, fontWeight: 700,
+                                          color: '#1D4ED8', background: '#EFF6FF', borderBottom: isLastRow ? 'none' : '1px solid #1E293B',
+                                        }}
+                                      >
+                                        Requesting Week
+                                      </div>
+                                    ),
+                                  ]
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                        </section>
+                        </div>
+
+                        {/* ── Request Overview + Details share one grid cell (col 3, spanning both
+                             rows), same reasoning as the col-2 wrapper above. ── */}
+                        <div style={{ gridColumn: '3', gridRow: '1 / span 2', display: 'flex', flexDirection: 'column', gap: 16 }}>
+                        {(() => {
+                          const weekDates = Array.from({ length: 7 }, (_, i) => toISODate(addDays(new Date(`${displayWeekStart}T00:00:00`), i)))
+                          const dayLabel = (date: string) => {
+                            const d = new Date(`${date}T00:00:00`)
+                            return {
+                              short: d.toLocaleDateString('en-GB', { weekday: 'short' }),
+                              dayMonth: d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }),
+                            }
+                          }
+                          const dayCounts = weekDates.map(date => (fixedOffByDate.get(date) ?? []).filter(r => r.status !== 'rejected').length)
+                          const maxCount = Math.max(1, ...dayCounts)
+
+                          return (
+                            <section style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
+                              <div style={{ padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                  <BarChart3 size={15} style={{ color: '#F97316' }} />
+                                </div>
+                                <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Request Overview</span>
+                              </div>
+                              <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 18 }}>
+                                {weekDates.map((date, i) => {
+                                  const label = dayLabel(date)
+                                  const count = dayCounts[i]
+                                  return (
+                                    <div key={date} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                      <span style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#374151', width: 88, flexShrink: 0, whiteSpace: 'nowrap' }}>{label.short} ({label.dayMonth})</span>
+                                      <div style={{ flex: 1, height: 14, borderRadius: 999, background: '#F1F5F9', overflow: 'hidden' }}>
+                                        <div style={{ width: `${(count / maxCount) * 100}%`, height: '100%', borderRadius: 999, background: '#F97316' }} />
+                                      </div>
+                                      <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#374151', width: 20, textAlign: 'right', flexShrink: 0 }}>{count}</span>
                                     </div>
                                   )
                                 })}
                               </div>
-                            </div>
-                          )}
-                        </section>
-
-                        {(() => {
-                          const PROCESSED_PAGE_SIZE = 6
-                          const totalPages = Math.max(1, Math.ceil(processed.length / PROCESSED_PAGE_SIZE))
-                          const currentPage = Math.min(fixedOffProcessedPage, totalPages - 1)
-                          const pageStart = currentPage * PROCESSED_PAGE_SIZE
-                          const visibleProcessed = processed.slice(pageStart, pageStart + PROCESSED_PAGE_SIZE)
-                          return (
-                            <section style={{ gridColumn: '3', gridRow: '1 / span 2', alignSelf: 'stretch', background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
-                              <div style={{ padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
-                                <div style={{ width: 30, height: 30, borderRadius: 9, background: '#F0FDF4', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                  <CheckCheck size={15} style={{ color: '#16A34A' }} />
-                                </div>
-                                <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, flex: 1 }}>Processed Requests</span>
-                                {processed.length > PROCESSED_PAGE_SIZE && (
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                    <button onClick={() => setFixedOffProcessedPage((currentPage - 1 + totalPages) % totalPages)} style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-                                      <ChevronLeft size={14} style={{ color: '#6B7280' }} />
-                                    </button>
-                                    <span style={{ fontSize: '0.72rem', fontWeight: 600, color: '#9CA3AF' }}>{pageStart + 1}-{Math.min(pageStart + PROCESSED_PAGE_SIZE, processed.length)} / {processed.length}</span>
-                                    <button onClick={() => setFixedOffProcessedPage((currentPage + 1) % totalPages)} style={{ width: 28, height: 28, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-                                      <ChevronRight size={14} style={{ color: '#6B7280' }} />
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
-                              <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                                {visibleProcessed.length === 0
-                                  ? <div style={{ padding: '24px', textAlign: 'center', color: '#9CA3AF', fontSize: '0.875rem' }}>No processed requests.</div>
-                                  : visibleProcessed.map(group => <FixedOffCard key={group.key} group={group} />)}
-                              </div>
                             </section>
                           )
                         })()}
+
+                        {(() => {
+                          const detailRequests = dayOffDetailDate
+                            ? fixedOffDayRequests
+                              .filter(r => r.request_date === dayOffDetailDate && r.status !== 'rejected')
+                              .sort((a, b) => a.requester_name.localeCompare(b.requester_name))
+                            : []
+                          const detailDateLabel = dayOffDetailDate
+                            ? new Date(`${dayOffDetailDate}T00:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+                            : null
+                          // Each person's full weekly request (not just this one day) gives context —
+                          // e.g. someone off Tue AND Wed shows both dates even though only Tue was clicked.
+                          const groupByUserWeek = new Map(fixedOffGroupsAll.map(g => [`${g.user_id}_${g.week_start}`, g]))
+                          const managerRequests = detailRequests.filter(r => r.requester_role === 'Manager')
+                          const employeeRequests = detailRequests.filter(r => r.requester_role === 'Employee')
+                          const isDetailInRequestingWeek = !!dayOffDetailDate && dayOffDetailDate >= displayWeekStart && dayOffDetailDate <= displayWeekEnd
+                          const managerLabel = isDetailInRequestingWeek ? 'Managers Requesting Off' : 'Manager'
+                          const employeeLabel = isDetailInRequestingWeek ? 'Employee Requesting Off' : 'Employee'
+
+                          const renderPerson = (req: FixedOffDayRequestView) => {
+                            const person = fixedOffStaffById.get(req.user_id)
+                            const deptId = req.department_id ?? person?.department_id ?? null
+                            const deptName = deptId ? fixedOffDeptNameById.get(deptId) : null
+                            const dc = deptName ? deptColor(deptName) : '#64748B'
+                            const group = groupByUserWeek.get(`${req.user_id}_${req.week_start}`)
+                            const requestedDates = group?.requests ?? [req]
+                            return (
+                              <div key={req.id} style={{ display: 'flex', alignItems: 'center', gap: 14, border: `1px solid ${PANEL_BORDER}`, borderRadius: 12, padding: '14px 16px' }}>
+                                <RoleAvatar role={req.requester_role} size={44} photoUrl={person?.profile_photo_url ?? null} />
+                                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                  {deptName && (
+                                    <span style={{ alignSelf: 'flex-start', fontSize: '0.58rem', fontWeight: 800, color: dc, background: `${dc}1a`, borderRadius: 999, padding: '2px 8px' }}>{deptName}</span>
+                                  )}
+                                  <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{req.requester_name}</span>
+                                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                    {requestedDates.map(r => (
+                                      <span key={r.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.64rem', fontWeight: 700, color: '#C2410C', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 999, padding: '3px 8px', whiteSpace: 'nowrap' }}>
+                                        <Calendar size={10} style={{ flexShrink: 0 }} />
+                                        {formatFixedOffRequestDay(r.request_date)}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                                {(req.status === 'approved' || req.status === 'modified') && (
+                                  <span title="Approved" style={{ width: 26, height: 26, borderRadius: '50%', background: '#DCFCE7', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                    <Check size={14} strokeWidth={3} style={{ color: '#15803D' }} />
+                                  </span>
+                                )}
+                              </div>
+                            )
+                          }
+
+                          return (
+                            <ShowcaseCard
+                              icon={<Eye size={15} style={{ color: '#F97316' }} />}
+                              title={detailDateLabel ? `Details for ${detailDateLabel}` : 'Details'}
+                              actions={dayOffDetailDate ? (
+                                <button type="button" onClick={() => setDayOffDetailDate(null)} style={{ width: 26, height: 26, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>
+                                  <X size={12} style={{ color: '#6B7280' }} />
+                                </button>
+                              ) : undefined}
+                            >
+                              {!dayOffDetailDate ? (
+                                <div style={{ padding: '28px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                                  <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>Click a day in the calendar to see who&apos;s off.</p>
+                                </div>
+                              ) : detailRequests.length === 0 ? (
+                                <div style={{ padding: '28px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                                  <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No one is off this day.</p>
+                                </div>
+                              ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxHeight: 580, overflowY: 'auto', paddingRight: 8 }}>
+                                  {managerRequests.length > 0 && (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                      <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#111827' }}>{managerLabel}</span>
+                                      {managerRequests.map(renderPerson)}
+                                    </div>
+                                  )}
+                                  {employeeRequests.length > 0 && (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                      <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#111827' }}>{employeeLabel}</span>
+                                      {employeeRequests.map(renderPerson)}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </ShowcaseCard>
+                          )
+                        })()}
+                        </div>
+
                       </>
                     )}
                   </>
@@ -2815,7 +3383,7 @@ export default function OwnerAttendancePage() {
             <div style={{ padding: '12px 24px 20px', display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid #F3F4F6' }}>
               <button
                 disabled={!exportFrom || !exportTo || exportLoading}
-                onClick={async () => { setExportOpen(false); await doExport(exportFrom, exportTo, exportFormat) }}
+                onClick={async () => { await doExport(exportFrom, exportTo, exportFormat); setExportOpen(false) }}
                 style={modalPrimaryButtonStyle(!exportFrom || !exportTo || exportLoading)}>
                 <Download size={13} /> {exportLoading ? 'Exporting…' : 'Export'}
               </button>
@@ -3067,6 +3635,238 @@ export default function OwnerAttendancePage() {
         )
       })()}
 
+      {managerOverridesModalOpen && (() => {
+        const deptNameById = new Map(companyDepartments.map(d => [d.id, d.name]))
+        const hasOverrides = Object.keys(individualQuotaOverrides).length > 0
+        const overrideStaff = companyStaff.filter(s => individualQuotaOverrides[s.id] !== undefined)
+        const showSearchPanel = overrideSearchPanelOpen
+        const hasActiveFilter = overrideSearch.trim() !== '' || overrideRoleFilter !== 'all' || overrideDeptFilter !== 'all'
+        const keyword = overrideSearch.trim().toLowerCase()
+        const filteredStaff = companyStaff.filter(s =>
+          (overrideRoleFilter === 'all' || s.role === overrideRoleFilter) &&
+          (overrideDeptFilter === 'all' || s.department_id === overrideDeptFilter) &&
+          (keyword === '' || s.full_name.toLowerCase().includes(keyword))
+        )
+        // In the editor, no active filter means "browse everyone"; the saved-overrides snapshot
+        // lives in the first modal view so Save can return there like Task Templates does.
+        const visibleStaff = hasActiveFilter
+          ? filteredStaff : companyStaff
+        const hasDrafts = Object.keys(overrideDrafts).length > 0
+
+        const closeSearchPanel = () => {
+          setOverrideDrafts({})
+          setOverrideSearch('')
+          setOverrideRoleFilter('all')
+          setOverrideDeptFilter('all')
+          setOverrideSearchPanelOpen(false)
+          setRevealedOverrideInputs(new Set())
+          setOverrideInputText({})
+        }
+
+        return (
+          <ModalOverlay onClose={() => setManagerOverridesModalOpen(false)} maxWidth="520px">
+            <ModalBox>
+              <ModalHeader title="Individual Overrides" icon={<UserCog size={15} color="#fff" strokeWidth={2.5} />} onClose={() => setManagerOverridesModalOpen(false)} />
+              {!showSearchPanel ? (
+                <div style={{ padding: '20px 24px 24px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {!hasOverrides ? (
+                    <div style={{ height: 180, borderRadius: 12, background: '#F8FAFC', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 8, fontWeight: 600, fontSize: 13 }}>
+                      <UserCog size={26} strokeWidth={1.5} />
+                      No individual overrides yet
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxHeight: 360, overflowY: 'auto', paddingRight: 4 }}>
+                      {overrideStaff.map(person => {
+                        const overrideValue = individualQuotaOverrides[person.id]
+                        const roleDefault = person.role === 'Manager' ? managerDefaultQuota : employeeDefaultQuota
+                        const listValue = overrideInputText[person.id] ?? String(overrideValue)
+                        const isEditingOverride = revealedOverrideInputs.has(person.id)
+                        const deptName = person.department_id ? deptNameById.get(person.department_id) : undefined
+                        const dc = deptName ? deptColor(deptName) : null
+                        return (
+                          <div key={person.id} style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 12, background: '#FFFFFF' }}>
+                            <RoleAvatar role={person.role} size={40} photoUrl={person.profile_photo_url} />
+                            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                              {dc && (
+                                <span style={{ alignSelf: 'flex-start', fontSize: '0.62rem', fontWeight: 800, color: dc, background: `${dc}1a`, borderRadius: 999, padding: '2px 8px' }}>{deptName}</span>
+                              )}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={person.full_name}>{person.full_name}</span>
+                              </div>
+                            </div>
+                            {isEditingOverride ? (
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                autoFocus
+                                value={listValue}
+                                onFocus={e => e.target.select()}
+                                onChange={e => {
+                                  const digit = e.target.value.replace(/\D/g, '').slice(-1)
+                                  if (digit !== '' && !/^[1-7]$/.test(digit)) return
+                                  setOverrideInputText(prev => ({ ...prev, [person.id]: digit }))
+                                }}
+                                onBlur={() => {
+                                  const raw = overrideInputText[person.id]
+                                  const parsed = raw ? Math.min(7, Math.max(1, Number(raw))) : overrideValue
+                                  setOverrideInputText(prev => { const next = { ...prev }; delete next[person.id]; return next })
+                                  setRevealedOverrideInputs(prev => { const next = new Set(prev); next.delete(person.id); return next })
+                                  if (parsed === roleDefault) void resetIndividualQuotaOverride(person.id)
+                                  else if (parsed !== overrideValue) void saveIndividualQuotaOverride(person.id, parsed)
+                                }}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter') e.currentTarget.blur()
+                                  if (e.key === 'Escape') {
+                                    setOverrideInputText(prev => { const next = { ...prev }; delete next[person.id]; return next })
+                                    setRevealedOverrideInputs(prev => { const next = new Set(prev); next.delete(person.id); return next })
+                                  }
+                                }}
+                                style={{ ...inputStyle, width: 62, padding: '6px 4px', fontSize: '0.78rem', textAlign: 'center', flexShrink: 0, fontWeight: 700, color: '#111827' }}
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                onDoubleClick={() => {
+                                  setOverrideInputText(prev => ({ ...prev, [person.id]: String(overrideValue) }))
+                                  setRevealedOverrideInputs(prev => new Set(prev).add(person.id))
+                                }}
+                                title="Double-click to edit override"
+                                style={{ ...inputStyle, width: 62, padding: '6px 4px', fontSize: '0.78rem', textAlign: 'center', flexShrink: 0, fontWeight: 700, color: '#111827', cursor: 'pointer', userSelect: 'none' }}
+                              >
+                                {overrideValue}
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => void resetIndividualQuotaOverride(person.id)}
+                              disabled={offDaySettingsSaving}
+                              title="Reset to default"
+                              style={{ width: 30, height: 34, border: 'none', background: 'transparent', color: '#DC2626', cursor: offDaySettingsSaving ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, flexShrink: 0, opacity: offDaySettingsSaving ? 0.55 : 1 }}
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setOverrideSearchPanelOpen(true)}
+                    style={{ alignSelf: 'center', marginTop: 10, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 'none', borderRadius: 10, background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                  >
+                    <Plus size={15} strokeWidth={2.5} /> Set Override
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div style={{ padding: '20px 24px 0', display: 'flex', gap: 8 }}>
+                    <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+                      <Search size={13} style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
+                      <input
+                        value={overrideSearch}
+                        onChange={e => setOverrideSearch(e.target.value)}
+                        style={{ ...inputStyle, height: 40, padding: '8px 8px 8px 32px', fontSize: '0.8125rem', boxSizing: 'border-box' }}
+                      />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <DropdownField
+                        fontSize="0.8125rem"
+                        value={overrideRoleFilter}
+                        onChange={setOverrideRoleFilter}
+                        options={[{ value: 'all', label: 'All Roles' }, { value: 'Manager', label: 'Manager' }, { value: 'Employee', label: 'Employee' }]}
+                      />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <DropdownField
+                        fontSize="0.8125rem"
+                        value={overrideDeptFilter}
+                        onChange={setOverrideDeptFilter}
+                        options={[{ value: 'all', label: 'All Departments' }, ...companyDepartments.map(d => ({ value: d.id, label: d.name }))]}
+                      />
+                    </div>
+                  </div>
+                  <div style={{ padding: '16px 24px 20px' }}>
+                    {visibleStaff.length === 0 ? (
+                      <div style={{ padding: '10px 0', color: '#9CA3AF', fontSize: '0.8125rem', fontWeight: 600 }}>No matching Managers or Employees.</div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 380, overflowY: 'auto', paddingRight: 8 }}>
+                        {visibleStaff.map(person => {
+                          const roleDefault = person.role === 'Manager' ? managerDefaultQuota : employeeDefaultQuota
+                          const value = overrideDrafts[person.id] ?? individualQuotaOverrides[person.id] ?? roleDefault
+                          const deptName = person.department_id ? deptNameById.get(person.department_id) : undefined
+                          const dc = deptName ? deptColor(deptName) : null
+                          return (
+                            <div key={person.id} style={{ border: '1px solid #E5E7EB', borderRadius: 12, padding: '10px 12px', display: 'flex', alignItems: 'center', gap: 12, background: '#FFFFFF' }}>
+                              <RoleAvatar role={person.role} size={40} photoUrl={person.profile_photo_url} />
+                              <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                {dc && overrideDeptFilter === 'all' && (
+                                  <span style={{ alignSelf: 'flex-start', fontSize: '0.62rem', fontWeight: 800, color: dc, background: `${dc}1a`, borderRadius: 999, padding: '2px 8px' }}>{deptName}</span>
+                                )}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                  <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={person.full_name}>{person.full_name}</span>
+                                </div>
+                              </div>
+                              {value === roleDefault && !revealedOverrideInputs.has(person.id) ? (
+                                <button
+                                  type="button"
+                                  onDoubleClick={() => setRevealedOverrideInputs(prev => new Set(prev).add(person.id))}
+                                  title="Double-click to set an override"
+                                  style={{ ...inputStyle, width: 62, padding: '6px 4px', fontSize: '0.78rem', textAlign: 'center', flexShrink: 0, fontWeight: 600, color: '#9CA3AF', cursor: 'pointer', userSelect: 'none' }}
+                                >
+                                  Default
+                                </button>
+                              ) : (
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  autoFocus={revealedOverrideInputs.has(person.id)}
+                                  value={overrideInputText[person.id] ?? String(value)}
+                                  onFocus={e => e.target.select()}
+                                  onChange={e => {
+                                    // Values are always a single digit 1-7 (a week has 7 days) — capping
+                                    // input to one character avoids the classic "backspace snaps back to
+                                    // the old value" controlled-input bug, and rejecting anything outside
+                                    // 1-7 immediately (rather than only clamping on blur) stops 8/9/0 from
+                                    // ever being visible even mid-edit.
+                                    const digit = e.target.value.replace(/\D/g, '').slice(-1)
+                                    if (digit !== '' && !/^[1-7]$/.test(digit)) return
+                                    setOverrideInputText(prev => ({ ...prev, [person.id]: digit }))
+                                    if (digit !== '') setOverrideDrafts(prev => ({ ...prev, [person.id]: Number(digit) }))
+                                  }}
+                                  onBlur={() => {
+                                    const raw = overrideInputText[person.id]
+                                    const parsed = raw ? Math.min(7, Math.max(1, Number(raw))) : roleDefault
+                                    setOverrideDrafts(prev => ({ ...prev, [person.id]: parsed }))
+                                    setOverrideInputText(prev => { const next = { ...prev }; delete next[person.id]; return next })
+                                    if (parsed === roleDefault) {
+                                      setRevealedOverrideInputs(prev => { const next = new Set(prev); next.delete(person.id); return next })
+                                    }
+                                  }}
+                                  style={{ ...inputStyle, width: 62, padding: '6px 4px', fontSize: '0.78rem', textAlign: 'center', flexShrink: 0, fontWeight: 700, color: '#111827' }}
+                                />
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ padding: '12px 24px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: '1px solid #F3F4F6' }}>
+                    <button type="button" onClick={closeSearchPanel} style={modalGhostButtonStyle}>Cancel</button>
+                    <button type="button" onClick={() => void saveOverrideDrafts()} disabled={!hasDrafts || offDaySettingsSaving} style={modalPrimaryButtonStyle(!hasDrafts || offDaySettingsSaving)}>
+                      {offDaySettingsSaving ? <Spinner size={13} /> : <Check size={13} />} Save
+                    </button>
+                  </div>
+                </>
+              )}
+            </ModalBox>
+          </ModalOverlay>
+        )
+      })()}
+
+      <Toast message={successToast} />
+      <Toast message={errorToast} variant="error" />
     </div>
   )
 }

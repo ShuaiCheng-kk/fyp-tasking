@@ -12,10 +12,11 @@ import {
 import { AiAssignSuggestion } from '@/types/AI'
 import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
+import Toast from '@/components/Toast'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import DepartmentBadge from '@/components/DepartmentBadge'
-import { Task, TaskInput, KanbanGroup, TaskReassignmentSuggestion, TaskWorkloadSuggestion, StalledTaskAlert } from '@/types/Task'
+import { Task, TaskInput, KanbanGroup, TaskWorkloadSuggestion, StalledTaskAlert } from '@/types/Task'
 import { TaskTemplate } from '@/types/TaskTemplate'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 
@@ -286,7 +287,6 @@ type Member = {
   worker_status?: string | null
   profile_photo_url?: string | null
 }
-type ManagerInfo = { id: string; full_name: string; department_id: string | null }
 type ShiftOption = TimelineShiftBlock & {
   assignee_name: string
   user_id: string | null
@@ -1106,21 +1106,6 @@ export default function OwnerTasksPage() {
   // Department selector
   const [selectedDeptId,  setSelectedDeptId]  = useState('') // '' = All
   const [deptTaskStats,   setDeptTaskStats]    = useState<DeptTaskStats[]>([])
-  const [deptManagerMap,  setDeptManagerMap]   = useState<Record<string, string>>({})
-  const [allManagers,     setAllManagers]      = useState<ManagerInfo[]>([])
-
-  // Department CRUD modals
-  const [editDeptModal,         setEditDeptModal]         = useState<Department | null>(null)
-  const [editDeptName,          setEditDeptName]          = useState('')
-  const [editDeptLoading,       setEditDeptLoading]       = useState(false)
-  const [editDeptError,         setEditDeptError]         = useState('')
-  const [deleteDeptModal,       setDeleteDeptModal]       = useState<Department | null>(null)
-  const [deleteDeptLoading,     setDeleteDeptLoading]     = useState(false)
-  const [deleteDeptError,       setDeleteDeptError]       = useState('')
-  const [editManagerModal,      setEditManagerModal]      = useState<Department | null>(null)
-  const [editManagerSelectedId, setEditManagerSelectedId] = useState('')
-  const [editManagerLoading,    setEditManagerLoading]    = useState(false)
-  const [editManagerError,      setEditManagerError]      = useState('')
 
   const [kanban,        setKanban]        = useState<KanbanGroup | null>(null)
   const [kanbanLoading, setKanbanLoading] = useState(false)
@@ -1190,8 +1175,6 @@ export default function OwnerTasksPage() {
   const [editDeadlineRuleOffsetAmount, setEditDeadlineRuleOffsetAmount] = useState(1)
   const [editDeadlineRuleOffsetUnit, setEditDeadlineRuleOffsetUnit] = useState<'hours' | 'days'>('days')
   const [editSubTasks, setEditSubTasks] = useState<{ id: string; title: string }[]>([])
-  const [reassignmentSuggestion, setReassignmentSuggestion] = useState<TaskReassignmentSuggestion | null>(null)
-  const [workloadSuggestion, setWorkloadSuggestion] = useState<TaskWorkloadSuggestion | null>(null)
   const [workloadSuggestions, setWorkloadSuggestions] = useState<TaskWorkloadSuggestion[]>([])
   const [workloadApplyLoadingId, setWorkloadApplyLoadingId] = useState('')
   const [workloadApplyError, setWorkloadApplyError] = useState('')
@@ -1430,33 +1413,20 @@ export default function OwnerTasksPage() {
     return () => { cancelled = true }
   }, [router])
 
-  // ── Fetch departments + members + managers ─────────────────────────────────
+  // ── Fetch departments + members ─────────────────────────────────────────────
 
   useEffect(() => {
     if (!companyId) return
     Promise.all([
       fetch(`/api/company/departments?company_id=${companyId}`).then(r => r.json()),
       fetch(`/api/team/members?company_id=${companyId}`).then(r => r.json()),
-      fetch(`/api/company/managers?company_id=${companyId}`).then(r => r.json()),
       fetch(`/api/task?company_id=${companyId}&dept_stats=true`).then(r => r.json()),
-    ]).then(([deptData, memberData, mgrData, statsData]) => {
+    ]).then(([deptData, memberData, statsData]) => {
       if (deptData.success) {
         setDepartments(deptData.departments)
         setDeptColorOverrides(deptData.departments)
       }
       if (memberData.success) setMembers(memberData.members)
-      if (mgrData.success) {
-        setAllManagers(mgrData.managers)
-        const map: Record<string, string> = {}
-        for (const mgr of mgrData.managers as ManagerInfo[]) {
-          if (mgr.department_id) {
-            map[mgr.department_id] = map[mgr.department_id]
-              ? `${map[mgr.department_id]}, ${mgr.full_name}`
-              : mgr.full_name
-          }
-        }
-        setDeptManagerMap(map)
-      }
       if (statsData.success) setDeptTaskStats(statsData.dept_stats ?? [])
     }).catch(() => {})
   }, [companyId])
@@ -1643,7 +1613,6 @@ export default function OwnerTasksPage() {
     setEditSubTaskCollapsed(true)
     setEditRecurringEnabled(!!task.recurrence_group_id)
     setEditRecurringCollapsed(true)
-    setReassignmentSuggestion(null)
   }
 
   const closePanel = () => { setSelectedTask(null); setDeleteConfirm(false); setPanelError(''); setSubTaskTitle('') }
@@ -1969,25 +1938,6 @@ export default function OwnerTasksPage() {
     setEditSubTasks(prev => prev.filter(s => s.id !== subTaskId))
   }
 
-  const handleFetchReassignmentSuggestion = async () => {
-    if (!selectedTask || !companyId) return
-    setTaskActionLoading('reassignment'); setPanelError('')
-    try {
-      const res = await fetch(`/api/task?company_id=${companyId}&suggestion=reassignment&task_id=${selectedTask.id}`)
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message)
-      setReassignmentSuggestion(data.suggestion)
-    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to fetch reassignment suggestion') }
-    finally { setTaskActionLoading('') }
-  }
-
-  const handleApplyReassignment = async () => {
-    if (!selectedTask || !reassignmentSuggestion?.recommended_assignee_id) return
-    setEditAssignee(reassignmentSuggestion.recommended_assignee_id)
-    setPanelError('')
-    showTaskToast('Suggested assignee selected. Save changes to apply.')
-  }
-
   const refreshTaskInsights = useCallback(async (kind: 'workload' | 'stalled') => {
     if (!companyId || !internalUserId) return
     setInsightLoading(kind); setInsightError('')
@@ -2003,7 +1953,6 @@ export default function OwnerTasksPage() {
       if (kind === 'workload') {
         const suggestions = (data.suggestions ?? []).filter((item: TaskWorkloadSuggestion) => item.type === 'rebalance')
         setWorkloadSuggestions(suggestions)
-        setWorkloadSuggestion(suggestions[0] ?? data.suggestion)
         if (suggestions.length === 0) setWorkloadInsightOpen(false)
       } else {
         const alerts = data.alerts ?? []
@@ -2015,8 +1964,7 @@ export default function OwnerTasksPage() {
   }, [companyId, selectedDeptId, internalUserId])
 
   const refreshAllTaskInsights = useCallback(async () => {
-    await refreshTaskInsights('workload')
-    await refreshTaskInsights('stalled')
+    await Promise.all([refreshTaskInsights('workload'), refreshTaskInsights('stalled')])
     window.dispatchEvent(new Event('task-insights-updated'))
   }, [refreshTaskInsights])
 
@@ -2270,65 +2218,6 @@ export default function OwnerTasksPage() {
     } finally {
       setDeleteTemplateLoading(false)
     }
-  }
-
-  // ── Department CRUD ────────────────────────────────────────────────────────
-
-  const handleEditDept = async () => {
-    if (!editDeptModal || !editDeptName.trim()) return
-    setEditDeptLoading(true); setEditDeptError('')
-    try {
-      const res = await fetch('/api/company/update-department', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ department_id: editDeptModal.id, name: editDeptName.trim() }) })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message)
-      setEditDeptModal(null)
-      const deptRes = await fetch(`/api/company/departments?company_id=${companyId}`)
-      const deptData = await deptRes.json()
-      if (deptData.success) { setDepartments(deptData.departments); setDeptColorOverrides(deptData.departments) }
-    } catch (err) { setEditDeptError(err instanceof Error ? err.message : 'Failed to update') }
-    finally { setEditDeptLoading(false) }
-  }
-
-  const handleDeleteDept = async () => {
-    if (!deleteDeptModal) return
-    setDeleteDeptLoading(true); setDeleteDeptError('')
-    try {
-      const res = await fetch('/api/company/delete-department', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ department_id: deleteDeptModal.id }) })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message)
-      setDeleteDeptModal(null)
-      if (selectedDeptId === deleteDeptModal.id) setSelectedDeptId('')
-      const deptRes = await fetch(`/api/company/departments?company_id=${companyId}`)
-      const deptData = await deptRes.json()
-      if (deptData.success) { setDepartments(deptData.departments); setDeptColorOverrides(deptData.departments) }
-    } catch (err) { setDeleteDeptError(err instanceof Error ? err.message : 'Failed to delete') }
-    finally { setDeleteDeptLoading(false) }
-  }
-
-  const handleEditDeptManager = async () => {
-    if (!editManagerModal || !editManagerSelectedId) return
-    setEditManagerLoading(true); setEditManagerError('')
-    try {
-      const res = await fetch('/api/user/update-department', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: editManagerSelectedId, department_id: editManagerModal.id }) })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message)
-      setEditManagerModal(null); setEditManagerSelectedId('')
-      const mgrRes = await fetch(`/api/company/managers?company_id=${companyId}`)
-      const mgrData = await mgrRes.json()
-      if (mgrData.success) {
-        setAllManagers(mgrData.managers)
-        const map: Record<string, string> = {}
-        for (const mgr of mgrData.managers as ManagerInfo[]) {
-          if (mgr.department_id) {
-            map[mgr.department_id] = map[mgr.department_id]
-              ? `${map[mgr.department_id]}, ${mgr.full_name}`
-              : mgr.full_name
-          }
-        }
-        setDeptManagerMap(map)
-      }
-    } catch (err) { setEditManagerError(err instanceof Error ? err.message : 'Failed to update manager') }
-    finally { setEditManagerLoading(false) }
   }
 
   // ── Members with a shift on a given date ───────────────────────────────────
@@ -2643,7 +2532,9 @@ export default function OwnerTasksPage() {
                               role="button"
                               aria-label={expandedTaskIds.has(item.task.id) ? 'Collapse sub-tasks' : 'Expand sub-tasks'}
                               onClick={e => { e.stopPropagation(); toggleTaskExpanded(item.task.id) }}
-                              style={{ display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: 6, flexShrink: 0, padding: '2px 6px', borderRadius: 999, background: 'rgba(255,255,255,0.25)', cursor: 'pointer' }}
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: 6, flexShrink: 0, padding: '2px 6px', borderRadius: 999, background: 'rgba(255,255,255,0.25)', cursor: 'pointer', transition: 'background 0.12s ease' }}
+                              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.4)' }}
+                              onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.25)' }}
                             >
                               <ChevronDown size={11} color="#FFFFFF" strokeWidth={3} style={{ transform: expandedTaskIds.has(item.task.id) ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
                             </span>
@@ -2784,13 +2675,6 @@ export default function OwnerTasksPage() {
     () => archivedTasks.filter(t => !t.parent_task_id && !t.source_task_id),
     [archivedTasks],
   )
-  const recommendedAssigneeName = reassignmentSuggestion?.recommended_assignee_id
-    ? members.find(m => m.id === reassignmentSuggestion.recommended_assignee_id)?.full_name ?? 'Unknown'
-    : ''
-  const currentAssigneeName = reassignmentSuggestion?.current_assignee_id
-    ? members.find(m => m.id === reassignmentSuggestion.current_assignee_id)?.full_name ?? 'Unassigned'
-    : 'Unassigned'
-
   const visibleDepts = departments.filter(d =>
     selectedDeptId === '' ? true : d.id === selectedDeptId
   )
@@ -2835,23 +2719,6 @@ export default function OwnerTasksPage() {
     setDragOverDepartmentId(null)
   }, [])
 
-  // ── Button helpers ────────────────────────────────────────────────────────
-
-  const primaryBtn = (loading: boolean): React.CSSProperties => ({
-    flex: 1, padding: '10px', background: '#111827', border: 'none', borderRadius: '8px',
-    fontWeight: 600, fontSize: '0.9375rem', color: '#FFFFFF',
-    cursor: loading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '7px', opacity: loading ? 0.65 : 1,
-  })
-  const ghostBtn: React.CSSProperties = {
-    flex: 1, padding: '10px', background: 'none', border: '1.5px solid #E5E7EB',
-    borderRadius: '8px', fontWeight: 600, fontSize: '0.9375rem', color: '#6B7280', cursor: 'pointer',
-  }
-  const dangerBtn = (loading: boolean): React.CSSProperties => ({
-    padding: '8px 16px', background: '#EF4444', border: 'none', borderRadius: '8px',
-    fontWeight: 600, fontSize: '0.875rem', color: '#FFFFFF',
-    cursor: loading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', opacity: loading ? 0.65 : 1,
-  })
-
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
@@ -2888,10 +2755,6 @@ export default function OwnerTasksPage() {
         @keyframes drawerSlideIn {
           from { opacity: 0; transform: translateX(24px); }
           to { opacity: 1; transform: translateX(0); }
-        }
-        @keyframes fadeSlideUpToast {
-          from { opacity: 0; transform: translateX(-50%) translateY(10px); }
-          to { opacity: 1; transform: translateX(-50%) translateY(0); }
         }
         @keyframes cardStagger {
           from { opacity: 0; transform: translateY(14px) scale(0.96); }
@@ -5003,83 +4866,6 @@ export default function OwnerTasksPage() {
         </div>
       )}
 
-      {/* ═══════════════ EDIT DEPT NAME MODAL ═══════════════ */}
-      {editDeptModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: '480px', background: '#FFFFFF', borderRadius: '16px', padding: '32px', boxShadow: '0 8px 40px rgba(0,0,0,0.12)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-              <h2 style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827', margin: 0 }}>Edit Department Name</h2>
-              <button onClick={() => setEditDeptModal(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', display: 'flex', padding: 4 }}><X size={18} /></button>
-            </div>
-            <label style={modalLabelStyle}>Department Name</label>
-            <input autoFocus value={editDeptName} onChange={e => setEditDeptName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleEditDept() }} style={modalInputStyle} />
-            <InlineError message={editDeptError} />
-            <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
-              <button style={primaryBtn(editDeptLoading)} onClick={handleEditDept} disabled={editDeptLoading}>
-                {editDeptLoading && <Spinner size={14} />} Save Changes
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ═══════════════ DELETE DEPT MODAL ═══════════════ */}
-      {deleteDeptModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: '480px', background: '#FFFFFF', borderRadius: '16px', padding: '32px', boxShadow: '0 8px 40px rgba(0,0,0,0.12)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-              <h2 style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827', margin: 0 }}>Delete Department</h2>
-              <button onClick={() => setDeleteDeptModal(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', display: 'flex', padding: 4 }}><X size={18} /></button>
-            </div>
-            <p style={{ fontSize: '0.9375rem', color: '#374151', margin: 0, lineHeight: 1.6 }}>
-              Are you sure you want to delete <strong style={{ color: '#111827' }}>{deleteDeptModal.name}</strong>?
-            </p>
-            <InlineError message={deleteDeptError} />
-            <div style={{ display: 'flex', gap: 10, marginTop: 24 }}>
-              <button style={ghostBtn} onClick={() => setDeleteDeptModal(null)}>Cancel</button>
-              <button style={dangerBtn(deleteDeptLoading)} onClick={handleDeleteDept} disabled={deleteDeptLoading}>
-                {deleteDeptLoading && <Spinner size={14} />} Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ═══════════════ EDIT DEPT MANAGER MODAL ═══════════════ */}
-      {editManagerModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: '480px', background: '#FFFFFF', borderRadius: '16px', padding: '32px', boxShadow: '0 8px 40px rgba(0,0,0,0.12)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-              <h2 style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827', margin: 0 }}>Change Manager</h2>
-              <button onClick={() => { setEditManagerModal(null); setEditManagerSelectedId('') }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', display: 'flex', padding: 4 }}><X size={18} /></button>
-            </div>
-            <p style={{ fontSize: '0.875rem', color: '#6B7280', margin: '0 0 16px', lineHeight: 1.55 }}>
-              Assign a manager to <strong>{editManagerModal.name}</strong>.
-            </p>
-            {allManagers.length === 0
-              ? <p style={{ fontSize: '0.875rem', color: '#9CA3AF', textAlign: 'center', margin: '8px 0 16px' }}>No managers in this company yet.</p>
-              : (
-                <>
-                  <label style={modalLabelStyle}>Manager</label>
-                  <div style={{ position: 'relative' }}>
-                    <select value={editManagerSelectedId} onChange={e => setEditManagerSelectedId(e.target.value)} style={{ ...modalInputStyle, paddingRight: 36, appearance: 'none', cursor: 'pointer' }}>
-                      <option value="">Select a manager</option>
-                      {allManagers.map(m => <option key={m.id} value={m.id}>{m.full_name}</option>)}
-                    </select>
-                    <ChevronDown size={15} style={{ position: 'absolute', right: 11, top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
-                  </div>
-                </>
-              )
-            }
-            <InlineError message={editManagerError} />
-            <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
-              <button style={primaryBtn(editManagerLoading)} onClick={handleEditDeptManager} disabled={editManagerLoading || !editManagerSelectedId}>
-                {editManagerLoading && <Spinner size={14} />} Save
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ═══════════════ AI TASK ASSIGNMENT MODAL ═══════════════ */}
       {aiModal && (() => {
@@ -5430,36 +5216,7 @@ export default function OwnerTasksPage() {
         )
       })()}
 
-      {taskToast && (
-        <div style={{
-          position: 'fixed',
-          bottom: 28,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 9999,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          background: '#0F172A',
-          color: '#FFFFFF',
-          borderRadius: 12,
-          padding: '12px 20px',
-          boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
-          fontSize: 13,
-          fontWeight: 600,
-          whiteSpace: 'nowrap',
-          animation: 'fadeSlideUpToast 0.22s ease',
-        }}>
-          <Check size={15} style={{ color: '#10B981', flexShrink: 0 }} />
-          {taskToast}
-        </div>
-      )}
-      <style>{`
-        @keyframes fadeSlideUpToast {
-          from { opacity: 0; transform: translateX(-50%) translateY(10px); }
-          to { opacity: 1; transform: translateX(-50%) translateY(0); }
-        }
-      `}</style>
+      <Toast message={taskToast} />
     </div>
   )
 }

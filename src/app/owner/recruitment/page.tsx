@@ -7,7 +7,7 @@ import { createBrowserClient } from '@supabase/ssr'
 import {
   Archive, ArchiveRestore, Briefcase, Building2, CalendarDays, Check, CheckCircle, ChevronDown, ChevronLeft, ChevronRight,
   ClipboardList, Clock, Coffee, Copy, Crown, DollarSign, Filter, FileText, LayoutGrid, MapPin,
-  MoreHorizontal, Pencil, Repeat, Send, Sparkles, Timer, Trash2, UserCheck, UserX, Users,
+  MoreHorizontal, Pencil, Plus, Repeat, Send, Sparkles, Timer, Trash2, UserCheck, UserX, Users,
   X, XCircle, Zap,
 } from 'lucide-react'
 import OwnerSidebar from '@/components/OwnerSidebar'
@@ -27,7 +27,7 @@ import { deptColor, setDeptColorOverrides } from '@/lib/deptColor'
 import DepartmentBadge from '@/components/DepartmentBadge'
 import RoleAvatar from '@/components/RoleAvatar'
 
-type Tab = 'jobs' | 'archived' | 'drafts' | 'review'
+type Tab = 'jobs' | 'review' | 'post'
 type Department = { id: string; name: string }
 
 // ─── shared tiny styles ──────────────────────────────────────────────────────
@@ -293,6 +293,7 @@ export default function OwnerRecruitmentPage() {
 
   // ui state
   const [activeTab, setActiveTab] = useState<Tab>('jobs')
+  const [postView, setPostView] = useState<'none' | 'archived' | 'drafts' | 'templates'>('none')
   const [loading, setLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
   const [aiLoading, setAiLoading] = useState(false)
@@ -733,7 +734,7 @@ export default function OwnerRecruitmentPage() {
       setFormOpen(false); resetForm()
       await fetchAll(companyId, internalUserId)
       if (status === 'open') { setActiveTab('jobs'); showToast(editingId ? 'Job updated' : 'Job posted') }
-      else { setActiveTab('drafts'); showToast(editingId ? 'Draft saved' : 'Saved as draft') }
+      else { setActiveTab('post'); setPostView('drafts'); showToast(editingId ? 'Draft saved' : 'Saved as draft') }
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Failed to save job')
     } finally { setActionLoading(false) }
@@ -1120,14 +1121,15 @@ export default function OwnerRecruitmentPage() {
         <div style={{ padding: '0 0 16px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: 4, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 999, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
             {([
-              { key: 'jobs' as Tab,   label: 'Posted Jobs' },
+              { key: 'jobs' as Tab,   label: 'All Jobs' },
               { key: 'review' as Tab, label: 'Review Requests' },
+              { key: 'post' as Tab,   label: 'Post Job' },
             ]).map(tab => {
               const active = activeTab === tab.key
               return (
                 <button
                   key={tab.key}
-                  onClick={() => { setActiveTab(tab.key); setSelectedArchivedId(''); setArchivedSelected(new Set()); setSelectedDraftId(''); setSelectedPendingId(''); setJobsSelected(new Set()) }}
+                  onClick={() => { setActiveTab(tab.key); setPostView('none'); setSelectedArchivedId(''); setArchivedSelected(new Set()); setSelectedDraftId(''); setSelectedPendingId(''); setJobsSelected(new Set()) }}
                   style={{
                     height: 36, padding: '0 16px', borderRadius: '99px', cursor: 'pointer', fontWeight: 700, fontSize: '0.8125rem',
                     border: 'none',
@@ -1139,6 +1141,9 @@ export default function OwnerRecruitmentPage() {
                   }}
                 >
                   {tab.label}
+                  {tab.key === 'post' && (
+                    <Plus size={13} strokeWidth={2.5} style={{ flexShrink: 0 }} />
+                  )}
                   {tab.key === 'review' && pendingPostings.length > 0 && (
                     <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#EF4444', flexShrink: 0 }} />
                   )}
@@ -1589,12 +1594,65 @@ export default function OwnerRecruitmentPage() {
             </div>
           )}
 
-          {/* ══ ARCHIVED tab ══════════════════════════════════════════════════ */}
-          {activeTab === 'archived' && (
+          {/* ══ POST JOB hub tab ═══════════════════════════════════════════════ */}
+          {activeTab === 'post' && (
             <div className="recruitment-grid">
+            <section className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 14, overflow: 'hidden' }}>
+              <div style={{ padding: '17px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <Plus size={15} style={{ color: '#F97316' }} />
+                </div>
+                <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Posting a Job</span>
+              </div>
+              <div style={{ padding: '12px 14px', display: 'grid', gap: 10 }}>
+                {([
+                  { key: 'ai' as const,       icon: Sparkles, title: 'AI Post Job', onClick: () => { resetForm(); setFormOpen(true) } },
+                  { key: 'archived' as const, icon: Archive,  title: 'Archived Jobs', onClick: () => { setPostView('archived'); setSelectedArchivedId(''); setArchivedSelected(new Set()) } },
+                  { key: 'drafts' as const,   icon: FileText, title: 'Draft Jobs', onClick: () => { setPostView('drafts'); setSelectedDraftId(''); setDraftsSelected(new Set()) } },
+                  { key: 'templates' as const, icon: ClipboardList, title: 'Manage Template', onClick: () => setPostView('templates') },
+                ]).map((card, idx) => {
+                  const Icon = card.icon
+                  const isSelected = postView === card.key
+                  return (
+                    <article
+                      key={card.key}
+                      onClick={card.onClick}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        border: `1px solid ${isSelected ? '#F97316' : PANEL_BORDER}`,
+                        borderRadius: 10, padding: '14px 16px',
+                        background: isSelected ? '#FFF7ED' : '#F9FAFB',
+                        cursor: 'pointer', overflow: 'hidden',
+                        transition: 'box-shadow 0.18s, transform 0.18s, border-color 0.18s, background 0.18s',
+                        animation: `deptCardIn 0.28s ease both ${idx * 55}ms`,
+                        boxShadow: isSelected ? '0 4px 16px rgba(249,115,22,0.15)' : undefined,
+                      }}
+                      onMouseEnter={e => { if (!isSelected) { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.boxShadow = '0 10px 28px rgba(15,23,42,0.11)'; e.currentTarget.style.borderColor = '#F97316' } }}
+                      onMouseLeave={e => { if (!isSelected) { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.borderColor = PANEL_BORDER } }}
+                    >
+                      <div style={{ width: 28, height: 28, borderRadius: 8, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <Icon size={14} style={{ color: '#F97316' }} />
+                      </div>
+                      <h3 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{card.title}</h3>
+                    </article>
+                  )
+                })}
+              </div>
+            </section>
 
-              {/* Left: archived list */}
-              <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden' }}>
+            {postView === 'none' && (
+              <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ padding: '40px 48px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14, width: '100%' }}>
+                  <Plus size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
+                  <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>Select an option to get started</p>
+                </div>
+              </div>
+            )}
+
+            {postView === 'archived' && (
+              <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                {!selectedArchived ? (
+                  <>
                 <div style={{ padding: '14px 18px 12px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', gap: 8 }}>
                   <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <Archive size={15} style={{ color: '#F97316' }} />
@@ -1625,6 +1683,7 @@ export default function OwnerRecruitmentPage() {
                     </div>
                   )}
                 </div>
+                    <div style={{ flex: 1, overflowY: 'auto' }}>
                 {loading ? (
                   <div style={{ padding: '24px 18px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                     <Spinner size={14} dark /> Loading...
@@ -1687,23 +1746,18 @@ export default function OwnerRecruitmentPage() {
                   })}
                   </div>
                 )}
-              </div>
-
-              {/* Right: archived detail (view-only) */}
-              <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                {!selectedArchived ? (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, padding: '32px 24px' }}>
-                    <div style={{ padding: '40px 48px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14, width: '100%' }}>
-                      <Archive size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
-                      <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>Select an archived job</p>
                     </div>
-                  </div>
+                  </>
                 ) : (
                   <>
                     {/* Header */}
                     <div style={{ borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center' }}>
                       <div style={{ flex: '0 0 min(860px, 62%)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '18px 24px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flexWrap: 'nowrap' }}>
+                          <button onClick={() => setSelectedArchivedId('')} title="Back to list" style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid #E5E7EB', background: '#FFFFFF', color: '#374151', display: 'grid', placeItems: 'center', cursor: 'pointer', flexShrink: 0 }}
+                            onMouseEnter={e => { e.currentTarget.style.background = '#F9FAFB' }}
+                            onMouseLeave={e => { e.currentTarget.style.background = '#FFFFFF' }}
+                          ><ChevronLeft size={16} /></button>
                           <h2 style={{ margin: 0, fontSize: '1.1rem', color: '#111827', fontWeight: 700, lineHeight: 1, alignSelf: 'center' }}>{selectedArchived.title}</h2>
                           {selectedArchived.is_recurring ? (
                             <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', whiteSpace: 'nowrap', flexShrink: 0 }}>Shift Job</span>
@@ -1732,8 +1786,6 @@ export default function OwnerRecruitmentPage() {
                       </div>
                       <div style={{ flex: 1 }} />
                     </div>
-
-                    {/* Two-column body */}
                     <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
                       {/* LEFT: job details */}
                       {(() => {
@@ -1887,6 +1939,322 @@ export default function OwnerRecruitmentPage() {
                   </>
                 )}
               </div>
+            )}
+
+            {postView === 'drafts' && (
+              <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                {!selectedDraft ? (
+                  <>
+                <div style={{ padding: '14px 18px 12px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <FileText size={15} style={{ color: '#F97316' }} />
+                  </div>
+                  <span className="font-heading" style={{ fontSize: 15, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.3px', flex: 1 }}>Draft Jobs</span>
+                  {draftsSelected.size > 0 && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <button
+                        onClick={publishDraftsSelected}
+                        disabled={actionLoading}
+                        title={`Post ${draftsSelected.size} selected`}
+                        style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid #BBF7D0', background: '#F0FDF4', color: '#059669', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}
+                        onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#DCFCE7' }}
+                        onMouseLeave={e => { e.currentTarget.style.background = '#F0FDF4' }}
+                      >
+                        {actionLoading ? <Spinner size={12} dark /> : <Send size={14} />}
+                      </button>
+                      <button
+                        onClick={deleteDraftsSelected}
+                        disabled={actionLoading}
+                        title={`Delete ${draftsSelected.size} selected`}
+                        style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid #FECACA', background: '#FEF2F2', color: '#DC2626', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}
+                        onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FEE2E2' }}
+                        onMouseLeave={e => { e.currentTarget.style.background = '#FEF2F2' }}
+                      >
+                        {actionLoading ? <Spinner size={12} dark /> : <Trash2 size={14} />}
+                      </button>
+                    </div>
+                  )}
+                </div>
+                    <div style={{ flex: 1, overflowY: 'auto' }}>
+                {loading ? (
+                  <div style={{ padding: '24px 18px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                    <Spinner size={14} dark /> Loading...
+                  </div>
+                ) : drafts.length === 0 ? (
+                  <div style={{ margin: '12px 14px', padding: '28px 16px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                    <FileText size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
+                    <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No drafts saved.</p>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '12px 14px' }}>
+                  {drafts.map((p, idx) => {
+                  const isSelected = selectedDraftId === p.id
+                  const checked = draftsSelected.has(p.id)
+                  return (
+                    <div
+                      key={p.id}
+                      className="dept-card"
+                      onClick={() => setSelectedDraftId(p.id)}
+                      style={{
+                        animationDelay: `${idx * 55}ms`,
+                        border: (isSelected || checked) ? '2px solid #F97316' : '2px solid #E5E7EB',
+                        borderRadius: 14,
+                        padding: '14px 14px 12px',
+                        background: '#FFFFFF',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        cursor: 'pointer',
+                        boxShadow: (isSelected || checked) ? '0 0 0 3px rgba(249,115,22,0.10)' : '0 1px 3px rgba(0,0,0,0.06)',
+                        transition: 'border-color 0.15s, box-shadow 0.15s, transform 0.15s',
+                      }}
+                      onMouseEnter={e => {
+                        if (isSelected || checked) return
+                        e.currentTarget.style.transform = 'translateY(-2px)'
+                        e.currentTarget.style.boxShadow = '0 6px 18px rgba(0,0,0,0.10)'
+                        e.currentTarget.style.borderColor = '#FDBA74'
+                      }}
+                      onMouseLeave={e => {
+                        if (isSelected || checked) return
+                        e.currentTarget.style.transform = 'none'
+                        e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.06)'
+                        e.currentTarget.style.borderColor = '#E5E7EB'
+                      }}
+                    >
+                      {/* Badge row: department badge + checkbox */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                        {p.department_name ? (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F0F9FF', color: '#0284C7', border: '1px solid #BAE6FD', whiteSpace: 'nowrap' }}>
+                            <LayoutGrid size={10} />{p.department_name}
+                          </span>
+                        ) : (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 9px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F3F4F6', color: '#9CA3AF', border: '1px solid #E5E7EB' }}>No dept</span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={e => { e.stopPropagation(); setDraftsSelected(prev => { const s = new Set(prev); checked ? s.delete(p.id) : s.add(p.id); return s }) }}
+                          style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 5, border: checked ? '2px solid #F97316' : '2px solid #D1D5DB', background: checked ? '#F97316' : '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0 }}
+                        >
+                          {checked && <Check size={11} color="#FFFFFF" strokeWidth={3} />}
+                        </button>
+                      </div>
+                      {/* Title + date row */}
+                      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10 }}>
+                        <strong style={{ fontSize: '0.9rem', color: '#1C1C1E', lineHeight: 1.4, flex: 1, minWidth: 0 }}>{p.title}</strong>
+                        <span style={{ fontSize: '0.75rem', color: '#C4C9D4', flexShrink: 0 }}>{formatPostedAt(p.created_at)}</span>
+                      </div>
+                    </div>
+                  )
+                  })}
+                  </div>
+                )}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 24px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flexWrap: 'nowrap' }}>
+                        <button onClick={() => setSelectedDraftId('')} title="Back to list" style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid #E5E7EB', background: '#FFFFFF', color: '#374151', display: 'grid', placeItems: 'center', cursor: 'pointer', flexShrink: 0 }}
+                          onMouseEnter={e => { e.currentTarget.style.background = '#F9FAFB' }}
+                          onMouseLeave={e => { e.currentTarget.style.background = '#FFFFFF' }}
+                        ><ChevronLeft size={16} /></button>
+                        <h2 style={{ margin: 0, fontSize: '1.1rem', color: '#111827', fontWeight: 700, lineHeight: 1, alignSelf: 'center' }}>{selectedDraft.title}</h2>
+                        {selectedDraft.is_recurring ? (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', whiteSpace: 'nowrap', flexShrink: 0 }}>Shift Job</span>
+                        ) : (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE', whiteSpace: 'nowrap', flexShrink: 0 }}>One-Off Job</span>
+                        )}
+                      </div>
+                      <button
+                        ref={draftMenuBtnRef}
+                        onClick={e => { e.stopPropagation(); if (!draftMenuOpen) { const r = e.currentTarget.getBoundingClientRect(); setDraftMenuPos({ top: r.bottom + 4, right: window.innerWidth - r.right }) } setDraftMenuOpen(o => !o) }}
+                        style={{ width: 32, height: 32, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', color: '#374151', display: 'grid', placeItems: 'center', cursor: 'pointer', flexShrink: 0 }}
+                        onMouseEnter={e => (e.currentTarget.style.background = '#F9FAFB')}
+                        onMouseLeave={e => (e.currentTarget.style.background = '#FFFFFF')}
+                      ><MoreHorizontal size={16} /></button>
+                    </div>
+                    {/* Two-column body */}
+                    <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                      {/* LEFT: job details */}
+                      {(() => {
+                        const toMins = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m }
+                        const isShiftJob = selectedDraft.is_recurring
+                        const shiftDate = selectedDraft.shift_date
+                        const shiftStart = selectedDraft.shift_start_time
+                        const shiftEnd = selectedDraft.shift_end_time
+                        const breakStart = selectedDraft.break_start_time
+                        const breakEnd = selectedDraft.break_end_time
+                        const estimatedHours = selectedDraft.estimated_hours
+                        const urgency = selectedDraft.urgency ?? 'normal'
+                        const urgencyLabel = urgency === 'urgent' ? 'Urgent' : urgency === 'high' ? 'High' : 'Normal'
+                        let totalAmt: number | null = null
+                        if (isShiftJob && selectedDraft.salary_amount != null && shiftStart && shiftEnd) {
+                          let worked = toMins(shiftEnd) - toMins(shiftStart)
+                          if (breakStart && breakEnd) worked -= (toMins(breakEnd) - toMins(breakStart))
+                          if (worked > 0) totalAmt = Math.round(selectedDraft.salary_amount * (worked / 60) * 100) / 100
+                        }
+                        const fmtShort = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return m === 0 ? `${h12}${ap}` : `${h12}:${String(m).padStart(2, '0')}${ap}` }
+                        const statCard: React.CSSProperties = { borderRadius: 12, padding: '10px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'center', minHeight: 72 }
+                        const statLabel: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }
+                        const statLabelText = (color: string): React.CSSProperties => ({ fontSize: '0.75rem', fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: '0.06em' })
+                        const statValue: React.CSSProperties = { margin: 0, fontSize: '0.8rem', fontWeight: 600, color: '#374151', lineHeight: 1.3 }
+                        return (
+                          <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px 24px' }}>
+                            {/* Stat cards */}
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 20 }}>
+                              {/* Pay */}
+                              {selectedDraft.salary_amount != null ? (
+                                <div style={{ ...statCard, background: '#FFF7ED', border: '1px solid #FED7AA' }}>
+                                  <div style={statLabel}><DollarSign size={11} style={{ color: '#F97316' }} /><span style={statLabelText('#F97316')}>{isShiftJob ? 'Pay' : 'Flat Rate'}</span></div>
+                                  <p style={statValue}>{isShiftJob ? `$${selectedDraft.salary_amount}/Hr${totalAmt != null ? ` ($${totalAmt % 1 === 0 ? totalAmt.toFixed(0) : totalAmt.toFixed(2)})` : ''}` : `$${selectedDraft.salary_amount}`}</p>
+                                </div>
+                              ) : (
+                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}><span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No pay set</span></div>
+                              )}
+                              {/* Date */}
+                              {shiftDate ? (
+                                <div style={{ ...statCard, background: '#F0F9FF', border: '1px solid #BAE6FD' }}>
+                                  <div style={statLabel}><CalendarDays size={11} style={{ color: '#0284C7' }} /><span style={statLabelText('#0284C7')}>Date</span></div>
+                                  <p style={statValue}>{new Date(shiftDate).toLocaleDateString('en-SG', { weekday: 'short', day: 'numeric', month: 'short' })}</p>
+                                </div>
+                              ) : (
+                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}><span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No date set</span></div>
+                              )}
+                              {/* Hours / Estimation */}
+                              {isShiftJob ? ((shiftStart || shiftEnd) ? (
+                                <div style={{ ...statCard, background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
+                                  <div style={statLabel}><Clock size={11} style={{ color: '#059669' }} /><span style={statLabelText('#059669')}>Hours</span></div>
+                                  <p style={statValue}>{shiftStart ? fmtShort(shiftStart) : '—'} – {shiftEnd ? fmtShort(shiftEnd) : '—'}</p>
+                                </div>
+                              ) : (
+                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}><span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No hours set</span></div>
+                              )) : (estimatedHours ? (
+                                <div style={{ ...statCard, background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
+                                  <div style={statLabel}><Clock size={11} style={{ color: '#059669' }} /><span style={statLabelText('#059669')}>Estimation</span></div>
+                                  <p style={statValue}>{estimatedHours} Hours</p>
+                                </div>
+                              ) : (
+                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}><span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No hours set</span></div>
+                              ))}
+                              {/* Break / Urgency */}
+                              {isShiftJob ? ((breakStart || breakEnd) ? (
+                                <div style={{ ...statCard, background: '#FDF4FF', border: '1px solid #E9D5FF' }}>
+                                  <div style={statLabel}><Coffee size={11} style={{ color: '#9333EA' }} /><span style={statLabelText('#9333EA')}>Break</span></div>
+                                  <p style={statValue}>{breakStart ? fmtShort(breakStart) : '—'} – {breakEnd ? fmtShort(breakEnd) : '—'}</p>
+                                </div>
+                              ) : (
+                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}><span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No break</span></div>
+                              )) : (
+                                <div style={{ ...statCard, background: '#FFF1F2', border: '1px solid #FECDD3' }}>
+                                  <div style={statLabel}><Zap size={11} style={{ color: '#E11D48' }} /><span style={statLabelText('#E11D48')}>Urgency</span></div>
+                                  <p style={statValue}>{urgencyLabel}</p>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Department + Employee row */}
+                            {(selectedDraft.department_name || selectedDraft.assigned_employee_name) && (
+                              <div style={{ display: 'flex', border: '1px solid #E5E7EB', borderRadius: 10, overflow: 'hidden', marginTop: 4 }}>
+                                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 0', borderRight: '1px solid #E5E7EB', background: '#FAFAFA' }}>
+                                  <LayoutGrid size={14} style={{ color: '#9CA3AF', flexShrink: 0 }} />
+                                  <span style={{ fontSize: '0.875rem', color: '#374151' }}>{selectedDraft.department_name ?? '—'}</span>
+                                </div>
+                                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 0', background: '#FAFAFA' }}>
+                                  <UserCheck size={14} style={{ color: '#9CA3AF', flexShrink: 0 }} />
+                                  <span style={{ fontSize: '0.875rem', color: '#374151' }}>{selectedDraft.assigned_employee_name ?? '—'}</span>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Scope & Requirements */}
+                            <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                              <div style={{ background: '#FFFFFF', borderRadius: 10, padding: '14px 16px', border: '1px solid #E5E7EB' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                                  <FileText size={13} style={{ color: '#F97316' }} />
+                                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Scope</span>
+                                </div>
+                                {selectedDraft.description ? (
+                                  <p style={{ margin: 0, fontSize: '0.875rem', color: '#374151', lineHeight: 1.75 }}>{selectedDraft.description}</p>
+                                ) : (
+                                  <p style={{ margin: 0, fontSize: '0.875rem', color: '#9CA3AF', fontStyle: 'italic' }}>Not set</p>
+                                )}
+                              </div>
+                              <div style={{ background: '#FFFFFF', borderRadius: 10, padding: '14px 16px', border: '1px solid #E5E7EB' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                                  <ClipboardList size={13} style={{ color: '#F97316' }} />
+                                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Requirements</span>
+                                </div>
+                                {selectedDraft.requirements ? (
+                                  <p style={{ margin: 0, fontSize: '0.875rem', color: '#374151', lineHeight: 1.75, whiteSpace: 'pre-wrap' }}>{selectedDraft.requirements}</p>
+                                ) : (
+                                  <p style={{ margin: 0, fontSize: '0.875rem', color: '#9CA3AF', fontStyle: 'italic' }}>Not set</p>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })()}
+
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {postView === 'templates' && (
+              <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ padding: '14px 18px 12px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <ClipboardList size={15} style={{ color: '#F97316' }} />
+                  </div>
+                  <span className="font-heading" style={{ fontSize: 15, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.3px', flex: 1 }}>Manage Templates</span>
+                </div>
+                <div style={{ flex: 1, overflowY: 'auto', padding: '12px 14px' }}>
+                  {templates.length === 0 ? (
+                    <div style={{ padding: '28px 16px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
+                      <ClipboardList size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
+                      <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No templates saved.</p>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {templates.map((t, idx) => (
+                        <div key={t.id} style={{
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+                          border: '1px solid #E5E7EB', borderRadius: 10, padding: '14px 16px', background: '#F9FAFB',
+                          animation: `deptCardIn 0.28s ease both ${idx * 55}ms`,
+                        }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                              <strong style={{ fontSize: '0.9rem', color: '#1C1C1E' }}>{t.name}</strong>
+                              <span style={{ display: 'inline-flex', alignItems: 'center', padding: '2px 8px', borderRadius: 99, fontSize: '0.68rem', fontWeight: 600, background: t.form_type === 'shift' ? '#FFF7ED' : '#F5F3FF', color: t.form_type === 'shift' ? '#C2410C' : '#7C3AED', border: `1px solid ${t.form_type === 'shift' ? '#FED7AA' : '#DDD6FE'}`, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                                {t.form_type === 'shift' ? 'Shift' : 'One-off'}
+                              </span>
+                            </div>
+                            <span style={{ fontSize: '0.78rem', color: '#6B7280' }}>{t.title}</span>
+                          </div>
+                          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                            <button
+                              onClick={() => { resetForm(); setFormJobType(t.form_type === 'shift' ? 'shift' : 'oneoff'); setFormEmpType(t.employment_type ?? 'casual'); setFormTitle(t.title); setFormDescription(t.description ?? ''); setFormRequirements(t.requirements ?? ''); setWizardStep('form'); setFormOpen(true) }}
+                              title="Use template"
+                              style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid #FED7AA', background: '#FFF7ED', color: '#EA580C', display: 'grid', placeItems: 'center', cursor: 'pointer' }}
+                              onMouseEnter={e => { e.currentTarget.style.background = '#FFEDD5' }}
+                              onMouseLeave={e => { e.currentTarget.style.background = '#FFF7ED' }}
+                            ><Send size={14} /></button>
+                            <button
+                              onClick={() => void deleteTemplateById(t.id)}
+                              disabled={templateActionLoading}
+                              title="Delete template"
+                              style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid #FECACA', background: '#FEF2F2', color: '#DC2626', display: 'grid', placeItems: 'center', cursor: templateActionLoading ? 'default' : 'pointer', opacity: templateActionLoading ? 0.65 : 1 }}
+                              onMouseEnter={e => { if (!templateActionLoading) e.currentTarget.style.background = '#FEE2E2' }}
+                              onMouseLeave={e => { e.currentTarget.style.background = '#FEF2F2' }}
+                            >{templateActionLoading ? <Spinner size={12} dark /> : <Trash2 size={14} />}</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
             </div>
           )}
 
@@ -2145,274 +2513,6 @@ export default function OwnerRecruitmentPage() {
             </div>
           )}
 
-          {/* ══ DRAFTS tab ════════════════════════════════════════════════════ */}
-          {activeTab === 'drafts' && (
-            <div className="recruitment-grid">
-
-              {/* Left: draft list */}
-              <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden' }}>
-                <div style={{ padding: '14px 18px 12px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <FileText size={15} style={{ color: '#F97316' }} />
-                  </div>
-                  <span className="font-heading" style={{ fontSize: 15, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.3px', flex: 1 }}>Draft Jobs</span>
-                  {draftsSelected.size > 0 && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <button
-                        onClick={publishDraftsSelected}
-                        disabled={actionLoading}
-                        title={`Post ${draftsSelected.size} selected`}
-                        style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid #BBF7D0', background: '#F0FDF4', color: '#059669', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}
-                        onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#DCFCE7' }}
-                        onMouseLeave={e => { e.currentTarget.style.background = '#F0FDF4' }}
-                      >
-                        {actionLoading ? <Spinner size={12} dark /> : <Send size={14} />}
-                      </button>
-                      <button
-                        onClick={deleteDraftsSelected}
-                        disabled={actionLoading}
-                        title={`Delete ${draftsSelected.size} selected`}
-                        style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid #FECACA', background: '#FEF2F2', color: '#DC2626', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}
-                        onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FEE2E2' }}
-                        onMouseLeave={e => { e.currentTarget.style.background = '#FEF2F2' }}
-                      >
-                        {actionLoading ? <Spinner size={12} dark /> : <Trash2 size={14} />}
-                      </button>
-                    </div>
-                  )}
-                </div>
-                {loading ? (
-                  <div style={{ padding: '24px 18px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-                    <Spinner size={14} dark /> Loading...
-                  </div>
-                ) : drafts.length === 0 ? (
-                  <div style={{ margin: '12px 14px', padding: '28px 16px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
-                    <FileText size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
-                    <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No drafts saved.</p>
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '12px 14px' }}>
-                  {drafts.map((p, idx) => {
-                  const isSelected = selectedDraftId === p.id
-                  const checked = draftsSelected.has(p.id)
-                  return (
-                    <div
-                      key={p.id}
-                      className="dept-card"
-                      onClick={() => setSelectedDraftId(p.id)}
-                      style={{
-                        animationDelay: `${idx * 55}ms`,
-                        border: (isSelected || checked) ? '2px solid #F97316' : '2px solid #E5E7EB',
-                        borderRadius: 14,
-                        padding: '14px 14px 12px',
-                        background: '#FFFFFF',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        cursor: 'pointer',
-                        boxShadow: (isSelected || checked) ? '0 0 0 3px rgba(249,115,22,0.10)' : '0 1px 3px rgba(0,0,0,0.06)',
-                        transition: 'border-color 0.15s, box-shadow 0.15s, transform 0.15s',
-                      }}
-                      onMouseEnter={e => {
-                        if (isSelected || checked) return
-                        e.currentTarget.style.transform = 'translateY(-2px)'
-                        e.currentTarget.style.boxShadow = '0 6px 18px rgba(0,0,0,0.10)'
-                        e.currentTarget.style.borderColor = '#FDBA74'
-                      }}
-                      onMouseLeave={e => {
-                        if (isSelected || checked) return
-                        e.currentTarget.style.transform = 'none'
-                        e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.06)'
-                        e.currentTarget.style.borderColor = '#E5E7EB'
-                      }}
-                    >
-                      {/* Badge row: department badge + checkbox */}
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                        {p.department_name ? (
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F0F9FF', color: '#0284C7', border: '1px solid #BAE6FD', whiteSpace: 'nowrap' }}>
-                            <LayoutGrid size={10} />{p.department_name}
-                          </span>
-                        ) : (
-                          <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 9px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F3F4F6', color: '#9CA3AF', border: '1px solid #E5E7EB' }}>No dept</span>
-                        )}
-                        <button
-                          type="button"
-                          onClick={e => { e.stopPropagation(); setDraftsSelected(prev => { const s = new Set(prev); checked ? s.delete(p.id) : s.add(p.id); return s }) }}
-                          style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 5, border: checked ? '2px solid #F97316' : '2px solid #D1D5DB', background: checked ? '#F97316' : '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0 }}
-                        >
-                          {checked && <Check size={11} color="#FFFFFF" strokeWidth={3} />}
-                        </button>
-                      </div>
-                      {/* Title + date row */}
-                      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10 }}>
-                        <strong style={{ fontSize: '0.9rem', color: '#1C1C1E', lineHeight: 1.4, flex: 1, minWidth: 0 }}>{p.title}</strong>
-                        <span style={{ fontSize: '0.75rem', color: '#C4C9D4', flexShrink: 0 }}>{formatPostedAt(p.created_at)}</span>
-                      </div>
-                    </div>
-                  )
-                  })}
-                  </div>
-                )}
-              </div>
-
-              {/* Right: draft detail */}
-              <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                {!selectedDraft ? (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, padding: '32px 24px' }}>
-                    <div style={{ padding: '40px 48px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14, width: '100%' }}>
-                      <FileText size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
-                      <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>Select a draft</p>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    {/* Header */}
-                    <div style={{ borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 24px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flexWrap: 'nowrap' }}>
-                        <h2 style={{ margin: 0, fontSize: '1.1rem', color: '#111827', fontWeight: 700, lineHeight: 1, alignSelf: 'center' }}>{selectedDraft.title}</h2>
-                        {selectedDraft.is_recurring ? (
-                          <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', whiteSpace: 'nowrap', flexShrink: 0 }}>Shift Job</span>
-                        ) : (
-                          <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE', whiteSpace: 'nowrap', flexShrink: 0 }}>One-Off Job</span>
-                        )}
-                      </div>
-                      <button
-                        ref={draftMenuBtnRef}
-                        onClick={e => { e.stopPropagation(); if (!draftMenuOpen) { const r = e.currentTarget.getBoundingClientRect(); setDraftMenuPos({ top: r.bottom + 4, right: window.innerWidth - r.right }) } setDraftMenuOpen(o => !o) }}
-                        style={{ width: 32, height: 32, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', color: '#374151', display: 'grid', placeItems: 'center', cursor: 'pointer', flexShrink: 0 }}
-                        onMouseEnter={e => (e.currentTarget.style.background = '#F9FAFB')}
-                        onMouseLeave={e => (e.currentTarget.style.background = '#FFFFFF')}
-                      ><MoreHorizontal size={16} /></button>
-                    </div>
-
-                    {/* Two-column body */}
-                    <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-                      {/* LEFT: job details */}
-                      {(() => {
-                        const toMins = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m }
-                        const isShiftJob = selectedDraft.is_recurring
-                        const shiftDate = selectedDraft.shift_date
-                        const shiftStart = selectedDraft.shift_start_time
-                        const shiftEnd = selectedDraft.shift_end_time
-                        const breakStart = selectedDraft.break_start_time
-                        const breakEnd = selectedDraft.break_end_time
-                        const estimatedHours = selectedDraft.estimated_hours
-                        const urgency = selectedDraft.urgency ?? 'normal'
-                        const urgencyLabel = urgency === 'urgent' ? 'Urgent' : urgency === 'high' ? 'High' : 'Normal'
-                        let totalAmt: number | null = null
-                        if (isShiftJob && selectedDraft.salary_amount != null && shiftStart && shiftEnd) {
-                          let worked = toMins(shiftEnd) - toMins(shiftStart)
-                          if (breakStart && breakEnd) worked -= (toMins(breakEnd) - toMins(breakStart))
-                          if (worked > 0) totalAmt = Math.round(selectedDraft.salary_amount * (worked / 60) * 100) / 100
-                        }
-                        const fmtShort = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return m === 0 ? `${h12}${ap}` : `${h12}:${String(m).padStart(2, '0')}${ap}` }
-                        const statCard: React.CSSProperties = { borderRadius: 12, padding: '10px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'center', minHeight: 72 }
-                        const statLabel: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }
-                        const statLabelText = (color: string): React.CSSProperties => ({ fontSize: '0.75rem', fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: '0.06em' })
-                        const statValue: React.CSSProperties = { margin: 0, fontSize: '0.8rem', fontWeight: 600, color: '#374151', lineHeight: 1.3 }
-                        return (
-                          <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px 24px' }}>
-                            {/* Stat cards */}
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 20 }}>
-                              {/* Pay */}
-                              {selectedDraft.salary_amount != null ? (
-                                <div style={{ ...statCard, background: '#FFF7ED', border: '1px solid #FED7AA' }}>
-                                  <div style={statLabel}><DollarSign size={11} style={{ color: '#F97316' }} /><span style={statLabelText('#F97316')}>{isShiftJob ? 'Pay' : 'Flat Rate'}</span></div>
-                                  <p style={statValue}>{isShiftJob ? `$${selectedDraft.salary_amount}/Hr${totalAmt != null ? ` ($${totalAmt % 1 === 0 ? totalAmt.toFixed(0) : totalAmt.toFixed(2)})` : ''}` : `$${selectedDraft.salary_amount}`}</p>
-                                </div>
-                              ) : (
-                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}><span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No pay set</span></div>
-                              )}
-                              {/* Date */}
-                              {shiftDate ? (
-                                <div style={{ ...statCard, background: '#F0F9FF', border: '1px solid #BAE6FD' }}>
-                                  <div style={statLabel}><CalendarDays size={11} style={{ color: '#0284C7' }} /><span style={statLabelText('#0284C7')}>Date</span></div>
-                                  <p style={statValue}>{new Date(shiftDate).toLocaleDateString('en-SG', { weekday: 'short', day: 'numeric', month: 'short' })}</p>
-                                </div>
-                              ) : (
-                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}><span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No date set</span></div>
-                              )}
-                              {/* Hours / Estimation */}
-                              {isShiftJob ? ((shiftStart || shiftEnd) ? (
-                                <div style={{ ...statCard, background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
-                                  <div style={statLabel}><Clock size={11} style={{ color: '#059669' }} /><span style={statLabelText('#059669')}>Hours</span></div>
-                                  <p style={statValue}>{shiftStart ? fmtShort(shiftStart) : '—'} – {shiftEnd ? fmtShort(shiftEnd) : '—'}</p>
-                                </div>
-                              ) : (
-                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}><span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No hours set</span></div>
-                              )) : (estimatedHours ? (
-                                <div style={{ ...statCard, background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
-                                  <div style={statLabel}><Clock size={11} style={{ color: '#059669' }} /><span style={statLabelText('#059669')}>Estimation</span></div>
-                                  <p style={statValue}>{estimatedHours} Hours</p>
-                                </div>
-                              ) : (
-                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}><span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No hours set</span></div>
-                              ))}
-                              {/* Break / Urgency */}
-                              {isShiftJob ? ((breakStart || breakEnd) ? (
-                                <div style={{ ...statCard, background: '#FDF4FF', border: '1px solid #E9D5FF' }}>
-                                  <div style={statLabel}><Coffee size={11} style={{ color: '#9333EA' }} /><span style={statLabelText('#9333EA')}>Break</span></div>
-                                  <p style={statValue}>{breakStart ? fmtShort(breakStart) : '—'} – {breakEnd ? fmtShort(breakEnd) : '—'}</p>
-                                </div>
-                              ) : (
-                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}><span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No break</span></div>
-                              )) : (
-                                <div style={{ ...statCard, background: '#FFF1F2', border: '1px solid #FECDD3' }}>
-                                  <div style={statLabel}><Zap size={11} style={{ color: '#E11D48' }} /><span style={statLabelText('#E11D48')}>Urgency</span></div>
-                                  <p style={statValue}>{urgencyLabel}</p>
-                                </div>
-                              )}
-                            </div>
-
-                            {/* Department + Employee row */}
-                            {(selectedDraft.department_name || selectedDraft.assigned_employee_name) && (
-                              <div style={{ display: 'flex', border: '1px solid #E5E7EB', borderRadius: 10, overflow: 'hidden', marginTop: 4 }}>
-                                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 0', borderRight: '1px solid #E5E7EB', background: '#FAFAFA' }}>
-                                  <LayoutGrid size={14} style={{ color: '#9CA3AF', flexShrink: 0 }} />
-                                  <span style={{ fontSize: '0.875rem', color: '#374151' }}>{selectedDraft.department_name ?? '—'}</span>
-                                </div>
-                                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 0', background: '#FAFAFA' }}>
-                                  <UserCheck size={14} style={{ color: '#9CA3AF', flexShrink: 0 }} />
-                                  <span style={{ fontSize: '0.875rem', color: '#374151' }}>{selectedDraft.assigned_employee_name ?? '—'}</span>
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Scope & Requirements */}
-                            <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                              <div style={{ background: '#FFFFFF', borderRadius: 10, padding: '14px 16px', border: '1px solid #E5E7EB' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                                  <FileText size={13} style={{ color: '#F97316' }} />
-                                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Scope</span>
-                                </div>
-                                {selectedDraft.description ? (
-                                  <p style={{ margin: 0, fontSize: '0.875rem', color: '#374151', lineHeight: 1.75 }}>{selectedDraft.description}</p>
-                                ) : (
-                                  <p style={{ margin: 0, fontSize: '0.875rem', color: '#9CA3AF', fontStyle: 'italic' }}>Not set</p>
-                                )}
-                              </div>
-                              <div style={{ background: '#FFFFFF', borderRadius: 10, padding: '14px 16px', border: '1px solid #E5E7EB' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                                  <ClipboardList size={13} style={{ color: '#F97316' }} />
-                                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Requirements</span>
-                                </div>
-                                {selectedDraft.requirements ? (
-                                  <p style={{ margin: 0, fontSize: '0.875rem', color: '#374151', lineHeight: 1.75, whiteSpace: 'pre-wrap' }}>{selectedDraft.requirements}</p>
-                                ) : (
-                                  <p style={{ margin: 0, fontSize: '0.875rem', color: '#9CA3AF', fontStyle: 'italic' }}>Not set</p>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        )
-                      })()}
-
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          )}
-
         </div>
         </div>
         </div>
@@ -2507,6 +2607,18 @@ export default function OwnerRecruitmentPage() {
           : wizardStep === 'type' ? 'Choose Job Type'
           : 'Complete Job Description'
 
+        // AI Post Job reuses this same wizard — give the create flow the same purple AI
+        // treatment as the Auto Shift Scheduling modal; editing an existing posting keeps
+        // the plain orange look since that entry point isn't the "AI Post Job" action.
+        const accent = editingId ? '#F97316' : '#7C3AED'
+        const accentDark = editingId ? '#EA580C' : '#6D28D9'
+        const accentGradient = `linear-gradient(135deg, ${accent}, ${accentDark})`
+        const accentTint = editingId ? '#FFF7ED' : '#F5F3FF'
+        const accentTintBorder = editingId ? '#FED7AA' : '#DDD6FE'
+        const accentTextDark = editingId ? '#C2410C' : '#6D28D9'
+        const accentDisabledBg = editingId ? '#FDA060' : '#EDE9FE'
+        const accentDisabledText = editingId ? '#FFFFFF' : '#A78BFA'
+
         const EXPIRY_PRESETS = [
           { value: 'none', label: 'No expiry' }, { value: '7d', label: '7 days' },
           { value: '14d', label: '14 days' },   { value: '30d', label: '30 days' },
@@ -2563,25 +2675,16 @@ export default function OwnerRecruitmentPage() {
 
               {/* Header */}
               <div style={{ padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                {!editingId ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                    {(['type', 'ai', 'form'] as const).map((s, i) => (
-                      <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                        <div style={{ width: 22, height: 22, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, background: displayStep === s ? '#F97316' : stepIdx > i ? '#FFF7ED' : '#F3F4F6', color: displayStep === s ? '#FFF' : stepIdx > i ? '#C2410C' : '#9CA3AF', flexShrink: 0 }}>
-                          {stepIdx > i ? <Check size={11} /> : i + 1}
-                        </div>
-                        {displayStep === s && (
-                          <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#111827' }}>
-                            {s === 'type' ? 'Job Type' : s === 'ai' ? 'Job Description' : 'Job Posted'}
-                          </span>
-                        )}
-                        {i < 2 && <div style={{ width: 16, height: 1.5, background: '#E5E7EB', margin: '0 1px' }} />}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0 }}>{modalTitle}</h2>
-                )}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  {!editingId && (
+                    <div style={{ width: 32, height: 32, borderRadius: 9, background: accentGradient, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <Sparkles size={15} color="#FFFFFF" strokeWidth={2.5} />
+                    </div>
+                  )}
+                  <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+                    {editingId ? modalTitle : 'Post a Job'}
+                  </h2>
+                </div>
                 <button onClick={() => { setFormOpen(false); resetForm() }} aria-label="Close" style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: 6, borderRadius: 8, flexShrink: 0 }}
                   onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
                   onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}>
@@ -2592,16 +2695,32 @@ export default function OwnerRecruitmentPage() {
               {/* Scrollable body */}
               <div style={{ padding: '20px 24px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 14 }}>
 
-                {/* Back row */}
-                {wizardStep !== 'type' && !editingId && (
-                  <div style={{ display: 'flex', alignItems: 'center' }}>
-                    <button onClick={() => setWizardStep('type')}
-                      style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: 'none', cursor: 'pointer', color: '#6B7280', fontWeight: 600, fontSize: '0.8125rem', padding: 0 }}
-                      onMouseEnter={e => { e.currentTarget.style.color = '#111827' }}
-                      onMouseLeave={e => { e.currentTarget.style.color = '#6B7280' }}>
-                      <ChevronLeft size={15} />
-                      Back
-                    </button>
+                {/* Step progress — same pattern as the Auto Shift Scheduling modal: completed steps become clickable back-circles */}
+                {!editingId && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                    {(['type', 'ai', 'form'] as const).map((s, i) => {
+                      const isDone = stepIdx > i
+                      return (
+                        <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                          {isDone ? (
+                            <button type="button" onClick={() => setWizardStep('type')} title="Back" aria-label="Back to Job Type"
+                              style={{ width: 24, height: 24, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, border: 'none', background: accentTint, color: accent, padding: 0, cursor: 'pointer' }}>
+                              <ChevronLeft size={14} strokeWidth={2.75} />
+                            </button>
+                          ) : (
+                            <div style={{ width: 20, height: 20, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, background: displayStep === s ? accent : '#F3F4F6', color: displayStep === s ? '#FFF' : '#9CA3AF', flexShrink: 0 }}>
+                              {i + 1}
+                            </div>
+                          )}
+                          {displayStep === s && (
+                            <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#111827' }}>
+                              {s === 'type' ? 'Job Type' : s === 'ai' ? 'Job Description' : 'Job Posted'}
+                            </span>
+                          )}
+                          {i < 2 && <div style={{ width: 16, height: 1.5, background: '#E5E7EB', margin: '0 1px' }} />}
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
 
@@ -2610,11 +2729,11 @@ export default function OwnerRecruitmentPage() {
                   <>
                     <button onClick={() => { setFormJobType('shift'); setFormEmpType('part-time'); setFormSalaryType('per hour'); setWizardStep('ai') }}
                       style={{ padding: '14px 16px', border: '1.5px solid #E5E7EB', borderRadius: 12, background: '#FFFFFF', cursor: 'pointer', textAlign: 'left' }}
-                      onMouseEnter={e => { e.currentTarget.style.borderColor = '#F97316'; e.currentTarget.style.background = '#FFFBF7' }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = accent; e.currentTarget.style.background = accentTint }}
                       onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.background = '#FFFFFF' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                        <div style={{ width: 36, height: 36, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                          <Repeat size={17} color="#F97316" />
+                        <div style={{ width: 36, height: 36, borderRadius: 9, background: accentTint, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                          <Repeat size={17} color={accent} />
                         </div>
                         <div>
                           <p style={{ fontWeight: 700, fontSize: '0.9375rem', color: '#111827', margin: '0 0 2px' }}>Shift Job</p>
@@ -2624,11 +2743,11 @@ export default function OwnerRecruitmentPage() {
                     </button>
                     <button onClick={() => { setFormJobType('oneoff'); setFormEmpType('casual'); setFormSalaryType('flat rate'); setWizardStep('ai') }}
                       style={{ padding: '14px 16px', border: '1.5px solid #E5E7EB', borderRadius: 12, background: '#FFFFFF', cursor: 'pointer', textAlign: 'left' }}
-                      onMouseEnter={e => { e.currentTarget.style.borderColor = '#F97316'; e.currentTarget.style.background = '#FFFBF7' }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = accent; e.currentTarget.style.background = accentTint }}
                       onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.background = '#FFFFFF' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                        <div style={{ width: 36, height: 36, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                          <Zap size={17} color="#F97316" />
+                        <div style={{ width: 36, height: 36, borderRadius: 9, background: accentTint, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                          <Zap size={17} color={accent} />
                         </div>
                         <div>
                           <p style={{ fontWeight: 700, fontSize: '0.9375rem', color: '#111827', margin: '0 0 2px' }}>One-off Job</p>
@@ -2644,10 +2763,10 @@ export default function OwnerRecruitmentPage() {
                   <>
                     {aiPreview ? (
                       <>
-                        <div style={{ background: '#FFFBF7', border: '1.5px solid #FED7AA', borderRadius: 10, padding: '14px 16px' }}>
+                        <div style={{ background: accentTint, border: `1.5px solid ${accentTintBorder}`, borderRadius: 10, padding: '14px 16px' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                            <Sparkles size={14} color="#F97316" />
-                            <span style={{ fontWeight: 700, fontSize: '0.8125rem', color: '#C2410C' }}>AI Draft Ready</span>
+                            <Sparkles size={14} color={accent} />
+                            <span style={{ fontWeight: 700, fontSize: '0.8125rem', color: accentTextDark }}>AI Draft Ready</span>
                             <span style={{ fontSize: '0.78rem', color: '#9CA3AF', marginLeft: 'auto' }}>Review before posting</span>
                           </div>
                           <p style={{ fontWeight: 700, fontSize: '0.9375rem', color: '#111827', margin: '0 0 4px' }}>{aiPreview.title}</p>
@@ -2655,16 +2774,16 @@ export default function OwnerRecruitmentPage() {
                         </div>
                         <div style={{ display: 'flex', gap: 10 }}>
                           <button onClick={() => setAiPreview(null)} style={{ flex: 1, padding: 10, background: 'none', border: '1.5px solid #E5E7EB', borderRadius: 8, fontWeight: 600, fontSize: '0.9375rem', color: '#6B7280', cursor: 'pointer' }}>← Regenerate</button>
-                          <button onClick={handleUseAIDraft} style={{ flex: 1, padding: 10, background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.9375rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7 }}>
+                          <button onClick={handleUseAIDraft} style={{ flex: 1, padding: 10, background: accentGradient, color: '#FFFFFF', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.9375rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7 }}>
                             <FileText size={14} /> Use This Draft
                           </button>
                         </div>
                       </>
                     ) : (
                       <>
-                        <div style={{ background: '#FFFBF7', border: '1.5px solid #FED7AA', borderRadius: 12, padding: '16px 18px' }}>
+                        <div style={{ background: accentTint, border: `1.5px solid ${accentTintBorder}`, borderRadius: 12, padding: '16px 18px' }}>
                           <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: '0.875rem', color: '#374151', marginBottom: 10 }}>
-                            <Sparkles size={14} color="#F97316" /> AI Job Description Builder
+                            <Sparkles size={14} color={accent} /> AI Job Description Builder
                           </label>
                           <textarea value={aiPrompt} onChange={e => setAiPrompt(e.target.value)}
                             rows={5} style={{ ...iStyle, background: '#FFFFFF', border: '1.5px solid #E5E7EB', resize: 'none' }} />
@@ -2674,7 +2793,7 @@ export default function OwnerRecruitmentPage() {
                             Fill Manually
                           </button>
                           <button onClick={handleAIGenerate} disabled={!aiPrompt.trim() || aiLoading}
-                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: !aiPrompt.trim() || aiLoading ? '#9CA3AF' : '#F97316', color: '#FFFFFF', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: !aiPrompt.trim() || aiLoading ? 'default' : 'pointer' }}>
+                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: !aiPrompt.trim() || aiLoading ? accentDisabledBg : accent, color: !aiPrompt.trim() || aiLoading ? accentDisabledText : '#FFFFFF', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: !aiPrompt.trim() || aiLoading ? 'default' : 'pointer' }}>
                             {aiLoading ? <><Spinner size={13} /> Generating…</> : <><Sparkles size={13} /> Generate</>}
                           </button>
                         </div>
@@ -2721,11 +2840,11 @@ export default function OwnerRecruitmentPage() {
                       </div>
                     )}
                     <div>
-                      <label style={lStyle}>Job Title <span style={{ color: '#F97316' }}>*</span></label>
+                      <label style={lStyle}>Job Title <span style={{ color: accent }}>*</span></label>
                       <input value={formTitle} onChange={e => setFormTitle(e.target.value)} placeholder={formJobType === 'shift' ? 'e.g. Weekend Cashier' : 'e.g. Event Setup Crew'} style={iStyle} />
                     </div>
                     <div>
-                      <label style={lStyle}>{formJobType === 'shift' ? 'Job Scope' : 'Description'} <span style={{ color: '#F97316' }}>*</span></label>
+                      <label style={lStyle}>{formJobType === 'shift' ? 'Job Scope' : 'Description'} <span style={{ color: accent }}>*</span></label>
                       <textarea value={formDescription} onChange={e => setFormDescription(e.target.value)} rows={1} style={{ ...iStyle, resize: 'vertical', lineHeight: 1.55, verticalAlign: 'top' }} placeholder="Describe the role, responsibilities, and expectations…" />
                     </div>
                     <div>
@@ -2741,14 +2860,14 @@ export default function OwnerRecruitmentPage() {
                       )}
                     </div>
                     <button onClick={() => { setNewTemplateName(formTitle); setFormError(''); setSaveTemplateModalOpen(true) }} disabled={!formTitle.trim()}
-                      style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', padding: 0, color: formTitle.trim() ? '#F97316' : '#D1D5DB', fontSize: '0.8125rem', fontWeight: 700, cursor: formTitle.trim() ? 'pointer' : 'default' }}>
+                      style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', padding: 0, color: formTitle.trim() ? accent : '#D1D5DB', fontSize: '0.8125rem', fontWeight: 700, cursor: formTitle.trim() ? 'pointer' : 'default' }}>
                       <ClipboardList size={13} /> Save as Template
                     </button>
                     {formJobType === 'oneoff' && (
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                         <div><label style={lStyle}>Est. Hours</label><input value={formEstHours} onChange={e => setFormEstHours(e.target.value)} placeholder="e.g. 4–6 hours" style={iStyle} /></div>
                         <div>
-                          <label style={lStyle}>Start Time <span style={{ color: '#F97316' }}>*</span></label>
+                          <label style={lStyle}>Start Time <span style={{ color: accent }}>*</span></label>
                           <input type="time" value={formJobStartTime} onChange={e => setFormJobStartTime(e.target.value)} style={iStyle} />
                         </div>
                         <div>
@@ -2765,7 +2884,7 @@ export default function OwnerRecruitmentPage() {
                       <>
                         <div style={divider} />
                         <div>
-                          <label style={lStyle}>Department <span style={{ color: '#F97316' }}>*</span></label>
+                          <label style={lStyle}>Department <span style={{ color: accent }}>*</span></label>
                           <RDrop value={formDeptId} placeholder="Select department"
                             options={departments.map(d => ({ value: d.id, label: d.name }))}
                             onChange={async (deptId) => {
@@ -2787,7 +2906,7 @@ export default function OwnerRecruitmentPage() {
                         </div>
                         {(formDeptId || editingId) && (
                           <div>
-                            <label style={lStyle}>Shift Date <span style={{ color: '#F97316' }}>*</span></label>
+                            <label style={lStyle}>Shift Date <span style={{ color: accent }}>*</span></label>
                             {shiftAvailableDates.length > 0 ? (
                               <RDrop value={formShiftDate} placeholder="Select date"
                                 options={shiftAvailableDates.map(({ date, start_time, end_time }) => {
@@ -2808,7 +2927,7 @@ export default function OwnerRecruitmentPage() {
                         )}
                         {(formShiftDate || editingId) && (
                           <div>
-                            <label style={lStyle}>Assigned Employee <span style={{ color: '#F97316' }}>*</span></label>
+                            <label style={lStyle}>Assigned Employee <span style={{ color: accent }}>*</span></label>
                             {shiftDateEmployees.length > 0 ? (
                               <RDrop value={formAssignedEmployeeId} placeholder="Select employee"
                                 options={shiftDateEmployees.map(emp => ({ value: emp.id, label: emp.full_name }))}
@@ -2827,11 +2946,11 @@ export default function OwnerRecruitmentPage() {
                           <>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                               <div>
-                                <label style={lStyle}>Start Time <span style={{ color: '#F97316' }}>*</span></label>
+                                <label style={lStyle}>Start Time <span style={{ color: accent }}>*</span></label>
                                 <RTimePicker value={formShiftStart || '09:00'} onChange={setFormShiftStart} />
                               </div>
                               <div>
-                                <label style={lStyle}>End Time <span style={{ color: '#F97316' }}>*</span></label>
+                                <label style={lStyle}>End Time <span style={{ color: accent }}>*</span></label>
                                 <RTimePicker value={formShiftEnd || '17:00'} onChange={setFormShiftEnd} />
                               </div>
                             </div>
@@ -2855,7 +2974,7 @@ export default function OwnerRecruitmentPage() {
                       <>
                         <div style={divider} />
                         <div>
-                          <label style={lStyle}>Department <span style={{ color: '#F97316' }}>*</span></label>
+                          <label style={lStyle}>Department <span style={{ color: accent }}>*</span></label>
                           <RDrop value={formDeptId} placeholder="Select department"
                             options={departments.map(d => ({ value: d.id, label: d.name }))}
                             onChange={async (deptId) => {
@@ -2877,7 +2996,7 @@ export default function OwnerRecruitmentPage() {
                         </div>
                         {formDeptId && (
                           <div>
-                            <label style={lStyle}>Shift Date <span style={{ color: '#F97316' }}>*</span></label>
+                            <label style={lStyle}>Shift Date <span style={{ color: accent }}>*</span></label>
                             {shiftAvailableDates.length > 0 ? (
                               <RDrop value={formShiftDate} placeholder="Select date"
                                 options={shiftAvailableDates.map(({ date, start_time, end_time }) => {
@@ -2898,7 +3017,7 @@ export default function OwnerRecruitmentPage() {
                         )}
                         {formShiftDate && (
                           <div>
-                            <label style={lStyle}>Assigned Employee <span style={{ color: '#F97316' }}>*</span></label>
+                            <label style={lStyle}>Assigned Employee <span style={{ color: accent }}>*</span></label>
                             {shiftDateEmployees.length > 0 ? (
                               <RDrop value={formAssignedEmployeeId} placeholder="Select employee"
                                 options={shiftDateEmployees.map(emp => ({ value: emp.id, label: emp.full_name }))}
@@ -2952,7 +3071,8 @@ export default function OwnerRecruitmentPage() {
                       {actionLoading ? <Spinner size={13} dark /> : <FileText size={13} />} Save Draft
                     </button>
                   )}
-                  <button onClick={() => saveForm(editingDraft ? 'draft' : 'open')} disabled={actionLoading} style={modalPrimaryButtonStyle(actionLoading)}>
+                  <button onClick={() => saveForm(editingDraft ? 'draft' : 'open')} disabled={actionLoading}
+                    style={editingId ? modalPrimaryButtonStyle(actionLoading) : { ...modalPrimaryButtonStyle(actionLoading), background: actionLoading ? accentDisabledBg : accentGradient }}>
                     {actionLoading ? <Spinner size={13} /> : <Check size={13} />} {editingDraft ? 'Save Changes' : editingId ? 'Save Changes' : 'Post Job'}
                   </button>
                 </div>

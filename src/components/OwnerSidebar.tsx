@@ -161,7 +161,7 @@ export default function OwnerSidebar({
         if (!d.success) return
         setUserRole(d.user.role)
         const internalId: string = d.user.id
-        const cid = localStorage.getItem('tasking_company_id') ?? localStorage.getItem(`tasking_company_id_${authUid}`)
+        const cid = localStorage.getItem('tasking_company_id') ?? localStorage.getItem(`tasking_company_id_${authUid}`) ?? d.user.company_id
         if (!cid) return
 
         fetch(`/api/inbox/unread-count?user_id=${internalId}&company_id=${cid}`)

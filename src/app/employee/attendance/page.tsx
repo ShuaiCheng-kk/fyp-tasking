@@ -337,7 +337,7 @@ export default function EmployeeAttendancePage() {
   }
 
   const handleSubmitFixedOff = async () => {
-    if (selectedFixedOffDates.length === 0) { setMyReqError('Select at least one date.'); return }
+    if (selectedFixedOffDates.length !== fixedOffQuota) { setMyReqError(`Select exactly ${fixedOffQuota} day(s).`); return }
     setFixedSubmitting(true); setMyReqError(''); setMyReqSuccess('')
     try {
       const res = await fetch('/api/attendance', {
@@ -361,7 +361,7 @@ export default function EmployeeAttendancePage() {
     setSelectedFixedOffDates(prev => {
       if (prev.includes(date)) return prev.filter(value => value !== date)
       if (prev.length >= fixedOffQuota) {
-        setMyReqError(`You can select up to ${fixedOffQuota} day(s).`)
+        setMyReqError(`You must select exactly ${fixedOffQuota} day(s).`)
         return prev
       }
       return [...prev, date].sort()
@@ -828,8 +828,8 @@ export default function EmployeeAttendancePage() {
                   </div>
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button onClick={() => setFixedFormOpen(false)} style={{ flex: 1, height: 38, background: 'none', border: `1.5px solid ${BORDER}`, borderRadius: 9, fontWeight: 700, fontSize: 13, color: MUTED, cursor: 'pointer' }}>Cancel</button>
-                    <button onClick={handleSubmitFixedOff} disabled={fixedSubmitting || selectedFixedOffDates.length === 0}
-                      style={{ flex: 2, height: 38, background: '#14532D', border: 'none', borderRadius: 9, fontWeight: 700, fontSize: 13, color: '#FFFFFF', cursor: fixedSubmitting ? 'default' : 'pointer', opacity: fixedSubmitting || selectedFixedOffDates.length === 0 ? 0.55 : 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                    <button onClick={handleSubmitFixedOff} disabled={fixedSubmitting || selectedFixedOffDates.length !== fixedOffQuota}
+                      style={{ flex: 2, height: 38, background: '#14532D', border: 'none', borderRadius: 9, fontWeight: 700, fontSize: 13, color: '#FFFFFF', cursor: fixedSubmitting ? 'default' : 'pointer', opacity: fixedSubmitting || selectedFixedOffDates.length !== fixedOffQuota ? 0.55 : 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                       {fixedSubmitting ? <Spinner /> : <Calendar size={13} />} Request Weekly Day Off
                     </button>
                   </div>

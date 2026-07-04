@@ -5,6 +5,7 @@ import { authRepository } from '@/repositories/auth/authRepository'
 import { attendanceRepository } from '@/repositories/owner/attendanceRepository'
 import { offDaySettingsRepository } from '@/repositories/owner/offDaySettingsRepository'
 import {
+  OffDayQuotaDefaultRole,
   OffDayQuotaSetting,
   OffDayQuotaUpsertInput,
   OffDaySubmissionDeadline,
@@ -28,43 +29,47 @@ export const offDaySettingsService = {
     return settings.map(s => ({ ...s, manager_name: s.user_id ? namesById.get(s.user_id) ?? null : null }))
   },
 
-  async setCompanyDefaultQuota(input: { company_id: string; owner_id: string; max_days_per_week: number }): Promise<OffDayQuotaSetting> {
+  async setDefaultQuota(input: { company_id: string; owner_id: string; role: OffDayQuotaDefaultRole; max_days_per_week: number }): Promise<OffDayQuotaSetting> {
     await this.assertOwner(input.owner_id, input.company_id)
     assertValidQuota(input.max_days_per_week)
     const upsertInput: OffDayQuotaUpsertInput = {
       company_id: input.company_id,
       user_id: null,
       max_days_per_week: input.max_days_per_week,
+      role: input.role,
       updated_by: input.owner_id,
     }
     return offDaySettingsRepository.upsertQuotaSetting(upsertInput)
   },
 
-  async setManagerQuotaOverride(input: { company_id: string; owner_id: string; manager_id: string; max_days_per_week: number }): Promise<OffDayQuotaSetting> {
+  async setUserQuotaOverride(input: { company_id: string; owner_id: string; user_id: string; max_days_per_week: number }): Promise<OffDayQuotaSetting> {
     await this.assertOwner(input.owner_id, input.company_id)
     assertValidQuota(input.max_days_per_week)
-    const manager = await authRepository.findByAuthIdOrInternalId(input.manager_id)
-    if (!manager || manager.role !== 'Manager' || manager.company_id !== input.company_id) {
-      throw new Error('manager_id must resolve to a Manager in this company')
+    const target = await authRepository.findByAuthIdOrInternalId(input.user_id)
+    if (!target || (target.role !== 'Manager' && target.role !== 'Employee') || target.company_id !== input.company_id) {
+      throw new Error('user_id must resolve to a Manager or Employee in this company')
     }
     const upsertInput: OffDayQuotaUpsertInput = {
       company_id: input.company_id,
-      user_id: input.manager_id,
+      user_id: input.user_id,
       max_days_per_week: input.max_days_per_week,
+      role: null,
       updated_by: input.owner_id,
     }
     return offDaySettingsRepository.upsertQuotaSetting(upsertInput)
   },
 
-  async removeManagerQuotaOverride(input: { company_id: string; owner_id: string; manager_id: string }): Promise<void> {
+  async removeUserQuotaOverride(input: { company_id: string; owner_id: string; user_id: string }): Promise<void> {
     await this.assertOwner(input.owner_id, input.company_id)
-    return offDaySettingsRepository.deleteQuotaOverride(input.company_id, input.manager_id)
+    return offDaySettingsRepository.deleteQuotaOverride(input.company_id, input.user_id)
   },
 
   async getEffectiveQuota(company_id: string, user_id: string): Promise<number> {
     const override = await offDaySettingsRepository.getQuotaForUser(company_id, user_id)
     if (override) return override.max_days_per_week
-    const fallback = await offDaySettingsRepository.getCompanyDefaultQuota(company_id)
+    const user = await authRepository.findByAuthIdOrInternalId(user_id)
+    const role: OffDayQuotaDefaultRole = user?.role === 'Manager' ? 'Manager' : 'Employee'
+    const fallback = await offDaySettingsRepository.getCompanyDefaultQuota(company_id, role)
     return fallback?.max_days_per_week ?? 2
   },
 
@@ -73,14 +78,18 @@ export const offDaySettingsService = {
     return offDaySettingsRepository.getDeadline(company_id)
   },
 
-  async setDeadline(input: { company_id: string; owner_id: string; deadline_weekday: number }): Promise<OffDaySubmissionDeadline> {
+  async setDeadline(input: { company_id: string; owner_id: string; deadline_weekday: number; deadline_time: string }): Promise<OffDaySubmissionDeadline> {
     await this.assertOwner(input.owner_id, input.company_id)
     if (!Number.isInteger(input.deadline_weekday) || input.deadline_weekday < 0 || input.deadline_weekday > 6) {
       throw new Error('deadline_weekday must be an integer between 0 and 6')
     }
+    if (!/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(input.deadline_time)) {
+      throw new Error('deadline_time must be in HH:MM 24-hour format')
+    }
     const upsertInput: OffDaySubmissionDeadlineUpsertInput = {
       company_id: input.company_id,
       deadline_weekday: input.deadline_weekday,
+      deadline_time: input.deadline_time,
       updated_by: input.owner_id,
     }
     return offDaySettingsRepository.upsertDeadline(upsertInput)

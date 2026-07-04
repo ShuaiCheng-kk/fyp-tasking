@@ -11,13 +11,21 @@ vi.mock('@/services/ai/openAIService', () => ({
 
 vi.mock('@/repositories/owner/attendanceRepository', () => ({
   attendanceRepository: {
-    getScheduledHeadcountForDeptDate: vi.fn(),
+    getEmployeesByCompany: vi.fn(),
+    getOffDayRequestsByCompanyAndWeek: vi.fn(),
+  },
+}))
+
+vi.mock('@/repositories/owner/ownerTeamRepository', () => ({
+  ownerTeamRepository: {
+    findManagersByDepartment: vi.fn(),
   },
 }))
 
 import { requestAISuggestService } from './requestAISuggestService'
 import { openAIService } from '@/services/ai/openAIService'
 import { attendanceRepository } from '@/repositories/owner/attendanceRepository'
+import { ownerTeamRepository } from '@/repositories/owner/ownerTeamRepository'
 
 const stubSuggestion = {
   recommendation: 'approve' as const,
@@ -27,14 +35,98 @@ const stubSuggestion = {
   alternatives: [],
 }
 
+function offDayRow(overrides: Partial<{ user_id: string; request_date: string; status: string }> = {}) {
+  return {
+    id: `row-${Math.random()}`,
+    company_id: 'company-1',
+    week_start: '2026-07-13',
+    source: 'submitted',
+    reviewed_by: null,
+    reviewed_at: null,
+    created_at: '2026-01-01',
+    user_id: 'other-user',
+    request_date: '2026-07-13',
+    status: 'approved',
+    ...overrides,
+  }
+}
+
 describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(ownerTeamRepository.findManagersByDepartment).mockResolvedValue([
+      { id: 'mgr-1', full_name: 'Manager One' },
+    ])
+    vi.mocked(attendanceRepository.getEmployeesByCompany).mockResolvedValue([
+      { id: 'emp-1', full_name: 'Employee One', department_id: 'dept-ops' },
+      { id: 'emp-2', full_name: 'Employee Two', department_id: 'dept-ops' },
+    ] as any)
+    vi.mocked(attendanceRepository.getOffDayRequestsByCompanyAndWeek).mockResolvedValue([])
+    vi.mocked(openAIService.generateStructuredJson).mockResolvedValue(stubSuggestion)
   })
 
-  it('flags any_date_would_be_understaffed=true when any requested date would drop the requester role below the minimum', async () => {
-    vi.mocked(attendanceRepository.getScheduledHeadcountForDeptDate).mockResolvedValue({ managers: 1, employees: 3 })
-    vi.mocked(openAIService.generateStructuredJson).mockResolvedValue(stubSuggestion)
+  // Regression: off-day requests are for a week that hasn't been shift-scheduled yet, so a check
+  // based on the (always-empty) shifts table would flag every date as understaffed no matter what.
+  // Staffing risk must be measured against the department roster instead.
+  it('does not flag understaffing purely because no shifts have been scheduled yet for that future week', async () => {
+    await requestAISuggestService.suggestFixedOffDayGroup({
+      requester_name: 'Manager One',
+      requester_role: 'Manager',
+      request_dates: ['2026-07-13'],
+      department_id: 'dept-ops',
+      company_id: 'company-1',
+      user_id: 'mgr-1',
+    })
+
+    const call = vi.mocked(openAIService.generateStructuredJson).mock.calls[0][0] as any
+    // Roster is 1 manager + 2 employees, nobody else off that day — approving the sole manager's
+    // request would drop the department to 0 managers, which IS genuinely understaffed (min 1).
+    expect(call.input.any_date_would_be_understaffed).toBe(true)
+    expect(call.input.department_manager_headcount).toBe(1)
+    expect(call.input.department_employee_headcount).toBe(2)
+  })
+
+  // The reason shown to the Owner must directly name the problem date and cause, not a paraphrased
+  // explanation — built deterministically so it's never at the mercy of the LLM's wording.
+  it('overrides the LLM reason with a deterministic, direct message naming the date and the short role', async () => {
+    const result = await requestAISuggestService.suggestFixedOffDayGroup({
+      requester_name: 'Manager One',
+      requester_role: 'Manager',
+      request_dates: ['2026-07-13'],
+      department_id: 'dept-ops',
+      company_id: 'company-1',
+      user_id: 'mgr-1',
+    })
+
+    expect(result.reason).toBe('Monday [13 Jul] already has too many managers off.')
+  })
+
+  it('returns the reassuring reason when nothing is understaffed, ignoring whatever the LLM said', async () => {
+    vi.mocked(ownerTeamRepository.findManagersByDepartment).mockResolvedValue([
+      { id: 'mgr-1', full_name: 'Manager One' },
+      { id: 'mgr-2', full_name: 'Manager Two' },
+    ])
+
+    const result = await requestAISuggestService.suggestFixedOffDayGroup({
+      requester_name: 'Manager One',
+      requester_role: 'Manager',
+      request_dates: ['2026-07-13'],
+      department_id: 'dept-ops',
+      company_id: 'company-1',
+      user_id: 'mgr-1',
+    })
+
+    expect(result.reason).toBe('This request keeps staffing balanced — safe to approve.')
+  })
+
+  it('flags understaffing when the requester is the only one covering their role that day, based on roster minus others already off', async () => {
+    vi.mocked(ownerTeamRepository.findManagersByDepartment).mockResolvedValue([
+      { id: 'mgr-1', full_name: 'Manager One' },
+      { id: 'mgr-2', full_name: 'Manager Two' },
+    ])
+    vi.mocked(attendanceRepository.getOffDayRequestsByCompanyAndWeek).mockResolvedValue([
+      offDayRow({ user_id: 'mgr-2', request_date: '2026-07-13', status: 'approved' }),
+    ] as any)
 
     await requestAISuggestService.suggestFixedOffDayGroup({
       requester_name: 'Manager One',
@@ -46,13 +138,16 @@ describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
     })
 
     const call = vi.mocked(openAIService.generateStructuredJson).mock.calls[0][0] as any
+    // 2 managers on roster, mgr-2 already off that day, mgr-1 requesting too -> 0 remain, below min 1.
     expect(call.input.any_date_would_be_understaffed).toBe(true)
-    expect(call.input.requested_dates[0].scheduled_managers).toBe(1)
+    expect(call.input.requested_dates[0].other_managers_already_off).toBe(1)
   })
 
-  it('does not flag understaffing when headcount stays at or above the minimum on every requested date', async () => {
-    vi.mocked(attendanceRepository.getScheduledHeadcountForDeptDate).mockResolvedValue({ managers: 2, employees: 3 })
-    vi.mocked(openAIService.generateStructuredJson).mockResolvedValue(stubSuggestion)
+  it('does not flag understaffing when enough roster remains after this request and everyone else already off', async () => {
+    vi.mocked(ownerTeamRepository.findManagersByDepartment).mockResolvedValue([
+      { id: 'mgr-1', full_name: 'Manager One' },
+      { id: 'mgr-2', full_name: 'Manager Two' },
+    ])
 
     await requestAISuggestService.suggestFixedOffDayGroup({
       requester_name: 'Manager One',
@@ -64,16 +159,19 @@ describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
     })
 
     const call = vi.mocked(openAIService.generateStructuredJson).mock.calls[0][0] as any
+    // 2 managers on roster, nobody else off, mgr-1 requesting -> 1 remains, meets min 1.
     expect(call.input.any_date_would_be_understaffed).toBe(false)
     expect(call.input.requested_dates).toHaveLength(2)
   })
 
-  it('flags any_date_would_be_understaffed=true when only one of several requested dates is tight', async () => {
-    vi.mocked(attendanceRepository.getScheduledHeadcountForDeptDate).mockImplementation(async (_company, _dept, date: string) => {
-      if (date === '2026-07-15') return { managers: 1, employees: 3 }
-      return { managers: 2, employees: 3 }
-    })
-    vi.mocked(openAIService.generateStructuredJson).mockResolvedValue(stubSuggestion)
+  it('flags only the specific date that is tight when several requested dates are mixed', async () => {
+    vi.mocked(ownerTeamRepository.findManagersByDepartment).mockResolvedValue([
+      { id: 'mgr-1', full_name: 'Manager One' },
+      { id: 'mgr-2', full_name: 'Manager Two' },
+    ])
+    vi.mocked(attendanceRepository.getOffDayRequestsByCompanyAndWeek).mockResolvedValue([
+      offDayRow({ user_id: 'mgr-2', request_date: '2026-07-15', status: 'approved' }),
+    ] as any)
 
     await requestAISuggestService.suggestFixedOffDayGroup({
       requester_name: 'Manager One',
@@ -92,13 +190,83 @@ describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
     expect(ok.would_be_understaffed).toBe(false)
   })
 
-  it('only includes dates in safe_alternative_dates that stay at or above the minimum and are not already requested', async () => {
-    // Requested dates: 2026-07-13 (Mon). Department is tight on 2026-07-14 (Tue), fine elsewhere.
-    vi.mocked(attendanceRepository.getScheduledHeadcountForDeptDate).mockImplementation(async (_company, _dept, date: string) => {
-      if (date === '2026-07-14') return { managers: 1, employees: 3 }
-      return { managers: 2, employees: 3 }
+  it('excludes the requester\'s own other-date rows from "others already off" for a given date', async () => {
+    vi.mocked(attendanceRepository.getOffDayRequestsByCompanyAndWeek).mockResolvedValue([
+      offDayRow({ user_id: 'mgr-1', request_date: '2026-07-14', status: 'pending' }),
+    ] as any)
+
+    await requestAISuggestService.suggestFixedOffDayGroup({
+      requester_name: 'Manager One',
+      requester_role: 'Manager',
+      request_dates: ['2026-07-13'],
+      department_id: 'dept-ops',
+      company_id: 'company-1',
+      user_id: 'mgr-1',
     })
-    vi.mocked(openAIService.generateStructuredJson).mockResolvedValue(stubSuggestion)
+
+    const call = vi.mocked(openAIService.generateStructuredJson).mock.calls[0][0] as any
+    expect(call.input.requested_dates[0].other_managers_already_off).toBe(0)
+  })
+
+  it('excludes rejected rows from "others already off"', async () => {
+    vi.mocked(ownerTeamRepository.findManagersByDepartment).mockResolvedValue([
+      { id: 'mgr-1', full_name: 'Manager One' },
+      { id: 'mgr-2', full_name: 'Manager Two' },
+    ])
+    vi.mocked(attendanceRepository.getOffDayRequestsByCompanyAndWeek).mockResolvedValue([
+      offDayRow({ user_id: 'mgr-2', request_date: '2026-07-13', status: 'rejected' }),
+    ] as any)
+
+    await requestAISuggestService.suggestFixedOffDayGroup({
+      requester_name: 'Manager One',
+      requester_role: 'Manager',
+      request_dates: ['2026-07-13'],
+      department_id: 'dept-ops',
+      company_id: 'company-1',
+      user_id: 'mgr-1',
+    })
+
+    const call = vi.mocked(openAIService.generateStructuredJson).mock.calls[0][0] as any
+    expect(call.input.requested_dates[0].other_managers_already_off).toBe(0)
+    expect(call.input.any_date_would_be_understaffed).toBe(false)
+  })
+
+  // First-come-first-served: the queue is worked in submission order. Two people's still-pending
+  // requests for the same day aren't in conflict with each other yet — only an ALREADY-DECIDED
+  // (approved/modified) day actually reserves it. The first person to submit should always come
+  // back clean since nothing has been approved ahead of them yet.
+  it('does not count another person\'s still-pending request against "others already off" — first-come-first-served', async () => {
+    vi.mocked(ownerTeamRepository.findManagersByDepartment).mockResolvedValue([
+      { id: 'mgr-1', full_name: 'Manager One' },
+      { id: 'mgr-2', full_name: 'Manager Two' },
+    ])
+    vi.mocked(attendanceRepository.getOffDayRequestsByCompanyAndWeek).mockResolvedValue([
+      offDayRow({ user_id: 'mgr-2', request_date: '2026-07-13', status: 'pending' }),
+    ] as any)
+
+    await requestAISuggestService.suggestFixedOffDayGroup({
+      requester_name: 'Manager One',
+      requester_role: 'Manager',
+      request_dates: ['2026-07-13'],
+      department_id: 'dept-ops',
+      company_id: 'company-1',
+      user_id: 'mgr-1',
+    })
+
+    const call = vi.mocked(openAIService.generateStructuredJson).mock.calls[0][0] as any
+    expect(call.input.requested_dates[0].other_managers_already_off).toBe(0)
+    expect(call.input.any_date_would_be_understaffed).toBe(false)
+  })
+
+  it('only includes dates in safe_alternative_dates that stay at or above the minimum and are not already requested', async () => {
+    vi.mocked(ownerTeamRepository.findManagersByDepartment).mockResolvedValue([
+      { id: 'mgr-1', full_name: 'Manager One' },
+      { id: 'mgr-2', full_name: 'Manager Two' },
+    ])
+    // Department is tight on 2026-07-14 (Tue) because mgr-2 is already off then.
+    vi.mocked(attendanceRepository.getOffDayRequestsByCompanyAndWeek).mockResolvedValue([
+      offDayRow({ user_id: 'mgr-2', request_date: '2026-07-14', status: 'approved' }),
+    ] as any)
 
     await requestAISuggestService.suggestFixedOffDayGroup({
       requester_name: 'Manager One',
@@ -114,9 +282,7 @@ describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
     expect(call.input.safe_alternative_dates).not.toContain('2026-07-13')
   })
 
-  it('returns an empty safe_alternative_dates list when department_id is null', async () => {
-    vi.mocked(openAIService.generateStructuredJson).mockResolvedValue(stubSuggestion)
-
+  it('returns an empty safe_alternative_dates list and skips roster lookups when department_id is null', async () => {
     await requestAISuggestService.suggestFixedOffDayGroup({
       requester_name: 'Employee One',
       requester_role: 'Employee',
@@ -128,6 +294,6 @@ describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
 
     const call = vi.mocked(openAIService.generateStructuredJson).mock.calls[0][0] as any
     expect(call.input.safe_alternative_dates).toEqual([])
-    expect(attendanceRepository.getScheduledHeadcountForDeptDate).not.toHaveBeenCalled()
+    expect(ownerTeamRepository.findManagersByDepartment).not.toHaveBeenCalled()
   })
 })

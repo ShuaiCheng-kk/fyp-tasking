@@ -59,60 +59,71 @@ describe('offDaySettingsService', () => {
     })
   })
 
-  describe('setCompanyDefaultQuota', () => {
+  describe('setDefaultQuota', () => {
     beforeEach(() => {
       vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue(owner as any)
     })
 
     it('rejects a non-integer quota', async () => {
-      await expect(offDaySettingsService.setCompanyDefaultQuota({ company_id: 'company-1', owner_id: 'owner-1', max_days_per_week: 2.5 }))
+      await expect(offDaySettingsService.setDefaultQuota({ company_id: 'company-1', owner_id: 'owner-1', role: 'Manager', max_days_per_week: 2.5 }))
         .rejects.toThrow('integer')
     })
 
     it('rejects a quota outside 1-7', async () => {
-      await expect(offDaySettingsService.setCompanyDefaultQuota({ company_id: 'company-1', owner_id: 'owner-1', max_days_per_week: 8 }))
+      await expect(offDaySettingsService.setDefaultQuota({ company_id: 'company-1', owner_id: 'owner-1', role: 'Manager', max_days_per_week: 8 }))
         .rejects.toThrow('integer')
     })
 
-    it('upserts with user_id null for the company default', async () => {
-      vi.mocked(offDaySettingsRepository.upsertQuotaSetting).mockResolvedValue({ company_id: 'company-1', user_id: null, max_days_per_week: 3, updated_by: 'owner-1', updated_at: '2026-01-01' })
+    it('upserts with user_id null and the given role for the default', async () => {
+      vi.mocked(offDaySettingsRepository.upsertQuotaSetting).mockResolvedValue({ company_id: 'company-1', user_id: null, max_days_per_week: 3, role: 'Manager', updated_by: 'owner-1', updated_at: '2026-01-01' })
 
-      await offDaySettingsService.setCompanyDefaultQuota({ company_id: 'company-1', owner_id: 'owner-1', max_days_per_week: 3 })
+      await offDaySettingsService.setDefaultQuota({ company_id: 'company-1', owner_id: 'owner-1', role: 'Manager', max_days_per_week: 3 })
 
       expect(offDaySettingsRepository.upsertQuotaSetting).toHaveBeenCalledWith({
-        company_id: 'company-1', user_id: null, max_days_per_week: 3, updated_by: 'owner-1',
+        company_id: 'company-1', user_id: null, max_days_per_week: 3, role: 'Manager', updated_by: 'owner-1',
       })
     })
   })
 
-  describe('setManagerQuotaOverride', () => {
+  describe('setUserQuotaOverride', () => {
     beforeEach(() => {
       vi.mocked(authRepository.findByAuthIdOrInternalId).mockImplementation(async (id: string) => {
         if (id === 'owner-1') return owner as any
         if (id === 'mgr-2') return { id: 'mgr-2', role: 'Manager', company_id: 'company-1' } as any
+        if (id === 'emp-2') return { id: 'emp-2', role: 'Employee', company_id: 'company-1' } as any
         return null
       })
     })
 
-    it('rejects when manager_id does not resolve to a Manager in this company', async () => {
-      await expect(offDaySettingsService.setManagerQuotaOverride({ company_id: 'company-1', owner_id: 'owner-1', manager_id: 'nobody', max_days_per_week: 2 }))
-        .rejects.toThrow('must resolve to a Manager')
+    it('rejects when user_id does not resolve to a Manager or Employee in this company', async () => {
+      await expect(offDaySettingsService.setUserQuotaOverride({ company_id: 'company-1', owner_id: 'owner-1', user_id: 'nobody', max_days_per_week: 2 }))
+        .rejects.toThrow('must resolve to a Manager or Employee')
     })
 
     it('upserts with the manager user_id set', async () => {
-      vi.mocked(offDaySettingsRepository.upsertQuotaSetting).mockResolvedValue({ company_id: 'company-1', user_id: 'mgr-2', max_days_per_week: 3, updated_by: 'owner-1', updated_at: '2026-01-01' })
+      vi.mocked(offDaySettingsRepository.upsertQuotaSetting).mockResolvedValue({ company_id: 'company-1', user_id: 'mgr-2', max_days_per_week: 3, role: null, updated_by: 'owner-1', updated_at: '2026-01-01' })
 
-      await offDaySettingsService.setManagerQuotaOverride({ company_id: 'company-1', owner_id: 'owner-1', manager_id: 'mgr-2', max_days_per_week: 3 })
+      await offDaySettingsService.setUserQuotaOverride({ company_id: 'company-1', owner_id: 'owner-1', user_id: 'mgr-2', max_days_per_week: 3 })
 
       expect(offDaySettingsRepository.upsertQuotaSetting).toHaveBeenCalledWith({
-        company_id: 'company-1', user_id: 'mgr-2', max_days_per_week: 3, updated_by: 'owner-1',
+        company_id: 'company-1', user_id: 'mgr-2', max_days_per_week: 3, role: null, updated_by: 'owner-1',
+      })
+    })
+
+    it('upserts with an Employee user_id set', async () => {
+      vi.mocked(offDaySettingsRepository.upsertQuotaSetting).mockResolvedValue({ company_id: 'company-1', user_id: 'emp-2', max_days_per_week: 4, role: null, updated_by: 'owner-1', updated_at: '2026-01-01' })
+
+      await offDaySettingsService.setUserQuotaOverride({ company_id: 'company-1', owner_id: 'owner-1', user_id: 'emp-2', max_days_per_week: 4 })
+
+      expect(offDaySettingsRepository.upsertQuotaSetting).toHaveBeenCalledWith({
+        company_id: 'company-1', user_id: 'emp-2', max_days_per_week: 4, role: null, updated_by: 'owner-1',
       })
     })
   })
 
   describe('getEffectiveQuota', () => {
     it('returns the per-user override when one exists', async () => {
-      vi.mocked(offDaySettingsRepository.getQuotaForUser).mockResolvedValue({ company_id: 'company-1', user_id: 'mgr-1', max_days_per_week: 3, updated_by: null, updated_at: '2026-01-01' })
+      vi.mocked(offDaySettingsRepository.getQuotaForUser).mockResolvedValue({ company_id: 'company-1', user_id: 'mgr-1', max_days_per_week: 3, role: null, updated_by: null, updated_at: '2026-01-01' })
 
       const quota = await offDaySettingsService.getEffectiveQuota('company-1', 'mgr-1')
 
@@ -120,17 +131,20 @@ describe('offDaySettingsService', () => {
       expect(offDaySettingsRepository.getCompanyDefaultQuota).not.toHaveBeenCalled()
     })
 
-    it('falls back to the company default when no override exists', async () => {
+    it('falls back to the role-scoped company default when no override exists', async () => {
       vi.mocked(offDaySettingsRepository.getQuotaForUser).mockResolvedValue(null)
-      vi.mocked(offDaySettingsRepository.getCompanyDefaultQuota).mockResolvedValue({ company_id: 'company-1', user_id: null, max_days_per_week: 2, updated_by: null, updated_at: '2026-01-01' })
+      vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue({ id: 'emp-1', role: 'Employee', company_id: 'company-1' } as any)
+      vi.mocked(offDaySettingsRepository.getCompanyDefaultQuota).mockResolvedValue({ company_id: 'company-1', user_id: null, max_days_per_week: 2, role: 'Employee', updated_by: null, updated_at: '2026-01-01' })
 
       const quota = await offDaySettingsService.getEffectiveQuota('company-1', 'emp-1')
 
       expect(quota).toBe(2)
+      expect(offDaySettingsRepository.getCompanyDefaultQuota).toHaveBeenCalledWith('company-1', 'Employee')
     })
 
     it('falls back to a hardcoded default of 2 when nothing is configured', async () => {
       vi.mocked(offDaySettingsRepository.getQuotaForUser).mockResolvedValue(null)
+      vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue({ id: 'emp-1', role: 'Employee', company_id: 'company-1' } as any)
       vi.mocked(offDaySettingsRepository.getCompanyDefaultQuota).mockResolvedValue(null)
 
       const quota = await offDaySettingsService.getEffectiveQuota('company-1', 'emp-1')
@@ -145,17 +159,22 @@ describe('offDaySettingsService', () => {
     })
 
     it('rejects a deadline_weekday outside 0-6', async () => {
-      await expect(offDaySettingsService.setDeadline({ company_id: 'company-1', owner_id: 'owner-1', deadline_weekday: 7 }))
+      await expect(offDaySettingsService.setDeadline({ company_id: 'company-1', owner_id: 'owner-1', deadline_weekday: 7, deadline_time: '17:00' }))
         .rejects.toThrow('0 and 6')
     })
 
-    it('upserts a valid deadline', async () => {
-      vi.mocked(offDaySettingsRepository.upsertDeadline).mockResolvedValue({ company_id: 'company-1', deadline_weekday: 2, updated_by: 'owner-1', updated_at: '2026-01-01' })
+    it('rejects a deadline_time not in HH:MM 24-hour format', async () => {
+      await expect(offDaySettingsService.setDeadline({ company_id: 'company-1', owner_id: 'owner-1', deadline_weekday: 2, deadline_time: '5:00 PM' }))
+        .rejects.toThrow('HH:MM')
+    })
 
-      await offDaySettingsService.setDeadline({ company_id: 'company-1', owner_id: 'owner-1', deadline_weekday: 2 })
+    it('upserts a valid deadline', async () => {
+      vi.mocked(offDaySettingsRepository.upsertDeadline).mockResolvedValue({ company_id: 'company-1', deadline_weekday: 2, deadline_time: '17:00', updated_by: 'owner-1', updated_at: '2026-01-01' })
+
+      await offDaySettingsService.setDeadline({ company_id: 'company-1', owner_id: 'owner-1', deadline_weekday: 2, deadline_time: '17:00' })
 
       expect(offDaySettingsRepository.upsertDeadline).toHaveBeenCalledWith({
-        company_id: 'company-1', deadline_weekday: 2, updated_by: 'owner-1',
+        company_id: 'company-1', deadline_weekday: 2, deadline_time: '17:00', updated_by: 'owner-1',
       })
     })
   })
@@ -164,8 +183,8 @@ describe('offDaySettingsService', () => {
     it('attaches manager_name to override rows via a batch user lookup', async () => {
       vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue(owner as any)
       vi.mocked(offDaySettingsRepository.getQuotaSettings).mockResolvedValue([
-        { company_id: 'company-1', user_id: null, max_days_per_week: 2, updated_by: null, updated_at: '2026-01-01' },
-        { company_id: 'company-1', user_id: 'mgr-1', max_days_per_week: 3, updated_by: 'owner-1', updated_at: '2026-01-01' },
+        { company_id: 'company-1', user_id: null, max_days_per_week: 2, role: 'Manager', updated_by: null, updated_at: '2026-01-01' },
+        { company_id: 'company-1', user_id: 'mgr-1', max_days_per_week: 3, role: null, updated_by: 'owner-1', updated_at: '2026-01-01' },
       ])
       vi.mocked(attendanceRepository.getUsersByIds).mockResolvedValue([{ id: 'mgr-1', full_name: 'Manager One', role: 'Manager' }] as any)
 

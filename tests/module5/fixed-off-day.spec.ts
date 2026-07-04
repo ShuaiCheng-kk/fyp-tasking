@@ -94,6 +94,17 @@ test.describe('Fixed Day Off — submission, routing, quota, deadline', () => {
     await cleanupTestOwnerAndCompany(seeded)
   })
 
+  test('Owner sets the Manager and Employee default quotas to 1 day/week', async ({ request }) => {
+    const setEmployee = await request.post('/api/attendance/off-day-settings', {
+      data: { action: 'set_default_quota', company_id: seeded.companyId, owner_id: seeded.ownerId, role: 'Employee', max_days_per_week: 1 },
+    })
+    expect(setEmployee.status()).toBe(200)
+    const setManager = await request.post('/api/attendance/off-day-settings', {
+      data: { action: 'set_default_quota', company_id: seeded.companyId, owner_id: seeded.ownerId, role: 'Manager', max_days_per_week: 1 },
+    })
+    expect(setManager.status()).toBe(200)
+  })
+
   test('Employee submits a fixed day off request for the upcoming week — lands as pending', async ({ request }) => {
     const res = await request.post('/api/attendance', {
       data: {
@@ -123,40 +134,31 @@ test.describe('Fixed Day Off — submission, routing, quota, deadline', () => {
     expect(body.success).toBe(true)
   })
 
-  test('Owner queue (no manager_id) only shows the Manager-submitted request', async ({ request }) => {
+  test('Owner queue shows both the Manager- and Employee-submitted requests directly (no Manager review step)', async ({ request }) => {
     const res = await request.get(`/api/attendance?company_id=${seeded.companyId}&resource=fixed_off_days`)
     expect(res.status()).toBe(200)
     const body = await res.json()
     const ids = body.requests.map((r: { user_id: string }) => r.user_id)
     expect(ids).toContain(managerId)
-    expect(ids).not.toContain(employeeId)
-  })
-
-  test('Manager queue only shows the Employee-submitted request within their managed department', async ({ request }) => {
-    const res = await request.get(`/api/attendance?company_id=${seeded.companyId}&resource=fixed_off_days&manager_id=${managerId}`)
-    expect(res.status()).toBe(200)
-    const body = await res.json()
-    const ids = body.requests.map((r: { user_id: string }) => r.user_id)
     expect(ids).toContain(employeeId)
-    expect(ids).not.toContain(managerId)
   })
 
-  test('Manager approves the Employee off-day request', async ({ request }) => {
-    const list = await request.get(`/api/attendance?company_id=${seeded.companyId}&resource=fixed_off_days&manager_id=${managerId}`)
+  test('Owner approves the Employee off-day request', async ({ request }) => {
+    const list = await request.get(`/api/attendance?company_id=${seeded.companyId}&resource=fixed_off_days`)
     const listBody = await list.json()
     const pending = listBody.requests.find((r: { user_id: string; status: string }) => r.user_id === employeeId && r.status === 'pending')
     expect(pending).toBeTruthy()
 
     const decide = await request.patch('/api/attendance', {
-      data: { action: 'decide_fixed_off_day', id: pending.id, reviewer_id: managerId, decision: 'approved' },
+      data: { action: 'decide_fixed_off_day', id: pending.id, reviewer_id: seeded.ownerId, decision: 'approved' },
     })
     expect(decide.status()).toBe(200)
     expect(await decide.json()).toMatchObject({ success: true, request: { status: 'approved' } })
   })
 
-  test('rejects a submission exceeding the company default quota', async ({ request }) => {
+  test('rejects a submission that does not exactly match the configured Employee default quota', async ({ request }) => {
     const setQuota = await request.post('/api/attendance/off-day-settings', {
-      data: { action: 'set_company_quota', company_id: seeded.companyId, owner_id: seeded.ownerId, max_days_per_week: 1 },
+      data: { action: 'set_default_quota', company_id: seeded.companyId, owner_id: seeded.ownerId, role: 'Employee', max_days_per_week: 1 },
     })
     expect(setQuota.status()).toBe(200)
 
@@ -167,12 +169,12 @@ test.describe('Fixed Day Off — submission, routing, quota, deadline', () => {
     })
     expect(res.status()).toBe(400)
     const body = await res.json()
-    expect(body.message).toContain('at most 1')
+    expect(body.message).toContain('exactly 1')
   })
 
-  test('a per-Manager quota override allows more days than the company default', async ({ request }) => {
+  test('a per-user quota override allows a different day count than the role default', async ({ request }) => {
     const override = await request.post('/api/attendance/off-day-settings', {
-      data: { action: 'set_manager_quota_override', company_id: seeded.companyId, owner_id: seeded.ownerId, manager_id: managerId, max_days_per_week: 3 },
+      data: { action: 'set_user_quota_override', company_id: seeded.companyId, owner_id: seeded.ownerId, user_id: managerId, max_days_per_week: 2 },
     })
     expect(override.status()).toBe(200)
 
@@ -208,13 +210,41 @@ test.describe('Fixed Day Off — submission, routing, quota, deadline', () => {
     expect(afterRows.every((r: { status: string }) => r.status === 'approved')).toBe(true)
   })
 
+  test('Owner modifies a weekly submission to different dates in the same week', async ({ request }) => {
+    const setQuota = await request.post('/api/attendance/off-day-settings', {
+      data: { action: 'set_default_quota', company_id: seeded.companyId, owner_id: seeded.ownerId, role: 'Employee', max_days_per_week: 1 },
+    })
+    expect(setQuota.status()).toBe(200)
+
+    const nextFri = addDaysLocal(upcomingMonday, 4)
+    const submit = await request.post('/api/attendance', {
+      data: { action: 'submit_fixed_off_day', user_id: employeeId, company_id: seeded.companyId, dates: [nextFri] },
+    })
+    expect(submit.status()).toBe(200)
+    const submitBody = await submit.json()
+    const id = submitBody.request[0].id
+
+    const nextSat = addDaysLocal(upcomingMonday, 5)
+    const modify = await request.patch('/api/attendance', {
+      data: { action: 'decide_fixed_off_day', id, reviewer_id: seeded.ownerId, decision: 'modified', new_date: nextSat },
+    })
+    expect(modify.status()).toBe(200)
+    const modifyBody = await modify.json()
+    expect(modifyBody.success).toBe(true)
+    expect(modifyBody.request).toMatchObject({ status: 'modified', request_date: nextSat })
+  })
+
   test('AI-suggest analyzes every date in a weekly group together', async ({ request }) => {
     const nextThu = addDaysLocal(upcomingMonday, 3)
     const nextFri = addDaysLocal(upcomingMonday, 4)
     const setQuota = await request.post('/api/attendance/off-day-settings', {
-      data: { action: 'set_company_quota', company_id: seeded.companyId, owner_id: seeded.ownerId, max_days_per_week: 5 },
+      data: { action: 'set_default_quota', company_id: seeded.companyId, owner_id: seeded.ownerId, role: 'Manager', max_days_per_week: 2 },
     })
     expect(setQuota.status()).toBe(200)
+    const removeOverride = await request.post('/api/attendance/off-day-settings', {
+      data: { action: 'remove_user_quota_override', company_id: seeded.companyId, owner_id: seeded.ownerId, user_id: managerId },
+    })
+    expect(removeOverride.status()).toBe(200)
     const managerSubmit = await request.post('/api/attendance', {
       data: { action: 'submit_fixed_off_day', user_id: managerId, company_id: seeded.companyId, dates: [nextThu, nextFri] },
     })
@@ -229,23 +259,26 @@ test.describe('Fixed Day Off — submission, routing, quota, deadline', () => {
     const aiBody = await ai.json()
     expect(aiBody.success).toBe(true)
     expect(['approve', 'reject', 'review']).toContain(aiBody.suggestion.recommendation)
+    expect(Array.isArray(aiBody.suggestion.alternatives)).toBe(true)
   })
 
-  test('rejects submission past the configured weekly deadline', async ({ request }) => {
+  test('rejects submission once the currently open week has shifted past a closed deadline', async ({ request }) => {
     const todayDow = new Date().getDay()
     const pastDeadlineDow = (todayDow + 6) % 7 // a weekday that already passed this week
 
     const setDeadline = await request.post('/api/attendance/off-day-settings', {
-      data: { action: 'set_deadline', company_id: seeded.companyId, owner_id: seeded.ownerId, deadline_weekday: pastDeadlineDow },
+      data: { action: 'set_deadline', company_id: seeded.companyId, owner_id: seeded.ownerId, deadline_weekday: pastDeadlineDow, deadline_time: '17:00' },
     })
     expect(setDeadline.status()).toBe(200)
 
+    // upcomingMonday's own deadline (this week) has now passed, so the open week has shifted to
+    // the week after — submitting for upcomingMonday should be rejected as no longer open.
     const res = await request.post('/api/attendance', {
       data: { action: 'submit_fixed_off_day', user_id: employeeId, company_id: seeded.companyId, dates: [upcomingMonday] },
     })
     expect(res.status()).toBe(400)
     const body = await res.json()
-    expect(body.message).toContain('deadline')
+    expect(body.message).toContain('currently open week')
   })
 })
 
@@ -267,23 +300,30 @@ test.describe('Fixed Day Off — Owner quota/deadline settings CRUD', () => {
     await cleanupTestOwnerAndCompany(seeded)
   })
 
-  test('sets and reads the company default quota', async ({ request }) => {
-    const set = await request.post('/api/attendance/off-day-settings', {
-      data: { action: 'set_company_quota', company_id: seeded.companyId, owner_id: seeded.ownerId, max_days_per_week: 2 },
+  test('sets and reads the Manager and Employee default quotas independently', async ({ request }) => {
+    const setManager = await request.post('/api/attendance/off-day-settings', {
+      data: { action: 'set_default_quota', company_id: seeded.companyId, owner_id: seeded.ownerId, role: 'Manager', max_days_per_week: 2 },
     })
-    expect(set.status()).toBe(200)
+    expect(setManager.status()).toBe(200)
+    const setEmployee = await request.post('/api/attendance/off-day-settings', {
+      data: { action: 'set_default_quota', company_id: seeded.companyId, owner_id: seeded.ownerId, role: 'Employee', max_days_per_week: 3 },
+    })
+    expect(setEmployee.status()).toBe(200)
 
     const get = await request.get(`/api/attendance/off-day-settings?company_id=${seeded.companyId}&owner_id=${seeded.ownerId}&resource=quota`)
     expect(get.status()).toBe(200)
     const body = await get.json()
     expect(body.settings).toEqual(
-      expect.arrayContaining([expect.objectContaining({ user_id: null, max_days_per_week: 2 })]),
+      expect.arrayContaining([
+        expect.objectContaining({ user_id: null, role: 'Manager', max_days_per_week: 2 }),
+        expect.objectContaining({ user_id: null, role: 'Employee', max_days_per_week: 3 }),
+      ]),
     )
   })
 
-  test('sets a per-Manager override then resets to company default by removing it', async ({ request }) => {
+  test('sets a per-user override then resets to the role default by removing it', async ({ request }) => {
     const override = await request.post('/api/attendance/off-day-settings', {
-      data: { action: 'set_manager_quota_override', company_id: seeded.companyId, owner_id: seeded.ownerId, manager_id: managerId, max_days_per_week: 4 },
+      data: { action: 'set_user_quota_override', company_id: seeded.companyId, owner_id: seeded.ownerId, user_id: managerId, max_days_per_week: 4 },
     })
     expect(override.status()).toBe(200)
 
@@ -291,7 +331,7 @@ test.describe('Fixed Day Off — Owner quota/deadline settings CRUD', () => {
     expect((await afterOverride.json()).max_days_per_week).toBe(4)
 
     const remove = await request.post('/api/attendance/off-day-settings', {
-      data: { action: 'remove_manager_quota_override', company_id: seeded.companyId, owner_id: seeded.ownerId, manager_id: managerId },
+      data: { action: 'remove_user_quota_override', company_id: seeded.companyId, owner_id: seeded.ownerId, user_id: managerId },
     })
     expect(remove.status()).toBe(200)
 
@@ -300,21 +340,21 @@ test.describe('Fixed Day Off — Owner quota/deadline settings CRUD', () => {
     expect(afterRemoveBody.max_days_per_week).not.toBe(4)
   })
 
-  test('sets and reads the weekly submission deadline', async ({ request }) => {
+  test('sets and reads the weekly submission deadline (weekday + time)', async ({ request }) => {
     const set = await request.post('/api/attendance/off-day-settings', {
-      data: { action: 'set_deadline', company_id: seeded.companyId, owner_id: seeded.ownerId, deadline_weekday: 2 },
+      data: { action: 'set_deadline', company_id: seeded.companyId, owner_id: seeded.ownerId, deadline_weekday: 2, deadline_time: '17:00' },
     })
     expect(set.status()).toBe(200)
 
     const get = await request.get(`/api/attendance/off-day-settings?company_id=${seeded.companyId}&owner_id=${seeded.ownerId}&resource=deadline`)
     expect(get.status()).toBe(200)
     const body = await get.json()
-    expect(body.deadline).toMatchObject({ deadline_weekday: 2 })
+    expect(body.deadline).toMatchObject({ deadline_weekday: 2, deadline_time: '17:00' })
   })
 
   test('rejects quota/deadline changes from a non-Owner', async ({ request }) => {
     const res = await request.post('/api/attendance/off-day-settings', {
-      data: { action: 'set_company_quota', company_id: seeded.companyId, owner_id: managerId, max_days_per_week: 2 },
+      data: { action: 'set_default_quota', company_id: seeded.companyId, owner_id: managerId, role: 'Manager', max_days_per_week: 2 },
     })
     expect(res.status()).toBe(400)
   })

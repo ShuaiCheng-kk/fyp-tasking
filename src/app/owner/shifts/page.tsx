@@ -35,6 +35,7 @@ import {
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
+import Toast from '@/components/Toast'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import DatePickerField from '@/components/DatePickerField'
@@ -137,8 +138,6 @@ type BulkEditRow = {
   department_id: string
   assigned_user_id: string
 }
-
-type DepartmentModalMode = 'add' | 'edit' | 'delete' | null
 
 type AutoShiftBlock = {
   key: string
@@ -696,12 +695,6 @@ function formatHourLabel(hour: number): string {
   return hour < 12 ? `${hour}am` : `${hour - 12}pm`
 }
 
-function parseDepartmentImportCsv(text: string): string[] {
-  const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
-  const withoutHeader = lines[0]?.toLowerCase().includes('department') ? lines.slice(1) : lines
-  return [...new Set(withoutHeader.map(line => line.split(',')[0]?.trim()).filter(Boolean))]
-}
-
 function roleRank(role: string): number {
   if (role === 'Manager') return 0
   if (role === 'Employee') return 1
@@ -829,23 +822,6 @@ export default function OwnerShiftsPage() {
   const [selectedTimelineUserIds, setSelectedTimelineUserIds] = useState<string[]>([])
   const [timelineBulkDeleting, setTimelineBulkDeleting] = useState(false)
   const [timelineDeleteError, setTimelineDeleteError] = useState('')
-
-  const [openDepartmentMenuId, setOpenDepartmentMenuId] = useState<string | null>(null)
-  const [deptMenuPos, setDeptMenuPos] = useState({ top: 0, right: 0 })
-  const [departmentModal, setDepartmentModal] = useState<DepartmentModalMode>(null)
-  const [departmentModalTab, setDepartmentModalTab] = useState<'manual' | 'import'>('manual')
-  const [activeDepartment, setActiveDepartment] = useState<Department | null>(null)
-  const [departmentNameInput, setDepartmentNameInput] = useState('')
-  const [departmentImportRows, setDepartmentImportRows] = useState<string[]>([])
-  const [departmentActionError, setDepartmentActionError] = useState('')
-  const [departmentActionResult, setDepartmentActionResult] = useState('')
-  const [departmentActionLoading, setDepartmentActionLoading] = useState(false)
-
-  const [managerModalDepartment, setManagerModalDepartment] = useState<Department | null>(null)
-  const [selectedManagerId, setSelectedManagerId] = useState('')
-  const [managerActionError, setManagerActionError] = useState('')
-  const [managerActionLoading, setManagerActionLoading] = useState(false)
-  const [managerRemoveLoading, setManagerRemoveLoading] = useState<string | null>(null)
 
   // AI Shift Scheduling state
   const [aiShiftModal, setAiShiftModal] = useState(false)
@@ -1078,17 +1054,6 @@ export default function OwnerShiftsPage() {
     void run()
     return () => { cancelled = true }
   }, [router])
-
-  useEffect(() => {
-    const closeDepartmentMenuOnOutsideClick = (event: PointerEvent) => {
-      const target = event.target
-      if (target instanceof Element && target.closest('[data-department-menu-root="true"]')) return
-      setOpenDepartmentMenuId(null)
-    }
-
-    document.addEventListener('pointerdown', closeDepartmentMenuOnOutsideClick)
-    return () => document.removeEventListener('pointerdown', closeDepartmentMenuOnOutsideClick)
-  }, [])
 
   const fetchAssignmentData = useCallback(async (cid: string, silent = false) => {
     if (!cid) return
@@ -2192,165 +2157,6 @@ export default function OwnerShiftsPage() {
     }
   }
 
-  const handleDepartmentImportFile = async (file: File | null) => {
-    setDepartmentActionError('')
-    setDepartmentActionResult('')
-    if (!file) return
-    const rows = parseDepartmentImportCsv(await file.text())
-    setDepartmentImportRows(rows)
-    if (rows.length === 0) setDepartmentActionError('No valid departments found.')
-  }
-
-  const openAddDepartment = () => {
-    setDepartmentModal('add')
-    setDepartmentModalTab('manual')
-    setActiveDepartment(null)
-    setDepartmentNameInput('')
-    setDepartmentImportRows([])
-    setDepartmentActionError('')
-    setDepartmentActionResult('')
-  }
-
-  const openEditDepartment = (department: Department) => {
-    setDepartmentModal('edit')
-    setDepartmentModalTab('manual')
-    setActiveDepartment(department)
-    setDepartmentNameInput(department.name)
-    setDepartmentActionError('')
-    setDepartmentActionResult('')
-    setOpenDepartmentMenuId(null)
-  }
-
-  const openDeleteDepartment = (department: Department) => {
-    setDepartmentModal('delete')
-    setActiveDepartment(department)
-    setDepartmentActionError('')
-    setDepartmentActionResult('')
-    setOpenDepartmentMenuId(null)
-  }
-
-  const openManagerModal = (department: Department) => {
-    setManagerModalDepartment(department)
-    setSelectedManagerId('')
-    setManagerActionError('')
-    setOpenDepartmentMenuId(null)
-  }
-
-  const handleSaveDepartment = async () => {
-    if (!companyId) return
-    const name = departmentNameInput.trim()
-    if (departmentModalTab === 'manual' && !name) {
-      setDepartmentActionError('Department name is required.')
-      return
-    }
-    if (departmentModalTab === 'import' && departmentImportRows.length === 0) {
-      setDepartmentActionError('Choose a CSV file with department names.')
-      return
-    }
-    setDepartmentActionLoading(true)
-    setDepartmentActionError('')
-    try {
-      if (departmentModalTab === 'import') {
-        const res = await fetch('/api/import/departments', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ company_id: companyId, departments: departmentImportRows }),
-        })
-        const data = await res.json()
-        if (!data.success) throw new Error(data.message || 'Failed to import departments')
-        const created = data.result?.created?.length ?? 0
-        const skipped = data.result?.skipped?.length ?? 0
-        setDepartmentActionResult(`${created} department(s) created. ${skipped} skipped.`)
-      } else {
-        const isEdit = departmentModal === 'edit'
-        const res = await fetch(isEdit ? '/api/company/update-department' : '/api/company/create-department', {
-          method: isEdit ? 'PATCH' : 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(isEdit ? { department_id: activeDepartment?.id, name } : { company_id: companyId, name }),
-        })
-        const data = await res.json()
-        if (!data.success) throw new Error(data.message || 'Failed to save department')
-        setDepartmentModal(null)
-      }
-      await fetchAssignmentData(companyId, true)
-    } catch (err) {
-      setDepartmentActionError(err instanceof Error ? err.message : 'Failed to save department')
-    } finally {
-      setDepartmentActionLoading(false)
-    }
-  }
-
-  const handleDeleteDepartment = async () => {
-    if (!companyId || !activeDepartment) return
-    setDepartmentActionLoading(true)
-    setDepartmentActionError('')
-    try {
-      const res = await fetch('/api/company/delete-department', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ department_id: activeDepartment.id }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to delete department')
-      setDepartmentModal(null)
-      setActiveDepartment(null)
-      await Promise.all([fetchAssignmentData(companyId, true), refreshShiftData(), fetchTimeline(companyId, timelineDate)])
-    } catch (err) {
-      setDepartmentActionError(err instanceof Error ? err.message : 'Failed to delete department')
-    } finally {
-      setDepartmentActionLoading(false)
-    }
-  }
-
-  const handleSetManager = async () => {
-    if (!companyId || !internalUserId || !managerModalDepartment || !selectedManagerId) return
-    setManagerActionLoading(true)
-    setManagerActionError('')
-    try {
-      const res = await fetch('/api/team/department-manager', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          company_id: companyId,
-          department_id: managerModalDepartment.id,
-          manager_id: selectedManagerId,
-          assigned_by: internalUserId,
-        }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to assign manager')
-      setSelectedManagerId('')
-      await fetchAssignmentData(companyId, true)
-    } catch (err) {
-      setManagerActionError(err instanceof Error ? err.message : 'Failed to assign manager')
-    } finally {
-      setManagerActionLoading(false)
-    }
-  }
-
-  const handleRemoveManager = async (managerId: string) => {
-    if (!companyId || !managerModalDepartment) return
-    setManagerRemoveLoading(managerId)
-    setManagerActionError('')
-    try {
-      const res = await fetch('/api/team/department-manager', {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          manager_id: managerId,
-          department_id: managerModalDepartment.id,
-        }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to remove manager')
-      await fetchAssignmentData(companyId, true)
-    } catch (err) {
-      setManagerActionError(err instanceof Error ? err.message : 'Failed to remove manager')
-    } finally {
-      setManagerRemoveLoading(null)
-    }
-  }
-
   const openShiftDetail = (shift: TimelineShiftBlock, row: TimelineRow, isPast = false) => {
     if (isPast) return
     setSelectedShift(shift)
@@ -2734,6 +2540,8 @@ export default function OwnerShiftsPage() {
       // Deleting a recurring original cascades to its sibling occurrences server-side, so reload the full row set instead of filtering only this id.
       await loadBulkEditRows()
       await refreshShiftData()
+      setSuccessToast('Shift deleted')
+      toastTimerRef.current = setTimeout(() => setSuccessToast(null), 3000)
     } catch (err) {
       setBulkEditError(err instanceof Error ? err.message : 'Failed to delete shift')
     } finally {
@@ -3026,7 +2834,9 @@ export default function OwnerShiftsPage() {
                 type="button"
                 className="off-bar"
                 onClick={() => { if (!isTimelinePast && dept) openBatchDrawer(dept, row.user_id!, timelineDate) }}
-                style={{ position: 'absolute', top: 10, bottom: 10, left: `${TL_PAD}%`, right: `${TL_PAD}%`, borderRadius: 999, background: '#E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1, border: 'none', cursor: isTimelinePast ? 'default' : 'pointer' }}
+                onMouseEnter={e => { if (!isTimelinePast) e.currentTarget.style.background = '#CBD5E1' }}
+                onMouseLeave={e => { e.currentTarget.style.background = '#E2E8F0' }}
+                style={{ position: 'absolute', top: 10, bottom: 10, left: `${TL_PAD}%`, right: `${TL_PAD}%`, borderRadius: 999, background: '#E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1, border: 'none', cursor: isTimelinePast ? 'default' : 'pointer', transition: 'background 0.15s' }}
                 title={isTimelinePast ? undefined : `Assign shift to ${row.full_name}`}
               >
                 <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em', pointerEvents: 'none' }}>Off</span>
@@ -3048,6 +2858,8 @@ export default function OwnerShiftsPage() {
                 type="button"
                 className="shift-bar"
                 onClick={() => openShiftDetail(shift, row, timelineDate < formatDateKey(new Date()))}
+                onMouseEnter={e => { if (timelineDate >= formatDateKey(new Date())) e.currentTarget.style.filter = 'brightness(1.08)' }}
+                onMouseLeave={e => { e.currentTarget.style.filter = 'none' }}
                 style={{
                   position: 'absolute',
                   top: 10, bottom: 10,
@@ -3188,13 +3000,15 @@ export default function OwnerShiftsPage() {
                         return (
                           <div key={date} style={{ padding: '0 6px', borderRight: `1px solid ${BORDER}`, height: rowHeight, overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'stretch', justifyContent: 'center' }}>
                             {dayShifts.length === 0 ? (
-                              <div style={{ borderRadius: 999, background: '#E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', height: 24, cursor: isPastDate ? 'default' : 'pointer' }}
+                              <div style={{ borderRadius: 999, background: '#E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', height: 24, cursor: isPastDate ? 'default' : 'pointer', transition: 'background 0.15s' }}
                                 onClick={() => {
                                   if (isPastDate) return
                                   const dept = departments.find(d => d.id === row.department_id)
                                   if (!dept) return
                                   openBatchDrawer(dept, row.user_id!, date)
                                 }}
+                                onMouseEnter={e => { if (!isPastDate) e.currentTarget.style.background = '#CBD5E1' }}
+                                onMouseLeave={e => { e.currentTarget.style.background = '#E2E8F0' }}
                                 title={isPastDate ? undefined : `Assign shift to ${row.full_name} on ${date}`}
                               >
                                 <span style={{ fontSize: 10, fontWeight: 600, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Off</span>
@@ -5749,35 +5563,8 @@ export default function OwnerShiftsPage() {
         </div>
       )}
 
-      {/* ── Success toast ── */}
-      {successToast && (
-        <div style={{
-          position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
-          zIndex: 9999, display: 'flex', alignItems: 'center', gap: 10,
-          background: '#0F172A', color: '#fff', borderRadius: 12,
-          padding: '12px 20px', boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
-          fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap',
-          animation: 'fadeSlideUpToast 0.22s ease',
-        }}>
-          <Check size={15} style={{ color: '#10B981', flexShrink: 0 }} />
-          {successToast}
-        </div>
-      )}
-
-      {/* ── Error toast ── */}
-      {errorToast && (
-        <div style={{
-          position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
-          zIndex: 9999, display: 'flex', alignItems: 'center', gap: 10,
-          background: '#0F172A', color: '#fff', borderRadius: 12,
-          padding: '12px 20px', boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
-          fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap',
-          animation: 'fadeSlideUpToast 0.22s ease',
-        }}>
-          <AlertTriangle size={15} style={{ color: '#F87171', flexShrink: 0 }} />
-          {errorToast}
-        </div>
-      )}
+      <Toast message={successToast ?? ''} />
+      <Toast message={errorToast ?? ''} variant="error" />
     </div>
   )
 }

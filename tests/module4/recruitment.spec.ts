@@ -442,3 +442,162 @@ test('UC42: owner rejects a pending job posting with a reason', async ({ request
   expect(rejectBody.posting.status).toBe('rejected')
   expect(rejectBody.posting.rejection_reason).toBe('Please add the salary details.')
 })
+
+test('UC37 edits an existing job posting\'s fields', async ({ request }) => {
+  const jobRes = await request.post('/api/recruitment', {
+    data: {
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      created_by: seeded.ownerId,
+      title: 'Title Before Edit',
+      description: 'Original description.',
+      formType: 'oneoff',
+      shift_date: '2030-03-09',
+      job_start_time: '09:00',
+      status: 'open',
+    },
+  })
+  expect(jobRes.status()).toBe(201)
+  const jobId = (await jobRes.json()).posting.id as string
+  createdJobIds.push(jobId)
+
+  const editRes = await request.patch('/api/recruitment', {
+    data: {
+      action: 'edit_posting',
+      job_id: jobId,
+      title: 'Title After Edit',
+      description: 'Updated description.',
+      job_start_time: '10:30',
+    },
+  })
+  expect(editRes.status()).toBe(200)
+  const editBody = await editRes.json()
+  expect(editBody.posting.title).toBe('Title After Edit')
+  expect(editBody.posting.description).toBe('Updated description.')
+  expect(editBody.posting.job_start_time).toBe('10:30:00')
+})
+
+test('UC38 archives and unarchives a job posting', async ({ request }) => {
+  const jobRes = await request.post('/api/recruitment', {
+    data: {
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      created_by: seeded.ownerId,
+      title: 'To Be Archived',
+      description: 'Will be archived then restored.',
+      formType: 'oneoff',
+      shift_date: '2030-03-10',
+      job_start_time: '09:00',
+      status: 'open',
+    },
+  })
+  const jobId = (await jobRes.json()).posting.id as string
+  createdJobIds.push(jobId)
+
+  const archiveRes = await request.patch('/api/recruitment', {
+    data: { action: 'archive_posting', job_id: jobId },
+  })
+  expect(archiveRes.status()).toBe(200)
+  const archiveBody = await archiveRes.json()
+  expect(archiveBody.posting.status).toBe('archived')
+  expect(archiveBody.posting.archived_at).toBeTruthy()
+
+  const unarchiveRes = await request.patch('/api/recruitment', {
+    data: { action: 'unarchive_posting', job_id: jobId },
+  })
+  expect(unarchiveRes.status()).toBe(200)
+  const unarchiveBody = await unarchiveRes.json()
+  expect(unarchiveBody.posting.status).toBe('open')
+  expect(unarchiveBody.posting.archived_at).toBeNull()
+})
+
+test('UC39 duplicates a job posting as a new, independently-published copy', async ({ request }) => {
+  const jobRes = await request.post('/api/recruitment', {
+    data: {
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      created_by: seeded.ownerId,
+      title: 'Original Posting To Copy',
+      description: 'Source posting for duplication.',
+      formType: 'oneoff',
+      shift_date: '2030-03-11',
+      job_start_time: '09:00',
+      status: 'open',
+    },
+  })
+  const jobId = (await jobRes.json()).posting.id as string
+  createdJobIds.push(jobId)
+
+  const dupRes = await request.patch('/api/recruitment', {
+    data: { action: 'duplicate_posting', job_id: jobId, created_by: seeded.ownerId },
+  })
+  expect(dupRes.status()).toBe(200)
+  const dupBody = await dupRes.json()
+  expect(dupBody.posting.id).not.toBe(jobId)
+  expect(dupBody.posting.title).toBe('Original Posting To Copy (copy)')
+  expect(dupBody.posting.description).toBe('Source posting for duplication.')
+  createdJobIds.push(dupBody.posting.id)
+
+  // Archiving the original must not affect the duplicate — they are independent rows.
+  await request.patch('/api/recruitment', { data: { action: 'archive_posting', job_id: jobId } })
+  const dupAfter = await request.get(`/api/recruitment?resource=job_posting&job_id=${dupBody.posting.id}`)
+  expect((await dupAfter.json()).posting.status).toBe('open')
+})
+
+test('UC40 saves a job posting as a draft, lists it, then publishes it', async ({ request }) => {
+  const draftRes = await request.post('/api/recruitment', {
+    data: {
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      created_by: seeded.ownerId,
+      title: 'Draft To Publish Later',
+      description: 'Not ready to post yet.',
+      formType: 'oneoff',
+      shift_date: '2030-03-12',
+      job_start_time: '09:00',
+      status: 'draft',
+    },
+  })
+  expect(draftRes.status()).toBe(201)
+  const draftBody = await draftRes.json()
+  expect(draftBody.posting.status).toBe('draft')
+  const jobId = draftBody.posting.id as string
+  createdJobIds.push(jobId)
+
+  const listRes = await request.get(`/api/recruitment?company_id=${seeded.companyId}&resource=drafts&user_id=${seeded.ownerId}`)
+  expect(listRes.status()).toBe(200)
+  const { drafts } = await listRes.json()
+  expect(drafts.some((d: { id: string }) => d.id === jobId)).toBe(true)
+
+  const publishRes = await request.patch('/api/recruitment', {
+    data: { action: 'publish_draft', job_id: jobId },
+  })
+  expect(publishRes.status()).toBe(200)
+  expect((await publishRes.json()).posting.status).toBe('open')
+})
+
+test('UC40 deletes a draft job posting without publishing it', async ({ request }) => {
+  const draftRes = await request.post('/api/recruitment', {
+    data: {
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      created_by: seeded.ownerId,
+      title: 'Draft To Delete',
+      description: 'Will be deleted before publishing.',
+      formType: 'oneoff',
+      shift_date: '2030-03-13',
+      job_start_time: '09:00',
+      status: 'draft',
+    },
+  })
+  const jobId = (await draftRes.json()).posting.id as string
+
+  const deleteRes = await request.patch('/api/recruitment', {
+    data: { action: 'delete_draft', job_id: jobId },
+  })
+  expect(deleteRes.status()).toBe(200)
+
+  const listRes = await request.get(`/api/recruitment?company_id=${seeded.companyId}&resource=drafts&user_id=${seeded.ownerId}`)
+  const { drafts } = await listRes.json()
+  expect(drafts.some((d: { id: string }) => d.id === jobId)).toBe(false)
+})

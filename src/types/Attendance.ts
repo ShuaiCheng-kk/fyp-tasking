@@ -3,7 +3,7 @@ import { ShiftAssignment } from './ShiftAssignment'
 
 export type AttendanceOwnerStatus = 'pending' | 'approved' | 'rejected' | 'modified'
 export type AttendanceExceptionType = 'pending' | 'late' | 'absent' | 'overtime'
-export type AttendanceRequestStatus = 'pending' | 'approved' | 'rejected'
+export type AttendanceRequestStatus = 'pending' | 'approved' | 'rejected' | 'modified'
 export type TimeOffRequestType = 'break_waiver'
 
 export interface AttendanceRecord {
@@ -233,15 +233,21 @@ export interface FixedOffDayDecisionInput {
   id: string
   reviewer_id: string
   decision: AttendanceRequestStatus
+  // Required when decision is 'modified' — the replacement date for this single row.
+  new_date?: string
 }
 
 // One weekly submission (a Manager/Employee's set of requested off-days for one week) is stored
-// as one row per date, but is decided on as a single unit — approving/rejecting applies to every
-// pending row in the group at once.
+// as one row per date, but is decided on as a single unit — approving/modifying applies to every
+// row in the group at once. Owner's only two live decisions are 'approved' (as requested) and
+// 'modified' (reassigned to different dates in the same week, e.g. after a staffing conflict) —
+// 'rejected' remains a valid historical status but is no longer offered as a new decision.
 export interface FixedOffDayDecisionGroupInput {
   ids: string[]
   reviewer_id: string
   decision: AttendanceRequestStatus
+  // Required when decision is 'modified' — replacement dates paired 1:1 with ids by array index.
+  new_dates?: string[]
 }
 
 export interface FixedOffDayCreateInput {
@@ -256,10 +262,13 @@ export interface FixedOffDayRequestView extends FixedOffDayRequest {
   department_id: string | null
 }
 
+export type OffDayQuotaDefaultRole = 'Manager' | 'Employee'
+
 export interface OffDayQuotaSetting {
   company_id: string
   user_id: string | null
   max_days_per_week: number
+  role: OffDayQuotaDefaultRole | null
   updated_by: string | null
   updated_at: string
 }
@@ -268,12 +277,14 @@ export interface OffDayQuotaUpsertInput {
   company_id: string
   user_id: string | null
   max_days_per_week: number
+  role: OffDayQuotaDefaultRole | null
   updated_by: string
 }
 
 export interface OffDaySubmissionDeadline {
   company_id: string
   deadline_weekday: number
+  deadline_time: string
   updated_by: string | null
   updated_at: string
 }
@@ -281,6 +292,7 @@ export interface OffDaySubmissionDeadline {
 export interface OffDaySubmissionDeadlineUpsertInput {
   company_id: string
   deadline_weekday: number
+  deadline_time: string
   updated_by: string
 }
 

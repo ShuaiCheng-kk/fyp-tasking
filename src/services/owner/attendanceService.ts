@@ -1,6 +1,7 @@
 // LAYER: Service
 // RULE: Business logic only. No HTTP handling. No direct DB access.
 
+import { authRepository } from '@/repositories/auth/authRepository'
 import { attendanceRepository } from '@/repositories/owner/attendanceRepository'
 import { offDaySettingsRepository } from '@/repositories/owner/offDaySettingsRepository'
 import { ownerTeamRepository } from '@/repositories/owner/ownerTeamRepository'
@@ -150,6 +151,26 @@ export function resolveDeadlineDateForWeek(weekStartKey: string, deadlineWeekday
   return addDays(weekStartKey, offsetFromMonday)
 }
 
+// Combines the deadline's weekday + time-of-day into the exact UTC instant submissions close,
+// matching this file's toISOString()-based "todayKey" convention throughout.
+function resolveDeadlineMoment(weekStartKey: string, deadline: { deadline_weekday: number; deadline_time: string }): Date {
+  const deadlineDate = resolveDeadlineDateForWeek(weekStartKey, deadline.deadline_weekday)
+  return new Date(`${deadlineDate}T${deadline.deadline_time}:00.000Z`)
+}
+
+// The week currently open for submission — normally "this week + 7", but once that window's own
+// deadline (which falls inside "this week") has passed, that window is closed/auto-assigned and
+// submissions shift forward to the week after, and so on. Never returns a week whose own deadline
+// has already passed, so it always reflects where a fresh submission actually lands.
+export function resolveActiveSubmissionWeekStart(todayKey: string, deadline: { deadline_weekday: number; deadline_time: string } | null): string {
+  let candidateWeekStart = computeWeekStart(todayKey)
+  for (;;) {
+    const targetWeek = addDays(candidateWeekStart, 7)
+    if (!deadline || Date.now() <= resolveDeadlineMoment(candidateWeekStart, deadline).getTime()) return targetWeek
+    candidateWeekStart = targetWeek
+  }
+}
+
 async function resolveDepartmentIdsByUser(
   userIds: string[],
   usersById: Map<string, { role: string }>,
@@ -184,8 +205,7 @@ async function runAutoAssignmentSweepForUpcomingWeek(company_id: string): Promis
 
   const deadline = await offDaySettingsRepository.getDeadline(company_id)
   if (!deadline) return
-  const deadlineDate = resolveDeadlineDateForWeek(thisWeekStart, deadline.deadline_weekday)
-  if (todayKey <= deadlineDate) return
+  if (Date.now() <= resolveDeadlineMoment(thisWeekStart, deadline).getTime()) return
 
   const [managers, employees, existingForWeek] = await Promise.all([
     attendanceRepository.getManagersByCompany(company_id),
@@ -193,22 +213,35 @@ async function runAutoAssignmentSweepForUpcomingWeek(company_id: string): Promis
     attendanceRepository.getOffDayRequestsByCompanyAndWeek(company_id, upcomingWeekStart),
   ])
   const usersWithRows = new Set(existingForWeek.map(r => r.user_id))
+  // Once everyone already has a row for the week (submitted or previously auto-assigned), there's
+  // nothing left to assign — bail out before the expensive per-department-per-date headcount work
+  // below, which this call would otherwise redo from scratch on every single page load for the rest
+  // of the week (it was the dominant cost behind the Weekly Day Off tab feeling slow every time).
+  const needsAssignment = managers.some(m => !usersWithRows.has(m.id)) || employees.some(e => !usersWithRows.has(e.id))
+  if (!needsAssignment) return
+
   const candidateDates = Array.from({ length: 7 }, (_, i) => addDays(upcomingWeekStart, i))
 
   // Consumed-per-department-date headcount across this sweep run, seeded from already-scheduled
-  // staff (via getScheduledHeadcountForDeptDate) and incremented as each user in this sweep is
-  // assigned an off-day, so later users' safety checks see earlier assignments in the same run.
+  // staff (via getScheduledHeadcountForDeptDate) and then reserved for both (a) people who already
+  // submitted their own off-days before the deadline — these are locked in first — and (b) each
+  // user in this sweep as they're assigned an off-day, so later users' safety checks see earlier
+  // reservations from the same run.
   const consumed = new Map<string, { managers: number; employees: number }>()
   const keyOf = (departmentId: string, date: string) => `${departmentId}_${date}`
 
-  const isSafeDate = async (departmentId: string | null, role: 'Manager' | 'Employee', date: string): Promise<boolean> => {
-    if (!departmentId) return true
+  const ensureSeeded = async (departmentId: string, date: string): Promise<{ managers: number; employees: number }> => {
     const key = keyOf(departmentId, date)
     if (!consumed.has(key)) {
       const headcount = await attendanceRepository.getScheduledHeadcountForDeptDate(company_id, departmentId, date)
       consumed.set(key, headcount)
     }
-    const current = consumed.get(key)!
+    return consumed.get(key)!
+  }
+
+  const isSafeDate = async (departmentId: string | null, role: 'Manager' | 'Employee', date: string): Promise<boolean> => {
+    if (!departmentId) return true
+    const current = await ensureSeeded(departmentId, date)
     if (role === 'Manager') return current.managers - 1 >= MIN_MANAGERS_PER_DAY
     return current.employees - 1 >= MIN_EMPLOYEES_PER_DAY
   }
@@ -228,6 +261,20 @@ async function runAutoAssignmentSweepForUpcomingWeek(company_id: string): Promis
     managerDeptById.set(m.id, depts[0]?.department_id ?? null)
   }))
 
+  const roleAndDeptById = new Map<string, { role: 'Manager' | 'Employee'; department_id: string | null }>()
+  managers.forEach(m => roleAndDeptById.set(m.id, { role: 'Manager', department_id: managerDeptById.get(m.id) ?? null }))
+  employees.forEach(e => roleAndDeptById.set(e.id, { role: 'Employee', department_id: e.department_id }))
+
+  // Lock in already-submitted off-days first — reserve their headcount impact before checking
+  // what's still safe to auto-assign to non-submitters. Rejected rows don't hold a day off.
+  for (const row of existingForWeek) {
+    if (row.status === 'rejected') continue
+    const info = roleAndDeptById.get(row.user_id)
+    if (!info?.department_id) continue
+    await ensureSeeded(info.department_id, row.request_date)
+    markConsumed(info.department_id, info.role, row.request_date)
+  }
+
   const candidates: Array<{ id: string; role: 'Manager' | 'Employee'; department_id: string | null }> = [
     ...managers.filter(m => !usersWithRows.has(m.id)).map(m => ({ id: m.id, role: 'Manager' as const, department_id: managerDeptById.get(m.id) ?? null })),
     ...employees.filter(e => !usersWithRows.has(e.id)).map(e => ({ id: e.id, role: 'Employee' as const, department_id: e.department_id })),
@@ -235,7 +282,7 @@ async function runAutoAssignmentSweepForUpcomingWeek(company_id: string): Promis
 
   for (const candidate of candidates) {
     const quotaOverride = await offDaySettingsRepository.getQuotaForUser(company_id, candidate.id)
-    const quotaDefault = quotaOverride ? null : await offDaySettingsRepository.getCompanyDefaultQuota(company_id)
+    const quotaDefault = quotaOverride ? null : await offDaySettingsRepository.getCompanyDefaultQuota(company_id, candidate.role)
     const maxDaysPerWeek = quotaOverride?.max_days_per_week ?? quotaDefault?.max_days_per_week ?? 2
 
     const safeDates: string[] = []
@@ -395,10 +442,10 @@ export const attendanceService = {
     const userIds = [...new Set(allRequests.flatMap(r => [r.requester_id, r.counterpart_id]))]
 
     const [assignmentsArr, users] = await Promise.all([
-      Promise.all(assignmentIds.map(id => attendanceRepository.getShiftAssignmentById(id))),
+      attendanceRepository.getShiftAssignmentsByIds(assignmentIds),
       attendanceRepository.getUsersByIds(userIds),
     ])
-    const assignmentsById = new Map(assignmentsArr.filter(Boolean).map(a => [a!.id, a!]))
+    const assignmentsById = new Map(assignmentsArr.map(a => [a.id, a]))
     const usersById = indexById(users)
 
     // Auto-reject any pending request whose shift date has arrived — see autoExpireSwapRequestIfNeeded.
@@ -429,13 +476,25 @@ export const attendanceService = {
     if (requests.length === 0) return []
 
     const scopedAssignmentIds = [...new Set(requests.flatMap(r => [r.requester_assignment_id, r.counterpart_assignment_id]))]
+    const scopedShiftIds = [...new Set(scopedAssignmentIds.map(id => assignmentsById.get(id)?.shift_id).filter(Boolean) as string[])]
 
-    const [taskCounts, movableTasks] = await Promise.all([
-      Promise.all(scopedAssignmentIds.map(id => attendanceRepository.getTasksByShiftAssignment(id).then(t => ({ id, count: t.length })))),
-      Promise.all(scopedAssignmentIds.map(id => attendanceRepository.getMovableTasksByShiftAssignment(id).then(tasks => ({ id, tasks })))),
+    const [shiftTasks, shiftMovableTasks] = await Promise.all([
+      attendanceRepository.getTasksByShiftIds(scopedShiftIds),
+      attendanceRepository.getMovableTasksByShiftIds(scopedShiftIds),
     ])
-    const taskCountById = new Map(taskCounts.map(tc => [tc.id, tc.count]))
-    const movableTasksById = new Map(movableTasks.map(mt => [mt.id, mt.tasks]))
+    // Group the flat, shift-scoped rows back per assignment (task count by shift; movable tasks
+    // additionally scoped to the assignment's own user, matching getMovableTasksByShiftAssignment).
+    const taskCountById = new Map(scopedAssignmentIds.map(id => {
+      const shiftId = assignmentsById.get(id)?.shift_id
+      return [id, shiftTasks.filter(t => t.shift_id === shiftId).length]
+    }))
+    const movableTasksById = new Map(scopedAssignmentIds.map(id => {
+      const assignment = assignmentsById.get(id)
+      const tasks = shiftMovableTasks
+        .filter(t => t.shift_id === assignment?.shift_id && t.assigned_user_id === assignment?.user_id)
+        .map(({ id, title, description, status, priority, due_at, created_at }) => ({ id, title, description, status, priority, due_at, created_at }))
+      return [id, tasks]
+    }))
 
     // fetch department names via requester assignment's shift department_id
     const deptIds = [...new Set(scopedAssignmentIds.map(id => assignmentsById.get(id)?.shifts?.department_id).filter(Boolean) as string[])]
@@ -510,11 +569,9 @@ export const attendanceService = {
     })
   },
 
-  // UC56: Approve Fixed Day Off — options.managerId absent -> Owner/Partner queue (Manager
-  // requesters only, since Owner cannot submit off-day requests). options.managerId set ->
-  // that Manager's queue (Employee requesters within their managed departments only). Mirrors
-  // getShiftSwapRequests's role-computed-at-query-time routing exactly.
-  async getFixedOffDayRequests(company_id: string, options?: { managerId?: string }): Promise<FixedOffDayRequestView[]> {
+  // UC56: Approve Fixed Day Off — Manager AND Employee submissions both route to the Owner/Partner
+  // queue directly (Employees are no longer reviewed by their Manager first).
+  async getFixedOffDayRequests(company_id: string): Promise<FixedOffDayRequestView[]> {
     await runAutoAssignmentSweepForUpcomingWeek(company_id)
 
     const allRequests = await attendanceRepository.getOffDayRequestsByCompany(company_id)
@@ -523,25 +580,13 @@ export const attendanceService = {
     const users = await attendanceRepository.getUsersByIds([...new Set(allRequests.map(request => request.user_id))])
     const usersById = indexById(users)
 
-    let requests = allRequests
-    if (options?.managerId) {
-      const managedDeptIds = new Set(
-        (await ownerTeamRepository.findManagerDepartments(options.managerId, company_id)).map(d => d.department_id),
-      )
-      const employeeIds = new Set(await attendanceRepository.getEmployeeIdsByDepartments([...managedDeptIds]))
-      requests = allRequests.filter(req => usersById.get(req.user_id)?.role === 'Employee' && employeeIds.has(req.user_id))
-    } else {
-      requests = allRequests.filter(req => usersById.get(req.user_id)?.role !== 'Employee')
-    }
-    if (requests.length === 0) return []
-
     const departmentIdByUser = await resolveDepartmentIdsByUser(
-      [...new Set(requests.map(req => req.user_id))],
+      [...new Set(allRequests.map(req => req.user_id))],
       usersById,
       company_id,
     )
 
-    return requests.map(request => ({
+    return allRequests.map(request => ({
       ...request,
       requester_name: usersById.get(request.user_id)?.full_name ?? 'Unknown member',
       requester_role: usersById.get(request.user_id)?.role ?? '',
@@ -550,27 +595,37 @@ export const attendanceService = {
   },
 
   async decideFixedOffDayRequest(input: FixedOffDayDecisionInput) {
-    if (!['approved', 'rejected'].includes(input.decision)) throw new Error('Invalid request decision')
+    if (!['approved', 'modified'].includes(input.decision)) throw new Error('Invalid request decision')
     const existing = await attendanceRepository.getFixedOffDayRequestById(input.id)
     if (!existing) throw new Error('Weekly day off request not found')
     if (existing.source === 'auto_assigned' && existing.status === 'approved') {
       throw new Error('This day off was auto-assigned and is already approved — nothing to decide')
+    }
+    if (input.decision === 'modified') {
+      if (!input.new_date) throw new Error('new_date is required to modify this request')
+      if (computeWeekStart(input.new_date) !== existing.week_start) {
+        throw new Error('The replacement date must fall within the same week as the original request')
+      }
     }
 
     return attendanceRepository.updateFixedOffDayRequest(input.id, {
       status: input.decision,
       reviewed_by: input.reviewer_id,
       reviewed_at: new Date().toISOString(),
+      ...(input.decision === 'modified' ? { request_date: input.new_date } : {}),
     })
   },
 
   // A Manager/Employee's weekly submission is one row per requested date but decided as a single
-  // unit — approving/rejecting the group applies the same decision to every pending row in it.
+  // unit — Owner's only two live decisions are 'approved' (as requested) or 'modified' (each row's
+  // date reassigned 1:1 from new_dates, e.g. after a staffing conflict flagged by AI review).
   async decideFixedOffDayRequestGroup(input: FixedOffDayDecisionGroupInput) {
-    if (!['approved', 'rejected'].includes(input.decision)) throw new Error('Invalid request decision')
+    if (!['approved', 'modified'].includes(input.decision)) throw new Error('Invalid request decision')
     if (input.ids.length === 0) throw new Error('No requests to decide')
 
-    const rows = await Promise.all(input.ids.map(id => attendanceRepository.getFixedOffDayRequestById(id)))
+    const fetchedRows = await attendanceRepository.getFixedOffDayRequestsByIds(input.ids)
+    const rowsById = new Map(fetchedRows.map(r => [r.id, r]))
+    const rows = input.ids.map(id => rowsById.get(id) ?? null)
     const missing = rows.some(r => !r)
     if (missing) throw new Error('Weekly day off request not found')
     const autoApproved = rows.some(r => r!.source === 'auto_assigned' && r!.status === 'approved')
@@ -578,11 +633,22 @@ export const attendanceService = {
       throw new Error('This day off was auto-assigned and is already approved — nothing to decide')
     }
 
+    if (input.decision === 'modified') {
+      const newDates = input.new_dates ?? []
+      if (newDates.length !== input.ids.length) throw new Error('new_dates must match ids 1:1')
+      if (new Set(newDates).size !== newDates.length) throw new Error('new_dates must not repeat a date')
+      const weekStart = rows[0]!.week_start
+      if (newDates.some(date => computeWeekStart(date) !== weekStart)) {
+        throw new Error('Replacement dates must all fall within the same week as the original request')
+      }
+    }
+
     const reviewedAt = new Date().toISOString()
-    return Promise.all(input.ids.map(id => attendanceRepository.updateFixedOffDayRequest(id, {
+    return Promise.all(input.ids.map((id, i) => attendanceRepository.updateFixedOffDayRequest(id, {
       status: input.decision,
       reviewed_by: input.reviewer_id,
       reviewed_at: reviewedAt,
+      ...(input.decision === 'modified' ? { request_date: input.new_dates![i] } : {}),
     })))
   },
 
@@ -675,26 +741,25 @@ export const attendanceService = {
     if (weekStarts.size > 1) throw new Error('All dates must fall within the same week')
     const targetWeekStart = [...weekStarts][0]
 
-    const thisWeekStart = computeWeekStart(todayKey)
-    const upcomingWeekStart = addDays(thisWeekStart, 7)
-    if (targetWeekStart !== upcomingWeekStart) {
-      throw new Error(`Requests must be for the upcoming week (starting ${upcomingWeekStart})`)
-    }
-
+    // Whichever week is currently open shifts forward once a window's own deadline passes (that
+    // window is closed/auto-assigned), so a Manager/Employee can only ever submit for the one week
+    // that's genuinely still open — never several at once, and never one that's already locked in.
     const deadline = await offDaySettingsRepository.getDeadline(input.company_id)
-    if (deadline) {
-      const deadlineDate = resolveDeadlineDateForWeek(thisWeekStart, deadline.deadline_weekday)
-      if (todayKey > deadlineDate) {
-        const nextWindowStart = addDays(upcomingWeekStart, 7)
-        throw new Error(`Submission deadline for this week has passed. Next window opens for the week of ${nextWindowStart}.`)
-      }
+    const activeWeekStart = resolveActiveSubmissionWeekStart(todayKey, deadline)
+    if (targetWeekStart !== activeWeekStart) {
+      throw new Error(`Requests must be for the currently open week (starting ${activeWeekStart})`)
     }
 
     const quotaOverride = await offDaySettingsRepository.getQuotaForUser(input.company_id, input.user_id)
-    const quotaDefault = quotaOverride ? null : await offDaySettingsRepository.getCompanyDefaultQuota(input.company_id)
-    const maxDaysPerWeek = quotaOverride?.max_days_per_week ?? quotaDefault?.max_days_per_week ?? 2
-    if (input.dates.length > maxDaysPerWeek) {
-      throw new Error(`You may request at most ${maxDaysPerWeek} day(s) off per week`)
+    let quotaDefault = null
+    if (!quotaOverride) {
+      const requester = await authRepository.findByAuthIdOrInternalId(input.user_id)
+      const requesterRole = requester?.role === 'Manager' ? 'Manager' : 'Employee'
+      quotaDefault = await offDaySettingsRepository.getCompanyDefaultQuota(input.company_id, requesterRole)
+    }
+    const requiredDaysPerWeek = quotaOverride?.max_days_per_week ?? quotaDefault?.max_days_per_week ?? 2
+    if (input.dates.length !== requiredDaysPerWeek) {
+      throw new Error(`You must select exactly ${requiredDaysPerWeek} day(s) off per week`)
     }
 
     const existingForWeek = await attendanceRepository.getFixedOffDayRequestsByUserAndWeek(input.user_id, input.company_id, targetWeekStart)
