@@ -45,6 +45,6 @@ export async function unsuspendUser(input: UnsuspendUserInput): Promise<void> {
   await repo.unsuspendUser(input.user_id)
 }
 
-export async function getReportStats(): Promise<UAReportStats> {
-  return repo.getReportStats()
+export async function getReportStats(from?: string, to?: string): Promise<UAReportStats> {
+  return repo.getReportStats(from, to)
 }

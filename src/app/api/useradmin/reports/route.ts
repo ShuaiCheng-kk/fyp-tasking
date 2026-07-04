@@ -1,9 +1,11 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { getReportStats } from '@/services/userAdmin/userAdminService'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const stats = await getReportStats()
+    const from = req.nextUrl.searchParams.get('from') ?? undefined
+    const to = req.nextUrl.searchParams.get('to') ?? undefined
+    const stats = await getReportStats(from, to)
     return NextResponse.json(stats)
   } catch (err) {
     return NextResponse.json({ error: (err as Error).message }, { status: 500 })

@@ -1,16 +1,24 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import AdminSidebar from '@/components/AdminSidebar'
 import { createBrowserClient } from '@supabase/ssr'
 import { Check, Eye, EyeOff } from 'lucide-react'
+import UserAdminSidebar from '@/components/UserAdminSidebar'
+import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 
-const ORANGE = '#F97316'
-const TEXT = '#1C1917'
-const BORDER = '#E2E8F0'
-const MUTED = '#94A3B8'
+const SIDEBAR_WIDTH = 64
 
-export default function AdminSettingsPage() {
+const T = {
+  bg:      '#27272A',
+  surface: '#FFFFFF',
+  border:  '#E2E8F0',
+  text1:   '#0F172A',
+  text3:   '#94A3B8',
+  accent:  '#F97316',
+}
+
+export default function UserAdminSettingsPage() {
+  const [userId, setUserId] = useState<string | null>(null)
   const [email, setEmail] = useState('')
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
@@ -25,6 +33,7 @@ export default function AdminSettingsPage() {
   useEffect(() => {
     const authUid = localStorage.getItem('tasking_user_id')
     if (!authUid) return
+    setUserId(authUid)
     fetch(`/api/user/me?user_id=${authUid}`)
       .then(r => r.json())
       .then(d => { if (d.success) setEmail(d.user.email_address ?? '') })
@@ -63,30 +72,32 @@ export default function AdminSettingsPage() {
 
   const inputStyle: React.CSSProperties = {
     width: '100%', boxSizing: 'border-box',
-    border: `1.5px solid ${BORDER}`, borderRadius: 10,
-    padding: '11px 14px', fontSize: 14, color: TEXT,
+    border: `1.5px solid ${T.border}`, borderRadius: 10,
+    padding: '11px 14px', fontSize: 14, color: T.text1,
     background: '#FFFFFF', outline: 'none',
   }
 
   const labelStyle: React.CSSProperties = {
-    display: 'block', fontSize: 13, fontWeight: 700, color: TEXT, marginBottom: 6,
+    display: 'block', fontSize: 13, fontWeight: 700, color: T.text1, marginBottom: 6,
   }
 
   const cardStyle: React.CSSProperties = {
-    background: '#FFFFFF', border: `1px solid ${BORDER}`, borderRadius: 16,
+    background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12,
     padding: '28px 32px',
   }
 
   return (
-    <main style={{ display: 'flex', minHeight: '100vh', background: '#27272A', fontFamily: 'Inter, system-ui, sans-serif' }}>
-      <AdminSidebar />
-      <section style={{ marginLeft: 64, padding: '36px 40px', flex: 1, background: 'transparent' }}>
-        <header style={{ marginBottom: 28 }}>
-          <p style={{ margin: '0 0 6px', color: '#64748B', fontSize: 11, letterSpacing: 1.4, fontWeight: 700, textTransform: 'uppercase' }}>Marketing Admin</p>
-          <h1 style={{ margin: 0, fontSize: 28, fontWeight: 900, color: '#F1F5F9', fontFamily: 'var(--font-heading)' }}>Settings</h1>
-        </header>
+    <div style={{ display: 'flex', minHeight: '100vh', background: T.bg, fontFamily: 'Inter, system-ui, sans-serif' }}>
+      <UserAdminSidebar />
+      <div style={{ marginLeft: SIDEBAR_WIDTH, flex: 1, minWidth: 0, background: 'transparent' }}>
+        <div style={{ padding: '24px 32px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <h1 style={{ fontWeight: 800, fontSize: '1.75rem', color: '#F1F5F9', margin: 0, letterSpacing: '-0.025em' }}>Settings</h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {userId && <OwnerUserBadge userId={userId} companyId="" />}
+          </div>
+        </div>
 
-        <div style={{ maxWidth: 520 }}>
+        <div style={{ padding: '20px 32px 32px', maxWidth: 480 }}>
           {notice && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, background: '#ECFDF5', border: '1px solid #BBF7D0', color: '#047857', borderRadius: 10, padding: '12px 16px', fontSize: 13, fontWeight: 700 }}>
               <Check size={15} /> {notice}
@@ -97,9 +108,9 @@ export default function AdminSettingsPage() {
               {error}
             </div>
           )}
-          {/* Password */}
-          <div style={{ ...cardStyle }}>
-            <h2 style={{ margin: '0 0 20px', fontSize: 16, fontWeight: 800, color: TEXT }}>Change password</h2>
+
+          <div style={cardStyle}>
+            <h2 style={{ margin: '0 0 20px', fontSize: 16, fontWeight: 800, color: T.text1 }}>Change password</h2>
             <form onSubmit={handleChangePassword} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               {[
                 { label: 'Current password', value: currentPassword, set: setCurrentPassword, show: showCurrent, toggle: () => setShowCurrent(v => !v) },
@@ -117,21 +128,21 @@ export default function AdminSettingsPage() {
                       placeholder="••••••••"
                       required
                     />
-                    <button type="button" onClick={toggle} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: MUTED, display: 'flex', alignItems: 'center' }}>
+                    <button type="button" onClick={toggle} style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: T.text3, display: 'flex', alignItems: 'center' }}>
                       {show ? <EyeOff size={16} /> : <Eye size={16} />}
                     </button>
                   </div>
                 </div>
               ))}
               <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                <button type="submit" disabled={savingPassword} style={{ background: ORANGE, color: '#fff', border: 'none', borderRadius: 10, padding: '10px 22px', fontSize: 13, fontWeight: 800, cursor: savingPassword ? 'default' : 'pointer', opacity: savingPassword ? 0.75 : 1 }}>
+                <button type="submit" disabled={savingPassword} style={{ background: T.accent, color: '#fff', border: 'none', borderRadius: 10, padding: '10px 22px', fontSize: 13, fontWeight: 800, cursor: savingPassword ? 'default' : 'pointer', opacity: savingPassword ? 0.75 : 1 }}>
                   {savingPassword ? 'Saving…' : 'Change password'}
                 </button>
               </div>
             </form>
           </div>
         </div>
-      </section>
-    </main>
+      </div>
+    </div>
   )
 }
