@@ -249,7 +249,9 @@ export default function UserAdminReports() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
       if (event === 'SIGNED_OUT') router.replace('/signin')
     })
-    supabase.auth.getSession().catch(() => router.replace('/signin'))
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (error || !session) supabase.auth.signOut({ scope: 'local' }).finally(() => router.replace('/signin'))
+    })
     return () => subscription.unsubscribe()
   }, [router])
 

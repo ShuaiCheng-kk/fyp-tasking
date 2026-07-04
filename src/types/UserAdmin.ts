@@ -20,10 +20,21 @@ export interface UACompany {
   owner_id: string | null
 }
 
+export interface UACompanyMember {
+  id: string
+  full_name: string
+  email_address: string
+  profile_photo_url: string | null
+  role: string
+  is_suspended: boolean
+  suspended_reason: string | null
+}
+
 export interface UACompanyDetail extends UACompany {
   member_count: number
   owner_name: string | null
   owner_email: string | null
+  members: UACompanyMember[]
 }
 
 export interface UAUser {

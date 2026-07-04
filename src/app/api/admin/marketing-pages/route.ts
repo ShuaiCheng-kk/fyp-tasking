@@ -1,6 +1,8 @@
 // LAYER: Controller
 // RULE: Only handles request/response. No business logic. No DB access.
 
+export const dynamic = 'force-dynamic'
+
 import { NextRequest, NextResponse } from 'next/server'
 import { marketingService } from '@/services/marketing/marketingService'
 
