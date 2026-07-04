@@ -4,7 +4,12 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { Zap, Shield, Star, X, Search, MapPin, Briefcase, Clock, Banknote, Timer, ChevronDown, LayoutGrid, Users, FileText } from 'lucide-react';
 import { hero, search, whyTasking, listings } from './content';
-import { JobPosting } from '@/types/recruitment.types';
+import { JobPosting as BaseJobPosting } from '@/types/Recruitment';
+
+// The public jobs API joins the department name onto each posting (see
+// src/app/api/jobs/public/route.ts) — not part of the base JobPosting shape.
+// form_type is a real job_postings column that the shared type doesn't declare yet.
+type JobPosting = BaseJobPosting & { department_name: string | null; form_type: string | null };
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 

@@ -26,11 +26,10 @@ export async function POST(req: NextRequest) {
   try {
     if (request_type === 'fixed_off_day') {
       const ids = b.ids as unknown
-      const manager_id = b.manager_id as string | undefined
       if (!Array.isArray(ids) || ids.length === 0 || !ids.every((id): id is string => typeof id === 'string')) {
         return NextResponse.json({ success: false, message: 'ids (non-empty string array) is required' }, { status: 400 })
       }
-      const fixedOff = await attendanceService.getFixedOffDayRequests(company_id, { managerId: manager_id })
+      const fixedOff = await attendanceService.getFixedOffDayRequests(company_id)
       const group = fixedOff.filter(r => ids.includes(r.id))
       if (group.length === 0) return NextResponse.json({ success: false, message: 'Request not found' }, { status: 404 })
       const first = group[0]

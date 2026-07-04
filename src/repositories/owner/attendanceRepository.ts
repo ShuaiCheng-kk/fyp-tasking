@@ -238,6 +238,33 @@ export const attendanceRepository = {
     return (data ?? []) as Array<{ id: string; title: string; description: string | null; status: string; priority: string | null; due_at: string | null; created_at: string }>
   },
 
+  // Batched counterpart of getTasksByShiftAssignment — one query across all shift_ids instead of
+  // one round-trip per assignment. Caller groups the flat rows by shift_id.
+  async getTasksByShiftIds(shift_ids: string[]): Promise<Array<{ id: string; title: string; status: string; shift_id: string }>> {
+    if (shift_ids.length === 0) return []
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('id, title, status, shift_id')
+      .in('shift_id', shift_ids)
+      .is('parent_task_id', null)
+    if (error) throw new Error(error.message)
+    return (data ?? []) as Array<{ id: string; title: string; status: string; shift_id: string }>
+  },
+
+  // Batched counterpart of getMovableTasksByShiftAssignment — one query across all shift_ids;
+  // caller filters/groups by (shift_id, assigned_user_id) per assignment.
+  async getMovableTasksByShiftIds(shift_ids: string[]): Promise<Array<{ id: string; title: string; description: string | null; status: string; priority: string | null; due_at: string | null; created_at: string; shift_id: string; assigned_user_id: string | null }>> {
+    if (shift_ids.length === 0) return []
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('id, title, description, status, priority, due_at, created_at, shift_id, assigned_user_id')
+      .in('shift_id', shift_ids)
+      .in('status', ['Assigned', 'In Progress'])
+      .eq('is_archived', false)
+    if (error) throw new Error(error.message)
+    return (data ?? []) as Array<{ id: string; title: string; description: string | null; status: string; priority: string | null; due_at: string | null; created_at: string; shift_id: string; assigned_user_id: string | null }>
+  },
+
   async updateShiftAssignmentUser(assignment_id: string, user_id: string): Promise<ShiftAssignment> {
     const { data, error } = await supabase
       .from('shift_assignments')
@@ -269,9 +296,19 @@ export const attendanceRepository = {
     return (data as FixedOffDayRequest | null) ?? null
   },
 
+  async getFixedOffDayRequestsByIds(ids: string[]): Promise<FixedOffDayRequest[]> {
+    if (ids.length === 0) return []
+    const { data, error } = await supabase
+      .from('employee_off_day_requests')
+      .select('id, user_id, company_id, request_date, week_start, status, source, reviewed_by, reviewed_at, created_at')
+      .in('id', ids)
+    if (error) throw new Error(error.message)
+    return (data ?? []) as FixedOffDayRequest[]
+  },
+
   async updateFixedOffDayRequest(
     id: string,
-    fields: Pick<FixedOffDayRequest, 'status' | 'reviewed_by' | 'reviewed_at'>,
+    fields: Partial<Pick<FixedOffDayRequest, 'status' | 'reviewed_by' | 'reviewed_at' | 'request_date'>>,
   ): Promise<FixedOffDayRequest> {
     const { data, error } = await supabase
       .from('employee_off_day_requests')
@@ -385,6 +422,16 @@ export const attendanceRepository = {
       .maybeSingle()
     if (error) throw new Error(error.message)
     return (data as AssignmentWithShift | null) ?? null
+  },
+
+  async getShiftAssignmentsByIds(assignment_ids: string[]): Promise<AssignmentWithShift[]> {
+    if (assignment_ids.length === 0) return []
+    const { data, error } = await supabase
+      .from('shift_assignments')
+      .select('*, shifts!inner(*)')
+      .in('id', assignment_ids)
+    if (error) throw new Error(error.message)
+    return (data ?? []) as AssignmentWithShift[]
   },
 
   async getAssignmentsByUserAndDate(user_id: string, shift_date: string): Promise<AssignmentWithShift[]> {

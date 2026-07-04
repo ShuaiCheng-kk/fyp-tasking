@@ -1068,72 +1068,116 @@ async function main() {
   console.log(`  ✓ 生成 ${ownerMsgCount} 条发给 Owner 的未读消息`)
 
   // ── Step 15c: Fixed Off Day Requests（触发 Fixed Day Off 红点）─────────────
-  // Managers seed Owner queue; Employees seed Manager queues.
+  // Manager AND Employee submissions both route directly to one unified Owner queue now —
+  // there is no separate Manager-review step. Owner's only two live decisions are
+  // Approve / Modify (see attendanceService.decideFixedOffDayRequestGroup).
   console.log('\nStep 15c: 生成 Fixed Off Day Requests...')
-  const fixedOffWeekStart = startOfWeekMonday(addDays(TODAY, 7))
-  const fixedOffWeekStartKey = dateKey(fixedOffWeekStart)
+
+  const offDayDeadlineWeekday = 5 // Friday, matching resolveDeadlineDateForWeek's Sun=0..Sat=6 convention
+  const offDayDeadlineTime = '17:00'
   const { error: offDayDeadlineSeedErr } = await supabase.from('off_day_submission_deadline').insert({
     company_id: company.id,
-    deadline_weekday: 5,
+    deadline_weekday: offDayDeadlineWeekday,
+    deadline_time: offDayDeadlineTime,
     updated_by: ownerUser.id,
   })
   if (offDayDeadlineSeedErr) console.warn(`  ! off_day_submission_deadline failed: ${offDayDeadlineSeedErr.message}`)
-  else console.log('  ok off_day_submission_deadline default Friday')
+  else console.log(`  ok off_day_submission_deadline Friday ${offDayDeadlineTime}`)
 
-  const ownerQueueManagers = Array.from({ length: 8 }, (_, i) => `manager${i + 1}@test.com`)
+  // Mirrors resolveActiveSubmissionWeekStart in attendanceService.ts — whichever week is still
+  // open for submission right now (shifts a week further out each time a week's own Friday-5PM
+  // deadline has passed), so the seeded pending queue lines up with what the live Owner page
+  // actually displays as "Off Day Request For Next Week X".
+  function resolveActiveSubmissionWeekStart(today, deadlineWeekday, deadlineTime) {
+    const [hh, mm] = deadlineTime.split(':').map(Number)
+    let candidateWeekStart = startOfWeekMonday(today)
+    for (;;) {
+      const targetWeek = addDays(candidateWeekStart, 7)
+      const deadlineMoment = new Date(dateInWeek(candidateWeekStart, deadlineWeekday))
+      deadlineMoment.setHours(hh, mm, 0, 0)
+      if (Date.now() <= deadlineMoment.getTime()) return targetWeek
+      candidateWeekStart = targetWeek
+    }
+  }
+  const activeWeekStart = resolveActiveSubmissionWeekStart(TODAY, offDayDeadlineWeekday, offDayDeadlineTime)
+  const activeWeekStartKey = dateKey(activeWeekStart)
+
+  // Default 2 days/week for both roles (matches what's already configured live), plus a couple
+  // of per-user overrides so the "Individual Overrides" panel has real entries to show.
   const offDayQuotaRows = [
-    { company_id: company.id, user_id: null, max_days_per_week: 3, updated_by: ownerUser.id },
-    ...ownerQueueManagers.map(email => ({
-      company_id: company.id,
-      user_id: userIdMap[email].internalId,
-      max_days_per_week: 3,
-      updated_by: ownerUser.id,
-    })),
+    { company_id: company.id, user_id: null, role: 'Manager', max_days_per_week: 2, updated_by: ownerUser.id },
+    { company_id: company.id, user_id: null, role: 'Employee', max_days_per_week: 2, updated_by: ownerUser.id },
+    { company_id: company.id, user_id: userIdMap['manager3@test.com'].internalId, max_days_per_week: 3, updated_by: ownerUser.id },
+    { company_id: company.id, user_id: userIdMap['employee2@test.com'].internalId, max_days_per_week: 1, updated_by: ownerUser.id },
   ]
   const { error: offDayQuotaSeedErr } = await supabase.from('off_day_quota_settings').insert(offDayQuotaRows)
   if (offDayQuotaSeedErr) console.warn(`  ! off_day_quota_settings failed: ${offDayQuotaSeedErr.message}`)
-  else console.log(`  ok off_day_quota_settings default (3/week) + ${ownerQueueManagers.length} manager overrides`)
+  else console.log('  ok off_day_quota_settings: Manager 2/week, Employee 2/week, +2 overrides')
 
-  // Owner queue: Managers submit weekly day-off requests, Owner decides. Spread across 8 weeks
-  // (matching the Weekly Day Off Calendar's week pager) so both the calendar strip and the
-  // Action Needed / Processed panels have enough pages to page through, like the real product.
-  const ownerWeekdays = [1, 2, 3, 4, 5]
-  const ownerPendingFixedOffSeeders = Array.from({ length: 20 }, (_, i) => ({
-    email: ownerQueueManagers[i % ownerQueueManagers.length],
-    weekday: ownerWeekdays[i % ownerWeekdays.length],
-    weekOffset: Math.floor(i / ownerWeekdays.length),
-    queue: 'Owner',
-    status: 'pending',
-  }))
-  const ownerProcessedFixedOffSeeders = Array.from({ length: 23 }, (_, i) => ({
-    email: ownerQueueManagers[(i + 2) % ownerQueueManagers.length],
-    weekday: ownerWeekdays[(i + 1) % ownerWeekdays.length],
-    weekOffset: 4 + Math.floor(i / ownerWeekdays.length),
-    queue: 'Owner',
-    status: i % 3 === 2 ? 'rejected' : 'approved',
-    source: i % 4 === 0 ? 'auto_assigned' : 'submitted',
-    reviewedHoursAgo: 3 + i,
-  }))
-  // Manager queue: Employees submit weekly day-off requests, their Manager decides — one pending
-  // per department so every Manager account has something to review, not just the two seeded before.
-  const managerQueueFixedOffSeeders = employeesByDept.map(([empEmail], deptIdx) => ({
-    email: empEmail,
-    weekday: [1, 2, 3, 4][deptIdx % 4],
-    weekOffset: 0,
-    queue: 'Manager',
-    status: 'pending',
-  }))
-  const fixedOffSeeders = [
-    ...ownerPendingFixedOffSeeders,
-    ...ownerProcessedFixedOffSeeders,
-    ...managerQueueFixedOffSeeders,
-  ]
+  // Effective quota per requester — must match the rows above so each seeded weekly group has
+  // exactly the right number of dates, same as a real submission would.
+  const requesterQuota = new Map([...managerEmails, ...employeeEmails].map(email => [email, 2]))
+  requesterQuota.set('manager3@test.com', 3)
+  requesterQuota.set('employee2@test.com', 1)
+
+  const WEEKDAY_COMBOS = {
+    1: [[1], [2], [3], [4], [5]],
+    2: [[1, 3], [2, 4], [3, 5], [1, 4], [2, 5], [1, 2], [4, 5], [2, 3]],
+    3: [[1, 3, 5], [2, 4, 5], [1, 2, 4], [1, 3, 4], [2, 3, 5]],
+  }
+  function pickWeekdaysForQuota(quota, idx) {
+    const combos = WEEKDAY_COMBOS[quota] ?? WEEKDAY_COMBOS[2]
+    return combos[idx % combos.length]
+  }
+
+  const allRequesters = [...managerEmails, ...employeeEmails]
+
+  // Pending — everyone submits their weekly group for the currently-open week, so the Owner's
+  // "Off Day Request For Next Week" queue (single-card pager) has a full, realistic set to page
+  // through and to test the Approve / Modify + AI Suggestion flow against.
+  const pendingFixedOffSeeders = allRequesters.flatMap((email, i) => {
+    const quota = requesterQuota.get(email)
+    return pickWeekdaysForQuota(quota, i).map(weekday => ({
+      email,
+      weekStart: activeWeekStart,
+      weekday,
+      status: 'pending',
+      source: 'submitted',
+      submittedHoursAgo: 6 + i * 3,
+    }))
+  })
+
+  // Historical — past 4 weeks, already decided (Approve / Modify only, matching the current
+  // product), so the Weekly Day Off Calendar heatmap has real past data to show alongside the
+  // upcoming week's live requests.
+  const historicalFixedOffSeeders = []
+  for (let w = 1; w <= 4; w++) {
+    const weekStart = addDays(activeWeekStart, -7 * w)
+    allRequesters.forEach((email, i) => {
+      if ((i + w) % 3 === 0) return // sparser historical weeks — not everyone requests every week
+      const quota = requesterQuota.get(email)
+      const weekdays = pickWeekdaysForQuota(quota, i + w)
+      weekdays.forEach(weekday => {
+        const reviewedHoursAgo = 24 * 7 * w + i
+        historicalFixedOffSeeders.push({
+          email,
+          weekStart,
+          weekday,
+          status: (i + w) % 4 === 0 ? 'modified' : 'approved',
+          source: (i + w) % 5 === 0 ? 'auto_assigned' : 'submitted',
+          reviewedHoursAgo,
+          submittedHoursAgo: reviewedHoursAgo + 2,
+        })
+      })
+    })
+  }
+
+  const fixedOffSeeders = [...pendingFixedOffSeeders, ...historicalFixedOffSeeders]
   let fixedOffCount = 0
   for (const fo of fixedOffSeeders) {
     const userId = userIdMap[fo.email].internalId
-    const requestWeekStart = addDays(fixedOffWeekStart, (fo.weekOffset ?? 0) * 7)
-    const requestWeekStartKey = dateKey(requestWeekStart)
-    const requestDate = dateKey(dateInWeek(requestWeekStart, fo.weekday))
+    const requestWeekStartKey = dateKey(fo.weekStart)
+    const requestDate = dateKey(dateInWeek(fo.weekStart, fo.weekday))
     const isDecided = fo.status !== 'pending'
     const { error: foErr } = await supabase.from('employee_off_day_requests').insert({
       user_id: userId,
@@ -1141,14 +1185,15 @@ async function main() {
       request_date: requestDate,
       week_start: requestWeekStartKey,
       status: fo.status,
-      source: fo.source ?? 'submitted',
+      source: fo.source,
+      created_at: new Date(Date.now() - (fo.submittedHoursAgo ?? 1) * 3600000).toISOString(),
       reviewed_by: isDecided ? ownerUser.id : null,
       reviewed_at: isDecided ? new Date(Date.now() - (fo.reviewedHoursAgo ?? 1) * 3600000).toISOString() : null,
     })
     if (foErr) console.warn(`  ! employee_off_day_requests failed (${fo.email}): ${foErr.message}`)
-    else { fixedOffCount++; console.log(`  ok ${fo.email} -> ${requestDate} ${fo.status} (${fo.queue} queue)`) }
+    else fixedOffCount++
   }
-  console.log(`  ok seeded ${fixedOffCount} employee_off_day_requests across 8 weeks starting ${fixedOffWeekStartKey}`)
+  console.log(`  ok seeded ${fixedOffCount} employee_off_day_requests (${pendingFixedOffSeeders.length} pending for week ${activeWeekStartKey} + ${historicalFixedOffSeeders.length} historical across 4 past weeks)`)
 
   // ── Step 16: Job Postings（Recruitment 页面的 Jobs 标签页 + Review 标签页数据）──
   // Jobs 标签页只显示 status in ('open','closed') 的职位（见 owner/recruitment/page.tsx

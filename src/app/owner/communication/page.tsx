@@ -8,6 +8,7 @@ import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import { createClient } from '@/lib/supabase'
 import { ModalOverlay, ModalBox, ModalHeader, modalInputStyle, modalLabelStyle, modalErrorBoxStyle, modalGhostButtonStyle, modalPrimaryButtonStyle, modalDestructiveButtonStyle } from '@/components/modal'
 import Spinner from '@/components/Spinner'
+import Toast from '@/components/Toast'
 import DepartmentBadge from '@/components/DepartmentBadge'
 import { setDeptColorOverrides } from '@/lib/deptColor'
 import {
@@ -63,7 +64,6 @@ type InboxInvite = {
   company_name: string
 }
 
-type InviteFlash = { id: string; message: string }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -302,7 +302,10 @@ export default function OwnerCommunicationPage() {
   // kept for backward compat (pendingPartnerId flow)
   const [selectedConv, setSelectedConv] = useState<Conversation | null>(null)
   const [invites, setInvites] = useState<InboxInvite[]>([])
-  const [inviteFlashes, setInviteFlashes] = useState<InviteFlash[]>([])
+  const [successToast, setSuccessToast] = useState('')
+  const [errorToast, setErrorToast] = useState('')
+  const successToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const errorToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [inviteLoading, setInviteLoading] = useState(false)
   const [inviteActing, setInviteActing] = useState<string | null>(null)
 
@@ -557,6 +560,18 @@ export default function OwnerCommunicationPage() {
     setCommTabIndicator({ left: activeRect.left - containerRect.left, width: activeRect.width, opacity: 1 })
   }, [activeTab, unreadMessages, unreadAnnCountState])
 
+  function showSuccessToast(message: string) {
+    if (successToastTimerRef.current) clearTimeout(successToastTimerRef.current)
+    setSuccessToast(message)
+    successToastTimerRef.current = setTimeout(() => setSuccessToast(''), 3000)
+  }
+
+  function showErrorToast(message: string) {
+    if (errorToastTimerRef.current) clearTimeout(errorToastTimerRef.current)
+    setErrorToast(message)
+    errorToastTimerRef.current = setTimeout(() => setErrorToast(''), 3000)
+  }
+
   async function handlePostAnnouncement() {
     if (!internalUserId || !companyId) return
     setPosting(true)
@@ -577,7 +592,12 @@ export default function OwnerCommunicationPage() {
         setAnnTitle('')
         setAnnContent('')
         setAnnDeptId('company-wide')
+        showSuccessToast('Announcement posted')
+      } else {
+        showErrorToast(data.error ?? 'Failed to post announcement')
       }
+    } catch {
+      showErrorToast('Failed to post announcement')
     } finally { setPosting(false) }
   }
 
@@ -595,7 +615,11 @@ export default function OwnerCommunicationPage() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.error)
-    } catch { fetchAnnouncements() }
+      showSuccessToast('Announcement deleted')
+    } catch (err) {
+      fetchAnnouncements()
+      showErrorToast(err instanceof Error ? err.message : 'Failed to delete announcement')
+    }
     finally { setDeleting(false) }
   }
 
@@ -632,6 +656,7 @@ export default function OwnerCommunicationPage() {
       setShowEditModal(false)
       fetchAnnouncements()
       setSelectedAnn(prev => prev ? { ...prev, title: editTitle, content: editContent, department_id: deptId } : prev)
+      showSuccessToast('Announcement updated')
     } catch (err: unknown) {
       setEditError(err instanceof Error ? err.message : 'An error occurred')
     } finally { setSaving(false) }
@@ -665,11 +690,9 @@ export default function OwnerCommunicationPage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.error ?? 'Failed to accept')
       setInvites(prev => prev.filter(i => i.id !== invite.id))
-      const flash: InviteFlash = { id: invite.id, message: `You have joined ${invite.company_name}` }
-      setInviteFlashes(prev => [...prev, flash])
-      setTimeout(() => setInviteFlashes(prev => prev.filter(f => f.id !== flash.id)), 4000)
+      showSuccessToast(`You have joined ${invite.company_name}`)
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Something went wrong')
+      showErrorToast(err instanceof Error ? err.message : 'Something went wrong')
     } finally { setInviteActing(null) }
   }
 
@@ -684,11 +707,9 @@ export default function OwnerCommunicationPage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.error ?? 'Failed to decline')
       setInvites(prev => prev.filter(i => i.id !== invite.id))
-      const flash: InviteFlash = { id: invite.id, message: 'Invitation declined' }
-      setInviteFlashes(prev => [...prev, flash])
-      setTimeout(() => setInviteFlashes(prev => prev.filter(f => f.id !== flash.id)), 3000)
+      showSuccessToast('Invitation declined')
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Something went wrong')
+      showErrorToast(err instanceof Error ? err.message : 'Something went wrong')
     } finally { setInviteActing(null) }
   }
 
@@ -751,8 +772,9 @@ export default function OwnerCommunicationPage() {
         if (internalUserId) localStorage.setItem(`pinned_convs_${internalUserId}`, JSON.stringify([...next]))
         return next
       })
+      showSuccessToast('Conversation deleted')
     } catch (err) {
-      console.error(err)
+      showErrorToast(err instanceof Error ? err.message : 'Failed to delete conversation')
     } finally {
       setDeletingConvId(null)
       setConfirmDeleteConvId(null)
@@ -860,7 +882,7 @@ export default function OwnerCommunicationPage() {
       }
       fetchConversations()
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Upload failed')
+      showErrorToast(err instanceof Error ? err.message : 'Upload failed')
     } finally {
       setPanelUploading(prev => ({ ...prev, [partnerId]: false }))
       clearPanelAttachment(partnerId)
@@ -1549,17 +1571,8 @@ export default function OwnerCommunicationPage() {
         </div>{/* /card outer padding */}
       </main>
 
-      {/* ── Toast flash ── */}
-      {inviteFlashes.length > 0 && (
-        <div style={{ position: 'fixed', bottom: 24, right: 24, display: 'flex', flexDirection: 'column', gap: 10, zIndex: 200 }}>
-          {inviteFlashes.map(f => (
-            <div key={f.id} style={{ background: '#111827', color: '#fff', padding: '11px 16px', borderRadius: 10, fontSize: 13, fontWeight: 600, boxShadow: '0 4px 16px rgba(0,0,0,0.18)', display: 'flex', alignItems: 'center', gap: 8, animation: 'fadeSlideUp 0.25s ease both' }}>
-              <Check size={13} color="#10B981" />
-              {f.message}
-            </div>
-          ))}
-        </div>
-      )}
+      <Toast message={successToast} />
+      <Toast message={errorToast} variant="error" />
 
       {/* ── Delete Confirmation Modal ── */}
       {deleteConfirmId && (

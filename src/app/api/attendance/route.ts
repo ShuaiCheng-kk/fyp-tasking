@@ -50,8 +50,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: true, requests })
     }
     if (resource === 'fixed_off_days') {
-      const manager_id = searchParams.get('manager_id') ?? undefined
-      const requests = await attendanceService.getFixedOffDayRequests(company_id, { managerId: manager_id })
+      const requests = await attendanceService.getFixedOffDayRequests(company_id)
       return NextResponse.json({ success: true, requests })
     }
     if (resource === 'range') {
@@ -169,20 +168,28 @@ export async function PATCH(req: NextRequest) {
         if (!b.ids.every((id): id is string => typeof id === 'string')) {
           return NextResponse.json({ success: false, message: 'ids must be an array of strings' }, { status: 400 })
         }
+        if (b.new_dates !== undefined && (!Array.isArray(b.new_dates) || !b.new_dates.every((d): d is string => typeof d === 'string'))) {
+          return NextResponse.json({ success: false, message: 'new_dates must be an array of strings' }, { status: 400 })
+        }
         const requests = await attendanceService.decideFixedOffDayRequestGroup({
           ids: b.ids,
           reviewer_id: b.reviewer_id,
           decision: b.decision as AttendanceRequestStatus,
+          new_dates: b.new_dates as string[] | undefined,
         })
         return NextResponse.json({ success: true, requests })
       }
       if (typeof b.id !== 'string') {
         return NextResponse.json({ success: false, message: 'id or ids is required' }, { status: 400 })
       }
+      if (b.new_date !== undefined && typeof b.new_date !== 'string') {
+        return NextResponse.json({ success: false, message: 'new_date must be a string' }, { status: 400 })
+      }
       const request = await attendanceService.decideFixedOffDayRequest({
         id: b.id,
         reviewer_id: b.reviewer_id,
         decision: b.decision as AttendanceRequestStatus,
+        new_date: b.new_date as string | undefined,
       })
       return NextResponse.json({ success: true, request })
     }

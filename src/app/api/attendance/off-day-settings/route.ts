@@ -56,56 +56,68 @@ export async function POST(req: NextRequest) {
   const action = b.action
 
   try {
-    if (action === 'set_company_quota') {
-      if (typeof b.company_id !== 'string' || typeof b.owner_id !== 'string' || typeof b.max_days_per_week !== 'number') {
-        return NextResponse.json({ success: false, message: 'company_id, owner_id and max_days_per_week are required' }, { status: 400 })
-      }
-      const setting = await offDaySettingsService.setCompanyDefaultQuota({
-        company_id: b.company_id,
-        owner_id: b.owner_id,
-        max_days_per_week: b.max_days_per_week,
-      })
-      return NextResponse.json({ success: true, setting })
-    }
-
-    if (action === 'set_manager_quota_override') {
+    if (action === 'set_default_quota') {
       if (
         typeof b.company_id !== 'string' ||
         typeof b.owner_id !== 'string' ||
-        typeof b.manager_id !== 'string' ||
+        (b.role !== 'Manager' && b.role !== 'Employee') ||
         typeof b.max_days_per_week !== 'number'
       ) {
-        return NextResponse.json({ success: false, message: 'company_id, owner_id, manager_id and max_days_per_week are required' }, { status: 400 })
+        return NextResponse.json({ success: false, message: 'company_id, owner_id, role and max_days_per_week are required' }, { status: 400 })
       }
-      const setting = await offDaySettingsService.setManagerQuotaOverride({
+      const setting = await offDaySettingsService.setDefaultQuota({
         company_id: b.company_id,
         owner_id: b.owner_id,
-        manager_id: b.manager_id,
+        role: b.role,
         max_days_per_week: b.max_days_per_week,
       })
       return NextResponse.json({ success: true, setting })
     }
 
-    if (action === 'remove_manager_quota_override') {
-      if (typeof b.company_id !== 'string' || typeof b.owner_id !== 'string' || typeof b.manager_id !== 'string') {
-        return NextResponse.json({ success: false, message: 'company_id, owner_id and manager_id are required' }, { status: 400 })
+    if (action === 'set_user_quota_override') {
+      if (
+        typeof b.company_id !== 'string' ||
+        typeof b.owner_id !== 'string' ||
+        typeof b.user_id !== 'string' ||
+        typeof b.max_days_per_week !== 'number'
+      ) {
+        return NextResponse.json({ success: false, message: 'company_id, owner_id, user_id and max_days_per_week are required' }, { status: 400 })
       }
-      await offDaySettingsService.removeManagerQuotaOverride({
+      const setting = await offDaySettingsService.setUserQuotaOverride({
         company_id: b.company_id,
         owner_id: b.owner_id,
-        manager_id: b.manager_id,
+        user_id: b.user_id,
+        max_days_per_week: b.max_days_per_week,
+      })
+      return NextResponse.json({ success: true, setting })
+    }
+
+    if (action === 'remove_user_quota_override') {
+      if (typeof b.company_id !== 'string' || typeof b.owner_id !== 'string' || typeof b.user_id !== 'string') {
+        return NextResponse.json({ success: false, message: 'company_id, owner_id and user_id are required' }, { status: 400 })
+      }
+      await offDaySettingsService.removeUserQuotaOverride({
+        company_id: b.company_id,
+        owner_id: b.owner_id,
+        user_id: b.user_id,
       })
       return NextResponse.json({ success: true })
     }
 
     if (action === 'set_deadline') {
-      if (typeof b.company_id !== 'string' || typeof b.owner_id !== 'string' || typeof b.deadline_weekday !== 'number') {
-        return NextResponse.json({ success: false, message: 'company_id, owner_id and deadline_weekday are required' }, { status: 400 })
+      if (
+        typeof b.company_id !== 'string' ||
+        typeof b.owner_id !== 'string' ||
+        typeof b.deadline_weekday !== 'number' ||
+        typeof b.deadline_time !== 'string'
+      ) {
+        return NextResponse.json({ success: false, message: 'company_id, owner_id, deadline_weekday and deadline_time are required' }, { status: 400 })
       }
       const deadline = await offDaySettingsService.setDeadline({
         company_id: b.company_id,
         owner_id: b.owner_id,
         deadline_weekday: b.deadline_weekday,
+        deadline_time: b.deadline_time,
       })
       return NextResponse.json({ success: true, deadline })
     }

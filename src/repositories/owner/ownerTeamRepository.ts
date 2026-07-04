@@ -35,7 +35,7 @@ export const ownerTeamRepository = {
   async findManagersByDepartment(company_id: string, department_id: string): Promise<{ id: string; full_name: string }[]> {
     const { data, error } = await supabase
       .from('manager_departments')
-      .select('manager_id, users!inner(id, full_name)')
+      .select('manager_id, users!manager_departments_manager_id_fkey!inner(id, full_name)')
       .eq('company_id', company_id)
       .eq('department_id', department_id)
     if (error) throw new Error(error.message)
