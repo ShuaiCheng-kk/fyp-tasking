@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import { Check, Eye, EyeOff } from 'lucide-react'
 import UserAdminSidebar from '@/components/UserAdminSidebar'
@@ -18,6 +19,7 @@ const T = {
 }
 
 export default function UserAdminSettingsPage() {
+  const router = useRouter()
   const [userId, setUserId] = useState<string | null>(null)
   const [email, setEmail] = useState('')
   const [currentPassword, setCurrentPassword] = useState('')
@@ -29,6 +31,18 @@ export default function UserAdminSettingsPage() {
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
   const [savingPassword, setSavingPassword] = useState(false)
+
+  useEffect(() => {
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    )
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') router.replace('/signin')
+    })
+    supabase.auth.getSession().catch(() => router.replace('/signin'))
+    return () => subscription.unsubscribe()
+  }, [router])
 
   useEffect(() => {
     const authUid = localStorage.getItem('tasking_user_id')

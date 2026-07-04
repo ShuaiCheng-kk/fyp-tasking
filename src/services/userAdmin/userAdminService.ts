@@ -37,6 +37,10 @@ export async function unsuspendCompany(input: UnsuspendCompanyInput): Promise<vo
 export async function suspendUser(input: SuspendUserInput): Promise<void> {
   if (!input.user_id) throw new Error('User ID is required')
   if (!input.reason?.trim()) throw new Error('Suspension reason is required')
+  const user = await repo.getUserById(input.user_id)
+  if (user && ['User Admin', 'Marketing Admin'].includes(user.role)) {
+    throw new Error('Platform admin accounts cannot be suspended')
+  }
   await repo.suspendUser(input.user_id, input.reason.trim())
 }
 

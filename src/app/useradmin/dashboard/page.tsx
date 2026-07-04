@@ -1,7 +1,9 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Search, Building2, Users, X, AlertTriangle, CheckCircle, ChevronRight, ChevronDown, ChevronUp, ChevronLeft } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { Search, Building2, Users, X, AlertTriangle, CheckCircle, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, ChevronsUpDown } from 'lucide-react'
+import { createBrowserClient } from '@supabase/ssr'
 import UserAdminSidebar from '@/components/UserAdminSidebar'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import { UACompany, UACompanyDetail, UAUser } from '@/types/UserAdmin'
@@ -162,6 +164,7 @@ function CalendarRangePicker({ from, to, onChange }: {
 }
 
 export default function UserAdminDashboard() {
+  const router = useRouter()
   const [tab, setTab] = useState<Tab>('companies')
   const [userId, setUserId] = useState<string | null>(null)
 
@@ -191,35 +194,54 @@ export default function UserAdminDashboard() {
 
   type UserSortField = 'full_name' | 'created_at'
   type CompanySortField = 'name' | 'created_at'
-  const [userSortField, setUserSortField] = useState<UserSortField>('created_at')
+  const [userSortField, setUserSortField] = useState<UserSortField | null>(null)
   const [userSortDir, setUserSortDir] = useState<'asc' | 'desc'>('desc')
-  const [compSortField, setCompSortField] = useState<CompanySortField>('created_at')
+  const [compSortField, setCompSortField] = useState<CompanySortField | null>(null)
   const [compSortDir, setCompSortDir] = useState<'asc' | 'desc'>('desc')
 
   const toggleUserSort = (field: UserSortField) => {
-    if (userSortField === field) setUserSortDir(d => d === 'asc' ? 'desc' : 'asc')
-    else { setUserSortField(field); setUserSortDir(field === 'created_at' ? 'desc' : 'asc') }
+    if (userSortField === field) {
+      if (userSortDir === 'asc') { setUserSortDir('desc') }
+      else { setUserSortField(null) }
+    } else { setUserSortField(field); setUserSortDir('asc') }
   }
   const toggleCompSort = (field: CompanySortField) => {
-    if (compSortField === field) setCompSortDir(d => d === 'asc' ? 'desc' : 'asc')
-    else { setCompSortField(field); setCompSortDir(field === 'created_at' ? 'desc' : 'asc') }
+    if (compSortField === field) {
+      if (compSortDir === 'asc') { setCompSortDir('desc') }
+      else { setCompSortField(null) }
+    } else { setCompSortField(field); setCompSortDir('asc') }
   }
 
-  const ALL_ROLES = ['Owner', 'Partner', 'Manager', 'Employee', 'Casual Worker', 'Marketing Admin', 'User Admin']
+  const ALL_ROLES = ['Owner', 'Partner', 'Manager', 'Employee', 'Casual Worker']
 
   const [detailCompany, setDetailCompany] = useState<UACompanyDetail | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailLoading, setDetailLoading] = useState(false)
 
+  const [detailUser, setDetailUser] = useState<UAUser | null>(null)
+  const [userDetailOpen, setUserDetailOpen] = useState(false)
+
   const [suspendModal, setSuspendModal] = useState<{ type: 'company' | 'user'; id: string; name: string } | null>(null)
   const [suspendReason, setSuspendReason] = useState('')
   const [suspending, setSuspending] = useState(false)
-  const [openReasonKey, setOpenReasonKey] = useState<string | null>(null)
+
 
   const [reinstateModal, setReinstateModal] = useState<{ type: 'company' | 'user'; id: string; name: string } | null>(null)
   const [reinstating, setReinstating] = useState(false)
 
   const [toast, setToast] = useState<string | null>(null)
+
+  useEffect(() => {
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    )
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') router.replace('/signin')
+    })
+    supabase.auth.getSession().catch(() => router.replace('/signin'))
+    return () => subscription.unsubscribe()
+  }, [router])
 
   useEffect(() => {
     const id = localStorage.getItem('tasking_user_id')
@@ -286,8 +308,8 @@ export default function UserAdminDashboard() {
   const toggleStatus = (s: string) =>
     setStatusFilters(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s])
 
-  const [userFilterOpen, setUserFilterOpen] = useState<Record<string, boolean>>({ company: true, role: true, status: true, date: false })
-  const [compFilterOpen, setCompFilterOpen] = useState<Record<string, boolean>>({ plan: true, industry: true, status: true, date: false })
+  const [userFilterOpen, setUserFilterOpen] = useState<Record<string, boolean>>({ company: false, role: false, status: false, date: false })
+  const [compFilterOpen, setCompFilterOpen] = useState<Record<string, boolean>>({ plan: false, industry: false, status: false, date: false })
   const toggleUserSection = (k: string) => setUserFilterOpen(p => ({ ...p, [k]: !p[k] }))
   const toggleCompSection = (k: string) => setCompFilterOpen(p => ({ ...p, [k]: !p[k] }))
 
@@ -304,6 +326,7 @@ export default function UserAdminDashboard() {
     if (userDateTo && new Date(u.created_at) > new Date(userDateTo + 'T23:59:59')) return false
     return true
   }).sort((a, b) => {
+    if (!userSortField) return 0
     const dir = userSortDir === 'asc' ? 1 : -1
     if (userSortField === 'full_name') return a.full_name.localeCompare(b.full_name) * dir
     return (new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) * dir
@@ -331,6 +354,7 @@ export default function UserAdminDashboard() {
     if (compDateTo && new Date(c.created_at) > new Date(compDateTo + 'T23:59:59')) return false
     return true
   }).sort((a, b) => {
+    if (!compSortField) return 0
     const dir = compSortDir === 'asc' ? 1 : -1
     if (compSortField === 'name') return a.name.localeCompare(b.name) * dir
     return (new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) * dir
@@ -392,38 +416,29 @@ export default function UserAdminDashboard() {
 
   // ── Sub-components ─────────────────────────────────────────────────────────
 
-  const StatusDot = ({ suspended, reason, rowKey }: { suspended: boolean; reason?: string | null; rowKey?: string }) => {
-    const open = rowKey != null && openReasonKey === rowKey
+  const StatusDot = ({ suspended, reason }: { suspended: boolean; reason?: string | null; rowKey?: string }) => {
+    const [hovered, setHovered] = useState(false)
     return (
-      <div style={{ position: 'relative' }}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5,
+      <div style={{ position: 'relative', display: 'inline-block' }}
+        onMouseEnter={() => suspended && reason && setHovered(true)}
+        onMouseLeave={() => setHovered(false)}>
+        <span style={{
+          display: 'inline-flex', alignItems: 'center', gap: 5,
           padding: '3px 9px', borderRadius: 6, fontSize: 11.5, fontWeight: 600, letterSpacing: '0.01em',
           background: suspended ? T.dangerBg : T.successBg,
           color: suspended ? '#DC2626' : '#16A34A',
           border: `1px solid ${suspended ? T.dangerMid : T.successMid}`,
+          cursor: suspended && reason ? 'default' : 'default',
         }}>
           <span style={{ width: 5, height: 5, borderRadius: '50%', background: suspended ? T.danger : T.success, display: 'inline-block' }} />
           {suspended ? 'Suspended' : 'Active'}
-          {suspended && reason && rowKey != null && (
-            <button
-              type="button"
-              onClick={() => setOpenReasonKey(open ? null : rowKey)}
-              style={{
-                width: 14, height: 14, borderRadius: '50%', border: `1px solid ${T.dangerMid}`,
-                background: '#FFFFFF', color: '#DC2626', fontSize: 9, fontWeight: 700, lineHeight: '1',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0, marginLeft: 2,
-              }}
-            >
-              ?
-            </button>
-          )}
         </span>
-        {open && reason && (
+        {hovered && reason && (
           <div style={{
             position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 30,
-            minWidth: 180, maxWidth: 240, background: T.text1, color: '#fff',
+            minWidth: 180, maxWidth: 240, background: '#1E293B', color: '#fff',
             borderRadius: 8, padding: '8px 11px', fontSize: 11.5, lineHeight: 1.5,
-            boxShadow: '0 8px 24px rgba(0,0,0,0.2)', fontWeight: 400,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.2)', fontWeight: 400, pointerEvents: 'none',
           }}>
             {reason}
           </div>
@@ -553,12 +568,12 @@ export default function UserAdminDashboard() {
                             const active = sortable && compSortField === sortable
                             return (
                               <th key={h} onClick={() => sortable && toggleCompSort(sortable as CompanySortField)}
-                                style={{ padding: '9px 16px', textAlign: 'left', fontWeight: 600, color: active ? T.text1 : T.text3, fontSize: 11, borderBottom: `1px solid ${T.border}`, whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.05em', cursor: sortable ? 'pointer' : 'default', userSelect: 'none' }}>
-                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                                style={{ padding: '9px 16px', textAlign: 'left', fontWeight: active ? 700 : 600, color: active ? '#F97316' : T.text3, fontSize: 11, borderBottom: `1px solid ${T.border}`, whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.05em', cursor: sortable ? 'pointer' : 'default', userSelect: 'none' }}>
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                                   {h}
                                   {sortable && (active
-                                    ? (compSortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)
-                                    : <ChevronDown size={12} style={{ opacity: 0.3 }} />)}
+                                    ? (compSortDir === 'asc' ? <ChevronUp size={13} color='#F97316' /> : <ChevronDown size={13} color='#F97316' />)
+                                    : <ChevronsUpDown size={13} style={{ opacity: 0.55 }} />)}
                                 </span>
                               </th>
                             )
@@ -584,7 +599,7 @@ export default function UserAdminDashboard() {
                               <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 5, background: c.plan === 'Paid' ? '#F0FDF4' : T.surfaceHi, color: c.plan === 'Paid' ? '#16A34A' : T.text3, border: `1px solid ${c.plan === 'Paid' ? '#BBF7D0' : T.border}` }}>{c.plan}</span>
                             </td>
                             <td style={{ padding: '11px 16px', color: T.text2, fontSize: '0.82rem' }}>{c.industry ?? '—'}</td>
-                            <td style={{ padding: '11px 16px' }}><StatusDot suspended={c.is_suspended} reason={c.suspended_reason} rowKey={`company-${c.id}`} /></td>
+                            <td style={{ padding: '11px 16px' }}><StatusDot suspended={c.is_suspended} reason={c.suspended_reason} /></td>
                             <td style={{ padding: '11px 16px', color: T.text3, fontSize: '0.8rem', fontVariantNumeric: 'tabular-nums' }}>{new Date(c.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
                             <td style={{ padding: '11px 16px' }}>
                               <button onClick={() => openDetail(c.id)} style={{ display: 'flex', alignItems: 'center', gap: 3, background: T.accentBg, border: `1px solid ${T.accentMid}`, borderRadius: 6, cursor: 'pointer', color: T.accent, fontWeight: 600, fontSize: 11.5, padding: '4px 10px' }}>
@@ -668,12 +683,12 @@ export default function UserAdminDashboard() {
                             const active = sortable && userSortField === sortable
                             return (
                               <th key={h} onClick={() => sortable && toggleUserSort(sortable as UserSortField)}
-                                style={{ padding: '9px 16px', textAlign: 'left', fontWeight: 600, color: active ? T.text1 : T.text3, fontSize: 11, borderBottom: `1px solid ${T.border}`, whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.05em', cursor: sortable ? 'pointer' : 'default', userSelect: 'none' }}>
-                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                                style={{ padding: '9px 16px', textAlign: 'left', fontWeight: active ? 700 : 600, color: active ? '#F97316' : T.text3, fontSize: 11, borderBottom: `1px solid ${T.border}`, whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.05em', cursor: sortable ? 'pointer' : 'default', userSelect: 'none' }}>
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                                   {h}
                                   {sortable && (active
-                                    ? (userSortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)
-                                    : <ChevronDown size={12} style={{ opacity: 0.3 }} />)}
+                                    ? (userSortDir === 'asc' ? <ChevronUp size={13} color='#F97316' /> : <ChevronDown size={13} color='#F97316' />)
+                                    : <ChevronsUpDown size={13} style={{ opacity: 0.55 }} />)}
                                 </span>
                               </th>
                             )
@@ -686,7 +701,8 @@ export default function UserAdminDashboard() {
                         ) : displayedUsers.length === 0 ? (
                           <tr><td colSpan={7} style={{ padding: 40, textAlign: 'center', color: T.text3 }}>No users found</td></tr>
                         ) : displayedUsers.map((u, i) => (
-                          <tr key={u.id} style={{ borderBottom: `1px solid ${i === displayedUsers.length - 1 ? 'transparent' : T.border}`, transition: 'background 0.1s' }}
+                          <tr key={u.id} style={{ borderBottom: `1px solid ${i === displayedUsers.length - 1 ? 'transparent' : T.border}`, transition: 'background 0.1s', cursor: 'pointer' }}
+                            onClick={() => { setDetailUser(u); setUserDetailOpen(true) }}
                             onMouseEnter={e => (e.currentTarget.style.background = '#F9FAFB')}
                             onMouseLeave={e => (e.currentTarget.style.background = '')}>
                             <td style={{ padding: '11px 16px', fontWeight: 600, color: T.text1 }}>
@@ -700,9 +716,9 @@ export default function UserAdminDashboard() {
                               <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 5, background: T.surfaceHi, color: T.text1, border: `1px solid ${T.border}`, whiteSpace: 'nowrap' }}>{u.role}</span>
                             </td>
                             <td style={{ padding: '11px 16px', color: T.text2, fontSize: '0.82rem' }}>{u.company_name ?? '—'}</td>
-                            <td style={{ padding: '11px 16px' }}><StatusDot suspended={u.is_suspended} reason={u.suspended_reason} rowKey={`user-${u.id}`} /></td>
+                            <td style={{ padding: '11px 16px' }}><StatusDot suspended={u.is_suspended} reason={u.suspended_reason} /></td>
                             <td style={{ padding: '11px 16px', color: T.text3, fontSize: '0.8rem', fontVariantNumeric: 'tabular-nums' }}>{new Date(u.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
-                            <td style={{ padding: '11px 16px' }}>
+                            <td style={{ padding: '11px 16px' }} onClick={e => e.stopPropagation()}>
                               {u.is_suspended ? (
                                 <button onClick={() => setReinstateModal({ type: 'user', id: u.id, name: u.full_name })}
                                   style={{ display: 'flex', alignItems: 'center', gap: 4, background: T.successBg, border: `1px solid ${T.successMid}`, borderRadius: 6, cursor: 'pointer', color: T.success, fontWeight: 600, fontSize: 11.5, padding: '4px 10px' }}>
@@ -843,6 +859,81 @@ export default function UserAdminDashboard() {
                 </div>
               </div>
             ) : null}
+          </div>
+        </div>
+      )}
+
+      {/* User Detail Modal */}
+      {userDetailOpen && detailUser && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
+          onClick={() => { setUserDetailOpen(false); setDetailUser(null) }}>
+          <div style={{ background: T.surface, borderRadius: 16, maxWidth: 480, width: '100%', boxShadow: '0 24px 80px rgba(0,0,0,0.25)', border: `1px solid ${T.border}` }}
+            onClick={e => e.stopPropagation()}>
+
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 24px', borderBottom: `1px solid ${T.border}`, background: '#FAFBFC', borderRadius: '16px 16px 0 0' }}>
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>User Record</div>
+                <h2 style={{ fontWeight: 700, fontSize: '1rem', color: T.text1, margin: 0 }}>User Details</h2>
+              </div>
+              <button onClick={() => { setUserDetailOpen(false); setDetailUser(null) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T.text3, padding: 4 }}><X size={18} /></button>
+            </div>
+
+            <div style={{ padding: 24 }}>
+              {/* Profile */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 20, marginBottom: 24 }}>
+                <Avatar name={detailUser.full_name} imageUrl={detailUser.profile_photo_url} size={120} round />
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: '1.2rem', color: T.text1 }}>{detailUser.full_name}</div>
+                  <div style={{ fontSize: '0.875rem', color: T.text2, marginTop: 3 }}>{detailUser.email_address}</div>
+                  <div style={{ marginTop: 8 }}>
+                    <StatusDot suspended={detailUser.is_suspended} reason={detailUser.suspended_reason} />
+                  </div>
+                </div>
+              </div>
+
+              {/* Info grid */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 24px', background: T.surfaceHi, borderRadius: 10, padding: 16, marginBottom: 16 }}>
+                {[
+                  ['Role', detailUser.role],
+                  ['Company', detailUser.company_name ?? '—'],
+                  ['Joined', new Date(detailUser.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })],
+                  ['Account', detailUser.is_suspended ? 'Suspended' : 'Active'],
+                ].map(([label, value]) => (
+                  <div key={label}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 3 }}>{label}</div>
+                    <div style={{ fontSize: '0.85rem', color: T.text1, fontWeight: 500 }}>{value}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Suspension reason */}
+              {detailUser.is_suspended && detailUser.suspended_reason && (
+                <div style={{ background: T.dangerBg, border: `1px solid ${T.dangerMid}`, borderRadius: 8, padding: '10px 14px', marginBottom: 16 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: T.danger, marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Suspension Reason</div>
+                  <div style={{ fontSize: '0.85rem', color: '#B91C1C' }}>{detailUser.suspended_reason}</div>
+                </div>
+              )}
+
+              {/* Actions */}
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', paddingTop: 12, borderTop: `1px solid ${T.border}` }}>
+                <button onClick={() => { setUserDetailOpen(false); setDetailUser(null) }}
+                  style={{ padding: '8px 16px', borderRadius: 8, border: `1px solid ${T.border}`, background: T.surface, cursor: 'pointer', color: T.text2, fontWeight: 600, fontSize: '0.85rem' }}>
+                  Close
+                </button>
+                {detailUser.is_suspended ? (
+                  <button onClick={() => { setUserDetailOpen(false); setReinstateModal({ type: 'user', id: detailUser.id, name: detailUser.full_name }) }}
+                    style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: T.success, cursor: 'pointer', color: '#fff', fontWeight: 600, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <CheckCircle size={14} /> Reinstate User
+                  </button>
+                ) : (
+                  <button onClick={() => { setUserDetailOpen(false); setSuspendModal({ type: 'user', id: detailUser.id, name: detailUser.full_name }) }}
+                    style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: T.danger, cursor: 'pointer', color: '#fff', fontWeight: 600, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <AlertTriangle size={14} /> Suspend User
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}

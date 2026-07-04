@@ -1,11 +1,13 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import {
   Building2, Users,
   TrendingUp, CalendarDays, Briefcase, BarChart2,
   Download, Mail, X,
 } from 'lucide-react'
+import { createBrowserClient } from '@supabase/ssr'
 import UserAdminSidebar from '@/components/UserAdminSidebar'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import { UAReportStats } from '@/types/UserAdmin'
@@ -227,6 +229,7 @@ function DonutChart({ segments, size = 140, strokeWidth = 20 }: {
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function UserAdminReports() {
+  const router = useRouter()
   const [tab, setTab] = useState<ReportTab>('company')
   const [stats, setStats] = useState<UAReportStats | null>(null)
   const [loading, setLoading] = useState(true)
@@ -237,6 +240,18 @@ export default function UserAdminReports() {
   const [showAllCompanies, setShowAllCompanies] = useState(false)
   const [dateFrom, setDateFrom] = useState(DEFAULT_FROM)
   const [dateTo, setDateTo] = useState(TODAY)
+
+  useEffect(() => {
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    )
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT') router.replace('/signin')
+    })
+    supabase.auth.getSession().catch(() => router.replace('/signin'))
+    return () => subscription.unsubscribe()
+  }, [router])
 
   useEffect(() => {
     const id = localStorage.getItem('tasking_user_id')
