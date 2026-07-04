@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { usePathname } from 'next/navigation'
-import { LogOut, LayoutDashboard, BarChart2 } from 'lucide-react'
+import { LogOut, LayoutDashboard, BarChart2, Settings } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 
 const THEME = {
@@ -18,6 +18,7 @@ const THEME = {
 const NAV = [
   { label: 'Dashboard', Icon: LayoutDashboard, href: '/useradmin/dashboard' },
   { label: 'Reports', Icon: BarChart2, href: '/useradmin/reports' },
+  { label: 'Settings', Icon: Settings, href: '/useradmin/settings' },
 ]
 
 export default function UserAdminSidebar() {

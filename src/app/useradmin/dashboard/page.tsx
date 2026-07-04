@@ -189,6 +189,22 @@ export default function UserAdminDashboard() {
   const [userDateFrom, setUserDateFrom] = useState('')
   const [userDateTo, setUserDateTo] = useState('')
 
+  type UserSortField = 'full_name' | 'created_at'
+  type CompanySortField = 'name' | 'created_at'
+  const [userSortField, setUserSortField] = useState<UserSortField>('created_at')
+  const [userSortDir, setUserSortDir] = useState<'asc' | 'desc'>('desc')
+  const [compSortField, setCompSortField] = useState<CompanySortField>('created_at')
+  const [compSortDir, setCompSortDir] = useState<'asc' | 'desc'>('desc')
+
+  const toggleUserSort = (field: UserSortField) => {
+    if (userSortField === field) setUserSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setUserSortField(field); setUserSortDir(field === 'created_at' ? 'desc' : 'asc') }
+  }
+  const toggleCompSort = (field: CompanySortField) => {
+    if (compSortField === field) setCompSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setCompSortField(field); setCompSortDir(field === 'created_at' ? 'desc' : 'asc') }
+  }
+
   const ALL_ROLES = ['Owner', 'Partner', 'Manager', 'Employee', 'Casual Worker', 'Marketing Admin', 'User Admin']
 
   const [detailCompany, setDetailCompany] = useState<UACompanyDetail | null>(null)
@@ -198,6 +214,10 @@ export default function UserAdminDashboard() {
   const [suspendModal, setSuspendModal] = useState<{ type: 'company' | 'user'; id: string; name: string } | null>(null)
   const [suspendReason, setSuspendReason] = useState('')
   const [suspending, setSuspending] = useState(false)
+  const [openReasonKey, setOpenReasonKey] = useState<string | null>(null)
+
+  const [reinstateModal, setReinstateModal] = useState<{ type: 'company' | 'user'; id: string; name: string } | null>(null)
+  const [reinstating, setReinstating] = useState(false)
 
   const [toast, setToast] = useState<string | null>(null)
 
@@ -283,6 +303,10 @@ export default function UserAdminDashboard() {
     if (userDateFrom && new Date(u.created_at) < new Date(userDateFrom)) return false
     if (userDateTo && new Date(u.created_at) > new Date(userDateTo + 'T23:59:59')) return false
     return true
+  }).sort((a, b) => {
+    const dir = userSortDir === 'asc' ? 1 : -1
+    if (userSortField === 'full_name') return a.full_name.localeCompare(b.full_name) * dir
+    return (new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) * dir
   })
 
   const togglePlan = (plan: string) =>
@@ -306,6 +330,10 @@ export default function UserAdminDashboard() {
     if (compDateFrom && new Date(c.created_at) < new Date(compDateFrom)) return false
     if (compDateTo && new Date(c.created_at) > new Date(compDateTo + 'T23:59:59')) return false
     return true
+  }).sort((a, b) => {
+    const dir = compSortDir === 'asc' ? 1 : -1
+    if (compSortField === 'name') return a.name.localeCompare(b.name) * dir
+    return (new Date(a.created_at).getTime() - new Date(b.created_at).getTime()) * dir
   })
 
   const openDetail = async (companyId: string) => {
@@ -351,19 +379,79 @@ export default function UserAdminDashboard() {
     else { fetchUsers(userSearch) }
   }
 
+  const confirmReinstate = async () => {
+    if (!reinstateModal) return
+    setReinstating(true)
+    try {
+      await doUnsuspend(reinstateModal.type, reinstateModal.id, reinstateModal.name)
+      setReinstateModal(null)
+    } finally {
+      setReinstating(false)
+    }
+  }
+
   // ── Sub-components ─────────────────────────────────────────────────────────
 
-  const StatusDot = ({ suspended }: { suspended: boolean }) => (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5,
-      padding: '3px 9px', borderRadius: 6, fontSize: 11.5, fontWeight: 600, letterSpacing: '0.01em',
-      background: suspended ? T.dangerBg : T.successBg,
-      color: suspended ? '#DC2626' : '#16A34A',
-      border: `1px solid ${suspended ? T.dangerMid : T.successMid}`,
-    }}>
-      <span style={{ width: 5, height: 5, borderRadius: '50%', background: suspended ? T.danger : T.success, display: 'inline-block' }} />
-      {suspended ? 'Suspended' : 'Active'}
-    </span>
-  )
+  const StatusDot = ({ suspended, reason, rowKey }: { suspended: boolean; reason?: string | null; rowKey?: string }) => {
+    const open = rowKey != null && openReasonKey === rowKey
+    return (
+      <div style={{ position: 'relative' }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5,
+          padding: '3px 9px', borderRadius: 6, fontSize: 11.5, fontWeight: 600, letterSpacing: '0.01em',
+          background: suspended ? T.dangerBg : T.successBg,
+          color: suspended ? '#DC2626' : '#16A34A',
+          border: `1px solid ${suspended ? T.dangerMid : T.successMid}`,
+        }}>
+          <span style={{ width: 5, height: 5, borderRadius: '50%', background: suspended ? T.danger : T.success, display: 'inline-block' }} />
+          {suspended ? 'Suspended' : 'Active'}
+          {suspended && reason && rowKey != null && (
+            <button
+              type="button"
+              onClick={() => setOpenReasonKey(open ? null : rowKey)}
+              style={{
+                width: 14, height: 14, borderRadius: '50%', border: `1px solid ${T.dangerMid}`,
+                background: '#FFFFFF', color: '#DC2626', fontSize: 9, fontWeight: 700, lineHeight: '1',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0, marginLeft: 2,
+              }}
+            >
+              ?
+            </button>
+          )}
+        </span>
+        {open && reason && (
+          <div style={{
+            position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 30,
+            minWidth: 180, maxWidth: 240, background: T.text1, color: '#fff',
+            borderRadius: 8, padding: '8px 11px', fontSize: 11.5, lineHeight: 1.5,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.2)', fontWeight: 400,
+          }}>
+            {reason}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  const Avatar = ({ name, imageUrl, size = 32, round = false }: { name: string; imageUrl?: string | null; size?: number; round?: boolean }) => {
+    const initials = name.trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase()).join('')
+    const radius = round ? size / 2 : (size >= 40 ? 10 : 7)
+    if (imageUrl) {
+      return (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={imageUrl} alt="" style={{ width: size, height: size, borderRadius: radius, objectFit: 'cover', border: `1px solid ${T.border}`, flexShrink: 0 }} />
+      )
+    }
+    return (
+      <span style={{
+        width: size, height: size, borderRadius: radius, flexShrink: 0,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: T.accentBg, border: `1px solid ${T.accentMid}`,
+        color: T.accent, fontWeight: 700, fontSize: size * 0.4,
+      }}>
+        {initials || '?'}
+      </span>
+    )
+  }
 
   const FilterSection = ({ label, count, pill, open, onToggle, children }: { label: string; count?: number; pill?: React.ReactNode; open: boolean; onToggle: () => void; children: React.ReactNode }) => (
     <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 10, marginTop: 2 }}>
@@ -460,9 +548,21 @@ export default function UserAdminDashboard() {
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                       <thead>
                         <tr style={{ background: '#FAFBFC' }}>
-                          {['Company', 'Plan', 'Industry', 'Status', 'Created', ''].map(h => (
-                            <th key={h} style={{ padding: '9px 16px', textAlign: 'left', fontWeight: 600, color: T.text3, fontSize: 11, borderBottom: `1px solid ${T.border}`, whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
-                          ))}
+                          {(['Company', 'Plan', 'Industry', 'Status', 'Created', ''] as const).map(h => {
+                            const sortable = h === 'Company' ? 'name' : h === 'Created' ? 'created_at' : null
+                            const active = sortable && compSortField === sortable
+                            return (
+                              <th key={h} onClick={() => sortable && toggleCompSort(sortable as CompanySortField)}
+                                style={{ padding: '9px 16px', textAlign: 'left', fontWeight: 600, color: active ? T.text1 : T.text3, fontSize: 11, borderBottom: `1px solid ${T.border}`, whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.05em', cursor: sortable ? 'pointer' : 'default', userSelect: 'none' }}>
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                                  {h}
+                                  {sortable && (active
+                                    ? (compSortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)
+                                    : <ChevronDown size={12} style={{ opacity: 0.3 }} />)}
+                                </span>
+                              </th>
+                            )
+                          })}
                         </tr>
                       </thead>
                       <tbody>
@@ -474,12 +574,17 @@ export default function UserAdminDashboard() {
                           <tr key={c.id} style={{ borderBottom: `1px solid ${i === displayedCompanies.length - 1 ? 'transparent' : T.border}`, transition: 'background 0.1s', cursor: 'default' }}
                             onMouseEnter={e => (e.currentTarget.style.background = '#F9FAFB')}
                             onMouseLeave={e => (e.currentTarget.style.background = '')}>
-                            <td style={{ padding: '11px 16px', fontWeight: 600, color: T.text1 }}>{c.name}</td>
+                            <td style={{ padding: '11px 16px', fontWeight: 600, color: T.text1 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                <Avatar name={c.name} imageUrl={c.logo_url} />
+                                {c.name}
+                              </div>
+                            </td>
                             <td style={{ padding: '11px 16px' }}>
                               <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 5, background: c.plan === 'Paid' ? '#F0FDF4' : T.surfaceHi, color: c.plan === 'Paid' ? '#16A34A' : T.text3, border: `1px solid ${c.plan === 'Paid' ? '#BBF7D0' : T.border}` }}>{c.plan}</span>
                             </td>
                             <td style={{ padding: '11px 16px', color: T.text2, fontSize: '0.82rem' }}>{c.industry ?? '—'}</td>
-                            <td style={{ padding: '11px 16px' }}><StatusDot suspended={c.is_suspended} /></td>
+                            <td style={{ padding: '11px 16px' }}><StatusDot suspended={c.is_suspended} reason={c.suspended_reason} rowKey={`company-${c.id}`} /></td>
                             <td style={{ padding: '11px 16px', color: T.text3, fontSize: '0.8rem', fontVariantNumeric: 'tabular-nums' }}>{new Date(c.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
                             <td style={{ padding: '11px 16px' }}>
                               <button onClick={() => openDetail(c.id)} style={{ display: 'flex', alignItems: 'center', gap: 3, background: T.accentBg, border: `1px solid ${T.accentMid}`, borderRadius: 6, cursor: 'pointer', color: T.accent, fontWeight: 600, fontSize: 11.5, padding: '4px 10px' }}>
@@ -558,9 +663,21 @@ export default function UserAdminDashboard() {
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
                       <thead>
                         <tr style={{ background: '#FAFBFC' }}>
-                          {['Name', 'Email', 'Role', 'Company', 'Status', 'Joined', ''].map(h => (
-                            <th key={h} style={{ padding: '9px 16px', textAlign: 'left', fontWeight: 600, color: T.text3, fontSize: 11, borderBottom: `1px solid ${T.border}`, whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
-                          ))}
+                          {(['Name', 'Email', 'Role', 'Company', 'Status', 'Joined', ''] as const).map(h => {
+                            const sortable = h === 'Name' ? 'full_name' : h === 'Joined' ? 'created_at' : null
+                            const active = sortable && userSortField === sortable
+                            return (
+                              <th key={h} onClick={() => sortable && toggleUserSort(sortable as UserSortField)}
+                                style={{ padding: '9px 16px', textAlign: 'left', fontWeight: 600, color: active ? T.text1 : T.text3, fontSize: 11, borderBottom: `1px solid ${T.border}`, whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.05em', cursor: sortable ? 'pointer' : 'default', userSelect: 'none' }}>
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                                  {h}
+                                  {sortable && (active
+                                    ? (userSortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)
+                                    : <ChevronDown size={12} style={{ opacity: 0.3 }} />)}
+                                </span>
+                              </th>
+                            )
+                          })}
                         </tr>
                       </thead>
                       <tbody>
@@ -572,17 +689,22 @@ export default function UserAdminDashboard() {
                           <tr key={u.id} style={{ borderBottom: `1px solid ${i === displayedUsers.length - 1 ? 'transparent' : T.border}`, transition: 'background 0.1s' }}
                             onMouseEnter={e => (e.currentTarget.style.background = '#F9FAFB')}
                             onMouseLeave={e => (e.currentTarget.style.background = '')}>
-                            <td style={{ padding: '11px 16px', fontWeight: 600, color: T.text1 }}>{u.full_name}</td>
+                            <td style={{ padding: '11px 16px', fontWeight: 600, color: T.text1 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                                <Avatar name={u.full_name} imageUrl={u.profile_photo_url} round />
+                                {u.full_name}
+                              </div>
+                            </td>
                             <td style={{ padding: '11px 16px', color: T.text2, fontSize: '0.82rem' }}>{u.email_address}</td>
                             <td style={{ padding: '11px 16px' }}>
                               <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 5, background: T.surfaceHi, color: T.text1, border: `1px solid ${T.border}`, whiteSpace: 'nowrap' }}>{u.role}</span>
                             </td>
                             <td style={{ padding: '11px 16px', color: T.text2, fontSize: '0.82rem' }}>{u.company_name ?? '—'}</td>
-                            <td style={{ padding: '11px 16px' }}><StatusDot suspended={u.is_suspended} /></td>
+                            <td style={{ padding: '11px 16px' }}><StatusDot suspended={u.is_suspended} reason={u.suspended_reason} rowKey={`user-${u.id}`} /></td>
                             <td style={{ padding: '11px 16px', color: T.text3, fontSize: '0.8rem', fontVariantNumeric: 'tabular-nums' }}>{new Date(u.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
                             <td style={{ padding: '11px 16px' }}>
                               {u.is_suspended ? (
-                                <button onClick={() => doUnsuspend('user', u.id, u.full_name)}
+                                <button onClick={() => setReinstateModal({ type: 'user', id: u.id, name: u.full_name })}
                                   style={{ display: 'flex', alignItems: 'center', gap: 4, background: T.successBg, border: `1px solid ${T.successMid}`, borderRadius: 6, cursor: 'pointer', color: T.success, fontWeight: 600, fontSize: 11.5, padding: '4px 10px' }}>
                                   <CheckCircle size={12} /> Reinstate
                                 </button>
@@ -652,7 +774,6 @@ export default function UserAdminDashboard() {
             onClick={e => e.stopPropagation()}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 24px', borderBottom: `1px solid ${T.border}`, background: '#FAFBFC' }}>
               <div>
-                <div style={{ fontSize: 10, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>Company Record</div>
                 <h2 style={{ fontWeight: 700, fontSize: '1rem', color: T.text1, margin: 0 }}>Company Details</h2>
               </div>
               <button onClick={() => { setDetailOpen(false); setDetailCompany(null) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T.text3, padding: 4 }}><X size={18} /></button>
@@ -663,14 +784,17 @@ export default function UserAdminDashboard() {
             ) : detailCompany ? (
               <div style={{ padding: 24 }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
-                  <div>
-                    <h3 style={{ fontWeight: 700, fontSize: '1.2rem', color: T.text1, margin: '0 0 4px' }}>{detailCompany.name}</h3>
-                    {detailCompany.description && <p style={{ color: T.text2, margin: 0, fontSize: '0.85rem' }}>{detailCompany.description}</p>}
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                    <Avatar name={detailCompany.name} imageUrl={detailCompany.logo_url} size={64} />
+                    <div>
+                      <h3 style={{ fontWeight: 700, fontSize: '1.2rem', color: T.text1, margin: '0 0 4px' }}>{detailCompany.name}</h3>
+                      {detailCompany.description && <p style={{ color: T.text2, margin: 0, fontSize: '0.85rem' }}>{detailCompany.description}</p>}
+                    </div>
                   </div>
                   <StatusDot suspended={detailCompany.is_suspended} />
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 24px', marginBottom: 20, background: T.bg, borderRadius: 10, padding: 16 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 24px', marginBottom: 20, background: '#F8FAFC', border: `1px solid ${T.border}`, borderRadius: 10, padding: 16 }}>
                   {[
                     ['Plan', detailCompany.plan],
                     ['Members', String(detailCompany.member_count)],
@@ -678,8 +802,12 @@ export default function UserAdminDashboard() {
                     ['Size', detailCompany.size ?? '—'],
                     ['Location', detailCompany.location ?? '—'],
                     ['Website', detailCompany.website ?? '—'],
+                    ['Address', detailCompany.address ?? '—'],
+                    ['Postal Code', detailCompany.postal_code ?? '—'],
                     ['Owner', detailCompany.owner_name ?? '—'],
                     ['Owner Email', detailCompany.owner_email ?? '—'],
+                    ['Plan Started', detailCompany.plan_started_at ? new Date(detailCompany.plan_started_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'],
+                    ['Next Billing', detailCompany.plan_next_billing_at ? new Date(detailCompany.plan_next_billing_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'],
                     ['Created', new Date(detailCompany.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })],
                   ].map(([label, value]) => (
                     <div key={label}>
@@ -702,7 +830,7 @@ export default function UserAdminDashboard() {
                     Close
                   </button>
                   {detailCompany.is_suspended ? (
-                    <button onClick={() => doUnsuspend('company', detailCompany.id, detailCompany.name)}
+                    <button onClick={() => setReinstateModal({ type: 'company', id: detailCompany.id, name: detailCompany.name })}
                       style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: T.success, cursor: 'pointer', color: '#fff', fontWeight: 600, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 6 }}>
                       <CheckCircle size={14} /> Reinstate Company
                     </button>
@@ -746,6 +874,37 @@ export default function UserAdminDashboard() {
                 <button onClick={doSuspend} disabled={!suspendReason.trim() || suspending}
                   style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: suspendReason.trim() ? T.danger : T.border, cursor: suspendReason.trim() ? 'pointer' : 'not-allowed', color: suspendReason.trim() ? '#fff' : T.text3, fontWeight: 600, fontSize: '0.85rem' }}>
                   {suspending ? 'Suspending…' : 'Confirm Suspend'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reinstate Modal */}
+      {reinstateModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', zIndex: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
+          onClick={() => setReinstateModal(null)}>
+          <div style={{ background: T.surface, borderRadius: 14, maxWidth: 420, width: '100%', boxShadow: '0 24px 80px rgba(0,0,0,0.25)', border: `1px solid ${T.border}` }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 22px', borderBottom: `1px solid ${T.border}` }}>
+              <h2 style={{ fontWeight: 700, fontSize: '0.95rem', color: T.success, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <CheckCircle size={16} /> Reinstate {reinstateModal.type === 'company' ? 'Company' : 'User'}
+              </h2>
+              <button onClick={() => setReinstateModal(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T.text3, padding: 4 }}><X size={16} /></button>
+            </div>
+            <div style={{ padding: 22 }}>
+              <p style={{ color: T.text2, fontSize: '0.875rem', margin: 0 }}>
+                Are you sure you want to reinstate <strong style={{ color: T.text1 }}>{reinstateModal.name}</strong>? {reinstateModal.type === 'company' ? 'This company' : 'This user'} will regain full access immediately.
+              </p>
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 20 }}>
+                <button onClick={() => setReinstateModal(null)}
+                  style={{ padding: '8px 16px', borderRadius: 8, border: `1px solid ${T.border}`, background: T.surface, cursor: 'pointer', color: T.text2, fontWeight: 600, fontSize: '0.85rem' }}>
+                  Cancel
+                </button>
+                <button onClick={confirmReinstate} disabled={reinstating}
+                  style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: T.success, cursor: reinstating ? 'default' : 'pointer', opacity: reinstating ? 0.75 : 1, color: '#fff', fontWeight: 600, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <CheckCircle size={14} /> {reinstating ? 'Reinstating…' : 'Confirm Reinstate'}
                 </button>
               </div>
             </div>

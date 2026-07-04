@@ -4,7 +4,7 @@ import { UACompany, UACompanyDetail, UAUser, UAReportStats } from '@/types/UserA
 export async function getAllCompanies(search?: string): Promise<UACompany[]> {
   let query = supabase
     .from('companies')
-    .select('id,name,description,plan,industry,size,location,website,is_suspended,suspended_at,suspended_reason,created_at,owner_id')
+    .select('id,name,description,plan,industry,size,location,website,logo_url,is_suspended,suspended_at,suspended_reason,created_at,owner_id')
     .order('created_at', { ascending: false })
 
   if (search) {
@@ -19,7 +19,7 @@ export async function getAllCompanies(search?: string): Promise<UACompany[]> {
 export async function getCompanyDetail(companyId: string): Promise<UACompanyDetail | null> {
   const { data: company, error } = await supabase
     .from('companies')
-    .select('id,name,description,plan,industry,size,location,website,is_suspended,suspended_at,suspended_reason,created_at,owner_id')
+    .select('id,name,description,plan,industry,size,location,website,address,postal_code,logo_url,plan_started_at,plan_next_billing_at,plan_cancel_at,is_suspended,suspended_at,suspended_reason,created_at,owner_id')
     .eq('id', companyId)
     .single()
 
@@ -53,7 +53,7 @@ export async function getCompanyDetail(companyId: string): Promise<UACompanyDeta
 export async function getAllUsers(search?: string, roles?: string[], statuses?: string[]): Promise<UAUser[]> {
   let query = supabase
     .from('users')
-    .select('id,supabase_auth_id,full_name,email_address,role,company_id,is_suspended,suspended_at,suspended_reason,created_at')
+    .select('id,supabase_auth_id,full_name,email_address,profile_photo_url,role,company_id,is_suspended,suspended_at,suspended_reason,created_at')
     .order('created_at', { ascending: false })
 
   if (search) {
@@ -119,18 +119,29 @@ export async function unsuspendUser(userId: string): Promise<void> {
   if (error) throw new Error(error.message)
 }
 
-export async function getReportStats(): Promise<UAReportStats> {
-  const [{ data: companies, error: ce }, { data: users, error: ue }, { count: pendingInvitations }] = await Promise.all([
+export async function getReportStats(from?: string, to?: string): Promise<UAReportStats> {
+  const [{ data: companies, error: ce }, { data: users, error: ue }, { data: invitations, error: ie }] = await Promise.all([
     supabase.from('companies').select('id,name,plan,industry,size,is_suspended,created_at'),
     supabase.from('users').select('id,role,company_id,is_suspended,created_at'),
-    supabase.from('invitation_code').select('id', { count: 'exact', head: true }).eq('status', 'Active'),
+    supabase.from('invitation_code').select('status,used_by'),
   ])
   if (ce) throw new Error(ce.message)
   if (ue) throw new Error(ue.message)
+  if (ie) throw new Error(ie.message)
+
+  const invs = invitations ?? []
+  const invitationFunnel = {
+    used: invs.filter((i: { used_by: string | null }) => i.used_by).length,
+    pending: invs.filter((i: { status: string; used_by: string | null }) => i.status === 'Active' && !i.used_by).length,
+    expired: invs.filter((i: { status: string; used_by: string | null }) => i.status === 'Expired' && !i.used_by).length,
+  }
+  const pendingInvitations = invitationFunnel.pending
 
   const now = new Date()
   const ago7 = new Date(now.getTime() - 7 * 86400000).toISOString()
   const ago30 = new Date(now.getTime() - 30 * 86400000).toISOString()
+  const rangeFrom = from ? new Date(from).toISOString() : ago30
+  const rangeTo = to ? new Date(new Date(to).getTime() + 86399999).toISOString() : now.toISOString()
 
   const cos = companies ?? []
   const usr = users ?? []
@@ -179,6 +190,15 @@ export async function getReportStats(): Promise<UAReportStats> {
 
   const avgUsersPerCompany = cos.length > 0 ? Math.round((usr.length / cos.length) * 10) / 10 : 0
 
+  const companyPlanMap: Record<string, string> = Object.fromEntries(cos.map((c: { id: string; plan: string }) => [c.id, c.plan]))
+  const usersByCompanyPlan = { free: 0, paid: 0 }
+  for (const u of usr as { company_id: string | null }[]) {
+    if (!u.company_id) continue
+    const plan = companyPlanMap[u.company_id]
+    if (plan === 'Paid') usersByCompanyPlan.paid += 1
+    else if (plan === 'Free') usersByCompanyPlan.free += 1
+  }
+
   return {
     totalCompanies: cos.length,
     totalUsers: usr.length,
@@ -190,8 +210,14 @@ export async function getReportStats(): Promise<UAReportStats> {
     newUsersLast7Days: usr.filter((u: { created_at: string }) => u.created_at >= ago7).length,
     newCompaniesLast30Days: cos.filter((c: { created_at: string }) => c.created_at >= ago30).length,
     newUsersLast30Days: usr.filter((u: { created_at: string }) => u.created_at >= ago30).length,
+    newCompaniesInRange: cos.filter((c: { created_at: string }) => c.created_at >= rangeFrom && c.created_at <= rangeTo).length,
+    newUsersInRange: usr.filter((u: { created_at: string }) => u.created_at >= rangeFrom && u.created_at <= rangeTo).length,
     avgUsersPerCompany,
-    pendingInvitationCount: pendingInvitations ?? 0,
+    pendingInvitationCount: pendingInvitations,
+    invitationFunnel,
+    usersWithCompany: usr.filter((u: { company_id: string | null }) => u.company_id).length,
+    usersWithoutCompany: usr.filter((u: { company_id: string | null }) => !u.company_id).length,
+    usersByCompanyPlan,
     topCompaniesByMemberCount,
     planBreakdown,
     roleBreakdown,

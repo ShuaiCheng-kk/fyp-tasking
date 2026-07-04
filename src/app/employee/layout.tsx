@@ -26,7 +26,13 @@ export default function EmployeeLayout({ children }: { children: React.ReactNode
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
     )
 
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session }, error }) => {
+      if (error?.message?.toLowerCase().includes('refresh token')) {
+        await supabase.auth.signOut()
+        localStorage.clear()
+        router.replace('/employee/removed')
+        return
+      }
       if (!session) {
         router.replace('/employee/removed')
         return
