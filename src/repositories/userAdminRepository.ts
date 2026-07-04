@@ -50,10 +50,13 @@ export async function getCompanyDetail(companyId: string): Promise<UACompanyDeta
   }
 }
 
+const PLATFORM_ADMIN_ROLES = ['User Admin', 'Marketing Admin']
+
 export async function getAllUsers(search?: string, roles?: string[], statuses?: string[]): Promise<UAUser[]> {
   let query = supabase
     .from('users')
     .select('id,supabase_auth_id,full_name,email_address,profile_photo_url,role,company_id,is_suspended,suspended_at,suspended_reason,created_at')
+    .not('role', 'in', `(${PLATFORM_ADMIN_ROLES.map(r => `"${r}"`).join(',')})`)
     .order('created_at', { ascending: false })
 
   if (search) {
@@ -101,6 +104,11 @@ export async function unsuspendCompany(companyId: string): Promise<void> {
     .update({ is_suspended: false, suspended_at: null, suspended_reason: null })
     .eq('id', companyId)
   if (error) throw new Error(error.message)
+}
+
+export async function getUserById(userId: string): Promise<{ role: string } | null> {
+  const { data } = await supabase.from('users').select('role').eq('id', userId).single()
+  return data ?? null
 }
 
 export async function suspendUser(userId: string, reason: string): Promise<void> {
