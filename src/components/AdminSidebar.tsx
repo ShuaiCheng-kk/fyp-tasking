@@ -31,7 +31,7 @@ export default function AdminSidebar({ pages = [], selectedSlug = '', onSelectSl
   const pathname = usePathname()
   const [expanded, setExpanded] = useState(false)
   const [hoveredKey, setHoveredKey] = useState<string | null>(null)
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ marketingPages: true, products: true, about: true })
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ marketingPages: false, products: true, about: true })
 
   const handleLogout = async () => {
     const supabase = createBrowserClient(

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import AdminSidebar from '@/components/AdminSidebar'
+import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import { createBrowserClient } from '@supabase/ssr'
 import { Check, Eye, EyeOff } from 'lucide-react'
 
@@ -11,6 +12,7 @@ const BORDER = '#E2E8F0'
 const MUTED = '#94A3B8'
 
 export default function AdminSettingsPage() {
+  const [adminUserId, setAdminUserId] = useState('')
   const [email, setEmail] = useState('')
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
@@ -25,6 +27,7 @@ export default function AdminSettingsPage() {
   useEffect(() => {
     const authUid = localStorage.getItem('tasking_user_id')
     if (!authUid) return
+    setAdminUserId(authUid)
     fetch(`/api/user/me?user_id=${authUid}`)
       .then(r => r.json())
       .then(d => { if (d.success) setEmail(d.user.email_address ?? '') })
@@ -81,9 +84,12 @@ export default function AdminSettingsPage() {
     <main style={{ display: 'flex', minHeight: '100vh', background: '#27272A', fontFamily: 'Inter, system-ui, sans-serif' }}>
       <AdminSidebar />
       <section style={{ marginLeft: 64, padding: '36px 40px', flex: 1, background: 'transparent' }}>
-        <header style={{ marginBottom: 28 }}>
-          <p style={{ margin: '0 0 6px', color: '#64748B', fontSize: 11, letterSpacing: 1.4, fontWeight: 700, textTransform: 'uppercase' }}>Marketing Admin</p>
-          <h1 style={{ margin: 0, fontSize: 28, fontWeight: 900, color: '#F1F5F9', fontFamily: 'var(--font-heading)' }}>Settings</h1>
+        <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, marginBottom: 28 }}>
+          <div>
+            <p style={{ margin: '0 0 6px', color: '#64748B', fontSize: 11, letterSpacing: 1.4, fontWeight: 700, textTransform: 'uppercase' }}>Marketing Admin</p>
+            <h1 style={{ margin: 0, fontSize: 28, fontWeight: 900, color: '#F1F5F9', fontFamily: 'var(--font-heading)' }}>Settings</h1>
+          </div>
+          {adminUserId && <OwnerUserBadge userId={adminUserId} companyId="" />}
         </header>
 
         <div style={{ maxWidth: 520 }}>
