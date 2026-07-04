@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase'
-import { UACompany, UACompanyDetail, UAUser, UAReportStats } from '@/types/UserAdmin'
+import { UACompany, UACompanyDetail, UACompanyMember, UAUser, UAReportStats } from '@/types/UserAdmin'
 
 export async function getAllCompanies(search?: string): Promise<UACompany[]> {
   let query = supabase
@@ -25,28 +25,28 @@ export async function getCompanyDetail(companyId: string): Promise<UACompanyDeta
 
   if (error || !company) return null
 
-  const { count: memberCount } = await supabase
-    .from('users')
-    .select('id', { count: 'exact', head: true })
-    .eq('company_id', companyId)
-
-  let ownerName: string | null = null
-  let ownerEmail: string | null = null
-  if (company.owner_id) {
-    const { data: owner } = await supabase
+  const [{ data: memberRows }, ownerResult] = await Promise.all([
+    supabase
       .from('users')
-      .select('full_name,email_address')
-      .eq('id', company.owner_id)
-      .single()
-    ownerName = owner?.full_name ?? null
-    ownerEmail = owner?.email_address ?? null
-  }
+      .select('id,full_name,email_address,profile_photo_url,role,is_suspended,suspended_reason')
+      .eq('company_id', companyId),
+    company.owner_id
+      ? supabase.from('users').select('full_name,email_address').eq('id', company.owner_id).single()
+      : Promise.resolve({ data: null }),
+  ])
+
+  const ROLE_ORDER: Record<string, number> = { Owner: 0, Partner: 1, Manager: 2, Employee: 3, 'Casual Worker': 4 }
+  const members: UACompanyMember[] = ((memberRows ?? []) as UACompanyMember[])
+    .sort((a, b) => (ROLE_ORDER[a.role] ?? 99) - (ROLE_ORDER[b.role] ?? 99) || a.full_name.localeCompare(b.full_name))
+  const ownerName: string | null = ownerResult.data?.full_name ?? null
+  const ownerEmail: string | null = ownerResult.data?.email_address ?? null
 
   return {
     ...(company as UACompany),
-    member_count: memberCount ?? 0,
+    member_count: members.length,
     owner_name: ownerName,
     owner_email: ownerEmail,
+    members,
   }
 }
 

@@ -6,7 +6,7 @@ import { Search, Building2, Users, X, AlertTriangle, CheckCircle, ChevronRight, 
 import { createBrowserClient } from '@supabase/ssr'
 import UserAdminSidebar from '@/components/UserAdminSidebar'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
-import { UACompany, UACompanyDetail, UAUser } from '@/types/UserAdmin'
+import { UACompany, UACompanyDetail, UACompanyMember, UAUser } from '@/types/UserAdmin'
 
 const SIDEBAR_WIDTH = 64
 
@@ -220,6 +220,7 @@ export default function UserAdminDashboard() {
 
   const [detailUser, setDetailUser] = useState<UAUser | null>(null)
   const [userDetailOpen, setUserDetailOpen] = useState(false)
+  const [prevCompanyId, setPrevCompanyId] = useState<string | null>(null)
 
   const [suspendModal, setSuspendModal] = useState<{ type: 'company' | 'user'; id: string; name: string } | null>(null)
   const [suspendReason, setSuspendReason] = useState('')
@@ -239,7 +240,9 @@ export default function UserAdminDashboard() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
       if (event === 'SIGNED_OUT') router.replace('/signin')
     })
-    supabase.auth.getSession().catch(() => router.replace('/signin'))
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (error || !session) supabase.auth.signOut({ scope: 'local' }).finally(() => router.replace('/signin'))
+    })
     return () => subscription.unsubscribe()
   }, [router])
 
@@ -369,6 +372,15 @@ export default function UserAdminDashboard() {
       setDetailCompany(data.company ?? null)
     } finally {
       setDetailLoading(false)
+    }
+  }
+
+  const closeUserDetail = () => {
+    setUserDetailOpen(false)
+    setDetailUser(null)
+    if (prevCompanyId) {
+      openDetail(prevCompanyId)
+      setPrevCompanyId(null)
     }
   }
 
@@ -786,61 +798,107 @@ export default function UserAdminDashboard() {
       {detailOpen && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
           onClick={() => { setDetailOpen(false); setDetailCompany(null) }}>
-          <div style={{ background: T.surface, borderRadius: 16, maxWidth: 560, width: '100%', maxHeight: '85vh', overflowY: 'auto', boxShadow: '0 24px 80px rgba(0,0,0,0.25)', border: `1px solid ${T.border}` }}
+          <div style={{ background: T.surface, borderRadius: 16, maxWidth: 860, width: '100%', maxHeight: '88vh', display: 'flex', flexDirection: 'column', boxShadow: '0 24px 80px rgba(0,0,0,0.25)', border: `1px solid ${T.border}` }}
             onClick={e => e.stopPropagation()}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 24px', borderBottom: `1px solid ${T.border}`, background: '#FAFBFC' }}>
-              <div>
-                <h2 style={{ fontWeight: 700, fontSize: '1rem', color: T.text1, margin: 0 }}>Company Details</h2>
-              </div>
+
+            {/* Header */}
+            <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 24px', borderBottom: `1px solid ${T.border}`, background: '#FAFBFC', borderRadius: '16px 16px 0 0' }}>
+              <h2 style={{ fontWeight: 700, fontSize: '1rem', color: T.text1, margin: 0 }}>Company Details</h2>
               <button onClick={() => { setDetailOpen(false); setDetailCompany(null) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T.text3, padding: 4 }}><X size={18} /></button>
             </div>
 
             {detailLoading ? (
               <div style={{ padding: 48, textAlign: 'center', color: T.text3 }}>Loading…</div>
             ) : detailCompany ? (
-              <div style={{ padding: 24 }}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-                    <Avatar name={detailCompany.name} imageUrl={detailCompany.logo_url} size={64} />
-                    <div>
-                      <h3 style={{ fontWeight: 700, fontSize: '1.2rem', color: T.text1, margin: '0 0 4px' }}>{detailCompany.name}</h3>
-                      {detailCompany.description && <p style={{ color: T.text2, margin: 0, fontSize: '0.85rem' }}>{detailCompany.description}</p>}
+              <>
+                {/* Two-column body */}
+                <div style={{ display: 'grid', gridTemplateColumns: '55fr 45fr', flex: 1, minHeight: 0 }}>
+
+                  {/* Left — company info */}
+                  <div style={{ overflowY: 'auto', padding: 24, borderRight: `1px solid ${T.border}` }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 20 }}>
+                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                        <Avatar name={detailCompany.name} imageUrl={detailCompany.logo_url} size={52} />
+                        <div>
+                          <h3 style={{ fontWeight: 700, fontSize: '1.1rem', color: T.text1, margin: '0 0 4px' }}>{detailCompany.name}</h3>
+                          {detailCompany.description && <p style={{ color: T.text2, margin: 0, fontSize: '0.82rem' }}>{detailCompany.description}</p>}
+                        </div>
+                      </div>
+                      <StatusDot suspended={detailCompany.is_suspended} />
                     </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 20px', marginBottom: 16, background: '#F8FAFC', border: `1px solid ${T.border}`, borderRadius: 10, padding: 14 }}>
+                      {[
+                        ['Plan', detailCompany.plan],
+                        ['Industry', detailCompany.industry ?? '—'],
+                        ['Size', detailCompany.size ?? '—'],
+                        ['Location', detailCompany.location ?? '—'],
+                        ['Website', detailCompany.website ?? '—'],
+                        ['Address', detailCompany.address ?? '—'],
+                        ['Postal Code', detailCompany.postal_code ?? '—'],
+                        ['Owner', detailCompany.owner_name ?? '—'],
+                        ['Owner Email', detailCompany.owner_email ?? '—'],
+                        ['Plan Started', detailCompany.plan_started_at ? new Date(detailCompany.plan_started_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'],
+                        ['Next Billing', detailCompany.plan_next_billing_at ? new Date(detailCompany.plan_next_billing_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'],
+                        ['Created', new Date(detailCompany.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })],
+                      ].map(([label, value]) => (
+                        <div key={label}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 3 }}>{label}</div>
+                          <div style={{ fontSize: '0.82rem', color: T.text1, fontWeight: 500, wordBreak: 'break-word' }}>{value}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {detailCompany.is_suspended && detailCompany.suspended_reason && (
+                      <div style={{ background: T.dangerBg, border: `1px solid ${T.dangerMid}`, borderRadius: 8, padding: '10px 14px' }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: T.danger, marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Suspension Reason</div>
+                        <div style={{ fontSize: '0.82rem', color: '#B91C1C' }}>{detailCompany.suspended_reason}</div>
+                      </div>
+                    )}
                   </div>
-                  <StatusDot suspended={detailCompany.is_suspended} />
+
+                  {/* Right — members */}
+                  <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                    <div style={{ flexShrink: 0, padding: '14px 16px', background: T.surfaceHi, borderBottom: `1px solid ${T.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: T.text2, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Members</span>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: T.text3, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 20, padding: '1px 8px' }}>{detailCompany.members.length}</span>
+                    </div>
+                    {detailCompany.members.length === 0 ? (
+                      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.text3, fontSize: '0.85rem' }}>No members yet</div>
+                    ) : (
+                      <div style={{ flex: 1, overflowY: 'auto' }}>
+                        {detailCompany.members.map((m: UACompanyMember, idx: number) => (
+                          <div key={m.id}
+                            onClick={() => {
+                              setPrevCompanyId(detailCompany.id)
+                              setDetailOpen(false)
+                              setDetailCompany(null)
+                              setDetailUser({ id: m.id, supabase_auth_id: '', full_name: m.full_name, email_address: m.email_address, profile_photo_url: m.profile_photo_url, role: m.role, company_id: detailCompany.id, company_name: detailCompany.name, is_suspended: m.is_suspended, suspended_at: null, suspended_reason: m.suspended_reason, created_at: '' })
+                              setUserDetailOpen(true)
+                            }}
+                            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', borderBottom: idx < detailCompany.members.length - 1 ? `1px solid ${T.border}` : 'none', cursor: 'pointer', transition: 'background 0.15s' }}
+                            onMouseEnter={e => (e.currentTarget.style.background = T.surfaceHi)}
+                            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                            <Avatar name={m.full_name} imageUrl={m.profile_photo_url} size={30} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontWeight: 600, fontSize: '0.82rem', color: T.text1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.full_name}</div>
+                              <div style={{ fontSize: 11, color: T.text3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.email_address}</div>
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3, flexShrink: 0 }}>
+                              <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 5, background: T.surfaceHi, color: T.text2, border: `1px solid ${T.border}`, whiteSpace: 'nowrap' }}>{m.role}</span>
+                              {m.is_suspended && (
+                                <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 5, background: T.dangerBg, color: T.danger, border: `1px solid ${T.dangerMid}`, whiteSpace: 'nowrap' }}>Suspended</span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 24px', marginBottom: 20, background: '#F8FAFC', border: `1px solid ${T.border}`, borderRadius: 10, padding: 16 }}>
-                  {[
-                    ['Plan', detailCompany.plan],
-                    ['Members', String(detailCompany.member_count)],
-                    ['Industry', detailCompany.industry ?? '—'],
-                    ['Size', detailCompany.size ?? '—'],
-                    ['Location', detailCompany.location ?? '—'],
-                    ['Website', detailCompany.website ?? '—'],
-                    ['Address', detailCompany.address ?? '—'],
-                    ['Postal Code', detailCompany.postal_code ?? '—'],
-                    ['Owner', detailCompany.owner_name ?? '—'],
-                    ['Owner Email', detailCompany.owner_email ?? '—'],
-                    ['Plan Started', detailCompany.plan_started_at ? new Date(detailCompany.plan_started_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'],
-                    ['Next Billing', detailCompany.plan_next_billing_at ? new Date(detailCompany.plan_next_billing_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'],
-                    ['Created', new Date(detailCompany.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })],
-                  ].map(([label, value]) => (
-                    <div key={label}>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 3 }}>{label}</div>
-                      <div style={{ fontSize: '0.85rem', color: T.text1, fontWeight: 500 }}>{value}</div>
-                    </div>
-                  ))}
-                </div>
-
-                {detailCompany.is_suspended && detailCompany.suspended_reason && (
-                  <div style={{ background: T.dangerBg, border: `1px solid ${T.dangerMid}`, borderRadius: 8, padding: '10px 14px', marginBottom: 16 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: T.danger, marginBottom: 2, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Suspension Reason</div>
-                    <div style={{ fontSize: '0.85rem', color: '#B91C1C' }}>{detailCompany.suspended_reason}</div>
-                  </div>
-                )}
-
-                <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', paddingTop: 12, borderTop: `1px solid ${T.border}` }}>
+                {/* Footer */}
+                <div style={{ flexShrink: 0, display: 'flex', gap: 10, justifyContent: 'flex-end', padding: '12px 24px', borderTop: `1px solid ${T.border}`, background: '#FAFBFC', borderRadius: '0 0 16px 16px' }}>
                   <button onClick={() => { setDetailOpen(false); setDetailCompany(null) }}
                     style={{ padding: '8px 16px', borderRadius: 8, border: `1px solid ${T.border}`, background: T.surface, cursor: 'pointer', color: T.text2, fontWeight: 600, fontSize: '0.85rem' }}>
                     Close
@@ -857,7 +915,7 @@ export default function UserAdminDashboard() {
                     </button>
                   )}
                 </div>
-              </div>
+              </>
             ) : null}
           </div>
         </div>
@@ -866,7 +924,7 @@ export default function UserAdminDashboard() {
       {/* User Detail Modal */}
       {userDetailOpen && detailUser && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.6)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}
-          onClick={() => { setUserDetailOpen(false); setDetailUser(null) }}>
+          onClick={closeUserDetail}>
           <div style={{ background: T.surface, borderRadius: 16, maxWidth: 480, width: '100%', boxShadow: '0 24px 80px rgba(0,0,0,0.25)', border: `1px solid ${T.border}` }}
             onClick={e => e.stopPropagation()}>
 
@@ -876,7 +934,7 @@ export default function UserAdminDashboard() {
                 <div style={{ fontSize: 10, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 2 }}>User Record</div>
                 <h2 style={{ fontWeight: 700, fontSize: '1rem', color: T.text1, margin: 0 }}>User Details</h2>
               </div>
-              <button onClick={() => { setUserDetailOpen(false); setDetailUser(null) }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T.text3, padding: 4 }}><X size={18} /></button>
+              <button onClick={closeUserDetail} style={{ background: 'none', border: 'none', cursor: 'pointer', color: T.text3, padding: 4 }}><X size={18} /></button>
             </div>
 
             <div style={{ padding: 24 }}>
@@ -917,17 +975,17 @@ export default function UserAdminDashboard() {
 
               {/* Actions */}
               <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', paddingTop: 12, borderTop: `1px solid ${T.border}` }}>
-                <button onClick={() => { setUserDetailOpen(false); setDetailUser(null) }}
+                <button onClick={closeUserDetail}
                   style={{ padding: '8px 16px', borderRadius: 8, border: `1px solid ${T.border}`, background: T.surface, cursor: 'pointer', color: T.text2, fontWeight: 600, fontSize: '0.85rem' }}>
-                  Close
+                  {prevCompanyId ? '← Back' : 'Close'}
                 </button>
                 {detailUser.is_suspended ? (
-                  <button onClick={() => { setUserDetailOpen(false); setReinstateModal({ type: 'user', id: detailUser.id, name: detailUser.full_name }) }}
+                  <button onClick={() => { setPrevCompanyId(null); setUserDetailOpen(false); setReinstateModal({ type: 'user', id: detailUser.id, name: detailUser.full_name }) }}
                     style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: T.success, cursor: 'pointer', color: '#fff', fontWeight: 600, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 6 }}>
                     <CheckCircle size={14} /> Reinstate User
                   </button>
                 ) : (
-                  <button onClick={() => { setUserDetailOpen(false); setSuspendModal({ type: 'user', id: detailUser.id, name: detailUser.full_name }) }}
+                  <button onClick={() => { setPrevCompanyId(null); setUserDetailOpen(false); setSuspendModal({ type: 'user', id: detailUser.id, name: detailUser.full_name }) }}
                     style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: T.danger, cursor: 'pointer', color: '#fff', fontWeight: 600, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 6 }}>
                     <AlertTriangle size={14} /> Suspend User
                   </button>
