@@ -34,6 +34,7 @@ export async function PATCH(
       title: body.title,
       description: body.description,
       priority: body.priority,
+      sub_task_titles: body.sub_task_titles,
     })
     return NextResponse.json({ success: true, template })
   } catch (err) {

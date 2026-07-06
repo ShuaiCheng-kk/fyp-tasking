@@ -127,12 +127,66 @@ export const workerApplicationRepository = {
     return applicant.user_id
   },
 
+  // UC49 needs a real shifts row to gate Clock In/Out for a newly-promoted Casual Worker —
+  // this resolves invitation -> applicant -> job posting in one hop so the service can read
+  // the job's company/department/time fields and create that shift right after promotion.
+  async getInvitationContext(invitationId: string): Promise<{
+    user_id: string
+    job: {
+      id: string
+      company_id: string
+      department_id: string | null
+      title: string
+      created_by: string
+      form_type: string | null
+      shift_date: string | null
+      shift_start_time: string | null
+      shift_end_time: string | null
+      job_start_time: string | null
+    }
+  } | null> {
+    const { data: invitation, error } = await supabase
+      .from('job_invitations')
+      .select('applicant_id')
+      .eq('id', invitationId)
+      .single()
+    if (error || !invitation) return null
+
+    const { data: applicant, error: appErr } = await supabase
+      .from('job_applicants')
+      .select('user_id, job_id')
+      .eq('id', invitation.applicant_id)
+      .single()
+    if (appErr || !applicant) return null
+
+    const { data: job, error: jobErr } = await supabase
+      .from('job_postings')
+      .select('id, company_id, department_id, title, created_by, form_type, shift_date, shift_start_time, shift_end_time, job_start_time')
+      .eq('id', applicant.job_id)
+      .single()
+    if (jobErr || !job) return null
+
+    return { user_id: applicant.user_id, job }
+  },
+
   async promoteGuestToWorker(userId: string): Promise<void> {
     const { error } = await supabase
       .from('users')
       .update({ role: 'Casual Worker', worker_status: 'active' })
       .eq('id', userId)
       .eq('role', 'Guest User')
+    if (error) throw new Error(error.message)
+  },
+
+  // Mirrors employee_departments/manager_departments — gives the newly-promoted Casual Worker a
+  // stable department membership instead of leaving it derivable only from shift history.
+  async addCasualWorkerToDepartment(userId: string, departmentId: string, companyId: string): Promise<void> {
+    const { error } = await supabase
+      .from('casualworker_departments')
+      .upsert(
+        { casual_worker_id: userId, department_id: departmentId, company_id: companyId },
+        { onConflict: 'casual_worker_id,department_id', ignoreDuplicates: true },
+      )
     if (error) throw new Error(error.message)
   },
 }

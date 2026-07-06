@@ -10,15 +10,16 @@ export const userService = {
     const { supabase } = await import('@/lib/supabase')
     const { data: user, error } = await supabase
       .from('users')
-      .select('*, manager_departments!manager_departments_manager_id_fkey(department_id), employee_departments(department_id)')
+      .select('*, manager_departments!manager_departments_manager_id_fkey(department_id), employee_departments(department_id), casualworker_departments(department_id)')
       .or(`id.eq.${id},supabase_auth_id.eq.${id}`)
       .single()
     if (error || !user) throw new Error('User not found')
     return {
       ...user,
-      department_id: user.manager_departments?.[0]?.department_id ?? user.employee_departments?.[0]?.department_id ?? null,
+      department_id: user.manager_departments?.[0]?.department_id ?? user.employee_departments?.[0]?.department_id ?? user.casualworker_departments?.[0]?.department_id ?? null,
       manager_departments: undefined,
       employee_departments: undefined,
+      casualworker_departments: undefined,
     } as User & { department_id: string | null }
   },
 
@@ -26,14 +27,15 @@ export const userService = {
     const { supabase } = await import('@/lib/supabase')
     const { data, error } = await supabase
       .from('users')
-      .select('*, manager_departments!manager_departments_manager_id_fkey(department_id), employee_departments(department_id)')
+      .select('*, manager_departments!manager_departments_manager_id_fkey(department_id), employee_departments(department_id), casualworker_departments(department_id)')
       .eq('company_id', company_id)
     if (error) throw new Error(error.message)
     const members = (data || []).map((row: any) => ({
       ...row,
-      department_id: row.manager_departments?.[0]?.department_id ?? row.employee_departments?.[0]?.department_id ?? null,
+      department_id: row.manager_departments?.[0]?.department_id ?? row.employee_departments?.[0]?.department_id ?? row.casualworker_departments?.[0]?.department_id ?? null,
       manager_departments: undefined,
       employee_departments: undefined,
+      casualworker_departments: undefined,
     })) as (User & { department_id: string | null })[]
     return members.sort((a, b) => (ROLE_ORDER[a.role] ?? 99) - (ROLE_ORDER[b.role] ?? 99))
   },
@@ -57,28 +59,28 @@ export const userService = {
     if (mdErr) throw new Error(mdErr.message)
     const mgrIds = (mdRows ?? []).map((r: any) => r.manager_id as string)
 
-    // Get all CW ids in the company
-    const { data: cwRows, error: cwErr } = await supabase
-      .from('users')
-      .select('id')
-      .eq('company_id', company_id)
-      .eq('role', 'Casual Worker')
-    if (cwErr) throw new Error(cwErr.message)
-    const cwIds = (cwRows ?? []).map((r: any) => r.id as string)
+    // Get CW IDs in this department via casualworker_departments (mirrors employee_departments)
+    const { data: cwdRows, error: cwdErr } = await supabase
+      .from('casualworker_departments')
+      .select('casual_worker_id')
+      .eq('department_id', department_id)
+    if (cwdErr) throw new Error(cwdErr.message)
+    const cwIds = (cwdRows ?? []).map((r: any) => r.casual_worker_id as string)
 
     const allIds = [...new Set([...empIds, ...mgrIds, ...cwIds])]
     if (allIds.length === 0) return []
 
     const { data, error } = await supabase
       .from('users')
-      .select('*, employee_departments(department_id), manager_departments!manager_departments_manager_id_fkey(department_id)')
+      .select('*, employee_departments(department_id), manager_departments!manager_departments_manager_id_fkey(department_id), casualworker_departments(department_id)')
       .in('id', allIds)
     if (error) throw new Error(error.message)
     const members = (data || []).map((row: any) => ({
       ...row,
-      department_id: row.manager_departments?.[0]?.department_id ?? row.employee_departments?.[0]?.department_id ?? null,
+      department_id: row.manager_departments?.[0]?.department_id ?? row.employee_departments?.[0]?.department_id ?? row.casualworker_departments?.[0]?.department_id ?? null,
       manager_departments: undefined,
       employee_departments: undefined,
+      casualworker_departments: undefined,
     })) as (User & { department_id: string | null })[]
     return members.sort((a, b) => (ROLE_ORDER[a.role] ?? 99) - (ROLE_ORDER[b.role] ?? 99))
   },

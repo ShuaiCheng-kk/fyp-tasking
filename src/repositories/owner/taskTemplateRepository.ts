@@ -15,6 +15,7 @@ export const taskTemplateRepository = {
         title: input.title,
         description: input.description ?? null,
         priority: input.priority ?? null,
+        sub_task_titles: input.sub_task_titles ?? [],
         created_by: input.created_by,
       })
       .select()

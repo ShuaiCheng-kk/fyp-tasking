@@ -1,5 +1,5 @@
 import { supabase } from '@/lib/supabase'
-import { MarketingContentBlock, MarketingPage, MarketingPageSummary } from '@/types/MarketingPage'
+import { CreateMarketingContentBlockInput, MarketingContentBlock, MarketingPage, MarketingPageSummary } from '@/types/MarketingPage'
 
 type MarketingPageRow = Omit<MarketingPage, 'blocks'>
 type MarketingPageListRow = Pick<MarketingPage, 'id' | 'slug' | 'title' | 'route_path' | 'is_editable'> & {
@@ -99,6 +99,12 @@ export const marketingRepository = {
     return data as MarketingContentBlock
   },
 
+  async reorderMarketingContentBlocks(updates: { id: string; sort_order: number }[]): Promise<void> {
+    await Promise.all(updates.map(({ id, sort_order }) =>
+      supabase.from('marketing_content_blocks').update({ sort_order }).eq('id', id)
+    ))
+  },
+
   async updateMarketingContentBlock(block_id: string, value: string): Promise<MarketingContentBlock> {
     const { data, error } = await supabase
       .from('marketing_content_blocks')
@@ -109,5 +115,25 @@ export const marketingRepository = {
 
     if (error) throw new Error(error.message)
     return data as MarketingContentBlock
+  },
+
+  async createMarketingContentBlock(input: CreateMarketingContentBlockInput): Promise<MarketingContentBlock> {
+    const { data, error } = await supabase
+      .from('marketing_content_blocks')
+      .insert(input)
+      .select('id, page_id, block_key, block_type, label, value, sort_order, updated_at')
+      .single()
+
+    if (error) throw new Error(error.message)
+    return data as MarketingContentBlock
+  },
+
+  async deleteMarketingContentBlock(block_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('marketing_content_blocks')
+      .delete()
+      .eq('id', block_id)
+
+    if (error) throw new Error(error.message)
   },
 }

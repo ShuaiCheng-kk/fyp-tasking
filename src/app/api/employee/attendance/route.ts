@@ -6,14 +6,93 @@ import { employeeAttendanceService } from '@/services/employee/employeeAttendanc
 
 export async function GET(req: NextRequest) {
   const user_id = req.nextUrl.searchParams.get('user_id')
+  const resource = req.nextUrl.searchParams.get('resource')
   if (!user_id) {
     return NextResponse.json({ success: false, message: 'user_id is required' }, { status: 400 })
   }
   try {
+    if (resource === 'my_shift') {
+      const myShift = await employeeAttendanceService.getMyShift(user_id)
+      return NextResponse.json({ success: true, myShift })
+    }
     const records = await employeeAttendanceService.getAttendanceRecords(user_id)
     return NextResponse.json({ success: true, records })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to fetch attendance records'
     return NextResponse.json({ success: false, message }, { status: 500 })
+  }
+}
+
+// UC49 — shared by Manager and Employee, both of whom clock in/out against their own
+// shift_assignment the same way (see employeeAttendanceService for why this file covers both).
+export async function POST(req: NextRequest) {
+  let body: unknown
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
+  }
+
+  const b = body as Record<string, unknown>
+  if (typeof b.user_id !== 'string' || !b.user_id) {
+    return NextResponse.json({ success: false, message: 'user_id is required' }, { status: 400 })
+  }
+  if (typeof b.shift_assignment_id !== 'string' || !b.shift_assignment_id) {
+    return NextResponse.json({ success: false, message: 'shift_assignment_id is required' }, { status: 400 })
+  }
+
+  try {
+    const authId = b.user_id
+    const shift_assignment_id = b.shift_assignment_id
+
+    if (b.action === 'clock_in') {
+      const record = await employeeAttendanceService.clockIn({
+        authId,
+        shift_assignment_id,
+        clock_time: typeof b.clock_time === 'string' ? b.clock_time : undefined,
+        notes: typeof b.notes === 'string' ? b.notes : null,
+        late_reason: typeof b.late_reason === 'string' ? b.late_reason : null,
+        attachment_url: typeof b.attachment_url === 'string' ? b.attachment_url : null,
+      })
+      return NextResponse.json({ success: true, record }, { status: 201 })
+    }
+
+    if (b.action === 'clock_out') {
+      const record = await employeeAttendanceService.clockOut({
+        authId,
+        shift_assignment_id,
+        clock_time: typeof b.clock_time === 'string' ? b.clock_time : undefined,
+        notes: typeof b.notes === 'string' ? b.notes : null,
+      })
+      return NextResponse.json({ success: true, record })
+    }
+
+    if (b.action === 'break_in') {
+      const record = await employeeAttendanceService.breakIn({ authId, shift_assignment_id })
+      return NextResponse.json({ success: true, record })
+    }
+
+    if (b.action === 'break_out') {
+      const record = await employeeAttendanceService.breakOut({ authId, shift_assignment_id })
+      return NextResponse.json({ success: true, record })
+    }
+
+    if (b.action === 'record_absence') {
+      if (typeof b.absence_reason !== 'string' || !b.absence_reason.trim()) {
+        return NextResponse.json({ success: false, message: 'absence_reason is required' }, { status: 400 })
+      }
+      const record = await employeeAttendanceService.recordAbsence({
+        authId,
+        shift_assignment_id,
+        absence_reason: b.absence_reason,
+        attachment_url: typeof b.attachment_url === 'string' ? b.attachment_url : null,
+      })
+      return NextResponse.json({ success: true, record })
+    }
+
+    return NextResponse.json({ success: false, message: 'Unsupported attendance action' }, { status: 400 })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Failed to update attendance'
+    return NextResponse.json({ success: false, message }, { status: 400 })
   }
 }

@@ -425,8 +425,8 @@ export const taskService = {
     return [updatedSubTask, updatedParent]
   },
 
-  async getKanbanTasks(company_id: string): Promise<KanbanGroup> {
-    const tasks = await taskRepository.getTasksByCompany(company_id)
+  async getKanbanTasks(company_id: string, assigned_by?: string): Promise<KanbanGroup> {
+    const tasks = await taskRepository.getTasksByCompany(company_id, assigned_by)
     return {
       Assigned: tasks.filter(t => t.status === 'Assigned'),
       'In Progress': tasks.filter(t => t.status === 'In Progress'),
@@ -500,8 +500,8 @@ export const taskService = {
   // manager pool starts at score 0 so managers with no active tasks can be recommended. A user
   // must have at least two active main tasks before we suggest moving one away; moving their only
   // task is not a meaningful rebalance.
-  async getWorkloadRebalancingSuggestions(company_id: string, department_id?: string): Promise<TaskWorkloadSuggestion[]> {
-    const activeTasks = (await taskRepository.getTasksByCompany(company_id))
+  async getWorkloadRebalancingSuggestions(company_id: string, department_id?: string, assigned_by?: string): Promise<TaskWorkloadSuggestion[]> {
+    const activeTasks = (await taskRepository.getTasksByCompany(company_id, assigned_by))
       .filter(task => task.status !== 'Complete' && task.parent_task_id === null && task.assigned_user_id)
       .filter(task => !department_id || task.department_id === department_id)
 
@@ -605,9 +605,9 @@ export const taskService = {
   // its total assigned-to-deadline window, as long as it hasn't reached Review yet. A task already
   // in Review or Complete is past the point this alert is meant to catch, so it's excluded
   // regardless of how much time has elapsed.
-  async getStalledTaskAlerts(company_id: string, department_id?: string): Promise<StalledTaskAlert[]> {
+  async getStalledTaskAlerts(company_id: string, department_id?: string, assigned_by?: string): Promise<StalledTaskAlert[]> {
     const now = Date.now()
-    return (await taskRepository.getTasksByCompany(company_id))
+    return (await taskRepository.getTasksByCompany(company_id, assigned_by))
       .filter(task => task.status === 'Assigned' || task.status === 'In Progress')
       .filter(task => task.parent_task_id === null)
       .filter(task => !department_id || task.department_id === department_id)
@@ -725,8 +725,10 @@ async function validateTaskAssignment(input: TaskInput): Promise<void> {
         }
       }
     } else if (creator.role === 'Manager') {
-      if (!['Employee', 'Casual Worker'].includes(assignee.role)) {
-        throw new Error('Manager tasks can only be assigned to Employees or Casual Workers')
+      // Strictly one level down — Casual Workers are the supervising Employee's to assign, never
+      // skipped straight to from Manager.
+      if (assignee.role !== 'Employee') {
+        throw new Error('Manager tasks can only be assigned to Employees')
       }
 
       const managerDeptIds = await taskRepository.getManagerDepartmentIds(creator.id, input.company_id)
@@ -734,11 +736,25 @@ async function validateTaskAssignment(input: TaskInput): Promise<void> {
         throw new Error('Managers can only create tasks for their own departments')
       }
 
-      const assigneeDeptIds = assignee.role === 'Employee'
-        ? await taskRepository.getEmployeeDepartmentIds(assignee.id)
-        : [input.department_id]
-      if (assignee.role === 'Employee' && !assigneeDeptIds.includes(input.department_id)) {
+      const assigneeDeptIds = await taskRepository.getEmployeeDepartmentIds(assignee.id)
+      if (!assigneeDeptIds.includes(input.department_id)) {
         throw new Error('Managers can only assign tasks to employees in their own department')
+      }
+    } else if (creator.role === 'Employee') {
+      // One level down from Employee — Casual Workers, and only ones this Employee actually
+      // supervises via a real shift_assignment, not any Casual Worker in the department.
+      if (assignee.role !== 'Casual Worker') {
+        throw new Error('Employee tasks can only be assigned to Casual Workers')
+      }
+
+      const employeeDeptIds = await taskRepository.getEmployeeDepartmentIds(creator.id)
+      if (!employeeDeptIds.includes(input.department_id)) {
+        throw new Error('Employees can only create tasks for their own department')
+      }
+
+      const supervisedCwIds = await taskRepository.getSupervisedCasualWorkerIds(creator.id, input.company_id, input.department_id)
+      if (!supervisedCwIds.includes(assignee.id)) {
+        throw new Error('Employees can only assign tasks to casual workers they supervise')
       }
     } else {
       throw new Error('This role cannot assign tasks')

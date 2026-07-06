@@ -31,8 +31,15 @@ export interface JobPosting {
   shift_end_time: string | null
   break_start_time: string | null
   break_end_time: string | null
+  job_start_time: string | null
   assigned_employee_id: string | null
   rejection_reason: string | null
+  expires_at: string | null
+  template_id: string | null
+  experience_required: string | null
+  minimum_age: string | null
+  uniform_required: boolean
+  uniform_details: string | null
 }
 
 export interface JobPostingInput {
@@ -59,14 +66,22 @@ export interface JobPostingInput {
   shift_end_time?: string | null
   break_start_time?: string | null
   break_end_time?: string | null
+  job_start_time?: string | null
   assigned_employee_id?: string | null
   form_type?: string | null
+  expires_at?: string | null
+  template_id?: string | null
+  experience_required?: string | null
+  minimum_age?: string | null
+  uniform_required?: boolean
+  uniform_details?: string | null
 }
 
 export interface JobPostingSummary extends JobPosting {
   department_name: string | null
   applicant_count: number
   pending_count: number
+  accepted_count: number
   assigned_employee_name: string | null
 }
 
@@ -95,6 +110,7 @@ export interface JobInvitation {
 export interface JobPostingPendingApproval extends JobPosting {
   department_name: string | null
   submitter_name: string | null
+  submitter_photo_url: string | null
   assigned_employee_name: string | null
 }
 

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import AdminSidebar from '@/components/AdminSidebar'
+import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import { createBrowserClient } from '@supabase/ssr'
 import { Check, Eye, EyeOff } from 'lucide-react'
 
@@ -11,7 +12,7 @@ const BORDER = '#E2E8F0'
 const MUTED = '#94A3B8'
 
 export default function AdminSettingsPage() {
-  const [fullName, setFullName] = useState('')
+  const [adminUserId, setAdminUserId] = useState('')
   const [email, setEmail] = useState('')
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
@@ -21,20 +22,15 @@ export default function AdminSettingsPage() {
   const [showConfirm, setShowConfirm] = useState(false)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
-  const [savingProfile, setSavingProfile] = useState(false)
   const [savingPassword, setSavingPassword] = useState(false)
 
   useEffect(() => {
     const authUid = localStorage.getItem('tasking_user_id')
     if (!authUid) return
+    setAdminUserId(authUid)
     fetch(`/api/user/me?user_id=${authUid}`)
       .then(r => r.json())
-      .then(d => {
-        if (d.success) {
-          setFullName(d.user.full_name ?? '')
-          setEmail(d.user.email_address ?? '')
-        }
-      })
+      .then(d => { if (d.success) setEmail(d.user.email_address ?? '') })
   }, [])
 
   const showNotice = (msg: string) => {
@@ -42,32 +38,11 @@ export default function AdminSettingsPage() {
     setTimeout(() => setNotice(''), 3500)
   }
 
-  const handleSaveProfile = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setSavingProfile(true)
-    setError('')
-    try {
-      const authUid = localStorage.getItem('tasking_user_id')
-      const res = await fetch('/api/user/update-profile', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: authUid, full_name: fullName }),
-      })
-      const data = await res.json()
-      if (data.success) showNotice('Profile updated')
-      else setError(data.error ?? 'Failed to update profile')
-    } catch {
-      setError('Something went wrong')
-    } finally {
-      setSavingProfile(false)
-    }
-  }
-
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
     if (newPassword !== confirmPassword) { setError('New passwords do not match'); return }
-    if (newPassword.length < 8) { setError('Password must be at least 8 characters'); return }
+    if (newPassword.length < 6) { setError('Password must be at least 6 characters'); return }
     setSavingPassword(true)
     try {
       const supabase = createBrowserClient(
@@ -106,49 +81,30 @@ export default function AdminSettingsPage() {
   }
 
   return (
-    <main style={{ display: 'flex', minHeight: '100vh', background: '#F8FAFC', fontFamily: 'var(--font-body)' }}>
+    <main style={{ display: 'flex', minHeight: '100vh', background: '#27272A', fontFamily: 'Inter, system-ui, sans-serif' }}>
       <AdminSidebar />
-      <section style={{ marginLeft: 64, padding: '36px 40px', flex: 1 }}>
-        <header style={{ marginBottom: 28 }}>
-          <p style={{ margin: '0 0 6px', color: ORANGE, fontSize: 11, letterSpacing: 1.4, fontWeight: 900, textTransform: 'uppercase' }}>Marketing Admin</p>
-          <h1 style={{ margin: 0, fontSize: 28, fontWeight: 900, color: TEXT, fontFamily: 'var(--font-heading)' }}>Settings</h1>
+      <section style={{ marginLeft: 64, padding: '36px 40px', flex: 1, background: 'transparent' }}>
+        <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, marginBottom: 28 }}>
+          <div>
+            <p style={{ margin: '0 0 6px', color: '#64748B', fontSize: 11, letterSpacing: 1.4, fontWeight: 700, textTransform: 'uppercase' }}>Marketing Admin</p>
+            <h1 style={{ margin: 0, fontSize: 28, fontWeight: 900, color: '#F1F5F9', fontFamily: 'var(--font-heading)' }}>Settings</h1>
+          </div>
+          {adminUserId && <OwnerUserBadge userId={adminUserId} companyId="" />}
         </header>
 
-        {notice && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20, background: '#ECFDF5', border: '1px solid #BBF7D0', color: '#047857', borderRadius: 10, padding: '12px 16px', fontSize: 13, fontWeight: 700, maxWidth: 520 }}>
-            <Check size={15} /> {notice}
-          </div>
-        )}
-        {error && (
-          <div style={{ marginBottom: 20, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 10, padding: '12px 16px', fontSize: 13, fontWeight: 700, maxWidth: 520 }}>
-            {error}
-          </div>
-        )}
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, alignItems: 'stretch' }}>
-          {/* Profile */}
-          <div style={{ ...cardStyle, marginBottom: 0, maxWidth: 'none', display: 'flex', flexDirection: 'column' }}>
-            <h2 style={{ margin: '0 0 20px', fontSize: 16, fontWeight: 800, color: TEXT }}>Profile</h2>
-            <form onSubmit={handleSaveProfile} style={{ display: 'flex', flexDirection: 'column', gap: 16, flex: 1 }}>
-              <div>
-                <label style={labelStyle}>Full name</label>
-                <input style={inputStyle} value={fullName} onChange={e => setFullName(e.target.value)} placeholder="Your name" />
-              </div>
-              <div>
-                <label style={labelStyle}>Email</label>
-                <input style={{ ...inputStyle, background: '#F8FAFC', color: MUTED }} value={email} disabled />
-                <p style={{ margin: '5px 0 0', fontSize: 11, color: MUTED }}>Email cannot be changed here</p>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 'auto' }}>
-                <button type="submit" disabled={savingProfile} style={{ background: ORANGE, color: '#fff', border: 'none', borderRadius: 10, padding: '10px 22px', fontSize: 13, fontWeight: 800, cursor: savingProfile ? 'default' : 'pointer', opacity: savingProfile ? 0.75 : 1 }}>
-                  {savingProfile ? 'Saving…' : 'Save profile'}
-                </button>
-              </div>
-            </form>
-          </div>
-
+        <div style={{ maxWidth: 520 }}>
+          {notice && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16, background: '#ECFDF5', border: '1px solid #BBF7D0', color: '#047857', borderRadius: 10, padding: '12px 16px', fontSize: 13, fontWeight: 700 }}>
+              <Check size={15} /> {notice}
+            </div>
+          )}
+          {error && (
+            <div style={{ marginBottom: 16, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 10, padding: '12px 16px', fontSize: 13, fontWeight: 700 }}>
+              {error}
+            </div>
+          )}
           {/* Password */}
-          <div style={{ ...cardStyle, marginBottom: 0, maxWidth: 'none' }}>
+          <div style={{ ...cardStyle }}>
             <h2 style={{ margin: '0 0 20px', fontSize: 16, fontWeight: 800, color: TEXT }}>Change password</h2>
             <form onSubmit={handleChangePassword} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               {[

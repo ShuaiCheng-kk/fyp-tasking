@@ -17,6 +17,12 @@ export async function GET(req: NextRequest) {
       const applicants = await recruitmentService.getApplicants(job_id)
       return NextResponse.json({ success: true, applicants })
     }
+    if (resource === 'job_posting') {
+      if (!job_id) return NextResponse.json({ success: false, message: 'job_id is required' }, { status: 400 })
+      const posting = await recruitmentService.getJobPostingById(job_id)
+      if (!posting) return NextResponse.json({ success: false, message: 'Job posting not found' }, { status: 404 })
+      return NextResponse.json({ success: true, posting })
+    }
     if (resource === 'workers') {
       if (!company_id) return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
       const assigned_employee_id = searchParams.get('assigned_employee_id')
@@ -87,8 +93,15 @@ export async function POST(req: NextRequest) {
     shift_end_time: typeof data.shift_end_time === 'string' && data.shift_end_time ? data.shift_end_time : null,
     break_start_time: typeof data.break_start_time === 'string' && data.break_start_time ? data.break_start_time : null,
     break_end_time: typeof data.break_end_time === 'string' && data.break_end_time ? data.break_end_time : null,
+    job_start_time: typeof data.job_start_time === 'string' && data.job_start_time ? data.job_start_time : null,
     assigned_employee_id: typeof data.assigned_employee_id === 'string' && data.assigned_employee_id ? data.assigned_employee_id : null,
     form_type: typeof data.formType === 'string' && data.formType ? data.formType : null,
+    expires_at: typeof data.expires_at === 'string' && data.expires_at ? data.expires_at : null,
+    template_id: typeof data.template_id === 'string' && data.template_id ? data.template_id : null,
+    experience_required: typeof data.experience_required === 'string' && data.experience_required ? data.experience_required : null,
+    minimum_age: typeof data.minimum_age === 'string' && data.minimum_age ? data.minimum_age : null,
+    uniform_required: data.uniform_required === true,
+    uniform_details: typeof data.uniform_details === 'string' && data.uniform_details ? data.uniform_details : null,
   }
 
   try {
@@ -130,7 +143,13 @@ export async function PATCH(req: NextRequest) {
         shift_end_time: typeof data.shift_end_time === 'string' ? data.shift_end_time : null,
         break_start_time: typeof data.break_start_time === 'string' ? data.break_start_time : null,
         break_end_time: typeof data.break_end_time === 'string' ? data.break_end_time : null,
+        job_start_time: typeof data.job_start_time === 'string' ? data.job_start_time : null,
         assigned_employee_id: typeof data.assigned_employee_id === 'string' ? data.assigned_employee_id : null,
+        expires_at: typeof data.expires_at === 'string' ? data.expires_at : null,
+        experience_required: typeof data.experience_required === 'string' ? data.experience_required : null,
+        minimum_age: typeof data.minimum_age === 'string' ? data.minimum_age : null,
+        uniform_required: typeof data.uniform_required === 'boolean' ? data.uniform_required : undefined,
+        uniform_details: typeof data.uniform_details === 'string' ? data.uniform_details : null,
       })
       return NextResponse.json({ success: true, posting })
     }

@@ -8,10 +8,10 @@ export async function GET(req: NextRequest) {
   const user_id = req.nextUrl.searchParams.get('user_id')
   if (!user_id) return NextResponse.json({ success: false, message: 'user_id is required' }, { status: 400 })
   try {
-    const requests = await availabilityService.getLeaveRequests(user_id)
+    const requests = await availabilityService.getBreakWaiverRequests(user_id)
     return NextResponse.json({ success: true, requests })
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Failed to fetch leave requests'
+    const message = err instanceof Error ? err.message : 'Failed to fetch break waiver requests'
     return NextResponse.json({ success: false, message }, { status: 500 })
   }
 }
@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'request_type is required' }, { status: 400 })
 
   try {
-    const request = await availabilityService.submitLeaveRequest({
+    const request = await availabilityService.submitBreakWaiverRequest({
       user_id: b.user_id,
       company_id: b.company_id,
       request_type: b.request_type,
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
     })
     return NextResponse.json({ success: true, request })
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Failed to submit leave request'
+    const message = err instanceof Error ? err.message : 'Failed to submit break waiver request'
     return NextResponse.json({ success: false, message }, { status: 500 })
   }
 }

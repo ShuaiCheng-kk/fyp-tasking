@@ -3,8 +3,8 @@ import { ShiftAssignment } from './ShiftAssignment'
 
 export type AttendanceOwnerStatus = 'pending' | 'approved' | 'rejected' | 'modified'
 export type AttendanceExceptionType = 'pending' | 'late' | 'absent' | 'overtime'
-export type AttendanceRequestStatus = 'pending' | 'approved' | 'rejected'
-export type TimeOffRequestType = 'time_off' | 'break_waiver' | 'leave'
+export type AttendanceRequestStatus = 'pending' | 'approved' | 'rejected' | 'modified'
+export type TimeOffRequestType = 'break_waiver'
 
 export interface AttendanceRecord {
   id: string
@@ -12,6 +12,11 @@ export interface AttendanceRecord {
   casual_worker_id: string
   clock_in_time: string | null
   clock_out_time: string | null
+  break_in_time: string | null
+  break_out_time: string | null
+  late_reason: string | null
+  absence_reason: string | null
+  attachment_url: string | null
   confirmed_by_employee_id: string
   submitted_by_employee_id: string
   status: string
@@ -30,6 +35,11 @@ export interface AttendanceRecord {
 export interface AttendanceRecordUpdate {
   clock_in_time?: string | null
   clock_out_time?: string | null
+  break_in_time?: string | null
+  break_out_time?: string | null
+  late_reason?: string | null
+  absence_reason?: string | null
+  attachment_url?: string | null
   confirmed_by_employee_id?: string | null
   submitted_by_employee_id?: string | null
   owner_status?: AttendanceOwnerStatus
@@ -48,6 +58,11 @@ export interface AttendanceRecordCreate {
   casual_worker_id: string
   clock_in_time: string | null
   clock_out_time?: string | null
+  break_in_time?: string | null
+  break_out_time?: string | null
+  late_reason?: string | null
+  absence_reason?: string | null
+  attachment_url?: string | null
   confirmed_by_employee_id: string
   submitted_by_employee_id: string
   status: string
@@ -92,6 +107,9 @@ export interface AttendanceDashboardRecord {
   shift: Shift
   assignee_name: string
   assignee_role: string
+  assignee_profile_photo_url: string | null
+  assignee_worker_status: string | null
+  assignee_hourly_rate: number | null
   supervisor_name: string | null
   department_name: string | null
   record: AttendanceRecord | null
@@ -111,85 +129,101 @@ export interface AttendanceDashboard {
   }
 }
 
-export interface TimeOffRequest {
-  id: string
-  company_id: string
-  requester_id: string
-  shift_assignment_id: string | null
-  request_type: TimeOffRequestType
-  reason: string | null
-  status: AttendanceRequestStatus
-  reviewed_by: string | null
-  reviewed_at: string | null
-  created_at: string
-  updated_at: string
-}
 
-export interface TimeOffRequestDecisionInput {
-  id: string
-  reviewer_id: string
-  decision: AttendanceRequestStatus
-}
-
-export interface TimeOffRequestCreateInput {
-  user_id: string
-  company_id: string
-  request_type: TimeOffRequestType
-  reason: string | null
-  shift_assignment_id?: string | null
-}
-
-export interface TimeOffRequestView extends TimeOffRequest {
-  requester_name: string
-  shift_title: string | null
-  shift_date: string | null
-  start_time: string | null
-  end_time: string | null
-}
+export type ShiftSwapCounterpartStatus = 'pending' | 'approved' | 'rejected'
+export type ShiftSwapStatus = 'pending' | 'approved' | 'rejected' | 'withdrawn'
 
 export interface ShiftSwapRequest {
   id: string
   company_id: string
-  shift_assignment_id: string
   requester_id: string
-  replacement_user_id: string
+  requester_assignment_id: string
+  counterpart_id: string
+  counterpart_assignment_id: string
   reason: string | null
-  status: AttendanceRequestStatus
+  counterpart_status: ShiftSwapCounterpartStatus
+  counterpart_reviewed_at: string | null
+  status: ShiftSwapStatus
   reviewed_by: string | null
   reviewed_at: string | null
+  ai_recommendation: string | null
+  ai_reason: string | null
   created_at: string
   updated_at: string
 }
 
-export interface ShiftSwapDecisionInput {
-  id: string
-  reviewer_id: string
-  decision: AttendanceRequestStatus
-}
-
 export interface ShiftSwapRequestCreateInput {
   company_id: string
-  shift_assignment_id: string
   requester_id: string
-  replacement_user_id: string
+  requester_assignment_id: string
+  counterpart_id: string
+  counterpart_assignment_id: string
   reason: string | null
+}
+
+export interface ShiftSwapCounterpartDecisionInput {
+  id: string
+  counterpart_id: string
+  decision: ShiftSwapCounterpartStatus
+}
+
+export interface ShiftSwapOwnerDecisionInput {
+  id: string
+  reviewer_id: string
+  decision: 'approved' | 'rejected'
+}
+
+export interface ShiftSwapWithdrawInput {
+  id: string
+  requester_id: string
 }
 
 export interface ShiftSwapRequestView extends ShiftSwapRequest {
   requester_name: string
-  replacement_name: string
-  shift_title: string | null
-  shift_date: string | null
-  start_time: string | null
-  end_time: string | null
+  requester_role: string
+  requester_photo_url: string | null
+  counterpart_name: string
+  counterpart_role: string
+  counterpart_photo_url: string | null
+  department_name: string | null
+  // Requester's shift info
+  requester_shift_title: string | null
+  requester_shift_date: string | null
+  requester_start_time: string | null
+  requester_end_time: string | null
+  // Counterpart's shift info
+  counterpart_shift_title: string | null
+  counterpart_shift_date: string | null
+  counterpart_start_time: string | null
+  counterpart_end_time: string | null
+  // Task counts (for AI impact report)
+  requester_task_count: number
+  counterpart_task_count: number
+  // Active (non-Complete, non-archived) tasks that will move to the other party if approved
+  requester_movable_tasks: ShiftSwapMovableTask[]
+  counterpart_movable_tasks: ShiftSwapMovableTask[]
 }
+
+export interface ShiftSwapMovableTask {
+  id: string
+  title: string
+  description: string | null
+  status: string
+  priority: string | null
+  due_at: string | null
+  created_at: string
+}
+
+export type FixedOffDaySource = 'submitted' | 'auto_assigned'
 
 export interface FixedOffDayRequest {
   id: string
   user_id: string
   company_id: string
-  weekday: number
+  request_date: string
+  week_start: string
   status: AttendanceRequestStatus
+  source: FixedOffDaySource
   reviewed_by: string | null
   reviewed_at: string | null
   created_at: string
@@ -199,8 +233,86 @@ export interface FixedOffDayDecisionInput {
   id: string
   reviewer_id: string
   decision: AttendanceRequestStatus
+  // Required when decision is 'modified' — the replacement date for this single row.
+  new_date?: string
+}
+
+// One weekly submission (a Manager/Employee's set of requested off-days for one week) is stored
+// as one row per date, but is decided on as a single unit — approving/modifying applies to every
+// row in the group at once. Owner's only two live decisions are 'approved' (as requested) and
+// 'modified' (reassigned to different dates in the same week, e.g. after a staffing conflict) —
+// 'rejected' remains a valid historical status but is no longer offered as a new decision.
+export interface FixedOffDayDecisionGroupInput {
+  ids: string[]
+  reviewer_id: string
+  decision: AttendanceRequestStatus
+  // Required when decision is 'modified' — replacement dates paired 1:1 with ids by array index.
+  new_dates?: string[]
+}
+
+export interface FixedOffDayCreateInput {
+  user_id: string
+  company_id: string
+  dates: string[]
 }
 
 export interface FixedOffDayRequestView extends FixedOffDayRequest {
   requester_name: string
+  requester_role: string
+  department_id: string | null
+}
+
+export type OffDayQuotaDefaultRole = 'Manager' | 'Employee'
+
+export interface OffDayQuotaSetting {
+  company_id: string
+  user_id: string | null
+  max_days_per_week: number
+  role: OffDayQuotaDefaultRole | null
+  updated_by: string | null
+  updated_at: string
+}
+
+export interface OffDayQuotaUpsertInput {
+  company_id: string
+  user_id: string | null
+  max_days_per_week: number
+  role: OffDayQuotaDefaultRole | null
+  updated_by: string
+}
+
+export interface OffDaySubmissionDeadline {
+  company_id: string
+  deadline_weekday: number
+  deadline_time: string
+  updated_by: string | null
+  updated_at: string
+}
+
+export interface OffDaySubmissionDeadlineUpsertInput {
+  company_id: string
+  deadline_weekday: number
+  deadline_time: string
+  updated_by: string
+}
+
+// Kept for page.tsx type annotations; leave/time_off functionality has been removed.
+// Pages that import this type will compile but the relevant UI sections will receive no data.
+export interface TimeOffRequestView {
+  id: string
+  company_id: string
+  requester_id: string
+  requester_name: string
+  shift_assignment_id: string | null
+  request_type: string
+  reason: string | null
+  status: AttendanceRequestStatus
+  reviewed_by: string | null
+  reviewed_at: string | null
+  created_at: string
+  updated_at: string
+  shift_title: string | null
+  shift_date: string | null
+  start_time: string | null
+  end_time: string | null
 }

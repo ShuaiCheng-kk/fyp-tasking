@@ -1,4 +1,6 @@
 import { workerApplicationRepository } from '@/repositories/guest/workerApplicationRepository'
+import { shiftService } from '@/services/owner/shiftService'
+import { recruitmentRepository } from '@/repositories/owner/recruitmentRepository'
 
 type SubmitApplicationInput = {
   job_id: string
@@ -36,6 +38,13 @@ export const workerApplicationService = {
 
     validateFile(input.resume_file, 'Resume')
     validateFile(input.cover_letter_file, 'Cover letter')
+
+    // Guards against a stale/bookmarked apply link — the job board itself already hides
+    // archived/expired postings, but a direct link could still reach this far.
+    const job = await recruitmentRepository.getJobPostingById(input.job_id)
+    if (!job || job.status !== 'open' || (job.expires_at && new Date(job.expires_at) < new Date())) {
+      throw new Error('This job is no longer accepting applications')
+    }
 
     const existing = await workerApplicationRepository.checkExistingApplication(
       input.job_id,
@@ -79,9 +88,55 @@ export const workerApplicationService = {
     if (!invitationId) throw new Error('Invitation ID is required')
     if (response !== 'accepted' && response !== 'declined') throw new Error('Invalid response')
     await workerApplicationRepository.respondToInvitation(invitationId, response)
-    if (response === 'accepted') {
-      const userId = await workerApplicationRepository.getUserIdFromInvitation(invitationId)
-      if (userId) await workerApplicationRepository.promoteGuestToWorker(userId)
+    if (response !== 'accepted') return
+
+    const context = await workerApplicationRepository.getInvitationContext(invitationId)
+    if (!context) return
+    await workerApplicationRepository.promoteGuestToWorker(context.user_id)
+    if (context.job.department_id) {
+      await workerApplicationRepository.addCasualWorkerToDepartment(context.user_id, context.job.department_id, context.job.company_id)
     }
+
+    // UC49 gates Clock In/Out off a real shifts row — the moment the Casual Worker accepts,
+    // create that shift (published immediately, since both sides already agreed to the work)
+    // and assign them to it, mirroring how Manager/Employee shifts already work.
+    const { job } = context
+    if (!job.department_id || !job.shift_date) return
+
+    let start_time: string | null = null
+    let end_time: string | null = null
+    let is_open_ended = false
+    if (job.form_type === 'shift' && job.shift_start_time && job.shift_end_time) {
+      start_time = job.shift_start_time
+      end_time = job.shift_end_time
+    } else if (job.form_type === 'oneoff' && job.job_start_time) {
+      start_time = job.job_start_time
+      end_time = addOneHour(job.job_start_time)
+      is_open_ended = true
+    }
+    if (!start_time || !end_time) return
+
+    await shiftService.createShift({
+      company_id: job.company_id,
+      department_id: job.department_id,
+      title: job.title,
+      shift_date: job.shift_date,
+      start_time,
+      end_time,
+      created_by: job.created_by,
+      publication_status: 'published',
+      assigned_user_id: context.user_id,
+      is_open_ended,
+      source_job_posting_id: job.id,
+    })
   },
+}
+
+// One-off jobs have an open-ended finish (the worker decides when the task is done, pay is
+// flat-rate regardless), but the shifts table requires a non-null end_time — this is only a
+// structural placeholder, never used to gate or limit Clock Out.
+function addOneHour(time: string): string {
+  const [h, m] = time.split(':').map(Number)
+  const next = (h + 1) % 24
+  return `${String(next).padStart(2, '0')}:${String(m ?? 0).padStart(2, '0')}`
 }

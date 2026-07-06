@@ -25,6 +25,7 @@ const baseTemplate = {
   title: 'Clean front desk',
   description: 'Wipe down and restock',
   priority: 'Medium',
+  sub_task_titles: ['Wipe counters', 'Restock supplies'],
   created_by: 'owner-1',
   created_at: '2026-06-01T00:00:00.000Z',
 }
@@ -44,6 +45,7 @@ describe('taskTemplateService — Task Template', () => {
         title: 'Clean front desk',
         description: 'Wipe down and restock',
         priority: 'Medium',
+        sub_task_titles: ['Wipe counters', 'Restock supplies'],
         created_by: 'owner-1',
       })
 
@@ -53,9 +55,41 @@ describe('taskTemplateService — Task Template', () => {
         title: 'Clean front desk',
         description: 'Wipe down and restock',
         priority: 'Medium',
+        sub_task_titles: ['Wipe counters', 'Restock supplies'],
         created_by: 'owner-1',
       })
       expect(result).toEqual(baseTemplate)
+    })
+
+    it('trims and drops blank sub-task titles', async () => {
+      vi.mocked(taskTemplateRepository.createTemplate).mockResolvedValue(baseTemplate)
+
+      await taskTemplateService.createTemplate({
+        company_id: 'company-1',
+        name: 'Daily Cleaning Checklist',
+        title: 'Clean front desk',
+        sub_task_titles: ['  Wipe counters  ', '   ', 'Restock supplies'],
+        created_by: 'owner-1',
+      })
+
+      expect(taskTemplateRepository.createTemplate).toHaveBeenCalledWith(
+        expect.objectContaining({ sub_task_titles: ['Wipe counters', 'Restock supplies'] })
+      )
+    })
+
+    it('defaults sub_task_titles to an empty array when omitted', async () => {
+      vi.mocked(taskTemplateRepository.createTemplate).mockResolvedValue(baseTemplate)
+
+      await taskTemplateService.createTemplate({
+        company_id: 'company-1',
+        name: 'Daily Cleaning Checklist',
+        title: 'Clean front desk',
+        created_by: 'owner-1',
+      })
+
+      expect(taskTemplateRepository.createTemplate).toHaveBeenCalledWith(
+        expect.objectContaining({ sub_task_titles: [] })
+      )
     })
 
     it('throws when required fields are missing', async () => {
@@ -101,7 +135,7 @@ describe('taskTemplateService — Task Template', () => {
   })
 
   describe('updateTemplate', () => {
-    it('updates name, title, description, and priority for an existing template', async () => {
+    it('updates name, title, description, priority, and sub_task_titles for an existing template', async () => {
       vi.mocked(taskTemplateRepository.getTemplateById).mockResolvedValue(baseTemplate)
       vi.mocked(taskTemplateRepository.updateTemplate).mockResolvedValue({
         ...baseTemplate,
@@ -109,6 +143,7 @@ describe('taskTemplateService — Task Template', () => {
         title: 'Renamed title',
         description: 'Renamed description',
         priority: 'High',
+        sub_task_titles: ['Check inventory'],
       })
 
       const result = await taskTemplateService.updateTemplate('template-1', {
@@ -116,6 +151,7 @@ describe('taskTemplateService — Task Template', () => {
         title: 'Renamed title',
         description: 'Renamed description',
         priority: 'High',
+        sub_task_titles: ['  Check inventory  '],
       })
 
       expect(taskTemplateRepository.updateTemplate).toHaveBeenCalledWith('template-1', {
@@ -123,6 +159,7 @@ describe('taskTemplateService — Task Template', () => {
         title: 'Renamed title',
         description: 'Renamed description',
         priority: 'High',
+        sub_task_titles: ['Check inventory'],
       })
       expect(result.name).toBe('Renamed')
     })
@@ -138,6 +175,7 @@ describe('taskTemplateService — Task Template', () => {
         title: baseTemplate.title,
         description: baseTemplate.description,
         priority: baseTemplate.priority,
+        sub_task_titles: baseTemplate.sub_task_titles,
       })
     })
 

@@ -9,8 +9,16 @@ export const recruitmentService = {
     return recruitmentRepository.getPublicJobPostings()
   },
 
+  // Lets any internal-staff view (e.g. an Owner reviewing a Casual Worker's attendance record)
+  // look up the exact job posting a shift originated from, via Shift.source_job_posting_id.
+  async getJobPostingById(id: string): Promise<JobPosting | null> {
+    if (!id) throw new Error('id is required')
+    return recruitmentRepository.getJobPostingById(id)
+  },
+
   async getJobPostingsByDepartment(company_id: string, department_id: string): Promise<JobPostingSummary[]> {
     if (!company_id || !department_id) throw new Error('company_id and department_id are required')
+    await recruitmentRepository.sweepExpiredJobPostings(company_id)
     const postings = await recruitmentRepository.getJobPostingsByDepartment(company_id, department_id)
     const applicantRows = await recruitmentRepository.getApplicantCounts(postings.map(posting => posting.id))
     const deptIds = [...new Set(postings.map(posting => posting.department_id).filter((id): id is string => Boolean(id)))]
@@ -24,12 +32,14 @@ export const recruitmentService = {
       department_name: posting.department_id ? deptMap.get(posting.department_id) ?? null : null,
       applicant_count: applicantRows.filter(row => row.job_id === posting.id).length,
       pending_count: applicantRows.filter(row => row.job_id === posting.id && row.status === 'pending').length,
+      accepted_count: applicantRows.filter(row => row.job_id === posting.id && row.status === 'accepted').length,
       assigned_employee_name: posting.assigned_employee_id ? empMap.get(posting.assigned_employee_id) ?? null : null,
     }))
   },
 
   async getJobPostingsForManager(company_id: string, manager_id: string): Promise<JobPostingSummary[]> {
     if (!company_id || !manager_id) throw new Error('company_id and manager_id are required')
+    await recruitmentRepository.sweepExpiredJobPostings(company_id)
     const deptIds = await recruitmentRepository.getManagerDepartmentIds(manager_id, company_id)
     const postings = await recruitmentRepository.getJobPostingsByManagerDepts(company_id, deptIds)
     const applicantRows = await recruitmentRepository.getApplicantCounts(postings.map(p => p.id))
@@ -46,12 +56,14 @@ export const recruitmentService = {
       department_name: posting.department_id ? deptMap.get(posting.department_id) ?? null : null,
       applicant_count: applicantRows.filter(r => r.job_id === posting.id).length,
       pending_count: applicantRows.filter(r => r.job_id === posting.id && r.status === 'pending').length,
+      accepted_count: applicantRows.filter(r => r.job_id === posting.id && r.status === 'accepted').length,
       assigned_employee_name: posting.assigned_employee_id ? empMap.get(posting.assigned_employee_id) ?? null : null,
     }))
   },
 
   async getJobPostings(company_id: string): Promise<JobPostingSummary[]> {
     if (!company_id) throw new Error('company_id is required')
+    await recruitmentRepository.sweepExpiredJobPostings(company_id)
     const postings = await recruitmentRepository.getJobPostingsByCompany(company_id)
     const applicantRows = await recruitmentRepository.getApplicantCounts(postings.map(posting => posting.id))
     const deptIds = [...new Set(postings.map(posting => posting.department_id).filter((id): id is string => Boolean(id)))]
@@ -68,6 +80,7 @@ export const recruitmentService = {
         department_name: posting.department_id ? deptMap.get(posting.department_id) ?? null : null,
         applicant_count: rows.length,
         pending_count: rows.filter(row => row.status === 'pending').length,
+        accepted_count: rows.filter(row => row.status === 'accepted').length,
         assigned_employee_name: posting.assigned_employee_id ? empMap.get(posting.assigned_employee_id) ?? null : null,
       }
     })
@@ -99,6 +112,7 @@ export const recruitmentService = {
       department_name: p.department_id ? deptMap.get(p.department_id) ?? null : null,
       applicant_count: 0,
       pending_count: 0,
+      accepted_count: 0,
       assigned_employee_name: p.assigned_employee_id ? empMap.get(p.assigned_employee_id) ?? null : null,
     }))
   },
@@ -171,6 +185,10 @@ export const recruitmentService = {
       break_start_time: original.break_start_time,
       break_end_time: original.break_end_time,
       assigned_employee_id: original.assigned_employee_id,
+      experience_required: original.experience_required,
+      minimum_age: original.minimum_age,
+      uniform_required: original.uniform_required,
+      uniform_details: original.uniform_details,
     })
   },
 
@@ -245,5 +263,11 @@ function validateJobPostingInput(input: JobPostingInput): void {
   }
   if (input.salary_amount !== undefined && input.salary_amount !== null && input.salary_amount < 0) {
     throw new Error('salary_amount cannot be negative')
+  }
+  // One-off jobs have no fixed end time (the worker decides when the task is done), but they
+  // still need a start time so UC49's Clock In gating has something to compare against — same
+  // role shift_start_time plays for Shift jobs.
+  if (!isDraft && input.form_type === 'oneoff' && !input.job_start_time) {
+    throw new Error('job_start_time is required to publish a one-off job')
   }
 }

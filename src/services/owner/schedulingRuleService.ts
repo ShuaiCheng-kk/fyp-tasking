@@ -4,6 +4,7 @@
 import OpenAI from 'openai'
 import { authRepository } from '@/repositories/auth/authRepository'
 import { schedulingRuleRepository } from '@/repositories/owner/schedulingRuleRepository'
+import { MIN_MANAGERS_PER_DAY, MIN_EMPLOYEES_PER_DAY, countRolesForGroup, weekStart } from '@/lib/schedulingConstants'
 import {
   ScheduleRuleViolation,
   ScheduleValidationItem,
@@ -20,8 +21,6 @@ const openai = new OpenAI({
 })
 
 const MAX_WEEKLY_HOURS = 44
-const MIN_MANAGERS_PER_DAY = 1
-const MIN_EMPLOYEES_PER_DAY = 1
 const MAX_CONSECUTIVE_DAYS = 3
 
 export const DEFAULT_SCHEDULING_RULES: SchedulingRule[] = [
@@ -38,8 +37,8 @@ export const DEFAULT_SCHEDULING_RULES: SchedulingRule[] = [
   },
   {
     key: 'fixed_off_day_block',
-    name: 'Fixed off day cannot be scheduled',
-    description: 'Employees and managers must not be scheduled on their fixed off day.',
+    name: 'Weekly day off cannot be scheduled',
+    description: 'Employees and managers must not be scheduled on their weekly day off.',
     rule_type: 'Hard Rule',
     value_type: 'text',
     value: 'Always enforced',
@@ -160,7 +159,7 @@ export const schedulingRuleService = {
       this.getRules(input.company_id),
       schedulingRuleRepository.getCompanyUsers(input.company_id),
       schedulingRuleRepository.getApprovedTimeOffByCompany(input.company_id),
-      schedulingRuleRepository.getFixedOffDays(input.company_id),
+      schedulingRuleRepository.getOffDayRequests(input.company_id, input.date_from, input.date_to),
     ])
     const items = input.items ?? await schedulingRuleRepository.getPublishedOrDraftScheduleItems(
       input.company_id,
@@ -185,15 +184,15 @@ export const schedulingRuleService = {
     const [rules, users, fixedOffDays, timeOffRequests, existingSchedule, previousSchedule] = await Promise.all([
       this.getRules(input.company_id),
       schedulingRuleRepository.getCompanyUsers(input.company_id),
-      schedulingRuleRepository.getFixedOffDays(input.company_id),
+      schedulingRuleRepository.getOffDayRequests(input.company_id, input.date_from, input.date_to),
       schedulingRuleRepository.getTimeOffRequestsByCompany(input.company_id),
       schedulingRuleRepository.getPublishedOrDraftScheduleItems(input.company_id, input.date_from, input.date_to),
       schedulingRuleRepository.getPublishedOrDraftScheduleItems(input.company_id, previousFrom, previousTo),
     ])
 
-    const fixedOffByUser = new Map<string, number[]>()
+    const fixedOffByUser = new Map<string, string[]>()
     for (const row of fixedOffDays) {
-      fixedOffByUser.set(row.user_id, [...(fixedOffByUser.get(row.user_id) ?? []), row.weekday])
+      fixedOffByUser.set(row.user_id, [...(fixedOffByUser.get(row.user_id) ?? []), row.request_date])
     }
 
     const existingHoursByUser = new Map<string, number>()
@@ -565,15 +564,15 @@ function validateItems(input: {
   rules: SchedulingRule[]
   users: Awaited<ReturnType<typeof schedulingRuleRepository.getCompanyUsers>>
   approvedTimeOff: Awaited<ReturnType<typeof schedulingRuleRepository.getApprovedTimeOffByCompany>>
-  fixedOffDays: Awaited<ReturnType<typeof schedulingRuleRepository.getFixedOffDays>>
+  fixedOffDays: Awaited<ReturnType<typeof schedulingRuleRepository.getOffDayRequests>>
   items: ScheduleValidationItem[]
 }): ScheduleValidationResult {
   const ruleMap = new Map(input.rules.map(rule => [rule.key, rule]))
   const usersById = new Map(input.users.map(user => [user.id, user]))
-  const fixedOffByUser = new Map<string, Set<number>>()
+  const fixedOffByUser = new Map<string, Set<string>>()
   for (const row of input.fixedOffDays) {
     if (!fixedOffByUser.has(row.user_id)) fixedOffByUser.set(row.user_id, new Set())
-    fixedOffByUser.get(row.user_id)!.add(row.weekday)
+    fixedOffByUser.get(row.user_id)!.add(row.request_date)
   }
 
   const violations: ScheduleRuleViolation[] = []
@@ -593,9 +592,8 @@ function validateItems(input: {
 
   for (const item of input.items) {
     if (!item.user_id) continue
-    const weekday = new Date(`${item.shift_date}T00:00:00`).getDay()
-    if (fixedOffByUser.get(item.user_id)?.has(weekday)) {
-      push('fixed_off_day_block', 'Worker is assigned on a fixed off day.', item)
+    if (fixedOffByUser.get(item.user_id)?.has(item.shift_date)) {
+      push('fixed_off_day_block', 'Worker is assigned on a weekly day off.', item)
     }
 
     const approvedOnDate = input.approvedTimeOff.some(request => (
@@ -631,23 +629,21 @@ function validateDepartmentMinimums(
   ruleMap: Map<SchedulingRuleKey, SchedulingRule>,
   push: (ruleKey: SchedulingRuleKey, message: string, item?: Partial<ScheduleValidationItem>) => void,
 ) {
-  const groups = new Map<string, { department_id: string; shift_date: string; managers: Set<string>; employees: Set<string> }>()
+  const groups = new Map<string, { department_id: string; shift_date: string; items: ScheduleValidationItem[] }>()
   for (const item of items) {
     const key = `${item.department_id}_${item.shift_date}`
-    if (!groups.has(key)) groups.set(key, { department_id: item.department_id, shift_date: item.shift_date, managers: new Set(), employees: new Set() })
-    if (!item.user_id) continue
-    const role = usersById.get(item.user_id)?.role
-    if (role === 'Manager') groups.get(key)!.managers.add(item.user_id)
-    if (role === 'Employee') groups.get(key)!.employees.add(item.user_id)
+    if (!groups.has(key)) groups.set(key, { department_id: item.department_id, shift_date: item.shift_date, items: [] })
+    groups.get(key)!.items.push(item)
   }
   for (const group of groups.values()) {
+    const { managers, employees } = countRolesForGroup(group.items, usersById)
     const minManagers = MIN_MANAGERS_PER_DAY
     const minEmployees = MIN_EMPLOYEES_PER_DAY
-    if (group.managers.size < minManagers) {
-      push('min_managers_per_department_day', `Department has ${group.managers.size} manager(s), below required minimum ${minManagers}.`, group)
+    if (managers < minManagers) {
+      push('min_managers_per_department_day', `Department has ${managers} manager(s), below required minimum ${minManagers}.`, group)
     }
-    if (group.employees.size < minEmployees) {
-      push('min_employees_per_department_day', `Department has ${group.employees.size} employee(s), below required minimum ${minEmployees}.`, group)
+    if (employees < minEmployees) {
+      push('min_employees_per_department_day', `Department has ${employees} employee(s), below required minimum ${minEmployees}.`, group)
     }
   }
 }
@@ -752,13 +748,6 @@ function validateWorkloadFairness(
   }
 }
 
-function weekStart(dateKey: string): string {
-  const date = new Date(`${dateKey}T00:00:00`)
-  const dow = (date.getDay() + 6) % 7
-  date.setDate(date.getDate() - dow)
-  return date.toISOString().slice(0, 10)
-}
-
 function daysBetween(a: string, b: string): number {
   const one = new Date(`${a}T00:00:00`).getTime()
   const two = new Date(`${b}T00:00:00`).getTime()
@@ -846,7 +835,7 @@ type AiStaffContext = {
   full_name: string
   role: string
   department_id: string | null
-  fixed_off_days: number[]
+  fixed_off_days: string[]
   remaining_weekly_hours: number
   scheduled_hours_in_period: number
   scheduled_days_in_period: number
@@ -979,7 +968,7 @@ function pickStaffForSlot(input: {
     .filter(staff => staff.department_id === input.departmentId)
     .filter(staff => staff.role === input.role)
     .filter(staff => !input.usedInWindow.has(staff.id))
-    .filter(staff => !staff.fixed_off_days.includes(weekday))
+    .filter(staff => !staff.fixed_off_days.includes(input.shiftDate))
     .filter(staff => !staff.leave_requests.some(request => (
       request.date === input.shiftDate &&
       request.leave_type === 'time_off' &&
@@ -1079,7 +1068,7 @@ function buildAiSchedulePrompt(input: {
     full_name: string
     role: string
     active: boolean
-    fixed_off_days: number[]
+    fixed_off_days: string[]
     max_weekly_hours: number
     remaining_weekly_hours: number
     previous_working_days: number
@@ -1087,7 +1076,7 @@ function buildAiSchedulePrompt(input: {
     leave_requests: Array<{ date: string | null; leave_type: string; status: string }>
   }> }>
   leave_requests: Array<{ requester_id: string; date: string | null; leave_type: string; status: string }>
-  fixed_off_days: Array<{ user_id: string; weekday: number }>
+  fixed_off_days: Array<{ user_id: string; request_date: string }>
   shiftTypes: ShiftTypeInput[]
 }): string {
   const rulesText = input.rules
@@ -1096,7 +1085,7 @@ function buildAiSchedulePrompt(input: {
 
   const deptText = input.department_staff.map(dept => {
     const staffLines = dept.staff.map(s => {
-      const offDays = s.fixed_off_days.map(d => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d]).join(', ') || 'none'
+      const offDays = s.fixed_off_days.join(', ') || 'none'
       const leaves = s.leave_requests.filter(l => l.status === 'approved' || l.status === 'pending')
       const leaveText = leaves.length > 0
         ? leaves.map(l => `${l.date ?? 'unknown date'} (${l.leave_type}, ${l.status})`).join(', ')

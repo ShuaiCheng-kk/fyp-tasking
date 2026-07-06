@@ -71,17 +71,18 @@ export const recruitmentRepository = {
       ...postings.map(p => p.created_by),
       ...postings.map(p => p.assigned_employee_id).filter((id): id is string => Boolean(id)),
     ].filter(Boolean))]
-    let userMap = new Map<string, string>()
+    let userMap = new Map<string, { full_name: string; profile_photo_url: string | null }>()
     if (allUserIds.length > 0) {
-      const { data: users } = await supabase.from('users').select('id, full_name').in('id', allUserIds)
-      userMap = new Map((users ?? []).map((u: { id: string; full_name: string }) => [u.id, u.full_name]))
+      const { data: users } = await supabase.from('users').select('id, full_name, profile_photo_url').in('id', allUserIds)
+      userMap = new Map((users ?? []).map((u: { id: string; full_name: string; profile_photo_url: string | null }) => [u.id, { full_name: u.full_name, profile_photo_url: u.profile_photo_url }]))
     }
 
     return postings.map(p => ({
       ...p,
       department_name: p.department_id ? deptMap.get(p.department_id) ?? null : null,
-      submitter_name: userMap.get(p.created_by) ?? null,
-      assigned_employee_name: p.assigned_employee_id ? userMap.get(p.assigned_employee_id) ?? null : null,
+      submitter_name: userMap.get(p.created_by)?.full_name ?? null,
+      submitter_photo_url: userMap.get(p.created_by)?.profile_photo_url ?? null,
+      assigned_employee_name: p.assigned_employee_id ? userMap.get(p.assigned_employee_id)?.full_name ?? null : null,
     }))
   },
 
@@ -144,8 +145,15 @@ export const recruitmentRepository = {
         shift_end_time: input.shift_end_time ?? null,
         break_start_time: input.break_start_time ?? null,
         break_end_time: input.break_end_time ?? null,
+        job_start_time: input.job_start_time ?? null,
         assigned_employee_id: input.assigned_employee_id ?? null,
         form_type: input.form_type ?? null,
+        expires_at: input.expires_at ?? null,
+        template_id: input.template_id ?? null,
+        experience_required: input.experience_required ?? null,
+        minimum_age: input.minimum_age ?? null,
+        uniform_required: input.uniform_required ?? false,
+        uniform_details: input.uniform_details ?? null,
       })
       .select()
       .single()
@@ -169,14 +177,31 @@ export const recruitmentRepository = {
     return data as JobPosting
   },
 
+  // Lazily run on-read (there is no cron/job-runner in this app — same pattern as
+  // autoExpireSwapRequestIfNeeded in attendanceService) — flips any 'open' posting whose deadline
+  // has passed to 'archived', the same terminal state the manual Archive action already produces.
+  // Scoping to company_id keeps the owner/manager dashboard sweep cheap; omit it to sweep globally
+  // (used by the public job board, which has no company context).
+  async sweepExpiredJobPostings(company_id?: string): Promise<void> {
+    let query = supabase
+      .from('job_postings')
+      .update({ status: 'archived', archived_at: new Date().toISOString() })
+      .eq('status', 'open')
+      .not('expires_at', 'is', null)
+      .lt('expires_at', new Date().toISOString())
+    if (company_id) query = query.eq('company_id', company_id)
+    const { error } = await query
+    if (error) throw new Error(error.message)
+  },
+
   async getApplicantsByJob(job_id: string): Promise<JobApplicant[]> {
     const { data, error } = await supabase
       .from('job_applicants')
-      .select('*')
+      .select('*, users(full_name, email_address)')
       .eq('job_id', job_id)
       .order('applied_at', { ascending: false })
     if (error) throw new Error(error.message)
-    return (data ?? []) as JobApplicant[]
+    return (data ?? []).map(mapApplicantRow)
   },
 
   async getApplicantCounts(job_ids: string[]): Promise<{ job_id: string; status: string }[]> {
@@ -192,11 +217,11 @@ export const recruitmentRepository = {
   async getApplicantById(id: string): Promise<JobApplicant | null> {
     const { data, error } = await supabase
       .from('job_applicants')
-      .select('*')
+      .select('*, users(full_name, email_address)')
       .eq('id', id)
       .single()
     if (error) return null
-    return data as JobApplicant
+    return mapApplicantRow(data)
   },
 
   async updateApplicantStatus(id: string, status: 'accepted' | 'rejected'): Promise<JobApplicant> {
@@ -204,10 +229,10 @@ export const recruitmentRepository = {
       .from('job_applicants')
       .update({ status })
       .eq('id', id)
-      .select()
+      .select('*, users(full_name, email_address)')
       .single()
     if (error) throw new Error(error.message)
-    return data as JobApplicant
+    return mapApplicantRow(data)
   },
 
   async createJobInvitation(input: {
@@ -387,4 +412,14 @@ export const recruitmentRepository = {
     if (error) throw new Error(error.message)
   },
 
+}
+
+function mapApplicantRow(row: Record<string, unknown>): JobApplicant {
+  const user = row.users as { full_name: string; email_address: string } | null
+  const { users: _users, ...rest } = row
+  return {
+    ...(rest as Omit<JobApplicant, 'full_name' | 'email_address'>),
+    full_name: user?.full_name ?? '',
+    email_address: user?.email_address ?? '',
+  }
 }

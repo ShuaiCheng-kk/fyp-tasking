@@ -1,5 +1,5 @@
 import { marketingRepository } from '@/repositories/marketing/marketingRepository'
-import { MarketingContentBlock, MarketingPage, MarketingPageSummary, UpdateMarketingContentBlockInput } from '@/types/MarketingPage'
+import { CreateMarketingContentBlockInput, MarketingContentBlock, MarketingPage, MarketingPageSummary, UpdateMarketingContentBlockInput } from '@/types/MarketingPage'
 
 const MARKETING_ADMIN_ROLE = 'Marketing Admin'
 
@@ -23,6 +23,11 @@ export const marketingService = {
     return page
   },
 
+  async reorderMarketingContentBlocks(admin_user_id: string, updates: { id: string; sort_order: number }[]): Promise<void> {
+    await marketingService.verifyMarketingAdmin(admin_user_id)
+    await marketingRepository.reorderMarketingContentBlocks(updates)
+  },
+
   async updateMarketingContentBlock(admin_user_id: string, input: UpdateMarketingContentBlockInput): Promise<MarketingContentBlock> {
     await marketingService.verifyMarketingAdmin(admin_user_id)
 
@@ -39,5 +44,21 @@ export const marketingService = {
     const page = await marketingRepository.getMarketingPageBySlug(slug)
     if (!page || !page.is_editable) return null
     return page
+  },
+
+  async createMarketingContentBlock(admin_user_id: string, input: CreateMarketingContentBlockInput): Promise<MarketingContentBlock> {
+    await marketingService.verifyMarketingAdmin(admin_user_id)
+    const page = await marketingRepository.getMarketingPageById(input.page_id)
+    if (!page || !page.is_editable) throw new Error('Editable marketing page not found')
+    return marketingRepository.createMarketingContentBlock(input)
+  },
+
+  async deleteMarketingContentBlock(admin_user_id: string, block_id: string): Promise<void> {
+    await marketingService.verifyMarketingAdmin(admin_user_id)
+    const block = await marketingRepository.getMarketingBlock(block_id)
+    if (!block) throw new Error('Content block not found')
+    const page = await marketingRepository.getMarketingPageById(block.page_id)
+    if (!page || !page.is_editable) throw new Error('Editable marketing page not found')
+    await marketingRepository.deleteMarketingContentBlock(block_id)
   },
 }

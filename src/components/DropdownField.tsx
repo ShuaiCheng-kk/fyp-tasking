@@ -6,12 +6,18 @@
 import { useState, useRef, useEffect } from 'react'
 import { ChevronDown } from 'lucide-react'
 
-export default function DropdownField({ value, options, onChange, placeholder, disabled = false }: {
+export default function DropdownField({ value, options, onChange, placeholder, disabled = false, compact = false, fontSize }: {
   value: string
   options: { value: string; label: string }[]
   onChange: (v: string) => void
   placeholder?: string
   disabled?: boolean
+  // Smaller trigger for toolbar/filter contexts (e.g. a search bar's adjacent filter) — the
+  // default (non-compact) size remains the form-field standard used everywhere else.
+  compact?: boolean
+  // Overrides the trigger's font size independent of compact (e.g. a long label list that needs
+  // to stay unabbreviated at the default height). Defaults to the compact/non-compact standard.
+  fontSize?: string
 }) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState({ top: 0, left: 0, width: 0 })
@@ -44,10 +50,10 @@ export default function DropdownField({ value, options, onChange, placeholder, d
       <button ref={triggerRef} type="button" onClick={handleOpen}
         style={{
           width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '10px 12px', border: `1.5px solid ${open ? '#F97316' : '#E5E7EB'}`, borderRadius: 8,
-          background: '#FFFFFF', cursor: 'pointer', fontSize: '0.9375rem',
+          padding: compact ? '6px 10px' : '10px 12px', border: `1.5px solid ${open ? '#F97316' : '#E5E7EB'}`, borderRadius: 8,
+          background: '#FFFFFF', cursor: 'pointer', fontSize: fontSize ?? (compact ? '0.8125rem' : '0.9375rem'),
           color: selected ? '#111827' : '#9CA3AF', fontWeight: selected ? 500 : 400,
-          outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s', minHeight: 40,
+          outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s', height: compact ? 32 : 40,
         }}>
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {selected?.label ?? placeholder ?? 'Select...'}

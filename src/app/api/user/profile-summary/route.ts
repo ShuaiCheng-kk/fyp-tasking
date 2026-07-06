@@ -2,7 +2,7 @@
 // RULE: Only handles request/response. No business logic. No DB access.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { availabilityService } from '@/services/user/availabilityService'
+import { attendanceService } from '@/services/owner/attendanceService'
 import { supabase } from '@/lib/supabase'
 
 export async function GET(req: NextRequest) {
@@ -10,14 +10,13 @@ export async function GET(req: NextRequest) {
   if (!user_id) return NextResponse.json({ success: false, message: 'user_id is required' }, { status: 400 })
 
   try {
-    const [userRow, days, requests] = await Promise.all([
+    const [userRow, fixedOffDates] = await Promise.all([
       supabase
         .from('users')
         .select('id, full_name, role, weekly_working_hours, max_weekly_hours, contracted_weekly_hours')
         .eq('id', user_id)
         .single(),
-      availabilityService.getFixedOffDays(user_id),
-      availabilityService.getLeaveRequests(user_id),
+      attendanceService.getUpcomingApprovedOffDates(user_id),
     ])
 
     if (userRow.error) throw new Error(userRow.error.message)
@@ -32,14 +31,8 @@ export async function GET(req: NextRequest) {
         weekly_working_hours: u.weekly_working_hours ?? null,
         max_weekly_hours: u.max_weekly_hours ?? null,
         contracted_weekly_hours: u.contracted_weekly_hours ?? null,
-        fixed_off_days: days.map((d: { weekday: number }) => d.weekday),
-        leave_requests: requests.map(r => ({
-          id: r.id,
-          request_type: r.request_type,
-          reason: r.reason,
-          status: r.status,
-          created_at: r.created_at,
-        })),
+        fixed_off_days: fixedOffDates,
+        leave_requests: [],
       },
     })
   } catch (err) {

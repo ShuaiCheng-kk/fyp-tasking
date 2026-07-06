@@ -5,14 +5,22 @@ import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import {
-  Archive, ArchiveRestore, Briefcase, Building2, CalendarDays, Check, CheckCircle, ChevronLeft, ChevronRight,
+  Archive, ArchiveRestore, Briefcase, Building2, CalendarDays, Check, ChevronLeft, ChevronRight,
   ClipboardList, Clock, Coffee, Copy, Crown, DollarSign, FileText, LayoutGrid, MapPin,
   MoreHorizontal, Pencil, Repeat, Send, Sparkles, Timer, Trash2, UserCheck, UserX,
   X, XCircle, Zap,
 } from 'lucide-react'
 import ManagerSidebar from '@/components/ManagerSidebar'
+import {
+  ModalOverlay, ModalBox, ModalHeader,
+  modalInputStyle, modalLabelStyle, modalErrorBoxStyle,
+  modalGhostButtonStyle, modalPrimaryButtonStyle, modalDestructiveButtonStyle,
+} from '@/components/modal'
+import Spinner from '@/components/Spinner'
+import Toast from '@/components/Toast'
 import { CandidateRecommendation } from '@/types/AI'
 import { JobApplicant, JobPostingSummary } from '@/types/Recruitment'
+import { JobTemplate } from '@/types/JobTemplate'
 
 type Tab = 'jobs' | 'archived' | 'drafts'
 type Department = { id: string; name: string }
@@ -43,21 +51,28 @@ const labelStyle: React.CSSProperties = {
 
 const cardShadow = '0 1px 3px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04)'
 
-const pageKeyframes = `
-  @keyframes overlayFadeIn { from { opacity: 0 } to { opacity: 1 } }
-  @keyframes modalSlideIn  { from { opacity: 0; transform: scale(0.97) translateY(8px) } to { opacity: 1; transform: scale(1) translateY(0) } }
-  @keyframes blockSlideUp  { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
-  @keyframes fadeSlideUpToast { from { opacity: 0; transform: translateX(-50%) translateY(10px) } to { opacity: 1; transform: translateX(-50%) translateY(0) } }
-`
-
-function Spinner({ size = 16, dark = false }: { size?: number; dark?: boolean }) {
-  return (
-    <svg className="animate-spin" width={size} height={size} viewBox="0 0 18 18" style={{ display: 'inline-block', flexShrink: 0 }}>
-      <circle cx="9" cy="9" r="7" stroke={dark ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.35)'} strokeWidth="2.5" fill="none" />
-      <path d="M9 2a7 7 0 0 1 7 7" stroke={dark ? '#111827' : 'white'} strokeWidth="2.5" strokeLinecap="round" fill="none" />
-    </svg>
-  )
+// Manager's role accent is blue, not the modal template's default orange — same shape/spacing
+// as modalPrimaryButtonStyle, just re-colored to match every other button on this page.
+function managerPrimaryButtonStyle(disabled = false): React.CSSProperties {
+  return {
+    padding: '7px 18px',
+    background: disabled ? '#93C5FD' : 'linear-gradient(135deg, #2563EB, #1D4ED8)',
+    border: 'none',
+    borderRadius: 8,
+    fontWeight: 600,
+    fontSize: '0.8125rem',
+    color: '#FFFFFF',
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    opacity: disabled ? 0.65 : 1,
+  }
 }
+
+const pageKeyframes = `
+  @keyframes blockSlideUp  { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
+`
 
 // ─── Custom dropdown matching Task modal DropdownField style ─────────────────
 function RDrop({ value, options, onChange, placeholder, disabled = false }: {
@@ -321,6 +336,7 @@ export default function ManagerRecruitmentPage() {
   // oneoff-specific
   const [formJobDate, setFormJobDate] = useState('')
   const [formJobEndDate, setFormJobEndDate] = useState('')
+  const [formJobStartTime, setFormJobStartTime] = useState('09:00')
   const [formEstHours, setFormEstHours] = useState('')
   const [formUrgency, setFormUrgency] = useState('normal')
   // AI builder
@@ -328,8 +344,15 @@ export default function ManagerRecruitmentPage() {
   const [aiPreview, setAiPreview] = useState<null | { title: string; description: string; requirements: string }>(null)
   const [formError, setFormError] = useState('')
 
-  // job templates
+  // quick-fill starter templates (hardcoded presets)
   const [showTemplates, setShowTemplates] = useState(false)
+
+  // saved job templates (UC36)
+  const [templates, setTemplates] = useState<JobTemplate[]>([])
+  const [showMyTemplates, setShowMyTemplates] = useState(false)
+  const [saveTemplateModalOpen, setSaveTemplateModalOpen] = useState(false)
+  const [newTemplateName, setNewTemplateName] = useState('')
+  const [templateActionLoading, setTemplateActionLoading] = useState(false)
 
   // detail / delete confirm
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; title: string; isDraft?: boolean } | null>(null)
@@ -369,18 +392,20 @@ export default function ManagerRecruitmentPage() {
     setLoading(true)
     setError('')
     try {
-      const [liveRes, draftsRes, deptRes] = await Promise.all([
+      const [liveRes, draftsRes, deptRes, templatesRes] = await Promise.all([
         fetch(`/api/recruitment?company_id=${cid}&manager_id=${uid}`),
         fetch(`/api/recruitment?company_id=${cid}&resource=drafts&user_id=${uid}`),
         fetch(`/api/company/departments?company_id=${cid}`),
+        fetch(`/api/job-template?company_id=${cid}`),
       ])
-      const [liveData, draftsData, deptData] = await Promise.all([
-        liveRes.json(), draftsRes.json(), deptRes.json(),
+      const [liveData, draftsData, deptData, templatesData] = await Promise.all([
+        liveRes.json(), draftsRes.json(), deptRes.json(), templatesRes.json(),
       ])
       if (!liveData.success) throw new Error(liveData.message || 'Failed to fetch jobs')
       setLivePostings(liveData.postings ?? [])
       setDrafts(draftsData.drafts ?? [])
       if (deptData.success) setDepartments(deptData.departments ?? [])
+      if (templatesData.success) setTemplates(templatesData.templates ?? [])
       setSelectedLiveId(prev => {
         const list = liveData.postings ?? []
         if (prev && list.some((p: JobPostingSummary) => p.id === prev)) return prev
@@ -521,7 +546,7 @@ export default function ManagerRecruitmentPage() {
     setFormIsRecurring(false); setFormRecurInterval(1); setFormRecurUnit('week')
     setFormShiftDate(''); setFormAssignedEmployeeId('')
     setShiftDeptEmployees([]); setShiftAvailableDates([]); setShiftDateEmployees([])
-    setFormJobDate(''); setFormJobEndDate(''); setFormEstHours(''); setFormUrgency('normal')
+    setFormJobDate(''); setFormJobEndDate(''); setFormEstHours(''); setFormUrgency('normal'); setFormJobStartTime('09:00')
     setAiPrompt(''); setAiPreview(null); setFormError('')
   }
 
@@ -532,6 +557,7 @@ export default function ManagerRecruitmentPage() {
   }
 
   const openEditForm = async (p: JobPostingSummary, isDraft = false) => {
+    const raw = p as unknown as Record<string, unknown>
     setEditingId(p.id); setEditingDraft(isDraft); setEditingRejected(p.status === 'rejected'); setWizardStep('form')
     const isShift = p.is_recurring
     setFormJobType(isShift ? 'shift' : 'oneoff')
@@ -540,12 +566,12 @@ export default function ManagerRecruitmentPage() {
     setFormSalaryAmt(p.salary_amount?.toString() ?? ''); setFormSalaryType(p.salary_type ?? (isShift ? 'per hour' : 'flat rate'))
     setFormDescription(p.description); setFormRequirements(p.requirements ?? '')
     setFormIndustry(''); setFormCompanyName(companyName); setFormBenefits('')
-    setFormOpenings(1); setFormExpiryPreset('none'); setFormExpiresAt('')
+    setFormOpenings(1)
+    setFormExpiryPreset(typeof raw.expiry_preset === 'string' && raw.expiry_preset ? raw.expiry_preset : 'none')
+    setFormExpiresAt(typeof raw.expires_at === 'string' && raw.expires_at ? raw.expires_at.slice(0, 10) : '')
     setFormIsRecurring(false); setFormRecurInterval(1); setFormRecurUnit('week')
     setFormJobDate(''); setFormJobEndDate('')
     setAiPrompt(''); setAiPreview(null); setFormError('')
-
-    const raw = p as unknown as Record<string, unknown>
     const savedShiftDate = typeof raw.shift_date === 'string' ? raw.shift_date : ''
     const savedShiftStart = typeof raw.shift_start_time === 'string' ? raw.shift_start_time.slice(0, 5) : '09:00'
     const savedShiftEnd = typeof raw.shift_end_time === 'string' ? raw.shift_end_time.slice(0, 5) : '17:00'
@@ -554,8 +580,10 @@ export default function ManagerRecruitmentPage() {
     const savedEmployeeId = typeof raw.assigned_employee_id === 'string' ? raw.assigned_employee_id : ''
     const savedEstHours = typeof raw.estimated_hours === 'string' ? raw.estimated_hours : ''
     const savedUrgency = typeof raw.urgency === 'string' ? raw.urgency : 'normal'
+    const savedJobStartTime = typeof raw.job_start_time === 'string' ? raw.job_start_time.slice(0, 5) : '09:00'
     setFormEstHours(savedEstHours)
     setFormUrgency(savedUrgency)
+    setFormJobStartTime(savedJobStartTime)
 
     if (p.department_id) {
       setShiftDeptEmployees([]); setShiftAvailableDates([]); setShiftDateEmployees([])
@@ -622,13 +650,68 @@ export default function ManagerRecruitmentPage() {
     shift_end_time: formJobType === 'shift' ? (formShiftEnd || null) : null,
     break_start_time: formJobType === 'shift' ? (formBreakStart || null) : null,
     break_end_time: formJobType === 'shift' ? (formBreakEnd || null) : null,
+    job_start_time: formJobType === 'oneoff' ? (formJobStartTime || null) : null,
     assigned_employee_id: formAssignedEmployeeId || null,
+    expires_at: formExpiresAt || null,
+    expiry_preset: formExpiryPreset || 'none',
     status,
   })
+
+  // ── job templates (UC36) ─────────────────────────────────────────────────────
+
+  const applyTemplate = (t: JobTemplate) => {
+    setFormJobType(t.form_type === 'shift' ? 'shift' : 'oneoff')
+    setFormEmpType(t.employment_type ?? 'casual')
+    setFormTitle(t.title)
+    setFormDescription(t.description ?? '')
+    setFormRequirements(t.requirements ?? '')
+    setShowMyTemplates(false)
+    setWizardStep('form')
+  }
+
+  const saveAsTemplate = async () => {
+    if (!companyId || !internalUserId || !newTemplateName.trim()) return
+    setTemplateActionLoading(true)
+    try {
+      const res = await fetch('/api/job-template', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          company_id: companyId, created_by: internalUserId, name: newTemplateName.trim(),
+          title: formTitle, description: formDescription || null, requirements: formRequirements || null,
+          employment_type: formEmpType || null, form_type: formJobType,
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to save template')
+      setTemplates(prev => [...prev, data.template])
+      setSaveTemplateModalOpen(false); setNewTemplateName('')
+      showToast('Template saved')
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Failed to save template')
+    } finally {
+      setTemplateActionLoading(false)
+    }
+  }
+
+  const deleteTemplateById = async (id: string) => {
+    setTemplateActionLoading(true)
+    try {
+      const res = await fetch(`/api/job-template/${id}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to delete template')
+      setTemplates(prev => prev.filter(t => t.id !== id))
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Failed to delete template')
+    } finally {
+      setTemplateActionLoading(false)
+    }
+  }
 
   const saveForm = async (status: 'pending_approval' | 'draft') => {
     if (!companyId || !internalUserId) return
     if (!formTitle.trim()) { setFormError('Title is required'); return }
+    if (status === 'pending_approval' && formJobType === 'oneoff' && !formJobStartTime) { setFormError('Start time is required to submit for approval'); return }
     if (status === 'pending_approval' && !formDescription.trim()) { setFormError('Description is required to send for review'); return }
     setActionLoading(true); setFormError('')
     try {
@@ -2108,11 +2191,44 @@ export default function ManagerRecruitmentPage() {
       </main>
 
       {/* ── Success toast ── */}
-      {successToast && (
-        <div style={{ position: 'fixed', bottom: 28, right: 28, zIndex: 9999, background: '#111827', color: '#FFFFFF', borderRadius: 12, padding: '11px 18px', fontSize: '0.875rem', fontWeight: 600, boxShadow: '0 4px 20px rgba(0,0,0,0.18)', display: 'flex', alignItems: 'center', gap: 8, pointerEvents: 'none' }}>
-          <CheckCircle size={15} style={{ color: '#34D399', flexShrink: 0 }} />
-          {successToast}
-        </div>
+      <Toast message={successToast ?? ''} />
+
+      {/* ══ Save as Template modal ═════════════════════════════════════════════ */}
+      {saveTemplateModalOpen && createPortal(
+        <ModalOverlay onClose={() => { setSaveTemplateModalOpen(false); setNewTemplateName('') }} maxWidth="420px">
+          <ModalBox>
+            <ModalHeader
+              title="Save as Template"
+              icon={<ClipboardList size={15} color="#fff" strokeWidth={2.5} />}
+              iconBg="linear-gradient(135deg, #2563EB, #1D4ED8)"
+              onClose={() => { setSaveTemplateModalOpen(false); setNewTemplateName('') }}
+            />
+            <div style={{ padding: '20px 24px 0' }}>
+              <p style={{ margin: '0 0 14px', color: '#6B7280', fontSize: '0.9rem', lineHeight: 1.55 }}>
+                Save this job's title, description, and requirements so you can reuse them next time.
+              </p>
+              <label style={modalLabelStyle}>Template Name</label>
+              <input
+                value={newTemplateName}
+                onChange={e => setNewTemplateName(e.target.value)}
+                placeholder="e.g. Weekend Cashier"
+                style={modalInputStyle}
+                onFocus={e => { e.currentTarget.style.borderColor = '#2563EB' }}
+                onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
+              />
+            </div>
+            {formError && <div style={modalErrorBoxStyle}>{formError}</div>}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', padding: '20px 24px' }}>
+              <button onClick={() => { setSaveTemplateModalOpen(false); setNewTemplateName('') }} style={modalGhostButtonStyle}>
+                Cancel
+              </button>
+              <button onClick={saveAsTemplate} disabled={templateActionLoading || !newTemplateName.trim()} style={managerPrimaryButtonStyle(templateActionLoading || !newTemplateName.trim())}>
+                {templateActionLoading ? <Spinner size={13} /> : <ClipboardList size={13} />} Save Template
+              </button>
+            </div>
+          </ModalBox>
+        </ModalOverlay>,
+        document.body
       )}
 
       {/* ══ Post Job / Edit modal — 3-step wizard ═════════════════════════════ */}
@@ -2170,14 +2286,14 @@ export default function ManagerRecruitmentPage() {
           setWizardStep('form')
         }
 
-        const iStyle: React.CSSProperties = { width: '100%', padding: '10px 12px', border: '1.5px solid #E5E7EB', borderRadius: 8, fontSize: '0.9375rem', color: '#111827', outline: 'none', boxSizing: 'border-box', background: '#FAFAFA', fontFamily: 'inherit', display: 'block' }
-        const lStyle: React.CSSProperties = { display: 'block', fontWeight: 600, fontSize: '0.875rem', color: '#374151', marginBottom: 8 }
+        const iStyle: React.CSSProperties = modalInputStyle
+        const lStyle: React.CSSProperties = modalLabelStyle
         const sectionLabel: React.CSSProperties = { margin: '4px 0 0', color: '#374151', fontSize: '0.875rem', fontWeight: 600 }
         const divider: React.CSSProperties = { borderTop: '1px dashed #E5E7EB', margin: '0' }
 
-        return (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>
-            <div onClick={e => e.stopPropagation()} style={{ width: 540, background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', maxHeight: '90vh', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
+        return createPortal(
+          <ModalOverlay onClose={() => { setFormOpen(false); resetForm() }} maxWidth="540px">
+            <ModalBox>
 
               {/* Header */}
               <div style={{ padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -2200,7 +2316,7 @@ export default function ManagerRecruitmentPage() {
                 ) : (
                   <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0 }}>{modalTitle}</h2>
                 )}
-                <button onClick={() => { setFormOpen(false); resetForm() }} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: 6, borderRadius: 8, flexShrink: 0 }}
+                <button onClick={() => { setFormOpen(false); resetForm() }} aria-label="Close" style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: 6, borderRadius: 8, flexShrink: 0 }}
                   onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
                   onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}>
                   <X size={16} />
@@ -2272,6 +2388,41 @@ export default function ManagerRecruitmentPage() {
                         </div>
                       )}
                     </div>
+
+                    {templates.length > 0 && (
+                      <div style={{ border: '1.5px solid #E5E7EB', borderRadius: 12, overflow: 'hidden' }}>
+                        <button onClick={() => setShowMyTemplates(v => !v)}
+                          style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: '#F9FAFB', border: 'none', cursor: 'pointer', textAlign: 'left' }}
+                          onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+                          onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <ClipboardList size={15} color="#6B7280" />
+                            <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#374151' }}>My Templates</span>
+                            <span style={{ fontSize: '0.75rem', color: '#9CA3AF', fontWeight: 400 }}>Start from a saved template</span>
+                          </div>
+                          <ChevronRight size={14} color="#9CA3AF" style={{ transform: showMyTemplates ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }} />
+                        </button>
+                        {showMyTemplates && (
+                          <div style={{ display: 'flex', flexDirection: 'column', borderTop: '1px solid #E5E7EB' }}>
+                            {templates.map((t, i) => (
+                              <div key={t.id}
+                                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', background: '#FFFFFF', borderTop: i === 0 ? 'none' : '1px solid #F3F4F6' }}>
+                                <button onClick={() => applyTemplate(t)}
+                                  style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left', flex: 1 }}>
+                                  <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#111827' }}>{t.name}</span>
+                                  <span style={{ fontSize: '0.75rem', color: '#9CA3AF', background: '#F3F4F6', borderRadius: 6, padding: '2px 7px' }}>{t.form_type === 'shift' ? 'Shift' : 'One-off'}</span>
+                                </button>
+                                <button onClick={() => void deleteTemplateById(t.id)} disabled={templateActionLoading}
+                                  style={{ background: 'none', border: 'none', cursor: templateActionLoading ? 'default' : 'pointer', padding: 4, display: 'flex', color: '#9CA3AF' }}
+                                  title="Delete template">
+                                  <Trash2 size={13} />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {/* Divider */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -2370,9 +2521,25 @@ export default function ManagerRecruitmentPage() {
                       <label style={lStyle}>Requirements</label>
                       <textarea value={formRequirements} onChange={e => setFormRequirements(e.target.value)} rows={1} style={{ ...iStyle, resize: 'vertical', lineHeight: 1.55, verticalAlign: 'top' }} placeholder="e.g. Must be available weekends, physically fit…" />
                     </div>
+                    <div>
+                      <label style={lStyle}>Application Deadline</label>
+                      <RDrop value={formExpiryPreset} options={EXPIRY_PRESETS} onChange={handleExpiryPreset} />
+                      {formExpiryPreset === 'custom' && (
+                        <input type="date" value={formExpiresAt} min={new Date().toISOString().slice(0, 10)}
+                          onChange={e => setFormExpiresAt(e.target.value)} style={{ ...iStyle, marginTop: 8 }} />
+                      )}
+                    </div>
+                    <button onClick={() => { setNewTemplateName(formTitle); setFormError(''); setSaveTemplateModalOpen(true) }} disabled={!formTitle.trim()}
+                      style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', padding: 0, color: formTitle.trim() ? '#2563EB' : '#D1D5DB', fontSize: '0.8125rem', fontWeight: 700, cursor: formTitle.trim() ? 'pointer' : 'default' }}>
+                      <ClipboardList size={13} /> Save as Template
+                    </button>
                     {formJobType === 'oneoff' && (
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                         <div><label style={lStyle}>Est. Hours</label><input value={formEstHours} onChange={e => setFormEstHours(e.target.value)} placeholder="e.g. 4–6 hours" style={iStyle} /></div>
+                        <div>
+                          <label style={lStyle}>Start Time <span style={{ color: '#2563EB' }}>*</span></label>
+                          <input type="time" value={formJobStartTime} onChange={e => setFormJobStartTime(e.target.value)} style={iStyle} />
+                        </div>
                         <div>
                           <label style={lStyle}>Urgency</label>
                           <RDrop value={formUrgency}
@@ -2529,30 +2696,30 @@ export default function ManagerRecruitmentPage() {
                       )
                     })()}
 
-                    {formError && <div style={{ border: '1px solid #FECACA', background: '#FEF2F2', color: '#B91C1C', borderRadius: 8, padding: '9px 12px', fontSize: 13, fontWeight: 700 }}>{formError}</div>}
                   </div>
                 )}
 
               </div>
 
+              {formError && <div style={modalErrorBoxStyle}>{formError}</div>}
+
               {/* Footer */}
               {wizardStep === 'form' && (
-                <div style={{ padding: '0 24px 16px', display: 'flex', justifyContent: 'flex-end', gap: 10, flexShrink: 0 }}>
+                <div style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8, flexShrink: 0 }}>
                   {!editingId && (
-                    <button onClick={() => saveForm('draft')} disabled={actionLoading}
-                      style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: '1px solid #E5E7EB', borderRadius: 10, background: '#FFFFFF', color: '#111827', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}>
+                    <button onClick={() => saveForm('draft')} disabled={actionLoading} style={modalGhostButtonStyle}>
                       {actionLoading ? <Spinner size={13} dark /> : <FileText size={13} />} Save Draft
                     </button>
                   )}
-                  <button onClick={() => saveForm('pending_approval')} disabled={actionLoading}
-                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: actionLoading ? '#93C5FD' : '#2563EB', color: '#FFFFFF', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: actionLoading ? 'default' : 'pointer' }}>
+                  <button onClick={() => saveForm('pending_approval')} disabled={actionLoading} style={managerPrimaryButtonStyle(actionLoading)}>
                     {actionLoading ? <Spinner size={13} /> : <Send size={13} />} {editingId && !editingDraft && !editingRejected ? 'Save Changes' : 'Send For Review'}
                   </button>
                 </div>
               )}
 
-            </div>
-          </div>
+            </ModalBox>
+          </ModalOverlay>,
+          document.body
         )
       })()}
 
@@ -2604,25 +2771,27 @@ export default function ManagerRecruitmentPage() {
 
       {/* ══ Delete confirm modal (draft + live) ══════════════════════════════ */}
       {deleteConfirm && (
-        <div onClick={() => setDeleteConfirm(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.42)', zIndex: 110, display: 'grid', placeItems: 'center', padding: 20, backdropFilter: 'blur(4px)', animation: 'overlayFadeIn 0.18s ease-out' }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: 420, background: '#FFFFFF', borderRadius: 20, padding: '24px', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-              <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#111827' }}>{deleteConfirm.isDraft === false ? 'Delete Job Posting' : 'Delete Draft'}</h2>
-              <button onClick={() => setDeleteConfirm(null)} style={{ border: 'none', background: '#F9FAFB', color: '#6B7280', cursor: 'pointer', padding: '5px', borderRadius: 7, display: 'flex' }}><X size={15} /></button>
+        <ModalOverlay onClose={() => setDeleteConfirm(null)} maxWidth="420px">
+          <ModalBox>
+            <ModalHeader
+              title={deleteConfirm.isDraft === false ? 'Delete Job Posting' : 'Delete Draft'}
+              icon={<Trash2 size={15} color="#fff" strokeWidth={2.5} />}
+              iconBg="linear-gradient(135deg, #EF4444, #DC2626)"
+              onClose={() => setDeleteConfirm(null)}
+            />
+            <div style={{ padding: '20px 24px 0' }}>
+              <p style={{ margin: 0, color: '#6B7280', fontSize: '0.9rem', lineHeight: 1.55 }}>
+                Permanently delete <strong style={{ color: '#111827' }}>"{deleteConfirm.title}"</strong>? This cannot be undone.
+              </p>
             </div>
-            <p style={{ margin: '0 0 20px', color: '#6B7280', fontSize: '0.9rem', lineHeight: 1.55 }}>
-              Permanently delete <strong style={{ color: '#111827' }}>"{deleteConfirm.title}"</strong>? This cannot be undone.
-            </p>
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button onClick={() => setDeleteConfirm(null)} style={{ border: '1.5px solid #E5E7EB', background: '#FFFFFF', color: '#374151', borderRadius: 8, padding: '8px 18px', fontWeight: 700, cursor: 'pointer', fontSize: '0.875rem' }}>Cancel</button>
-              <button onClick={() => deleteDraft(deleteConfirm.id, deleteConfirm.isDraft !== false)} disabled={actionLoading}
-                style={{ border: 'none', background: '#DC2626', color: '#FFFFFF', borderRadius: 8, padding: '8px 18px', fontWeight: 700, cursor: actionLoading ? 'default' : 'pointer', fontSize: '0.875rem', opacity: actionLoading ? 0.65 : 1, display: 'flex', alignItems: 'center', gap: 6 }}
-              >
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', padding: '20px 24px' }}>
+              <button onClick={() => setDeleteConfirm(null)} style={modalGhostButtonStyle}>Cancel</button>
+              <button onClick={() => deleteDraft(deleteConfirm.id, deleteConfirm.isDraft !== false)} disabled={actionLoading} style={modalDestructiveButtonStyle(actionLoading)}>
                 {actionLoading ? <Spinner size={13} /> : <Trash2 size={13} />} Delete
               </button>
             </div>
-          </div>
-        </div>
+          </ModalBox>
+        </ModalOverlay>
       )}
     </div>
   )

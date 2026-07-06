@@ -42,6 +42,30 @@ test('creates a task template', async ({ request }) => {
   templateId = body.template.id
 })
 
+test('creates a template with sub-task titles, trimming blanks, then updates them', async ({ request }) => {
+  const createRes = await request.post('/api/task-template', {
+    data: {
+      company_id: seeded.companyId,
+      name: 'Opening Checklist',
+      title: 'Open the store',
+      sub_task_titles: ['  Unlock doors  ', '   ', 'Turn on lights'],
+      created_by: seeded.ownerId,
+    },
+  })
+  expect(createRes.status()).toBe(201)
+  const created = await createRes.json()
+  expect(created.template.sub_task_titles).toEqual(['Unlock doors', 'Turn on lights'])
+
+  const updateRes = await request.patch(`/api/task-template/${created.template.id}`, {
+    data: { sub_task_titles: ['Unlock doors', 'Turn on lights', 'Count register'] },
+  })
+  expect(updateRes.status()).toBe(200)
+  const updated = await updateRes.json()
+  expect(updated.template.sub_task_titles).toEqual(['Unlock doors', 'Turn on lights', 'Count register'])
+
+  await admin.from('task_templates').delete().eq('id', created.template.id)
+})
+
 test('rejects a template missing a title', async ({ request }) => {
   const res = await request.post('/api/task-template', {
     data: {

@@ -4,17 +4,19 @@ import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, Fra
 import { useRouter } from 'next/navigation'
 import { createPortal } from 'react-dom'
 import {
-  Plus, X, ChevronDown, Calendar, AlertCircle,
+  Plus, X, ChevronDown, Calendar, AlertCircle, ArrowRight,
   CheckCircle, Clock, Eye, Layers, Users,
   Crown, UserCog, UserRound, Pencil, Trash2, CalendarDays, ChevronLeft, ChevronRight,
-  Sparkles, Check, Archive, ArchiveRestore, Repeat, Copy, GitBranch, Bell, ArrowRightLeft, LayoutTemplate, AlertTriangle,
+  Sparkles, Check, Archive, ArchiveRestore, Repeat, Copy, GitBranch, Bell, ArrowRightLeft, LayoutTemplate, AlertTriangle, RefreshCw,
 } from 'lucide-react'
 import { AiAssignSuggestion } from '@/types/AI'
 import { createBrowserClient } from '@supabase/ssr'
 import OwnerSidebar from '@/components/OwnerSidebar'
+import Toast from '@/components/Toast'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
-import { Task, TaskInput, KanbanGroup, TaskReassignmentSuggestion, TaskWorkloadSuggestion, StalledTaskAlert } from '@/types/Task'
+import DepartmentBadge from '@/components/DepartmentBadge'
+import { Task, TaskInput, KanbanGroup, TaskWorkloadSuggestion, StalledTaskAlert } from '@/types/Task'
 import { TaskTemplate } from '@/types/TaskTemplate'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 
@@ -96,7 +98,7 @@ function TaskDatePicker({ value, onChange, taskDates, minDate, accentColor, full
     <div ref={popoverRef} style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 9999, background: '#FFFFFF', border: `1px solid ${TASK_BORDER}`, borderRadius: 16, boxShadow: '0 8px 32px rgba(15,23,42,0.14)', padding: '14px 16px', width: pos.width }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
         <button type="button" onClick={goPrev} disabled={!canGoPrev} style={{ width: 26, height: 26, border: `1px solid ${TASK_BORDER}`, borderRadius: 7, background: '#FFFFFF', cursor: canGoPrev ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', color: canGoPrev ? '#64748B' : '#D1D5DB' }}><ChevronLeft size={13} /></button>
-        <span style={{ fontSize: 13, fontWeight: 700, color: TASK_TEXT }}>{monthLabel}</span>
+        <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: TASK_TEXT }}>{monthLabel}</span>
         <button type="button" onClick={goNext} style={{ width: 26, height: 26, border: `1px solid ${TASK_BORDER}`, borderRadius: 7, background: '#FFFFFF', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748B' }}><ChevronRight size={13} /></button>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', marginBottom: 4 }}>
@@ -285,7 +287,6 @@ type Member = {
   worker_status?: string | null
   profile_photo_url?: string | null
 }
-type ManagerInfo = { id: string; full_name: string; department_id: string | null }
 type ShiftOption = TimelineShiftBlock & {
   assignee_name: string
   user_id: string | null
@@ -363,6 +364,13 @@ function kanbanDateKey(task: Task): string {
   return formatDateKey(new Date(task.created_at))
 }
 
+// Assigned/In Progress/Review tasks are still being worked on, so they stay visible on the
+// Kanban board no matter which day is selected — only Complete is anchored to its start date,
+// since a finished task is a historical record of that specific day.
+function isKanbanVisibleOnDate(task: Task, taskDate: string): boolean {
+  return task.status === 'Complete' ? kanbanDateKey(task) === taskDate : true
+}
+
 function addDays(date: Date, days: number): Date {
   const next = new Date(date)
   next.setDate(next.getDate() + days)
@@ -392,11 +400,6 @@ function formatShiftOptionLabel(shift: ShiftOption): string {
 }
 
 import { deptColor, setDeptColorOverrides } from '@/lib/deptColor'
-function deptCardBg(deptId: string): string {
-  const hex = deptColor(deptId)
-  const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16)
-  return `rgba(${r},${g},${b},0.06)`
-}
 function deptCardBorder(deptId: string): string {
   const hex = deptColor(deptId)
   const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16)
@@ -699,7 +702,7 @@ function DeadlinePicker({ dateValue, timeValue, onChange, minDate }: {
     <div style={{ padding: '14px 16px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
         <button type="button" onClick={goPrev} disabled={!canGoPrev} style={{ width: 26, height: 26, border: `1px solid ${TASK_BORDER}`, borderRadius: 7, background: '#FFFFFF', cursor: canGoPrev ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', color: canGoPrev ? '#64748B' : '#D1D5DB' }}><ChevronLeft size={13} /></button>
-        <span style={{ fontSize: 13, fontWeight: 700, color: TASK_TEXT }}>{monthLabel}</span>
+        <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: TASK_TEXT }}>{monthLabel}</span>
         <button type="button" onClick={goNext} style={{ width: 26, height: 26, border: `1px solid ${TASK_BORDER}`, borderRadius: 7, background: '#FFFFFF', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748B' }}><ChevronRight size={13} /></button>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', marginBottom: 4 }}>
@@ -1026,16 +1029,11 @@ function TaskCard({
       {hasTopRowBadges && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12, paddingRight: 24 }}>
           {priority && task.priority && (
-            <span style={{ fontSize: '0.65rem', fontWeight: 800, padding: '2px 7px', borderRadius: '99px', background: priority.bg, color: priority.text, letterSpacing: '0.01em' }}>
+            <span style={{ fontSize: '0.72rem', fontWeight: 800, padding: '4px 10px', borderRadius: '99px', background: priority.bg, color: priority.text, letterSpacing: '0.01em' }}>
               {task.priority}
             </span>
           )}
-          {dept && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.65rem', fontWeight: 700, padding: '2px 7px', borderRadius: '99px', background: deptCardBg(dept.id), color: deptColor(dept.id) }}>
-              <span style={{ width: 5, height: 5, borderRadius: '50%', background: deptColor(dept.id), flexShrink: 0 }} />
-              {dept.name}
-            </span>
-          )}
+          {dept && <DepartmentBadge departmentId={dept.id} departmentName={dept.name} />}
           {!!subTaskCount && (
             <button
               type="button"
@@ -1108,21 +1106,6 @@ export default function OwnerTasksPage() {
   // Department selector
   const [selectedDeptId,  setSelectedDeptId]  = useState('') // '' = All
   const [deptTaskStats,   setDeptTaskStats]    = useState<DeptTaskStats[]>([])
-  const [deptManagerMap,  setDeptManagerMap]   = useState<Record<string, string>>({})
-  const [allManagers,     setAllManagers]      = useState<ManagerInfo[]>([])
-
-  // Department CRUD modals
-  const [editDeptModal,         setEditDeptModal]         = useState<Department | null>(null)
-  const [editDeptName,          setEditDeptName]          = useState('')
-  const [editDeptLoading,       setEditDeptLoading]       = useState(false)
-  const [editDeptError,         setEditDeptError]         = useState('')
-  const [deleteDeptModal,       setDeleteDeptModal]       = useState<Department | null>(null)
-  const [deleteDeptLoading,     setDeleteDeptLoading]     = useState(false)
-  const [deleteDeptError,       setDeleteDeptError]       = useState('')
-  const [editManagerModal,      setEditManagerModal]      = useState<Department | null>(null)
-  const [editManagerSelectedId, setEditManagerSelectedId] = useState('')
-  const [editManagerLoading,    setEditManagerLoading]    = useState(false)
-  const [editManagerError,      setEditManagerError]      = useState('')
 
   const [kanban,        setKanban]        = useState<KanbanGroup | null>(null)
   const [kanbanLoading, setKanbanLoading] = useState(false)
@@ -1192,8 +1175,6 @@ export default function OwnerTasksPage() {
   const [editDeadlineRuleOffsetAmount, setEditDeadlineRuleOffsetAmount] = useState(1)
   const [editDeadlineRuleOffsetUnit, setEditDeadlineRuleOffsetUnit] = useState<'hours' | 'days'>('days')
   const [editSubTasks, setEditSubTasks] = useState<{ id: string; title: string }[]>([])
-  const [reassignmentSuggestion, setReassignmentSuggestion] = useState<TaskReassignmentSuggestion | null>(null)
-  const [workloadSuggestion, setWorkloadSuggestion] = useState<TaskWorkloadSuggestion | null>(null)
   const [workloadSuggestions, setWorkloadSuggestions] = useState<TaskWorkloadSuggestion[]>([])
   const [workloadApplyLoadingId, setWorkloadApplyLoadingId] = useState('')
   const [workloadApplyError, setWorkloadApplyError] = useState('')
@@ -1306,13 +1287,15 @@ export default function OwnerTasksPage() {
   const [templateModalOpen,    setTemplateModalOpen]    = useState(false)
   const [templateFormMode,     setTemplateFormMode]     = useState<'list' | 'create' | 'edit'>('list')
   const [templateFormId,       setTemplateFormId]       = useState('')
-  const [templateFormName,     setTemplateFormName]     = useState('')
   const [templateFormTitle,    setTemplateFormTitle]    = useState('')
   const [templateFormDesc,     setTemplateFormDesc]     = useState('')
   const [templateFormPriority, setTemplateFormPriority] = useState('')
+  const [templateFormSubTaskEnabled, setTemplateFormSubTaskEnabled] = useState(false)
+  const [templateFormSubTasks, setTemplateFormSubTasks] = useState<{ id: string; title: string }[]>([])
+  const [templateFormSubTaskCollapsed, setTemplateFormSubTaskCollapsed] = useState(false)
+  const [templateFormSubTaskDraft, setTemplateFormSubTaskDraft] = useState('')
   const [templateLoading,      setTemplateLoading]      = useState(false)
   const [templateError,        setTemplateError]        = useState('')
-  const [deleteTemplateModal,  setDeleteTemplateModal]  = useState<TaskTemplate | null>(null)
   const [deleteTemplateLoading, setDeleteTemplateLoading] = useState(false)
   const [archiveModalOpen,     setArchiveModalOpen]     = useState(false)
   const [archivedTasks,        setArchivedTasks]        = useState<Task[]>([])
@@ -1432,33 +1415,20 @@ export default function OwnerTasksPage() {
     return () => { cancelled = true }
   }, [router])
 
-  // ── Fetch departments + members + managers ─────────────────────────────────
+  // ── Fetch departments + members ─────────────────────────────────────────────
 
   useEffect(() => {
     if (!companyId) return
     Promise.all([
       fetch(`/api/company/departments?company_id=${companyId}`).then(r => r.json()),
       fetch(`/api/team/members?company_id=${companyId}`).then(r => r.json()),
-      fetch(`/api/company/managers?company_id=${companyId}`).then(r => r.json()),
       fetch(`/api/task?company_id=${companyId}&dept_stats=true`).then(r => r.json()),
-    ]).then(([deptData, memberData, mgrData, statsData]) => {
+    ]).then(([deptData, memberData, statsData]) => {
       if (deptData.success) {
         setDepartments(deptData.departments)
         setDeptColorOverrides(deptData.departments)
       }
       if (memberData.success) setMembers(memberData.members)
-      if (mgrData.success) {
-        setAllManagers(mgrData.managers)
-        const map: Record<string, string> = {}
-        for (const mgr of mgrData.managers as ManagerInfo[]) {
-          if (mgr.department_id) {
-            map[mgr.department_id] = map[mgr.department_id]
-              ? `${map[mgr.department_id]}, ${mgr.full_name}`
-              : mgr.full_name
-          }
-        }
-        setDeptManagerMap(map)
-      }
       if (statsData.success) setDeptTaskStats(statsData.dept_stats ?? [])
     }).catch(() => {})
   }, [companyId])
@@ -1519,15 +1489,15 @@ export default function OwnerTasksPage() {
   }, [newAssigneeId, newTaskModal, shiftOptions, taskDate])
 
   const fetchKanban = useCallback(async (cid: string, silent = false) => {
-    if (!cid) return
+    if (!cid || !internalUserId) return
     if (!silent) setKanbanLoading(true)
     try {
-      const res = await fetch(`/api/task?company_id=${cid}&kanban=true`)
+      const res = await fetch(`/api/task?company_id=${cid}&kanban=true&assigned_by=${encodeURIComponent(internalUserId)}`)
       const data = await res.json()
       if (data.success) setKanban(data.groups)
     } catch {}
     finally { if (!silent) setKanbanLoading(false) }
-  }, [])
+  }, [internalUserId])
 
   useEffect(() => {
     if (!companyId) return
@@ -1645,7 +1615,6 @@ export default function OwnerTasksPage() {
     setEditSubTaskCollapsed(true)
     setEditRecurringEnabled(!!task.recurrence_group_id)
     setEditRecurringCollapsed(true)
-    setReassignmentSuggestion(null)
   }
 
   const closePanel = () => { setSelectedTask(null); setDeleteConfirm(false); setPanelError(''); setSubTaskTitle('') }
@@ -1905,7 +1874,6 @@ export default function OwnerTasksPage() {
       if (!data.success) throw new Error(data.message)
       await fetchKanban(companyId)
       await refreshAllTaskInsights()
-      setWorkloadInsightOpen(false)
       showTaskToast('Task reassigned.')
     } catch (err) {
       setWorkloadApplyError(err instanceof Error ? err.message : 'Failed to reassign task')
@@ -1971,40 +1939,21 @@ export default function OwnerTasksPage() {
     setEditSubTasks(prev => prev.filter(s => s.id !== subTaskId))
   }
 
-  const handleFetchReassignmentSuggestion = async () => {
-    if (!selectedTask || !companyId) return
-    setTaskActionLoading('reassignment'); setPanelError('')
-    try {
-      const res = await fetch(`/api/task?company_id=${companyId}&suggestion=reassignment&task_id=${selectedTask.id}`)
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message)
-      setReassignmentSuggestion(data.suggestion)
-    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to fetch reassignment suggestion') }
-    finally { setTaskActionLoading('') }
-  }
-
-  const handleApplyReassignment = async () => {
-    if (!selectedTask || !reassignmentSuggestion?.recommended_assignee_id) return
-    setEditAssignee(reassignmentSuggestion.recommended_assignee_id)
-    setPanelError('')
-    showTaskToast('Suggested assignee selected. Save changes to apply.')
-  }
-
   const refreshTaskInsights = useCallback(async (kind: 'workload' | 'stalled') => {
-    if (!companyId) return
+    if (!companyId || !internalUserId) return
     setInsightLoading(kind); setInsightError('')
     try {
       const deptParam = selectedDeptId ? `&department_id=${selectedDeptId}` : ''
+      const userParam = `&assigned_by=${encodeURIComponent(internalUserId)}`
       const query = kind === 'workload'
-        ? `/api/task?company_id=${companyId}&suggestion=workload`
-        : `/api/task?company_id=${companyId}&suggestion=stalled${deptParam}`
+        ? `/api/task?company_id=${companyId}&suggestion=workload${userParam}`
+        : `/api/task?company_id=${companyId}&suggestion=stalled${deptParam}${userParam}`
       const res = await fetch(query)
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
       if (kind === 'workload') {
         const suggestions = (data.suggestions ?? []).filter((item: TaskWorkloadSuggestion) => item.type === 'rebalance')
         setWorkloadSuggestions(suggestions)
-        setWorkloadSuggestion(suggestions[0] ?? data.suggestion)
         if (suggestions.length === 0) setWorkloadInsightOpen(false)
       } else {
         const alerts = data.alerts ?? []
@@ -2013,11 +1962,11 @@ export default function OwnerTasksPage() {
       }
     } catch (err) { setInsightError(err instanceof Error ? err.message : 'Failed to refresh task insight') }
     finally { setInsightLoading('') }
-  }, [companyId, selectedDeptId])
+  }, [companyId, selectedDeptId, internalUserId])
 
   const refreshAllTaskInsights = useCallback(async () => {
-    await refreshTaskInsights('workload')
-    await refreshTaskInsights('stalled')
+    await Promise.all([refreshTaskInsights('workload'), refreshTaskInsights('stalled')])
+    window.dispatchEvent(new Event('task-insights-updated'))
   }, [refreshTaskInsights])
 
   // ── Create task ────────────────────────────────────────────────────────────
@@ -2045,6 +1994,17 @@ export default function OwnerTasksPage() {
     void refreshTaskInsights('workload')
     void refreshTaskInsights('stalled')
   }, [companyId, selectedDeptId, refreshTaskInsights])
+
+  // Stalled-task status is time-based (percent elapsed toward due_at), so a task can cross the
+  // alert threshold purely from time passing while the page sits open with no user interaction.
+  // Poll periodically so the notification reflects that without requiring a manual refresh.
+  useEffect(() => {
+    if (!companyId) return
+    const interval = setInterval(() => {
+      void refreshTaskInsights('stalled')
+    }, 5 * 60 * 1000)
+    return () => clearInterval(interval)
+  }, [companyId, refreshTaskInsights])
 
   const handleCreateSubTask = () => {
     if (!subTaskTitle.trim()) return
@@ -2167,10 +2127,13 @@ export default function OwnerTasksPage() {
   const openCreateTemplate = () => {
     setTemplateFormMode('create')
     setTemplateFormId('')
-    setTemplateFormName('')
     setTemplateFormTitle('')
     setTemplateFormDesc('')
     setTemplateFormPriority('')
+    setTemplateFormSubTaskEnabled(false)
+    setTemplateFormSubTasks([])
+    setTemplateFormSubTaskCollapsed(false)
+    setTemplateFormSubTaskDraft('')
     setTemplateError('')
   }
 
@@ -2199,36 +2162,58 @@ export default function OwnerTasksPage() {
   const openEditTemplate = (template: TaskTemplate) => {
     setTemplateFormMode('edit')
     setTemplateFormId(template.id)
-    setTemplateFormName(template.name)
     setTemplateFormTitle(template.title)
     setTemplateFormDesc(template.description ?? '')
     setTemplateFormPriority(template.priority ?? '')
+    const subTasks = (template.sub_task_titles ?? []).map(title => ({ id: crypto.randomUUID(), title }))
+    setTemplateFormSubTaskEnabled(subTasks.length > 0)
+    setTemplateFormSubTasks(subTasks)
+    setTemplateFormSubTaskCollapsed(false)
+    setTemplateFormSubTaskDraft('')
     setTemplateError('')
   }
 
+  const useTaskTemplate = (template: TaskTemplate) => {
+    setTemplateModalOpen(false)
+    openNewTaskFor('', '')
+    setNewTitle(template.title)
+    setNewDescription(template.description ?? '')
+    setNewPriority(template.priority ?? '')
+    setNewTemplateId(template.id)
+    const subTasks = (template.sub_task_titles ?? []).map(title => ({ id: crypto.randomUUID(), title }))
+    if (subTasks.length > 0) {
+      setNewSubTaskEnabled(true)
+      setNewSubTasks(subTasks)
+      setNewSubTaskCollapsed(true)
+    }
+  }
+
   const handleSaveTemplate = async () => {
-    if (!templateFormName.trim() || !templateFormTitle.trim()) {
-      setTemplateError('Name and task title are required.')
+    if (!templateFormTitle.trim()) {
+      setTemplateError('Task title is required.')
       return
     }
     setTemplateLoading(true)
     setTemplateError('')
     try {
       const isEdit = templateFormMode === 'edit'
+      const subTaskTitles = templateFormSubTaskEnabled ? templateFormSubTasks.map(s => s.title) : []
       const res = await fetch(isEdit ? `/api/task-template/${templateFormId}` : '/api/task-template', {
         method: isEdit ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(isEdit ? {
-          name: templateFormName.trim(),
+          name: templateFormTitle.trim(),
           title: templateFormTitle.trim(),
           description: templateFormDesc.trim() || null,
           priority: templateFormPriority || null,
+          sub_task_titles: subTaskTitles,
         } : {
           company_id: companyId,
-          name: templateFormName.trim(),
+          name: templateFormTitle.trim(),
           title: templateFormTitle.trim(),
           description: templateFormDesc.trim() || null,
           priority: templateFormPriority || null,
+          sub_task_titles: subTaskTitles,
           created_by: internalUserId || undefined,
         }),
       })
@@ -2244,80 +2229,19 @@ export default function OwnerTasksPage() {
     }
   }
 
-  const handleDeleteTemplate = async () => {
-    if (!deleteTemplateModal) return
+  const handleDeleteTemplate = async (id: string) => {
     setDeleteTemplateLoading(true)
     try {
-      const res = await fetch(`/api/task-template/${deleteTemplateModal.id}`, { method: 'DELETE' })
+      const res = await fetch(`/api/task-template/${id}`, { method: 'DELETE' })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to delete template')
       await fetchTaskTemplates(companyId)
-      setDeleteTemplateModal(null)
       showTaskToast('Template deleted.')
     } catch (err) {
       setTemplateError(err instanceof Error ? err.message : 'Failed to delete template')
     } finally {
       setDeleteTemplateLoading(false)
     }
-  }
-
-  // ── Department CRUD ────────────────────────────────────────────────────────
-
-  const handleEditDept = async () => {
-    if (!editDeptModal || !editDeptName.trim()) return
-    setEditDeptLoading(true); setEditDeptError('')
-    try {
-      const res = await fetch('/api/company/update-department', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ department_id: editDeptModal.id, name: editDeptName.trim() }) })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message)
-      setEditDeptModal(null)
-      const deptRes = await fetch(`/api/company/departments?company_id=${companyId}`)
-      const deptData = await deptRes.json()
-      if (deptData.success) { setDepartments(deptData.departments); setDeptColorOverrides(deptData.departments) }
-    } catch (err) { setEditDeptError(err instanceof Error ? err.message : 'Failed to update') }
-    finally { setEditDeptLoading(false) }
-  }
-
-  const handleDeleteDept = async () => {
-    if (!deleteDeptModal) return
-    setDeleteDeptLoading(true); setDeleteDeptError('')
-    try {
-      const res = await fetch('/api/company/delete-department', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ department_id: deleteDeptModal.id }) })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message)
-      setDeleteDeptModal(null)
-      if (selectedDeptId === deleteDeptModal.id) setSelectedDeptId('')
-      const deptRes = await fetch(`/api/company/departments?company_id=${companyId}`)
-      const deptData = await deptRes.json()
-      if (deptData.success) { setDepartments(deptData.departments); setDeptColorOverrides(deptData.departments) }
-    } catch (err) { setDeleteDeptError(err instanceof Error ? err.message : 'Failed to delete') }
-    finally { setDeleteDeptLoading(false) }
-  }
-
-  const handleEditDeptManager = async () => {
-    if (!editManagerModal || !editManagerSelectedId) return
-    setEditManagerLoading(true); setEditManagerError('')
-    try {
-      const res = await fetch('/api/user/update-department', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: editManagerSelectedId, department_id: editManagerModal.id }) })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message)
-      setEditManagerModal(null); setEditManagerSelectedId('')
-      const mgrRes = await fetch(`/api/company/managers?company_id=${companyId}`)
-      const mgrData = await mgrRes.json()
-      if (mgrData.success) {
-        setAllManagers(mgrData.managers)
-        const map: Record<string, string> = {}
-        for (const mgr of mgrData.managers as ManagerInfo[]) {
-          if (mgr.department_id) {
-            map[mgr.department_id] = map[mgr.department_id]
-              ? `${map[mgr.department_id]}, ${mgr.full_name}`
-              : mgr.full_name
-          }
-        }
-        setDeptManagerMap(map)
-      }
-    } catch (err) { setEditManagerError(err instanceof Error ? err.message : 'Failed to update manager') }
-    finally { setEditManagerLoading(false) }
   }
 
   // ── Members with a shift on a given date ───────────────────────────────────
@@ -2379,7 +2303,7 @@ export default function OwnerTasksPage() {
     if (!kanban) return []
     return (kanban[col] ?? [])
       .filter(t => !selectedDeptId || t.department_id === selectedDeptId)
-      .filter(t => kanbanDateKey(t) === taskDate)
+      .filter(t => isKanbanVisibleOnDate(t, taskDate))
       .sort((a, b) => (PRIORITY_ORDER[a.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.priority ?? ''] ?? 4))
   }
 
@@ -2403,9 +2327,10 @@ export default function OwnerTasksPage() {
   }, [taskDate])
 
   const calendarWeekLabel = useMemo(() => {
+    const fmtD = (d: Date) => `${String(d.getDate()).padStart(2, '0')} ${d.toLocaleDateString('en-AU', { month: 'short' })}`
     const first = new Date(`${calendarWeekDates[0]}T00:00:00`)
     const last = new Date(`${calendarWeekDates[6]}T00:00:00`)
-    return `${first.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} - ${last.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+    return `${fmtD(first)} – ${fmtD(last)} ${last.getFullYear()}`
   }, [calendarWeekDates])
 
   const taskCalendarItems = useMemo(() => {
@@ -2561,7 +2486,7 @@ export default function OwnerTasksPage() {
                       </div>
                     </div>
                     {calendarWeekDates.map((date, i) => (
-                      <div key={date} style={{ gridColumn: i + 2, gridRow: 1, borderRight: i < 6 ? `1px solid ${TASK_BORDER}` : 'none', background: date === todayStr ? '#FFF7ED' : '#FFFFFF' }} />
+                      <div key={date} style={{ gridColumn: i + 2, gridRow: 1, borderRight: i < 6 ? `1px solid ${TASK_BORDER}` : 'none', background: '#FFFFFF' }} />
                     ))}
                     {[...row.items].sort((a, b) => (
                       (PRIORITY_ORDER[a.task.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.task.priority ?? ''] ?? 4) ||
@@ -2631,7 +2556,9 @@ export default function OwnerTasksPage() {
                               role="button"
                               aria-label={expandedTaskIds.has(item.task.id) ? 'Collapse sub-tasks' : 'Expand sub-tasks'}
                               onClick={e => { e.stopPropagation(); toggleTaskExpanded(item.task.id) }}
-                              style={{ display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: 6, flexShrink: 0, padding: '2px 6px', borderRadius: 999, background: 'rgba(255,255,255,0.25)', cursor: 'pointer' }}
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: 6, flexShrink: 0, padding: '2px 6px', borderRadius: 999, background: 'rgba(255,255,255,0.25)', cursor: 'pointer', transition: 'background 0.12s ease' }}
+                              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.4)' }}
+                              onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.25)' }}
                             >
                               <ChevronDown size={11} color="#FFFFFF" strokeWidth={3} style={{ transform: expandedTaskIds.has(item.task.id) ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
                             </span>
@@ -2667,7 +2594,7 @@ export default function OwnerTasksPage() {
   const newAssigneeMember = members.find(m => m.id === newAssigneeId) ?? null
   const priorityDropdownOptions: { value: string; label: string }[] =
     (['Low', 'Medium', 'High', 'Urgent'] as PriorityLevel[]).map(p => ({ value: p, label: p }))
-  const templateDropdownOptions = taskTemplates.map(t => ({ value: t.id, label: t.name }))
+  const templateDropdownOptions = taskTemplates.map(t => ({ value: t.id, label: t.title }))
   const newRecurringPreviewDates: string[] = (() => {
     if (!newRecurringEnabled || !newRecurrenceRule || !newStartDate || !newRecurrenceEndDate) return []
     const intervalDays = newRecurrenceRule === 'daily'
@@ -2756,8 +2683,10 @@ export default function OwnerTasksPage() {
     else base.setDate(base.getDate() + editDeadlineRuleOffsetAmount)
     return base.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
   }
-  const editTaskDeptMembers = (editDeptId ? assignableMembers.filter(m => m.department_id === editDeptId) : assignableMembers)
-    .filter(m => userIdsWithShiftOnDate(editStartDate).has(m.id) || m.id === editAssignee)
+  const editTaskDeptMembers = assignableMembers.filter(m =>
+    m.id === editAssignee ||
+    ((!editDeptId || m.department_id === editDeptId) && userIdsWithShiftOnDate(editStartDate).has(m.id))
+  )
   const editAssigneeDropdownOptions = editTaskDeptMembers.map(m => ({ value: m.id, label: m.full_name }))
   const isEditTaskValid = editTitle.trim() !== '' && editDeptId !== '' && editStartDate !== '' && editPriority !== '' && editDueAt !== '' && editDeadlineTime !== ''
   const isEditRecurringFormValid = !editRecurringEnabled || (
@@ -2772,13 +2701,6 @@ export default function OwnerTasksPage() {
     () => archivedTasks.filter(t => !t.parent_task_id && !t.source_task_id),
     [archivedTasks],
   )
-  const recommendedAssigneeName = reassignmentSuggestion?.recommended_assignee_id
-    ? members.find(m => m.id === reassignmentSuggestion.recommended_assignee_id)?.full_name ?? 'Unknown'
-    : ''
-  const currentAssigneeName = reassignmentSuggestion?.current_assignee_id
-    ? members.find(m => m.id === reassignmentSuggestion.current_assignee_id)?.full_name ?? 'Unassigned'
-    : 'Unassigned'
-
   const visibleDepts = departments.filter(d =>
     selectedDeptId === '' ? true : d.id === selectedDeptId
   )
@@ -2823,23 +2745,6 @@ export default function OwnerTasksPage() {
     setDragOverDepartmentId(null)
   }, [])
 
-  // ── Button helpers ────────────────────────────────────────────────────────
-
-  const primaryBtn = (loading: boolean): React.CSSProperties => ({
-    flex: 1, padding: '10px', background: '#111827', border: 'none', borderRadius: '8px',
-    fontWeight: 600, fontSize: '0.9375rem', color: '#FFFFFF',
-    cursor: loading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '7px', opacity: loading ? 0.65 : 1,
-  })
-  const ghostBtn: React.CSSProperties = {
-    flex: 1, padding: '10px', background: 'none', border: '1.5px solid #E5E7EB',
-    borderRadius: '8px', fontWeight: 600, fontSize: '0.9375rem', color: '#6B7280', cursor: 'pointer',
-  }
-  const dangerBtn = (loading: boolean): React.CSSProperties => ({
-    padding: '8px 16px', background: '#EF4444', border: 'none', borderRadius: '8px',
-    fontWeight: 600, fontSize: '0.875rem', color: '#FFFFFF',
-    cursor: loading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', opacity: loading ? 0.65 : 1,
-  })
-
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
@@ -2876,10 +2781,6 @@ export default function OwnerTasksPage() {
         @keyframes drawerSlideIn {
           from { opacity: 0; transform: translateX(24px); }
           to { opacity: 1; transform: translateX(0); }
-        }
-        @keyframes fadeSlideUpToast {
-          from { opacity: 0; transform: translateX(-50%) translateY(10px); }
-          to { opacity: 1; transform: translateX(-50%) translateY(0); }
         }
         @keyframes cardStagger {
           from { opacity: 0; transform: translateY(14px) scale(0.96); }
@@ -3098,6 +2999,18 @@ export default function OwnerTasksPage() {
                       <Bell size={15} style={{ color: '#F97316' }} />
                     </div>
                     <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A' }}>Notification</span>
+                    {(stalledAlerts.length > 0 || workloadSuggestions.length > 0) && (
+                      <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#EF4444', border: '1.5px solid #fff', marginLeft: 2, flexShrink: 0 }} />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => void refreshAllTaskInsights()}
+                      disabled={!!insightLoading}
+                      title="Refresh notifications"
+                      style={{ width: 26, height: 26, border: 'none', borderRadius: 999, background: 'transparent', color: '#9CA3AF', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginLeft: 'auto', cursor: insightLoading ? 'default' : 'pointer' }}
+                    >
+                      {insightLoading ? <Spinner size={13} dark /> : <RefreshCw size={14} />}
+                    </button>
                   </div>
                   <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
                     {(() => {
@@ -3108,7 +3021,7 @@ export default function OwnerTasksPage() {
                             <ArrowRightLeft size={14} />
                           </span>
                           <div style={{ minWidth: 0, flex: 1 }}>
-                            <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: TASK_TEXT }}>Workload Suggestion</p>
+                            <p style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700, color: TASK_TEXT }}>Workload Suggestion</p>
                           </div>
                           <button
                             type="button"
@@ -3134,7 +3047,7 @@ export default function OwnerTasksPage() {
                             <Bell size={14} />
                           </span>
                           <div style={{ minWidth: 0, flex: 1 }}>
-                            <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: TASK_TEXT }}>Stalled Tasks</p>
+                            <p style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700, color: TASK_TEXT }}>Stalled Tasks</p>
                           </div>
                           <button
                             type="button"
@@ -3198,7 +3111,7 @@ export default function OwnerTasksPage() {
                           const endDate = t.due_at ? formatDateKey(new Date(t.due_at)) : startDate
                           return endDate >= calendarWeekDates[0] && startDate <= calendarWeekDates[6]
                         }
-                        return kanbanDateKey(t) === taskDate
+                        return isKanbanVisibleOnDate(t, taskDate)
                       })
                       return (
                         <>
@@ -3427,7 +3340,7 @@ export default function OwnerTasksPage() {
                           onClick={() => setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), -7)))}
                           style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${TASK_BORDER}`, background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: 'pointer', color: TASK_TEXT }}
                         ><ChevronLeft size={16} /></button>
-                        <span style={{ height: 38, minWidth: 188, padding: '0 12px', border: `1px solid ${TASK_BORDER}`, borderRadius: 9, background: '#FFFFFF', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: TASK_TEXT, fontSize: 13, fontWeight: 500, fontFamily: 'var(--font-body), system-ui, sans-serif' }}>
+                        <span style={{ height: 38, minWidth: 176, padding: '0 12px', border: `1px solid ${TASK_BORDER}`, borderRadius: 9, background: '#FFFFFF', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, color: TASK_TEXT, fontSize: 13, fontWeight: 500, fontFamily: 'var(--font-body), system-ui, sans-serif' }}>
                           <CalendarDays size={14} color="#64748B" />{calendarWeekLabel}
                         </span>
                         <button
@@ -4098,14 +4011,13 @@ export default function OwnerTasksPage() {
                         </button>
                       </div>
 
-                      <div style={{ minWidth: 0, width: 150, justifySelf: 'stretch', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 7 }}>
-                        <p style={{ margin: 0, width: '100%', fontSize: 10, fontWeight: 800, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.02em', lineHeight: 1.15, textAlign: 'center', whiteSpace: 'nowrap' }}>Reassign Suggestion</p>
+                      <div style={{ minWidth: 0, width: 150, justifySelf: 'stretch', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
                         <button
                           type="button"
                           aria-label={`Open ${recommendedName} profile`}
                           onClick={() => { if (recommendedMember) setProfileMember(recommendedMember) }}
                           className="internal-member-card"
-                          style={{ width: 126, height: 128, padding: '10px 8px', borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', boxShadow: '0 1px 3px rgba(15,23,42,0.06)', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', cursor: recommendedMember ? 'pointer' : 'default', textAlign: 'center', transition: 'box-shadow 0.22s ease, border-color 0.22s ease, transform 0.22s ease, background 0.22s ease' }}
+                          style={{ width: 126, height: '100%', padding: '10px 8px', borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', boxShadow: '0 1px 3px rgba(15,23,42,0.06)', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', cursor: recommendedMember ? 'pointer' : 'default', textAlign: 'center', transition: 'box-shadow 0.22s ease, border-color 0.22s ease, transform 0.22s ease, background 0.22s ease' }}
                           onMouseEnter={e => { if (recommendedMember) { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.boxShadow = '0 3px 10px rgba(0,0,0,0.10)'; e.currentTarget.style.background = '#FFFFFF' } }}
                           onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.boxShadow = '0 1px 3px rgba(15,23,42,0.06)'; e.currentTarget.style.background = '#FFFFFF' }}
                         >
@@ -4703,16 +4615,11 @@ export default function OwnerTasksPage() {
                             {hasBadges && (
                               <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12, paddingRight: 58 }}>
                                 {priorityStyle && task.priority && (
-                                  <span style={{ fontSize: '0.65rem', fontWeight: 800, padding: '2px 7px', borderRadius: '99px', background: priorityStyle.bg, color: priorityStyle.text, letterSpacing: '0.01em' }}>
+                                  <span style={{ fontSize: '0.72rem', fontWeight: 800, padding: '4px 10px', borderRadius: '99px', background: priorityStyle.bg, color: priorityStyle.text, letterSpacing: '0.01em' }}>
                                     {task.priority}
                                   </span>
                                 )}
-                                {dept && (
-                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.65rem', fontWeight: 700, padding: '2px 7px', borderRadius: '99px', background: deptCardBg(dept.id), color: deptColor(dept.id), minWidth: 0 }}>
-                                    <span style={{ width: 5, height: 5, borderRadius: '50%', background: deptColor(dept.id), flexShrink: 0 }} />
-                                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dept.name}</span>
-                                  </span>
-                                )}
+                                {dept && <DepartmentBadge departmentId={dept.id} departmentName={dept.name} />}
                                 {subTasks.length > 0 && (
                                   <button
                                     type="button"
@@ -4888,13 +4795,17 @@ export default function OwnerTasksPage() {
                                   {t.priority}
                                 </span>
                               )}
-                              <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: '#111827', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.name}</p>
+                              <button type="button" onClick={() => openEditTemplate(t)} title="Edit template"
+                                style={{ margin: 0, fontSize: 14, fontWeight: 700, color: '#111827', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', border: 'none', background: 'transparent', padding: 0, textAlign: 'left', cursor: 'pointer' }}
+                                onMouseEnter={e => { e.currentTarget.style.color = TASK_ORANGE }}
+                                onMouseLeave={e => { e.currentTarget.style.color = '#111827' }}
+                              >{t.title}</button>
                             </div>
                             <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                              <button type="button" onClick={() => openEditTemplate(t)} style={{ border: 'none', background: 'transparent', color: '#6B7280', cursor: 'pointer', display: 'flex', padding: 6, borderRadius: 6 }} title="Edit">
-                                <Pencil size={14} />
+                              <button type="button" onClick={() => useTaskTemplate(t)} style={{ border: 'none', background: 'transparent', color: '#6B7280', cursor: 'pointer', display: 'flex', padding: 6, borderRadius: 6 }} title="Use template">
+                                <ArrowRight size={14} />
                               </button>
-                              <button type="button" onClick={() => setDeleteTemplateModal(t)} style={{ border: 'none', background: 'transparent', color: '#DC2626', cursor: 'pointer', display: 'flex', padding: 6, borderRadius: 6 }} title="Delete">
+                              <button type="button" onClick={() => void handleDeleteTemplate(t.id)} disabled={deleteTemplateLoading} style={{ border: 'none', background: 'transparent', color: '#DC2626', cursor: deleteTemplateLoading ? 'default' : 'pointer', display: 'flex', padding: 6, borderRadius: 6, opacity: deleteTemplateLoading ? 0.5 : 1 }} title="Delete">
                                 <Trash2 size={14} />
                               </button>
                             </div>
@@ -4914,27 +4825,101 @@ export default function OwnerTasksPage() {
                 </>
               ) : (
                 <>
-                  <div>
-                    <label style={modalLabelStyle}>Name</label>
-                    <input autoFocus value={templateFormName} onChange={e => setTemplateFormName(e.target.value)} placeholder="e.g. Daily Cleaning Checklist" style={modalInputStyle} />
+                  {/* Title + Priority */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    <div>
+                      <label style={modalLabelStyle}>Title</label>
+                      <input autoFocus value={templateFormTitle} onChange={e => setTemplateFormTitle(e.target.value)} style={modalInputStyle} />
+                    </div>
+                    <div>
+                      <label style={modalLabelStyle}>Priority</label>
+                      <DropdownField
+                        value={templateFormPriority}
+                        options={priorityDropdownOptions}
+                        onChange={setTemplateFormPriority}
+                        placeholder="Select priority"
+                        badgeColors={PRIORITY_COLORS}
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <label style={modalLabelStyle}>Task Title</label>
-                    <input value={templateFormTitle} onChange={e => setTemplateFormTitle(e.target.value)} placeholder="Task title this template creates..." style={modalInputStyle} />
-                  </div>
+
+                  {/* Description */}
                   <div>
                     <label style={modalLabelStyle}>Description</label>
-                    <textarea value={templateFormDesc} onChange={e => setTemplateFormDesc(e.target.value)} onKeyDown={e => handleDescriptionKeyDown(e, templateFormDesc, setTemplateFormDesc)} rows={2} placeholder="Add more context..." style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }} />
+                    <textarea value={templateFormDesc} onChange={e => setTemplateFormDesc(e.target.value)} onKeyDown={e => handleDescriptionKeyDown(e, templateFormDesc, setTemplateFormDesc)} rows={2} style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }} />
                   </div>
-                  <div>
-                    <label style={modalLabelStyle}>Priority</label>
-                    <DropdownField
-                      value={templateFormPriority}
-                      options={priorityDropdownOptions}
-                      onChange={setTemplateFormPriority}
-                      placeholder="Select priority"
-                      badgeColors={PRIORITY_COLORS}
-                    />
+
+                  {/* Divider */}
+                  <div style={{ borderTop: '1px dashed #E5E7EB' }} />
+
+                  {/* Sub Task toggle */}
+                  <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flex: 1 }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
+                          <GitBranch size={13} color={TASK_ORANGE} /> Sub Task
+                          {templateFormSubTasks.length > 0 && (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 18, height: 18, padding: '0 5px', borderRadius: 9, background: '#FFF3E8', color: '#EA580C', fontSize: 11, fontWeight: 800 }}>
+                              {templateFormSubTasks.length}
+                            </span>
+                          )}
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={templateFormSubTaskEnabled}
+                          onChange={e => setTemplateFormSubTaskEnabled(e.target.checked)}
+                          style={{ width: 16, height: 16, accentColor: TASK_ORANGE, cursor: 'pointer', marginLeft: 'auto' }}
+                        />
+                      </label>
+                      {templateFormSubTaskEnabled && templateFormSubTasks.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setTemplateFormSubTaskCollapsed(prev => !prev)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, marginLeft: 6, display: 'flex', color: '#9CA3AF', borderRadius: 6, flexShrink: 0 }}
+                        >
+                          <ChevronDown size={14} style={{ transform: templateFormSubTaskCollapsed ? 'none' : 'rotate(180deg)', transition: 'transform 0.15s' }} />
+                        </button>
+                      )}
+                    </div>
+
+                    {templateFormSubTaskEnabled && !(templateFormSubTaskCollapsed && templateFormSubTasks.length > 0) && (
+                      <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        {templateFormSubTasks.length > 0 && (
+                          <SubTaskOrderList
+                            items={templateFormSubTasks}
+                            onReorder={orderedIds => setTemplateFormSubTasks(prev => orderedIds.map(id => prev.find(s => s.id === id)!))}
+                            onRemove={id => setTemplateFormSubTasks(prev => prev.filter(s => s.id !== id))}
+                            onRename={(id, title) => setTemplateFormSubTasks(prev => prev.map(s => s.id === id ? { ...s, title } : s))}
+                          />
+                        )}
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <input
+                            value={templateFormSubTaskDraft}
+                            onChange={e => setTemplateFormSubTaskDraft(e.target.value)}
+                            placeholder="Sub-task title..."
+                            style={{ ...modalInputStyle, flex: 1, minWidth: 0, minHeight: 32, padding: '6px 10px', fontSize: 12 }}
+                            onKeyDown={e => {
+                              if (e.key !== 'Enter' || !templateFormSubTaskDraft.trim()) return
+                              e.preventDefault()
+                              setTemplateFormSubTasks(prev => [...prev, { id: crypto.randomUUID(), title: templateFormSubTaskDraft.trim() }])
+                              setTemplateFormSubTaskDraft('')
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!templateFormSubTaskDraft.trim()) return
+                              setTemplateFormSubTasks(prev => [...prev, { id: crypto.randomUUID(), title: templateFormSubTaskDraft.trim() }])
+                              setTemplateFormSubTaskDraft('')
+                            }}
+                            disabled={!templateFormSubTaskDraft.trim()}
+                            style={{ flexShrink: 0, width: 32, height: 30, padding: 0, border: 'none', borderRadius: 7, background: templateFormSubTaskDraft.trim() ? 'linear-gradient(135deg, #F97316, #EA580C)' : '#E5E7EB', color: templateFormSubTaskDraft.trim() ? '#FFFFFF' : '#9CA3AF', fontWeight: 700, fontSize: 12, cursor: templateFormSubTaskDraft.trim() ? 'pointer' : 'not-allowed', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                          >
+                            <Plus size={14} strokeWidth={2.5} />
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </>
               )}
@@ -4957,8 +4942,8 @@ export default function OwnerTasksPage() {
                 <button
                   type="button"
                   onClick={handleSaveTemplate}
-                  disabled={templateLoading || !templateFormName.trim() || !templateFormTitle.trim()}
-                  style={{ padding: '7px 18px', background: (!templateFormName.trim() || !templateFormTitle.trim()) ? '#E5E7EB' : templateLoading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: (!templateFormName.trim() || !templateFormTitle.trim()) ? '#9CA3AF' : '#FFFFFF', cursor: templateLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: templateLoading ? 0.65 : 1 }}
+                  disabled={templateLoading || !templateFormTitle.trim()}
+                  style={{ padding: '7px 18px', background: !templateFormTitle.trim() ? '#E5E7EB' : templateLoading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: !templateFormTitle.trim() ? '#9CA3AF' : '#FFFFFF', cursor: templateLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: templateLoading ? 0.65 : 1 }}
                 >
                   {templateLoading ? <Spinner size={13} /> : <Check size={13} />} {templateFormMode === 'edit' ? 'Save Changes' : 'Create Template'}
                 </button>
@@ -4968,100 +4953,7 @@ export default function OwnerTasksPage() {
         </div>
       )}
 
-      {/* ═══════════════ DELETE TASK TEMPLATE MODAL ═══════════════ */}
-      {deleteTemplateModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'grid', placeItems: 'center', padding: 18, zIndex: 110, animation: 'overlayFadeIn 0.18s ease-out' }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: 'min(420px, 100%)', background: '#FFFFFF', borderRadius: 16, border: '1px solid #E2E8F0', boxShadow: '0 24px 70px rgba(15,23,42,0.32)', padding: 16, animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 16 }}>
-              <h2 style={{ margin: 0, color: TASK_TEXT, fontSize: 16, fontWeight: 700 }}>Delete Template</h2>
-              <button type="button" onClick={() => setDeleteTemplateModal(null)} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, border: `1px solid ${TASK_BORDER}`, borderRadius: 9, background: '#FFFFFF', cursor: 'pointer', color: TASK_TEXT }}><X size={16} /></button>
-            </div>
-            <p style={{ color: '#64748B', marginTop: 0, fontSize: 13 }}>Are you sure you want to delete <strong style={{ color: TASK_TEXT }}>{deleteTemplateModal.name}</strong>?</p>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
-              <button type="button" onClick={() => setDeleteTemplateModal(null)} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: `1px solid ${TASK_BORDER}`, borderRadius: 10, background: '#FFFFFF', color: TASK_TEXT, height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Cancel</button>
-              <button type="button" onClick={handleDeleteTemplate} disabled={deleteTemplateLoading} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: '#DC2626', color: '#FFFFFF', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: deleteTemplateLoading ? 'default' : 'pointer', opacity: deleteTemplateLoading ? 0.65 : 1 }}>{deleteTemplateLoading ? null : <Trash2 size={16} />} Delete</button>
-            </div>
-          </div>
-        </div>
-      )}
 
-      {/* ═══════════════ EDIT DEPT NAME MODAL ═══════════════ */}
-      {editDeptModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: '480px', background: '#FFFFFF', borderRadius: '16px', padding: '32px', boxShadow: '0 8px 40px rgba(0,0,0,0.12)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-              <h2 style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827', margin: 0 }}>Edit Department Name</h2>
-              <button onClick={() => setEditDeptModal(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', display: 'flex', padding: 4 }}><X size={18} /></button>
-            </div>
-            <label style={modalLabelStyle}>Department Name</label>
-            <input autoFocus value={editDeptName} onChange={e => setEditDeptName(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') handleEditDept() }} style={modalInputStyle} />
-            <InlineError message={editDeptError} />
-            <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
-              <button style={primaryBtn(editDeptLoading)} onClick={handleEditDept} disabled={editDeptLoading}>
-                {editDeptLoading && <Spinner size={14} />} Save Changes
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ═══════════════ DELETE DEPT MODAL ═══════════════ */}
-      {deleteDeptModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: '480px', background: '#FFFFFF', borderRadius: '16px', padding: '32px', boxShadow: '0 8px 40px rgba(0,0,0,0.12)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-              <h2 style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827', margin: 0 }}>Delete Department</h2>
-              <button onClick={() => setDeleteDeptModal(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', display: 'flex', padding: 4 }}><X size={18} /></button>
-            </div>
-            <p style={{ fontSize: '0.9375rem', color: '#374151', margin: 0, lineHeight: 1.6 }}>
-              Are you sure you want to delete <strong style={{ color: '#111827' }}>{deleteDeptModal.name}</strong>?
-            </p>
-            <InlineError message={deleteDeptError} />
-            <div style={{ display: 'flex', gap: 10, marginTop: 24 }}>
-              <button style={ghostBtn} onClick={() => setDeleteDeptModal(null)}>Cancel</button>
-              <button style={dangerBtn(deleteDeptLoading)} onClick={handleDeleteDept} disabled={deleteDeptLoading}>
-                {deleteDeptLoading && <Spinner size={14} />} Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ═══════════════ EDIT DEPT MANAGER MODAL ═══════════════ */}
-      {editManagerModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: '480px', background: '#FFFFFF', borderRadius: '16px', padding: '32px', boxShadow: '0 8px 40px rgba(0,0,0,0.12)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-              <h2 style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827', margin: 0 }}>Change Manager</h2>
-              <button onClick={() => { setEditManagerModal(null); setEditManagerSelectedId('') }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9CA3AF', display: 'flex', padding: 4 }}><X size={18} /></button>
-            </div>
-            <p style={{ fontSize: '0.875rem', color: '#6B7280', margin: '0 0 16px', lineHeight: 1.55 }}>
-              Assign a manager to <strong>{editManagerModal.name}</strong>.
-            </p>
-            {allManagers.length === 0
-              ? <p style={{ fontSize: '0.875rem', color: '#9CA3AF', textAlign: 'center', margin: '8px 0 16px' }}>No managers in this company yet.</p>
-              : (
-                <>
-                  <label style={modalLabelStyle}>Manager</label>
-                  <div style={{ position: 'relative' }}>
-                    <select value={editManagerSelectedId} onChange={e => setEditManagerSelectedId(e.target.value)} style={{ ...modalInputStyle, paddingRight: 36, appearance: 'none', cursor: 'pointer' }}>
-                      <option value="">Select a manager</option>
-                      {allManagers.map(m => <option key={m.id} value={m.id}>{m.full_name}</option>)}
-                    </select>
-                    <ChevronDown size={15} style={{ position: 'absolute', right: 11, top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
-                  </div>
-                </>
-              )
-            }
-            <InlineError message={editManagerError} />
-            <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
-              <button style={primaryBtn(editManagerLoading)} onClick={handleEditDeptManager} disabled={editManagerLoading || !editManagerSelectedId}>
-                {editManagerLoading && <Spinner size={14} />} Save
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ═══════════════ AI TASK ASSIGNMENT MODAL ═══════════════ */}
       {aiModal && (() => {
@@ -5412,36 +5304,7 @@ export default function OwnerTasksPage() {
         )
       })()}
 
-      {taskToast && (
-        <div style={{
-          position: 'fixed',
-          bottom: 28,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 9999,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          background: '#0F172A',
-          color: '#FFFFFF',
-          borderRadius: 12,
-          padding: '12px 20px',
-          boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
-          fontSize: 13,
-          fontWeight: 600,
-          whiteSpace: 'nowrap',
-          animation: 'fadeSlideUpToast 0.22s ease',
-        }}>
-          <Check size={15} style={{ color: '#10B981', flexShrink: 0 }} />
-          {taskToast}
-        </div>
-      )}
-      <style>{`
-        @keyframes fadeSlideUpToast {
-          from { opacity: 0; transform: translateX(-50%) translateY(10px); }
-          to { opacity: 1; transform: translateX(-50%) translateY(0); }
-        }
-      `}</style>
+      <Toast message={taskToast} />
     </div>
   )
 }

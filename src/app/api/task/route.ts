@@ -21,6 +21,7 @@ export async function GET(req: NextRequest) {
   const task_id = searchParams.get('task_id') ?? undefined
   const date_from = searchParams.get('date_from') ?? undefined
   const date_to = searchParams.get('date_to') ?? undefined
+  const assigned_by = searchParams.get('assigned_by') ?? undefined
 
   if (!company_id) {
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
@@ -28,7 +29,7 @@ export async function GET(req: NextRequest) {
 
   try {
     if (kanban) {
-      const groups = await taskService.getKanbanTasks(company_id)
+      const groups = await taskService.getKanbanTasks(company_id, assigned_by)
       return NextResponse.json({ success: true, groups })
     }
     if (stats) {
@@ -52,7 +53,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: true, tasks })
     }
     if (suggestion === 'workload') {
-      const suggestions = await taskService.getWorkloadRebalancingSuggestions(company_id, department_id)
+      const suggestions = await taskService.getWorkloadRebalancingSuggestions(company_id, department_id, assigned_by)
       return NextResponse.json({
         success: true,
         suggestions,
@@ -64,7 +65,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: true, suggestion: reassignmentSuggestion })
     }
     if (suggestion === 'stalled') {
-      const alerts = await taskService.getStalledTaskAlerts(company_id, department_id)
+      const alerts = await taskService.getStalledTaskAlerts(company_id, department_id, assigned_by)
       return NextResponse.json({ success: true, alerts })
     }
     if (shift_id) {

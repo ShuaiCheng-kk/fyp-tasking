@@ -3,7 +3,12 @@
     "allow": [
       "Bash(node *)",
       "Skill(run)",
-      "Skill(run:*)"
+      "Skill(run:*)",
+      "mcp__613e371a-a7db-4d62-9e90-664d8c52c6a6__execute_sql",
+      "PowerShell(cd \"C:\\\\Users\\\\ACER\\\\fyp-tasking\"; npx tsc --noEmit 2>&1 | Where-Object { $_ -match \"dashboard\" })",
+      "mcp__613e371a-a7db-4d62-9e90-664d8c52c6a6__list_projects",
+      "mcp__613e371a-a7db-4d62-9e90-664d8c52c6a6__apply_migration",
+      "mcp__visualize__show_widget"
     ]
   }
 }

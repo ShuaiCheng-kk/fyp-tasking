@@ -6,7 +6,7 @@ import Link from 'next/link'
 import {
   LayoutDashboard,
   BarChart2,
-  Users,
+  Building2,
   MessageCircle,
   LogOut,
   UserPlus,
@@ -14,20 +14,18 @@ import {
   CheckSquare,
   CalendarDays,
   GripVertical,
-  Settings,
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 
 const NAV_ITEMS = [
-  { label: 'Dashboard',     Icon: LayoutDashboard, href: '/owner/dashboard',       dot: null as 'messages' | 'announcements' | 'review' | null },
+  { label: 'Dashboard',     Icon: LayoutDashboard, href: '/owner/dashboard',       dot: null as 'messages' | 'announcements' | 'review' | 'tasks' | null },
   { label: 'Shifts',        Icon: CalendarDays,    href: '/owner/shifts',          dot: null },
-  { label: 'Tasks',         Icon: CheckSquare,     href: '/owner/tasks',           dot: null },
-  { label: 'Team',          Icon: Users,            href: '/owner/team',            dot: null },
+  { label: 'Tasks',         Icon: CheckSquare,     href: '/owner/tasks',           dot: 'tasks' as const },
+  { label: 'Company',       Icon: Building2,       href: '/owner/team',            dot: null },
   { label: 'Communication', Icon: MessageCircle,    href: '/owner/communication',   dot: 'messages' as const },
   { label: 'Recruitment',   Icon: UserPlus,         href: '/owner/recruitment',     dot: 'review' as const },
-  { label: 'Attendance',    Icon: ClipboardList,    href: '/owner/attendance',      dot: null },
+  { label: 'Attendance',    Icon: ClipboardList,    href: '/owner/attendance',      dot: 'attendance' as const },
   { label: 'Report',        Icon: BarChart2,        href: '/owner/report',          dot: null },
-  { label: 'Settings',      Icon: Settings,         href: '/owner/settings',        dot: null },
 ]
 
 const NAV_LABELS = NAV_ITEMS.map(i => i.label)
@@ -54,13 +52,13 @@ export function getOwnerLandingHref(): string {
 }
 
 const THEME = {
-  sidebarBg: '#1C1C1E',
-  sidebarText: '#FFFFFF',
-  sidebarActiveBg: '#F97316',
-  sidebarActiveText: '#FFFFFF',
-  sidebarHoverBg: 'rgba(255,255,255,0.1)',
-  sidebarBorder: 'rgba(255,255,255,0.08)',
-  logoBorder: 'rgba(255,255,255,0.08)',
+  sidebarBg: '#FFFFFF',
+  sidebarText: '#374151',
+  sidebarActiveBg: 'transparent',
+  sidebarActiveText: '#F97316',
+  sidebarHoverBg: '#F9FAFB',
+  sidebarBorder: '#E5E7EB',
+  logoBorder: '#E5E7EB',
 }
 
 export default function OwnerSidebar({
@@ -76,6 +74,9 @@ export default function OwnerSidebar({
   const [msgCount, setMsgCount] = useState(unreadMessages ?? 0)
   const [annCount, setAnnCount] = useState(unreadAnnouncements ?? 0)
   const [reviewCount, setReviewCount] = useState(0)
+  const [attendanceCount, setAttendanceCount] = useState(0)
+  const [taskAlertCount, setTaskAlertCount] = useState(0)
+  const fetchTaskAlertsRef = useRef<(() => void) | null>(null)
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const [draggingLabel, setDraggingLabel] = useState<string | null>(null)
   const [dragOverLabel, setDragOverLabel] = useState<string | null>(null)
@@ -160,7 +161,7 @@ export default function OwnerSidebar({
         if (!d.success) return
         setUserRole(d.user.role)
         const internalId: string = d.user.id
-        const cid = localStorage.getItem('tasking_company_id') ?? localStorage.getItem(`tasking_company_id_${authUid}`)
+        const cid = localStorage.getItem('tasking_company_id') ?? localStorage.getItem(`tasking_company_id_${authUid}`) ?? d.user.company_id
         if (!cid) return
 
         fetch(`/api/inbox/unread-count?user_id=${internalId}&company_id=${cid}`)
@@ -172,6 +173,24 @@ export default function OwnerSidebar({
           .then(r => r.json())
           .then(data => { if (data.success) setReviewCount((data.pendingPostings as unknown[]).length ?? 0) })
           .catch(() => {})
+
+        fetch(`/api/attendance?resource=pending_requests_count&company_id=${cid}`)
+          .then(r => r.json())
+          .then(data => { if (data.success) setAttendanceCount(data.count ?? 0) })
+          .catch(() => {})
+
+        const fetchTaskAlerts = () => {
+          Promise.all([
+            fetch(`/api/task?company_id=${cid}&suggestion=workload&assigned_by=${internalId}`).then(r => r.json()).catch(() => ({ success: false })),
+            fetch(`/api/task?company_id=${cid}&suggestion=stalled&assigned_by=${internalId}`).then(r => r.json()).catch(() => ({ success: false })),
+          ]).then(([workloadData, stalledData]) => {
+            const workloadCount = workloadData.success ? (workloadData.suggestions ?? []).filter((s: { type: string }) => s.type === 'rebalance').length : 0
+            const stalledCount = stalledData.success ? (stalledData.alerts ?? []).length : 0
+            setTaskAlertCount(workloadCount + stalledCount)
+          }).catch(() => {})
+        }
+        fetchTaskAlertsRef.current = fetchTaskAlerts
+        fetchTaskAlerts()
 
         const readKey = `ann_read_ids_${cid}_${internalId}`
         let readIds: Set<string> = new Set()
@@ -231,19 +250,40 @@ export default function OwnerSidebar({
             refreshAnnCount)
           .subscribe()
 
+        const refreshAttendanceCount = () => {
+          fetch(`/api/attendance?resource=pending_requests_count&company_id=${cid}`)
+            .then(r => r.json())
+            .then(data => { if (data.success) setAttendanceCount(data.count ?? 0) })
+            .catch(() => {})
+        }
+
+        const swapChannel = supabase
+          .channel('owner-sidebar-swaps')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'shift_swap_requests', filter: `company_id=eq.${cid}` },
+            refreshAttendanceCount)
+          .subscribe()
+
+        const offDayChannel = supabase
+          .channel('owner-sidebar-off-day')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'employee_off_day_requests', filter: `company_id=eq.${cid}` },
+            refreshAttendanceCount)
+          .subscribe()
+
         return () => {
           supabase.removeChannel(msgChannel)
           supabase.removeChannel(annChannel)
           supabase.removeChannel(reviewChannel)
+          supabase.removeChannel(swapChannel)
+          supabase.removeChannel(offDayChannel)
         }
       })
       .catch(() => {})
   }, [])
 
   useEffect(() => {
-    const handler = () => setReviewCount(0)
-    window.addEventListener('recruitment-review-opened', handler)
-    return () => window.removeEventListener('recruitment-review-opened', handler)
+    const handler = () => { fetchTaskAlertsRef.current?.() }
+    window.addEventListener('task-insights-updated', handler)
+    return () => window.removeEventListener('task-insights-updated', handler)
   }, [])
 
   useEffect(() => {
@@ -341,7 +381,7 @@ export default function OwnerSidebar({
       <nav style={{ flex: 1, padding: '12px 8px', overflow: 'hidden', position: 'relative' }}>
         {orderedItems.map(({ label, Icon, href, dot }, idx) => {
           const active = pathname === href
-          const showDot = dot === 'messages' ? msgCount > 0 : dot === 'announcements' ? annCount > 0 : dot === 'review' ? reviewCount > 0 : false
+          const showDot = dot === 'messages' ? msgCount > 0 : dot === 'announcements' ? annCount > 0 : dot === 'review' ? reviewCount > 0 : dot === 'attendance' ? attendanceCount > 0 : dot === 'tasks' ? taskAlertCount > 0 : false
           const isDragging = draggingLabel === label
           const isDragOver = dragOverLabel === label
 
@@ -386,13 +426,14 @@ export default function OwnerSidebar({
                 display: 'flex',
                 alignItems: 'center',
                 gap: '10px',
-                padding: expanded ? '10px 12px 10px 30px' : '10px 12px',
+                padding: '10px 12px',
                 borderRadius: '8px',
                 background: active
                   ? THEME.sidebarActiveBg
                   : hoveredIdx === idx && !draggingLabel
                     ? THEME.sidebarHoverBg
                     : 'transparent',
+                border: active ? '1.5px solid #F97316' : '1.5px solid transparent',
                 color: active ? THEME.sidebarActiveText : THEME.sidebarText,
                 fontWeight: active ? 600 : 500,
                 fontSize: '0.9rem',
@@ -402,28 +443,13 @@ export default function OwnerSidebar({
                 marginBottom: '2px',
                 position: 'relative',
                 transform: isDragging ? 'scale(0.985)' : undefined,
-                transition: 'box-shadow 0.18s ease, transform 0.18s ease, opacity 0.18s ease',
+                transition: 'box-shadow 0.18s ease, transform 0.18s ease, opacity 0.18s ease, border-color 0.15s ease',
                 opacity: isDragging ? 0.88 : 1,
                 outline: isDragOver ? '2px dashed #F97316' : 'none',
                 outlineOffset: 3,
                 boxShadow: isDragOver ? '0 14px 34px rgba(249,115,22,0.12)' : 'none',
               }}
             >
-              {/* Grip handle — only visible when expanded and hovered */}
-              <span
-                style={{
-                  position: 'absolute', left: 0,
-                  top: 0, bottom: 0,
-                  width: '28px',
-                  opacity: expanded && hoveredIdx === idx && !active ? 0.5 : 0,
-                  transition: 'opacity 0.15s',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  cursor: 'grab',
-                }}
-              >
-                <GripVertical size={13} strokeWidth={2} />
-              </span>
-
               <span style={{ position: 'relative', flexShrink: 0 }}>
                 <Icon size={18} strokeWidth={2.1} style={{ display: 'block', color: 'currentColor' }} />
                 {showDot && (
@@ -437,6 +463,22 @@ export default function OwnerSidebar({
               <span style={{ opacity: expanded ? 1 : 0, transition: 'opacity 0.15s' }}>
                 {label}
               </span>
+
+              {/* Grip handle — right side, only visible when expanded and hovered */}
+              {expanded && (
+                <span
+                  style={{
+                    marginLeft: 'auto',
+                    opacity: hoveredIdx === idx && !active ? 0.5 : 0,
+                    transition: 'opacity 0.15s',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    cursor: 'grab',
+                    flexShrink: 0,
+                  }}
+                >
+                  <GripVertical size={13} strokeWidth={2} />
+                </span>
+              )}
             </a>
           )
         })}
@@ -445,7 +487,7 @@ export default function OwnerSidebar({
 
       {/* Logout */}
       <div style={{ padding: '12px 8px', borderTop: `1px solid ${THEME.logoBorder}`, flexShrink: 0 }}>
-        <div style={{ borderTop: `1px solid ${THEME.sidebarBorder}`, paddingTop: '8px', marginTop: '2px' }}>
+        <div>
           <button
             onClick={handleLogout}
             style={{

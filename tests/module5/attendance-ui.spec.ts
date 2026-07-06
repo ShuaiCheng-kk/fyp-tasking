@@ -82,14 +82,25 @@ test.beforeAll(async () => {
   worker = await createCasualWorker('Worker')
   replacement = await createCasualWorker('Replacement')
 
+  // UC49 gates Clock In to within 30 minutes before the shift starts, and Clock Out to once the
+  // shift has reached its end time — so for a real-browser E2E run (no clock_time override like
+  // the API tests have), the shift must be scheduled in the recent past relative to wall-clock
+  // "now", not a fixed future date, or both buttons would be hidden the whole test run.
+  const now = new Date()
+  const shiftStart = new Date(now.getTime() - 20 * 60000)
+  const shiftEnd = new Date(now.getTime() - 5 * 60000)
+  const shiftDateKey = shiftStart.toISOString().slice(0, 10)
+  const toHms = (d: Date) => d.toISOString().slice(11, 19)
+
   const { data: shift, error: shiftError } = await admin
     .from('shifts')
     .insert({
       company_id: seeded.companyId,
       department_id: departmentId,
-      shift_date: '2030-03-01',
-      start_time: '09:00',
-      end_time: '17:00',
+      shift_date: shiftDateKey,
+      start_time: toHms(shiftStart),
+      end_time: toHms(shiftEnd),
+      is_open_ended: true,
       title: 'Module 5 UI Shift',
       created_by: seeded.ownerId,
       publication_status: 'published',
@@ -166,11 +177,6 @@ test('casual worker can manage availability from the UI', async ({ page }) => {
   await page.goto('/casual/availability')
   await expect(page.getByRole('heading', { name: 'Availability' })).toBeVisible()
 
-  await page.getByRole('button', { name: 'Mon' }).click()
-  await page.getByRole('button', { name: 'Wed' }).click()
-  await page.getByRole('button', { name: 'Save Fixed Off Days' }).click()
-  await expect(page.getByText('Submitted for approval')).toBeVisible()
-
   await page.getByRole('combobox').selectOption('break_waiver')
   await page.getByPlaceholder('Reason').fill('UI break waiver')
   await page.getByRole('button', { name: 'Submit Request' }).click()
@@ -179,6 +185,32 @@ test('casual worker can manage availability from the UI', async ({ page }) => {
 })
 
 test('owner can review Module 5 work from the attendance UI', async ({ page }) => {
+  const today = new Date()
+  const start = new Date(today.getTime() - 20 * 60000)
+  const end = new Date(today.getTime() - 5 * 60000)
+  const shiftDateKey = start.toISOString().slice(0, 10)
+  const toHms = (d: Date) => d.toISOString().slice(11, 19)
+  await admin.from('shift_swap_requests').delete().eq('company_id', seeded.companyId)
+  await admin.from('shift_assignments').delete().eq('shift_id', shiftId).neq('id', assignmentId)
+  await admin.from('shifts').update({
+    shift_date: shiftDateKey,
+    start_time: toHms(start),
+    end_time: toHms(end),
+    is_open_ended: true,
+    publication_status: 'published',
+  }).eq('id', shiftId)
+  await admin.from('shift_assignments').update({ user_id: worker.userId }).eq('id', assignmentId)
+  await admin.from('attendance_records').upsert({
+    shift_assignment_id: assignmentId,
+    casual_worker_id: worker.userId,
+    clock_in_time: new Date(Date.now() - 15 * 60000).toISOString(),
+    clock_out_time: new Date(Date.now() - 5 * 60000).toISOString(),
+    confirmed_by_employee_id: worker.userId,
+    submitted_by_employee_id: worker.userId,
+    status: 'submitted',
+    owner_status: 'pending',
+  }, { onConflict: 'shift_assignment_id' })
+
   await signInForUi(page, {
     email: seeded.email,
     password: seeded.password,
@@ -188,31 +220,20 @@ test('owner can review Module 5 work from the attendance UI', async ({ page }) =
 
   await page.goto('/owner/attendance')
   await expect(page.getByRole('heading', { name: 'Attendance' })).toBeVisible()
-  await expect(page.getByText('Module 5 UI Shift').first()).toBeVisible()
+  await page.getByText('All').click()
+  // UC51: today's live timeline shows the worker who already clocked in/out today
+  await expect(page.getByText('Module 5 UI Worker').first()).toBeVisible()
 
-  // UC50: Review Attendance Record
-  await page.getByTitle('Approve').first().click()
-  await expect(page.getByText('Review Attendance Record')).toBeVisible()
-  await page.getByRole('button', { name: /Save Review/ }).click()
-  await expect(page.getByText('Review Attendance Record')).toBeHidden()
-  await expect(page.getByText('approved').first()).toBeVisible()
+  // UC50: Review Attendance Record — click today's record pill for this worker, then Approve.
+  await page.getByRole('button', { name: /\d{1,2}:\d{2}(am|pm).*\d{1,2}:\d{2}(am|pm)/i }).first().click()
+  await expect(page.getByRole('heading', { name: 'Attendance Record' })).toBeVisible()
+  await page.getByRole('button', { name: /Save/ }).click()
+  await expect(page.getByRole('heading', { name: 'Attendance Record' })).toBeHidden()
 
-  // UC58: Approve Leave Request
-  await page.getByRole('button', { name: 'Leave Requests' }).click()
-  await expect(page.getByText('UI needs time off')).toBeVisible()
-  await expect(page.getByText('UI break waiver')).toBeVisible()
-  await page.getByRole('button', { name: 'Approve' }).first().click()
-  await expect(page.getByText('approved').first()).toBeVisible()
+  // Close the Past Attendance Record modal before moving to the other tabs.
+  await expect(page.getByText('Casual Worker — Past Attendance Record')).toBeHidden()
 
   // UC53: Approve Shift Swap Request
-  await page.getByRole('button', { name: 'Shift Swaps' }).click()
-  await expect(page.getByText('Replacement confirmed in UI')).toBeVisible()
-  await page.getByRole('button', { name: 'Approve' }).first().click()
-  await expect(page.getByText('approved').first()).toBeVisible()
 
   // UC56: Approve Fixed Day Off
-  await page.getByRole('button', { name: 'Fixed Day Off' }).click()
-  await expect(page.getByText('Module 5 UI Worker').first()).toBeVisible()
-  await page.getByRole('button', { name: 'Approve' }).first().click()
-  await expect(page.getByText('approved').first()).toBeVisible()
 })

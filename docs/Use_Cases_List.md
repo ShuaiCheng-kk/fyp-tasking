@@ -1,6 +1,6 @@
 # Tasking — Use Cases List
 
-Complete, code-verified use case inventory across all roles, organized by feature module. Each use case is numbered continuously (UC1–UC86, no gaps) and tagged with its subscription tier.
+Complete, code-verified use case inventory across all roles, organized by feature module. Each use case is numbered continuously (UC1–UC80, no gaps) and tagged with its subscription tier.
 
 **Tier legend**
 - **Free** — included in the free plan
@@ -71,74 +71,65 @@ Complete, code-verified use case inventory across all roles, organized by featur
 - UC47 Generate AI Job Description Suggestion — Paid — O, P, M
 - UC48 View AI Candidate Recommendation — Paid — O, P, M
 
-## Module 5 — Attendance UC49–58
+## Module 5 — Attendance UC49–57
 
-- UC49 Clock In / Clock Out — Free — E, CW
+- UC49 Clock In / Clock Out — Free — M, E, CW
 - UC50 Review Attendance Record — Free — O, P, M, E, CW
 - UC51 View Attendance Status — Free — O, P, M
-- UC52 Submit Shift Swap Request — Free — E, CW
+- UC52 Submit Shift Swap Request — Free — M, E
 - UC53 Approve Shift Swap Request — Free — O, P, M
-- UC54 Generate AI Timesheet Approval Suggestion — Paid — O, P, M
-- UC55 Submit Fixed Day Off — Free — E, CW
-- UC56 Approve Fixed Day Off — Free — O, P, M
-- UC57 Submit Leave Request — Free — E, CW
-- UC58 Approve Leave Request — Free — O, P, M
+- UC54 Submit Fixed Day Off — Free — M, E
+- UC55 Export Attendance Record — Paid — O, P, M
+- UC56 Submit Leave Request — Free — M, E
+- UC57 Approve Leave Request — Free — O, P, M
 
-## Module 6 — Communication UC59–62
+## Module 6 — Communication UC58–61
 
-- UC59 Post Announcement — Free — O, P, M, E
-- UC60 Edit Own Announcement — Free — O, P, M, E
-- UC61 Delete Own Announcement — Free — O, P, M, E
-- UC62 Send Direct Message — Free — O, P, M, E, CW
+- UC58 Post Announcement — Free — O, P, M, E
+- UC59 Edit Own Announcement — Free — O, P, M, E
+- UC60 Delete Own Announcement — Free — O, P, M, E
+- UC61 Send Direct Message — Free — O, P, M, E, CW
 
-## Module 7 — Report UC63–65
+## Module 7 — Report UC62–64
 
-- UC63 View Workforce Analytics — Paid — O, P, M
-- UC64 View AI Anomaly Detection Report — Paid — O, P, M
-- UC65 Export Report as CSV — Paid — O, P, M
+- UC62 View Workforce Analytics — Paid — O, P, M
+- UC63 View AI Anomaly Detection Report — Paid — O, P, M
+- UC64 Export Report as CSV — Paid — O, P, M
 
-## Module 8 — Settings & Billing UC66–70
+## Module 8 — Account & Authentication UC65–71
 
-- UC66 Switch Active Company — Free — O, P, M, E
-- UC67 Create Additional Company — Paid — O, P
-- UC68 Delete Company — Free — O
-- UC69 Leave Company — Free — O, P, M, E
-- UC70 Manage Subscription Plan — Free — O, P
+- UC65 Register Account — Free — O, P, M, E, CW, GU
+- UC66 Sign In — Free — All Users
+- UC67 Forgot / Reset Password — Free — All Users
+- UC68 Email Verification — Free — O, P, M, E, CW, GU
+- UC69 Edit Own Profile — Free — O, P, M, E, CW
+- UC70 Accept Company Invitation — Free — O, P, M, E, CW
+- UC71 Logout — Free — All Users
 
-## Module 9 — Account & Authentication UC71–77
-
-- UC71 Register Account — Free — O, P, M, E, CW, GU
-- UC72 Sign In — Free — All Users
-- UC73 Forgot / Reset Password — Free — All Users
-- UC74 Email Verification — Free — O, P, M, E, GU
-- UC75 Edit Own Profile — Free — O, P, M, E, CW
-- UC76 Accept Company Invitation — Free — O, P, M, E
-- UC77 Logout — Free — All Users
-
-## Module 10 — Marketing CMS UC78–81
+## Module 9 — Marketing CMS UC72–75
 
 Operated by a separate `Marketing Admin` role, outside the Owner/Partner/Manager/Employee/Casual Worker/Guest User hierarchy.
 
-- UC78 View Marketing Page List — N/A — MA
-- UC79 Edit Marketing Page — N/A — MA
-- UC80 Edit Content Block — N/A — MA
-- UC81 View Public Marketing Page — N/A — O, P, M, E, CW, GU
+- UC72 View Marketing Page List — N/A — MA
+- UC73 Edit Marketing Page — N/A — MA
+- UC74 Edit Content Block — N/A — MA
+- UC75 View Public Marketing Page — N/A — O, P, M, E, CW, GU
 
-## Module 11 — User & Company Admin UC82–86
+## Module 10 — User & Company Admin UC76–80
 
 Operated by a separate `User Admin` role, outside the Owner/Partner/Manager/Employee/Casual Worker/Guest User hierarchy.
 
-- UC82 View and Search All Companies — N/A — UA
-- UC83 View and Search All Users — N/A — UA
-- UC84 View Company Detail — N/A — UA
-- UC85 Suspend Company — N/A — UA
-- UC86 Suspend User Account — N/A — UA
+- UC76 View and Search All Companies — N/A — UA
+- UC77 View and Search All Users — N/A — UA
+- UC78 View Company Detail — N/A — UA
+- UC79 Suspend Company — N/A — UA
+- UC80 Suspend User Account — N/A — UA
 
 ---
 
 ## Summary
 
-- Total use cases: **86**
-- Free: **50**
-- Paid: **27**
+- Total use cases: **80**
+- Free: **48**
+- Paid: **23**
 - N/A (platform-internal): **9**

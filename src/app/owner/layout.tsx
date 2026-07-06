@@ -35,14 +35,21 @@ export default function OwnerLayout({
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
     )
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'SIGNED_OUT') {
-        localStorage.removeItem('tasking_user_id')
-        localStorage.removeItem('tasking_company_id')
-        localStorage.removeItem('tasking_active_session')
-        localStorage.removeItem('tasking_user_role')
-        router.replace('/signin')
-      }
+    const clearAndRedirect = () => {
+      localStorage.removeItem('tasking_user_id')
+      localStorage.removeItem('tasking_company_id')
+      localStorage.removeItem('tasking_active_session')
+      localStorage.removeItem('tasking_user_role')
+      router.replace('/signin')
+    }
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT') clearAndRedirect()
+      if (event === 'TOKEN_REFRESHED' && !session) clearAndRedirect()
+    })
+
+    supabase.auth.getSession().then(({ error }) => {
+      if (error?.message?.toLowerCase().includes('refresh token')) clearAndRedirect()
     })
 
     async function checkAuth() {
