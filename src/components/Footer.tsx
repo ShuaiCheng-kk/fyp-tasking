@@ -34,6 +34,7 @@ const columns = [
     links: [
       { label: "Pricing", href: "/pricing" },
       { label: "Job Board", href: "/job-board" },
+      { label: "Leave a Feedback", href: "/feedback" },
     ],
   },
 ];
