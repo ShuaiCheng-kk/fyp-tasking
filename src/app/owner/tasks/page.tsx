@@ -4,7 +4,7 @@ import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, Fra
 import { useRouter } from 'next/navigation'
 import { createPortal } from 'react-dom'
 import {
-  Plus, X, ChevronDown, Calendar, AlertCircle,
+  Plus, X, ChevronDown, Calendar, AlertCircle, ArrowRight,
   CheckCircle, Clock, Eye, Layers, Users,
   Crown, UserCog, UserRound, Pencil, Trash2, CalendarDays, ChevronLeft, ChevronRight,
   Sparkles, Check, Archive, ArchiveRestore, Repeat, Copy, GitBranch, Bell, ArrowRightLeft, LayoutTemplate, AlertTriangle, RefreshCw,
@@ -1287,13 +1287,15 @@ export default function OwnerTasksPage() {
   const [templateModalOpen,    setTemplateModalOpen]    = useState(false)
   const [templateFormMode,     setTemplateFormMode]     = useState<'list' | 'create' | 'edit'>('list')
   const [templateFormId,       setTemplateFormId]       = useState('')
-  const [templateFormName,     setTemplateFormName]     = useState('')
   const [templateFormTitle,    setTemplateFormTitle]    = useState('')
   const [templateFormDesc,     setTemplateFormDesc]     = useState('')
   const [templateFormPriority, setTemplateFormPriority] = useState('')
+  const [templateFormSubTaskEnabled, setTemplateFormSubTaskEnabled] = useState(false)
+  const [templateFormSubTasks, setTemplateFormSubTasks] = useState<{ id: string; title: string }[]>([])
+  const [templateFormSubTaskCollapsed, setTemplateFormSubTaskCollapsed] = useState(false)
+  const [templateFormSubTaskDraft, setTemplateFormSubTaskDraft] = useState('')
   const [templateLoading,      setTemplateLoading]      = useState(false)
   const [templateError,        setTemplateError]        = useState('')
-  const [deleteTemplateModal,  setDeleteTemplateModal]  = useState<TaskTemplate | null>(null)
   const [deleteTemplateLoading, setDeleteTemplateLoading] = useState(false)
   const [archiveModalOpen,     setArchiveModalOpen]     = useState(false)
   const [archivedTasks,        setArchivedTasks]        = useState<Task[]>([])
@@ -1872,7 +1874,6 @@ export default function OwnerTasksPage() {
       if (!data.success) throw new Error(data.message)
       await fetchKanban(companyId)
       await refreshAllTaskInsights()
-      setWorkloadInsightOpen(false)
       showTaskToast('Task reassigned.')
     } catch (err) {
       setWorkloadApplyError(err instanceof Error ? err.message : 'Failed to reassign task')
@@ -2126,10 +2127,13 @@ export default function OwnerTasksPage() {
   const openCreateTemplate = () => {
     setTemplateFormMode('create')
     setTemplateFormId('')
-    setTemplateFormName('')
     setTemplateFormTitle('')
     setTemplateFormDesc('')
     setTemplateFormPriority('')
+    setTemplateFormSubTaskEnabled(false)
+    setTemplateFormSubTasks([])
+    setTemplateFormSubTaskCollapsed(false)
+    setTemplateFormSubTaskDraft('')
     setTemplateError('')
   }
 
@@ -2158,36 +2162,58 @@ export default function OwnerTasksPage() {
   const openEditTemplate = (template: TaskTemplate) => {
     setTemplateFormMode('edit')
     setTemplateFormId(template.id)
-    setTemplateFormName(template.name)
     setTemplateFormTitle(template.title)
     setTemplateFormDesc(template.description ?? '')
     setTemplateFormPriority(template.priority ?? '')
+    const subTasks = (template.sub_task_titles ?? []).map(title => ({ id: crypto.randomUUID(), title }))
+    setTemplateFormSubTaskEnabled(subTasks.length > 0)
+    setTemplateFormSubTasks(subTasks)
+    setTemplateFormSubTaskCollapsed(false)
+    setTemplateFormSubTaskDraft('')
     setTemplateError('')
   }
 
+  const useTaskTemplate = (template: TaskTemplate) => {
+    setTemplateModalOpen(false)
+    openNewTaskFor('', '')
+    setNewTitle(template.title)
+    setNewDescription(template.description ?? '')
+    setNewPriority(template.priority ?? '')
+    setNewTemplateId(template.id)
+    const subTasks = (template.sub_task_titles ?? []).map(title => ({ id: crypto.randomUUID(), title }))
+    if (subTasks.length > 0) {
+      setNewSubTaskEnabled(true)
+      setNewSubTasks(subTasks)
+      setNewSubTaskCollapsed(true)
+    }
+  }
+
   const handleSaveTemplate = async () => {
-    if (!templateFormName.trim() || !templateFormTitle.trim()) {
-      setTemplateError('Name and task title are required.')
+    if (!templateFormTitle.trim()) {
+      setTemplateError('Task title is required.')
       return
     }
     setTemplateLoading(true)
     setTemplateError('')
     try {
       const isEdit = templateFormMode === 'edit'
+      const subTaskTitles = templateFormSubTaskEnabled ? templateFormSubTasks.map(s => s.title) : []
       const res = await fetch(isEdit ? `/api/task-template/${templateFormId}` : '/api/task-template', {
         method: isEdit ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(isEdit ? {
-          name: templateFormName.trim(),
+          name: templateFormTitle.trim(),
           title: templateFormTitle.trim(),
           description: templateFormDesc.trim() || null,
           priority: templateFormPriority || null,
+          sub_task_titles: subTaskTitles,
         } : {
           company_id: companyId,
-          name: templateFormName.trim(),
+          name: templateFormTitle.trim(),
           title: templateFormTitle.trim(),
           description: templateFormDesc.trim() || null,
           priority: templateFormPriority || null,
+          sub_task_titles: subTaskTitles,
           created_by: internalUserId || undefined,
         }),
       })
@@ -2203,15 +2229,13 @@ export default function OwnerTasksPage() {
     }
   }
 
-  const handleDeleteTemplate = async () => {
-    if (!deleteTemplateModal) return
+  const handleDeleteTemplate = async (id: string) => {
     setDeleteTemplateLoading(true)
     try {
-      const res = await fetch(`/api/task-template/${deleteTemplateModal.id}`, { method: 'DELETE' })
+      const res = await fetch(`/api/task-template/${id}`, { method: 'DELETE' })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to delete template')
       await fetchTaskTemplates(companyId)
-      setDeleteTemplateModal(null)
       showTaskToast('Template deleted.')
     } catch (err) {
       setTemplateError(err instanceof Error ? err.message : 'Failed to delete template')
@@ -2570,7 +2594,7 @@ export default function OwnerTasksPage() {
   const newAssigneeMember = members.find(m => m.id === newAssigneeId) ?? null
   const priorityDropdownOptions: { value: string; label: string }[] =
     (['Low', 'Medium', 'High', 'Urgent'] as PriorityLevel[]).map(p => ({ value: p, label: p }))
-  const templateDropdownOptions = taskTemplates.map(t => ({ value: t.id, label: t.name }))
+  const templateDropdownOptions = taskTemplates.map(t => ({ value: t.id, label: t.title }))
   const newRecurringPreviewDates: string[] = (() => {
     if (!newRecurringEnabled || !newRecurrenceRule || !newStartDate || !newRecurrenceEndDate) return []
     const intervalDays = newRecurrenceRule === 'daily'
@@ -2659,8 +2683,10 @@ export default function OwnerTasksPage() {
     else base.setDate(base.getDate() + editDeadlineRuleOffsetAmount)
     return base.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
   }
-  const editTaskDeptMembers = (editDeptId ? assignableMembers.filter(m => m.department_id === editDeptId) : assignableMembers)
-    .filter(m => userIdsWithShiftOnDate(editStartDate).has(m.id) || m.id === editAssignee)
+  const editTaskDeptMembers = assignableMembers.filter(m =>
+    m.id === editAssignee ||
+    ((!editDeptId || m.department_id === editDeptId) && userIdsWithShiftOnDate(editStartDate).has(m.id))
+  )
   const editAssigneeDropdownOptions = editTaskDeptMembers.map(m => ({ value: m.id, label: m.full_name }))
   const isEditTaskValid = editTitle.trim() !== '' && editDeptId !== '' && editStartDate !== '' && editPriority !== '' && editDueAt !== '' && editDeadlineTime !== ''
   const isEditRecurringFormValid = !editRecurringEnabled || (
@@ -4769,13 +4795,17 @@ export default function OwnerTasksPage() {
                                   {t.priority}
                                 </span>
                               )}
-                              <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: '#111827', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.name}</p>
+                              <button type="button" onClick={() => openEditTemplate(t)} title="Edit template"
+                                style={{ margin: 0, fontSize: 14, fontWeight: 700, color: '#111827', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', border: 'none', background: 'transparent', padding: 0, textAlign: 'left', cursor: 'pointer' }}
+                                onMouseEnter={e => { e.currentTarget.style.color = TASK_ORANGE }}
+                                onMouseLeave={e => { e.currentTarget.style.color = '#111827' }}
+                              >{t.title}</button>
                             </div>
                             <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                              <button type="button" onClick={() => openEditTemplate(t)} style={{ border: 'none', background: 'transparent', color: '#6B7280', cursor: 'pointer', display: 'flex', padding: 6, borderRadius: 6 }} title="Edit">
-                                <Pencil size={14} />
+                              <button type="button" onClick={() => useTaskTemplate(t)} style={{ border: 'none', background: 'transparent', color: '#6B7280', cursor: 'pointer', display: 'flex', padding: 6, borderRadius: 6 }} title="Use template">
+                                <ArrowRight size={14} />
                               </button>
-                              <button type="button" onClick={() => setDeleteTemplateModal(t)} style={{ border: 'none', background: 'transparent', color: '#DC2626', cursor: 'pointer', display: 'flex', padding: 6, borderRadius: 6 }} title="Delete">
+                              <button type="button" onClick={() => void handleDeleteTemplate(t.id)} disabled={deleteTemplateLoading} style={{ border: 'none', background: 'transparent', color: '#DC2626', cursor: deleteTemplateLoading ? 'default' : 'pointer', display: 'flex', padding: 6, borderRadius: 6, opacity: deleteTemplateLoading ? 0.5 : 1 }} title="Delete">
                                 <Trash2 size={14} />
                               </button>
                             </div>
@@ -4795,27 +4825,101 @@ export default function OwnerTasksPage() {
                 </>
               ) : (
                 <>
-                  <div>
-                    <label style={modalLabelStyle}>Name</label>
-                    <input autoFocus value={templateFormName} onChange={e => setTemplateFormName(e.target.value)} placeholder="e.g. Daily Cleaning Checklist" style={modalInputStyle} />
+                  {/* Title + Priority */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    <div>
+                      <label style={modalLabelStyle}>Title</label>
+                      <input autoFocus value={templateFormTitle} onChange={e => setTemplateFormTitle(e.target.value)} style={modalInputStyle} />
+                    </div>
+                    <div>
+                      <label style={modalLabelStyle}>Priority</label>
+                      <DropdownField
+                        value={templateFormPriority}
+                        options={priorityDropdownOptions}
+                        onChange={setTemplateFormPriority}
+                        placeholder="Select priority"
+                        badgeColors={PRIORITY_COLORS}
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <label style={modalLabelStyle}>Task Title</label>
-                    <input value={templateFormTitle} onChange={e => setTemplateFormTitle(e.target.value)} placeholder="Task title this template creates..." style={modalInputStyle} />
-                  </div>
+
+                  {/* Description */}
                   <div>
                     <label style={modalLabelStyle}>Description</label>
-                    <textarea value={templateFormDesc} onChange={e => setTemplateFormDesc(e.target.value)} onKeyDown={e => handleDescriptionKeyDown(e, templateFormDesc, setTemplateFormDesc)} rows={2} placeholder="Add more context..." style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }} />
+                    <textarea value={templateFormDesc} onChange={e => setTemplateFormDesc(e.target.value)} onKeyDown={e => handleDescriptionKeyDown(e, templateFormDesc, setTemplateFormDesc)} rows={2} style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }} />
                   </div>
-                  <div>
-                    <label style={modalLabelStyle}>Priority</label>
-                    <DropdownField
-                      value={templateFormPriority}
-                      options={priorityDropdownOptions}
-                      onChange={setTemplateFormPriority}
-                      placeholder="Select priority"
-                      badgeColors={PRIORITY_COLORS}
-                    />
+
+                  {/* Divider */}
+                  <div style={{ borderTop: '1px dashed #E5E7EB' }} />
+
+                  {/* Sub Task toggle */}
+                  <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', flex: 1 }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
+                          <GitBranch size={13} color={TASK_ORANGE} /> Sub Task
+                          {templateFormSubTasks.length > 0 && (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 18, height: 18, padding: '0 5px', borderRadius: 9, background: '#FFF3E8', color: '#EA580C', fontSize: 11, fontWeight: 800 }}>
+                              {templateFormSubTasks.length}
+                            </span>
+                          )}
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={templateFormSubTaskEnabled}
+                          onChange={e => setTemplateFormSubTaskEnabled(e.target.checked)}
+                          style={{ width: 16, height: 16, accentColor: TASK_ORANGE, cursor: 'pointer', marginLeft: 'auto' }}
+                        />
+                      </label>
+                      {templateFormSubTaskEnabled && templateFormSubTasks.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setTemplateFormSubTaskCollapsed(prev => !prev)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, marginLeft: 6, display: 'flex', color: '#9CA3AF', borderRadius: 6, flexShrink: 0 }}
+                        >
+                          <ChevronDown size={14} style={{ transform: templateFormSubTaskCollapsed ? 'none' : 'rotate(180deg)', transition: 'transform 0.15s' }} />
+                        </button>
+                      )}
+                    </div>
+
+                    {templateFormSubTaskEnabled && !(templateFormSubTaskCollapsed && templateFormSubTasks.length > 0) && (
+                      <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        {templateFormSubTasks.length > 0 && (
+                          <SubTaskOrderList
+                            items={templateFormSubTasks}
+                            onReorder={orderedIds => setTemplateFormSubTasks(prev => orderedIds.map(id => prev.find(s => s.id === id)!))}
+                            onRemove={id => setTemplateFormSubTasks(prev => prev.filter(s => s.id !== id))}
+                            onRename={(id, title) => setTemplateFormSubTasks(prev => prev.map(s => s.id === id ? { ...s, title } : s))}
+                          />
+                        )}
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <input
+                            value={templateFormSubTaskDraft}
+                            onChange={e => setTemplateFormSubTaskDraft(e.target.value)}
+                            placeholder="Sub-task title..."
+                            style={{ ...modalInputStyle, flex: 1, minWidth: 0, minHeight: 32, padding: '6px 10px', fontSize: 12 }}
+                            onKeyDown={e => {
+                              if (e.key !== 'Enter' || !templateFormSubTaskDraft.trim()) return
+                              e.preventDefault()
+                              setTemplateFormSubTasks(prev => [...prev, { id: crypto.randomUUID(), title: templateFormSubTaskDraft.trim() }])
+                              setTemplateFormSubTaskDraft('')
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!templateFormSubTaskDraft.trim()) return
+                              setTemplateFormSubTasks(prev => [...prev, { id: crypto.randomUUID(), title: templateFormSubTaskDraft.trim() }])
+                              setTemplateFormSubTaskDraft('')
+                            }}
+                            disabled={!templateFormSubTaskDraft.trim()}
+                            style={{ flexShrink: 0, width: 32, height: 30, padding: 0, border: 'none', borderRadius: 7, background: templateFormSubTaskDraft.trim() ? 'linear-gradient(135deg, #F97316, #EA580C)' : '#E5E7EB', color: templateFormSubTaskDraft.trim() ? '#FFFFFF' : '#9CA3AF', fontWeight: 700, fontSize: 12, cursor: templateFormSubTaskDraft.trim() ? 'pointer' : 'not-allowed', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                          >
+                            <Plus size={14} strokeWidth={2.5} />
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </>
               )}
@@ -4838,8 +4942,8 @@ export default function OwnerTasksPage() {
                 <button
                   type="button"
                   onClick={handleSaveTemplate}
-                  disabled={templateLoading || !templateFormName.trim() || !templateFormTitle.trim()}
-                  style={{ padding: '7px 18px', background: (!templateFormName.trim() || !templateFormTitle.trim()) ? '#E5E7EB' : templateLoading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: (!templateFormName.trim() || !templateFormTitle.trim()) ? '#9CA3AF' : '#FFFFFF', cursor: templateLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: templateLoading ? 0.65 : 1 }}
+                  disabled={templateLoading || !templateFormTitle.trim()}
+                  style={{ padding: '7px 18px', background: !templateFormTitle.trim() ? '#E5E7EB' : templateLoading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: !templateFormTitle.trim() ? '#9CA3AF' : '#FFFFFF', cursor: templateLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: templateLoading ? 0.65 : 1 }}
                 >
                   {templateLoading ? <Spinner size={13} /> : <Check size={13} />} {templateFormMode === 'edit' ? 'Save Changes' : 'Create Template'}
                 </button>
@@ -4849,22 +4953,6 @@ export default function OwnerTasksPage() {
         </div>
       )}
 
-      {/* ═══════════════ DELETE TASK TEMPLATE MODAL ═══════════════ */}
-      {deleteTemplateModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'grid', placeItems: 'center', padding: 18, zIndex: 110, animation: 'overlayFadeIn 0.18s ease-out' }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: 'min(420px, 100%)', background: '#FFFFFF', borderRadius: 16, border: '1px solid #E2E8F0', boxShadow: '0 24px 70px rgba(15,23,42,0.32)', padding: 16, animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 16 }}>
-              <h2 style={{ margin: 0, color: TASK_TEXT, fontSize: 16, fontWeight: 700 }}>Delete Template</h2>
-              <button type="button" onClick={() => setDeleteTemplateModal(null)} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34, border: `1px solid ${TASK_BORDER}`, borderRadius: 9, background: '#FFFFFF', cursor: 'pointer', color: TASK_TEXT }}><X size={16} /></button>
-            </div>
-            <p style={{ color: '#64748B', marginTop: 0, fontSize: 13 }}>Are you sure you want to delete <strong style={{ color: TASK_TEXT }}>{deleteTemplateModal.name}</strong>?</p>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, marginTop: 18 }}>
-              <button type="button" onClick={() => setDeleteTemplateModal(null)} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: `1px solid ${TASK_BORDER}`, borderRadius: 10, background: '#FFFFFF', color: TASK_TEXT, height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Cancel</button>
-              <button type="button" onClick={handleDeleteTemplate} disabled={deleteTemplateLoading} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: '#DC2626', color: '#FFFFFF', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: deleteTemplateLoading ? 'default' : 'pointer', opacity: deleteTemplateLoading ? 0.65 : 1 }}>{deleteTemplateLoading ? null : <Trash2 size={16} />} Delete</button>
-            </div>
-          </div>
-        </div>
-      )}
 
 
       {/* ═══════════════ AI TASK ASSIGNMENT MODAL ═══════════════ */}

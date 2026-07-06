@@ -36,6 +36,15 @@ export async function PATCH(
       requirements: body.requirements,
       employment_type: body.employment_type,
       form_type: body.form_type,
+      department_id: body.department_id,
+      salary_amount: body.salary_amount,
+      salary_type: body.salary_type,
+      uniform_required: body.uniform_required,
+      uniform_details: body.uniform_details,
+      experience_required: body.experience_required,
+      minimum_age: body.minimum_age,
+      estimated_hours: body.estimated_hours,
+      urgency: body.urgency,
     })
     return NextResponse.json({ success: true, template })
   } catch (err) {

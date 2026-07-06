@@ -5,6 +5,7 @@ export interface TaskTemplate {
   title: string
   description: string | null
   priority: string | null
+  sub_task_titles: string[]
   created_by: string
   created_at: string
 }
@@ -15,6 +16,7 @@ export interface TaskTemplateInput {
   title: string
   description?: string | null
   priority?: string | null
+  sub_task_titles?: string[]
   created_by: string
 }
 
@@ -23,4 +25,5 @@ export interface TaskTemplateUpdateInput {
   title?: string
   description?: string | null
   priority?: string | null
+  sub_task_titles?: string[]
 }

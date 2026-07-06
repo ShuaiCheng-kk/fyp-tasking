@@ -97,7 +97,11 @@ export async function POST(req: NextRequest) {
     assigned_employee_id: typeof data.assigned_employee_id === 'string' && data.assigned_employee_id ? data.assigned_employee_id : null,
     form_type: typeof data.formType === 'string' && data.formType ? data.formType : null,
     expires_at: typeof data.expires_at === 'string' && data.expires_at ? data.expires_at : null,
-    expiry_preset: typeof data.expiry_preset === 'string' && data.expiry_preset ? data.expiry_preset : null,
+    template_id: typeof data.template_id === 'string' && data.template_id ? data.template_id : null,
+    experience_required: typeof data.experience_required === 'string' && data.experience_required ? data.experience_required : null,
+    minimum_age: typeof data.minimum_age === 'string' && data.minimum_age ? data.minimum_age : null,
+    uniform_required: data.uniform_required === true,
+    uniform_details: typeof data.uniform_details === 'string' && data.uniform_details ? data.uniform_details : null,
   }
 
   try {
@@ -142,7 +146,10 @@ export async function PATCH(req: NextRequest) {
         job_start_time: typeof data.job_start_time === 'string' ? data.job_start_time : null,
         assigned_employee_id: typeof data.assigned_employee_id === 'string' ? data.assigned_employee_id : null,
         expires_at: typeof data.expires_at === 'string' ? data.expires_at : null,
-        expiry_preset: typeof data.expiry_preset === 'string' ? data.expiry_preset : null,
+        experience_required: typeof data.experience_required === 'string' ? data.experience_required : null,
+        minimum_age: typeof data.minimum_age === 'string' ? data.minimum_age : null,
+        uniform_required: typeof data.uniform_required === 'boolean' ? data.uniform_required : undefined,
+        uniform_details: typeof data.uniform_details === 'string' ? data.uniform_details : null,
       })
       return NextResponse.json({ success: true, posting })
     }

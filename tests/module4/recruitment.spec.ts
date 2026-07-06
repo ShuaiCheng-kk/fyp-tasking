@@ -321,7 +321,121 @@ test('UC36 creates, lists, edits, and deletes a job template', async ({ request 
   expect(templatesAfterDelete.some((t: { id: string }) => t.id === created.id)).toBe(false)
 })
 
-test('UC43 persists an application deadline on a job posting', async ({ request }) => {
+test('template usage stats reflect jobs created from a template', async ({ request }) => {
+  const templateRes = await request.post('/api/job-template', {
+    data: {
+      company_id: seeded.companyId,
+      created_by: seeded.ownerId,
+      name: 'Usage Stats Template',
+      title: 'Event Crew',
+      description: 'Set up and tear down event equipment',
+      form_type: 'oneoff',
+    },
+  })
+  expect(templateRes.status()).toBe(201)
+  const template = (await templateRes.json()).template
+  createdTemplateIds.push(template.id)
+
+  const zeroUsageRes = await request.get(`/api/job-template/${template.id}/usage`)
+  expect(zeroUsageRes.status()).toBe(200)
+  expect((await zeroUsageRes.json()).stats).toEqual({
+    used_in_jobs: 0, published_jobs: 0, draft_jobs: 0, last_used_at: null,
+  })
+
+  const draftRes = await request.post('/api/recruitment', {
+    data: {
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      created_by: seeded.ownerId,
+      title: 'Event Crew',
+      description: 'Set up and tear down event equipment',
+      formType: 'oneoff',
+      job_start_time: '09:00',
+      status: 'draft',
+      template_id: template.id,
+    },
+  })
+  expect(draftRes.status()).toBe(201)
+  const draftPosting = (await draftRes.json()).posting
+  createdJobIds.push(draftPosting.id)
+  expect(draftPosting.template_id).toBe(template.id)
+
+  const publishedRes = await request.post('/api/recruitment', {
+    data: {
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      created_by: seeded.ownerId,
+      title: 'Event Crew',
+      description: 'Set up and tear down event equipment',
+      formType: 'oneoff',
+      job_start_time: '09:00',
+      status: 'open',
+      template_id: template.id,
+    },
+  })
+  expect(publishedRes.status()).toBe(201)
+  const publishedPosting = (await publishedRes.json()).posting
+  createdJobIds.push(publishedPosting.id)
+
+  const usageRes = await request.get(`/api/job-template/${template.id}/usage`)
+  expect(usageRes.status()).toBe(200)
+  const { stats } = await usageRes.json()
+  expect(stats.used_in_jobs).toBe(2)
+  expect(stats.published_jobs).toBe(1)
+  expect(stats.draft_jobs).toBe(1)
+  expect(stats.last_used_at).not.toBeNull()
+})
+
+test('applying a template carries Experience Required, Minimum Age, and Uniform Required/Details onto the job posting', async ({ request }) => {
+  const templateRes = await request.post('/api/job-template', {
+    data: {
+      company_id: seeded.companyId,
+      created_by: seeded.ownerId,
+      name: 'Requirements Template',
+      title: 'Barista',
+      description: 'Serve customers, prep orders',
+      form_type: 'oneoff',
+      experience_required: '1+ Year',
+      minimum_age: '18+',
+      uniform_required: true,
+      uniform_details: 'Black polo + apron',
+    },
+  })
+  expect(templateRes.status()).toBe(201)
+  const template = (await templateRes.json()).template
+  createdTemplateIds.push(template.id)
+  expect(template.experience_required).toBe('1+ Year')
+  expect(template.minimum_age).toBe('18+')
+  expect(template.uniform_required).toBe(true)
+  expect(template.uniform_details).toBe('Black polo + apron')
+
+  const postingRes = await request.post('/api/recruitment', {
+    data: {
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      created_by: seeded.ownerId,
+      title: template.title,
+      description: template.description,
+      formType: 'oneoff',
+      job_start_time: '09:00',
+      status: 'open',
+      template_id: template.id,
+      experience_required: template.experience_required,
+      minimum_age: template.minimum_age,
+      uniform_required: template.uniform_required,
+      uniform_details: template.uniform_details,
+    },
+  })
+  expect(postingRes.status()).toBe(201)
+  const posting = (await postingRes.json()).posting
+  createdJobIds.push(posting.id)
+  expect(posting.experience_required).toBe('1+ Year')
+  expect(posting.minimum_age).toBe('18+')
+  expect(posting.uniform_required).toBe(true)
+  expect(posting.uniform_details).toBe('Black polo + apron')
+})
+
+test('UC43 persists an application deadline (date + time) on a job posting', async ({ request }) => {
   const res = await request.post('/api/recruitment', {
     data: {
       company_id: seeded.companyId,
@@ -334,23 +448,53 @@ test('UC43 persists an application deadline on a job posting', async ({ request 
       shift_start_time: '09:00',
       shift_end_time: '17:00',
       status: 'open',
-      expires_at: '2030-04-01',
-      expiry_preset: '30d',
+      expires_at: '2030-04-01T15:30:00.000Z',
     },
   })
   expect(res.status()).toBe(201)
   const body = await res.json()
   createdJobIds.push(body.posting.id)
   expect(body.posting.expires_at).toContain('2030-04-01')
-  expect(body.posting.expiry_preset).toBe('30d')
 
   const editRes = await request.patch('/api/recruitment', {
-    data: { action: 'edit_posting', job_id: body.posting.id, expires_at: '2030-05-01', expiry_preset: 'custom' },
+    data: { action: 'edit_posting', job_id: body.posting.id, expires_at: '2030-05-01T09:00:00.000Z' },
   })
   expect(editRes.status()).toBe(200)
   const editBody = await editRes.json()
   expect(editBody.posting.expires_at).toContain('2030-05-01')
-  expect(editBody.posting.expiry_preset).toBe('custom')
+})
+
+test('UC43 auto-archives an open posting once its deadline has passed', async ({ request }) => {
+  const createRes = await request.post('/api/recruitment', {
+    data: {
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      created_by: seeded.ownerId,
+      title: 'Past-Deadline Cashier',
+      description: 'Should auto-archive once listed after its deadline.',
+      formType: 'oneoff',
+      job_start_time: '09:00',
+      status: 'open',
+      expires_at: '2020-01-01T00:00:00.000Z',
+    },
+  })
+  expect(createRes.status()).toBe(201)
+  const created = (await createRes.json()).posting
+  createdJobIds.push(created.id)
+  expect(created.status).toBe('open')
+
+  // Listing the company's postings runs the lazy expiry sweep before returning.
+  const listRes = await request.get(`/api/recruitment?company_id=${seeded.companyId}`)
+  expect(listRes.status()).toBe(200)
+  const { postings } = await listRes.json()
+  const swept = postings.find((p: { id: string }) => p.id === created.id)
+  expect(swept.status).toBe('archived')
+  expect(swept.archived_at).not.toBeNull()
+
+  // Archived (even if only just auto-archived) must never appear on the public job board.
+  const publicRes = await request.get('/api/jobs/public')
+  const { jobs } = await publicRes.json()
+  expect(jobs.some((j: { id: string }) => j.id === created.id)).toBe(false)
 })
 
 test('UC44 view applicant list resolves full_name and email_address from the applicant\'s user account', async ({ request }) => {

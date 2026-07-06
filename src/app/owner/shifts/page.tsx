@@ -3757,7 +3757,7 @@ export default function OwnerShiftsPage() {
                   </div>
 
                   <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 28 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 8 }}>
                       {AI_WIZARD_STEPS.map((s, i) => {
                         const isDone = stepIdx > i
                         return (

@@ -18,6 +18,7 @@ export const recruitmentService = {
 
   async getJobPostingsByDepartment(company_id: string, department_id: string): Promise<JobPostingSummary[]> {
     if (!company_id || !department_id) throw new Error('company_id and department_id are required')
+    await recruitmentRepository.sweepExpiredJobPostings(company_id)
     const postings = await recruitmentRepository.getJobPostingsByDepartment(company_id, department_id)
     const applicantRows = await recruitmentRepository.getApplicantCounts(postings.map(posting => posting.id))
     const deptIds = [...new Set(postings.map(posting => posting.department_id).filter((id): id is string => Boolean(id)))]
@@ -38,6 +39,7 @@ export const recruitmentService = {
 
   async getJobPostingsForManager(company_id: string, manager_id: string): Promise<JobPostingSummary[]> {
     if (!company_id || !manager_id) throw new Error('company_id and manager_id are required')
+    await recruitmentRepository.sweepExpiredJobPostings(company_id)
     const deptIds = await recruitmentRepository.getManagerDepartmentIds(manager_id, company_id)
     const postings = await recruitmentRepository.getJobPostingsByManagerDepts(company_id, deptIds)
     const applicantRows = await recruitmentRepository.getApplicantCounts(postings.map(p => p.id))
@@ -61,6 +63,7 @@ export const recruitmentService = {
 
   async getJobPostings(company_id: string): Promise<JobPostingSummary[]> {
     if (!company_id) throw new Error('company_id is required')
+    await recruitmentRepository.sweepExpiredJobPostings(company_id)
     const postings = await recruitmentRepository.getJobPostingsByCompany(company_id)
     const applicantRows = await recruitmentRepository.getApplicantCounts(postings.map(posting => posting.id))
     const deptIds = [...new Set(postings.map(posting => posting.department_id).filter((id): id is string => Boolean(id)))]
@@ -182,6 +185,10 @@ export const recruitmentService = {
       break_start_time: original.break_start_time,
       break_end_time: original.break_end_time,
       assigned_employee_id: original.assigned_employee_id,
+      experience_required: original.experience_required,
+      minimum_age: original.minimum_age,
+      uniform_required: original.uniform_required,
+      uniform_details: original.uniform_details,
     })
   },
 

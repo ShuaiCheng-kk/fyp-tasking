@@ -13,6 +13,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS protect_admin_accounts ON users;
+
 CREATE TRIGGER protect_admin_accounts
 BEFORE DELETE ON users
 FOR EACH ROW EXECUTE FUNCTION prevent_admin_deletion();

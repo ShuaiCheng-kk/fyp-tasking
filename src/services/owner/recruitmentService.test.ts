@@ -31,6 +31,7 @@ vi.mock('@/repositories/owner/recruitmentRepository', () => ({
     getCasualWorkersByCompany: vi.fn(),
     getAcceptedCasualWorkersByAssignedEmployee: vi.fn(),
     updateCasualWorkerStatus: vi.fn(),
+    sweepExpiredJobPostings: vi.fn(),
   },
 }))
 
@@ -75,7 +76,11 @@ const basePosting: JobPosting = {
   assigned_employee_id: null,
   rejection_reason: null,
   expires_at: null,
-  expiry_preset: null,
+  template_id: null,
+  experience_required: null,
+  minimum_age: null,
+  uniform_required: false,
+  uniform_details: null,
 }
 
 const baseApplicant: JobApplicant = {
@@ -140,15 +145,27 @@ describe('recruitmentService — Recruitment', () => {
         .rejects.toThrow('job_start_time is required to publish a one-off job')
     })
 
-    it('persists expires_at and expiry_preset when provided (UC43)', async () => {
+    it('persists expires_at when provided (UC43)', async () => {
       vi.mocked(recruitmentRepository.createJobPosting).mockResolvedValue({
-        ...basePosting, expires_at: '2026-07-10', expiry_preset: '7d',
+        ...basePosting, expires_at: '2026-07-10T23:59:00.000Z',
       })
 
-      await recruitmentService.createJobPosting({ ...baseInput, expires_at: '2026-07-10', expiry_preset: '7d' })
+      await recruitmentService.createJobPosting({ ...baseInput, expires_at: '2026-07-10T23:59:00.000Z' })
 
       expect(recruitmentRepository.createJobPosting).toHaveBeenCalledWith(
-        expect.objectContaining({ expires_at: '2026-07-10', expiry_preset: '7d' })
+        expect.objectContaining({ expires_at: '2026-07-10T23:59:00.000Z' })
+      )
+    })
+
+    it('persists template_id when the posting was created from a template', async () => {
+      vi.mocked(recruitmentRepository.createJobPosting).mockResolvedValue({
+        ...basePosting, template_id: 'template-1',
+      })
+
+      await recruitmentService.createJobPosting({ ...baseInput, template_id: 'template-1' })
+
+      expect(recruitmentRepository.createJobPosting).toHaveBeenCalledWith(
+        expect.objectContaining({ template_id: 'template-1' })
       )
     })
   })

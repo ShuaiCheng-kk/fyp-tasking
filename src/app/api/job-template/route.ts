@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { company_id, name, title, description, requirements, employment_type, form_type, created_by } = body as Record<string, unknown>
+  const { company_id, name, title, description, requirements, employment_type, form_type, department_id, salary_amount, salary_type, uniform_required, uniform_details, experience_required, minimum_age, estimated_hours, urgency, created_by } = body as Record<string, unknown>
 
   if (!company_id || typeof company_id !== 'string')
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
@@ -49,6 +49,15 @@ export async function POST(req: NextRequest) {
       requirements: typeof requirements === 'string' ? requirements : null,
       employment_type: typeof employment_type === 'string' ? employment_type : null,
       form_type: typeof form_type === 'string' ? form_type : null,
+      department_id: typeof department_id === 'string' && department_id ? department_id : null,
+      salary_amount: typeof salary_amount === 'number' ? salary_amount : null,
+      salary_type: typeof salary_type === 'string' ? salary_type : null,
+      uniform_required: uniform_required === true,
+      uniform_details: typeof uniform_details === 'string' && uniform_details ? uniform_details : null,
+      experience_required: typeof experience_required === 'string' && experience_required ? experience_required : null,
+      minimum_age: typeof minimum_age === 'string' && minimum_age ? minimum_age : null,
+      estimated_hours: typeof estimated_hours === 'string' && estimated_hours ? estimated_hours : null,
+      urgency: typeof urgency === 'string' && urgency ? urgency : null,
       created_by,
     })
     return NextResponse.json({ success: true, template }, { status: 201 })

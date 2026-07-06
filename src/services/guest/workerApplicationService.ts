@@ -1,5 +1,6 @@
 import { workerApplicationRepository } from '@/repositories/guest/workerApplicationRepository'
 import { shiftService } from '@/services/owner/shiftService'
+import { recruitmentRepository } from '@/repositories/owner/recruitmentRepository'
 
 type SubmitApplicationInput = {
   job_id: string
@@ -37,6 +38,13 @@ export const workerApplicationService = {
 
     validateFile(input.resume_file, 'Resume')
     validateFile(input.cover_letter_file, 'Cover letter')
+
+    // Guards against a stale/bookmarked apply link — the job board itself already hides
+    // archived/expired postings, but a direct link could still reach this far.
+    const job = await recruitmentRepository.getJobPostingById(input.job_id)
+    if (!job || job.status !== 'open' || (job.expires_at && new Date(job.expires_at) < new Date())) {
+      throw new Error('This job is no longer accepting applications')
+    }
 
     const existing = await workerApplicationRepository.checkExistingApplication(
       input.job_id,
