@@ -2833,7 +2833,7 @@ export default function OwnerAttendancePage() {
                         gap: 14,
                       }}
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 44 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', rowGap: 12, gap: 44 }}>
                         <RoleAvatar role={group.requester_role || 'Manager'} size={72} photoUrl={requester?.profile_photo_url ?? null} />
 
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flexShrink: 0 }}>
@@ -2886,7 +2886,7 @@ export default function OwnerAttendancePage() {
                                 }
                               }}
                               disabled={reqActionLoading || aiLoading}
-                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#C2410C', background: (isModifying || aiResult) ? '#FFEDD5' : '#FFF7ED', border: `1.5px solid ${(isModifying || aiResult) ? '#FDBA74' : '#FED7AA'}`, borderRadius: 999, padding: '6px 16px', cursor: (reqActionLoading || aiLoading) ? 'default' : 'pointer', opacity: (reqActionLoading || aiLoading) ? 0.6 : 1, transition: 'background 0.15s, border-color 0.15s' }}
+                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#6D28D9', background: (isModifying || aiResult) ? '#EDE9FE' : '#F5F3FF', border: `1.5px solid ${(isModifying || aiResult) ? '#C4B5FD' : '#DDD6FE'}`, borderRadius: 999, padding: '6px 16px', cursor: (reqActionLoading || aiLoading) ? 'default' : 'pointer', opacity: (reqActionLoading || aiLoading) ? 0.6 : 1, transition: 'background 0.15s, border-color 0.15s' }}
                             >
                               {aiLoading ? <Spinner size={13} /> : <Sparkles size={13} />} Suggestion
                             </button>
@@ -2914,7 +2914,7 @@ export default function OwnerAttendancePage() {
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
                             <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
                               {aiResult && aiResult.recommendation === 'modify' && (
-                                <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#C2410C', lineHeight: 1.4 }}>{aiResult.reason}</span>
+                                <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#0F172A', lineHeight: 1.4 }}>{aiResult.reason}</span>
                               )}
                               <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: 0 }}>
                                 Select {requestedCount} replacement day{requestedCount > 1 ? 's' : ''} for the week of {formatSwapDate(group.week_start)}
@@ -2935,8 +2935,8 @@ export default function OwnerAttendancePage() {
                                   style={{
                                     display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 700,
                                     color: isSelected ? '#FFFFFF' : '#334155',
-                                    background: isSelected ? '#F97316' : '#FFFFFF',
-                                    border: `1.5px solid ${isSelected ? '#F97316' : '#E5E7EB'}`,
+                                    background: isSelected ? '#A78BFA' : '#FFFFFF',
+                                    border: `1.5px solid ${isSelected ? '#A78BFA' : '#E5E7EB'}`,
                                     borderRadius: 999, padding: '5px 10px', cursor: 'pointer',
                                   }}
                                 >
@@ -2957,9 +2957,9 @@ export default function OwnerAttendancePage() {
                               type="button"
                               onClick={() => decideFixedOffGroup(ids, 'modified', group.requester_name, fixedOffModifySelection)}
                               disabled={fixedOffModifySelection.length !== requestedCount || reqActionLoading}
-                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#FFFFFF', background: (fixedOffModifySelection.length !== requestedCount || reqActionLoading) ? '#FDBA74' : '#F97316', border: 'none', borderRadius: 999, padding: '6px 16px', cursor: (fixedOffModifySelection.length !== requestedCount || reqActionLoading) ? 'default' : 'pointer', opacity: (fixedOffModifySelection.length !== requestedCount || reqActionLoading) ? 0.7 : 1 }}
+                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#FFFFFF', background: (fixedOffModifySelection.length !== requestedCount || reqActionLoading) ? '#C4B5FD' : 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 999, padding: '6px 16px', cursor: (fixedOffModifySelection.length !== requestedCount || reqActionLoading) ? 'default' : 'pointer', opacity: (fixedOffModifySelection.length !== requestedCount || reqActionLoading) ? 0.7 : 1 }}
                             >
-                              {reqActionLoading ? <Spinner size={13} /> : <Check size={13} />} Confirm Modification
+                              {reqActionLoading ? <Spinner size={13} /> : <Check size={13} />} Confirm
                             </button>
                           </div>
                         </div>
@@ -3047,6 +3047,12 @@ export default function OwnerAttendancePage() {
                             </div>
                           </div>
 
+                          {fixedOffDayRequests.length === 0 ? (
+                            <div style={{ padding: '48px 16px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, color: '#9CA3AF' }}>
+                              <CalendarDays size={22} strokeWidth={1.5} />
+                              <span style={{ fontSize: 13, fontWeight: 600 }}>No off day requests yet</span>
+                            </div>
+                          ) : (
                           <div style={{ padding: '12px 16px 16px', overflowX: 'auto' }}>
                             <div style={{ minWidth: 560, border: '1px solid #1E293B', borderRadius: 10, overflow: 'hidden' }}>
                               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(76px, 1fr))', background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', height: 44 }}>
@@ -3138,6 +3144,7 @@ export default function OwnerAttendancePage() {
                               </div>
                             </div>
                           </div>
+                          )}
                         </section>
                         </div>
 
@@ -3164,6 +3171,12 @@ export default function OwnerAttendancePage() {
                                 </div>
                                 <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Request Overview</span>
                               </div>
+                              {fixedOffDayRequests.length === 0 ? (
+                                <div style={{ padding: '32px 16px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, color: '#9CA3AF' }}>
+                                  <BarChart3 size={22} strokeWidth={1.5} />
+                                  <span style={{ fontSize: 13, fontWeight: 600 }}>No off day requests yet</span>
+                                </div>
+                              ) : (
                               <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 18 }}>
                                 {weekDates.map((date, i) => {
                                   const label = dayLabel(date)
@@ -3179,6 +3192,7 @@ export default function OwnerAttendancePage() {
                                   )
                                 })}
                               </div>
+                              )}
                             </section>
                           )
                         })()}

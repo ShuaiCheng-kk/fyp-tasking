@@ -35,7 +35,11 @@ export interface JobPosting {
   assigned_employee_id: string | null
   rejection_reason: string | null
   expires_at: string | null
-  expiry_preset: string | null
+  template_id: string | null
+  experience_required: string | null
+  minimum_age: string | null
+  uniform_required: boolean
+  uniform_details: string | null
 }
 
 export interface JobPostingInput {
@@ -66,7 +70,11 @@ export interface JobPostingInput {
   assigned_employee_id?: string | null
   form_type?: string | null
   expires_at?: string | null
-  expiry_preset?: string | null
+  template_id?: string | null
+  experience_required?: string | null
+  minimum_age?: string | null
+  uniform_required?: boolean
+  uniform_details?: string | null
 }
 
 export interface JobPostingSummary extends JobPosting {

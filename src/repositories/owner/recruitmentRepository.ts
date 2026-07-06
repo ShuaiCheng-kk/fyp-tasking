@@ -149,7 +149,11 @@ export const recruitmentRepository = {
         assigned_employee_id: input.assigned_employee_id ?? null,
         form_type: input.form_type ?? null,
         expires_at: input.expires_at ?? null,
-        expiry_preset: input.expiry_preset ?? null,
+        template_id: input.template_id ?? null,
+        experience_required: input.experience_required ?? null,
+        minimum_age: input.minimum_age ?? null,
+        uniform_required: input.uniform_required ?? false,
+        uniform_details: input.uniform_details ?? null,
       })
       .select()
       .single()
@@ -171,6 +175,23 @@ export const recruitmentRepository = {
       .single()
     if (error) throw new Error(error.message)
     return data as JobPosting
+  },
+
+  // Lazily run on-read (there is no cron/job-runner in this app — same pattern as
+  // autoExpireSwapRequestIfNeeded in attendanceService) — flips any 'open' posting whose deadline
+  // has passed to 'archived', the same terminal state the manual Archive action already produces.
+  // Scoping to company_id keeps the owner/manager dashboard sweep cheap; omit it to sweep globally
+  // (used by the public job board, which has no company context).
+  async sweepExpiredJobPostings(company_id?: string): Promise<void> {
+    let query = supabase
+      .from('job_postings')
+      .update({ status: 'archived', archived_at: new Date().toISOString() })
+      .eq('status', 'open')
+      .not('expires_at', 'is', null)
+      .lt('expires_at', new Date().toISOString())
+    if (company_id) query = query.eq('company_id', company_id)
+    const { error } = await query
+    if (error) throw new Error(error.message)
   },
 
   async getApplicantsByJob(job_id: string): Promise<JobApplicant[]> {

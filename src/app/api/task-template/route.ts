@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { company_id, name, title, description, priority, created_by } = body as Record<string, unknown>
+  const { company_id, name, title, description, priority, sub_task_titles, created_by } = body as Record<string, unknown>
 
   if (!company_id || typeof company_id !== 'string')
     return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
@@ -47,6 +47,7 @@ export async function POST(req: NextRequest) {
       title,
       description: typeof description === 'string' ? description : null,
       priority: typeof priority === 'string' ? priority : null,
+      sub_task_titles: Array.isArray(sub_task_titles) ? sub_task_titles.filter((t): t is string => typeof t === 'string') : undefined,
       created_by,
     })
     return NextResponse.json({ success: true, template }, { status: 201 })
