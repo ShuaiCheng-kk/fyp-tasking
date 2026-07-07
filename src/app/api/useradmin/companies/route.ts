@@ -1,3 +1,6 @@
+// LAYER: Controller
+// RULE: Only handles request/response. No business logic. No DB access.
+
 import { NextRequest, NextResponse } from 'next/server'
 import { listCompanies } from '@/services/userAdmin/userAdminService'
 

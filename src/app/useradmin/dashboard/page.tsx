@@ -3,10 +3,10 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { Search, Building2, Users, X, AlertTriangle, CheckCircle, ChevronRight, ChevronDown, ChevronUp, ChevronLeft, ChevronsUpDown } from 'lucide-react'
-import { createBrowserClient } from '@supabase/ssr'
 import UserAdminSidebar from '@/components/UserAdminSidebar'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import { UACompany, UACompanyDetail, UACompanyMember, UAUser } from '@/types/UserAdmin'
+import { useAuthGuard } from '@/hooks/useAuthGuard'
 
 const SIDEBAR_WIDTH = 64
 
@@ -165,6 +165,7 @@ function CalendarRangePicker({ from, to, onChange }: {
 
 export default function UserAdminDashboard() {
   const router = useRouter()
+  useAuthGuard()
   const [tab, setTab] = useState<Tab>('companies')
   const [userId, setUserId] = useState<string | null>(null)
 
@@ -231,20 +232,6 @@ export default function UserAdminDashboard() {
   const [reinstating, setReinstating] = useState(false)
 
   const [toast, setToast] = useState<string | null>(null)
-
-  useEffect(() => {
-    const supabase = createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    )
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'SIGNED_OUT') router.replace('/signin')
-    })
-    supabase.auth.getSession().then(({ data: { session }, error }) => {
-      if (error || !session) supabase.auth.signOut({ scope: 'local' }).finally(() => router.replace('/signin'))
-    })
-    return () => subscription.unsubscribe()
-  }, [router])
 
   useEffect(() => {
     const id = localStorage.getItem('tasking_user_id')

@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -6,8 +6,8 @@ import { useRouter } from 'next/navigation'
 import { Check, ExternalLink, FileText, ImagePlus, RefreshCcw, Save, Trash2 } from 'lucide-react'
 import AdminSidebar from '@/components/AdminSidebar'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
-import { createBrowserClient } from '@supabase/ssr'
 import { MarketingContentBlock, MarketingPage, MarketingPageSummary } from '@/types/MarketingPage'
+import { useAuthGuard } from '@/hooks/useAuthGuard'
 import { MarketingIcon, MARKETING_ICON_NAMES } from '@/app/(marketing)/marketingIcons'
 import { comparisonTable as pricingComparisonTable } from '@/app/(marketing)/pricing/content'
 
@@ -71,6 +71,7 @@ function hasBlock(blocks: Record<string, MarketingContentBlock>, blockKey: strin
 
 export default function AdminDashboardPage() {
   const router = useRouter()
+  useAuthGuard()
   const [adminUserId, setAdminUserId] = useState('')
   const [authChecked, setAuthChecked] = useState(false)
   const [userName, setUserName] = useState('')
@@ -116,19 +117,6 @@ export default function AdminDashboardPage() {
     } else {
       setAuthChecked(true)
     }
-
-    const supabase = createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    )
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'SIGNED_OUT') router.replace('/signin')
-    })
-    supabase.auth.getSession().then(({ data: { session }, error }) => {
-      if (error || !session) supabase.auth.signOut({ scope: 'local' }).finally(() => router.replace('/signin'))
-    })
-
-    return () => subscription.unsubscribe()
   }, [router])
 
   useEffect(() => {
@@ -150,7 +138,7 @@ export default function AdminDashboardPage() {
       setLoadingPages(true)
       setError('')
       try {
-        const res = await fetch(`/api/admin/marketing-pages?admin_user_id=${encodeURIComponent(adminUserId)}`)
+        const res = await fetch(`/api/marketingadmin/pages?admin_user_id=${encodeURIComponent(adminUserId)}`)
         const data = await res.json()
         if (!data.success) throw new Error(data.message)
         const nextPages = (data.pages ?? []) as MarketingPageSummary[]
@@ -180,7 +168,7 @@ export default function AdminDashboardPage() {
       setNotice('')
       try {
         const params = new URLSearchParams({ admin_user_id: adminUserId, slug: selectedSlug })
-        const res = await fetch(`/api/admin/marketing-pages?${params.toString()}`)
+        const res = await fetch(`/api/marketingadmin/pages?${params.toString()}`)
         const data = await res.json()
         if (!data.success) throw new Error(data.message)
         const page = data.page as MarketingPage
@@ -204,7 +192,7 @@ export default function AdminDashboardPage() {
     setError('')
     setNotice('')
     try {
-      const res = await fetch('/api/admin/marketing-pages', {
+      const res = await fetch('/api/marketingadmin/pages', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -241,7 +229,7 @@ export default function AdminDashboardPage() {
   const createBlock = async (page_id: string, block_key: string, label: string, value: string, sort_order: number) => {
     if (!adminUserId) return null
     try {
-      const res = await fetch('/api/marketing/blocks', {
+      const res = await fetch('/api/marketingadmin/blocks', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ admin_user_id: adminUserId, page_id, block_key, block_type: 'text', label, value, sort_order }),
@@ -260,7 +248,7 @@ export default function AdminDashboardPage() {
   const deleteBlock = async (block_id: string) => {
     if (!adminUserId) return
     try {
-      const res = await fetch(`/api/marketing/blocks?admin_user_id=${adminUserId}&id=${block_id}`, { method: 'DELETE' })
+      const res = await fetch(`/api/marketingadmin/blocks?admin_user_id=${adminUserId}&id=${block_id}`, { method: 'DELETE' })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
       setSelectedPage(current => current ? { ...current, blocks: current.blocks.filter(b => b.id !== block_id) } : current)
@@ -283,7 +271,7 @@ export default function AdminDashboardPage() {
       updates.forEach(u => { updateMap[u.id] = u.sort_order })
       return { ...current, blocks: current.blocks.map(b => updateMap[b.id] !== undefined ? { ...b, sort_order: updateMap[b.id] } : b) }
     })
-    await fetch('/api/admin/marketing-pages', {
+    await fetch('/api/marketingadmin/pages', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ admin_user_id: adminUserId, updates }),
@@ -294,7 +282,7 @@ export default function AdminDashboardPage() {
     if (!selectedPage || !adminUserId) return
     const existing = blockByKey[iconBlockKey]
     if (existing) {
-      await fetch('/api/admin/marketing-pages', {
+      await fetch('/api/marketingadmin/pages', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ admin_user_id: adminUserId, block_id: existing.id, value: iconName }),
@@ -323,21 +311,18 @@ export default function AdminDashboardPage() {
     setError('')
     setNotice('')
     try {
-      const supabase = createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      )
-      const ext = file.name.split('.').pop()
-      const path = `${block.block_key}-${Date.now()}.${ext}`
-      const { error: uploadError } = await supabase.storage
-        .from('marketing-images')
-        .upload(path, file, { upsert: true })
-      if (uploadError) throw new Error(uploadError.message)
-      const { data: urlData } = supabase.storage.from('marketing-images').getPublicUrl(path)
-      const res = await fetch('/api/admin/marketing-pages', {
+      const formData = new FormData()
+      formData.append('admin_user_id', adminUserId)
+      formData.append('block_key', block.block_key)
+      formData.append('file', file)
+      const uploadRes = await fetch('/api/marketingadmin/upload', { method: 'POST', body: formData })
+      const uploadData = await uploadRes.json()
+      if (!uploadData.success) throw new Error(uploadData.message)
+
+      const res = await fetch('/api/marketingadmin/pages', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ admin_user_id: adminUserId, block_id: block.id, value: urlData.publicUrl }),
+        body: JSON.stringify({ admin_user_id: adminUserId, block_id: block.id, value: uploadData.publicUrl }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
@@ -357,24 +342,18 @@ export default function AdminDashboardPage() {
     setError('')
     setNotice('')
     try {
-      const supabase = createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      )
-      const ext = file.name.split('.').pop()
-      const path = `${block.block_key}-${Date.now()}.${ext}`
-      const { error: uploadError } = await supabase.storage
-        .from('marketing-images')
-        .upload(path, file, { upsert: true })
-      if (uploadError) throw new Error(uploadError.message)
+      const formData = new FormData()
+      formData.append('admin_user_id', adminUserId)
+      formData.append('block_key', block.block_key)
+      formData.append('file', file)
+      const uploadRes = await fetch('/api/marketingadmin/upload', { method: 'POST', body: formData })
+      const uploadData = await uploadRes.json()
+      if (!uploadData.success) throw new Error(uploadData.message)
 
-      const { data: urlData } = supabase.storage.from('marketing-images').getPublicUrl(path)
-      const publicUrl = urlData.publicUrl
-
-      const res = await fetch('/api/admin/marketing-pages', {
+      const res = await fetch('/api/marketingadmin/pages', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ admin_user_id: adminUserId, block_id: block.id, value: publicUrl }),
+        body: JSON.stringify({ admin_user_id: adminUserId, block_id: block.id, value: uploadData.publicUrl }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
@@ -441,7 +420,7 @@ export default function AdminDashboardPage() {
             <button
               type="button"
               onClick={async () => {
-                const res = await fetch('/api/admin/marketing-pages', {
+                const res = await fetch('/api/marketingadmin/pages', {
                   method: 'PATCH',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ admin_user_id: adminUserId, block_id: block.id, value: '' }),
@@ -596,7 +575,7 @@ export default function AdminDashboardPage() {
     const newVal = currentlyVisible ? 'false' : 'true'
     setDrafts(prev => ({ ...prev, [block.id]: newVal }))
     setSavingBlockId(block.id)
-    fetch('/api/admin/marketing-pages', {
+    fetch('/api/marketingadmin/pages', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ block_id: block.id, value: newVal, admin_user_id: adminUserId }),
@@ -738,7 +717,7 @@ export default function AdminDashboardPage() {
 
     const saveBlock = async (block: MarketingContentBlock) => {
       setSavingBlockId(block.id)
-      const res = await fetch('/api/admin/marketing-pages', {
+      const res = await fetch('/api/marketingadmin/pages', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ admin_user_id: adminUserId, block_id: block.id, value: drafts[block.id] ?? block.value }),
@@ -2443,7 +2422,7 @@ export default function AdminDashboardPage() {
                 onClick={async (e) => {
                   e.stopPropagation()
                   if (!vBlock) return
-                  const res = await fetch('/api/admin/marketing-pages', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ admin_user_id: adminUserId, block_id: vBlock.id, value: '' }) })
+                  const res = await fetch('/api/marketingadmin/pages', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ admin_user_id: adminUserId, block_id: vBlock.id, value: '' }) })
                   const data = await res.json()
                   if (data.success) {
                     setSelectedPage(c => c ? { ...c, blocks: c.blocks.map(b => b.id === data.block.id ? data.block : b) } : c)
@@ -2719,7 +2698,7 @@ export default function AdminDashboardPage() {
                   <button type="button" title="Click to toggle" onClick={async () => {
                     if (!block || !selectedPage || !adminUserId) return
                     const newVal = val ? 'false' : 'true'
-                    await fetch('/api/admin/marketing-pages', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ admin_user_id: adminUserId, block_id: block.id, value: newVal }) })
+                    await fetch('/api/marketingadmin/pages', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ admin_user_id: adminUserId, block_id: block.id, value: newVal }) })
                     setSelectedPage(c => c ? { ...c, blocks: c.blocks.map(b => b.id === block.id ? { ...b, value: newVal } : b) } : c)
                     setDrafts(d => ({ ...d, [block.id]: newVal }))
                   }} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 6, padding: 4, transition: 'background 0.1s' }}
@@ -2757,7 +2736,7 @@ export default function AdminDashboardPage() {
                   updates.forEach(u => { m[u.id] = u.sort_order })
                   return { ...current, blocks: current.blocks.map(b => m[b.id] !== undefined ? { ...b, sort_order: m[b.id] } : b) }
                 })
-                await fetch('/api/admin/marketing-pages', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ admin_user_id: adminUserId, updates }) })
+                await fetch('/api/marketingadmin/pages', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ admin_user_id: adminUserId, updates }) })
               }
 
               const reorderRowsInGroup = async (grpIdx: number, fromRowIdx: number, toRowIdx: number) => {
@@ -2776,7 +2755,7 @@ export default function AdminDashboardPage() {
                   updates.forEach(u => { m[u.id] = u.sort_order })
                   return { ...current, blocks: current.blocks.map(b => m[b.id] !== undefined ? { ...b, sort_order: m[b.id] } : b) }
                 })
-                await fetch('/api/admin/marketing-pages', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ admin_user_id: adminUserId, updates }) })
+                await fetch('/api/marketingadmin/pages', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ admin_user_id: adminUserId, updates }) })
               }
 
               return (

@@ -1,11 +1,10 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
-import { createBrowserClient } from '@supabase/ssr'
 import { Check, Eye, EyeOff } from 'lucide-react'
 import UserAdminSidebar from '@/components/UserAdminSidebar'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
+import { useAuthGuard } from '@/hooks/useAuthGuard'
 
 const SIDEBAR_WIDTH = 64
 
@@ -19,7 +18,7 @@ const T = {
 }
 
 export default function UserAdminSettingsPage() {
-  const router = useRouter()
+  useAuthGuard()
   const [userId, setUserId] = useState<string | null>(null)
   const [email, setEmail] = useState('')
   const [currentPassword, setCurrentPassword] = useState('')
@@ -31,20 +30,6 @@ export default function UserAdminSettingsPage() {
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
   const [savingPassword, setSavingPassword] = useState(false)
-
-  useEffect(() => {
-    const supabase = createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    )
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'SIGNED_OUT') router.replace('/signin')
-    })
-    supabase.auth.getSession().then(({ data: { session }, error }) => {
-      if (error || !session) supabase.auth.signOut({ scope: 'local' }).finally(() => router.replace('/signin'))
-    })
-    return () => subscription.unsubscribe()
-  }, [router])
 
   useEffect(() => {
     const authUid = localStorage.getItem('tasking_user_id')
@@ -67,14 +52,13 @@ export default function UserAdminSettingsPage() {
     if (newPassword.length < 6) { setError('Password must be at least 6 characters'); return }
     setSavingPassword(true)
     try {
-      const supabase = createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      )
-      const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password: currentPassword })
-      if (signInErr) { setError('Current password is incorrect'); setSavingPassword(false); return }
-      const { error: updateErr } = await supabase.auth.updateUser({ password: newPassword })
-      if (updateErr) { setError(updateErr.message); setSavingPassword(false); return }
+      const res = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, current_password: currentPassword, new_password: newPassword }),
+      })
+      const data = await res.json()
+      if (!data.success) { setError(data.message ?? 'Failed to change password'); return }
       setCurrentPassword('')
       setNewPassword('')
       setConfirmPassword('')

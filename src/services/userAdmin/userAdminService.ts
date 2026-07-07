@@ -1,3 +1,6 @@
+// LAYER: Service
+// RULE: Business logic only. No HTTP handling. No direct DB access.
+
 import {
   UACompany,
   UACompanyDetail,

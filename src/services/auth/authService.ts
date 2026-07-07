@@ -142,6 +142,20 @@ export const authService = {
     if (error) throw new Error(error.message)
   },
 
+  async changePassword(email: string, currentPassword: string, newPassword: string): Promise<void> {
+    const verifyClient = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      { auth: { persistSession: false, autoRefreshToken: false } }
+    )
+    const { data, error: signInErr } = await verifyClient.auth.signInWithPassword({ email, password: currentPassword })
+    if (signInErr || !data.user) throw new Error('Current password is incorrect')
+
+    const admin = getAdminClient()
+    const { error: updateErr } = await admin.auth.admin.updateUserById(data.user.id, { password: newPassword })
+    if (updateErr) throw new Error(updateErr.message)
+  },
+
   async registerOwner(data: {
     full_name: string
     email: string

@@ -1,3 +1,6 @@
+// LAYER: Repository
+// RULE: Supabase queries only. No business logic. No HTTP handling.
+
 import { supabase } from '@/lib/supabase'
 import { UACompany, UACompanyDetail, UACompanyMember, UAUser, UAReportStats } from '@/types/UserAdmin'
 

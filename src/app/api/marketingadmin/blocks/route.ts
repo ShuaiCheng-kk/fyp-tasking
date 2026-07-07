@@ -2,7 +2,7 @@
 // RULE: Only handles request/response. No business logic. No DB access.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { marketingService } from '@/services/marketing/marketingService'
+import { marketingAdminService } from '@/services/marketingadmin/marketingAdminService'
 
 export async function POST(req: NextRequest) {
   try {
@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, message: 'Missing required fields' }, { status: 400 })
     }
 
-    const block = await marketingService.createMarketingContentBlock(admin_user_id, {
+    const block = await marketingAdminService.createMarketingContentBlock(admin_user_id, {
       page_id,
       block_key,
       block_type,
@@ -38,7 +38,7 @@ export async function DELETE(req: NextRequest) {
     if (!admin_user_id) return NextResponse.json({ success: false, message: 'admin_user_id is required' }, { status: 400 })
     if (!block_id) return NextResponse.json({ success: false, message: 'id is required' }, { status: 400 })
 
-    await marketingService.deleteMarketingContentBlock(admin_user_id, block_id)
+    await marketingAdminService.deleteMarketingContentBlock(admin_user_id, block_id)
     return NextResponse.json({ success: true }, { status: 200 })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to delete block'
