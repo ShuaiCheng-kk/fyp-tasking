@@ -4,7 +4,7 @@
 export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
-import { marketingService } from '@/services/marketing/marketingService'
+import { marketingAdminService } from '@/services/marketingadmin/marketingAdminService'
 
 export async function GET(req: NextRequest) {
   const admin_user_id = req.nextUrl.searchParams.get('admin_user_id')
@@ -16,11 +16,11 @@ export async function GET(req: NextRequest) {
 
   try {
     if (slug) {
-      const page = await marketingService.getMarketingPageForAdmin(admin_user_id, slug)
+      const page = await marketingAdminService.getMarketingPageForAdmin(admin_user_id, slug)
       return NextResponse.json({ success: true, page }, { status: 200 })
     }
 
-    const pages = await marketingService.listMarketingPages(admin_user_id)
+    const pages = await marketingAdminService.listMarketingPages(admin_user_id)
     return NextResponse.json({ success: true, pages }, { status: 200 })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to fetch marketing pages'
@@ -47,7 +47,7 @@ export async function PUT(req: NextRequest) {
   }
 
   try {
-    await marketingService.reorderMarketingContentBlocks(admin_user_id, updates as { id: string; sort_order: number }[])
+    await marketingAdminService.reorderMarketingContentBlocks(admin_user_id, updates as { id: string; sort_order: number }[])
     return NextResponse.json({ success: true }, { status: 200 })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to reorder blocks'
@@ -77,7 +77,7 @@ export async function PATCH(req: NextRequest) {
   }
 
   try {
-    const block = await marketingService.updateMarketingContentBlock(admin_user_id, { block_id, value })
+    const block = await marketingAdminService.updateMarketingContentBlock(admin_user_id, { block_id, value })
     return NextResponse.json({ success: true, block }, { status: 200 })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to update content'

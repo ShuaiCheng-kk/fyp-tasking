@@ -3,7 +3,6 @@
 import { useState, useEffect } from 'react'
 import AdminSidebar from '@/components/AdminSidebar'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
-import { createBrowserClient } from '@supabase/ssr'
 import { Check, Eye, EyeOff } from 'lucide-react'
 
 const ORANGE = '#F97316'
@@ -45,14 +44,13 @@ export default function AdminSettingsPage() {
     if (newPassword.length < 6) { setError('Password must be at least 6 characters'); return }
     setSavingPassword(true)
     try {
-      const supabase = createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      )
-      const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password: currentPassword })
-      if (signInErr) { setError('Current password is incorrect'); setSavingPassword(false); return }
-      const { error: updateErr } = await supabase.auth.updateUser({ password: newPassword })
-      if (updateErr) { setError(updateErr.message); setSavingPassword(false); return }
+      const res = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, current_password: currentPassword, new_password: newPassword }),
+      })
+      const data = await res.json()
+      if (!data.success) { setError(data.message ?? 'Failed to change password'); return }
       setCurrentPassword('')
       setNewPassword('')
       setConfirmPassword('')
