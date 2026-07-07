@@ -143,6 +143,15 @@ const guestApplicants = [
   { email: 'guest6@test.com', full_name: 'Sofia Chen',    phone_number: '+65 8200 2006', date_of_birth: '2000-07-19' },
 ]
 
+// Platform-level admin accounts (Module 9/10) — NOT scoped to any company, separate from the
+// company hierarchy above. Protected from deletion by the protect_admin_accounts DB trigger, so
+// these are created idempotently (skipped if already present) rather than deleted-then-recreated
+// like the rest of the seed data.
+const platformAdmins = [
+  { email: 'madmin@tasking.com', full_name: 'Marketing Admin', role: 'Marketing Admin' },
+  { email: 'uadmin@tasking.com', full_name: 'User Admin',      role: 'User Admin' },
+]
+
 const legacyTestEmailsToDelete = [
   ...accounts.map(a => a.email),
   ...casualWorkers.map(cw => cw.email),
@@ -227,9 +236,12 @@ async function main() {
   const { error: offDayDeadlineErr } = await supabase.from('off_day_submission_deadline').delete().neq('company_id', '00000000-0000-0000-0000-000000000000')
   if (offDayDeadlineErr) console.warn(`  ! clear off_day_submission_deadline failed: ${offDayDeadlineErr.message}`)
   else console.log('  ok clear off_day_submission_deadline')
+  // Platform admin rows (User Admin / Marketing Admin) are excluded — the protect_admin_accounts
+  // DB trigger rejects any attempt to delete them, which would otherwise fail this entire statement.
   const { error: uErr } = await supabase.from('users').delete().neq('id', '00000000-0000-0000-0000-000000000000')
+    .not('role', 'in', '("User Admin","Marketing Admin")')
   if (uErr) console.warn(`  ⚠ 清空 users 失败: ${uErr.message}`)
-  else console.log('  ✓ 清空 users')
+  else console.log('  ✓ 清空 users（保留 User Admin / Marketing Admin）')
   const { error: dErr } = await supabase.from('departments').delete().neq('id', '00000000-0000-0000-0000-000000000000')
   if (dErr) console.warn(`  ⚠ 清空 departments 失败: ${dErr.message}`)
   else console.log('  ✓ 清空 departments')
@@ -245,6 +257,53 @@ async function main() {
     if (testEmails.has(u.email)) {
       await supabase.auth.admin.deleteUser(u.id)
       console.log(`  ✓ 删除 auth: ${u.email}`)
+    }
+  }
+
+  // ── Step 2b: 确保平台级 Admin 账号存在（Marketing Admin / User Admin）──────
+  // 这两个账号不在 legacyTestEmailsToDelete 里，也被 Step 1 的清空排除 —— 每次
+  // 重跑都是"不存在才创建"，绝不删除重建，避免撞上 protect_admin_accounts 触发器。
+  console.log('\nStep 2b: 确保平台级 Admin 账号存在...')
+  for (const admin of platformAdmins) {
+    let authId = existingUsers?.users?.find(u => u.email === admin.email)?.id
+
+    if (!authId) {
+      const { data, error } = await supabase.auth.admin.createUser({
+        email: admin.email,
+        password: PASSWORD,
+        email_confirm: true,
+      })
+      if (error || !data.user) {
+        console.error(`  ✗ auth 创建失败 ${admin.email}: ${error?.message}`)
+        process.exit(1)
+      }
+      authId = data.user.id
+      console.log(`  ✓ auth 创建: ${admin.email} → ${authId}`)
+    } else {
+      console.log(`  · auth 已存在: ${admin.email} → ${authId}`)
+    }
+
+    const { data: existingRow } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email_address', admin.email)
+      .maybeSingle()
+
+    if (!existingRow) {
+      const { error: insErr } = await supabase.from('users').insert({
+        supabase_auth_id: authId,
+        full_name: admin.full_name,
+        email_address: admin.email,
+        phone_number: null,
+        date_of_birth: null,
+        profile_photo_url: DEMO_PHOTO_URL,
+        role: admin.role,
+        company_id: null,
+      })
+      if (insErr) { console.error(`  ✗ 插入 users 失败 ${admin.email}:`, insErr.message); process.exit(1) }
+      console.log(`  ✓ users 创建: ${admin.full_name} (${admin.role})`)
+    } else {
+      console.log(`  · users 已存在: ${admin.full_name} (${admin.role})`)
     }
   }
 
@@ -870,6 +929,9 @@ async function main() {
   console.log('  Employee: employee1~8@test.com')
   console.log('  CW:       cw1~10@test.com')
   console.log('  Guest:    guest1~6@test.com（求职申请人，尚未受雇）')
+  console.log('\n平台级 Admin 账号（不属于任何 company，密码同为 111111）')
+  console.log('  Marketing Admin: madmin@tasking.com')
+  console.log('  User Admin:      uadmin@tasking.com')
   console.log('\n公司：Sunrise Hospitality Group')
   console.log('\n部门分配：')
   console.log('  Operations:       manager1,2 / employee1,2')

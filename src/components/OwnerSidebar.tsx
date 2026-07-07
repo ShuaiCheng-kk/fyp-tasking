@@ -386,7 +386,7 @@ export default function OwnerSidebar({
           const isDragOver = dragOverLabel === label
 
           return (
-            <a
+            <Link
               key={label}
               ref={el => {
                 if (el) itemRefs.current.set(label, el)
@@ -479,7 +479,7 @@ export default function OwnerSidebar({
                   <GripVertical size={13} strokeWidth={2} />
                 </span>
               )}
-            </a>
+            </Link>
           )
         })}
 

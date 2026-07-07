@@ -2906,7 +2906,7 @@ export default function OwnerTasksPage() {
               Tasks
             </h1>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
+          <div data-owner-header-badges style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId} />}
             {companyId && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
           </div>

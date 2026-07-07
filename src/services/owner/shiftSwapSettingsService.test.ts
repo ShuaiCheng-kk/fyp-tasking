@@ -1,0 +1,149 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+vi.mock('@/lib/supabase', () => ({
+  supabase: {},
+  createClient: () => ({}),
+}))
+
+vi.mock('@/repositories/auth/authRepository', () => ({
+  authRepository: {
+    findByAuthIdOrInternalId: vi.fn(),
+  },
+}))
+
+vi.mock('@/repositories/owner/shiftSwapSettingsRepository', () => ({
+  shiftSwapSettingsRepository: {
+    getSettings: vi.fn(),
+    upsertSettings: vi.fn(),
+  },
+}))
+
+import { shiftSwapSettingsService } from './shiftSwapSettingsService'
+import { authRepository } from '@/repositories/auth/authRepository'
+import { shiftSwapSettingsRepository } from '@/repositories/owner/shiftSwapSettingsRepository'
+
+const owner = { id: 'owner-1', role: 'Owner', company_id: 'company-1' }
+const nonOwner = { id: 'mgr-1', role: 'Manager', company_id: 'company-1' }
+
+const validSettingsInput = {
+  company_id: 'company-1',
+  owner_id: 'owner-1',
+  auto_approval_enabled: true,
+  monthly_swap_limit: 3,
+  deadline_weekday: 2,
+  deadline_time: '17:00',
+  require_review_on_limit_exceeded: true,
+  require_review_on_deadline_exceeded: true,
+}
+
+describe('shiftSwapSettingsService', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  describe('assertOwner', () => {
+    it('passes for an Owner in the same company', async () => {
+      vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue(owner as any)
+      await expect(shiftSwapSettingsService.assertOwner('owner-1', 'company-1')).resolves.toBeUndefined()
+    })
+
+    it('rejects a non-Owner caller', async () => {
+      vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue(nonOwner as any)
+      await expect(shiftSwapSettingsService.assertOwner('mgr-1', 'company-1')).rejects.toThrow('Only Owner')
+    })
+
+    it('rejects a caller from a different company', async () => {
+      vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue({ ...owner, company_id: 'other-company' } as any)
+      await expect(shiftSwapSettingsService.assertOwner('owner-1', 'company-1')).rejects.toThrow('Only Owner')
+    })
+  })
+
+  describe('getSettings', () => {
+    beforeEach(() => {
+      vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue(owner as any)
+    })
+
+    it('returns the stored row when one exists', async () => {
+      const stored = { company_id: 'company-1', auto_approval_enabled: true, monthly_swap_limit: 3, deadline_weekday: 2, deadline_time: '17:00', require_review_on_limit_exceeded: true, require_review_on_deadline_exceeded: true, updated_by: 'owner-1', updated_at: '2026-01-01T00:00:00Z' }
+      vi.mocked(shiftSwapSettingsRepository.getSettings).mockResolvedValue(stored)
+
+      const result = await shiftSwapSettingsService.getSettings('company-1', 'owner-1')
+
+      expect(result).toEqual(stored)
+    })
+
+    it('returns safe defaults (auto-approval off, no limit, no deadline) when nothing is configured yet', async () => {
+      vi.mocked(shiftSwapSettingsRepository.getSettings).mockResolvedValue(null)
+
+      const result = await shiftSwapSettingsService.getSettings('company-1', 'owner-1')
+
+      expect(result).toEqual(expect.objectContaining({
+        company_id: 'company-1',
+        auto_approval_enabled: false,
+        monthly_swap_limit: null,
+        deadline_weekday: null,
+        deadline_time: null,
+        require_review_on_limit_exceeded: true,
+        require_review_on_deadline_exceeded: true,
+      }))
+    })
+  })
+
+  describe('setSettings', () => {
+    beforeEach(() => {
+      vi.mocked(authRepository.findByAuthIdOrInternalId).mockResolvedValue(owner as any)
+    })
+
+    it('rejects a non-positive monthly_swap_limit', async () => {
+      await expect(shiftSwapSettingsService.setSettings({ ...validSettingsInput, monthly_swap_limit: 0 }))
+        .rejects.toThrow('positive integer')
+    })
+
+    it('rejects a non-integer monthly_swap_limit', async () => {
+      await expect(shiftSwapSettingsService.setSettings({ ...validSettingsInput, monthly_swap_limit: 2.5 }))
+        .rejects.toThrow('positive integer')
+    })
+
+    it('allows a null monthly_swap_limit (unlimited)', async () => {
+      vi.mocked(shiftSwapSettingsRepository.upsertSettings).mockResolvedValue({ ...validSettingsInput, monthly_swap_limit: null, updated_by: 'owner-1', updated_at: '2026-01-01T00:00:00Z' })
+      await expect(shiftSwapSettingsService.setSettings({ ...validSettingsInput, monthly_swap_limit: null })).resolves.toBeDefined()
+    })
+
+    it('rejects deadline_weekday set without deadline_time', async () => {
+      await expect(shiftSwapSettingsService.setSettings({ ...validSettingsInput, deadline_time: null }))
+        .rejects.toThrow('must be set together')
+    })
+
+    it('rejects deadline_time set without deadline_weekday', async () => {
+      await expect(shiftSwapSettingsService.setSettings({ ...validSettingsInput, deadline_weekday: null }))
+        .rejects.toThrow('must be set together')
+    })
+
+    it('rejects a deadline_weekday outside 0-6', async () => {
+      await expect(shiftSwapSettingsService.setSettings({ ...validSettingsInput, deadline_weekday: 7 }))
+        .rejects.toThrow('0 and 6')
+    })
+
+    it('rejects a deadline_time not in HH:MM 24-hour format', async () => {
+      await expect(shiftSwapSettingsService.setSettings({ ...validSettingsInput, deadline_time: '5:00 PM' }))
+        .rejects.toThrow('HH:MM')
+    })
+
+    it('upserts a valid settings payload', async () => {
+      vi.mocked(shiftSwapSettingsRepository.upsertSettings).mockResolvedValue({ ...validSettingsInput, updated_by: 'owner-1', updated_at: '2026-01-01T00:00:00Z' })
+
+      await shiftSwapSettingsService.setSettings(validSettingsInput)
+
+      expect(shiftSwapSettingsRepository.upsertSettings).toHaveBeenCalledWith({
+        company_id: 'company-1',
+        auto_approval_enabled: true,
+        monthly_swap_limit: 3,
+        deadline_weekday: 2,
+        deadline_time: '17:00',
+        require_review_on_limit_exceeded: true,
+        require_review_on_deadline_exceeded: true,
+        updated_by: 'owner-1',
+      })
+    })
+  })
+})

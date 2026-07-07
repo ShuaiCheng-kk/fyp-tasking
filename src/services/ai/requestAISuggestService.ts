@@ -12,6 +12,12 @@ export interface RequestAISuggestion {
   reason: string
   concerns: string[]
   alternatives: string[]
+  // Which of the requester's OWN request_dates actually need a replacement — the rest of the group
+  // is staffing-safe as requested and should just be approved as-is, not forced into a swap too.
+  problem_dates: string[]
+  // The specific reason for each date in problem_dates, keyed by date — shown under that date's own
+  // card rather than one combined sentence for the whole group.
+  problem_reasons: Record<string, string>
 }
 
 // Local-time date arithmetic, matching weekStart()'s convention in schedulingConstants.ts.
@@ -32,17 +38,19 @@ function formatDateLabel(dateKey: string): string {
   return `${weekday} [${dayMonth}]`
 }
 
+// One line naming exactly why THIS date is a problem — shown directly under that date's own card
+// on the frontend, rather than one combined sentence floating above the whole group.
+function buildDateReason(p: { date: string; managerShort: boolean; employeeShort: boolean }): string {
+  const roles = [p.managerShort && 'managers', p.employeeShort && 'employees'].filter(Boolean).join(' and ')
+  return `${formatDateLabel(p.date)} already has too many ${roles} off.`
+}
+
 // Built deterministically rather than left to the LLM's phrasing — the Owner just needs to know
 // which date is the problem and why, not a paraphrased explanation of the whole request.
 function buildReason(perDate: Array<{ date: string; managerShort: boolean; employeeShort: boolean }>): string {
   const problems = perDate.filter(d => d.managerShort || d.employeeShort)
   if (problems.length === 0) return 'This request keeps staffing balanced — safe to approve.'
-  return problems
-    .map(p => {
-      const roles = [p.managerShort && 'managers', p.employeeShort && 'employees'].filter(Boolean).join(' and ')
-      return `${formatDateLabel(p.date)} already has too many ${roles} off`
-    })
-    .join('; ') + '.'
+  return problems.map(p => buildDateReason(p).replace(/\.$/, '')).join('; ') + '.'
 }
 
 export const requestAISuggestService = {
@@ -66,8 +74,12 @@ export const requestAISuggestService = {
     const role: 'Manager' | 'Employee' = request.requester_role === 'Manager' ? 'Manager' : 'Employee'
     const departmentId = request.department_id
     const weekStarts = [...new Set(request.request_dates.map(weekStart))]
+    // Fallback weeks — only actually offered as alternatives when the requested week itself has no
+    // safe day left (see safeAlternativeDates below), e.g. the whole week is short-staffed already.
+    const nextWeekStarts = weekStarts.map(ws => addDaysToDateKey(ws, 7))
     const requestedSet = new Set(request.request_dates)
-    const candidateDates = [...new Set(weekStarts.flatMap(ws => Array.from({ length: 7 }, (_, i) => addDaysToDateKey(ws, i))))]
+    const sameWeekDates = [...new Set(weekStarts.flatMap(ws => Array.from({ length: 7 }, (_, i) => addDaysToDateKey(ws, i))))]
+    const nextWeekDates = [...new Set(nextWeekStarts.flatMap(ws => Array.from({ length: 7 }, (_, i) => addDaysToDateKey(ws, i))))]
 
     let deptManagerIds = new Set<string>()
     let deptEmployeeIds = new Set<string>()
@@ -77,7 +89,7 @@ export const requestAISuggestService = {
       const [managers, employees, rowsPerWeek] = await Promise.all([
         ownerTeamRepository.findManagersByDepartment(request.company_id, departmentId),
         attendanceRepository.getEmployeesByCompany(request.company_id),
-        Promise.all(weekStarts.map(ws => attendanceRepository.getOffDayRequestsByCompanyAndWeek(request.company_id, ws))),
+        Promise.all([...weekStarts, ...nextWeekStarts].map(ws => attendanceRepository.getOffDayRequestsByCompanyAndWeek(request.company_id, ws))),
       ])
       deptManagerIds = new Set(managers.map(m => m.id))
       deptEmployeeIds = new Set(employees.filter(e => e.department_id === departmentId).map(e => e.id))
@@ -138,13 +150,23 @@ export const requestAISuggestService = {
 
     // Safe alternatives: the other days of the same week(s) covered by this submission that would
     // NOT drop the department below the minimum, deterministically pre-computed so the LLM can only
-    // pick from real, already-validated options rather than invent one.
+    // pick from real, already-validated options rather than invent one. Only once the requested
+    // week(s) can't cover every replacement needed do we spill into the following week — a later
+    // alternative there is still a real, already-validated option, just a bonus day rather than a
+    // same-week swap.
     const safeAlternativeDates: string[] = []
-    for (const date of candidateDates) {
-      if (requestedSet.has(date)) continue
-      if (!departmentId) break
-      if (!wouldBeUnderstaffed(date)) safeAlternativeDates.push(date)
-      if (safeAlternativeDates.length >= 3) break
+    if (departmentId) {
+      for (const date of sameWeekDates) {
+        if (requestedSet.has(date)) continue
+        if (!wouldBeUnderstaffed(date)) safeAlternativeDates.push(date)
+        if (safeAlternativeDates.length >= request.request_dates.length) break
+      }
+      if (safeAlternativeDates.length < request.request_dates.length) {
+        for (const date of nextWeekDates) {
+          if (!wouldBeUnderstaffed(date)) safeAlternativeDates.push(date)
+          if (safeAlternativeDates.length >= request.request_dates.length) break
+        }
+      }
     }
 
     const context = {
@@ -171,7 +193,7 @@ export const requestAISuggestService = {
         'Give ONE overall recommendation covering the whole request: if any date in requested_dates has would_be_understaffed true, recommend modify; otherwise recommend approve.',
         'recommendation must be one of: approve, modify.',
         'confidence is 0–100. reason is a brief one-sentence summary (it will be replaced by the caller with an exact templated message, so keep it short). concerns is a list of issues, one per problematic date if any (empty if none).',
-        'alternatives must ONLY reference dates from safe_alternative_dates if any are provided — never invent a date and never repeat a date already in requested_dates. If safe_alternative_dates is empty, alternatives must be empty. When recommending modify, alternatives should list the best replacement date(s) from safe_alternative_dates, picking the ones that keep the week\'s off-days most evenly spread out.',
+        'alternatives must ONLY reference dates from safe_alternative_dates if any are provided — never invent a date and never repeat a date already in requested_dates. If safe_alternative_dates is empty, alternatives must be empty. When recommending modify, alternatives should list the best replacement date(s) from safe_alternative_dates, picking the ones that keep the week\'s off-days most evenly spread out. safe_alternative_dates may include a date from the week AFTER the requested week — that only happens when the requested week itself has no safe day left, and is expected: prefer same-week dates when available, and only fall back to a following-week date when necessary.',
       ].join(' '),
       input: context,
       schema: {
@@ -188,9 +210,16 @@ export const requestAISuggestService = {
       },
     })
 
-    // reason is rebuilt deterministically instead of trusting the LLM's phrasing — the Owner just
-    // needs to know which date is the problem and why, not a paraphrased explanation.
-    return { ...suggestion, reason: buildReason(perDate) }
+    // reason/problem_dates/problem_reasons are rebuilt deterministically instead of trusting the
+    // LLM — the Owner just needs to know which date is the problem and why, not a paraphrased
+    // explanation, and which dates in the group are actually safe to approve as-is.
+    const problems = perDate.filter(d => d.managerShort || d.employeeShort)
+    return {
+      ...suggestion,
+      reason: buildReason(perDate),
+      problem_dates: problems.map(d => d.date),
+      problem_reasons: Object.fromEntries(problems.map(p => [p.date, buildDateReason(p)])),
+    }
   },
 
 }

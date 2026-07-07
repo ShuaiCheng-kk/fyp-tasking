@@ -366,7 +366,7 @@ export default function CompanySettingsView({ sidebar, dashboardPath }: { sideba
               Settings
             </h1>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
+          <div data-owner-header-badges style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={activeCompanyId} />}
             {activeCompanyId && <OwnerPlanBadge plan={companies.find(c => c.id === activeCompanyId)?.plan ?? 'Free'} currentCompanyId={activeCompanyId} />}
           </div>

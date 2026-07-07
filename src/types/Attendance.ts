@@ -148,6 +148,7 @@ export interface ShiftSwapRequest {
   reviewed_at: string | null
   ai_recommendation: string | null
   ai_reason: string | null
+  requires_owner_review: boolean
   created_at: string
   updated_at: string
 }
@@ -212,6 +213,33 @@ export interface ShiftSwapMovableTask {
   priority: string | null
   due_at: string | null
   created_at: string
+}
+
+// Company-wide config for Shift Swap auto-approval. A single row per company — no per-role/
+// per-user overrides (unlike Off Day quotas), since the Owner's spec is one shared limit/deadline
+// for everyone. null monthly_swap_limit / deadline_weekday+deadline_time means "not configured yet",
+// which submitShiftSwapRequest treats as "nothing to enforce" (existing always-manual behavior).
+export interface ShiftSwapSettings {
+  company_id: string
+  auto_approval_enabled: boolean
+  monthly_swap_limit: number | null
+  deadline_weekday: number | null
+  deadline_time: string | null
+  require_review_on_limit_exceeded: boolean
+  require_review_on_deadline_exceeded: boolean
+  updated_by: string | null
+  updated_at: string
+}
+
+export interface ShiftSwapSettingsUpsertInput {
+  company_id: string
+  auto_approval_enabled: boolean
+  monthly_swap_limit: number | null
+  deadline_weekday: number | null
+  deadline_time: string | null
+  require_review_on_limit_exceeded: boolean
+  require_review_on_deadline_exceeded: boolean
+  updated_by: string
 }
 
 export type FixedOffDaySource = 'submitted' | 'auto_assigned'

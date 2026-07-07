@@ -161,7 +161,7 @@ export const attendanceRepository = {
 
   async updateShiftSwapRequest(
     id: string,
-    fields: Partial<Pick<ShiftSwapRequest, 'status' | 'reviewed_by' | 'reviewed_at' | 'counterpart_status' | 'counterpart_reviewed_at' | 'ai_recommendation' | 'ai_reason'>>,
+    fields: Partial<Pick<ShiftSwapRequest, 'status' | 'reviewed_by' | 'reviewed_at' | 'counterpart_status' | 'counterpart_reviewed_at' | 'ai_recommendation' | 'ai_reason' | 'requires_owner_review'>>,
   ): Promise<ShiftSwapRequest> {
     const { data, error } = await supabase
       .from('shift_swap_requests')
@@ -327,6 +327,7 @@ export const attendanceRepository = {
     counterpart_id: string
     counterpart_assignment_id: string
     reason: string | null
+    requires_owner_review: boolean
   }): Promise<ShiftSwapRequest> {
     const { data, error } = await supabase
       .from('shift_swap_requests')
@@ -335,6 +336,22 @@ export const attendanceRepository = {
       .single()
     if (error) throw new Error(error.message)
     return data as ShiftSwapRequest
+  },
+
+  // Counts this user's shift swap requests (as either side) that reached a final result
+  // (approved or rejected) within [fromISO, toISO) — used to enforce the Owner's monthly swap
+  // limit. Pending/withdrawn requests haven't "used up" a swap yet.
+  async countDecidedShiftSwapsForUser(company_id: string, user_id: string, fromISO: string, toISO: string): Promise<number> {
+    const { count, error } = await supabase
+      .from('shift_swap_requests')
+      .select('id', { count: 'exact', head: true })
+      .eq('company_id', company_id)
+      .in('status', ['approved', 'rejected'])
+      .gte('created_at', fromISO)
+      .lt('created_at', toISO)
+      .or(`requester_id.eq.${user_id},counterpart_id.eq.${user_id}`)
+    if (error) throw new Error(error.message)
+    return count ?? 0
   },
 
   async createFixedOffDayRequests(input: {

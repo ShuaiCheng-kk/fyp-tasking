@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 vi.mock('@/lib/supabase', () => ({
   supabase: {},
@@ -39,6 +39,7 @@ vi.mock('@/repositories/owner/attendanceRepository', () => ({
     getEmployeesByCompany: vi.fn(),
     getManagersByCompany: vi.fn(),
     getScheduledHeadcountForDeptDate: vi.fn(),
+    countDecidedShiftSwapsForUser: vi.fn(),
   },
 }))
 
@@ -47,6 +48,12 @@ vi.mock('@/repositories/owner/offDaySettingsRepository', () => ({
     getQuotaForUser: vi.fn(),
     getCompanyDefaultQuota: vi.fn(),
     getDeadline: vi.fn(),
+  },
+}))
+
+vi.mock('@/repositories/owner/shiftSwapSettingsRepository', () => ({
+  shiftSwapSettingsRepository: {
+    getSettings: vi.fn(),
   },
 }))
 
@@ -71,6 +78,7 @@ vi.mock('@/repositories/owner/ownerTeamRepository', () => ({
 import { attendanceService } from './attendanceService'
 import { attendanceRepository } from '@/repositories/owner/attendanceRepository'
 import { offDaySettingsRepository } from '@/repositories/owner/offDaySettingsRepository'
+import { shiftSwapSettingsRepository } from '@/repositories/owner/shiftSwapSettingsRepository'
 import { taskRepository } from '@/repositories/owner/taskRepository'
 import { ownerTeamRepository } from '@/repositories/owner/ownerTeamRepository'
 import { authRepository } from '@/repositories/auth/authRepository'
@@ -409,6 +417,174 @@ describe('attendanceService', () => {
     })
   })
 
+  describe('submitShiftSwapRequest — auto-approval rule gating (monthly limit & weekly deadline)', () => {
+    const baseAssignment = (id: string, user_id: string, shift_date: string) => ({
+      id, user_id,
+      shifts: { id: `shift-${id}`, department_id: 'dept-1', shift_date, start_time: '09:00', end_time: '17:00', title: 'Shift' },
+    })
+    const sameRoleUsers = [
+      { id: 'user-1', full_name: 'Alice', role: 'Employee' },
+      { id: 'user-2', full_name: 'Bob', role: 'Employee' },
+    ]
+    const baseSettings = {
+      company_id: 'company-1', auto_approval_enabled: true,
+      monthly_swap_limit: null as number | null, deadline_weekday: null as number | null, deadline_time: null as string | null,
+      require_review_on_limit_exceeded: true, require_review_on_deadline_exceeded: true,
+      updated_by: 'owner-1', updated_at: '2026-01-01T00:00:00Z',
+    }
+
+    beforeEach(() => {
+      vi.mocked(attendanceRepository.getShiftAssignmentById).mockImplementation(async (id: string) => {
+        if (id === 'asn-1') return baseAssignment('asn-1', 'user-1', tomorrowStr) as any
+        if (id === 'asn-2') return baseAssignment('asn-2', 'user-2', dayAfterStr) as any
+        return null
+      })
+      vi.mocked(attendanceRepository.getUsersByIds).mockResolvedValue(sameRoleUsers as any)
+      vi.mocked(attendanceRepository.getPendingSwapRequestsByAssignment).mockResolvedValue([])
+      vi.mocked(attendanceRepository.createShiftSwapRequest).mockResolvedValue({ id: 'swap-1' } as any)
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    const submit = () => attendanceService.submitShiftSwapRequest({
+      company_id: 'company-1', requester_id: 'user-1', requester_assignment_id: 'asn-1',
+      counterpart_id: 'user-2', counterpart_assignment_id: 'asn-2', reason: null,
+    })
+
+    it('flags requires_owner_review=false when no settings row exists yet', async () => {
+      vi.mocked(shiftSwapSettingsRepository.getSettings).mockResolvedValue(null)
+
+      await submit()
+
+      expect(attendanceRepository.createShiftSwapRequest).toHaveBeenCalledWith(expect.objectContaining({ requires_owner_review: false }))
+    })
+
+    it('blocks submission outright when the monthly limit is exceeded and review-on-limit is off', async () => {
+      vi.mocked(shiftSwapSettingsRepository.getSettings).mockResolvedValue({ ...baseSettings, monthly_swap_limit: 3, require_review_on_limit_exceeded: false })
+      vi.mocked(attendanceRepository.countDecidedShiftSwapsForUser).mockImplementation(async (_company, userId) => (userId === 'user-1' ? 3 : 0))
+
+      await expect(submit()).rejects.toThrow('Monthly shift swap limit')
+      expect(attendanceRepository.createShiftSwapRequest).not.toHaveBeenCalled()
+    })
+
+    it('allows submission but flags requires_owner_review when the monthly limit is exceeded and review-on-limit is on', async () => {
+      vi.mocked(shiftSwapSettingsRepository.getSettings).mockResolvedValue({ ...baseSettings, monthly_swap_limit: 3, require_review_on_limit_exceeded: true })
+      vi.mocked(attendanceRepository.countDecidedShiftSwapsForUser).mockImplementation(async (_company, userId) => (userId === 'user-2' ? 3 : 0))
+
+      await submit()
+
+      expect(attendanceRepository.createShiftSwapRequest).toHaveBeenCalledWith(expect.objectContaining({ requires_owner_review: true }))
+    })
+
+    it('does not count against the limit when neither party has reached it', async () => {
+      vi.mocked(shiftSwapSettingsRepository.getSettings).mockResolvedValue({ ...baseSettings, monthly_swap_limit: 3 })
+      vi.mocked(attendanceRepository.countDecidedShiftSwapsForUser).mockResolvedValue(2)
+
+      await submit()
+
+      expect(attendanceRepository.createShiftSwapRequest).toHaveBeenCalledWith(expect.objectContaining({ requires_owner_review: false }))
+    })
+
+    it('blocks submission outright when past the weekly deadline and review-on-deadline is off', async () => {
+      vi.setSystemTime(new Date('2026-01-06T12:00:00.000Z')) // Tuesday noon UTC
+      vi.mocked(shiftSwapSettingsRepository.getSettings).mockResolvedValue({ ...baseSettings, deadline_weekday: 2, deadline_time: '09:00', require_review_on_deadline_exceeded: false })
+
+      await expect(submit()).rejects.toThrow('submission deadline')
+      expect(attendanceRepository.createShiftSwapRequest).not.toHaveBeenCalled()
+    })
+
+    it('allows submission but flags requires_owner_review when past the weekly deadline and review-on-deadline is on', async () => {
+      vi.setSystemTime(new Date('2026-01-06T12:00:00.000Z')) // Tuesday noon UTC
+      vi.mocked(shiftSwapSettingsRepository.getSettings).mockResolvedValue({ ...baseSettings, deadline_weekday: 2, deadline_time: '09:00', require_review_on_deadline_exceeded: true })
+
+      await submit()
+
+      expect(attendanceRepository.createShiftSwapRequest).toHaveBeenCalledWith(expect.objectContaining({ requires_owner_review: true }))
+    })
+
+    it('does not flag requires_owner_review when submitted before this week\'s deadline', async () => {
+      vi.setSystemTime(new Date('2026-01-06T12:00:00.000Z')) // Tuesday noon UTC
+      vi.mocked(shiftSwapSettingsRepository.getSettings).mockResolvedValue({ ...baseSettings, deadline_weekday: 2, deadline_time: '18:00' }) // 6pm — not yet passed
+
+      await submit()
+
+      expect(attendanceRepository.createShiftSwapRequest).toHaveBeenCalledWith(expect.objectContaining({ requires_owner_review: false }))
+    })
+  })
+
+  describe('respondShiftSwapRequest (auto-approval)', () => {
+    const futureAssignment = (id: string, user_id: string, shift_id: string, shift_date: string) => ({
+      id, user_id, shift_id,
+      shifts: { id: shift_id, department_id: 'dept-1', shift_date, start_time: '09:00', end_time: '17:00', title: 'Shift' },
+    })
+    const baseSettings = {
+      company_id: 'company-1', auto_approval_enabled: true,
+      monthly_swap_limit: null as number | null, deadline_weekday: null as number | null, deadline_time: null as string | null,
+      require_review_on_limit_exceeded: true, require_review_on_deadline_exceeded: true,
+      updated_by: 'owner-1', updated_at: '2026-01-01T00:00:00Z',
+    }
+    const pendingRequest = (requiresOwnerReview: boolean) => ({
+      id: 'swap-1', company_id: 'company-1',
+      requester_id: 'user-1', requester_assignment_id: 'asn-1',
+      counterpart_id: 'user-2', counterpart_assignment_id: 'asn-2',
+      counterpart_status: 'pending', status: 'pending', requires_owner_review: requiresOwnerReview,
+    })
+
+    it('closes the request on rejection without checking settings or touching assignments', async () => {
+      vi.mocked(attendanceRepository.getShiftSwapRequestById).mockResolvedValue(pendingRequest(false) as any)
+      vi.mocked(attendanceRepository.updateShiftSwapRequest).mockResolvedValue({ id: 'swap-1', status: 'rejected' } as any)
+
+      await attendanceService.respondShiftSwapRequest({ id: 'swap-1', counterpart_id: 'user-2', decision: 'rejected' })
+
+      expect(shiftSwapSettingsRepository.getSettings).not.toHaveBeenCalled()
+      expect(attendanceRepository.updateShiftAssignmentUser).not.toHaveBeenCalled()
+    })
+
+    it('leaves the request pending for the Owner when auto-approval is off', async () => {
+      vi.mocked(attendanceRepository.getShiftSwapRequestById).mockResolvedValue(pendingRequest(false) as any)
+      vi.mocked(attendanceRepository.updateShiftSwapRequest).mockResolvedValue({ id: 'swap-1', counterpart_status: 'approved', status: 'pending' } as any)
+      vi.mocked(shiftSwapSettingsRepository.getSettings).mockResolvedValue({ ...baseSettings, auto_approval_enabled: false })
+
+      await attendanceService.respondShiftSwapRequest({ id: 'swap-1', counterpart_id: 'user-2', decision: 'approved' })
+
+      expect(attendanceRepository.updateShiftAssignmentUser).not.toHaveBeenCalled()
+    })
+
+    it('leaves the request pending for the Owner when it was flagged requires_owner_review at submission, even with auto-approval on', async () => {
+      vi.mocked(attendanceRepository.getShiftSwapRequestById).mockResolvedValue(pendingRequest(true) as any)
+      vi.mocked(attendanceRepository.updateShiftSwapRequest).mockResolvedValue({ id: 'swap-1', counterpart_status: 'approved', status: 'pending' } as any)
+      vi.mocked(shiftSwapSettingsRepository.getSettings).mockResolvedValue(baseSettings)
+
+      await attendanceService.respondShiftSwapRequest({ id: 'swap-1', counterpart_id: 'user-2', decision: 'approved' })
+
+      expect(attendanceRepository.updateShiftAssignmentUser).not.toHaveBeenCalled()
+    })
+
+    it('auto-approves and swaps assignments immediately once both parties have agreed, with reviewed_by=null', async () => {
+      vi.mocked(attendanceRepository.getShiftSwapRequestById).mockResolvedValue(pendingRequest(false) as any)
+      vi.mocked(attendanceRepository.updateShiftSwapRequest).mockResolvedValue({ id: 'swap-1' } as any)
+      vi.mocked(shiftSwapSettingsRepository.getSettings).mockResolvedValue(baseSettings)
+      vi.mocked(attendanceRepository.getShiftAssignmentById).mockImplementation(async (id: string) => {
+        if (id === 'asn-1') return futureAssignment('asn-1', 'user-1', 'shift-1', tomorrowStr) as any
+        if (id === 'asn-2') return futureAssignment('asn-2', 'user-2', 'shift-2', dayAfterStr) as any
+        return null
+      })
+      vi.mocked(attendanceRepository.updateShiftAssignmentUser).mockResolvedValue({} as any)
+      vi.mocked(taskRepository.reassignTasksForShiftSwap).mockResolvedValue(undefined)
+
+      await attendanceService.respondShiftSwapRequest({ id: 'swap-1', counterpart_id: 'user-2', decision: 'approved' })
+
+      expect(attendanceRepository.updateShiftSwapRequest).toHaveBeenNthCalledWith(1, 'swap-1', expect.objectContaining({ counterpart_status: 'approved' }))
+      expect(attendanceRepository.updateShiftAssignmentUser).toHaveBeenCalledWith('asn-1', 'user-2')
+      expect(attendanceRepository.updateShiftAssignmentUser).toHaveBeenCalledWith('asn-2', 'user-1')
+      expect(taskRepository.reassignTasksForShiftSwap).toHaveBeenCalledWith('shift-1', 'user-1', 'user-2')
+      expect(taskRepository.reassignTasksForShiftSwap).toHaveBeenCalledWith('shift-2', 'user-2', 'user-1')
+      expect(attendanceRepository.updateShiftSwapRequest).toHaveBeenLastCalledWith('swap-1', expect.objectContaining({ status: 'approved', reviewed_by: null }))
+    })
+  })
+
   describe('getShiftSwapRequests (task-impact preview)', () => {
     it('attaches each side\'s movable tasks from getMovableTasksByShiftAssignment', async () => {
       vi.mocked(attendanceRepository.getShiftSwapRequestsByCompany).mockResolvedValue([
@@ -555,13 +731,37 @@ describe('attendanceService', () => {
         .rejects.toThrow('new_date is required')
     })
 
-    it('rejects a modify whose new_date falls in a different week', async () => {
+    it('modifies the request to a replacement date in the following week (a bonus day when this week has no safe slot)', async () => {
       vi.mocked(attendanceRepository.getFixedOffDayRequestById).mockResolvedValue({
         id: 'fod-1', user_id: 'user-1', company_id: 'company-1', request_date: '2026-07-09', week_start: '2026-07-06', status: 'pending', source: 'submitted', reviewed_by: null, reviewed_at: null, created_at: '2026-01-01',
       } as any)
+      vi.mocked(attendanceRepository.updateFixedOffDayRequest).mockResolvedValue({ id: 'fod-1', status: 'modified' } as any)
 
-      await expect(attendanceService.decideFixedOffDayRequest({ id: 'fod-1', reviewer_id: 'owner-1', decision: 'modified', new_date: '2026-07-14' }))
-        .rejects.toThrow('same week')
+      await attendanceService.decideFixedOffDayRequest({ id: 'fod-1', reviewer_id: 'owner-1', decision: 'modified', new_date: '2026-07-14' })
+
+      expect(attendanceRepository.updateFixedOffDayRequest).toHaveBeenCalledWith('fod-1', expect.objectContaining({ status: 'modified', request_date: '2026-07-14' }))
+    })
+
+    it('allows a replacement date many weeks out — Owner picks freely, no week cap', async () => {
+      vi.mocked(attendanceRepository.getFixedOffDayRequestById).mockResolvedValue({
+        id: 'fod-1', user_id: 'user-1', company_id: 'company-1', request_date: '2026-07-09', week_start: '2026-07-06', status: 'pending', source: 'submitted', reviewed_by: null, reviewed_at: null, created_at: '2026-01-01',
+      } as any)
+      vi.mocked(attendanceRepository.updateFixedOffDayRequest).mockResolvedValue({ id: 'fod-1', status: 'modified' } as any)
+
+      await attendanceService.decideFixedOffDayRequest({ id: 'fod-1', reviewer_id: 'owner-1', decision: 'modified', new_date: '2026-08-15' })
+
+      expect(attendanceRepository.updateFixedOffDayRequest).toHaveBeenCalledWith('fod-1', expect.objectContaining({ status: 'modified', request_date: '2026-08-15' }))
+    })
+
+    it('treats a "modify" whose new_date is unchanged from the original as a plain approval', async () => {
+      vi.mocked(attendanceRepository.getFixedOffDayRequestById).mockResolvedValue({
+        id: 'fod-1', user_id: 'user-1', company_id: 'company-1', request_date: '2026-07-09', week_start: '2026-07-06', status: 'pending', source: 'submitted', reviewed_by: null, reviewed_at: null, created_at: '2026-01-01',
+      } as any)
+      vi.mocked(attendanceRepository.updateFixedOffDayRequest).mockResolvedValue({ id: 'fod-1', status: 'approved' } as any)
+
+      await attendanceService.decideFixedOffDayRequest({ id: 'fod-1', reviewer_id: 'owner-1', decision: 'modified', new_date: '2026-07-09' })
+
+      expect(attendanceRepository.updateFixedOffDayRequest).toHaveBeenCalledWith('fod-1', expect.objectContaining({ status: 'approved' }))
     })
   })
 
@@ -644,13 +844,42 @@ describe('attendanceService', () => {
       })).rejects.toThrow('not repeat')
     })
 
-    it('rejects modify when a replacement date falls outside the request week', async () => {
+    it('allows a replacement date many weeks out — Owner picks freely, no week cap', async () => {
       vi.mocked(attendanceRepository.getFixedOffDayRequestsByIds).mockResolvedValue(
         [rowFor('fod-1', '2026-07-06'), rowFor('fod-2', '2026-07-08')] as any)
+      vi.mocked(attendanceRepository.updateFixedOffDayRequest).mockResolvedValue({} as any)
 
-      await expect(attendanceService.decideFixedOffDayRequestGroup({
-        ids: ['fod-1', 'fod-2'], reviewer_id: 'owner-1', decision: 'modified', new_dates: ['2026-07-11', '2026-07-20'],
-      })).rejects.toThrow('same week')
+      await attendanceService.decideFixedOffDayRequestGroup({
+        ids: ['fod-1', 'fod-2'], reviewer_id: 'owner-1', decision: 'modified', new_dates: ['2026-07-11', '2026-08-20'],
+      })
+
+      expect(attendanceRepository.updateFixedOffDayRequest).toHaveBeenCalledWith('fod-2', expect.objectContaining({ status: 'modified', request_date: '2026-08-20' }))
+    })
+
+    it('allows a replacement date in the following week as a bonus day (keeps the row on this week\'s week_start)', async () => {
+      vi.mocked(attendanceRepository.getFixedOffDayRequestsByIds).mockResolvedValue(
+        [rowFor('fod-1', '2026-07-06'), rowFor('fod-2', '2026-07-08')] as any)
+      vi.mocked(attendanceRepository.updateFixedOffDayRequest).mockResolvedValue({} as any)
+
+      await attendanceService.decideFixedOffDayRequestGroup({
+        ids: ['fod-1', 'fod-2'], reviewer_id: 'owner-1', decision: 'modified', new_dates: ['2026-07-11', '2026-07-14'],
+      })
+
+      expect(attendanceRepository.updateFixedOffDayRequest).toHaveBeenCalledWith('fod-2', expect.objectContaining({ status: 'modified', request_date: '2026-07-14' }))
+    })
+
+    it('keeps a row approved (not modified) when its "replacement" is the same date it already had — lets one batch mix approve-safe with replace-only-flagged', async () => {
+      vi.mocked(attendanceRepository.getFixedOffDayRequestsByIds).mockResolvedValue(
+        [rowFor('fod-1', '2026-07-06'), rowFor('fod-2', '2026-07-08')] as any)
+      vi.mocked(attendanceRepository.updateFixedOffDayRequest).mockResolvedValue({} as any)
+
+      await attendanceService.decideFixedOffDayRequestGroup({
+        // fod-1 is safe and comes back unchanged; only fod-2 is actually being swapped to a new date.
+        ids: ['fod-1', 'fod-2'], reviewer_id: 'owner-1', decision: 'modified', new_dates: ['2026-07-06', '2026-07-14'],
+      })
+
+      expect(attendanceRepository.updateFixedOffDayRequest).toHaveBeenCalledWith('fod-1', expect.objectContaining({ status: 'approved' }))
+      expect(attendanceRepository.updateFixedOffDayRequest).toHaveBeenCalledWith('fod-2', expect.objectContaining({ status: 'modified', request_date: '2026-07-14' }))
     })
   })
 

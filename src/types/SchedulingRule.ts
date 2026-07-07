@@ -70,4 +70,5 @@ export type AiShiftSlot = {
   assigned_user_id: string | null
   assigned_user_name: string | null
   reason: string
+  role: 'Manager' | 'Employee'
 }

@@ -35,6 +35,15 @@ const stubSuggestion = {
   alternatives: [],
 }
 
+// getOffDayRequestsByCompanyAndWeek is now called once per week under consideration (the requested
+// week AND the following week, since a replacement may spill over) — resolve per-week so a row
+// belonging to one week doesn't get double-counted when the other week's call reuses the same stub.
+function mockOffDayRowsForWeek(week: string, rows: unknown[]) {
+  vi.mocked(attendanceRepository.getOffDayRequestsByCompanyAndWeek).mockImplementation(
+    async (_company: string, ws: string) => (ws === week ? rows : []) as any,
+  )
+}
+
 function offDayRow(overrides: Partial<{ user_id: string; request_date: string; status: string }> = {}) {
   return {
     id: `row-${Math.random()}`,
@@ -124,9 +133,9 @@ describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
       { id: 'mgr-1', full_name: 'Manager One' },
       { id: 'mgr-2', full_name: 'Manager Two' },
     ])
-    vi.mocked(attendanceRepository.getOffDayRequestsByCompanyAndWeek).mockResolvedValue([
+    mockOffDayRowsForWeek('2026-07-13', [
       offDayRow({ user_id: 'mgr-2', request_date: '2026-07-13', status: 'approved' }),
-    ] as any)
+    ])
 
     await requestAISuggestService.suggestFixedOffDayGroup({
       requester_name: 'Manager One',
@@ -169,9 +178,9 @@ describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
       { id: 'mgr-1', full_name: 'Manager One' },
       { id: 'mgr-2', full_name: 'Manager Two' },
     ])
-    vi.mocked(attendanceRepository.getOffDayRequestsByCompanyAndWeek).mockResolvedValue([
+    mockOffDayRowsForWeek('2026-07-13', [
       offDayRow({ user_id: 'mgr-2', request_date: '2026-07-15', status: 'approved' }),
-    ] as any)
+    ])
 
     await requestAISuggestService.suggestFixedOffDayGroup({
       requester_name: 'Manager One',
@@ -191,9 +200,9 @@ describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
   })
 
   it('excludes the requester\'s own other-date rows from "others already off" for a given date', async () => {
-    vi.mocked(attendanceRepository.getOffDayRequestsByCompanyAndWeek).mockResolvedValue([
+    mockOffDayRowsForWeek('2026-07-13', [
       offDayRow({ user_id: 'mgr-1', request_date: '2026-07-14', status: 'pending' }),
-    ] as any)
+    ])
 
     await requestAISuggestService.suggestFixedOffDayGroup({
       requester_name: 'Manager One',
@@ -213,9 +222,9 @@ describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
       { id: 'mgr-1', full_name: 'Manager One' },
       { id: 'mgr-2', full_name: 'Manager Two' },
     ])
-    vi.mocked(attendanceRepository.getOffDayRequestsByCompanyAndWeek).mockResolvedValue([
+    mockOffDayRowsForWeek('2026-07-13', [
       offDayRow({ user_id: 'mgr-2', request_date: '2026-07-13', status: 'rejected' }),
-    ] as any)
+    ])
 
     await requestAISuggestService.suggestFixedOffDayGroup({
       requester_name: 'Manager One',
@@ -240,9 +249,9 @@ describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
       { id: 'mgr-1', full_name: 'Manager One' },
       { id: 'mgr-2', full_name: 'Manager Two' },
     ])
-    vi.mocked(attendanceRepository.getOffDayRequestsByCompanyAndWeek).mockResolvedValue([
+    mockOffDayRowsForWeek('2026-07-13', [
       offDayRow({ user_id: 'mgr-2', request_date: '2026-07-13', status: 'pending' }),
-    ] as any)
+    ])
 
     await requestAISuggestService.suggestFixedOffDayGroup({
       requester_name: 'Manager One',
@@ -264,9 +273,9 @@ describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
       { id: 'mgr-2', full_name: 'Manager Two' },
     ])
     // Department is tight on 2026-07-14 (Tue) because mgr-2 is already off then.
-    vi.mocked(attendanceRepository.getOffDayRequestsByCompanyAndWeek).mockResolvedValue([
+    mockOffDayRowsForWeek('2026-07-13', [
       offDayRow({ user_id: 'mgr-2', request_date: '2026-07-14', status: 'approved' }),
-    ] as any)
+    ])
 
     await requestAISuggestService.suggestFixedOffDayGroup({
       requester_name: 'Manager One',
@@ -280,6 +289,38 @@ describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
     const call = vi.mocked(openAIService.generateStructuredJson).mock.calls[0][0] as any
     expect(call.input.safe_alternative_dates).not.toContain('2026-07-14')
     expect(call.input.safe_alternative_dates).not.toContain('2026-07-13')
+  })
+
+  // Cross-week spillover: when the requested week is fully booked (every remaining day already
+  // short-staffed), safe alternatives should spill into the following week rather than come back
+  // empty — this is the "borrow a bonus day off the following week" case the Owner asked for.
+  it('spills over to a safe date in the following week when every day in the requested week is already short-staffed', async () => {
+    vi.mocked(ownerTeamRepository.findManagersByDepartment).mockResolvedValue([
+      { id: 'mgr-1', full_name: 'Manager One' },
+      { id: 'mgr-2', full_name: 'Manager Two' },
+    ])
+    mockOffDayRowsForWeek('2026-07-13', [
+      offDayRow({ user_id: 'mgr-2', request_date: '2026-07-14', status: 'approved' }),
+      offDayRow({ user_id: 'mgr-2', request_date: '2026-07-15', status: 'approved' }),
+      offDayRow({ user_id: 'mgr-2', request_date: '2026-07-16', status: 'approved' }),
+      offDayRow({ user_id: 'mgr-2', request_date: '2026-07-17', status: 'approved' }),
+      offDayRow({ user_id: 'mgr-2', request_date: '2026-07-18', status: 'approved' }),
+      offDayRow({ user_id: 'mgr-2', request_date: '2026-07-19', status: 'approved' }),
+    ])
+
+    await requestAISuggestService.suggestFixedOffDayGroup({
+      requester_name: 'Manager One',
+      requester_role: 'Manager',
+      request_dates: ['2026-07-13'],
+      department_id: 'dept-ops',
+      company_id: 'company-1',
+      user_id: 'mgr-1',
+    })
+
+    expect(attendanceRepository.getOffDayRequestsByCompanyAndWeek).toHaveBeenCalledWith('company-1', '2026-07-20')
+    const call = vi.mocked(openAIService.generateStructuredJson).mock.calls[0][0] as any
+    expect(call.input.safe_alternative_dates.length).toBeGreaterThan(0)
+    expect(call.input.safe_alternative_dates.every((d: string) => d >= '2026-07-20')).toBe(true)
   })
 
   it('returns an empty safe_alternative_dates list and skips roster lookups when department_id is null', async () => {

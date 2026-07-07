@@ -6,7 +6,7 @@ export default function RoleAvatar({ role, size = 36, photoUrl }: { role: string
   if (photoUrl) {
     return (
       <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: size, height: size, borderRadius: 999, flexShrink: 0, overflow: 'hidden' }}>
-        <img src={photoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        <img src={photoUrl} alt="" crossOrigin="anonymous" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
       </span>
     )
   }
