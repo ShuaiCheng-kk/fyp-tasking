@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import {
@@ -19,6 +19,7 @@ import {
   RotateCw,
   Table2,
   GripVertical,
+  LayoutTemplate,
   Sparkles,
   Trash2,
   Upload,
@@ -43,6 +44,7 @@ import { deptColor, setDeptColorOverrides } from '@/lib/deptColor'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 import { ShiftTemplate } from '@/types/ShiftTemplate'
 import { AiShiftSlot, ShiftTypeInput } from '@/types/SchedulingRule'
+import { aiScheduleGenerationStore, AutoShiftBlock, AI_SCHEDULE_RULE_STEPS } from '@/lib/aiScheduleGenerationStore'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -137,15 +139,6 @@ type BulkEditRow = {
   end_time: string
   department_id: string
   assigned_user_id: string
-}
-
-type AutoShiftBlock = {
-  key: string
-  department_id: string
-  department_name: string
-  shift_date: string
-  slots: AiShiftSlot[]
-  warning: string | null
 }
 
 type AiScheduleViolation = {
@@ -401,17 +394,6 @@ function addDays(date: Date, days: number): Date {
 }
 
 const CLOPENING_MIN_REST_HOURS = 5
-
-const AI_SCHEDULE_RULE_STEPS = [
-  'Checking approved leave for the selected departments…',
-  'Checking weekly days off…',
-  'Calculating weekly working hour limits (44h/week)…',
-  'Ensuring at least 1 manager and 1 employee per department each day…',
-  'Limiting consecutive working days (max 3)…',
-  'Rotating weekend duty fairly…',
-  'Balancing workload across staff…',
-  'Finalizing the draft schedule…',
-]
 
 function findClopeningConflict(input: {
   shift_date: string
@@ -833,21 +815,30 @@ export default function OwnerShiftsPage() {
   ])
   const [aiShiftTypeTemplateIds, setAiShiftTypeTemplateIds] = useState<string[]>([''])
   const [aiShiftSelectedDepartmentIds, setAiShiftSelectedDepartmentIds] = useState<string[]>([])
-  const [aiShiftLoading, setAiShiftLoading] = useState(false)
-  const [aiShiftProgress, setAiShiftProgress] = useState(0)
-  const [aiShiftRuleStepIndex, setAiShiftRuleStepIndex] = useState(0)
   const [aiShiftError, setAiShiftError] = useState('')
-  const [aiShiftNotice, setAiShiftNotice] = useState('')
-  const [aiShiftSuggestions, setAiShiftSuggestions] = useState<AutoShiftBlock[]>([])
-  const [aiShiftSelected, setAiShiftSelected] = useState<Set<string>>(new Set())
   const [aiEditingSlot, setAiEditingSlot] = useState<{ blockKey: string; slotIndex: number } | null>(null)
   const [aiDraggingSlot, setAiDraggingSlot] = useState<{ blockKey: string; slotIndex: number } | null>(null)
   const [aiDragOverCell, setAiDragOverCell] = useState<string | null>(null)
   const [aiShiftCreateLoading, setAiShiftCreateLoading] = useState(false)
   const [aiShiftCreateError, setAiShiftCreateError] = useState('')
   const [aiResultWeekOffset, setAiResultWeekOffset] = useState(0)
-  const [aiStaffAvailability, setAiStaffAvailability] = useState<Map<string, { fixedOffDates: Set<string>; approvedLeaveDates: Set<string> }>>(new Map())
-  const [aiShiftKnownRows, setAiShiftKnownRows] = useState<Map<string, { name: string; deptId: string; deptName: string; isUnassigned: boolean }>>(new Map())
+  // Drives the "genie" minimize animation right after starting a generation — the modal shrinks
+  // and flies toward the top-right corner (where the floating widget lives) instead of just sitting
+  // there or vanishing abruptly, so it's visually obvious where the run went.
+  const [aiShiftMinimizing, setAiShiftMinimizing] = useState(false)
+
+  // The generation run itself lives in a module-level store (not component state) so it survives
+  // navigating away from this page — see src/lib/aiScheduleGenerationStore.ts for why.
+  const aiGenState = useSyncExternalStore(aiScheduleGenerationStore.subscribe, aiScheduleGenerationStore.getSnapshot, aiScheduleGenerationStore.getSnapshot)
+  const aiShiftLoading = aiGenState.status === 'generating'
+  const aiShiftProgress = aiGenState.progress
+  const aiShiftRuleStepIndex = aiGenState.ruleStepIndex
+  const aiShiftNotice = aiGenState.notice
+  const aiShiftGenerationError = aiGenState.error
+  const aiShiftSuggestions = aiGenState.blocks
+  const aiShiftSelected = aiGenState.selected
+  const aiStaffAvailability = aiGenState.staffAvailability
+  const aiShiftKnownRows = aiGenState.knownRows
 
   const [bulkEditModalOpen, setBulkEditModalOpen] = useState(false)
   const [bulkEditDateFrom, setBulkEditDateFrom] = useState('')
@@ -873,6 +864,21 @@ export default function OwnerShiftsPage() {
   const [templateEditEndTime, setTemplateEditEndTime] = useState('')
   const [templateEditLoading, setTemplateEditLoading] = useState(false)
   const [templateEditError, setTemplateEditError] = useState('')
+
+  // Standalone "Shift Templates" list/create/edit modal reachable from the toolbar — mirrors the
+  // Task Templates modal's UX (src/app/owner/tasks/page.tsx). Separate state from the
+  // templateSave*/templateEdit* above, which belong to the inline template picker embedded in the
+  // per-department Assign Shift drawer — a different flow, left untouched.
+  const [shiftTemplateModalOpen, setShiftTemplateModalOpen] = useState(false)
+  const [shiftTemplateFormMode, setShiftTemplateFormMode] = useState<'list' | 'create' | 'edit'>('list')
+  const [shiftTemplateFormId, setShiftTemplateFormId] = useState('')
+  const [shiftTemplateFormName, setShiftTemplateFormName] = useState('')
+  const [shiftTemplateFormStartTime, setShiftTemplateFormStartTime] = useState('09:00')
+  const [shiftTemplateFormEndTime, setShiftTemplateFormEndTime] = useState('17:00')
+  const [shiftTemplateFormLoading, setShiftTemplateFormLoading] = useState(false)
+  const [shiftTemplateFormError, setShiftTemplateFormError] = useState('')
+  const [deleteShiftTemplateLoading, setDeleteShiftTemplateLoading] = useState(false)
+
   const [expandedBatchCells, setExpandedBatchCells] = useState<Set<string>>(new Set())
   const [editSelectedTemplateId, setEditSelectedTemplateId] = useState('')
   const [duplicateSelectedTemplateId, setDuplicateSelectedTemplateId] = useState('')
@@ -900,8 +906,35 @@ export default function OwnerShiftsPage() {
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [errorToast, setErrorToast] = useState<string | null>(null)
   const errorToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const aiGenerateAbortRef = useRef<AbortController | null>(null)
-  const aiShiftRuleStepTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // If the Owner goes back and changes dates/departments/shift types after already generating (or
+  // while still generating) a schedule, the old/in-flight run is for a different input and must
+  // not be shown as-is — clear it so the "generate" step asks for a fresh run against the new
+  // selection. The run itself lives in aiScheduleGenerationStore, not component state.
+  //
+  // These fields still sitting at their pristine just-mounted defaults ('' / [] / the single
+  // default shift type) means the mount-time resume effect (near openAiShiftModal) hasn't hydrated
+  // them from a background run yet — not that the Owner edited anything. Skipping in that case
+  // also happens to make this safe under React Strict Mode's dev-only double-invoke of effects:
+  // both invocations see the same pre-hydration closure (no real render happens between them), so
+  // both hit this guard; only the real post-hydration render (where these no longer match the
+  // pristine defaults) reaches the comparison below.
+  useEffect(() => {
+    if (!aiShiftDateFrom && !aiShiftDateTo && aiShiftSelectedDepartmentIds.length === 0) return
+    const existing = aiScheduleGenerationStore.getSnapshot()
+    if (existing.status === 'idle') return
+    const p = existing.params
+    const matchesActiveRun = !!p
+      && p.dateFrom === aiShiftDateFrom
+      && p.dateTo === aiShiftDateTo
+      && p.departmentIds.length === aiShiftSelectedDepartmentIds.length
+      && p.departmentIds.every(id => aiShiftSelectedDepartmentIds.includes(id))
+      && p.shiftTypes.length === aiShiftTypes.length
+      && p.shiftTypes.every((st, i) => st.start_time === aiShiftTypes[i]?.start_time && st.end_time === aiShiftTypes[i]?.end_time)
+    if (matchesActiveRun) return
+    aiScheduleGenerationStore.clear()
+    setAiResultWeekOffset(0)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiShiftSelectedDepartmentIds, aiShiftDateFrom, aiShiftDateTo, aiShiftTypes])
 
   const profileSummary: UserProfileSummary = {
     user_id: '',
@@ -986,12 +1019,6 @@ export default function OwnerShiftsPage() {
   useEffect(() => {
     if (recurringShiftError) recurringShiftErrorRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   }, [recurringShiftError])
-
-  useEffect(() => {
-    return () => {
-      aiGenerateAbortRef.current?.abort()
-    }
-  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -1555,8 +1582,28 @@ export default function OwnerShiftsPage() {
   }
 
   const openAiShiftModal = (_dept?: Department | null) => {
-    aiGenerateAbortRef.current?.abort()
-    aiGenerateAbortRef.current = null
+    const existing = aiScheduleGenerationStore.getSnapshot()
+    // A run is already generating or sitting done/errored in the background (e.g. the Owner
+    // minimized it and came back, or clicked the floating widget) — jump straight to reviewing it
+    // instead of resetting the wizard, and hydrate the form fields so "back"/regenerate stays
+    // consistent with what's actually showing.
+    if (existing.status !== 'idle') {
+      if (existing.params) {
+        setAiShiftDateFrom(existing.params.dateFrom)
+        setAiShiftDateTo(existing.params.dateTo)
+        setAiShiftSelectedDepartmentIds(existing.params.departmentIds)
+        setAiShiftTypes(existing.params.shiftTypes)
+        setAiShiftTypeTemplateIds(existing.params.shiftTypes.map(() => ''))
+      }
+      setAiShiftError('')
+      setAiShiftCreateError('')
+      setAiEditingSlot(null)
+      setAiDraggingSlot(null)
+      setAiDragOverCell(null)
+      setAiShiftWizardStep('generate')
+      setAiShiftModal(true)
+      return
+    }
     setAiShiftWizardStep('dates')
     const today = new Date()
     const dow = (today.getDay() + 6) % 7
@@ -1569,44 +1616,63 @@ export default function OwnerShiftsPage() {
     setAiShiftTypes([{ label: 'Shift 1', start_time: '09:00', end_time: '17:00' }])
     setAiShiftTypeTemplateIds([''])
     setAiShiftSelectedDepartmentIds([])
-    setAiShiftLoading(false)
-    setAiShiftProgress(0)
     setAiShiftError('')
-    setAiShiftNotice('')
-    setAiShiftSuggestions([])
-    setAiShiftSelected(new Set())
     setAiShiftCreateError('')
     setAiResultWeekOffset(0)
     setAiEditingSlot(null)
     setAiDraggingSlot(null)
     setAiDragOverCell(null)
-    setAiStaffAvailability(new Map())
-    setAiShiftKnownRows(new Map())
     setAiShiftModal(true)
   }
 
   const closeAiShiftModal = () => {
-    aiGenerateAbortRef.current?.abort()
-    aiGenerateAbortRef.current = null
-    if (aiShiftRuleStepTimerRef.current) { clearInterval(aiShiftRuleStepTimerRef.current); aiShiftRuleStepTimerRef.current = null }
-    setAiShiftLoading(false)
+    // While a run is still generating, closing just minimizes it — the floating widget (mounted in
+    // the owner layout) keeps tracking progress in the background. Once it's done or errored,
+    // closing acknowledges and clears it so the widget doesn't linger.
+    if (aiScheduleGenerationStore.getSnapshot().status !== 'generating') {
+      aiScheduleGenerationStore.clear()
+    }
     setAiShiftModal(false)
   }
 
-  const stopAiShiftProgress = (complete: boolean) => {
-    if (aiShiftRuleStepTimerRef.current) { clearInterval(aiShiftRuleStepTimerRef.current); aiShiftRuleStepTimerRef.current = null }
-    if (complete) setAiShiftProgress(100)
-  }
+  // Once the shrink-toward-the-widget animation (see the modal card's transform below) has had time
+  // to play, actually hide the modal — the run itself keeps going in aiScheduleGenerationStore
+  // regardless, same as a manual minimize.
+  useEffect(() => {
+    if (!aiShiftMinimizing) return
+    const timer = setTimeout(() => {
+      setAiShiftModal(false)
+      setAiShiftMinimizing(false)
+    }, 550)
+    return () => clearTimeout(timer)
+  }, [aiShiftMinimizing])
 
-  const handleAiGenerateShifts = async () => {
+  // Only reopen the wizard in response to an explicit request from the floating widget's onClick
+  // (aiGenState.pendingOpen) — never merely because this page happened to mount or a background run
+  // happens to be non-idle. Landing on /owner/shifts any other way (sidebar nav, direct URL,
+  // browser back) must show the plain page, not pop the modal open uninvited. This covers both the
+  // Owner clicking the widget from elsewhere (this page mounts fresh with pendingOpen already true)
+  // and clicking it while already sitting here (pendingOpen flips true on an already-mounted page).
+  useEffect(() => {
+    if (!aiGenState.pendingOpen) return
+    aiScheduleGenerationStore.consumeOpenRequest()
+    if (aiScheduleGenerationStore.getSnapshot().status !== 'idle') {
+      openAiShiftModal()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiGenState.pendingOpen])
+
+  // Returns whether it actually started a generation run (false on a validation failure) — used by
+  // the primary "Generate Schedule with AI" button to know whether to play the minimize animation.
+  const handleAiGenerateShifts = async (): Promise<boolean> => {
     const normalizedDateFrom = normalizeDateInput(aiShiftDateFrom)
     const normalizedDateTo = normalizeDateInput(aiShiftDateTo)
-    if (!normalizedDateFrom || !normalizedDateTo) { setAiShiftError('Select a date range'); return }
+    if (!normalizedDateFrom || !normalizedDateTo) { setAiShiftError('Select a date range'); return false }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDateFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(normalizedDateTo)) {
       setAiShiftError('Select a valid date range')
-      return
+      return false
     }
-    if (aiShiftSelectedDepartmentIds.length === 0) { setAiShiftError('Select at least one department'); return }
+    if (aiShiftSelectedDepartmentIds.length === 0) { setAiShiftError('Select at least one department'); return false }
     const validShiftTypes = aiShiftTypes
       .map((shift, index) => ({
         label: shift.label?.trim() || `Shift ${index + 1}`,
@@ -1614,159 +1680,52 @@ export default function OwnerShiftsPage() {
         end_time: shift.end_time,
       }))
       .filter(shift => shift.start_time && shift.end_time)
-    if (validShiftTypes.length === 0) { setAiShiftError('Add at least one shift type'); return }
+    if (validShiftTypes.length === 0) { setAiShiftError('Add at least one shift type'); return false }
     if (validShiftTypes.some(shift => shift.start_time >= shift.end_time)) {
       setAiShiftError('Each shift type start time must be before end time')
-      return
+      return false
     }
 
     const dayCount = Math.floor((new Date(`${normalizedDateTo}T00:00:00Z`).getTime() - new Date(`${normalizedDateFrom}T00:00:00Z`).getTime()) / 86_400_000) + 1
     const slotCount = aiShiftSelectedDepartmentIds.length * dayCount * validShiftTypes.length
     if (slotCount > 150) {
       setAiShiftError(`Too many shifts to generate at once (${slotCount}). Narrow the date range, departments, or shift types and try again.`)
-      return
+      return false
     }
-    setAiShiftLoading(true)
     setAiShiftError('')
-    setAiShiftNotice('')
-    setAiShiftSuggestions([])
-    setAiShiftSelected(new Set())
-    setAiResultWeekOffset(0)
-    setAiShiftProgress(0)
-    setAiShiftRuleStepIndex(0)
     setAiEditingSlot(null)
     setAiDraggingSlot(null)
     setAiDragOverCell(null)
-    setAiStaffAvailability(new Map())
-    setAiShiftKnownRows(new Map())
-    aiGenerateAbortRef.current?.abort()
-    const controller = new AbortController()
-    aiGenerateAbortRef.current = controller
-    if (aiShiftRuleStepTimerRef.current) clearInterval(aiShiftRuleStepTimerRef.current)
-    aiShiftRuleStepTimerRef.current = setInterval(() => {
-      setAiShiftRuleStepIndex(i => Math.min(i + 1, AI_SCHEDULE_RULE_STEPS.length - 1))
-    }, 2200)
+    setAiResultWeekOffset(0)
+    // The actual generation (streaming fetch + progress) runs in aiScheduleGenerationStore, not
+    // here — so it keeps going even if the Owner navigates away from this page. See that module
+    // for why, and src/components/owner/AiScheduleStatusWidget.tsx for the persistent indicator.
     const deptNameMap = new Map(departments.map(d => [d.id, d.name]))
-    const received: AutoShiftBlock[] = []
-    let expectedBlockCount = 0
-    try {
-      const res = await fetch('/api/owner/scheduling-rules/generate', {
-        method: 'POST',
-        signal: controller.signal,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          company_id: companyId,
-          user_id: internalUserId,
-          date_from: normalizedDateFrom,
-          date_to: normalizedDateTo,
-          department_ids: aiShiftSelectedDepartmentIds,
-          shift_types: validShiftTypes,
-        }),
-      })
-      if (!res.body) throw new Error('Streaming not supported by this browser')
+    void aiScheduleGenerationStore.startGeneration({
+      companyId,
+      userId: internalUserId,
+      dateFrom: normalizedDateFrom,
+      dateTo: normalizedDateTo,
+      departmentIds: aiShiftSelectedDepartmentIds,
+      shiftTypes: validShiftTypes,
+    }, deptNameMap)
+    return true
+  }
 
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let doneResult: { notice?: string } | null = null
-      let streamError: string | null = null
-
-      while (true) {
-        const { value, done } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        let sepIdx: number
-        while ((sepIdx = buffer.indexOf('\n\n')) !== -1) {
-          const rawEvent = buffer.slice(0, sepIdx)
-          buffer = buffer.slice(sepIdx + 2)
-          const eventMatch = rawEvent.match(/^event: (.+)$/m)
-          const dataMatch = rawEvent.match(/^data: (.+)$/m)
-          if (!eventMatch || !dataMatch) continue
-          const eventName = eventMatch[1]
-          const payload = JSON.parse(dataMatch[1])
-
-          if (eventName === 'block') {
-            expectedBlockCount = payload.expectedBlockCount ?? expectedBlockCount
-            const block = payload.block as { department_id: string; department_name?: string; shift_date: string; slots: AiShiftSlot[]; warning: string | null }
-            const deptName = block.department_name ?? deptNameMap.get(block.department_id) ?? block.department_id
-            received.push({
-              key: `${block.department_id}_${block.shift_date}`,
-              department_id: block.department_id,
-              department_name: deptName,
-              shift_date: block.shift_date,
-              slots: Array.isArray(block.slots) ? block.slots : [],
-              warning: block.warning,
-            })
-            // Results are intentionally not rendered as they arrive — they're shown all at once once generation finishes.
-            if (expectedBlockCount > 0) setAiShiftProgress(Math.min(96, (received.length / expectedBlockCount) * 100))
-          } else if (eventName === 'done') {
-            doneResult = payload
-          } else if (eventName === 'error') {
-            streamError = payload.message ?? 'Schedule generation failed'
-          }
-        }
-      }
-
-      if (streamError) throw new Error(streamError)
-      setAiShiftSuggestions(received)
-      setAiShiftKnownRows(() => {
-        const knownRows = new Map<string, { name: string; deptId: string; deptName: string; isUnassigned: boolean }>()
-        for (const block of received) {
-          for (const slot of block.slots) {
-            const rowKey = slot.assigned_user_id ?? `unassigned_${block.department_id}`
-            if (!knownRows.has(rowKey)) {
-              knownRows.set(rowKey, {
-                name: slot.assigned_user_name ?? 'Unassigned',
-                deptId: block.department_id,
-                deptName: block.department_name,
-                isUnassigned: !slot.assigned_user_id,
-              })
-            }
-          }
-        }
-        return knownRows
-      })
-      setAiShiftSelected(new Set(received.flatMap(b => b.slots.map((_, slotIndex) => aiSlotSelectionKey(b.key, slotIndex)))))
-      setAiShiftNotice(doneResult?.notice ?? `AI generated ${received.length} schedule block${received.length === 1 ? '' : 's'} for Owner review.`)
-      stopAiShiftProgress(true)
-
-      try {
-        const contextRes = await fetch(`/api/owner/scheduling-rules/context?company_id=${companyId}&user_id=${internalUserId}&date_from=${normalizedDateFrom}&date_to=${normalizedDateTo}`)
-        const contextData = await contextRes.json()
-        if (contextData.success) {
-          const staff = contextData.context.staff as { id: string; fixed_off_days: string[]; leave_requests: { date: string | null; leave_type: string; status: string }[] }[]
-          const nextAvailability = new Map<string, { fixedOffDates: Set<string>; approvedLeaveDates: Set<string> }>()
-          for (const member of staff) {
-            nextAvailability.set(member.id, {
-              fixedOffDates: new Set(member.fixed_off_days),
-              approvedLeaveDates: new Set(member.leave_requests.filter(r => r.status === 'approved' && r.date).map(r => r.date as string)),
-            })
-          }
-          setAiStaffAvailability(nextAvailability)
-        } else {
-          console.error('[AI Schedule] Failed to load staff availability for fixed-off/leave badges:', contextData.message)
-        }
-      } catch (err) {
-        // Non-critical: the grid simply won't show fixed-off/leave badges if this lookup fails.
-        console.error('[AI Schedule] Failed to load staff availability for fixed-off/leave badges:', err)
-      }
-    } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') return
-      setAiShiftError(err instanceof Error ? err.message : 'Schedule generation failed')
-      stopAiShiftProgress(false)
-    } finally {
-      if (aiGenerateAbortRef.current === controller) {
-        aiGenerateAbortRef.current = null
-        setAiShiftLoading(false)
-      }
-    }
+  // The primary "Generate Schedule with AI" button (not the small regenerate icon on an
+  // already-reviewed result) — starts the run and immediately shrinks the modal away toward the
+  // widget, rather than leaving them staring at it or requiring a manual close.
+  const handleAiGenerateAndMinimize = async () => {
+    const started = await handleAiGenerateShifts()
+    if (!started) return
+    setAiShiftMinimizing(true)
   }
 
 
   const aiSlotSelectionKey = (blockKey: string, slotIndex: number) => `${blockKey}_${slotIndex}`
 
   const updateAiShiftSlot = (blockKey: string, slotIndex: number, fields: Partial<AiShiftSlot>) => {
-    setAiShiftSuggestions(prev => prev.map(block => {
+    aiScheduleGenerationStore.setBlocks(prev => prev.map(block => {
       if (block.key !== blockKey) return block
       return { ...block, slots: block.slots.map((slot, i) => i === slotIndex ? { ...slot, ...fields } : slot) }
     }))
@@ -1777,7 +1736,7 @@ export default function OwnerShiftsPage() {
     slotIndex: number,
     to: { department_id: string; shift_date: string; assigned_user_id: string | null; assigned_user_name: string | null },
   ) => {
-    setAiShiftSuggestions(prev => {
+    aiScheduleGenerationStore.setBlocks(prev => {
       const fromBlock = prev.find(b => b.key === fromBlockKey)
       const slot = fromBlock?.slots[slotIndex]
       if (!fromBlock || !slot) return prev
@@ -1803,7 +1762,7 @@ export default function OwnerShiftsPage() {
         next = [...next, { key: toKey, department_id: to.department_id, department_name: deptName, shift_date: to.shift_date, slots: [movedSlot], warning: null }]
       }
       if (wasSelected) {
-        setAiShiftSelected(prevSel => {
+        aiScheduleGenerationStore.setSelected(prevSel => {
           const nextSel = new Set(prevSel)
           nextSel.delete(fromSelectionKey)
           nextSel.add(aiSlotSelectionKey(toKey, newSlotIndex))
@@ -1883,6 +1842,7 @@ export default function OwnerShiftsPage() {
       if (bulkData.result.failed.length > 0) {
         throw new Error(bulkData.result.failed[0].message || 'Failed to create some shifts')
       }
+      aiScheduleGenerationStore.clear()
       setAiShiftModal(false)
       setSuccessToast(validation.warnings.length > 0
         ? `Draft shifts created with ${validation.warnings.length} soft-rule warning${validation.warnings.length === 1 ? '' : 's'}`
@@ -2659,6 +2619,82 @@ export default function OwnerShiftsPage() {
     }
   }
 
+  // Standalone "Shift Templates" modal handlers (list -> create/edit), mirroring Task Templates'
+  // handleSaveTemplate/handleDeleteTemplate in src/app/owner/tasks/page.tsx.
+  const openCreateShiftTemplateEntry = () => {
+    setShiftTemplateFormId('')
+    setShiftTemplateFormName('')
+    setShiftTemplateFormStartTime('09:00')
+    setShiftTemplateFormEndTime('17:00')
+    setShiftTemplateFormMode('create')
+    setShiftTemplateFormError('')
+  }
+
+  const openEditShiftTemplateEntry = (template: ShiftTemplate) => {
+    setShiftTemplateFormId(template.id)
+    setShiftTemplateFormName(template.name)
+    setShiftTemplateFormStartTime(template.start_time)
+    setShiftTemplateFormEndTime(template.end_time)
+    setShiftTemplateFormMode('edit')
+    setShiftTemplateFormError('')
+  }
+
+  const handleSaveShiftTemplateEntry = async () => {
+    if (!shiftTemplateFormName.trim()) { setShiftTemplateFormError('Name is required'); return }
+    if (!shiftTemplateFormStartTime || !shiftTemplateFormEndTime) { setShiftTemplateFormError('Start and end time are required'); return }
+    if (shiftTemplateFormStartTime >= shiftTemplateFormEndTime) { setShiftTemplateFormError('Start time must be before end time'); return }
+    setShiftTemplateFormLoading(true)
+    setShiftTemplateFormError('')
+    try {
+      const isEdit = shiftTemplateFormMode === 'edit'
+      const res = await fetch(isEdit ? `/api/shift-template/${shiftTemplateFormId}` : '/api/shift-template', {
+        method: isEdit ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(isEdit ? {
+          name: shiftTemplateFormName.trim(),
+          start_time: shiftTemplateFormStartTime,
+          end_time: shiftTemplateFormEndTime,
+        } : {
+          company_id: companyId,
+          name: shiftTemplateFormName.trim(),
+          start_time: shiftTemplateFormStartTime,
+          end_time: shiftTemplateFormEndTime,
+          created_by: internalUserId,
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to save template')
+      await fetchShiftTemplates(companyId)
+      setShiftTemplateFormMode('list')
+      setErrorToast(null)
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+      setSuccessToast(isEdit ? 'Shift template updated' : 'Shift template created')
+      toastTimerRef.current = setTimeout(() => setSuccessToast(null), 3000)
+    } catch (err) {
+      setShiftTemplateFormError(err instanceof Error ? err.message : 'Failed to save template')
+    } finally {
+      setShiftTemplateFormLoading(false)
+    }
+  }
+
+  const handleDeleteShiftTemplateEntry = async (id: string) => {
+    setDeleteShiftTemplateLoading(true)
+    try {
+      const res = await fetch(`/api/shift-template/${id}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to delete template')
+      await fetchShiftTemplates(companyId)
+      setErrorToast(null)
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+      setSuccessToast('Shift template deleted')
+      toastTimerRef.current = setTimeout(() => setSuccessToast(null), 3000)
+    } catch (err) {
+      setShiftTemplateFormError(err instanceof Error ? err.message : 'Failed to delete template')
+    } finally {
+      setDeleteShiftTemplateLoading(false)
+    }
+  }
+
   const handleUndoLastAction = async () => {
     if (!companyId || !internalUserId) return
     setUndoLoading(true)
@@ -3154,7 +3190,7 @@ export default function OwnerShiftsPage() {
             </h1>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
+          <div data-owner-header-badges style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId} />}
             {companyId && <OwnerPlanBadge plan={company?.plan ?? 'Free'} currentCompanyId={companyId} />}
           </div>
@@ -3515,6 +3551,15 @@ export default function OwnerShiftsPage() {
                   {redoLoading ? <Spinner size={13} /> : <Redo2 size={14} />} Redo
                 </button>
               )}
+              {companyId && (
+                <button
+                  type="button"
+                  onClick={() => { setShiftTemplateModalOpen(true); setShiftTemplateFormMode('list'); setShiftTemplateFormError('') }}
+                  style={secondaryButtonStyle}
+                >
+                  <LayoutTemplate size={14} /> Template
+                </button>
+              )}
               {companyId && departments.length > 0 && (
                 <button
                   type="button"
@@ -3725,8 +3770,8 @@ export default function OwnerShiftsPage() {
       )}
 
       {/* ═══════════════ AI SHIFT SCHEDULING MODAL ═══════════════ */}      {aiShiftModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>
-          <div onClick={e => e.stopPropagation()} style={{ width: aiShiftWizardStep === 'generate' && aiShiftSuggestions.length > 0 ? 1120 : 480, maxWidth: 'calc(100% - 40px)', maxHeight: '92vh', background: '#FFFFFF', borderRadius: 20, boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', overflow: 'hidden', flexShrink: 0, transition: 'width 0.25s ease', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out', opacity: aiShiftMinimizing ? 0 : 1, transition: aiShiftMinimizing ? 'opacity 0.45s ease' : 'none', pointerEvents: aiShiftMinimizing ? 'none' : 'auto' }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: aiShiftWizardStep === 'generate' && aiShiftSuggestions.length > 0 ? 1120 : 480, maxWidth: 'calc(100% - 40px)', maxHeight: '92vh', background: '#FFFFFF', borderRadius: 20, boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', display: 'flex', flexDirection: 'column', overflow: 'hidden', flexShrink: 0, transformOrigin: 'top right', transform: aiShiftMinimizing ? 'translate(46vw, -46vh) scale(0.04)' : 'none', opacity: aiShiftMinimizing ? 0 : 1, transition: aiShiftMinimizing ? 'transform 0.5s cubic-bezier(0.4,0,0.2,1), opacity 0.5s ease' : 'width 0.25s ease', animation: aiShiftMinimizing ? 'none' : 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
             {(() => {
               const AI_WIZARD_STEPS = ['dates', 'departments', 'shiftTypes', 'generate'] as const
               const stepIdx = AI_WIZARD_STEPS.indexOf(aiShiftWizardStep)
@@ -3750,6 +3795,7 @@ export default function OwnerShiftsPage() {
                     </div>
                     <button
                       onClick={closeAiShiftModal}
+                      aria-label="Close"
                       style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8, flexShrink: 0 }}
                       onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
                       onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
@@ -3765,7 +3811,16 @@ export default function OwnerShiftsPage() {
                             {isDone ? (
                               <button
                                 type="button"
-                                onClick={() => setAiShiftWizardStep(s)}
+                                onClick={() => {
+                                  // Going back to an earlier step to change dates/departments/shift
+                                  // types means the Owner no longer wants the run currently in
+                                  // flight — cancel it rather than let it keep generating for
+                                  // inputs they're about to change (or already stepped away from).
+                                  if (aiScheduleGenerationStore.getSnapshot().status === 'generating') {
+                                    aiScheduleGenerationStore.clear()
+                                  }
+                                  setAiShiftWizardStep(s)
+                                }}
                                 title="Back"
                                 aria-label={`Back to ${stepLabel[s]}`}
                                 className="ai-wizard-back-circle"
@@ -3919,7 +3974,7 @@ export default function OwnerShiftsPage() {
                     )}
 
                     {aiShiftWizardStep === 'generate' && aiShiftSuggestions.length === 0 && !aiShiftLoading && (
-                      <button type="button" onClick={handleAiGenerateShifts} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '11px 14px', background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: 'pointer' }}>
+                      <button type="button" onClick={handleAiGenerateAndMinimize} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '11px 14px', background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: 'pointer' }}>
                         <Sparkles size={13} strokeWidth={2.5} />
                         Generate Schedule with AI
                       </button>
@@ -3937,7 +3992,7 @@ export default function OwnerShiftsPage() {
                       </div>
                     )}
 
-                    {aiShiftWizardStep === 'generate' && aiShiftError && <div style={{ padding: '10px 14px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, fontSize: '0.875rem', color: '#DC2626' }}>{aiShiftError}</div>}
+                    {aiShiftWizardStep === 'generate' && (aiShiftError || aiShiftGenerationError) && <div style={{ padding: '10px 14px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, fontSize: '0.875rem', color: '#DC2626' }}>{aiShiftError || aiShiftGenerationError}</div>}
 
                     {aiShiftWizardStep === 'generate' && aiShiftSuggestions.length > 0 && (() => {
                       const allDates = Array.from(new Set(aiShiftSuggestions.map(b => b.shift_date))).sort()
@@ -3949,33 +4004,33 @@ export default function OwnerShiftsPage() {
                       const membersById = new Map(members.map(m => [m.id, m]))
                       const departmentOrder = new Map(orderedDepartments.map((dept, index) => [dept.id, index]))
 
-                      type PersonRow = { key: string; name: string; deptId: string; deptName: string; isUnassigned: boolean; photoUrl: string | null; role: string | null }
+                      type PersonRow = { key: string; name: string; deptId: string; deptName: string; photoUrl: string | null; role: string | null }
                       const rowMap = new Map<string, PersonRow>()
                       // Seed rows from every person seen since generation started, not just current slots —
                       // otherwise dragging someone's last shift away makes them disappear with no way to drag one back.
+                      // Slots with no assigned_user_id (nobody eligible) never get a row here — they're
+                      // surfaced as a staffing-gap summary below the grid instead, not as a fake person row.
                       for (const [rowKey, known] of aiShiftKnownRows) {
-                        const member = known.isUnassigned ? undefined : membersById.get(rowKey)
+                        const member = membersById.get(rowKey)
                         rowMap.set(rowKey, {
                           key: rowKey,
                           name: known.name,
                           deptId: known.deptId,
                           deptName: known.deptName,
-                          isUnassigned: known.isUnassigned,
                           photoUrl: member?.profile_photo_url ?? null,
                           role: member?.role ?? null,
                         })
                       }
                       for (const block of aiShiftSuggestions) {
                         for (const slot of block.slots) {
-                          const rowKey = slot.assigned_user_id ?? `unassigned_${block.department_id}`
-                          if (!rowMap.has(rowKey)) {
-                            const member = slot.assigned_user_id ? membersById.get(slot.assigned_user_id) : undefined
-                            rowMap.set(rowKey, {
-                              key: rowKey,
-                              name: slot.assigned_user_name ?? 'Unassigned',
+                          if (!slot.assigned_user_id) continue
+                          if (!rowMap.has(slot.assigned_user_id)) {
+                            const member = membersById.get(slot.assigned_user_id)
+                            rowMap.set(slot.assigned_user_id, {
+                              key: slot.assigned_user_id,
+                              name: slot.assigned_user_name ?? '',
                               deptId: block.department_id,
                               deptName: block.department_name,
-                              isUnassigned: !slot.assigned_user_id,
                               photoUrl: member?.profile_photo_url ?? null,
                               role: member?.role ?? null,
                             })
@@ -3983,7 +4038,6 @@ export default function OwnerShiftsPage() {
                         }
                       }
                       const rows = Array.from(rowMap.values()).sort((a, b) => {
-                        if (a.isUnassigned !== b.isUnassigned) return a.isUnassigned ? 1 : -1
                         const deptOrderDiff = (departmentOrder.get(a.deptId) ?? 999) - (departmentOrder.get(b.deptId) ?? 999)
                         if (deptOrderDiff !== 0) return deptOrderDiff
                         const roleDiff = roleRank(a.role ?? '') - roleRank(b.role ?? '')
@@ -3996,11 +4050,20 @@ export default function OwnerShiftsPage() {
                         for (const block of aiShiftSuggestions) {
                           if (block.shift_date !== date) continue
                           block.slots.forEach((slot, slotIndex) => {
-                            const slotKey = slot.assigned_user_id ?? `unassigned_${block.department_id}`
-                            if (slotKey === rowKey) out.push({ block, slot, slotIndex })
+                            if (slot.assigned_user_id === rowKey) out.push({ block, slot, slotIndex })
                           })
                         }
                         return out
+                      }
+
+                      // Per department+date, which role has nobody covering it — drives the red "needs
+                      // coverage" cell painted directly on that role's rows, instead of a separate banner.
+                      const missingRoleByCell = new Map<string, { missingManager: boolean; missingEmployee: boolean }>()
+                      for (const block of aiShiftSuggestions) {
+                        missingRoleByCell.set(`${block.department_id}_${block.shift_date}`, {
+                          missingManager: block.slots.some(s => s.role === 'Manager' && !s.assigned_user_id),
+                          missingEmployee: block.slots.some(s => s.role === 'Employee' && !s.assigned_user_id),
+                        })
                       }
 
                       return (
@@ -4013,14 +4076,14 @@ export default function OwnerShiftsPage() {
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                             <button
                               type="button"
-                              onClick={() => setAiShiftSelected(new Set(aiShiftSuggestions.flatMap(block => block.slots.map((_, slotIndex) => aiSlotSelectionKey(block.key, slotIndex)))))}
+                              onClick={() => aiScheduleGenerationStore.setSelected(() => new Set(aiShiftSuggestions.flatMap(block => block.slots.map((_, slotIndex) => aiSlotSelectionKey(block.key, slotIndex)))))}
                               title="Select all"
                               aria-label="Select all"
                               style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 7, background: 'none', border: '1px solid #E5E7EB', color: '#7C3AED', cursor: 'pointer' }}
                             ><CheckCheck size={13} /></button>
                             <button
                               type="button"
-                              onClick={() => setAiShiftSelected(new Set())}
+                              onClick={() => aiScheduleGenerationStore.setSelected(() => new Set())}
                               title="Clear"
                               aria-label="Clear"
                               style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: 7, background: 'none', border: '1px solid #E5E7EB', color: '#9CA3AF', cursor: 'pointer' }}
@@ -4060,32 +4123,34 @@ export default function OwnerShiftsPage() {
                                   )
                                 })}
                               </div>
-                              <div>
+                              <div style={{ maxHeight: 420, overflowY: 'auto' }}>
                                 {rows.map((row, rowIdx) => {
-                                  const barColor = row.isUnassigned ? '#9CA3AF' : deptColor(row.deptId)
+                                  const barColor = deptColor(row.deptId)
                                   return (
                                     <div key={row.key} style={{ display: 'grid', gridTemplateColumns: `${TL_NAME_COL}px repeat(${weekDates.length}, 1fr)`, borderTop: rowIdx === 0 ? 'none' : `1px solid ${PANEL_BORDER}`, background: '#FFFFFF', minHeight: 58 }}>
                                       <div style={{ display: 'flex', alignItems: 'center', borderRight: `1px solid ${PANEL_BORDER}`, overflow: 'hidden' }}>
                                         <div style={{ width: 8, alignSelf: 'stretch', flexShrink: 0, background: barColor, opacity: 0.85 }} />
                                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px 0 12px', minWidth: 0, flex: 1 }}>
-                                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: row.photoUrl ? 'transparent' : row.isUnassigned ? '#F3F4F6' : row.role === 'Manager' ? '#FFF7ED' : '#F3F4F6', color: row.isUnassigned ? '#9CA3AF' : row.role === 'Manager' ? '#EA580C' : '#4B5563', borderRadius: 999, overflow: 'hidden' }}>
+                                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: row.photoUrl ? 'transparent' : row.role === 'Manager' ? '#FFF7ED' : '#F3F4F6', color: row.role === 'Manager' ? '#EA580C' : '#4B5563', borderRadius: 999, overflow: 'hidden' }}>
                                             {row.photoUrl
                                               ? <img src={row.photoUrl} alt={row.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                               : row.role === 'Manager' ? <UserCog size={13} /> : <UserRound size={13} />}
                                           </div>
                                           <div style={{ minWidth: 0 }}>
                                             <span style={{ ...MEMBER_NAME_STYLE, display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{row.name}</span>
-                                            <span style={{ fontSize: 10.5, fontWeight: 600, color: '#9CA3AF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>{row.role ?? (row.isUnassigned ? row.deptName : '')}</span>
+                                            <span style={{ fontSize: 10.5, fontWeight: 600, color: '#9CA3AF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>{row.role ?? ''}</span>
                                           </div>
                                         </div>
                                       </div>
                                       {weekDates.map(date => {
                                         const cells = cellsFor(row.key, date)
                                         const cellDropKey = `${row.key}_${date}`
-                                        const availability = row.isUnassigned ? undefined : aiStaffAvailability.get(row.key)
+                                        const availability = aiStaffAvailability.get(row.key)
                                         const isFixedOff = availability?.fixedOffDates.has(date) ?? false
                                         const isOnLeave = availability?.approvedLeaveDates.has(date) ?? false
                                         const isUnavailable = isFixedOff || isOnLeave
+                                        const missingForRole = missingRoleByCell.get(`${row.deptId}_${date}`)
+                                        const needsCoverage = !isUnavailable && (row.role === 'Manager' ? missingForRole?.missingManager : missingForRole?.missingEmployee)
                                         const isDragOver = aiDragOverCell === cellDropKey && aiDraggingSlot
                                         const isBlockedDrop = isDragOver && isUnavailable
                                         return (
@@ -4105,8 +4170,8 @@ export default function OwnerShiftsPage() {
                                               moveAiShiftSlot(aiDraggingSlot.blockKey, aiDraggingSlot.slotIndex, {
                                                 department_id: row.deptId,
                                                 shift_date: date,
-                                                assigned_user_id: row.isUnassigned ? null : row.key,
-                                                assigned_user_name: row.isUnassigned ? null : row.name,
+                                                assigned_user_id: row.key,
+                                                assigned_user_name: row.name,
                                               })
                                               setAiDraggingSlot(null)
                                             }}
@@ -4114,11 +4179,15 @@ export default function OwnerShiftsPage() {
                                           >
                                             {cells.length === 0 ? (
                                               isUnavailable ? (
-                                                <div title={isOnLeave ? 'Approved Leave' : 'Weekly Day Off'} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, borderRadius: 999, background: isOnLeave ? '#FEE2E2' : '#F3F4F6', height: 24, padding: '0 6px' }}>
+                                                <div title={isOnLeave ? 'Approved Leave' : 'Off Day'} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, borderRadius: 999, background: isOnLeave ? '#FEE2E2' : '#F3F4F6', height: 24, padding: '0 6px' }}>
                                                   {isOnLeave ? <CalendarDays size={11} color="#DC2626" /> : <AlertTriangle size={11} color="#9CA3AF" />}
                                                   <span style={{ fontSize: 9.5, fontWeight: 700, color: isOnLeave ? '#DC2626' : '#6B7280', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                                    {isOnLeave ? 'Approved Leave' : 'Weekly Day Off'}
+                                                    {isOnLeave ? 'Approved Leave' : 'Off Day'}
                                                   </span>
+                                                </div>
+                                              ) : needsCoverage ? (
+                                                <div title={`No ${row.role} scheduled`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 999, background: '#FCA5A5', border: '1px solid #DC2626', height: 24 }}>
+                                                  <AlertTriangle size={11} color="#7F1D1D" />
                                                 </div>
                                               ) : (
                                                 <div style={{ borderRadius: 999, background: '#F3F4F6', height: 24 }} />
@@ -4139,16 +4208,14 @@ export default function OwnerShiftsPage() {
                                                       background: checked ? deptColor(block.department_id) : '#FFFFFF',
                                                       border: `1.5px solid ${checked ? deptColor(block.department_id) : '#E5E7EB'}`,
                                                       borderRadius: 999, width: '100%', cursor: 'grab',
-                                                      opacity: block.warning ? 0.75 : 1,
                                                     }}
                                                   >
                                                     <button
                                                       type="button"
-                                                      onClick={() => setAiShiftSelected(prev => { const next = new Set(prev); if (next.has(selectionKey)) next.delete(selectionKey); else next.add(selectionKey); return next })}
-                                                      title={`${slot.shift_label} ${formatShiftHour(slot.start_time)}–${formatShiftHour(slot.end_time)}: ${slot.reason}`}
+                                                      onClick={() => aiScheduleGenerationStore.setSelected(prev => { const next = new Set(prev); if (next.has(selectionKey)) next.delete(selectionKey); else next.add(selectionKey); return next })}
+                                                      title={`${slot.shift_label} ${formatShiftHour(slot.start_time)}–${formatShiftHour(slot.end_time)}`}
                                                       style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, border: 'none', background: 'transparent', cursor: 'pointer', height: '100%', minWidth: 0, padding: 0 }}
                                                     >
-                                                      {block.warning && <AlertTriangle size={10} color={checked ? '#FFFFFF' : '#D97706'} style={{ flexShrink: 0 }} />}
                                                       <span style={{ fontSize: 10, fontWeight: 700, color: checked ? '#FFFFFF' : '#374151', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                                         {formatShiftHour(slot.start_time)}–{formatShiftHour(slot.end_time)}
                                                       </span>
@@ -4929,6 +4996,113 @@ export default function OwnerShiftsPage() {
               <button type="button" onClick={submitSaveTemplate} disabled={templateSaveLoading} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: templateSaveLoading ? '#FDA060' : '#F97316', color: '#FFFFFF', height: 36, padding: '0 18px', fontSize: 13, fontWeight: 700, cursor: templateSaveLoading ? 'not-allowed' : 'pointer', opacity: templateSaveLoading ? 0.65 : 1 }}>
                 {templateSaveLoading ? <Spinner size={13} /> : <Check size={14} />} Save
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════ SHIFT TEMPLATES MODAL (mirrors Task Templates) ═══════════════ */}
+      {shiftTemplateModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: 440, maxHeight: '88vh', overflowY: 'auto', background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
+
+            {/* Header */}
+            <div style={{ padding: '18px 20px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <LayoutTemplate size={15} color="#fff" strokeWidth={2.5} />
+                </div>
+                <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+                  {shiftTemplateFormMode === 'list' ? 'Shift Templates' : shiftTemplateFormMode === 'edit' ? 'Edit Template' : 'New Template'}
+                </h2>
+              </div>
+              <button onClick={() => setShiftTemplateModalOpen(false)} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+                onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {shiftTemplateFormMode === 'list' ? (
+                <>
+                  {shiftTemplates.length === 0 ? (
+                    <div style={{ height: 180, borderRadius: 12, background: '#F8FAFC', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 8, fontWeight: 600, fontSize: 13 }}>
+                      <LayoutTemplate size={26} strokeWidth={1.5} />
+                      No shift templates yet
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {shiftTemplates.map(t => (
+                        <div key={t.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '12px 14px', border: '1px solid #E5E7EB', borderRadius: 10 }}>
+                          <button type="button" onClick={() => openEditShiftTemplateEntry(t)} title="Edit template"
+                            style={{ margin: 0, minWidth: 0, flex: 1, fontSize: 14, fontWeight: 700, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', border: 'none', background: 'transparent', padding: 0, textAlign: 'left', cursor: 'pointer' }}
+                            onMouseEnter={e => { e.currentTarget.style.color = OWNER_ORANGE }}
+                            onMouseLeave={e => { e.currentTarget.style.color = '#111827' }}
+                          >
+                            {t.name} <span style={{ fontWeight: 500, color: '#9CA3AF' }}>· {formatShiftHour(t.start_time)}–{formatShiftHour(t.end_time)}</span>
+                          </button>
+                          <button type="button" onClick={() => void handleDeleteShiftTemplateEntry(t.id)} disabled={deleteShiftTemplateLoading} style={{ border: 'none', background: 'transparent', color: '#DC2626', cursor: deleteShiftTemplateLoading ? 'default' : 'pointer', display: 'flex', padding: 6, borderRadius: 6, opacity: deleteShiftTemplateLoading ? 0.5 : 1, flexShrink: 0 }} title="Delete">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={openCreateShiftTemplateEntry}
+                    style={{ alignSelf: 'center', marginTop: 10, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 'none', borderRadius: 10, background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                  >
+                    <Plus size={15} strokeWidth={2.5} /> New Template
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div>
+                    <label style={modalLabelStyle}>Name</label>
+                    <input autoFocus value={shiftTemplateFormName} onChange={e => setShiftTemplateFormName(e.target.value)} placeholder="e.g. Morning Shift" style={modalInputStyle} />
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    <div>
+                      <label style={modalLabelStyle}>Start time</label>
+                      <TimePicker value={shiftTemplateFormStartTime} onChange={v => { setShiftTemplateFormStartTime(v); setShiftTemplateFormEndTime(prev => bumpEndTime(v, prev)) }} />
+                    </div>
+                    <div>
+                      <label style={modalLabelStyle}>End time</label>
+                      <TimePicker value={shiftTemplateFormEndTime} onChange={setShiftTemplateFormEndTime} minTime={shiftTemplateFormStartTime} />
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {shiftTemplateFormError && <div style={{ margin: '0 20px 12px', ...errorBoxStyle }}>{shiftTemplateFormError}</div>}
+
+            {/* Footer */}
+            <div style={{ padding: '0 20px 18px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              {shiftTemplateFormMode !== 'list' && (
+                <button
+                  type="button"
+                  onClick={() => { setShiftTemplateFormMode('list'); setShiftTemplateFormError('') }}
+                  style={{ ...secondaryButtonStyle, borderRadius: 10, height: 36, padding: '0 14px' }}
+                >
+                  Cancel
+                </button>
+              )}
+              {shiftTemplateFormMode !== 'list' && (
+                <button
+                  type="button"
+                  onClick={handleSaveShiftTemplateEntry}
+                  disabled={shiftTemplateFormLoading || !shiftTemplateFormName.trim()}
+                  style={{ padding: '7px 18px', background: !shiftTemplateFormName.trim() ? '#E5E7EB' : shiftTemplateFormLoading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: !shiftTemplateFormName.trim() ? '#9CA3AF' : '#FFFFFF', cursor: shiftTemplateFormLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: shiftTemplateFormLoading ? 0.65 : 1 }}
+                >
+                  {shiftTemplateFormLoading ? <Spinner size={13} /> : <Check size={13} />} {shiftTemplateFormMode === 'edit' ? 'Save Changes' : 'Create Template'}
+                </button>
+              )}
             </div>
           </div>
         </div>

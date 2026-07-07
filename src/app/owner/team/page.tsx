@@ -658,12 +658,14 @@ function OrgNode({
   animationDelay,
   searchHighlighted = false,
   searchDimmed = false,
+  isExporting = false,
 }: {
   member: TeamMember
   onClick: () => void
   animationDelay?: string
   searchHighlighted?: boolean
   searchDimmed?: boolean
+  isExporting?: boolean
 }) {
   const dark = member.role === 'Owner' || member.role === 'Partner'
   const isManager = member.role === 'Manager'
@@ -672,8 +674,8 @@ function OrgNode({
       onClick={onClick}
       className={`org-node-btn org-node-${member.role.toLowerCase().replace(/\s+/g, '-')}`}
       style={{
-        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
-        padding: '12px 16px', borderRadius: 12,
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: isExporting ? 10 : 6,
+        padding: isExporting ? '18px 20px' : '12px 16px', borderRadius: 12,
         border: searchHighlighted
           ? '2px solid #F97316'
           : `1.5px solid ${dark ? '#0F172A' : isManager ? '#FDBA74' : '#E5E7EB'}`,
@@ -686,10 +688,10 @@ function OrgNode({
       }}
     >
       <span className="org-node-avatar">
-        <RoleAvatar role={member.role} size={36} photoUrl={member.profile_photo_url} />
+        <RoleAvatar role={member.role} size={isExporting ? 52 : 36} photoUrl={member.profile_photo_url} />
       </span>
-      <p className="org-name-export" style={{ fontWeight: 700, fontSize: '0.8125rem', color: searchHighlighted ? '#111827' : dark ? '#FFFFFF' : '#111827', margin: 0, lineHeight: 1.3, textAlign: 'center' }}>{member.full_name}</p>
-      <p className="org-role-export" style={{ fontWeight: 600, fontSize: '0.72rem', color: searchHighlighted ? '#4B5563' : dark ? '#CBD5E1' : '#6B7280', margin: 0, lineHeight: 1.2, textAlign: 'center' }}>{member.role}</p>
+      <p className="org-name-export" style={{ fontWeight: 700, fontSize: isExporting ? '1rem' : '0.8125rem', color: searchHighlighted ? '#111827' : dark ? '#FFFFFF' : '#111827', margin: 0, lineHeight: 1.3, textAlign: 'center' }}>{member.full_name}</p>
+      <p className="org-role-export" style={{ fontWeight: 600, fontSize: isExporting ? '0.85rem' : '0.72rem', color: searchHighlighted ? '#4B5563' : dark ? '#CBD5E1' : '#6B7280', margin: 0, lineHeight: 1.2, textAlign: 'center' }}>{member.role}</p>
     </button>
   )
 }
@@ -703,23 +705,29 @@ type OrgChartTreeProps = {
   onMemberClick: (m: TeamMember) => void
   onDepartmentClick: (department: { id: string; name: string }) => void
   searchQuery?: string
+  companyName?: string
+  isExporting?: boolean
 }
 
 const LINE_COLOR = '#CBD5E1'
-const NODE_W    = 140   // node width inside dept column
-const LEADER_W  = 160   // leadership node width
-const LEADER_GAP = 16   // gap between leadership nodes
-const MGR_GAP   = 12    // horizontal gap between managers in same dept
-const EMP_GAP   = 8     // vertical gap between employees
-const DEPT_PAD  = 12    // horizontal padding inside dept box
-const DEPT_GAP  = 20    // gap between dept columns
-const OUTER_H   = 48    // SVG height: leadership → dept cols
-const INNER_H   = 30    // SVG height: dept header → managers
-const M2E_H     = 16    // connector height: managers → employees
 
-function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick, onDepartmentClick, searchQuery = '' }: OrgChartTreeProps) {
+function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick, onDepartmentClick, searchQuery = '', companyName = '', isExporting = false }: OrgChartTreeProps) {
   const normalizedSearch = searchQuery.trim().toLowerCase()
   const searchActive = normalizedSearch.length > 0
+  // Exported PNGs read at a distance (printed / shared) so every node, gap, and
+  // connector is scaled up relative to the on-screen tree — a plain CSS zoom
+  // would blur; scaling the actual layout constants keeps the export crisp.
+  const factor    = isExporting ? 1.35 : 1
+  const NODE_W    = 140 * factor   // node width inside dept column
+  const LEADER_W  = 160 * factor   // leadership node width
+  const LEADER_GAP = 16 * factor   // gap between leadership nodes
+  const MGR_GAP   = 12 * factor    // horizontal gap between managers in same dept
+  const EMP_GAP   = 8 * factor     // vertical gap between employees
+  const DEPT_PAD  = 12 * factor    // horizontal padding inside dept box
+  const DEPT_GAP  = 20 * factor    // gap between dept columns
+  const OUTER_H   = 48 * factor * 1.4 // SVG height: leadership → dept cols
+  const INNER_H   = 30 * factor    // SVG height: dept header → managers
+  const M2E_H     = 16 * factor    // connector height: managers → employees
   // Sort departments A→Z (left to right)
   const sortedDepts = [...departments].sort((a, b) => a.name.localeCompare(b.name))
 
@@ -780,8 +788,15 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick, onD
     <div style={{ overflowX: 'auto', paddingBottom: 8, paddingTop: 8 }}>
       <div className="org-chart-capture" style={{ width: totalW + 48, margin: '0 auto', padding: '16px 24px 8px', background: '#FFFFFF', boxSizing: 'border-box' }}>
 
+        {/* ── Export-only header: company name ── */}
+        {companyName && (
+          <div className="org-chart-export-header">
+            <h2 style={{ margin: 0, fontWeight: 800, color: '#111827', textAlign: 'center' }}>{companyName}</h2>
+          </div>
+        )}
+
         {/* ── Row 1: Leadership — Owner pinned to totalW/2 ── */}
-        <div style={{ position: 'relative', height: 80, flexShrink: 0 }}>
+        <div style={{ position: 'relative', height: 80 * factor, flexShrink: 0 }}>
           {orderedLeaders.map((m, i) => (
             <div key={m.id} style={{
               position: 'absolute',
@@ -795,6 +810,7 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick, onD
                 animationDelay={`${0.08 + i * 0.08}s`}
                 searchHighlighted={searchActive && memberMatchesSearch(m)}
                 searchDimmed={searchActive && !memberMatchesSearch(m)}
+                isExporting={isExporting}
               />
             </div>
           ))}
@@ -903,6 +919,7 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick, onD
                             animationDelay={`${0.26 + di * 0.07 + mi * 0.05}s`}
                             searchHighlighted={searchActive && memberMatchesSearch(m)}
                             searchDimmed={searchActive && !memberMatchesSearch(m)}
+                            isExporting={isExporting}
                           />
                         </div>
                       ))}
@@ -930,6 +947,7 @@ function OrgChartTree({ topMembers, departments, teamMembers, onMemberClick, onD
                           animationDelay={`${0.32 + di * 0.07 + ei * 0.04}s`}
                           searchHighlighted={searchActive && memberMatchesSearch(m)}
                           searchDimmed={searchActive && !memberMatchesSearch(m)}
+                          isExporting={isExporting}
                         />
                       ))}
                     </div>
@@ -1264,13 +1282,58 @@ export default function TeamPage() {
     if (!el || orgExporting) return
     setOrgExporting(true)
     let captureEl: HTMLElement | null = null
+    const restoreAvatarSrcs: Array<() => void> = []
     try {
       el.classList.add('org-chart-exporting')
       await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       captureEl = el.querySelector<HTMLElement>('.org-chart-capture') ?? el
       captureEl.classList.add('org-chart-exporting')
+      // Give React a moment to commit the isExporting-scaled layout before measuring.
       await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
       await document.fonts?.ready
+
+      // html2canvas can't reliably rasterize <img> avatars loaded from a remote
+      // URL — SVG avatar services (e.g. dicebear) render blank. Pre-draw each
+      // one onto an offscreen canvas via a plain Image element (createImageBitmap
+      // fails to decode SVG blobs with no explicit width/height) and swap the img
+      // to that PNG data URL for the capture, then restore the original src.
+      const avatarImgs = Array.from(captureEl.querySelectorAll<HTMLImageElement>('.org-node-avatar img'))
+      await Promise.all(avatarImgs.map(async img => {
+        const original = img.src
+        let objectUrl: string | null = null
+        try {
+          const response = await fetch(original, { mode: 'cors' })
+          const blob = await response.blob()
+          objectUrl = URL.createObjectURL(blob)
+          const rasterSource = new Image()
+          rasterSource.crossOrigin = 'anonymous'
+          await new Promise<void>((resolve, reject) => {
+            rasterSource.onload = () => resolve()
+            rasterSource.onerror = () => reject(new Error('avatar decode failed'))
+            rasterSource.src = objectUrl!
+          })
+          const size = 128
+          const canvas = document.createElement('canvas')
+          canvas.width = size
+          canvas.height = size
+          const ctx = canvas.getContext('2d')
+          if (!ctx) return
+          ctx.drawImage(rasterSource, 0, 0, size, size)
+          const dataUrl = canvas.toDataURL('image/png')
+          restoreAvatarSrcs.push(() => { img.src = original })
+          img.src = dataUrl
+          await new Promise<void>(resolve => {
+            if (img.complete) return resolve()
+            img.addEventListener('load', () => resolve(), { once: true })
+            img.addEventListener('error', () => resolve(), { once: true })
+          })
+        } catch {
+          // Leave the original src — html2canvas will just skip it if it can't render.
+        } finally {
+          if (objectUrl) URL.revokeObjectURL(objectUrl)
+        }
+      }))
+
       const html2canvas = (await import('html2canvas')).default
       const canvas = await html2canvas(captureEl, {
         backgroundColor: '#ffffff',
@@ -1288,6 +1351,7 @@ export default function TeamPage() {
       link.click()
     } catch {}
     finally {
+      restoreAvatarSrcs.forEach(restore => restore())
       captureEl?.classList.remove('org-chart-exporting')
       el.classList.remove('org-chart-exporting')
       setOrgExporting(false)
@@ -2728,6 +2792,16 @@ export default function TeamPage() {
         .org-role-export {
           display: none;
         }
+        .org-chart-export-header {
+          display: none;
+        }
+        .org-chart-exporting .org-chart-export-header {
+          display: block !important;
+          margin-bottom: 20px !important;
+        }
+        .org-chart-exporting .org-chart-export-header h2 {
+          font-size: 1.4rem !important;
+        }
         .org-chart-capture.org-chart-exporting,
         .org-chart-capture.org-chart-exporting *,
         .org-chart-exporting .org-chart-capture,
@@ -2778,25 +2852,23 @@ export default function TeamPage() {
           border-color: #E5E7EB !important;
         }
         .org-chart-exporting .org-node-btn {
-          min-height: 84px !important;
+          min-height: 112px !important;
           animation: none !important;
           transform: none !important;
           justify-content: center !important;
           opacity: 1 !important;
         }
         .org-chart-exporting .org-node-avatar {
-          display: none !important;
+          display: inline-flex !important;
         }
         .org-chart-exporting .org-name-export {
           display: block !important;
-          font-size: 0.875rem !important;
           font-weight: 800 !important;
           line-height: 1.22 !important;
         }
         .org-chart-exporting .org-role-export {
           display: block !important;
           color: #64748B !important;
-          font-size: 0.76rem !important;
           font-weight: 700 !important;
           line-height: 1.2 !important;
         }
@@ -2867,7 +2939,7 @@ export default function TeamPage() {
               Team
             </h1>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
+          <div data-owner-header-badges style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId} />}
             {companyId && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
           </div>
@@ -3377,6 +3449,8 @@ export default function TeamPage() {
                       onMemberClick={(m) => setProfileMember(m)}
                       onDepartmentClick={(department) => openEditDepartment(department)}
                       searchQuery={normalizedOrgSearch}
+                      companyName={companyName}
+                      isExporting={orgExporting}
                     />
                   </div>
               )}

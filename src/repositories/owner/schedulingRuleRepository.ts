@@ -25,7 +25,7 @@ export type RuleValidationUser = {
   weekly_working_hours?: number | null
   max_weekly_hours?: number | null
   contracted_weekly_hours?: number | null
-  department_id: string | null
+  department_ids: string[]
 }
 
 export type ApprovedTimeOffRow = {
@@ -88,9 +88,16 @@ export const schedulingRuleRepository = {
       .select('*, manager_departments!manager_departments_manager_id_fkey(department_id), employee_departments(department_id)')
       .eq('company_id', company_id)
     if (error) throw new Error(error.message)
+    // A Manager can be assigned to more than one department (manager_departments is many-to-many) —
+    // collapsing to a single department_id would silently drop them from every department but the first.
     return (data ?? []).map((row: any) => ({
       ...row,
-      department_id: row.manager_departments?.[0]?.department_id ?? row.employee_departments?.[0]?.department_id ?? null,
+      department_ids: [
+        ...new Set([
+          ...(row.manager_departments ?? []).map((d: any) => d.department_id),
+          ...(row.employee_departments ?? []).map((d: any) => d.department_id),
+        ]),
+      ] as string[],
       manager_departments: undefined,
       employee_departments: undefined,
     })) as RuleValidationUser[]
@@ -179,7 +186,7 @@ export const schedulingRuleRepository = {
       .from('employee_off_day_requests')
       .select('user_id, request_date')
       .eq('company_id', company_id)
-      .eq('status', 'approved')
+      .in('status', ['approved', 'modified'])
       .gte('request_date', date_from)
       .lte('request_date', date_to)
     if (error) {

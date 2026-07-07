@@ -234,6 +234,62 @@ test.describe('Fixed Day Off — submission, routing, quota, deadline', () => {
     expect(modifyBody.request).toMatchObject({ status: 'modified', request_date: nextSat })
   })
 
+  test('Owner modifies a weekly submission to a bonus day in the following week', async ({ request }) => {
+    // Isolated user so this doesn't interact with the shared employeeId/managerId state built up by
+    // the surrounding tests in this file.
+    const spillEmployeeId = await createUser('spill', seeded.companyId, 'Employee')
+    const { error: deptErr } = await admin.from('employee_departments').insert({
+      employee_id: spillEmployeeId, department_id: departmentId, company_id: seeded.companyId,
+    })
+    expect(deptErr).toBeNull()
+
+    const setQuota = await request.post('/api/attendance/off-day-settings', {
+      data: { action: 'set_default_quota', company_id: seeded.companyId, owner_id: seeded.ownerId, role: 'Employee', max_days_per_week: 1 },
+    })
+    expect(setQuota.status()).toBe(200)
+
+    const nextWed = addDaysLocal(upcomingMonday, 2)
+    const submit = await request.post('/api/attendance', {
+      data: { action: 'submit_fixed_off_day', user_id: spillEmployeeId, company_id: seeded.companyId, dates: [nextWed] },
+    })
+    expect(submit.status()).toBe(200)
+    const submitBody = await submit.json()
+    const id = submitBody.request[0].id
+
+    const followingMonday = addDaysLocal(upcomingMonday, 7)
+    const bonusDay = addDaysLocal(followingMonday, 1)
+    const modify = await request.patch('/api/attendance', {
+      data: { action: 'decide_fixed_off_day', id, reviewer_id: seeded.ownerId, decision: 'modified', new_date: bonusDay },
+    })
+    expect(modify.status()).toBe(200)
+    const modifyBody = await modify.json()
+    expect(modifyBody.success).toBe(true)
+    expect(modifyBody.request).toMatchObject({ status: 'modified', request_date: bonusDay })
+
+    // The week-lock is gone entirely — Owner can pick a replacement arbitrarily far out.
+    const farOut = addDaysLocal(followingMonday, 30)
+    const farModify = await request.patch('/api/attendance', {
+      data: { action: 'decide_fixed_off_day', id, reviewer_id: seeded.ownerId, decision: 'modified', new_date: farOut },
+    })
+    expect(farModify.status()).toBe(200)
+    const farModifyBody = await farModify.json()
+    expect(farModifyBody.request).toMatchObject({ status: 'modified', request_date: farOut })
+
+    // "Modifying" to the date it already has is really just approving it as requested.
+    const reapprove = await request.patch('/api/attendance', {
+      data: { action: 'decide_fixed_off_day', id, reviewer_id: seeded.ownerId, decision: 'modified', new_date: farOut },
+    })
+    expect(reapprove.status()).toBe(200)
+    const reapproveBody = await reapprove.json()
+    expect(reapproveBody.request).toMatchObject({ status: 'approved', request_date: farOut })
+
+    await admin.from('employee_off_day_requests').delete().eq('user_id', spillEmployeeId)
+    await admin.from('employee_departments').delete().eq('employee_id', spillEmployeeId)
+    const { data: u } = await admin.from('users').select('supabase_auth_id').eq('id', spillEmployeeId).single()
+    await admin.from('users').delete().eq('id', spillEmployeeId)
+    if (u?.supabase_auth_id) await admin.auth.admin.deleteUser(u.supabase_auth_id).catch(() => undefined)
+  })
+
   test('AI-suggest analyzes every date in a weekly group together', async ({ request }) => {
     const nextThu = addDaysLocal(upcomingMonday, 3)
     const nextFri = addDaysLocal(upcomingMonday, 4)
@@ -258,7 +314,7 @@ test.describe('Fixed Day Off — submission, routing, quota, deadline', () => {
     expect(ai.status()).toBe(200)
     const aiBody = await ai.json()
     expect(aiBody.success).toBe(true)
-    expect(['approve', 'reject', 'review']).toContain(aiBody.suggestion.recommendation)
+    expect(['approve', 'modify']).toContain(aiBody.suggestion.recommendation)
     expect(Array.isArray(aiBody.suggestion.alternatives)).toBe(true)
   })
 

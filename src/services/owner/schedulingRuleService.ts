@@ -226,7 +226,7 @@ export const schedulingRuleService = {
         id: user.id,
         full_name: user.full_name,
         role: user.role,
-        department_id: user.department_id,
+        department_ids: user.department_ids,
         active: true,
         fixed_off_days: fixedOffByUser.get(user.id) ?? [],
         max_weekly_hours: maxWeeklyHours,
@@ -292,7 +292,7 @@ export const schedulingRuleService = {
 
     const deptStaff = input.department_ids.map(deptId => ({
       department_id: deptId,
-      staff: eligibleStaff.filter(s => s.department_id === deptId),
+      staff: eligibleStaff.filter(s => s.department_ids.includes(deptId)),
     }))
 
     const dateCount = enumerateDateRange(input.date_from, input.date_to).length
@@ -411,7 +411,7 @@ export const schedulingRuleService = {
 
     const deptStaff = input.department_ids.map(deptId => ({
       department_id: deptId,
-      staff: eligibleStaff.filter(s => s.department_id === deptId),
+      staff: eligibleStaff.filter(s => s.department_ids.includes(deptId)),
     }))
 
     const dateCount = enumerateDateRange(input.date_from, input.date_to).length
@@ -834,7 +834,7 @@ type AiStaffContext = {
   id: string
   full_name: string
   role: string
-  department_id: string | null
+  department_ids: string[]
   fixed_off_days: string[]
   remaining_weekly_hours: number
   scheduled_hours_in_period: number
@@ -922,7 +922,7 @@ function normalizeAiScheduleBlock(input: {
       role: 'Manager',
       usedInWindow,
     })
-    slots.push(buildSlot(label, shiftType, manager, manager ? 'manager_requirement' : 'no_eligible_staff'))
+    slots.push(buildSlot(label, shiftType, manager, manager ? 'manager_requirement' : 'no_eligible_manager', 'Manager'))
     if (manager) commitStaffAssignment(input.state, manager.id, input.block.shift_date, shiftType)
     else warnings.push(`No eligible manager for ${label}.`)
 
@@ -935,7 +935,7 @@ function normalizeAiScheduleBlock(input: {
       role: 'Employee',
       usedInWindow,
     })
-    slots.push(buildSlot(label, shiftType, employee, employee ? 'employee_requirement' : 'no_eligible_staff'))
+    slots.push(buildSlot(label, shiftType, employee, employee ? 'employee_requirement' : 'no_eligible_employee', 'Employee'))
     if (employee) commitStaffAssignment(input.state, employee.id, input.block.shift_date, shiftType)
     else warnings.push(`No eligible employee for ${label}.`)
   }
@@ -965,7 +965,7 @@ function pickStaffForSlot(input: {
   })
 
   const candidates = input.staff
-    .filter(staff => staff.department_id === input.departmentId)
+    .filter(staff => staff.department_ids.includes(input.departmentId))
     .filter(staff => staff.role === input.role)
     .filter(staff => !input.usedInWindow.has(staff.id))
     .filter(staff => !staff.fixed_off_days.includes(input.shiftDate))
@@ -1015,6 +1015,7 @@ function buildSlot(
   shiftType: ShiftTypeInput,
   staff: AiStaffContext | null,
   reason: string,
+  role: 'Manager' | 'Employee',
 ): AiShiftSlot {
   return {
     shift_label: label,
@@ -1023,6 +1024,7 @@ function buildSlot(
     assigned_user_id: staff?.id ?? null,
     assigned_user_name: staff?.full_name ?? null,
     reason,
+    role,
   }
 }
 
@@ -1200,6 +1202,8 @@ const REASON_CODE_TEXT: Record<string, string> = {
   manager_requirement: 'Manager assigned to meet daily minimum requirement.',
   employee_requirement: 'Employee assigned to meet daily minimum requirement.',
   no_eligible_staff: 'No eligible staff member available for this slot.',
+  no_eligible_manager: 'No eligible manager available for this slot.',
+  no_eligible_employee: 'No eligible employee available for this slot.',
 }
 
 function resolveReasonText(code: string): string {

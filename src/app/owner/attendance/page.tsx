@@ -42,6 +42,8 @@ interface FixedOffDayAISuggestion {
   reason: string
   concerns: string[]
   alternatives: string[]
+  problem_dates: string[]
+  problem_reasons: Record<string, string>
 }
 
 // A Manager/Employee submits one weekly request (e.g. "off Mon + Wed next week"), stored as one
@@ -441,7 +443,7 @@ function CurrentShiftsBlock({ show, deptName, rows, loading, panelBorder, highli
   })
   const todayKey2 = today.toISOString().slice(0, 10)
   const csIconButtonStyle: React.CSSProperties = {
-    width: 34, height: 34, borderRadius: 8, border: `1px solid ${panelBorder}`,
+    width: 28, height: 28, borderRadius: 8, border: `1px solid ${panelBorder}`,
     background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: 'pointer', color: TEXT_DARK, flexShrink: 0,
   }
   const dc = deptColor(deptName)
@@ -481,7 +483,7 @@ function CurrentShiftsBlock({ show, deptName, rows, loading, panelBorder, highli
         <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
           <CalendarDays size={15} style={{ color: '#F97316' }} />
         </div>
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
           <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Current Shifts</span>
           {deptName && (
             <span style={{ fontSize: 12, fontWeight: 600, color: dc, background: `${dc}1a`, borderRadius: 999, padding: '2px 10px', marginLeft: 10 }}>{deptName}</span>
@@ -825,6 +827,17 @@ export default function OwnerAttendancePage() {
   const [deadlineWeekday, setDeadlineWeekday] = useState(2)
   const [deadlineTime, setDeadlineTime] = useState('17:00')
 
+  // ── Shift Swap Settings block state ──────────────────────────────────────
+  const [swapSettingsLoading, setSwapSettingsLoading] = useState(false)
+  const [swapSettingsError, setSwapSettingsError] = useState('')
+  const [swapSettingsSaving, setSwapSettingsSaving] = useState(false)
+  const [swapAutoApprovalEnabled, setSwapAutoApprovalEnabled] = useState(false)
+  const [swapMonthlyLimit, setSwapMonthlyLimit] = useState<number | null>(3)
+  const [swapDeadlineWeekday, setSwapDeadlineWeekday] = useState(2)
+  const [swapDeadlineTime, setSwapDeadlineTime] = useState('17:00')
+  const [swapReviewOnLimitExceeded, setSwapReviewOnLimitExceeded] = useState(true)
+  const [swapReviewOnDeadlineExceeded, setSwapReviewOnDeadlineExceeded] = useState(true)
+
   // ── Requests tab state ───────────────────────────────────────────────────
   const [reqTab, setReqTab] = useState<'swaps' | 'fixedoff'>('swaps')
   const [swapRequests, setSwapRequests] = useState<ShiftSwapRequestView[]>([])
@@ -878,7 +891,10 @@ export default function OwnerAttendancePage() {
   // week. Only one card's picker is open at a time. The manual pick-any-day flow stays intact for
   // later Free-tier gating; "Suggestion" (below) is the AI-assisted entry point that drives it.
   const [modifyingFixedOffKey, setModifyingFixedOffKey] = useState<string | null>(null)
-  const [fixedOffModifySelection, setFixedOffModifySelection] = useState<string[]>([])
+  // Maps an ORIGINAL requested date -> the replacement date chosen for it. Only the specific dates
+  // AI/Owner flag as a staffing problem need an entry here — every other date in the group is safe
+  // and gets approved as requested without needing a replacement picked for it.
+  const [fixedOffModifySelection, setFixedOffModifySelection] = useState<Record<string, string>>({})
   const [requestAiKey, setRequestAiKey] = useState<string | null>(null)
   const [requestAiResult, setRequestAiResult] = useState<FixedOffDayAISuggestion | null>(null)
   const [requestAiLoading, setRequestAiLoading] = useState(false)
@@ -1243,6 +1259,66 @@ export default function OwnerAttendancePage() {
     }
   }
 
+  // ── Shift Swap Settings (auto-approval rules) ────────────────────────────────
+  const swapSettingsLoadedForRef = useRef<string | null>(null)
+  const loadSwapSettings = useCallback(async (force = false) => {
+    if (!companyId || !internalUserId) return
+    if (!force && swapSettingsLoadedForRef.current === companyId) return
+    swapSettingsLoadedForRef.current = companyId
+    setSwapSettingsLoading(true)
+    setSwapSettingsError('')
+    try {
+      const res = await fetch(`/api/attendance/shift-swap-settings?company_id=${companyId}&owner_id=${internalUserId}`)
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to load shift swap settings')
+      setSwapAutoApprovalEnabled(!!data.settings.auto_approval_enabled)
+      setSwapMonthlyLimit(data.settings.monthly_swap_limit ?? null)
+      setSwapDeadlineWeekday(data.settings.deadline_weekday ?? 2)
+      setSwapDeadlineTime(data.settings.deadline_time ?? '17:00')
+      setSwapReviewOnLimitExceeded(data.settings.require_review_on_limit_exceeded ?? true)
+      setSwapReviewOnDeadlineExceeded(data.settings.require_review_on_deadline_exceeded ?? true)
+    } catch (err) {
+      swapSettingsLoadedForRef.current = null
+      setSwapSettingsError(err instanceof Error ? err.message : 'Failed to load shift swap settings')
+    } finally {
+      setSwapSettingsLoading(false)
+    }
+  }, [companyId, internalUserId])
+
+  useEffect(() => {
+    if (mainTab === 'requests' && reqTab === 'swaps') void loadSwapSettings()
+  }, [mainTab, reqTab, loadSwapSettings])
+
+  const saveSwapSettings = async () => {
+    if (!companyId || !internalUserId) return
+    setSwapSettingsSaving(true)
+    setSwapSettingsError('')
+    try {
+      const res = await fetch('/api/attendance/shift-swap-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'set_settings', company_id: companyId, owner_id: internalUserId,
+          auto_approval_enabled: swapAutoApprovalEnabled,
+          monthly_swap_limit: swapMonthlyLimit,
+          deadline_weekday: swapDeadlineWeekday,
+          deadline_time: swapDeadlineTime,
+          require_review_on_limit_exceeded: swapReviewOnLimitExceeded,
+          require_review_on_deadline_exceeded: swapReviewOnDeadlineExceeded,
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to save shift swap settings')
+      showSuccessToast('Settings saved successfully.')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to save shift swap settings'
+      setSwapSettingsError(message)
+      showErrorToast(message)
+    } finally {
+      setSwapSettingsSaving(false)
+    }
+  }
+
   // ── Decide request ────────────────────────────────────────────────────────
   const decideRequest = async (
     kind: 'decide_shift_swap',
@@ -1298,7 +1374,7 @@ export default function OwnerAttendancePage() {
         return next
       })
       setModifyingFixedOffKey(null)
-      setFixedOffModifySelection([])
+      setFixedOffModifySelection({})
       await fetchRequestData(companyId)
       showSuccessToast(decision === 'approved' ? 'Day off request approved.' : 'Day off request modified.')
     } catch (err) {
@@ -1309,10 +1385,10 @@ export default function OwnerAttendancePage() {
   }
 
   // "Suggestion" — AI reviews one weekly request against everyone else's requests/scheduled
-  // headcount that week and recommends Approve or Modify. On Modify it seeds the existing manual
-  // day-picker with the AI's suggested replacement day(s) so the Owner just needs to confirm (or
-  // still override manually before confirming).
-  const analyzeFixedOffRequest = async (groupKey: string, ids: string[], requestedCount: number) => {
+  // headcount that week and recommends Approve or Modify. On Modify it seeds a replacement only for
+  // the specific dates it flagged as a staffing problem (problem_dates) — every other date in the
+  // group is left alone since it's already safe to approve as requested.
+  const analyzeFixedOffRequest = async (groupKey: string, ids: string[]) => {
     setRequestAiKey(groupKey)
     setRequestAiResult(null)
     setRequestAiError('')
@@ -1327,11 +1403,14 @@ export default function OwnerAttendancePage() {
       if (!data.success) throw new Error(data.message || 'AI analysis failed')
       setRequestAiResult(data.suggestion)
       if (data.suggestion.recommendation === 'modify') {
-        // Only pre-select AI-vetted alternatives — never fall back to the original requested dates,
-        // since those are exactly what triggered the "modify" recommendation in the first place.
-        // If the AI found fewer safe alternatives than needed, the Owner picks the rest manually
-        // (the Confirm button already stays disabled until the full count is selected).
-        setFixedOffModifySelection((data.suggestion.alternatives ?? []).slice(0, requestedCount))
+        // Pair up each flagged date with the AI's next-best safe alternative, in order. If the AI
+        // found fewer safe alternatives than problem dates, the remainder are left for the Owner to
+        // fill in manually (Confirm stays disabled until every flagged date has a pick).
+        const problemDates: string[] = data.suggestion.problem_dates ?? []
+        const alternatives: string[] = data.suggestion.alternatives ?? []
+        const seeded: Record<string, string> = {}
+        problemDates.forEach((date: string, i: number) => { if (alternatives[i]) seeded[date] = alternatives[i] })
+        setFixedOffModifySelection(seeded)
         setModifyingFixedOffKey(groupKey)
       }
     } catch (err) {
@@ -1793,7 +1872,7 @@ export default function OwnerAttendancePage() {
         {/* ── Page header ────────────────────────────────────────────────── */}
         <div style={{ padding: '20px 28px 16px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24, flexShrink: 0 }}>
           <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">Attendance</h1>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
+          <div data-owner-header-badges style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId} />}
             {companyId && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
           </div>
@@ -2154,7 +2233,7 @@ export default function OwnerAttendancePage() {
             REQUESTS TAB
         ══════════════════════════════════════════════════════════════════ */}
         {mainTab === 'requests' && (
-          <div style={{ padding: '0 28px 28px', display: 'grid', gridTemplateColumns: 'minmax(260px, 326px) minmax(360px, 1fr) minmax(360px, 640px)', gridTemplateRows: 'auto minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
+          <div style={{ padding: '0 28px 28px', display: 'grid', gridTemplateColumns: 'minmax(260px, 326px) minmax(400px, 1fr) minmax(360px, 540px)', gridTemplateRows: 'auto minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
             <div style={{ display: 'contents' }}>
 
             {/* ── LEFT: Request Types sidebar ──────────────────────────────── */}
@@ -2205,6 +2284,100 @@ export default function OwnerAttendancePage() {
                   })}
                 </div>
               </section>
+              {reqTab === 'swaps' && (
+                <section style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
+                  <div style={{ padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <Settings size={15} style={{ color: '#F97316' }} />
+                    </div>
+                    <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, flex: 1 }}>Settings</span>
+                    {swapSettingsLoading && <Spinner size={13} dark />}
+                  </div>
+                  <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 24 }}>
+                    {swapSettingsError && (
+                      <div style={{ padding: '10px 12px', borderRadius: 10, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', fontSize: 12, fontWeight: 700 }}>{swapSettingsError}</div>
+                    )}
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: '0 0 6px' }}>Monthly Swap Limit / Person</label>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, border: '1.5px solid #E5E7EB', borderRadius: 8, minHeight: 40, padding: '10px 12px', background: '#FFFFFF', boxSizing: 'border-box' }}>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={swapMonthlyLimit ?? ''}
+                            placeholder="No limit"
+                            onChange={e => {
+                              const digits = e.target.value.replace(/\D/g, '')
+                              setSwapMonthlyLimit(digits === '' ? null : Math.max(1, Number(digits)))
+                            }}
+                            style={{ width: `${String(swapMonthlyLimit ?? 'No limit').length}ch`, minWidth: 10, border: 'none', outline: 'none', padding: 0, fontSize: '0.9375rem', color: '#111827', background: 'transparent' }}
+                          />
+                          <span style={{ fontSize: '0.9375rem', color: '#111827' }}>swap</span>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: '0 0 6px' }}>Swap Deadline</label>
+                        <div style={{ display: 'flex', gap: 10 }}>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <DropdownField
+                              value={String(swapDeadlineWeekday)}
+                              onChange={v => setSwapDeadlineWeekday(Number(v))}
+                              options={['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((day, i) => ({ value: String(i), label: day }))}
+                            />
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <DropdownField
+                              value={swapDeadlineTime}
+                              onChange={setSwapDeadlineTime}
+                              options={DEADLINE_TIME_OPTIONS}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ borderTop: '1px solid #E5E7EB', paddingTop: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                        <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: 0 }}>Preferences</label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={swapAutoApprovalEnabled}
+                            onChange={e => setSwapAutoApprovalEnabled(e.target.checked)}
+                            style={{ width: 16, height: 16, accentColor: '#F97316', cursor: 'pointer' }}
+                          />
+                          <span style={{ fontSize: '0.875rem', color: '#111827' }}>Auto Approval</span>
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={swapReviewOnLimitExceeded}
+                            onChange={e => setSwapReviewOnLimitExceeded(e.target.checked)}
+                            style={{ width: 16, height: 16, accentColor: '#F97316', cursor: 'pointer' }}
+                          />
+                          <span style={{ fontSize: '0.875rem', color: '#111827' }}>Monthly limit exceeded</span>
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                          <input
+                            type="checkbox"
+                            checked={swapReviewOnDeadlineExceeded}
+                            onChange={e => setSwapReviewOnDeadlineExceeded(e.target.checked)}
+                            style={{ width: 16, height: 16, accentColor: '#F97316', cursor: 'pointer' }}
+                          />
+                          <span style={{ fontSize: '0.875rem', color: '#111827' }}>Submitted after deadline</span>
+                        </label>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                        <button onClick={() => void saveSwapSettings()} disabled={swapSettingsSaving || swapSettingsLoading} style={modalPrimaryButtonStyle(swapSettingsSaving || swapSettingsLoading)}>
+                          {swapSettingsSaving ? <Spinner size={13} /> : <Check size={14} />}
+                          Save
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+              )}
               {reqTab === 'fixedoff' && (
                 <section style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
                   <div style={{ padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -2490,9 +2663,14 @@ export default function OwnerAttendancePage() {
                                 )}
                               </div>
                             ) : (
-                              <span title={req.status === 'approved' ? 'Approved' : 'Rejected'} style={{ width: 30, height: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: statusTone.bg, color: statusTone.text, border: `1.5px solid ${statusTone.border}`, borderRadius: 999, flexShrink: 0 }}>
-                                <StatusIcon size={12} strokeWidth={3} />
-                              </span>
+                              <>
+                                {approved && req.reviewed_by === null && (
+                                  <span title="Approved automatically by the Shift Swap auto-approval rules" style={{ fontSize: '0.62rem', fontWeight: 800, color: '#7C3AED', background: '#F5F3FF', borderRadius: 999, padding: '3px 8px', whiteSpace: 'nowrap' }}>Auto-Approved</span>
+                                )}
+                                <span title={req.status === 'approved' ? 'Approved' : 'Rejected'} style={{ width: 30, height: 30, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: statusTone.bg, color: statusTone.text, border: `1.5px solid ${statusTone.border}`, borderRadius: 999, flexShrink: 0 }}>
+                                  <StatusIcon size={12} strokeWidth={3} />
+                                </span>
+                              </>
                             )}
                           </div>
                         </div>
@@ -2627,7 +2805,8 @@ export default function OwnerAttendancePage() {
                           const pageStart = currentPage * PAGE_SIZE
                           const visibleItems = actionNeeded.slice(pageStart, pageStart + PAGE_SIZE)
                           return (
-                        <section style={{ gridColumn: '2', gridRow: '1', background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden', height: 260, display: 'flex', flexDirection: 'column' }}>
+                        <div style={{ gridColumn: '2', gridRow: '1', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        <section style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden', height: 260, display: 'flex', flexDirection: 'column' }}>
                           <div style={{ padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
                             <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                               <ClipboardList size={15} style={{ color: '#F97316' }} />
@@ -2675,6 +2854,17 @@ export default function OwnerAttendancePage() {
                             </div>
                           )}
                         </section>
+                        <CurrentShiftsBlock
+                          show={reqTab === 'swaps'}
+                          deptName={currentShiftsDept ?? ''}
+                          rows={currentShiftsRows}
+                          loading={currentShiftsLoading}
+                          panelBorder={PANEL_BORDER}
+                          highlightRequest={activeSwapRequest}
+                          anchorDate={csAnchorDate}
+                          onNavigateDay={navigateCurrentShiftsDay}
+                        />
+                        </div>
                           )
                         })()}
 
@@ -2805,18 +2995,21 @@ export default function OwnerAttendancePage() {
                   const statusTone = fixedOffStatusTone(group.status)
                   const ids = group.requests.map(r => r.id)
                   const weekDates = Array.from({ length: 7 }, (_, i) => toISODate(addDays(new Date(`${group.week_start}T00:00:00`), i)))
-                  const requestedCount = group.requests.length
+                  const customMinDate = toISODate(addDays(new Date(`${weekDates[6]}T00:00:00`), 1))
                   const aiResult = requestAiKey === group.key ? requestAiResult : null
                   const aiLoading = requestAiLoading && requestAiKey === group.key
                   const aiErr = requestAiKey === group.key ? requestAiError : ''
 
-                  const toggleModifyDate = (date: string) => {
-                    setFixedOffModifySelection(prev => {
-                      if (prev.includes(date)) return prev.filter(d => d !== date)
-                      if (prev.length >= requestedCount) return prev
-                      return [...prev, date]
-                    })
-                  }
+                  // Only the dates AI actually flagged need a replacement picked — everything else in
+                  // the group is safe and gets approved as requested. Falls back to treating the whole
+                  // group as needing a pick if problem_dates is ever missing (defensive, shouldn't happen).
+                  const requestDates = group.requests.map(r => r.request_date)
+                  const problemDates = aiResult?.recommendation === 'modify'
+                    ? (aiResult.problem_dates?.length ? aiResult.problem_dates : requestDates)
+                    : []
+                  const safeDates = requestDates.filter(d => !problemDates.includes(d))
+                  const resolvedCount = problemDates.filter(d => !!fixedOffModifySelection[d]).length
+                  const allResolved = problemDates.length > 0 && resolvedCount === problemDates.length
 
                   return (
                     <div
@@ -2881,14 +3074,15 @@ export default function OwnerAttendancePage() {
                                   setModifyingFixedOffKey(null)
                                   setRequestAiKey(null)
                                   setRequestAiResult(null)
+                                  setFixedOffModifySelection({})
                                 } else {
-                                  void analyzeFixedOffRequest(group.key, ids, requestedCount)
+                                  void analyzeFixedOffRequest(group.key, ids)
                                 }
                               }}
                               disabled={reqActionLoading || aiLoading}
                               style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#6D28D9', background: (isModifying || aiResult) ? '#EDE9FE' : '#F5F3FF', border: `1.5px solid ${(isModifying || aiResult) ? '#C4B5FD' : '#DDD6FE'}`, borderRadius: 999, padding: '6px 16px', cursor: (reqActionLoading || aiLoading) ? 'default' : 'pointer', opacity: (reqActionLoading || aiLoading) ? 0.6 : 1, transition: 'background 0.15s, border-color 0.15s' }}
                             >
-                              {aiLoading ? <Spinner size={13} /> : <Sparkles size={13} />} Suggestion
+                              {aiLoading ? <><Spinner size={13} /> Analyzing…</> : <><Sparkles size={13} /> Suggestion</>}
                             </button>
                           </div>
                         ) : (
@@ -2898,6 +3092,15 @@ export default function OwnerAttendancePage() {
                         )}
                       </div>
 
+                      {aiLoading && (
+                        <div style={{ width: '100%', boxSizing: 'border-box', border: '1px solid #DDD6FE', background: '#F5F3FF', borderRadius: 12, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <span style={{ width: 28, height: 28, borderRadius: '50%', background: '#EDE9FE', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            <Spinner size={14} />
+                          </span>
+                          <p style={{ margin: 0, fontSize: '0.8125rem', fontWeight: 600, color: '#374151', lineHeight: 1.4 }}>Analyzing staffing for this request…</p>
+                        </div>
+                      )}
+
                       {aiErr && <div style={{ fontSize: '0.75rem', color: '#DC2626', fontWeight: 600 }}>{aiErr}</div>}
 
                       {aiResult && aiResult.recommendation === 'approve' && (
@@ -2905,59 +3108,91 @@ export default function OwnerAttendancePage() {
                           <span style={{ width: 28, height: 28, borderRadius: '50%', background: '#DCFCE7', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                             <Check size={14} strokeWidth={3} style={{ color: '#15803D' }} />
                           </span>
-                          <p style={{ margin: 0, fontSize: '0.82rem', color: '#374151', lineHeight: 1.4 }}>{aiResult.reason}</p>
+                          <p style={{ margin: 0, fontSize: '0.8125rem', fontWeight: 600, color: '#374151', lineHeight: 1.4 }}>{aiResult.reason}</p>
                         </div>
                       )}
 
                       {isModifying && (
                         <div onClick={e => e.stopPropagation()} style={{ width: '100%', boxSizing: 'border-box', border: '1.5px solid #FED7AA', borderRadius: 12, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-                              {aiResult && aiResult.recommendation === 'modify' && (
-                                <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#0F172A', lineHeight: 1.4 }}>{aiResult.reason}</span>
-                              )}
-                              <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: 0 }}>
-                                Select {requestedCount} replacement day{requestedCount > 1 ? 's' : ''} for the week of {formatSwapDate(group.week_start)}
-                              </label>
-                            </div>
-                            <span style={{ fontSize: '0.75rem', fontWeight: 700, color: fixedOffModifySelection.length === requestedCount ? '#15803D' : '#9CA3AF' }}>
-                              {fixedOffModifySelection.length}/{requestedCount}
-                            </span>
-                          </div>
+                          {/* One badge per requested date — same pill style as "Requested Off Days"
+                              above, colored green (safe, approved as-is) or orange (needs a
+                              replacement, expanded directly below it). */}
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                            {weekDates.map(date => {
-                              const isSelected = fixedOffModifySelection.includes(date)
+                            {requestDates.map(date => {
+                              const isSafe = safeDates.includes(date)
                               return (
-                                <button
-                                  key={date}
-                                  type="button"
-                                  onClick={() => toggleModifyDate(date)}
-                                  style={{
-                                    display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 700,
-                                    color: isSelected ? '#FFFFFF' : '#334155',
-                                    background: isSelected ? '#A78BFA' : '#FFFFFF',
-                                    border: `1.5px solid ${isSelected ? '#A78BFA' : '#E5E7EB'}`,
-                                    borderRadius: 999, padding: '5px 10px', cursor: 'pointer',
-                                  }}
-                                >
+                                <span key={date} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.76rem', fontWeight: 700, color: isSafe ? '#15803D' : '#C2410C', background: isSafe ? '#F0FDF4' : '#FFF7ED', border: `1px solid ${isSafe ? '#BBF7D0' : '#FED7AA'}`, borderRadius: 999, padding: '4px 10px', whiteSpace: 'nowrap' }}>
+                                  {!isSafe && <Calendar size={11} style={{ flexShrink: 0 }} />}
                                   {formatFixedOffRequestDay(date)}
-                                </button>
+                                </span>
                               )
                             })}
                           </div>
+
+                          {problemDates.map(date => {
+                            const selected = fixedOffModifySelection[date] ?? ''
+                            const isCustomValue = selected !== '' && !weekDates.includes(selected)
+                            return (
+                              <div key={date} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                                <p style={{ margin: 0, fontSize: '0.8125rem', fontWeight: 700, color: '#0F172A', lineHeight: 1.4 }}>
+                                  {aiResult?.problem_reasons?.[date] ?? `Pick a replacement for ${formatFixedOffRequestDay(date)}.`}
+                                </p>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                                  {weekDates.map(wd => {
+                                    const isSelected = selected === wd
+                                    return (
+                                      <button
+                                        key={wd}
+                                        type="button"
+                                        onClick={() => setFixedOffModifySelection(prev => ({ ...prev, [date]: wd }))}
+                                        style={{
+                                          display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 700,
+                                          color: isSelected ? '#6D28D9' : '#334155',
+                                          background: isSelected ? '#EDE9FE' : '#FFFFFF',
+                                          border: `1.5px solid ${isSelected ? '#C4B5FD' : '#E5E7EB'}`,
+                                          borderRadius: 999, padding: '5px 10px', cursor: 'pointer',
+                                        }}
+                                      >
+                                        {formatFixedOffRequestDay(wd)}
+                                      </button>
+                                    )
+                                  })}
+                                  <input
+                                    type="date"
+                                    value={isCustomValue ? selected : ''}
+                                    min={customMinDate}
+                                    onChange={e => {
+                                      if (e.target.value) setFixedOffModifySelection(prev => ({ ...prev, [date]: e.target.value }))
+                                    }}
+                                    style={{
+                                      fontSize: '0.72rem', fontWeight: 700,
+                                      color: isCustomValue ? '#6D28D9' : '#334155',
+                                      background: isCustomValue ? '#EDE9FE' : '#FFFFFF',
+                                      border: `1.5px solid ${isCustomValue ? '#C4B5FD' : '#E5E7EB'}`,
+                                      borderRadius: 999, padding: '4px 8px', cursor: 'pointer',
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            )
+                          })}
+
                           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
                             <button
                               type="button"
-                              onClick={() => setModifyingFixedOffKey(null)}
+                              onClick={() => { setModifyingFixedOffKey(null); setFixedOffModifySelection({}) }}
                               style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#6B7280', background: '#FFFFFF', border: '1.5px solid #E5E7EB', borderRadius: 999, padding: '6px 16px', cursor: 'pointer' }}
                             >
                               Cancel
                             </button>
                             <button
                               type="button"
-                              onClick={() => decideFixedOffGroup(ids, 'modified', group.requester_name, fixedOffModifySelection)}
-                              disabled={fixedOffModifySelection.length !== requestedCount || reqActionLoading}
-                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#FFFFFF', background: (fixedOffModifySelection.length !== requestedCount || reqActionLoading) ? '#C4B5FD' : 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 999, padding: '6px 16px', cursor: (fixedOffModifySelection.length !== requestedCount || reqActionLoading) ? 'default' : 'pointer', opacity: (fixedOffModifySelection.length !== requestedCount || reqActionLoading) ? 0.7 : 1 }}
+                              onClick={() => {
+                                const newDates = requestDates.map(d => fixedOffModifySelection[d] ?? d)
+                                decideFixedOffGroup(ids, 'modified', group.requester_name, newDates)
+                              }}
+                              disabled={!allResolved || reqActionLoading}
+                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#FFFFFF', background: (!allResolved || reqActionLoading) ? '#C4B5FD' : 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 'none', borderRadius: 999, padding: '6px 16px', cursor: (!allResolved || reqActionLoading) ? 'default' : 'pointer', opacity: (!allResolved || reqActionLoading) ? 0.7 : 1 }}
                             >
                               {reqActionLoading ? <Spinner size={13} /> : <Check size={13} />} Confirm
                             </button>
@@ -3222,6 +3457,11 @@ export default function OwnerAttendancePage() {
                             const dc = deptName ? deptColor(deptName) : '#64748B'
                             const group = groupByUserWeek.get(`${req.user_id}_${req.week_start}`)
                             const requestedDates = group?.requests ?? [req]
+                            // Clicking a date that falls inside the week currently open for review lets
+                            // the Owner act right here — same Approve/Suggestion actions as the top card,
+                            // without having to page through Action Needed to find this person's group.
+                            const canAct = isDetailInRequestingWeek && req.status === 'pending' && !!group
+                            const aiLoadingHere = canAct && requestAiLoading && requestAiKey === group!.key
                             return (
                               <div key={req.id} style={{ display: 'flex', alignItems: 'center', gap: 14, border: `1px solid ${PANEL_BORDER}`, borderRadius: 12, padding: '14px 16px' }}>
                                 <RoleAvatar role={req.requester_role} size={44} photoUrl={person?.profile_photo_url ?? null} />
@@ -3243,6 +3483,30 @@ export default function OwnerAttendancePage() {
                                   <span title="Approved" style={{ width: 26, height: 26, borderRadius: '50%', background: '#DCFCE7', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                                     <Check size={14} strokeWidth={3} style={{ color: '#15803D' }} />
                                   </span>
+                                )}
+                                {canAct && (
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
+                                    <button
+                                      type="button"
+                                      onClick={() => void decideFixedOffGroup(group!.requests.map(r => r.id), 'approved', group!.requester_name)}
+                                      disabled={reqActionLoading}
+                                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, fontSize: '0.68rem', fontWeight: 700, color: '#15803D', background: '#F0FDF4', border: '1.5px solid #BBF7D0', borderRadius: 999, padding: '4px 10px', cursor: reqActionLoading ? 'default' : 'pointer', opacity: reqActionLoading ? 0.6 : 1, whiteSpace: 'nowrap' }}
+                                    >
+                                      <Check size={11} /> Approve
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const idx = fixedOffActionNeeded.findIndex(g => g.key === group!.key)
+                                        if (idx >= 0) setFixedOffActionIndex(idx)
+                                        void analyzeFixedOffRequest(group!.key, group!.requests.map(r => r.id))
+                                      }}
+                                      disabled={reqActionLoading || requestAiLoading}
+                                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, fontSize: '0.68rem', fontWeight: 700, color: '#6D28D9', background: '#F5F3FF', border: '1.5px solid #DDD6FE', borderRadius: 999, padding: '4px 10px', cursor: (reqActionLoading || requestAiLoading) ? 'default' : 'pointer', opacity: (reqActionLoading || requestAiLoading) ? 0.6 : 1, whiteSpace: 'nowrap' }}
+                                    >
+                                      {aiLoadingHere ? <><Spinner size={11} /> Analyzing…</> : <><Sparkles size={11} /> Suggestion</>}
+                                    </button>
+                                  </div>
                                 )}
                               </div>
                             )
@@ -3296,22 +3560,8 @@ export default function OwnerAttendancePage() {
             </div>{/* /right content */}
             </div>{/* /two-col grid */}
 
-            {/* ── Current Shifts + Task Changes — full-width, below Type + Action Needed ───
-                 Stacked in one flex wrapper (not separate grid rows) so they stay flush together
-                 regardless of how tall column 3 (Processed Requests, which spans rows 1-2) makes
-                 the row-2 track — a second grid row would inherit that inflated track height and
-                 leave a large gap above it. ─── */}
+            {/* ── Task Changes — full-width, below Type/Settings + Action Needed/Current Shifts ─── */}
             <div style={{ gridColumn: '1 / 3', gridRow: '2', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <CurrentShiftsBlock
-                show={reqTab === 'swaps'}
-                deptName={currentShiftsDept ?? ''}
-                rows={currentShiftsRows}
-                loading={currentShiftsLoading}
-                panelBorder={PANEL_BORDER}
-                highlightRequest={activeSwapRequest}
-                anchorDate={csAnchorDate}
-                onNavigateDay={navigateCurrentShiftsDay}
-              />
               <div style={{ display: 'flex', alignItems: 'stretch', gap: 16 }}>
                 <TaskChangeBlock
                   title="Current Task"
