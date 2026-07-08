@@ -3,6 +3,7 @@ export type ActivityLog = {
   company_id: string
   actor_id: string | null
   action: string
+  target_id: string | null
   target_name: string | null
   detail: string | null
   is_read: boolean
@@ -14,6 +15,7 @@ export type ActivityLogInput = {
   company_id: string
   actor_id: string
   action: string
+  target_id?: string | null
   target_name?: string | null
   detail?: string | null
 }

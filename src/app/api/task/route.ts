@@ -138,6 +138,7 @@ export async function POST(req: NextRequest) {
     priority: (b.priority as string) ?? null,
     due_at: (b.due_at as string) ?? null,
     task_date: (b.task_date as string) ?? null,
+    assigned_user_ids: Array.isArray(b.assigned_user_ids) ? b.assigned_user_ids.filter((v): v is string => typeof v === 'string') : undefined,
   }
 
   const subTasks = Array.isArray(b.sub_tasks)

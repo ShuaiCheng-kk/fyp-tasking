@@ -5,7 +5,7 @@ export const ownerAnnouncementRepository = {
   async getAnnouncements(companyId: string, requestingUserId?: string | null, role?: string | null, departmentId?: string | null) {
     const { data, error } = await supabase
       .from('announcements')
-      .select('*, poster:users!announcements_from_user_id_fkey(full_name, role)')
+      .select('*, poster:users!announcements_from_user_id_fkey(full_name, role, profile_photo_url, manager_departments!manager_departments_manager_id_fkey(department_id, departments(name)))')
       .eq('company_id', companyId)
       .order('created_at', { ascending: false })
     if (error) throw error
@@ -26,7 +26,8 @@ export const ownerAnnouncementRepository = {
       })
       .map((row: any) => {
         const { poster, ...rest } = row
-        return { ...rest, created_by_name: poster?.full_name ?? null, poster_role: poster?.role ?? null }
+        const posterDept = poster?.manager_departments?.[0]
+        return { ...rest, created_by_name: poster?.full_name ?? null, created_by_photo_url: poster?.profile_photo_url ?? null, poster_role: poster?.role ?? null, poster_department_id: posterDept?.department_id ?? null, poster_department_name: posterDept?.departments?.name ?? null }
       })
   },
 
@@ -51,7 +52,7 @@ export const ownerAnnouncementRepository = {
 
     const { data, error } = await supabase
       .from('announcements')
-      .update({ title, content, department_id: departmentId })
+      .update({ title, content, department_id: departmentId, updated_at: new Date().toISOString() })
       .eq('id', announcementId)
       .select()
       .single()

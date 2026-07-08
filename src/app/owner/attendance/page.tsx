@@ -1927,7 +1927,7 @@ export default function OwnerAttendancePage() {
                     >
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                         <span style={{ width: 8, height: 8, borderRadius: 999, background: color, flexShrink: 0 }} />
-                        <h3 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700, color: TEXT_DARK, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{group.deptName}</h3>
+                        <h3 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 600, color: '#374151', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{group.deptName}</h3>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
@@ -1991,7 +1991,7 @@ export default function OwnerAttendancePage() {
                       onMouseLeave={e => { if (!isActive) { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.borderColor = PANEL_BORDER } }}
                     >
                       <span style={{ width: 8, height: 8, borderRadius: 999, background: '#94A3B8', flexShrink: 0 }} />
-                      <span style={{ fontSize: '0.9375rem', fontWeight: 700, color: '#374151' }}>{opt.label}</span>
+                      <span style={{ fontSize: '0.9375rem', fontWeight: 600, color: '#374151' }}>{opt.label}</span>
                     </article>
                   )
                 })}

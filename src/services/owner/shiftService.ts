@@ -327,6 +327,7 @@ export const shiftService = {
     date_to: string
     publication_status: 'draft' | 'published'
     performed_by?: string
+    department_id?: string
   }): Promise<{ shifts: Shift[] }> {
     if (!input.company_id || !input.date_from || !input.date_to) {
       throw new Error('company_id, date_from, and date_to are required')
@@ -338,7 +339,7 @@ export const shiftService = {
       throw new Error('date_from must be before date_to')
     }
     const beforeShifts = input.performed_by
-      ? await shiftRepository.getShiftsByCompanyAndDateRange(input.company_id, input.date_from, input.date_to)
+      ? await shiftRepository.getShiftsByCompanyAndDateRange(input.company_id, input.date_from, input.date_to, input.department_id)
       : []
     const shifts = await shiftRepository.updateSchedulePublication(input)
     if (input.performed_by && beforeShifts.length > 0) {
@@ -831,81 +832,59 @@ export const shiftService = {
 
     if (action.action_type === 'edit') {
       const previousShift = action.undo_payload.previous_shift as Shift | undefined
-      if (previousShift) {
-        const currentShift = await shiftRepository.getShiftById(previousShift.id)
-        if (currentShift) redo_payload.next_shift = currentShift
-        const { id, company_id: _companyId, created_by: _createdBy, created_at: _createdAt, ...fields } = previousShift
-        void _companyId
-        void _createdBy
-        void _createdAt
-        await shiftRepository.updateShift(id, fields)
-      }
       const previousCascadedShifts = action.undo_payload.previous_cascaded_shifts ?? []
-      const currentCascadedShifts: Shift[] = []
-      for (const sibling of previousCascadedShifts) {
-        const currentSibling = await shiftRepository.getShiftById(sibling.id)
-        if (currentSibling) currentCascadedShifts.push(currentSibling)
-        const { id, company_id: _companyId, created_by: _createdBy, created_at: _createdAt, ...fields } = sibling
-        void _companyId
-        void _createdBy
-        void _createdAt
-        await shiftRepository.updateShift(id, fields)
+      const shiftsToRestore = previousShift ? [previousShift, ...previousCascadedShifts] : previousCascadedShifts
+      if (shiftsToRestore.length > 0) {
+        const currentShifts = await shiftRepository.getShiftsByIds(shiftsToRestore.map(s => s.id))
+        if (previousShift) {
+          const currentMain = currentShifts.find(s => s.id === previousShift.id)
+          if (currentMain) redo_payload.next_shift = currentMain
+        }
+        const currentCascaded = currentShifts.filter(s => previousCascadedShifts.some(sibling => sibling.id === s.id))
+        if (currentCascaded.length > 0) redo_payload.next_cascaded_shifts = currentCascaded
+        await shiftRepository.upsertShifts(shiftsToRestore)
       }
-      if (currentCascadedShifts.length > 0) redo_payload.next_cascaded_shifts = currentCascadedShifts
       const currentAssignments = await shiftRepository.getAssignmentsByShiftIds(action.affected_shift_ids)
       if (currentAssignments.length > 0) redo_payload.next_assignments = currentAssignments
       const previousAssignments = [
         ...(action.undo_payload.previous_assignments ?? []),
         ...(action.undo_payload.previous_cascaded_assignments ?? []),
       ]
-      for (const shiftId of action.affected_shift_ids) {
-        await shiftRepository.deleteAssignmentsByShiftId(shiftId)
-      }
+      await shiftRepository.deleteAssignmentsByShiftIds(action.affected_shift_ids)
       await shiftRepository.restoreShiftAssignments(previousAssignments.filter(a => action.affected_shift_ids.includes(a.shift_id)))
     } else if (action.action_type === 'delete') {
       const deletedShifts = action.undo_payload.deleted_shifts ?? []
-      for (const shift of deletedShifts) {
-        await shiftRepository.restoreShift(shift)
-      }
+      await shiftRepository.restoreShifts(deletedShifts)
       const deletedAssignments = action.undo_payload.deleted_assignments ?? []
       await shiftRepository.restoreShiftAssignments(deletedAssignments)
     } else if (action.action_type === 'bulk_edit') {
       const previousShifts = action.undo_payload.previous_shifts ?? []
-      const currentShifts: Shift[] = []
-      for (const shift of previousShifts) {
-        const currentShift = await shiftRepository.getShiftById(shift.id)
-        if (currentShift) currentShifts.push(currentShift)
-        const { id, company_id: _companyId, created_by: _createdBy, created_at: _createdAt, ...fields } = shift
-        void _companyId
-        void _createdBy
-        void _createdAt
-        await shiftRepository.updateShift(id, fields)
+      if (previousShifts.length > 0) {
+        const currentShifts = await shiftRepository.getShiftsByIds(previousShifts.map(s => s.id))
+        if (currentShifts.length > 0) redo_payload.next_shifts = currentShifts
+        await shiftRepository.upsertShifts(previousShifts)
       }
-      if (currentShifts.length > 0) redo_payload.next_shifts = currentShifts
     } else if (action.action_type === 'publish') {
       const previousStatuses = action.undo_payload.previous_publication_statuses ?? []
-      const currentShifts: Shift[] = []
-      for (const status of previousStatuses) {
-        const currentShift = await shiftRepository.getShiftById(status.id)
-        if (currentShift) currentShifts.push(currentShift)
-        await shiftRepository.updateShift(status.id, { publication_status: status.publication_status })
-      }
-      if (currentShifts.length > 0) {
-        redo_payload.next_publication_statuses = currentShifts.map(s => ({ id: s.id, publication_status: s.publication_status }))
+      if (previousStatuses.length > 0) {
+        const currentShifts = await shiftRepository.getShiftsByIds(previousStatuses.map(s => s.id))
+        if (currentShifts.length > 0) {
+          redo_payload.next_publication_statuses = currentShifts.map(s => ({ id: s.id, publication_status: s.publication_status }))
+        }
+        const draftIds = previousStatuses.filter(s => s.publication_status === 'draft').map(s => s.id)
+        const publishedIds = previousStatuses.filter(s => s.publication_status === 'published').map(s => s.id)
+        await Promise.all([
+          shiftRepository.updatePublicationStatusByIds(draftIds, 'draft'),
+          shiftRepository.updatePublicationStatusByIds(publishedIds, 'published'),
+        ])
       }
     } else {
-      const recreateShifts: Shift[] = []
-      for (const shiftId of action.affected_shift_ids) {
-        const currentShift = await shiftRepository.getShiftById(shiftId)
-        if (currentShift) recreateShifts.push(currentShift)
-      }
+      const recreateShifts = await shiftRepository.getShiftsByIds(action.affected_shift_ids)
       const recreateAssignments = await shiftRepository.getAssignmentsByShiftIds(action.affected_shift_ids)
       if (recreateShifts.length > 0) redo_payload.recreate_shifts = recreateShifts
       if (recreateAssignments.length > 0) redo_payload.recreate_assignments = recreateAssignments
-      for (const shiftId of action.affected_shift_ids) {
-        await shiftRepository.deleteAssignmentsByShiftId(shiftId)
-        await shiftRepository.deleteShift(shiftId)
-      }
+      await shiftRepository.deleteAssignmentsByShiftIds(action.affected_shift_ids)
+      await shiftRepository.deleteShiftsByIds(action.affected_shift_ids)
     }
 
     await shiftRepository.markActionUndone(action.id, redo_payload)
@@ -921,46 +900,29 @@ export const shiftService = {
 
     if (action.action_type === 'edit') {
       const nextShift = redo_payload.next_shift
-      if (nextShift) {
-        const { id, company_id: _companyId, created_by: _createdBy, created_at: _createdAt, ...fields } = nextShift
-        void _companyId
-        void _createdBy
-        void _createdAt
-        await shiftRepository.updateShift(id, fields)
-      }
-      for (const sibling of redo_payload.next_cascaded_shifts ?? []) {
-        const { id, company_id: _companyId, created_by: _createdBy, created_at: _createdAt, ...fields } = sibling
-        void _companyId
-        void _createdBy
-        void _createdAt
-        await shiftRepository.updateShift(id, fields)
-      }
-      for (const shiftId of action.affected_shift_ids) {
-        await shiftRepository.deleteAssignmentsByShiftId(shiftId)
-      }
+      const nextCascadedShifts = redo_payload.next_cascaded_shifts ?? []
+      const shiftsToApply = nextShift ? [nextShift, ...nextCascadedShifts] : nextCascadedShifts
+      if (shiftsToApply.length > 0) await shiftRepository.upsertShifts(shiftsToApply)
+      await shiftRepository.deleteAssignmentsByShiftIds(action.affected_shift_ids)
       const nextAssignments = redo_payload.next_assignments ?? []
       await shiftRepository.restoreShiftAssignments(nextAssignments.filter(a => action.affected_shift_ids.includes(a.shift_id)))
     } else if (action.action_type === 'delete') {
-      for (const shiftId of action.affected_shift_ids) {
-        await shiftRepository.deleteAssignmentsByShiftId(shiftId)
-        await shiftRepository.deleteShift(shiftId)
-      }
+      await shiftRepository.deleteAssignmentsByShiftIds(action.affected_shift_ids)
+      await shiftRepository.deleteShiftsByIds(action.affected_shift_ids)
     } else if (action.action_type === 'bulk_edit') {
-      for (const shift of redo_payload.next_shifts ?? []) {
-        const { id, company_id: _companyId, created_by: _createdBy, created_at: _createdAt, ...fields } = shift
-        void _companyId
-        void _createdBy
-        void _createdAt
-        await shiftRepository.updateShift(id, fields)
-      }
+      const nextShifts = redo_payload.next_shifts ?? []
+      if (nextShifts.length > 0) await shiftRepository.upsertShifts(nextShifts)
     } else if (action.action_type === 'publish') {
-      for (const status of redo_payload.next_publication_statuses ?? []) {
-        await shiftRepository.updateShift(status.id, { publication_status: status.publication_status })
-      }
+      const nextStatuses = redo_payload.next_publication_statuses ?? []
+      const draftIds = nextStatuses.filter(s => s.publication_status === 'draft').map(s => s.id)
+      const publishedIds = nextStatuses.filter(s => s.publication_status === 'published').map(s => s.id)
+      await Promise.all([
+        shiftRepository.updatePublicationStatusByIds(draftIds, 'draft'),
+        shiftRepository.updatePublicationStatusByIds(publishedIds, 'published'),
+      ])
     } else {
-      for (const shift of redo_payload.recreate_shifts ?? []) {
-        await shiftRepository.restoreShift(shift)
-      }
+      const recreateShifts = redo_payload.recreate_shifts ?? []
+      await shiftRepository.restoreShifts(recreateShifts)
       await shiftRepository.restoreShiftAssignments(redo_payload.recreate_assignments ?? [])
     }
 

@@ -10,6 +10,7 @@ export const activityLogRepository = {
       company_id: input.company_id,
       actor_id: input.actor_id,
       action: input.action,
+      target_id: input.target_id ?? null,
       target_name: input.target_name ?? null,
       detail: input.detail ?? null,
     })

@@ -21,6 +21,9 @@ export interface Task {
   created_at: string
   updated_at?: string
   shift_date?: string | null
+  // Full assignee set for top-level tasks (assigned_user_id is the first/primary entry, kept in
+  // sync). Not populated on sub-tasks — those stay single-assignee via assigned_user_id alone.
+  assigned_user_ids?: string[]
 }
 
 export interface TaskInput {
@@ -42,6 +45,10 @@ export interface TaskInput {
   source_task_id?: string | null
   is_archived?: boolean
   is_completed?: boolean
+  // Full desired assignee set. When provided, assigned_user_id is derived as the first entry and
+  // every id is validated against the same one-level-down role check. Omit for single-assignee
+  // behavior identical to today.
+  assigned_user_ids?: string[]
 }
 
 export interface SubTaskInput {

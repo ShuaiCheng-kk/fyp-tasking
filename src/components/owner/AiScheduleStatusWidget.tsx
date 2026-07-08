@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
-import { AlertTriangle, X } from 'lucide-react'
+import { AlertTriangle, Check, X } from 'lucide-react'
 import Spinner from '@/components/Spinner'
 import { aiScheduleGenerationStore } from '@/lib/aiScheduleGenerationStore'
 
@@ -89,48 +89,77 @@ export default function AiScheduleStatusWidget() {
       ? 'Schedule Ready'
       : 'Schedule Generation Failed'
 
+  // Pulses while generating, and while a finished draft is still unreviewed — draws the Owner's eye
+  // until they actually click through. Stops the instant they do (acknowledged) or once dismissed
+  // (status back to idle) or failed (nothing pending to lose their attention over). Two separate
+  // named keyframes (rather than one keyframe reading a CSS custom property off the button) so the
+  // ring color for each status is baked directly into the animation — nothing to wire through inline
+  // style timing.
+  const shouldBreathe = (state.status === 'generating' || state.status === 'done') && !state.acknowledged
+  const breatheAnimationName = state.status === 'done' ? 'aiScheduleBreatheDone' : 'aiScheduleBreatheGenerating'
+
   return (
-    <button
-      type="button"
-      onClick={goToShifts}
-      style={{
-        position: 'fixed',
-        top: position.top,
-        right: position.right,
-        zIndex: 90,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        height: WIDGET_HEIGHT,
-        background: '#FFFFFF',
-        border: '1.5px solid #E5E7EB',
-        borderRadius: 999,
-        padding: state.status === 'done' ? '0 8px 0 16px' : '0 8px 0 6px',
-        boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
-        cursor: 'pointer',
-        whiteSpace: 'nowrap',
-      }}
-    >
-      {state.status === 'generating' && (
-        <span style={{ width: 24, height: 24, borderRadius: 999, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F5F3FF' }}>
-          <Spinner size={13} dark />
-        </span>
-      )}
-      {state.status === 'error' && (
-        <span style={{ width: 24, height: 24, borderRadius: 999, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FEF2F2' }}>
-          <AlertTriangle size={13} color="#DC2626" />
-        </span>
-      )}
-      <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{label}</span>
-      <span
-        role="button"
-        aria-label={state.status === 'generating' ? 'Cancel' : 'Dismiss'}
-        title={state.status === 'generating' ? 'Cancel' : 'Dismiss'}
-        onClick={dismiss}
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 22, height: 22, borderRadius: 999, color: '#9CA3AF', flexShrink: 0, cursor: 'pointer' }}
+    <>
+      <style>{`
+        @keyframes aiScheduleBreatheGenerating {
+          0%, 100% { box-shadow: 0 1px 4px rgba(0,0,0,0.06), 0 0 0 0 rgba(124,58,237,0.45); }
+          50% { box-shadow: 0 1px 4px rgba(0,0,0,0.06), 0 0 0 7px rgba(124,58,237,0); }
+        }
+        @keyframes aiScheduleBreatheDone {
+          0%, 100% { box-shadow: 0 1px 4px rgba(0,0,0,0.06), 0 0 0 0 rgba(22,163,74,0.5); }
+          50% { box-shadow: 0 1px 4px rgba(0,0,0,0.06), 0 0 0 8px rgba(22,163,74,0); }
+        }
+      `}</style>
+      <button
+        type="button"
+        onClick={goToShifts}
+        style={{
+          position: 'fixed',
+          top: position.top,
+          right: position.right,
+          zIndex: 90,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          height: WIDGET_HEIGHT,
+          background: '#FFFFFF',
+          border: '1.5px solid #E5E7EB',
+          borderRadius: 999,
+          padding: '0 8px 0 6px',
+          boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+          cursor: 'pointer',
+          whiteSpace: 'nowrap',
+          animation: shouldBreathe ? `${breatheAnimationName} 1.8s ease-in-out infinite` : undefined,
+        }}
       >
-        <X size={13} />
-      </span>
-    </button>
+        {state.status === 'generating' && (
+          <span style={{ width: 24, height: 24, borderRadius: 999, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F5F3FF' }}>
+            <Spinner size={13} dark />
+          </span>
+        )}
+        {state.status === 'done' && (
+          <span style={{ width: 24, height: 24, borderRadius: 999, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#DCFCE7' }}>
+            <Check size={13} color="#16A34A" strokeWidth={2.5} />
+          </span>
+        )}
+        {state.status === 'error' && (
+          <span style={{ width: 24, height: 24, borderRadius: 999, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FEF2F2' }}>
+            <AlertTriangle size={13} color="#DC2626" />
+          </span>
+        )}
+        <span style={{ fontSize: 13, fontWeight: 600, color: '#111827' }}>{label}</span>
+        {state.status !== 'done' && (
+          <span
+            role="button"
+            aria-label={state.status === 'generating' ? 'Cancel' : 'Dismiss'}
+            title={state.status === 'generating' ? 'Cancel' : 'Dismiss'}
+            onClick={dismiss}
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 22, height: 22, borderRadius: 999, color: '#9CA3AF', flexShrink: 0, cursor: 'pointer' }}
+          >
+            <X size={13} />
+          </span>
+        )}
+      </button>
+    </>
   )
 }
