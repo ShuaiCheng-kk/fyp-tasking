@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import PartnerSidebar from '@/components/PartnerSidebar'
+import MultiSelectDropdownField from '@/components/MultiSelectDropdownField'
 import { Task, TaskInput, KanbanGroup } from '@/types/Task'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 
@@ -471,7 +472,8 @@ function TaskCard({
     return () => document.removeEventListener('mousedown', h)
   }, [menuOpen])
 
-  const assignee = members.find(m => m.id === task.assigned_user_id)
+  const assigneeIds = task.assigned_user_ids ?? (task.assigned_user_id ? [task.assigned_user_id] : [])
+  const assignees = assigneeIds.map(id => members.find(m => m.id === id)).filter((m): m is Member => !!m)
   const shift = task.shift_id ? shiftOptions.find(s => s.id === task.shift_id) : null
   const priority = task.priority ? PRIORITY_COLORS[task.priority] : null
   const overdue = task.due_at && task.status !== 'Complete' && isDueOverdue(task.due_at)
@@ -562,13 +564,22 @@ function TaskCard({
 
       {/* Footer: assignee + deadline time */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-        {assignee ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div className="task-card-icon" style={{ width: 22, height: 22, borderRadius: '50%', background: '#FFF3E8', border: '1.5px solid #F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-              <UserCog size={12} color="#F97316" strokeWidth={2} />
+        {assignees.length > 0 ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+            <div style={{ display: 'flex', flexShrink: 0 }}>
+              {assignees.slice(0, 3).map((assignee, i) => (
+                <div key={assignee.id} className="task-card-icon" style={{ width: 22, height: 22, borderRadius: '50%', background: '#FFF3E8', border: '1.5px solid #F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginLeft: i === 0 ? 0 : -6, boxShadow: i === 0 ? undefined : '0 0 0 1.5px #FFFFFF' }}>
+                  <UserCog size={12} color="#F97316" strokeWidth={2} />
+                </div>
+              ))}
+              {assignees.length > 3 && (
+                <div style={{ width: 22, height: 22, borderRadius: '50%', background: '#F1F5F9', border: '1.5px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginLeft: -6, boxShadow: '0 0 0 1.5px #FFFFFF', fontSize: '0.6rem', fontWeight: 700, color: '#64748B' }}>
+                  +{assignees.length - 3}
+                </div>
+              )}
             </div>
             <span style={{ fontSize: '0.75rem', color: '#374151', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {assignee.full_name}
+              {assignees.map(a => a.full_name).join(', ')}
             </span>
           </div>
         ) : (
@@ -640,7 +651,7 @@ export default function OwnerTasksPage() {
   const [editPriority,    setEditPriority]    = useState('')
   const [editDueAt,          setEditDueAt]          = useState('')
   const [editDeadlineTime,   setEditDeadlineTime]   = useState('')
-  const [editAssignee,       setEditAssignee]       = useState('')
+  const [editAssigneeIds,    setEditAssigneeIds]    = useState<string[]>([])
   const [editShiftId,        setEditShiftId]        = useState('')
   const [editStatus,      setEditStatus]      = useState<Task['status']>('Assigned')
   const [editPercent,     setEditPercent]     = useState(0)
@@ -657,7 +668,7 @@ export default function OwnerTasksPage() {
   const [newTitle,        setNewTitle]        = useState('')
   const [newDescription,  setNewDescription]  = useState('')
   const [newDeptId,       setNewDeptId]       = useState('')
-  const [newAssigneeId,   setNewAssigneeId]   = useState('')
+  const [newAssigneeIds,  setNewAssigneeIds]  = useState<string[]>([])
   const [newShiftId,        setNewShiftId]        = useState('')
   const [newPriority,       setNewPriority]       = useState('')
   const [newDeadlineTime,   setNewDeadlineTime]   = useState('')
@@ -775,10 +786,11 @@ export default function OwnerTasksPage() {
   // ── Auto-select nearest shift when assignee changes ──────────────────────
 
   useEffect(() => {
-    if (!newAssigneeId || !newTaskModal) { return }
+    const primaryAssigneeId = newAssigneeIds[0]
+    if (!primaryAssigneeId || !newTaskModal) { return }
     const todayStr = formatDateKey(new Date())
     const assigneeShifts = shiftOptions
-      .filter(s => s.user_id === newAssigneeId && s.shift_date >= todayStr)
+      .filter(s => s.user_id === primaryAssigneeId && s.shift_date >= todayStr)
       .sort((a, b) => a.shift_date.localeCompare(b.shift_date) || a.start_time.localeCompare(b.start_time))
     const todayShifts = assigneeShifts.filter(s => s.shift_date === todayStr)
     const firstShift = todayShifts[0] ?? assigneeShifts[0] ?? null
@@ -789,7 +801,7 @@ export default function OwnerTasksPage() {
       setNewShiftId('')
       setNewDeadlineTime('')
     }
-  }, [newAssigneeId, newTaskModal, shiftOptions])
+  }, [newAssigneeIds, newTaskModal, shiftOptions])
 
   const fetchKanban = useCallback(async (cid: string, silent = false) => {
     if (!cid) return
@@ -817,7 +829,7 @@ export default function OwnerTasksPage() {
     setEditPriority(task.priority ?? '')
     setEditDueAt(task.due_at ? task.due_at.slice(0, 10) : '')
     setEditDeadlineTime(task.due_at ? new Date(task.due_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '')
-    setEditAssignee(task.assigned_user_id ?? '')
+    setEditAssigneeIds(task.assigned_user_ids ?? (task.assigned_user_id ? [task.assigned_user_id] : []))
     setEditShiftId(task.shift_id ?? '')
     setEditStatus(task.status)
     setEditPercent(task.percentage_complete)
@@ -832,7 +844,7 @@ export default function OwnerTasksPage() {
 
   const handleSaveTask = async () => {
     if (!selectedTask || !editTitle.trim()) return
-    if (editAssignee && !editShiftId) { setPanelError('Please select a shift for the assignee'); return }
+    if (editAssigneeIds.length > 0 && !editShiftId) { setPanelError('Please select a shift for the assignee'); return }
     setEditLoading(true); setPanelError('')
     try {
       const resolvedShift = shiftOptions.find(x => x.id === editShiftId)
@@ -849,7 +861,7 @@ export default function OwnerTasksPage() {
         description: editDescription || null,
         priority: editPriority || null,
         due_at,
-        assigned_user_id: editAssignee || null,
+        assigned_user_ids: editAssigneeIds,
         shift_id: editShiftId || null,
         status: editStatus,
         percentage_complete: editPercent,
@@ -950,7 +962,7 @@ export default function OwnerTasksPage() {
         shift_id: editShiftId || selectedTask.shift_id,
         parent_task_id: selectedTask.id,
         title: subTaskTitle.trim(),
-        assigned_user_id: editAssignee || selectedTask.assigned_user_id,
+        assigned_user_id: editAssigneeIds[0] || selectedTask.assigned_user_id,
         assigned_by: internalUserId || null,
         status: 'Assigned',
         percentage_complete: 0,
@@ -970,7 +982,7 @@ export default function OwnerTasksPage() {
 
   const handleCreateTask = async () => {
     if (!newTitle.trim() || !newDeptId) { setNewError('Title and department are required'); return }
-    if (newAssigneeId && !newShiftId) { setNewError('Please select a shift for the assignee'); return }
+    if (newAssigneeIds.length > 0 && !newShiftId) { setNewError('Please select a shift for the assignee'); return }
     setNewLoading(true); setNewError('')
     try {
       const input: Partial<TaskInput> & { company_id: string; department_id: string; title: string } = {
@@ -978,7 +990,7 @@ export default function OwnerTasksPage() {
         department_id: newDeptId,
         title: newTitle.trim(),
         description: newDescription || null,
-        assigned_user_id: newAssigneeId || null,
+        assigned_user_ids: newAssigneeIds,
         assigned_by: internalUserId || null,
         shift_id: newShiftId || null,
         priority: newPriority || null,
@@ -994,7 +1006,7 @@ export default function OwnerTasksPage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
       setNewTaskModal(false)
-      setNewTitle(''); setNewDescription(''); setNewDeptId(''); setNewAssigneeId(''); setNewShiftId(''); setNewPriority(''); setNewDeadlineTime('')
+      setNewTitle(''); setNewDescription(''); setNewDeptId(''); setNewAssigneeIds([]); setNewShiftId(''); setNewPriority(''); setNewDeadlineTime('')
       fetchKanban(companyId)
     } catch (err) { setNewError(err instanceof Error ? err.message : 'Failed to create task') }
     finally { setNewLoading(false) }
@@ -1003,7 +1015,7 @@ export default function OwnerTasksPage() {
   // Open new task modal pre-filled with dept + assignee
   const openNewTaskFor = (memberId: string, deptId: string) => {
     setNewDeptId(deptId)
-    setNewAssigneeId(memberId)
+    setNewAssigneeIds(memberId ? [memberId] : [])
     setNewShiftId('')
     setNewTitle(''); setNewDescription(''); setNewPriority(''); setNewDeadlineTime(''); setNewError('')
     setNewTaskModal(true)
@@ -1116,8 +1128,8 @@ export default function OwnerTasksPage() {
   const assignableMembers = members.filter(m => m.role === 'Manager')
   const newTaskDeptMembers = newDeptId ? assignableMembers.filter(m => m.department_id === newDeptId) : assignableMembers
   const _todayStr = formatDateKey(new Date())
-  const newTaskShiftOptions = (newAssigneeId
-    ? shiftOptions.filter(s => s.user_id === newAssigneeId)
+  const newTaskShiftOptions = (newAssigneeIds[0]
+    ? shiftOptions.filter(s => s.user_id === newAssigneeIds[0])
     : newDeptId
       ? shiftOptions.filter(s => s.department_id === newDeptId)
       : shiftOptions
@@ -1134,8 +1146,8 @@ export default function OwnerTasksPage() {
     ...(['Low', 'Medium', 'High', 'Urgent'] as PriorityLevel[]).map(p => ({ value: p, label: p })),
   ]
   const editTaskShiftOptions = selectedTask ? shiftOptions.filter(shift => shift.department_id === selectedTask.department_id) : shiftOptions
-  const editAssigneeShiftOptions = editAssignee
-    ? editTaskShiftOptions.filter(s => s.user_id === editAssignee)
+  const editAssigneeShiftOptions = editAssigneeIds[0]
+    ? editTaskShiftOptions.filter(s => s.user_id === editAssigneeIds[0])
     : editTaskShiftOptions
   const editShiftDropdownOptions = editAssigneeShiftOptions.map(s => ({
     value: s.id,
@@ -1382,7 +1394,7 @@ export default function OwnerTasksPage() {
                   const deptMembers = members.filter(m => m.department_id === dept.id && m.role === 'Manager')
                   // collect user IDs that have tasks on the selected date
                   const allDateTasks = COLUMNS.flatMap(col => filteredTasks(col))
-                  const busyIds = new Set(allDateTasks.map(t => t.assigned_user_id).filter(Boolean) as string[])
+                  const busyIds = new Set(allDateTasks.flatMap(t => t.assigned_user_ids ?? (t.assigned_user_id ? [t.assigned_user_id] : [])))
                   const freeMembers = deptMembers.filter(m => !busyIds.has(m.id))
                   const busyMembers = deptMembers.filter(m => busyIds.has(m.id))
 
@@ -1488,8 +1500,9 @@ export default function OwnerTasksPage() {
 
       {/* ═══════════════ TASK DETAIL PANEL ═══════════════ */}
       {selectedTask && taskViewMode && (() => {
-        const viewAssigneeName = selectedTask.assigned_user_id
-          ? (members.find(m => m.id === selectedTask.assigned_user_id)?.full_name ?? 'Unknown')
+        const viewAssigneeIds = selectedTask.assigned_user_ids ?? (selectedTask.assigned_user_id ? [selectedTask.assigned_user_id] : [])
+        const viewAssigneeName = viewAssigneeIds.length > 0
+          ? viewAssigneeIds.map(uid => members.find(m => m.id === uid)?.full_name ?? 'Unknown').join(', ')
           : null
         const viewShift = selectedTask.shift_id ? shiftOptions.find(s => s.id === selectedTask.shift_id) : null
         const viewDept = departments.find(d => d.id === selectedTask.department_id)
@@ -1675,11 +1688,11 @@ export default function OwnerTasksPage() {
                 </div>
                 <div>
                   <label style={modalLabelStyle}>Assign To</label>
-                  <DropdownField
-                    value={editAssignee}
+                  <MultiSelectDropdownField
+                    values={editAssigneeIds}
                     options={editAssigneeDropdownOptions}
-                    onChange={v => { setEditAssignee(v); setEditShiftId(''); setEditDeadlineTime('') }}
-                    placeholder="Unassigned"
+                    onChange={v => { setEditAssigneeIds(v); setEditShiftId(''); setEditDeadlineTime('') }}
+                    allLabel="Unassigned"
                   />
                 </div>
               </div>
@@ -1691,7 +1704,7 @@ export default function OwnerTasksPage() {
               <div>
                 <label style={modalLabelStyle}>
                   Shift
-                  {editAssignee && editAssigneeShiftOptions.length === 0 && (
+                  {editAssigneeIds.length > 0 && editAssigneeShiftOptions.length === 0 && (
                     <span style={{ fontWeight: 400, color: '#F97316', marginLeft: 8, fontSize: '0.78rem' }}>no upcoming shifts</span>
                   )}
                 </label>
@@ -1703,8 +1716,8 @@ export default function OwnerTasksPage() {
                     const s = editAssigneeShiftOptions.find(x => x.id === v)
                     if (s) setEditDeadlineTime(s.end_time.slice(0, 5))
                   }}
-                  placeholder={editAssignee ? 'Select shift' : 'Select assignee first'}
-                  disabled={!editAssignee}
+                  placeholder={editAssigneeIds.length > 0 ? 'Select shift' : 'Select assignee first'}
+                  disabled={editAssigneeIds.length === 0}
                 />
               </div>
 
@@ -1813,17 +1826,17 @@ export default function OwnerTasksPage() {
                   <DropdownField
                     value={newDeptId}
                     options={deptDropdownOptions}
-                    onChange={v => { setNewDeptId(v); setNewAssigneeId(''); setNewShiftId(''); setNewDeadlineTime('') }}
+                    onChange={v => { setNewDeptId(v); setNewAssigneeIds([]); setNewShiftId(''); setNewDeadlineTime('') }}
                     placeholder="Select department"
                   />
                 </div>
                 <div>
                   <label style={modalLabelStyle}>Assign To</label>
-                  <DropdownField
-                    value={newAssigneeId}
+                  <MultiSelectDropdownField
+                    values={newAssigneeIds}
                     options={assigneeDropdownOptions}
-                    onChange={v => setNewAssigneeId(v)}
-                    placeholder="Unassigned"
+                    onChange={setNewAssigneeIds}
+                    allLabel="Unassigned"
                     disabled={!newDeptId}
                   />
                 </div>
@@ -1837,7 +1850,7 @@ export default function OwnerTasksPage() {
                 <div>
                   <label style={modalLabelStyle}>
                     Shift
-                    {newAssigneeId && newTaskShiftOptions.length === 0 && (
+                    {newAssigneeIds.length > 0 && newTaskShiftOptions.length === 0 && (
                       <span style={{ fontWeight: 400, color: '#F97316', marginLeft: 8, fontSize: '0.78rem' }}>no upcoming shifts</span>
                     )}
                   </label>
@@ -1849,8 +1862,8 @@ export default function OwnerTasksPage() {
                       const s = newTaskShiftOptions.find(x => x.id === v)
                       if (s) setNewDeadlineTime(s.end_time.slice(0, 5))
                     }}
-                    placeholder={newAssigneeId ? 'Select shift' : 'Select assignee first'}
-                    disabled={!newAssigneeId}
+                    placeholder={newAssigneeIds.length > 0 ? 'Select shift' : 'Select assignee first'}
+                    disabled={newAssigneeIds.length === 0}
                   />
                 </div>
                 <div>

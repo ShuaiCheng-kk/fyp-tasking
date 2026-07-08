@@ -3,6 +3,7 @@
 
 import { supabase } from '@/lib/supabase'
 import { Task, TaskInput, TaskStats, TaskStatItem, DepartmentTaskStats } from '@/types/Task'
+import { TaskAssignment } from '@/types/TaskAssignment'
 import { User } from '@/types/auth.types'
 import { Shift } from '@/types/Shift'
 
@@ -32,7 +33,39 @@ export const taskRepository = {
       .select()
       .single()
     if (error) throw new Error(error.message)
+    // Keeps task_assignments in sync with the primary assignee for every call site (sub-tasks,
+    // duplicates, recurring occurrences) without any of them needing to know task_assignments exists.
+    if (input.assigned_user_id) {
+      const { error: assignError } = await supabase
+        .from('task_assignments')
+        .insert({ task_id: data.id, user_id: input.assigned_user_id, assigned_by: input.assigned_by ?? null })
+      if (assignError) throw new Error(assignError.message)
+    }
     return data as Task
+  },
+
+  // Full desired assignee set for a task — deletes the existing rows and inserts one per id.
+  // Used explicitly when a caller provides assigned_user_ids (2+ assignees); the single-assignee
+  // sync above/in updateTask covers everything else.
+  async replaceTaskAssignees(task_id: string, user_ids: string[], assigned_by: string | null): Promise<void> {
+    const { error: deleteError } = await supabase.from('task_assignments').delete().eq('task_id', task_id)
+    if (deleteError) throw new Error(deleteError.message)
+    if (user_ids.length === 0) return
+    const { error: insertError } = await supabase
+      .from('task_assignments')
+      .insert(user_ids.map(user_id => ({ task_id, user_id, assigned_by })))
+    if (insertError) throw new Error(insertError.message)
+  },
+
+  async getAssignmentsByTaskIds(task_ids: string[]): Promise<TaskAssignment[]> {
+    if (task_ids.length === 0) return []
+    const { data, error } = await supabase
+      .from('task_assignments')
+      .select('*')
+      .in('task_id', task_ids)
+      .order('created_at', { ascending: true })
+    if (error) throw new Error(error.message)
+    return (data ?? []) as TaskAssignment[]
   },
 
   async getTasksByCompany(company_id: string, assigned_by?: string): Promise<Task[]> {
@@ -44,10 +77,11 @@ export const taskRepository = {
     if (assigned_by) query = query.eq('assigned_by', assigned_by)
     const { data, error } = await query.order('created_at', { ascending: false })
     if (error) throw new Error(error.message)
-    return ((data ?? []) as unknown as (Task & { shifts: { shift_date: string }[] | null })[]).map(row => ({
+    const tasks = ((data ?? []) as unknown as (Task & { shifts: { shift_date: string }[] | null })[]).map(row => ({
       ...row,
       shift_date: row.shifts && row.shifts.length > 0 ? row.shifts[0].shift_date : null,
     }))
+    return this.attachAssignedUserIds(tasks)
   },
 
   async getArchivedTasksByCompany(company_id: string): Promise<Task[]> {
@@ -62,10 +96,24 @@ export const taskRepository = {
       .is('source_task_id', null)
       .order('updated_at', { ascending: false })
     if (error) throw new Error(error.message)
-    return ((data ?? []) as unknown as (Task & { shifts: { shift_date: string }[] | null })[]).map(row => ({
+    const tasks = ((data ?? []) as unknown as (Task & { shifts: { shift_date: string }[] | null })[]).map(row => ({
       ...row,
       shift_date: row.shifts && row.shifts.length > 0 ? row.shifts[0].shift_date : null,
     }))
+    return this.attachAssignedUserIds(tasks)
+  },
+
+  // Batch-attaches the full assignee set onto each top-level task (one extra query, not per row).
+  async attachAssignedUserIds(tasks: Task[]): Promise<Task[]> {
+    if (tasks.length === 0) return tasks
+    const assignments = await this.getAssignmentsByTaskIds(tasks.map(t => t.id))
+    const byTaskId = new Map<string, string[]>()
+    for (const a of assignments) {
+      const ids = byTaskId.get(a.task_id) ?? []
+      ids.push(a.user_id)
+      byTaskId.set(a.task_id, ids)
+    }
+    return tasks.map(t => ({ ...t, assigned_user_ids: byTaskId.get(t.id) ?? (t.assigned_user_id ? [t.assigned_user_id] : []) }))
   },
 
   async getTasksByShift(shift_id: string): Promise<Task[]> {
@@ -82,14 +130,26 @@ export const taskRepository = {
   // shift swap is approved so task ownership follows the assignee. 'Review' tasks are awaiting
   // sign-off on this person's work and 'Complete'/archived tasks are done, so all three stay put.
   async reassignTasksForShiftSwap(shift_id: string, from_user_id: string, to_user_id: string): Promise<void> {
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('tasks')
       .update({ assigned_user_id: to_user_id })
       .eq('shift_id', shift_id)
       .eq('assigned_user_id', from_user_id)
       .in('status', ['Assigned', 'In Progress'])
       .eq('is_archived', false)
+      .select('id')
     if (error) throw new Error(error.message)
+    // Keep any co-assignee rows for the swapped tasks pointing at the new user too, so a
+    // multi-assignee task doesn't retain a stale assignment to whoever gave up the shift.
+    const affectedIds = (data ?? []).map(row => row.id as string)
+    if (affectedIds.length > 0) {
+      const { error: assignError } = await supabase
+        .from('task_assignments')
+        .update({ user_id: to_user_id })
+        .eq('user_id', from_user_id)
+        .in('task_id', affectedIds)
+      if (assignError) throw new Error(assignError.message)
+    }
   },
 
   async getTasksByShiftForCompany(company_id: string, shift_id: string): Promise<Task[]> {
@@ -122,7 +182,8 @@ export const taskRepository = {
       .eq('id', id)
       .single()
     if (error) throw new Error(error.message)
-    return data as Task
+    const [task] = await this.attachAssignedUserIds([data as Task])
+    return task
   },
 
   async getTasksByRecurrenceGroupId(recurrence_group_id: string): Promise<Task[]> {
@@ -218,14 +279,25 @@ export const taskRepository = {
     return (data ?? []).length > 0
   },
 
-  async updateTask(id: string, input: Partial<TaskInput>): Promise<Task> {
+  // assignedBy attributes any resulting task_assignments row (who performed the reassignment) —
+  // it is never written to the tasks row itself, since tasks.assigned_by is the original creator
+  // and stays immutable after creation.
+  async updateTask(id: string, input: Partial<TaskInput>, assignedBy?: string | null): Promise<Task> {
+    // assigned_user_ids is not a real column — it's consumed by replaceTaskAssignees below, never
+    // written to the tasks row itself.
+    const { assigned_user_ids: _assignedUserIds, ...columns } = input
     const { data, error } = await supabase
       .from('tasks')
-      .update(input)
+      .update(columns)
       .eq('id', id)
       .select()
       .single()
     if (error) throw new Error(error.message)
+    // Reassigning the primary (e.g. today's single-select "Assign To" edit) keeps task_assignments
+    // in sync automatically, the same way createTask does on insert.
+    if ('assigned_user_id' in input) {
+      await this.replaceTaskAssignees(id, input.assigned_user_id ? [input.assigned_user_id] : [], assignedBy ?? null)
+    }
     return data as Task
   },
 

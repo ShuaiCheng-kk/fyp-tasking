@@ -16,6 +16,7 @@ import {
   TaskWorkloadSuggestion,
   StalledTaskAlert,
 } from '@/types/Task'
+import { User } from '@/types/auth.types'
 
 export interface ActivityFeedEvent {
   id: string
@@ -34,7 +35,21 @@ export const taskService = {
     if (!input.company_id || !input.department_id || !input.title?.trim()) {
       throw new Error('company_id, department_id, and title are required')
     }
+    // When a caller provides the full assignee set, the first id becomes the primary
+    // (tasks.assigned_user_id) that every existing single-assignee code path keeps reasoning
+    // about; every id in the set (not just the primary) still goes through the same one-level-down
+    // role check.
+    const assigneeIds = input.assigned_user_ids?.filter(Boolean) ?? []
+    if (assigneeIds.length > 0) {
+      input = { ...input, assigned_user_id: assigneeIds[0] }
+    }
     await validateTaskAssignment(input)
+    if (assigneeIds.length > 1) {
+      const creator = input.assigned_by ? await taskRepository.getUserById(input.assigned_by) : null
+      for (const assigneeId of assigneeIds.slice(1)) {
+        await validateAssignee(creator, assigneeId, input)
+      }
+    }
     if (input.percentage_complete !== undefined) {
       if (input.percentage_complete < 0 || input.percentage_complete > 100) {
         throw new Error('percentage_complete must be between 0 and 100')
@@ -51,7 +66,11 @@ export const taskService = {
       // in UI and recurrence flows. They are not scored separately for workload/stalled alerts.
       input = { ...input, priority: parent.priority, due_at: parent.due_at }
     }
-    return taskRepository.createTask(input)
+    const task = await taskRepository.createTask(input)
+    if (assigneeIds.length > 1) {
+      await taskRepository.replaceTaskAssignees(task.id, assigneeIds, input.assigned_by ?? null)
+    }
+    return task
   },
 
   // UC22 Create Sub Task / UC28 Set Task Dependencies — sub_tasks are created under the
@@ -91,13 +110,26 @@ export const taskService = {
   async editTask(id: string, input: Partial<TaskInput>, actingUserId?: string | null): Promise<Task> {
     if (!id) throw new Error('Task id is required')
     const existing = await assertIsTaskOwner(id, actingUserId)
-    await validateTaskAssignment({
+    // Same primary-sync as assignTask — when the caller sends the full assignee set, the first id
+    // becomes the new tasks.assigned_user_id and every id gets the same role check.
+    const assigneeIds = input.assigned_user_ids?.filter(Boolean) ?? null
+    if (assigneeIds) {
+      input = { ...input, assigned_user_id: assigneeIds[0] ?? null }
+    }
+    const mergedInput = {
       ...existing,
       ...input,
       company_id: input.company_id ?? existing.company_id,
       department_id: input.department_id ?? existing.department_id,
       title: input.title ?? existing.title,
-    })
+    }
+    await validateTaskAssignment(mergedInput)
+    if (assigneeIds && assigneeIds.length > 1) {
+      const creator = mergedInput.assigned_by ? await taskRepository.getUserById(mergedInput.assigned_by) : null
+      for (const assigneeId of assigneeIds.slice(1)) {
+        await validateAssignee(creator, assigneeId, mergedInput)
+      }
+    }
     if (input.status && !VALID_STATUSES.includes(input.status as typeof VALID_STATUSES[number])) {
       throw new Error(`status must be one of: ${VALID_STATUSES.join(', ')}`)
     }
@@ -106,7 +138,10 @@ export const taskService = {
         throw new Error('percentage_complete must be between 0 and 100')
       }
     }
-    const updated = await taskRepository.updateTask(id, input)
+    const updated = await taskRepository.updateTask(id, input, actingUserId)
+    if (assigneeIds && assigneeIds.length > 1) {
+      await taskRepository.replaceTaskAssignees(id, assigneeIds, actingUserId ?? null)
+    }
     if (existing.parent_task_id === null) {
       const cascade: Partial<TaskInput> = {}
       if (input.assigned_user_id !== undefined && input.assigned_user_id !== existing.assigned_user_id) {
@@ -401,8 +436,9 @@ export const taskService = {
     const subTask = await taskRepository.getTaskById(subTaskId)
     if (!subTask.parent_task_id) throw new Error('Task is not a sub-task')
     const parent = await taskRepository.getTaskById(subTask.parent_task_id)
-    if (!actingUserId || parent.assigned_user_id !== actingUserId) {
-      throw new Error('Only the user assigned to this task can complete its sub-tasks')
+    const parentAssigneeIds = parent.assigned_user_ids ?? (parent.assigned_user_id ? [parent.assigned_user_id] : [])
+    if (!actingUserId || !parentAssigneeIds.includes(actingUserId)) {
+      throw new Error('Only a user assigned to this task can complete its sub-tasks')
     }
     if (parent.status !== 'In Progress') {
       throw new Error('Sub-tasks can only be completed while the task is In Progress')
@@ -706,59 +742,66 @@ function computeDeadlineFromRule(taskDate: string, rule: TaskDeadlineRule): stri
   return base.toISOString()
 }
 
+// One assignee's worth of the Owner->Manager / Manager->Employee / Employee->CasualWorker check —
+// factored out so a multi-assignee task can run the exact same check per co-assignee, not just
+// the primary.
+async function validateAssignee(creator: User | null, assigneeId: string, input: TaskInput): Promise<void> {
+  const assignee = await taskRepository.getUserById(assigneeId)
+  if (!assignee) throw new Error('Selected assignee not found')
+  if (assignee.company_id !== input.company_id) throw new Error('Selected assignee does not belong to this company')
+
+  if (!creator || creator.role === 'Owner' || creator.role === 'Partner') {
+    if (assignee.role !== 'Manager') {
+      throw new Error('Owner tasks can only be assigned to Managers')
+    }
+    if (input.task_date) {
+      const hasShift = await taskRepository.hasShiftOnDate(assignee.id, input.company_id, input.task_date)
+      if (!hasShift) {
+        throw new Error('Selected manager does not have a shift on the task date')
+      }
+    }
+  } else if (creator.role === 'Manager') {
+    // Strictly one level down — Casual Workers are the supervising Employee's to assign, never
+    // skipped straight to from Manager.
+    if (assignee.role !== 'Employee') {
+      throw new Error('Manager tasks can only be assigned to Employees')
+    }
+
+    const managerDeptIds = await taskRepository.getManagerDepartmentIds(creator.id, input.company_id)
+    if (!managerDeptIds.includes(input.department_id)) {
+      throw new Error('Managers can only create tasks for their own departments')
+    }
+
+    const assigneeDeptIds = await taskRepository.getEmployeeDepartmentIds(assignee.id)
+    if (!assigneeDeptIds.includes(input.department_id)) {
+      throw new Error('Managers can only assign tasks to employees in their own department')
+    }
+  } else if (creator.role === 'Employee') {
+    // One level down from Employee — Casual Workers, and only ones this Employee actually
+    // supervises via a real shift_assignment, not any Casual Worker in the department.
+    if (assignee.role !== 'Casual Worker') {
+      throw new Error('Employee tasks can only be assigned to Casual Workers')
+    }
+
+    const employeeDeptIds = await taskRepository.getEmployeeDepartmentIds(creator.id)
+    if (!employeeDeptIds.includes(input.department_id)) {
+      throw new Error('Employees can only create tasks for their own department')
+    }
+
+    const supervisedCwIds = await taskRepository.getSupervisedCasualWorkerIds(creator.id, input.company_id, input.department_id)
+    if (!supervisedCwIds.includes(assignee.id)) {
+      throw new Error('Employees can only assign tasks to casual workers they supervise')
+    }
+  } else {
+    throw new Error('This role cannot assign tasks')
+  }
+}
+
 async function validateTaskAssignment(input: TaskInput): Promise<void> {
   const creator = input.assigned_by ? await taskRepository.getUserById(input.assigned_by) : null
 
   if (input.assigned_user_id) {
-    const assignee = await taskRepository.getUserById(input.assigned_user_id)
-    if (!assignee) throw new Error('Selected assignee not found')
-    if (assignee.company_id !== input.company_id) throw new Error('Selected assignee does not belong to this company')
-
-    if (!creator || creator.role === 'Owner' || creator.role === 'Partner') {
-      if (assignee.role !== 'Manager') {
-        throw new Error('Owner tasks can only be assigned to Managers')
-      }
-      if (input.task_date) {
-        const hasShift = await taskRepository.hasShiftOnDate(assignee.id, input.company_id, input.task_date)
-        if (!hasShift) {
-          throw new Error('Selected manager does not have a shift on the task date')
-        }
-      }
-    } else if (creator.role === 'Manager') {
-      // Strictly one level down — Casual Workers are the supervising Employee's to assign, never
-      // skipped straight to from Manager.
-      if (assignee.role !== 'Employee') {
-        throw new Error('Manager tasks can only be assigned to Employees')
-      }
-
-      const managerDeptIds = await taskRepository.getManagerDepartmentIds(creator.id, input.company_id)
-      if (!managerDeptIds.includes(input.department_id)) {
-        throw new Error('Managers can only create tasks for their own departments')
-      }
-
-      const assigneeDeptIds = await taskRepository.getEmployeeDepartmentIds(assignee.id)
-      if (!assigneeDeptIds.includes(input.department_id)) {
-        throw new Error('Managers can only assign tasks to employees in their own department')
-      }
-    } else if (creator.role === 'Employee') {
-      // One level down from Employee — Casual Workers, and only ones this Employee actually
-      // supervises via a real shift_assignment, not any Casual Worker in the department.
-      if (assignee.role !== 'Casual Worker') {
-        throw new Error('Employee tasks can only be assigned to Casual Workers')
-      }
-
-      const employeeDeptIds = await taskRepository.getEmployeeDepartmentIds(creator.id)
-      if (!employeeDeptIds.includes(input.department_id)) {
-        throw new Error('Employees can only create tasks for their own department')
-      }
-
-      const supervisedCwIds = await taskRepository.getSupervisedCasualWorkerIds(creator.id, input.company_id, input.department_id)
-      if (!supervisedCwIds.includes(assignee.id)) {
-        throw new Error('Employees can only assign tasks to casual workers they supervise')
-      }
-    } else {
-      throw new Error('This role cannot assign tasks')
-    }
+    await validateAssignee(creator, input.assigned_user_id, input)
   }
 
   if (input.shift_id) {

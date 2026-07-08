@@ -10,15 +10,20 @@ export default function DepartmentBadge({
   departmentName,
   fallbackLabel = 'Company-wide',
   fallbackIcon,
+  large = false,
 }: {
   departmentId: string | null | undefined
   departmentName: string | null | undefined
   fallbackLabel?: string
   fallbackIcon?: ReactNode
+  large?: boolean
 }) {
+  const fontSize = large ? '0.85rem' : '0.72rem'
+  const padding = large ? '6px 14px' : '4px 10px'
+
   if (!departmentId || !departmentName) {
     return (
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 800, color: '#64748B', background: '#F1F5F9', borderRadius: 999, padding: '4px 10px' }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize, fontWeight: 800, color: '#64748B', background: '#F1F5F9', borderRadius: 999, padding }}>
         {fallbackIcon}
         {fallbackLabel}
       </span>
@@ -27,7 +32,7 @@ export default function DepartmentBadge({
 
   const dc = deptColor(departmentId)
   return (
-    <span style={{ fontSize: '0.72rem', fontWeight: 800, color: dc, background: `${dc}1a`, borderRadius: 999, padding: '4px 10px' }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', fontSize, fontWeight: 800, color: dc, background: `${dc}1a`, borderRadius: 999, padding }}>
       {departmentName}
     </span>
   )

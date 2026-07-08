@@ -16,6 +16,7 @@ import Toast from '@/components/Toast'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import DepartmentBadge from '@/components/DepartmentBadge'
+import MultiSelectDropdownField from '@/components/MultiSelectDropdownField'
 import { Task, TaskInput, KanbanGroup, TaskWorkloadSuggestion, StalledTaskAlert } from '@/types/Task'
 import { TaskTemplate } from '@/types/TaskTemplate'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
@@ -977,7 +978,8 @@ function TaskCard({
   fillHeight?: boolean
   isSubTask?: boolean
 }) {
-  const assignee = members.find(m => m.id === task.assigned_user_id)
+  const assigneeIds = task.assigned_user_ids ?? (task.assigned_user_id ? [task.assigned_user_id] : [])
+  const assignees = assigneeIds.map(id => members.find(m => m.id === id)).filter((m): m is Member => !!m)
   const shift = task.shift_id ? shiftOptions.find(s => s.id === task.shift_id) : null
   const priority = !isSubTask && task.priority ? PRIORITY_COLORS[task.priority] : null
   const deadlineWarning = task.due_at && task.status !== 'Complete' && (isDueOverdue(task.due_at) || isDueWithinHours(task.due_at, 2))
@@ -1055,15 +1057,24 @@ function TaskCard({
 
       {/* Footer: assignee + deadline time */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-        {assignee ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div className="task-card-icon" style={{ width: 18, height: 18, borderRadius: '50%', background: assignee.profile_photo_url ? 'transparent' : '#FFF3E8', border: '1.5px solid #F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
-              {assignee.profile_photo_url
-                ? <img src={assignee.profile_photo_url} alt={assignee.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                : <UserCog size={10} color="#F97316" strokeWidth={2} />}
+        {assignees.length > 0 ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+            <div style={{ display: 'flex', flexShrink: 0 }}>
+              {assignees.slice(0, 3).map((assignee, i) => (
+                <div key={assignee.id} className="task-card-icon" style={{ width: 18, height: 18, borderRadius: '50%', background: assignee.profile_photo_url ? 'transparent' : '#FFF3E8', border: '1.5px solid #F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden', marginLeft: i === 0 ? 0 : -6, boxShadow: i === 0 ? undefined : '0 0 0 1.5px #FFFFFF' }}>
+                  {assignee.profile_photo_url
+                    ? <img src={assignee.profile_photo_url} alt={assignee.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    : <UserCog size={10} color="#F97316" strokeWidth={2} />}
+                </div>
+              ))}
+              {assignees.length > 3 && (
+                <div style={{ width: 18, height: 18, borderRadius: '50%', background: '#F1F5F9', border: '1.5px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginLeft: -6, boxShadow: '0 0 0 1.5px #FFFFFF', fontSize: '0.55rem', fontWeight: 700, color: '#64748B' }}>
+                  +{assignees.length - 3}
+                </div>
+              )}
             </div>
             <span style={{ fontSize: '0.7rem', color: '#374151', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {assignee.full_name}
+              {assignees.map(a => a.full_name).join(', ')}
             </span>
           </div>
         ) : (
@@ -1150,7 +1161,7 @@ export default function OwnerTasksPage() {
   const [editPriority,    setEditPriority]    = useState('')
   const [editDueAt,          setEditDueAt]          = useState('')
   const [editDeadlineTime,   setEditDeadlineTime]   = useState('')
-  const [editAssignee,       setEditAssignee]       = useState('')
+  const [editAssigneeIds,    setEditAssigneeIds]    = useState<string[]>([])
   const [editShiftId,        setEditShiftId]        = useState('')
   const [editStatus,      setEditStatus]      = useState<Task['status']>('Assigned')
   const [editPercent,     setEditPercent]     = useState(0)
@@ -1211,7 +1222,7 @@ export default function OwnerTasksPage() {
   const [newTitle,        setNewTitle]        = useState('')
   const [newDescription,  setNewDescription]  = useState('')
   const [newDeptId,       setNewDeptId]       = useState('')
-  const [newAssigneeId,   setNewAssigneeId]   = useState('')
+  const [newAssigneeIds,  setNewAssigneeIds]  = useState<string[]>([])
   const [newShiftId,        setNewShiftId]        = useState('')
   const [newStartDate,      setNewStartDate]      = useState('')
   const [newPriority,       setNewPriority]       = useState('')
@@ -1285,7 +1296,7 @@ export default function OwnerTasksPage() {
   // Task Template management modal
   const [taskTemplates,        setTaskTemplates]        = useState<TaskTemplate[]>([])
   const [templateModalOpen,    setTemplateModalOpen]    = useState(false)
-  const [templateFormMode,     setTemplateFormMode]     = useState<'list' | 'create' | 'edit'>('list')
+  const [templateFormMode,     setTemplateFormMode]     = useState<'create' | 'edit'>('create')
   const [templateFormId,       setTemplateFormId]       = useState('')
   const [templateFormTitle,    setTemplateFormTitle]    = useState('')
   const [templateFormDesc,     setTemplateFormDesc]     = useState('')
@@ -1477,16 +1488,17 @@ export default function OwnerTasksPage() {
   // user navigates away and the view resets to today.
 
   useEffect(() => {
-    if (!newAssigneeId || !newTaskModal) { return }
+    const primaryAssigneeId = newAssigneeIds[0]
+    if (!primaryAssigneeId || !newTaskModal) { return }
     const shiftOnViewedDate = shiftOptions
-      .filter(s => s.user_id === newAssigneeId && s.shift_date === taskDate)
+      .filter(s => s.user_id === primaryAssigneeId && s.shift_date === taskDate)
       .sort((a, b) => a.start_time.localeCompare(b.start_time))[0] ?? null
     if (shiftOnViewedDate) {
       setNewShiftId(shiftOnViewedDate.id)
     } else {
       setNewShiftId('')
     }
-  }, [newAssigneeId, newTaskModal, shiftOptions, taskDate])
+  }, [newAssigneeIds, newTaskModal, shiftOptions, taskDate])
 
   const fetchKanban = useCallback(async (cid: string, silent = false) => {
     if (!cid || !internalUserId) return
@@ -1593,7 +1605,7 @@ export default function OwnerTasksPage() {
     setEditPriority(task.priority ?? '')
     setEditDueAt(task.due_at ? formatDateKey(new Date(task.due_at)) : '')
     setEditDeadlineTime(task.due_at ? new Date(task.due_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '')
-    setEditAssignee(task.assigned_user_id ?? '')
+    setEditAssigneeIds(task.assigned_user_ids ?? (task.assigned_user_id ? [task.assigned_user_id] : []))
     setEditShiftId(task.shift_id ?? '')
     setEditStatus(task.status)
     setEditPercent(task.percentage_complete)
@@ -1639,7 +1651,7 @@ export default function OwnerTasksPage() {
         priority: editPriority || null,
         due_at,
         task_date: editStartDate,
-        assigned_user_id: editAssignee || null,
+        assigned_user_ids: editAssigneeIds,
         shift_id: editShiftId || null,
         status: editStatus,
         percentage_complete: editPercent,
@@ -1705,7 +1717,7 @@ export default function OwnerTasksPage() {
             shift_id: editShiftId || null,
             parent_task_id: selectedTask.id,
             title: s.title,
-            assigned_user_id: editAssignee || null,
+            assigned_user_id: editAssigneeIds[0] || null,
             assigned_by: internalUserId || null,
             status: 'Assigned',
             percentage_complete: 0,
@@ -2031,7 +2043,7 @@ export default function OwnerTasksPage() {
         department_id: newDeptId,
         title: newTitle.trim(),
         description: newDescription || null,
-        assigned_user_id: newAssigneeId || null,
+        assigned_user_ids: newAssigneeIds,
         assigned_by: internalUserId || null,
         shift_id: newShiftId || null,
         priority: newPriority || null,
@@ -2073,7 +2085,7 @@ export default function OwnerTasksPage() {
         if (!recurringData.success) throw new Error(recurringData.message)
       }
       setNewTaskModal(false)
-      setNewTitle(''); setNewDescription(''); setNewDeptId(''); setNewAssigneeId(''); setNewShiftId(''); setNewStartDate(''); setNewPriority(''); setNewDeadlineDate(''); setNewDeadlineTime(''); setNewTemplateId('')
+      setNewTitle(''); setNewDescription(''); setNewDeptId(''); setNewAssigneeIds([]); setNewShiftId(''); setNewStartDate(''); setNewPriority(''); setNewDeadlineDate(''); setNewDeadlineTime(''); setNewTemplateId('')
       setNewSubTaskEnabled(false); setNewSubTasks([]); setNewSubTaskDraft(''); setNewSubTaskCollapsed(false)
       setNewRecurringEnabled(false); setNewRecurringCollapsed(false); setNewRecurrenceRule(''); setNewRecurrenceEndDate(''); setNewCustomIntervalDays(14); setNewCustomIntervalTouched(false)
       setNewDeadlineRuleType(''); setNewDeadlineRuleTime(''); setNewDeadlineRuleWeekday(null); setNewDeadlineRuleOffsetAmount(1); setNewDeadlineRuleOffsetUnit('days')
@@ -2112,7 +2124,7 @@ export default function OwnerTasksPage() {
   // Calendar tab shows a whole week, not one day, so the user must pick the start date themselves — leave it blank.
   const openNewTaskFor = (memberId: string, deptId: string) => {
     setNewDeptId(deptId)
-    setNewAssigneeId(memberId)
+    setNewAssigneeIds(memberId ? [memberId] : [])
     setNewShiftId('')
     setNewStartDate(boardViewMode === 'kanban' && taskDate > todayTaskDate ? taskDate : todayTaskDate)
     setNewTitle(''); setNewDescription(''); setNewPriority(''); setNewDeadlineDate(''); setNewDeadlineTime(''); setNewError(''); setNewTemplateId('')
@@ -2135,6 +2147,7 @@ export default function OwnerTasksPage() {
     setTemplateFormSubTaskCollapsed(false)
     setTemplateFormSubTaskDraft('')
     setTemplateError('')
+    setTemplateModalOpen(true)
   }
 
   const openArchiveModal = async () => {
@@ -2171,6 +2184,7 @@ export default function OwnerTasksPage() {
     setTemplateFormSubTaskCollapsed(false)
     setTemplateFormSubTaskDraft('')
     setTemplateError('')
+    setTemplateModalOpen(true)
   }
 
   const useTaskTemplate = (template: TaskTemplate) => {
@@ -2220,7 +2234,7 @@ export default function OwnerTasksPage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to save template')
       await fetchTaskTemplates(companyId)
-      setTemplateFormMode('list')
+      setTemplateModalOpen(false)
       showTaskToast(isEdit ? 'Template updated.' : 'Template created.')
     } catch (err) {
       setTemplateError(err instanceof Error ? err.message : 'Failed to save template')
@@ -2374,10 +2388,15 @@ export default function OwnerTasksPage() {
         items: typeof taskCalendarItems
       }>()
       for (const item of taskCalendarItems) {
-        const assignee = members.find(m => m.id === item.task.assigned_user_id) ?? null
-        const key = item.task.assigned_user_id ?? `unassigned_${item.task.department_id ?? 'none'}`
-        if (!rows.has(key)) rows.set(key, { key, assignee, items: [] })
-        rows.get(key)!.items.push(item)
+        // A multi-assignee task gets its own bar in every assignee's row — same principle as
+        // Shift timelines showing one row per person, not one row per shift.
+        const assigneeIds = item.task.assigned_user_ids ?? (item.task.assigned_user_id ? [item.task.assigned_user_id] : [])
+        const keys = assigneeIds.length > 0 ? assigneeIds : [`unassigned_${item.task.department_id ?? 'none'}`]
+        for (const key of keys) {
+          const assignee = members.find(m => m.id === key) ?? null
+          if (!rows.has(key)) rows.set(key, { key, assignee, items: [] })
+          rows.get(key)!.items.push(item)
+        }
       }
 
       return [...rows.values()].map(row => {
@@ -2591,7 +2610,14 @@ export default function OwnerTasksPage() {
 
   const assignableMembers = members.filter(m => m.role === 'Manager')
   const deptDropdownOptions = departments.map(d => ({ value: d.id, label: d.name }))
-  const newAssigneeMember = members.find(m => m.id === newAssigneeId) ?? null
+  const newAssigneeMembers = newAssigneeIds.map(id => members.find(m => m.id === id)).filter((m): m is Member => !!m)
+  // Same "keep the pre-selected person in the list even if they wouldn't otherwise qualify"
+  // rule as the edit modal's editTaskDeptMembers.
+  const newAssigneeDeptMembers = assignableMembers.filter(m =>
+    newAssigneeIds.includes(m.id) ||
+    ((!newDeptId || m.department_id === newDeptId) && userIdsWithShiftOnDate(newStartDate).has(m.id))
+  )
+  const newAssigneeDropdownOptions = newAssigneeDeptMembers.map(m => ({ value: m.id, label: m.full_name }))
   const priorityDropdownOptions: { value: string; label: string }[] =
     (['Low', 'Medium', 'High', 'Urgent'] as PriorityLevel[]).map(p => ({ value: p, label: p }))
   const templateDropdownOptions = taskTemplates.map(t => ({ value: t.id, label: t.title }))
@@ -2684,7 +2710,7 @@ export default function OwnerTasksPage() {
     return base.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
   }
   const editTaskDeptMembers = assignableMembers.filter(m =>
-    m.id === editAssignee ||
+    editAssigneeIds.includes(m.id) ||
     ((!editDeptId || m.department_id === editDeptId) && userIdsWithShiftOnDate(editStartDate).has(m.id))
   )
   const editAssigneeDropdownOptions = editTaskDeptMembers.map(m => ({ value: m.id, label: m.full_name }))
@@ -2718,10 +2744,10 @@ export default function OwnerTasksPage() {
   const activeDeptIds = useMemo(() => {
     const ids = new Set<string>()
     for (const shift of shiftOptions) {
-      if (shift.user_id && shift.publication_status !== 'draft') ids.add(shift.department_id)
+      if (shift.user_id && shift.publication_status === 'published' && shift.shift_date === taskDate) ids.add(shift.department_id)
     }
     return ids
-  }, [shiftOptions])
+  }, [shiftOptions, taskDate])
 
   const moveDepartment = useCallback((sourceId: string, targetId: string) => {
     if (!sourceId || !targetId || sourceId === targetId) return
@@ -3021,7 +3047,7 @@ export default function OwnerTasksPage() {
                             <ArrowRightLeft size={14} />
                           </span>
                           <div style={{ minWidth: 0, flex: 1 }}>
-                            <p style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700, color: TASK_TEXT }}>Workload Suggestion</p>
+                            <p style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 600, color: '#374151', lineHeight: 1.2 }}>Workload Suggestion</p>
                           </div>
                           <button
                             type="button"
@@ -3047,7 +3073,7 @@ export default function OwnerTasksPage() {
                             <Bell size={14} />
                           </span>
                           <div style={{ minWidth: 0, flex: 1 }}>
-                            <p style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700, color: TASK_TEXT }}>Stalled Tasks</p>
+                            <p style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 600, color: '#374151', lineHeight: 1.2 }}>Stalled Tasks</p>
                           </div>
                           <button
                             type="button"
@@ -3177,7 +3203,7 @@ export default function OwnerTasksPage() {
                                         className={activeDeptIds.has(d.id) ? 'dept-dot-active' : undefined}
                                         style={{ width: 8, height: 8, borderRadius: '50%', background: deptColor(d.id), flexShrink: 0, display: 'inline-block' }}
                                       />
-                                      <h3 style={{ margin: 0, fontWeight: 700, fontSize: '0.9375rem', color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.name}</h3>
+                                      <h3 style={{ margin: 0, fontWeight: 600, fontSize: '0.9375rem', color: '#374151', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.name}</h3>
                                     </div>
                                     <span
                                       aria-hidden="true"
@@ -3235,7 +3261,8 @@ export default function OwnerTasksPage() {
                       .flatMap(col => filteredTasks(col))
                       .filter(t => !t.parent_task_id)
                       .reduce<Record<string, number>>((acc, t) => {
-                        if (t.assigned_user_id) acc[t.assigned_user_id] = (acc[t.assigned_user_id] ?? 0) + 1
+                        const ids = t.assigned_user_ids ?? (t.assigned_user_id ? [t.assigned_user_id] : [])
+                        for (const id of ids) acc[id] = (acc[id] ?? 0) + 1
                         return acc
                       }, {})
                     const freeMembers = deptMembers.filter(m => (dateTaskCountByUser[m.id] ?? 0) === 0)
@@ -3303,6 +3330,84 @@ export default function OwnerTasksPage() {
                   })()}
                 </div>
               </section>
+
+              <section className="task-template-panel" style={{ width: '100%', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'visible' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 18px', borderBottom: '1px solid #F3F4F6' }}>
+                  <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <LayoutTemplate size={15} style={{ color: '#F97316' }} />
+                  </div>
+                  <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A' }}>Templates</span>
+                </div>
+                <div style={{ padding: 14 }}>
+                  {taskTemplates.length === 0 ? (
+                    <div style={{ borderRadius: 12, background: '#F8FAFC', padding: 18, color: '#94A3B8', fontSize: 13, fontWeight: 600, textAlign: 'center', marginBottom: 10 }}>
+                      No task templates yet.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 10 }}>
+                      {taskTemplates.map(t => {
+                        const priorityStyle = t.priority ? PRIORITY_COLORS[t.priority] : null
+                        return (
+                          <div key={t.id} className="task-template-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, border: '1px solid #E5E7EB', borderRadius: 12, padding: '13px 14px', background: '#F9FAFB' }}>
+                            <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
+                              {priorityStyle && (
+                                <span style={{ flexShrink: 0, fontSize: '0.65rem', fontWeight: 800, padding: '2px 7px', borderRadius: '99px', background: priorityStyle.bg, color: priorityStyle.text, letterSpacing: '0.01em' }}>
+                                  {t.priority}
+                                </span>
+                              )}
+                              <p style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 600, color: '#374151', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</p>
+                            </div>
+                            <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                              <button
+                                type="button"
+                                onClick={() => openEditTemplate(t)}
+                                title="Edit template"
+                                style={{ border: 'none', background: 'transparent', color: '#6B7280', cursor: 'pointer', display: 'flex', padding: 6, borderRadius: 6 }}
+                                onMouseEnter={e => { e.currentTarget.style.color = TASK_ORANGE; e.currentTarget.style.background = '#FFF7ED' }}
+                                onMouseLeave={e => { e.currentTarget.style.color = '#6B7280'; e.currentTarget.style.background = 'transparent' }}
+                              >
+                                <Pencil size={14} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => useTaskTemplate(t)}
+                                title="Apply template"
+                                style={{ border: 'none', background: 'transparent', color: '#6B7280', cursor: 'pointer', display: 'flex', padding: 6, borderRadius: 6 }}
+                                onMouseEnter={e => { e.currentTarget.style.color = '#16A34A'; e.currentTarget.style.background = '#F0FDF4' }}
+                                onMouseLeave={e => { e.currentTarget.style.color = '#6B7280'; e.currentTarget.style.background = 'transparent' }}
+                              >
+                                <ArrowRight size={14} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void handleDeleteTemplate(t.id)}
+                                disabled={deleteTemplateLoading}
+                                title="Delete template"
+                                style={{ border: 'none', background: 'transparent', color: '#DC2626', cursor: deleteTemplateLoading ? 'default' : 'pointer', display: 'flex', padding: 6, borderRadius: 6, opacity: deleteTemplateLoading ? 0.5 : 1 }}
+                                onMouseEnter={e => { if (!deleteTemplateLoading) e.currentTarget.style.background = '#FEE2E2' }}
+                                onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                              >
+                                {deleteTemplateLoading ? <Spinner size={13} /> : <Trash2 size={14} />}
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                  {companyId && (
+                    <div style={{ display: 'flex', justifyContent: 'center' }}>
+                      <button
+                        type="button"
+                        onClick={openCreateTemplate}
+                        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 'none', borderRadius: 10, background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                      >
+                        <Plus size={15} strokeWidth={2.5} /> New Template
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </section>
               </div>
 
               {/* ── BOARD PANEL ────────────────────────────────────────────── */}
@@ -3324,14 +3429,6 @@ export default function OwnerTasksPage() {
                       style={{ height: 38, padding: '0 14px', border: `1px solid ${TASK_BORDER}`, borderRadius: 8, background: '#FFFFFF', color: companyId ? TASK_TEXT : '#94A3B8', fontSize: 13, fontWeight: 700, cursor: companyId ? 'pointer' : 'not-allowed', display: 'inline-flex', alignItems: 'center', gap: 7 }}
                     >
                       <Archive size={15} /> Archive
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setTemplateModalOpen(true); setTemplateFormMode('list'); setTemplateError('') }}
-                      disabled={!companyId}
-                      style={{ height: 38, padding: '0 14px', border: `1px solid ${TASK_BORDER}`, borderRadius: 8, background: '#FFFFFF', color: companyId ? TASK_TEXT : '#94A3B8', fontSize: 13, fontWeight: 700, cursor: companyId ? 'pointer' : 'not-allowed', display: 'inline-flex', alignItems: 'center', gap: 7 }}
-                    >
-                      <LayoutTemplate size={15} /> Template
                     </button>
                     {boardViewMode === 'calendar' ? (
                       <>
@@ -3621,17 +3718,17 @@ export default function OwnerTasksPage() {
                   <DropdownField
                     value={editDeptId}
                     options={deptDropdownOptions}
-                    onChange={v => { setEditDeptId(v); setEditAssignee(''); setEditShiftId('') }}
+                    onChange={v => { setEditDeptId(v); setEditAssigneeIds([]); setEditShiftId('') }}
                     placeholder="Select department"
                   />
                 </div>
                 <div>
                   <label style={modalLabelStyle}>Assign To</label>
-                  <DropdownField
-                    value={editAssignee}
+                  <MultiSelectDropdownField
+                    values={editAssigneeIds}
                     options={editAssigneeDropdownOptions}
-                    onChange={v => { setEditAssignee(v); setEditShiftId('') }}
-                    placeholder="Unassigned"
+                    onChange={v => { setEditAssigneeIds(v); setEditShiftId('') }}
+                    allLabel="Unassigned"
                   />
                 </div>
               </div>
@@ -4156,7 +4253,11 @@ export default function OwnerTasksPage() {
                   <AlertCircle size={15} color="#fff" strokeWidth={2.5} />
                 </div>
                 <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
-                  {newAssigneeMember ? `Assign Task to ${newAssigneeMember.full_name}` : 'New Task'}
+                  {newAssigneeMembers.length === 1
+                    ? `Assign Task to ${newAssigneeMembers[0].full_name}`
+                    : newAssigneeMembers.length > 1
+                      ? `Assign Task to ${newAssigneeMembers.length} Managers`
+                      : 'New Task'}
                 </h2>
               </div>
               <button onClick={() => setNewTaskModal(false)} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
@@ -4206,6 +4307,17 @@ export default function OwnerTasksPage() {
                     badgeColors={PRIORITY_COLORS}
                   />
                 </div>
+              </div>
+
+              {/* Assign To — multiple Managers can share the same task */}
+              <div>
+                <label style={modalLabelStyle}>Assign To</label>
+                <MultiSelectDropdownField
+                  values={newAssigneeIds}
+                  options={newAssigneeDropdownOptions}
+                  onChange={setNewAssigneeIds}
+                  allLabel="Unassigned"
+                />
               </div>
 
               {/* Description */}
@@ -4562,7 +4674,9 @@ export default function OwnerTasksPage() {
                 <>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
                     {visibleArchivedTasks.map(task => {
-                      const assignee = task.assigned_user_id ? members.find(m => m.id === task.assigned_user_id) : null
+                      const assigneeIds = task.assigned_user_ids ?? (task.assigned_user_id ? [task.assigned_user_id] : [])
+                      const assignees = assigneeIds.map(uid => members.find(m => m.id === uid)).filter((m): m is Member => !!m)
+                      const assignee = assignees[0] ?? null
                       const priorityStyle = task.priority ? PRIORITY_COLORS[task.priority] : null
                       const dept = departments.find(d => d.id === task.department_id)
                       const deadlineWarning = task.due_at && task.status !== 'Complete' && (isDueOverdue(task.due_at) || isDueWithinHours(task.due_at, 2))
@@ -4645,7 +4759,7 @@ export default function OwnerTasksPage() {
                                       : <UserCog size={10} color="#F97316" strokeWidth={2} />}
                                   </div>
                                   <span style={{ fontSize: '0.7rem', color: '#374151', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                    {assignee.full_name}
+                                    {assignees.map(a => a.full_name).join(', ')}
                                   </span>
                                 </div>
                               ) : (
@@ -4763,7 +4877,7 @@ export default function OwnerTasksPage() {
                   <LayoutTemplate size={15} color="#fff" strokeWidth={2.5} />
                 </div>
                 <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
-                  {templateFormMode === 'list' ? 'Task Templates' : templateFormMode === 'edit' ? 'Edit Template' : 'New Template'}
+                  {templateFormMode === 'edit' ? 'Edit Template' : 'New Template'}
                 </h2>
               </div>
               <button onClick={() => setTemplateModalOpen(false)} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
@@ -4776,60 +4890,12 @@ export default function OwnerTasksPage() {
 
             {/* Body */}
             <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {templateFormMode === 'list' ? (
-                <>
-                  {taskTemplates.length === 0 ? (
-                    <div style={{ height: 180, borderRadius: 12, background: '#F8FAFC', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 8, fontWeight: 600, fontSize: 13 }}>
-                      <LayoutTemplate size={26} strokeWidth={1.5} />
-                      No task templates yet
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      {taskTemplates.map(t => {
-                        const priorityStyle = t.priority ? PRIORITY_COLORS[t.priority] : null
-                        return (
-                          <div key={t.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '12px 14px', border: '1px solid #E5E7EB', borderRadius: 10 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
-                              {priorityStyle && (
-                                <span style={{ flexShrink: 0, fontSize: '0.65rem', fontWeight: 800, padding: '2px 7px', borderRadius: '99px', background: priorityStyle.bg, color: priorityStyle.text, letterSpacing: '0.01em' }}>
-                                  {t.priority}
-                                </span>
-                              )}
-                              <button type="button" onClick={() => openEditTemplate(t)} title="Edit template"
-                                style={{ margin: 0, fontSize: 14, fontWeight: 700, color: '#111827', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', border: 'none', background: 'transparent', padding: 0, textAlign: 'left', cursor: 'pointer' }}
-                                onMouseEnter={e => { e.currentTarget.style.color = TASK_ORANGE }}
-                                onMouseLeave={e => { e.currentTarget.style.color = '#111827' }}
-                              >{t.title}</button>
-                            </div>
-                            <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                              <button type="button" onClick={() => useTaskTemplate(t)} style={{ border: 'none', background: 'transparent', color: '#6B7280', cursor: 'pointer', display: 'flex', padding: 6, borderRadius: 6 }} title="Use template">
-                                <ArrowRight size={14} />
-                              </button>
-                              <button type="button" onClick={() => void handleDeleteTemplate(t.id)} disabled={deleteTemplateLoading} style={{ border: 'none', background: 'transparent', color: '#DC2626', cursor: deleteTemplateLoading ? 'default' : 'pointer', display: 'flex', padding: 6, borderRadius: 6, opacity: deleteTemplateLoading ? 0.5 : 1 }} title="Delete">
-                                <Trash2 size={14} />
-                              </button>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={openCreateTemplate}
-                    style={{ alignSelf: 'center', marginTop: 10, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 'none', borderRadius: 10, background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-                  >
-                    <Plus size={15} strokeWidth={2.5} /> New Template
-                  </button>
-                </>
-              ) : (
-                <>
+              <>
                   {/* Title + Priority */}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                     <div>
                       <label style={modalLabelStyle}>Title</label>
-                      <input autoFocus value={templateFormTitle} onChange={e => setTemplateFormTitle(e.target.value)} style={modalInputStyle} />
+                      <input autoFocus value={templateFormTitle} onChange={e => setTemplateFormTitle(e.target.value)} placeholder="Task title..." style={modalInputStyle} />
                     </div>
                     <div>
                       <label style={modalLabelStyle}>Priority</label>
@@ -4846,7 +4912,7 @@ export default function OwnerTasksPage() {
                   {/* Description */}
                   <div>
                     <label style={modalLabelStyle}>Description</label>
-                    <textarea value={templateFormDesc} onChange={e => setTemplateFormDesc(e.target.value)} onKeyDown={e => handleDescriptionKeyDown(e, templateFormDesc, setTemplateFormDesc)} rows={2} style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }} />
+                    <textarea value={templateFormDesc} onChange={e => setTemplateFormDesc(e.target.value)} onKeyDown={e => handleDescriptionKeyDown(e, templateFormDesc, setTemplateFormDesc)} rows={2} placeholder="Add more context..." style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }} />
                   </div>
 
                   {/* Divider */}
@@ -4921,33 +4987,28 @@ export default function OwnerTasksPage() {
                       </div>
                     )}
                   </div>
-                </>
-              )}
+              </>
             </div>
 
             <InlineError message={templateError} />
 
             {/* Footer */}
             <div style={{ padding: '0 20px 18px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              {templateFormMode !== 'list' && (
-                <button
-                  type="button"
-                  onClick={() => { setTemplateFormMode('list'); setTemplateError('') }}
-                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: `1px solid ${TASK_BORDER}`, borderRadius: 10, background: '#FFFFFF', color: TASK_TEXT, height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-                >
-                  Cancel
-                </button>
-              )}
-              {templateFormMode !== 'list' && (
-                <button
-                  type="button"
-                  onClick={handleSaveTemplate}
-                  disabled={templateLoading || !templateFormTitle.trim()}
-                  style={{ padding: '7px 18px', background: !templateFormTitle.trim() ? '#E5E7EB' : templateLoading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: !templateFormTitle.trim() ? '#9CA3AF' : '#FFFFFF', cursor: templateLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: templateLoading ? 0.65 : 1 }}
-                >
-                  {templateLoading ? <Spinner size={13} /> : <Check size={13} />} {templateFormMode === 'edit' ? 'Save Changes' : 'Create Template'}
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => setTemplateModalOpen(false)}
+                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: `1px solid ${TASK_BORDER}`, borderRadius: 10, background: '#FFFFFF', color: TASK_TEXT, height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveTemplate}
+                disabled={templateLoading || !templateFormTitle.trim()}
+                style={{ padding: '7px 18px', background: !templateFormTitle.trim() ? '#E5E7EB' : templateLoading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: !templateFormTitle.trim() ? '#9CA3AF' : '#FFFFFF', cursor: templateLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: templateLoading ? 0.65 : 1 }}
+              >
+                {templateLoading ? <Spinner size={13} /> : <Check size={13} />} {templateFormMode === 'edit' ? 'Save Changes' : 'Create Template'}
+              </button>
             </div>
           </div>
         </div>

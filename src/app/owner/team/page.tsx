@@ -999,7 +999,9 @@ function formatLongDateTime(value: string | null | undefined, empty = '—') {
   }).format(date)
 }
 
-type ActivityLogEntry = { id: string; actor_id: string | null; action: string; target_name: string | null; detail: string | null; is_read: boolean; created_at: string }
+type ActivityLogEntry = { id: string; actor_id: string | null; action: string; target_id: string | null; target_name: string | null; detail: string | null; is_read: boolean; created_at: string }
+
+const ACTIVITY_LOG_CLICK_ACTIONS = new Set(['set_active', 'set_inactive', 'change_department'])
 
 function describeActivityLog(log: ActivityLogEntry): { icon: React.ReactNode; message: string } {
   const target = log.target_name ?? '—'
@@ -1014,7 +1016,7 @@ function describeActivityLog(log: ActivityLogEntry): { icon: React.ReactNode; me
     case 'set_active':
       return { icon: iconWrap('#DCFCE7', <Check size={13} style={{ color: '#16A34A' }} />), message: `Activated ${target}` }
     case 'set_inactive':
-      return { icon: iconWrap('#F1F5F9', <X size={13} style={{ color: '#64748B' }} />), message: `Deactivated ${target}${log.detail ? ` — ${log.detail}` : ''}` }
+      return { icon: iconWrap('#F1F5F9', <X size={13} style={{ color: '#64748B' }} />), message: `Deactivated ${target}` }
     case 'change_department':
       return { icon: iconWrap('#DBEAFE', <Pencil size={13} style={{ color: '#2563EB' }} />), message: `Changed ${target} to ${log.detail ?? 'a new department'}` }
     default:
@@ -1272,7 +1274,7 @@ export default function TeamPage() {
   const cwDetailSuccessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [cwStatusError, setCWStatusError] = useState('')
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null)
-  const [activityLogs, setActivityLogs] = useState<{ id: string; actor_id: string | null; action: string; target_name: string | null; detail: string | null; is_read: boolean; created_at: string }[]>([])
+  const [activityLogs, setActivityLogs] = useState<ActivityLogEntry[]>([])
   const normalizedCwSearch = cwSearchQuery.trim().toLowerCase()
   const normalizedInternalSearch = internalSearchQuery.trim().toLowerCase()
   const normalizedOrgSearch = orgSearchQuery.trim().toLowerCase()
@@ -1462,7 +1464,7 @@ export default function TeamPage() {
   useEffect(() => { companyIdRef.current = companyId }, [companyId])
   useEffect(() => { userIdRef.current = internalUserId }, [internalUserId])
 
-  const logActivity = useCallback(async (action: string, target_name?: string, detail?: string) => {
+  const logActivity = useCallback(async (action: string, target_name?: string, detail?: string, target_id?: string) => {
     const cid = companyIdRef.current
     const uid = userIdRef.current
     if (!cid || !uid) return
@@ -1470,10 +1472,10 @@ export default function TeamPage() {
       const res = await fetch('/api/activity-log', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company_id: cid, actor_id: uid, action, target_name, detail }),
+        body: JSON.stringify({ company_id: cid, actor_id: uid, action, target_id, target_name, detail }),
       })
       const json = await res.json()
-      console.log('[logActivity] POST result:', json, { cid, uid, action, target_name, detail })
+      console.log('[logActivity] POST result:', json, { cid, uid, action, target_id, target_name, detail })
       fetchActivityLogs(cid)
     } catch (e) { console.error('[logActivity] failed:', e) }
   }, [fetchActivityLogs])
@@ -1930,7 +1932,7 @@ export default function TeamPage() {
       setTeamMembers(prev => prev.map(member => member.id === profileMember.id ? { ...member, department_id: departmentId } : member))
       await fetchTeamMembers(companyId)
       showCWDetailSuccess(`${profileMember.full_name}'s department has been updated.`)
-      logActivity('change_department', profileMember.full_name, companyDepartments.find(dept => dept.id === departmentId)?.name ?? undefined)
+      logActivity('change_department', profileMember.full_name, companyDepartments.find(dept => dept.id === departmentId)?.name ?? undefined, profileMember.id)
     } catch (err) {
       setProfileDeptSelectedId(profileMember.department_id ?? '')
       setProfileDeptError(err instanceof Error ? err.message : 'Failed to update department')
@@ -2282,6 +2284,36 @@ export default function TeamPage() {
     },
   ] as const
 
+  const openActivityLogTarget = (log: ActivityLogEntry) => {
+    if (!log.target_id || !ACTIVITY_LOG_CLICK_ACTIONS.has(log.action)) return
+    const member = teamMembers.find(m => m.id === log.target_id)
+    if (!member) return
+    if (member.role === 'Casual Worker') {
+      const rawStatus = (member.worker_status ?? 'active').toLowerCase()
+      setSelectedCWPreview({
+        id: member.id,
+        name: member.full_name,
+        lastShift: '—',
+        totalVisits: 0,
+        status: rawStatus === 'active' ? 'Active' : 'Inactive',
+        inactiveReason: member.inactivate_reason || null,
+        email: member.email_address || null,
+        dateOfBirth: member.date_of_birth || null,
+        phoneNumber: member.phone_number || null,
+        photoUrl: member.profile_photo_url || null,
+      })
+      setCWApplication(null)
+      setCWApplicationLoading(true)
+      fetch(`/api/team/cw-application?user_id=${member.id}`)
+        .then(r => r.json())
+        .then(d => { if (d.success) setCWApplication(d.application) })
+        .catch(() => {})
+        .finally(() => setCWApplicationLoading(false))
+    } else {
+      setProfileMember(member)
+    }
+  }
+
   const renderAllBlockFrame = (blockId: AllBlockId, content: React.ReactNode) => (
     <div
       ref={el => {
@@ -2428,13 +2460,32 @@ export default function TeamPage() {
             {activityLogs.length === 0 ? (
               <p style={{ fontSize: 13, color: '#94A3B8', margin: 0, textAlign: 'center', padding: '16px 0' }}>No activity yet</p>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', maxHeight: 224, overflowY: 'auto' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', maxHeight: 224, overflowY: 'auto', overflowX: 'hidden' }}>
                 {activityLogs.map((log, i) => {
                   const { icon, message } = describeActivityLog(log)
                   const date = new Date(log.created_at)
-                  const timeStr = date.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })
+                  const timeStr = `${String(date.getDate()).padStart(2, '0')} ${date.toLocaleDateString([], { month: 'short' })}, ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                  const clickable = !!log.target_id && ACTIVITY_LOG_CLICK_ACTIONS.has(log.action)
                   return (
-                    <div key={log.id} className="log-row-item" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: i < activityLogs.length - 1 ? '1px solid #F3F4F6' : 'none', animationDelay: `${0.22 + i * 0.06}s` }}>
+                    <div
+                      key={log.id}
+                      className="log-row-item"
+                      onClick={clickable ? () => openActivityLogTarget(log) : undefined}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 10,
+                        padding: '10px 8px',
+                        margin: '0 -8px',
+                        borderRadius: 8,
+                        borderBottom: i < activityLogs.length - 1 ? '1px solid #F3F4F6' : 'none',
+                        animationDelay: `${0.22 + i * 0.06}s`,
+                        cursor: clickable ? 'pointer' : 'default',
+                        transition: 'background 0.15s ease',
+                      }}
+                      onMouseEnter={clickable ? e => { e.currentTarget.style.background = '#F8FAFC' } : undefined}
+                      onMouseLeave={clickable ? e => { e.currentTarget.style.background = 'transparent' } : undefined}
+                    >
                       <div style={{ flexShrink: 0 }}>{icon}</div>
                       <div>
                         <p style={{ fontSize: 13, color: '#0F172A', margin: 0, lineHeight: 1.5 }}>
@@ -3170,7 +3221,7 @@ export default function TeamPage() {
                         {activityLogs.map((log, i) => {
                           const { icon, message } = describeActivityLog(log)
                           const date = new Date(log.created_at)
-                          const timeStr = date.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false })
+                          const timeStr = `${String(date.getDate()).padStart(2, '0')} ${date.toLocaleDateString([], { month: 'short' })}, ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
                           return (
                             <div key={log.id} className="log-row-item" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: i < activityLogs.length - 1 ? '1px solid #F3F4F6' : 'none', animationDelay: `${0.22 + i * 0.06}s` }}>
                               <div style={{ flexShrink: 0 }}>{icon}</div>
@@ -4078,7 +4129,7 @@ export default function TeamPage() {
                         setSelectedCWPreview(null)
                         setCWStatusError('')
                         showCWDetailSuccess(`${current.name} has been set to Active.`)
-                        logActivity('set_active', current.name)
+                        logActivity('set_active', current.name, undefined, current.id)
                       } else {
                         setCWStatusError(data.message || 'Failed to set active. Please try again.')
                       }
@@ -4177,7 +4228,7 @@ export default function TeamPage() {
                       setSelectedCWPreview(null)
                       setCWStatusError('')
                       showCWDetailSuccess(`${name} has been set to Inactive.`)
-                      logActivity('set_inactive', name, cwInactiveReason || undefined)
+                      logActivity('set_inactive', name, cwInactiveReason || undefined, cwInactiveReasonModal.id)
                     } else {
                       setCWStatusError(data.message || 'Failed to inactivate. Please try again.')
                     }

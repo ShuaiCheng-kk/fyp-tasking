@@ -756,3 +756,47 @@ test('completes sub-tasks in order while In Progress, and auto-promotes the pare
 
   await admin.from('tasks').delete().in('id', [subA.id, subB.id, parent.id])
 })
+
+test('a task can be assigned to multiple managers, both see it on the Kanban board, and either can move its status', async ({ request }) => {
+  const task = await createTask(request, {
+    title: 'Shared prep task', shift_id: null, assigned_user_ids: [managerA.userId, managerB.userId],
+  })
+
+  // The first id in assigned_user_ids becomes the primary assignee.
+  expect(task).toMatchObject({ assigned_user_id: managerA.userId })
+
+  const { data: assignments, error: assignmentsError } = await admin
+    .from('task_assignments')
+    .select('user_id')
+    .eq('task_id', task.id)
+  expect(assignmentsError).toBeNull()
+  expect((assignments ?? []).map((a: { user_id: string }) => a.user_id).sort())
+    .toEqual([managerA.userId, managerB.userId].sort())
+
+  const kanban = await request.get(`/api/task?company_id=${seeded.companyId}&kanban=true`)
+  const kanbanBody = await kanban.json()
+  const allTasks = [...kanbanBody.groups.Assigned, ...kanbanBody.groups['In Progress'], ...kanbanBody.groups.Review, ...kanbanBody.groups.Complete]
+  const kanbanTask = allTasks.find((t: { id: string }) => t.id === task.id)
+  expect(kanbanTask.assigned_user_ids.slice().sort()).toEqual([managerA.userId, managerB.userId].sort())
+
+  // Either co-assignee (not just the primary) can move the task's status forward.
+  const dragForward = await request.patch('/api/task', {
+    data: { id: task.id, status: 'In Progress', percentage_complete: 33 },
+  })
+  expect(dragForward.status()).toBe(200)
+  const dragBody = await dragForward.json()
+  expect(dragBody.task.status).toBe('In Progress')
+
+  // Editing the assignee set down to a single manager clears the co-assignee's row.
+  const shrinkRes = await request.patch('/api/task', {
+    data: { id: task.id, assigned_by: seeded.ownerId, assigned_user_ids: [managerB.userId] },
+  })
+  expect(shrinkRes.status()).toBe(200)
+  const shrinkBody = await shrinkRes.json()
+  expect(shrinkBody.task.assigned_user_id).toBe(managerB.userId)
+  const { data: afterShrink } = await admin.from('task_assignments').select('user_id').eq('task_id', task.id)
+  expect((afterShrink ?? []).map((a: { user_id: string }) => a.user_id)).toEqual([managerB.userId])
+
+  await admin.from('task_assignments').delete().eq('task_id', task.id)
+  await admin.from('tasks').delete().eq('id', task.id)
+})

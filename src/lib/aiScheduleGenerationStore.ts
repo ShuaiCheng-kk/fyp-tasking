@@ -47,6 +47,11 @@ type AiScheduleGenerationState = {
   // browser back) must NOT pop the wizard open uninvited; only clicking the widget (or the page's
   // own "AI Schedule" button, handled separately) should.
   pendingOpen: boolean
+  // Whether the Owner has clicked the floating widget for this run yet. Drives the "breathing"
+  // attention animation on the widget (see AiScheduleStatusWidget) — it pulses while generating and
+  // while a finished draft is still unreviewed, and stops the moment they click through. Reset false
+  // at the start of every new run so a fresh generation always grabs attention again.
+  acknowledged: boolean
 }
 
 export const AI_SCHEDULE_RULE_STEPS = [
@@ -72,6 +77,7 @@ const idleState: AiScheduleGenerationState = {
   staffAvailability: new Map(),
   params: null,
   pendingOpen: false,
+  acknowledged: false,
 }
 
 let state: AiScheduleGenerationState = idleState
@@ -116,7 +122,7 @@ export const aiScheduleGenerationStore = {
   // consumeOpenRequest) to reopen the wizard — whether that page mounts fresh right after (the
   // Owner was elsewhere) or is already sitting there (a click there navigates nowhere).
   requestOpen() {
-    setState({ pendingOpen: true })
+    setState({ pendingOpen: true, acknowledged: true })
   },
 
   // The Shifts page calls this once it's acted on a pending open request, so the same request
@@ -149,6 +155,7 @@ export const aiScheduleGenerationStore = {
       knownRows: new Map(),
       staffAvailability: new Map(),
       params: input,
+      acknowledged: false,
     })
     ruleStepTimer = setInterval(() => {
       setState({ ruleStepIndex: Math.min(state.ruleStepIndex + 1, AI_SCHEDULE_RULE_STEPS.length - 1) })

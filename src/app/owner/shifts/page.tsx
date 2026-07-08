@@ -40,6 +40,7 @@ import Toast from '@/components/Toast'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import DatePickerField from '@/components/DatePickerField'
+import MultiSelectDropdownField from '@/components/MultiSelectDropdownField'
 import { deptColor, setDeptColorOverrides } from '@/lib/deptColor'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 import { ShiftTemplate } from '@/types/ShiftTemplate'
@@ -346,10 +347,13 @@ const pageKeyframes = `
   @keyframes shimmer          { 0% { background-position: -400px 0 } 100% { background-position: 400px 0 } }
 
   .shift-dept-panel  { animation: blockPopIn 0.42s cubic-bezier(0.34,1.56,0.64,1) both 0.05s; }
+  .shift-template-panel { animation: blockPopIn 0.42s cubic-bezier(0.34,1.56,0.64,1) both 0.09s; }
   .shift-timeline-panel { animation: blockSlideUp 0.38s ease both 0.12s; }
   .shift-dept-card:hover { box-shadow: 0 4px 14px rgba(0,0,0,0.09) !important; transform: translateY(-1px) !important; }
   .member-card       { animation: cardStagger 0.30s ease both; transition: box-shadow 0.18s ease, border-color 0.18s ease; }
   .member-card:hover { box-shadow: 0 3px 10px rgba(0,0,0,0.08); border-color: #FDBA74 !important; }
+  .shift-template-card { animation: cardStagger 0.30s ease both; transition: box-shadow 0.18s ease, border-color 0.18s ease; }
+  .shift-template-card:hover { box-shadow: 0 3px 10px rgba(0,0,0,0.08); border-color: #FDBA74 !important; }
   .tl-row            { transition: background 0.14s ease; }
   .tl-row:hover      { background: #FAFAFA !important; }
   .tl-name           { transition: color 0.14s ease; }
@@ -444,6 +448,18 @@ function bumpEndTime(startTime: string, currentEndTime: string): string {
   const [h, m] = startTime.split(':').map(Number)
   const total = Math.min(h * 60 + m + 30, 23 * 60 + 30)
   return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
+}
+
+const SHIFT_NAME_TIME_PRESETS: { keyword: string; start_time: string; end_time: string }[] = [
+  { keyword: 'morning', start_time: '07:00', end_time: '15:00' },
+  { keyword: 'afternoon', start_time: '11:00', end_time: '19:00' },
+  { keyword: 'evening', start_time: '15:00', end_time: '23:00' },
+]
+
+function matchShiftNameTimePreset(name: string): { start_time: string; end_time: string } | null {
+  const lower = name.toLowerCase()
+  const preset = SHIFT_NAME_TIME_PRESETS.find(p => lower.includes(p.keyword))
+  return preset ? { start_time: preset.start_time, end_time: preset.end_time } : null
 }
 
 function previewDateLabel(dateKey: string): string {
@@ -720,14 +736,6 @@ const inputStyle: React.CSSProperties = {
   boxSizing: 'border-box',
 }
 
-const labelStyle: React.CSSProperties = {
-  display: 'block',
-  marginBottom: 6,
-  color: '#334155',
-  fontSize: 12,
-  fontWeight: 600,
-}
-
 const EMPTY_DATE_SET = new Set<string>()
 
 const modalLabelStyle: React.CSSProperties = {
@@ -843,7 +851,8 @@ export default function OwnerShiftsPage() {
   const [bulkEditModalOpen, setBulkEditModalOpen] = useState(false)
   const [bulkEditDateFrom, setBulkEditDateFrom] = useState('')
   const [bulkEditDateTo, setBulkEditDateTo] = useState('')
-  const [bulkEditDepartmentId, setBulkEditDepartmentId] = useState('')
+  const [bulkEditDepartmentIds, setBulkEditDepartmentIds] = useState<string[]>([])
+  const [bulkEditUserIds, setBulkEditUserIds] = useState<string[]>([])
   const [bulkEditRows, setBulkEditRows] = useState<BulkEditRow[]>([])
   const [bulkEditLoading, setBulkEditLoading] = useState(false)
   const [bulkEditSaving, setBulkEditSaving] = useState(false)
@@ -870,11 +879,12 @@ export default function OwnerShiftsPage() {
   // templateSave*/templateEdit* above, which belong to the inline template picker embedded in the
   // per-department Assign Shift drawer — a different flow, left untouched.
   const [shiftTemplateModalOpen, setShiftTemplateModalOpen] = useState(false)
-  const [shiftTemplateFormMode, setShiftTemplateFormMode] = useState<'list' | 'create' | 'edit'>('list')
+  const [shiftTemplateFormMode, setShiftTemplateFormMode] = useState<'create' | 'edit'>('create')
   const [shiftTemplateFormId, setShiftTemplateFormId] = useState('')
   const [shiftTemplateFormName, setShiftTemplateFormName] = useState('')
   const [shiftTemplateFormStartTime, setShiftTemplateFormStartTime] = useState('09:00')
   const [shiftTemplateFormEndTime, setShiftTemplateFormEndTime] = useState('17:00')
+  const [shiftTemplateTimeTouched, setShiftTemplateTimeTouched] = useState(false)
   const [shiftTemplateFormLoading, setShiftTemplateFormLoading] = useState(false)
   const [shiftTemplateFormError, setShiftTemplateFormError] = useState('')
   const [deleteShiftTemplateLoading, setDeleteShiftTemplateLoading] = useState(false)
@@ -2388,7 +2398,8 @@ export default function OwnerShiftsPage() {
   const openBulkEditModal = () => {
     setBulkEditDateFrom(todayStr > minDate ? todayStr : minDate)
     setBulkEditDateTo(formatDateKey(addDays(new Date(), 7)))
-    setBulkEditDepartmentId('')
+    setBulkEditDepartmentIds([])
+    setBulkEditUserIds([])
     setBulkEditRows([])
     setBulkEditError('')
     setBulkEditRowErrors({})
@@ -2414,7 +2425,8 @@ export default function OwnerShiftsPage() {
       const rows: TimelineRow[] = data.rows ?? []
       const nextRows: BulkEditRow[] = []
       for (const row of rows) {
-        if (bulkEditDepartmentId && row.department_id !== bulkEditDepartmentId) continue
+        if (bulkEditDepartmentIds.length > 0 && !bulkEditDepartmentIds.includes(row.department_id)) continue
+        if (bulkEditUserIds.length > 0 && (!row.user_id || !bulkEditUserIds.includes(row.user_id))) continue
         for (const shift of row.shifts) {
           nextRows.push({
             id: shift.id,
@@ -2440,7 +2452,7 @@ export default function OwnerShiftsPage() {
   useEffect(() => {
     if (!bulkEditModalOpen) return
     void loadBulkEditRows()
-  }, [bulkEditModalOpen, bulkEditDateFrom, bulkEditDateTo, bulkEditDepartmentId])
+  }, [bulkEditModalOpen, bulkEditDateFrom, bulkEditDateTo, bulkEditDepartmentIds, bulkEditUserIds])
 
   const updateBulkEditRow = (id: string, fields: Partial<BulkEditRow>) => {
     setBulkEditRows(prev => prev.map(row => row.id === id ? { ...row, ...fields } : row))
@@ -2626,8 +2638,10 @@ export default function OwnerShiftsPage() {
     setShiftTemplateFormName('')
     setShiftTemplateFormStartTime('09:00')
     setShiftTemplateFormEndTime('17:00')
+    setShiftTemplateTimeTouched(false)
     setShiftTemplateFormMode('create')
     setShiftTemplateFormError('')
+    setShiftTemplateModalOpen(true)
   }
 
   const openEditShiftTemplateEntry = (template: ShiftTemplate) => {
@@ -2635,8 +2649,10 @@ export default function OwnerShiftsPage() {
     setShiftTemplateFormName(template.name)
     setShiftTemplateFormStartTime(template.start_time)
     setShiftTemplateFormEndTime(template.end_time)
+    setShiftTemplateTimeTouched(true)
     setShiftTemplateFormMode('edit')
     setShiftTemplateFormError('')
+    setShiftTemplateModalOpen(true)
   }
 
   const handleSaveShiftTemplateEntry = async () => {
@@ -2665,7 +2681,7 @@ export default function OwnerShiftsPage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to save template')
       await fetchShiftTemplates(companyId)
-      setShiftTemplateFormMode('list')
+      setShiftTemplateModalOpen(false)
       setErrorToast(null)
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
       setSuccessToast(isEdit ? 'Shift template updated' : 'Shift template created')
@@ -2766,9 +2782,10 @@ export default function OwnerShiftsPage() {
     return { date_from: timelineDate, date_to: timelineDate }
   }
 
-  const visibleShiftsForPublishToggle = shiftViewMode === 'calendar'
-    ? calWeekRows.flatMap(row => row.shifts)
-    : timelineRows.flatMap(row => row.shifts)
+  const visibleShiftsForPublishToggle = (shiftViewMode === 'calendar' ? calWeekRows : timelineRows)
+    .filter(row => !selectedDepartmentId || row.department_id === selectedDepartmentId)
+    .flatMap(row => row.shifts)
+    .filter(shift => shift.shift_date >= todayStr)
   const hasDraftInScope = visibleShiftsForPublishToggle.some(s => s.publication_status === 'draft')
   const isFullyPublished = visibleShiftsForPublishToggle.length > 0 && !hasDraftInScope
 
@@ -2776,12 +2793,14 @@ export default function OwnerShiftsPage() {
     if (!companyId) return
     const nextStatus: 'draft' | 'published' = hasDraftInScope ? 'published' : 'draft'
     const { date_from, date_to } = visibleScheduleRange()
+    const clampedDateFrom = date_from < todayStr ? todayStr : date_from
+    if (clampedDateFrom > date_to) return
     setPublishLoading(true)
     try {
       const res = await fetch('/api/shift/schedule', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company_id: companyId, date_from, date_to, publication_status: nextStatus, performed_by: internalUserId }),
+        body: JSON.stringify({ company_id: companyId, date_from: clampedDateFrom, date_to, publication_status: nextStatus, performed_by: internalUserId, department_id: selectedDepartmentId ?? undefined }),
       })
       const data = await res.json()
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
@@ -3276,6 +3295,7 @@ export default function OwnerShiftsPage() {
           {companyId && (
             <>
               <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 326px) minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
         <section className="shift-dept-panel" style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'visible' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: 12, padding: '16px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, flexWrap: 'wrap' }}>
             {selectedDepartment ? (
@@ -3320,7 +3340,7 @@ export default function OwnerShiftsPage() {
                       No Manager or Employee yet.
                     </div>
                   ) : getDepartmentPeople(selectedDepartment).map((member, memberIdx) => (
-                    <div key={`${member.id}-${shiftViewMode}`} className="member-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, border: member.role === 'Manager' ? '1.5px solid #FDBA74' : `1px solid ${PANEL_BORDER}`, borderRadius: 12, padding: '13px 12px', background: member.role === 'Manager' ? '#FFFBF7' : '#FFFFFF', animationDelay: `${memberIdx * 50}ms` }}>
+                    <div key={`${member.id}-${shiftViewMode}`} className="member-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, border: `1px solid ${PANEL_BORDER}`, borderRadius: 12, padding: '13px 12px', background: '#FFFFFF', animationDelay: `${memberIdx * 50}ms` }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                         <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 999, background: member.profile_photo_url ? 'transparent' : (member.role === 'Manager' ? '#FFF7ED' : '#F3F4F6'), color: member.role === 'Manager' ? '#EA580C' : '#4B5563', flexShrink: 0, overflow: 'hidden' }}>
                           {member.profile_photo_url
@@ -3490,15 +3510,77 @@ export default function OwnerShiftsPage() {
                 <button
                   type="button"
                   onClick={() => openAiShiftModal(null)}
-                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 36, padding: '0 24px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
                 >
-                  <Sparkles size={14} /> AI Schedule
+                  <Sparkles size={15} strokeWidth={2.5} /> AI Schedule
                 </button>
               </div>
               </>
             )}
           </div>
         </section>
+
+        <section className="shift-template-panel" style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'visible' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '16px 18px', borderBottom: `1px solid ${PANEL_BORDER}` }}>
+            <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <LayoutTemplate size={15} style={{ color: '#F97316' }} />
+            </div>
+            <span style={SECTION_TITLE_STYLE}>Templates</span>
+          </div>
+          <div style={{ padding: 14 }}>
+            {shiftTemplates.length === 0 ? (
+              <div style={{ borderRadius: 12, background: '#F8FAFC', padding: 18, color: '#94A3B8', fontSize: 13, fontWeight: 600, textAlign: 'center', marginBottom: 10 }}>
+                No shift templates yet.
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gap: 10, marginBottom: 10 }}>
+                {shiftTemplates.map((t, idx) => (
+                  <div key={`${t.id}-${shiftViewMode}`} className="shift-template-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, border: `1px solid ${PANEL_BORDER}`, borderRadius: 12, padding: '13px 14px', background: '#F9FAFB', animationDelay: `${idx * 50}ms` }}>
+                    <div style={{ minWidth: 0, paddingLeft: 4 }}>
+                      <p style={{ margin: 0, ...DEPARTMENT_NAME_STYLE, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.name}</p>
+                      <p style={{ margin: '6px 0 0', fontSize: 12, color: '#9CA3AF', fontWeight: 600 }}>{formatShiftHour(t.start_time)} – {formatShiftHour(t.end_time)}</p>
+                    </div>
+                    <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                      <button
+                        type="button"
+                        onClick={() => openEditShiftTemplateEntry(t)}
+                        title="Edit template"
+                        style={{ border: 'none', background: 'transparent', color: '#6B7280', cursor: 'pointer', display: 'flex', padding: 6, borderRadius: 6 }}
+                        onMouseEnter={e => { e.currentTarget.style.color = OWNER_ORANGE; e.currentTarget.style.background = '#FFF7ED' }}
+                        onMouseLeave={e => { e.currentTarget.style.color = '#6B7280'; e.currentTarget.style.background = 'transparent' }}
+                      >
+                        <Pencil size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteShiftTemplateEntry(t.id)}
+                        disabled={deleteShiftTemplateLoading}
+                        title="Delete template"
+                        style={{ border: 'none', background: 'transparent', color: '#DC2626', cursor: deleteShiftTemplateLoading ? 'default' : 'pointer', display: 'flex', padding: 6, borderRadius: 6, opacity: deleteShiftTemplateLoading ? 0.5 : 1 }}
+                        onMouseEnter={e => { if (!deleteShiftTemplateLoading) e.currentTarget.style.background = '#FEE2E2' }}
+                        onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                      >
+                        {deleteShiftTemplateLoading ? <Spinner size={13} /> : <Trash2 size={14} />}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {companyId && (
+              <div style={{ display: 'flex', justifyContent: 'center' }}>
+                <button
+                  type="button"
+                  onClick={openCreateShiftTemplateEntry}
+                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 'none', borderRadius: 10, background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                >
+                  <Plus size={15} strokeWidth={2.5} /> New Template
+                </button>
+              </div>
+            )}
+          </div>
+        </section>
+        </div>
 
         <section className="shift-timeline-panel" style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, flexWrap: 'wrap', flexShrink: 0 }}>
@@ -3507,7 +3589,7 @@ export default function OwnerShiftsPage() {
                 <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   <CalendarDays size={15} style={{ color: '#F97316' }} />
                 </div>
-                <span style={SECTION_TITLE_STYLE}>Shift Timeline</span>
+                <span style={SECTION_TITLE_STYLE}>{selectedDepartment ? `${selectedDepartment.name} Shift Timeline` : 'All Departments Shift Timeline'}</span>
                 {companyId && (
                   <button
                     type="button"
@@ -3521,7 +3603,7 @@ export default function OwnerShiftsPage() {
                       cursor: (publishLoading || visibleShiftsForPublishToggle.length === 0) ? 'not-allowed' : 'pointer',
                     }}
                   >
-                    {publishLoading ? <Spinner size={13} /> : <Send size={14} />} {isFullyPublished ? 'Unpublish' : 'Publish'}
+                    {publishLoading ? <Spinner size={13} dark /> : <Send size={14} />} {isFullyPublished ? 'Unpublish' : 'Publish'}
                   </button>
                 )}
               </div>
@@ -3536,7 +3618,7 @@ export default function OwnerShiftsPage() {
                   title="Undo last shift action"
                   style={{ ...secondaryButtonStyle, opacity: undoLoading ? 0.65 : 1, cursor: undoLoading ? 'not-allowed' : 'pointer' }}
                 >
-                  {undoLoading ? <Spinner size={13} /> : <Undo2 size={14} />} Undo
+                  {undoLoading ? <Spinner size={13} dark /> : <Undo2 size={14} />} Undo
                 </button>
               )}
               {companyId && (
@@ -3548,16 +3630,7 @@ export default function OwnerShiftsPage() {
                   title="Redo last undone shift action"
                   style={{ ...secondaryButtonStyle, opacity: redoLoading ? 0.65 : 1, cursor: redoLoading ? 'not-allowed' : 'pointer' }}
                 >
-                  {redoLoading ? <Spinner size={13} /> : <Redo2 size={14} />} Redo
-                </button>
-              )}
-              {companyId && (
-                <button
-                  type="button"
-                  onClick={() => { setShiftTemplateModalOpen(true); setShiftTemplateFormMode('list'); setShiftTemplateFormError('') }}
-                  style={secondaryButtonStyle}
-                >
-                  <LayoutTemplate size={14} /> Template
+                  {redoLoading ? <Spinner size={13} dark /> : <Redo2 size={14} />} Redo
                 </button>
               )}
               {companyId && departments.length > 0 && (
@@ -3933,7 +4006,7 @@ export default function OwnerShiftsPage() {
                               )}
                               {shiftTemplates.length > 0 && (
                                 <div style={{ marginBottom: 10 }}>
-                                  <label style={labelStyle}>Template</label>
+                                  <label style={modalLabelStyle}>Template</label>
                                   <DropdownField
                                     value={aiShiftTypeTemplateIds[index] ?? ''}
                                     options={shiftTemplates.map(t => ({ value: t.id, label: t.name }))}
@@ -3948,8 +4021,8 @@ export default function OwnerShiftsPage() {
                                 </div>
                               )}
                               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                                <div><label style={labelStyle}>Start time</label><TimePicker value={shift.start_time} onChange={value => { setAiShiftTypes(prev => prev.map((item, i) => i === index ? { ...item, start_time: value } : item)); setAiShiftTypeTemplateIds(prev => prev.map((id, i) => i === index ? '' : id)) }} /></div>
-                                <div><label style={labelStyle}>End time</label><TimePicker value={shift.end_time} onChange={value => { setAiShiftTypes(prev => prev.map((item, i) => i === index ? { ...item, end_time: value } : item)); setAiShiftTypeTemplateIds(prev => prev.map((id, i) => i === index ? '' : id)) }} /></div>
+                                <div><label style={modalLabelStyle}>Start Time</label><TimePicker value={shift.start_time} onChange={value => { setAiShiftTypes(prev => prev.map((item, i) => i === index ? { ...item, start_time: value } : item)); setAiShiftTypeTemplateIds(prev => prev.map((id, i) => i === index ? '' : id)) }} /></div>
+                                <div><label style={modalLabelStyle}>End Time</label><TimePicker value={shift.end_time} onChange={value => { setAiShiftTypes(prev => prev.map((item, i) => i === index ? { ...item, end_time: value } : item)); setAiShiftTypeTemplateIds(prev => prev.map((id, i) => i === index ? '' : id)) }} /></div>
                               </div>
                             </div>
                           ))}
@@ -4519,11 +4592,11 @@ export default function OwnerShiftsPage() {
                           )
                         })()}
                         <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                          <span style={{ display: 'block', fontWeight: 600, fontSize: '0.875rem', color: '#374151', marginBottom: 4 }}>Start time</span>
+                          <span style={{ ...modalLabelStyle, marginBottom: 4 }}>Start Time</span>
                           <TimePicker value={defaultStartTime} onChange={v => { setSelectedTemplateId(''); setDefaultStartTime(v); setDefaultEndTime(prev => bumpEndTime(v, prev)) }} />
                         </label>
                         <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                          <span style={{ display: 'block', fontWeight: 600, fontSize: '0.875rem', color: '#374151', marginBottom: 4 }}>End time</span>
+                          <span style={{ ...modalLabelStyle, marginBottom: 4 }}>End Time</span>
                           <TimePicker value={defaultEndTime} onChange={v => { setSelectedTemplateId(''); setDefaultEndTime(v) }} minTime={defaultStartTime} />
                         </label>
                         <button type="button" onClick={() => {
@@ -4545,7 +4618,7 @@ export default function OwnerShiftsPage() {
                 <div style={{ marginBottom: 20, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, alignItems: 'stretch' }}>
                 <div style={{ background: '#FFFFFF', borderRadius: 14, padding: '12px', border: `1px solid ${PANEL_BORDER}`, display: 'flex', flexDirection: 'column' }}>
                   <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
+                    <span style={{ ...modalLabelStyle, display: 'flex', alignItems: 'center', gap: 6, marginBottom: 0 }}>
                       <Repeat size={13} color={OWNER_ORANGE} /> Recurring
                     </span>
                     <input
@@ -4578,7 +4651,7 @@ export default function OwnerShiftsPage() {
 
                       {recurringShiftForm.recurrence_rule === 'custom' && (
                         <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Repeat every (days)</span>
+                          <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Repeat Every (Days)</span>
                           <input
                             type="text"
                             inputMode="numeric"
@@ -4594,7 +4667,7 @@ export default function OwnerShiftsPage() {
                       )}
 
                       <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Repeat until</span>
+                        <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Repeat Until</span>
                         <DatePickerField
                           value={recurringShiftForm.recurrence_end_date}
                           onChange={v => setRecurringShiftForm(prev => ({ ...prev, recurrence_end_date: v }))}
@@ -4613,7 +4686,7 @@ export default function OwnerShiftsPage() {
 
                 <div style={{ background: '#FFFFFF', borderRadius: 14, padding: '12px', border: `1px solid ${PANEL_BORDER}`, display: 'flex', flexDirection: 'column' }}>
                   <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
+                    <span style={{ ...modalLabelStyle, display: 'flex', alignItems: 'center', gap: 6, marginBottom: 0 }}>
                       <SplitSquareHorizontal size={13} color={OWNER_ORANGE} /> Splitting
                     </span>
                     <input
@@ -4747,13 +4820,13 @@ export default function OwnerShiftsPage() {
                                   >
                                     <X size={10} />
                                   </button>
-                                  <p style={{ margin: '0 0 7px', fontSize: 11, fontWeight: 600, color: TEXT_DARK, paddingRight: 14 }}>{previewDateLabel(date)}</p>
+                                  <p style={{ margin: '0 0 7px', fontSize: 13, fontWeight: 600, color: TEXT_DARK, paddingRight: 14 }}>{previewDateLabel(date)}</p>
                                   {batchSplitEnabled && isSingleCellRepeatEligible ? (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#FFFFFF', fontSize: 11, fontWeight: 600, color: TEXT_DARK }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#FFFFFF', fontSize: 13, fontWeight: 600, color: TEXT_DARK }}>
                                         {formatShiftHour(cell.start_time)} – {formatShiftHour(batchSplitBlock1End)}
                                       </div>
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#FFFFFF', fontSize: 11, fontWeight: 600, color: TEXT_DARK }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#FFFFFF', fontSize: 13, fontWeight: 600, color: TEXT_DARK }}>
                                         {formatShiftHour(batchSplitBlock2Start)} – {formatShiftHour(cell.end_time)}
                                       </div>
                                     </div>
@@ -4821,18 +4894,18 @@ export default function OwnerShiftsPage() {
                               const cell = enabledBatchCells[0]
                               return (
                                 <div key={key} style={{ border: `1px solid ${PANEL_BORDER}`, borderRadius: 10, padding: '9px 10px', background: '#FFFFFF' }}>
-                                  <p style={{ margin: '0 0 7px', fontSize: 11, fontWeight: 600, color: TEXT_DARK }}>{previewDateLabel(date)}</p>
+                                  <p style={{ margin: '0 0 7px', fontSize: 13, fontWeight: 600, color: TEXT_DARK }}>{previewDateLabel(date)}</p>
                                   {batchSplitEnabled ? (
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#FFFFFF', fontSize: 11, fontWeight: 600, color: TEXT_DARK }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#FFFFFF', fontSize: 13, fontWeight: 600, color: TEXT_DARK }}>
                                         {formatShiftHour(cell?.start_time ?? defaultStartTime)} – {formatShiftHour(batchSplitBlock1End)}
                                       </div>
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#FFFFFF', fontSize: 11, fontWeight: 600, color: TEXT_DARK }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#FFFFFF', fontSize: 13, fontWeight: 600, color: TEXT_DARK }}>
                                         {formatShiftHour(batchSplitBlock2Start)} – {formatShiftHour(cell?.end_time ?? defaultEndTime)}
                                       </div>
                                     </div>
                                   ) : (
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#FFFFFF', fontSize: 11, fontWeight: 600, color: TEXT_DARK }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8, background: '#FFFFFF', fontSize: 13, fontWeight: 600, color: TEXT_DARK }}>
                                       {formatShiftHour(cell?.start_time ?? defaultStartTime)} – {formatShiftHour(cell?.end_time ?? defaultEndTime)}
                                     </div>
                                   )}
@@ -5013,7 +5086,7 @@ export default function OwnerShiftsPage() {
                   <LayoutTemplate size={15} color="#fff" strokeWidth={2.5} />
                 </div>
                 <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
-                  {shiftTemplateFormMode === 'list' ? 'Shift Templates' : shiftTemplateFormMode === 'edit' ? 'Edit Template' : 'New Template'}
+                  {shiftTemplateFormMode === 'edit' ? 'Edit Template' : 'New Template'}
                 </h2>
               </div>
               <button onClick={() => setShiftTemplateModalOpen(false)} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
@@ -5026,83 +5099,50 @@ export default function OwnerShiftsPage() {
 
             {/* Body */}
             <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-              {shiftTemplateFormMode === 'list' ? (
-                <>
-                  {shiftTemplates.length === 0 ? (
-                    <div style={{ height: 180, borderRadius: 12, background: '#F8FAFC', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 8, fontWeight: 600, fontSize: 13 }}>
-                      <LayoutTemplate size={26} strokeWidth={1.5} />
-                      No shift templates yet
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      {shiftTemplates.map(t => (
-                        <div key={t.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '12px 14px', border: '1px solid #E5E7EB', borderRadius: 10 }}>
-                          <button type="button" onClick={() => openEditShiftTemplateEntry(t)} title="Edit template"
-                            style={{ margin: 0, minWidth: 0, flex: 1, fontSize: 14, fontWeight: 700, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', border: 'none', background: 'transparent', padding: 0, textAlign: 'left', cursor: 'pointer' }}
-                            onMouseEnter={e => { e.currentTarget.style.color = OWNER_ORANGE }}
-                            onMouseLeave={e => { e.currentTarget.style.color = '#111827' }}
-                          >
-                            {t.name} <span style={{ fontWeight: 500, color: '#9CA3AF' }}>· {formatShiftHour(t.start_time)}–{formatShiftHour(t.end_time)}</span>
-                          </button>
-                          <button type="button" onClick={() => void handleDeleteShiftTemplateEntry(t.id)} disabled={deleteShiftTemplateLoading} style={{ border: 'none', background: 'transparent', color: '#DC2626', cursor: deleteShiftTemplateLoading ? 'default' : 'pointer', display: 'flex', padding: 6, borderRadius: 6, opacity: deleteShiftTemplateLoading ? 0.5 : 1, flexShrink: 0 }} title="Delete">
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={openCreateShiftTemplateEntry}
-                    style={{ alignSelf: 'center', marginTop: 10, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 'none', borderRadius: 10, background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-                  >
-                    <Plus size={15} strokeWidth={2.5} /> New Template
-                  </button>
-                </>
-              ) : (
-                <>
-                  <div>
-                    <label style={modalLabelStyle}>Name</label>
-                    <input autoFocus value={shiftTemplateFormName} onChange={e => setShiftTemplateFormName(e.target.value)} placeholder="e.g. Morning Shift" style={modalInputStyle} />
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                    <div>
-                      <label style={modalLabelStyle}>Start time</label>
-                      <TimePicker value={shiftTemplateFormStartTime} onChange={v => { setShiftTemplateFormStartTime(v); setShiftTemplateFormEndTime(prev => bumpEndTime(v, prev)) }} />
-                    </div>
-                    <div>
-                      <label style={modalLabelStyle}>End time</label>
-                      <TimePicker value={shiftTemplateFormEndTime} onChange={setShiftTemplateFormEndTime} minTime={shiftTemplateFormStartTime} />
-                    </div>
-                  </div>
-                </>
-              )}
+              <div>
+                <label style={modalLabelStyle}>Name</label>
+                <input
+                  autoFocus
+                  value={shiftTemplateFormName}
+                  onChange={e => {
+                    const value = e.target.value
+                    setShiftTemplateFormName(value)
+                    if (!shiftTemplateTimeTouched) {
+                      const preset = matchShiftNameTimePreset(value)
+                      if (preset) {
+                        setShiftTemplateFormStartTime(preset.start_time)
+                        setShiftTemplateFormEndTime(preset.end_time)
+                      }
+                    }
+                  }}
+                  placeholder="e.g. Morning Shift"
+                  style={modalInputStyle}
+                />
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div>
+                  <label style={modalLabelStyle}>Start Time</label>
+                  <TimePicker value={shiftTemplateFormStartTime} onChange={v => { setShiftTemplateFormStartTime(v); setShiftTemplateFormEndTime(prev => bumpEndTime(v, prev)); setShiftTemplateTimeTouched(true) }} />
+                </div>
+                <div>
+                  <label style={modalLabelStyle}>End Time</label>
+                  <TimePicker value={shiftTemplateFormEndTime} onChange={v => { setShiftTemplateFormEndTime(v); setShiftTemplateTimeTouched(true) }} minTime={shiftTemplateFormStartTime} />
+                </div>
+              </div>
             </div>
 
             {shiftTemplateFormError && <div style={{ margin: '0 20px 12px', ...errorBoxStyle }}>{shiftTemplateFormError}</div>}
 
             {/* Footer */}
             <div style={{ padding: '0 20px 18px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-              {shiftTemplateFormMode !== 'list' && (
-                <button
-                  type="button"
-                  onClick={() => { setShiftTemplateFormMode('list'); setShiftTemplateFormError('') }}
-                  style={{ ...secondaryButtonStyle, borderRadius: 10, height: 36, padding: '0 14px' }}
-                >
-                  Cancel
-                </button>
-              )}
-              {shiftTemplateFormMode !== 'list' && (
-                <button
-                  type="button"
-                  onClick={handleSaveShiftTemplateEntry}
-                  disabled={shiftTemplateFormLoading || !shiftTemplateFormName.trim()}
-                  style={{ padding: '7px 18px', background: !shiftTemplateFormName.trim() ? '#E5E7EB' : shiftTemplateFormLoading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: !shiftTemplateFormName.trim() ? '#9CA3AF' : '#FFFFFF', cursor: shiftTemplateFormLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: shiftTemplateFormLoading ? 0.65 : 1 }}
-                >
-                  {shiftTemplateFormLoading ? <Spinner size={13} /> : <Check size={13} />} {shiftTemplateFormMode === 'edit' ? 'Save Changes' : 'Create Template'}
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={handleSaveShiftTemplateEntry}
+                disabled={shiftTemplateFormLoading || !shiftTemplateFormName.trim()}
+                style={{ padding: '7px 18px', background: !shiftTemplateFormName.trim() ? '#E5E7EB' : shiftTemplateFormLoading ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: !shiftTemplateFormName.trim() ? '#9CA3AF' : '#FFFFFF', cursor: shiftTemplateFormLoading ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: shiftTemplateFormLoading ? 0.65 : 1 }}
+              >
+                {shiftTemplateFormLoading ? <Spinner size={13} /> : <Check size={13} />} {shiftTemplateFormMode === 'edit' ? 'Save Changes' : 'Create Template'}
+              </button>
             </div>
           </div>
         </div>
@@ -5168,12 +5208,12 @@ export default function OwnerShiftsPage() {
                   </div>
                 )}
                 <div>
-                  <span style={{ display: 'block', fontWeight: 700, fontSize: '0.875rem', color: '#374151', marginBottom: 8 }}>Reassign to</span>
+                  <span style={modalLabelStyle}>Reassign To</span>
                   <DropdownField
                     value={shiftEditForm.assigned_user_id}
                     options={members
                       .filter(member => member.department_id === shiftEditForm.department_id)
-                      .map(member => ({ value: member.id, label: `${member.full_name} · ${member.role}` }))}
+                      .map(member => ({ value: member.id, label: member.full_name }))}
                     onChange={v => setShiftEditForm(prev => ({ ...prev, assigned_user_id: v }))}
                     placeholder="Select person"
                   />
@@ -5292,11 +5332,11 @@ export default function OwnerShiftsPage() {
                       )
                     })()}
                     <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      <span style={{ display: 'block', fontWeight: 600, fontSize: '0.875rem', color: '#374151', marginBottom: 4 }}>Start time</span>
+                      <span style={{ ...modalLabelStyle, marginBottom: 4 }}>Start Time</span>
                       <TimePicker value={shiftEditForm.start_time} onChange={val => { setEditSelectedTemplateId(''); setShiftEditForm(prev => ({ ...prev, start_time: val, end_time: bumpEndTime(val, prev.end_time) })) }} />
                     </label>
                     <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      <span style={{ display: 'block', fontWeight: 600, fontSize: '0.875rem', color: '#374151', marginBottom: 4 }}>End time</span>
+                      <span style={{ ...modalLabelStyle, marginBottom: 4 }}>End Time</span>
                       <TimePicker value={shiftEditForm.end_time} onChange={val => { setEditSelectedTemplateId(''); setShiftEditForm(prev => ({ ...prev, end_time: val })) }} minTime={shiftEditForm.start_time} />
                     </label>
                   </div>
@@ -5305,7 +5345,7 @@ export default function OwnerShiftsPage() {
                 <div style={{ display: 'grid', gridTemplateColumns: selectedShift?.split_group_id ? '1fr' : '1fr 1fr', gap: 12, alignItems: 'stretch' }}>
                 <div style={{ background: '#FFFFFF', borderRadius: 14, padding: '12px', border: `1px solid ${PANEL_BORDER}`, display: 'flex', flexDirection: 'column' }}>
                   <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: editIsRecurrenceOriginal ? 'not-allowed' : 'pointer' }}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
+                    <span style={{ ...modalLabelStyle, display: 'flex', alignItems: 'center', gap: 6, marginBottom: 0 }}>
                       <Repeat size={13} color={OWNER_ORANGE} /> Recurring
                     </span>
                     <input
@@ -5342,7 +5382,7 @@ export default function OwnerShiftsPage() {
 
                       {editRecurringForm.recurrence_rule === 'custom' && (
                         <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Repeat every (days)</span>
+                          <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Repeat Every (Days)</span>
                           <input
                             type="text"
                             inputMode="numeric"
@@ -5359,7 +5399,7 @@ export default function OwnerShiftsPage() {
                       )}
 
                       <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Repeat until</span>
+                        <span style={{ display: 'block', fontWeight: 600, fontSize: '0.75rem', color: '#374151' }}>Repeat Until</span>
                         <DatePickerField
                           value={editRecurringForm.recurrence_end_date}
                           onChange={v => { setEditRecurringForm(prev => ({ ...prev, recurrence_end_date: v })); setEditRecurringTouched(true) }}
@@ -5379,7 +5419,7 @@ export default function OwnerShiftsPage() {
                 {!selectedShift?.split_group_id && (
                 <div style={{ background: '#FFFFFF', borderRadius: 14, padding: '12px', border: `1px solid ${PANEL_BORDER}`, display: 'flex', flexDirection: 'column' }}>
                   <label style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.8125rem', color: '#374151' }}>
+                    <span style={{ ...modalLabelStyle, display: 'flex', alignItems: 'center', gap: 6, marginBottom: 0 }}>
                       <SplitSquareHorizontal size={13} color={OWNER_ORANGE} /> Splitting
                     </span>
                     <input
@@ -5530,27 +5570,26 @@ export default function OwnerShiftsPage() {
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  <span style={{ display: 'block', fontWeight: 600, fontSize: '0.8125rem', color: '#374151', marginBottom: 4 }}>Start time</span>
+                  <span style={{ ...modalLabelStyle, marginBottom: 4 }}>Start Time</span>
                   <TimePicker value={duplicateShiftForm.start_time} onChange={v => { setDuplicateSelectedTemplateId(''); setDuplicateShiftForm(prev => ({ ...prev, start_time: v, end_time: bumpEndTime(v, prev.end_time) })) }} />
                 </label>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  <span style={{ display: 'block', fontWeight: 600, fontSize: '0.8125rem', color: '#374151', marginBottom: 4 }}>End time</span>
+                  <span style={{ ...modalLabelStyle, marginBottom: 4 }}>End Time</span>
                   <TimePicker value={duplicateShiftForm.end_time} onChange={v => { setDuplicateSelectedTemplateId(''); setDuplicateShiftForm(prev => ({ ...prev, end_time: v })) }} minTime={duplicateShiftForm.start_time} />
                 </label>
               </div>
 
               {(() => {
                 const availableMembers = members.filter(member =>
-                  member.department_id === selectedShift.department_id
-                  && !(futureShiftMap.get(`${member.id}_${duplicateShiftForm.shift_date}`) ?? []).length,
+                  !(futureShiftMap.get(`${member.id}_${duplicateShiftForm.shift_date}`) ?? []).length,
                 )
                 const noOneAvailable = availableMembers.length === 0
                 return (
                   <div>
-                    <span style={{ display: 'block', fontWeight: 700, fontSize: '0.875rem', color: '#374151', marginBottom: 8 }}>Assign to</span>
+                    <span style={modalLabelStyle}>Assign To</span>
                     <DropdownField
                       value={duplicateShiftForm.assigned_user_id}
-                      options={availableMembers.map(member => ({ value: member.id, label: `${member.full_name} · ${member.role}` }))}
+                      options={availableMembers.map(member => ({ value: member.id, label: member.full_name }))}
                       onChange={v => setDuplicateShiftForm(prev => ({ ...prev, assigned_user_id: v }))}
                       placeholder={noOneAvailable ? 'No one available on this date' : 'Select person'}
                       disabled={noOneAvailable}
@@ -5579,7 +5618,7 @@ export default function OwnerShiftsPage() {
 
       {bulkEditModalOpen && (
         <div style={modalOverlayStyle}>
-          <div style={{ ...modalStyle, width: 'min(960px, calc(100% - 32px))', maxHeight: '88vh', padding: 0, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ ...modalStyle, width: 'min(960px, calc(100% - 32px))', maxHeight: 'min(680px, 88vh)', padding: 0, display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6', flexShrink: 0 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -5617,13 +5656,30 @@ export default function OwnerShiftsPage() {
                   compact
                 />
               </label>
-              <div style={{ minWidth: 200 }}>
+              <div style={{ flex: 1, minWidth: 200 }}>
                 <span style={{ display: 'block', fontWeight: 600, fontSize: '0.8125rem', color: '#374151', marginBottom: 4 }}>Department</span>
-                <DropdownField
-                  value={bulkEditDepartmentId}
-                  options={[{ value: '', label: 'All departments' }, ...departments.map(dept => ({ value: dept.id, label: dept.name }))]}
-                  onChange={setBulkEditDepartmentId}
-                  placeholder="All departments"
+                <MultiSelectDropdownField
+                  values={bulkEditDepartmentIds}
+                  options={departments.map(dept => ({ value: dept.id, label: dept.name }))}
+                  onChange={next => {
+                    setBulkEditDepartmentIds(next)
+                    if (next.length > 0) {
+                      const allowedUserIds = new Set(members.filter(m => m.department_id && next.includes(m.department_id)).map(m => m.id))
+                      setBulkEditUserIds(prev => prev.filter(id => allowedUserIds.has(id)))
+                    }
+                  }}
+                  allLabel="All departments"
+                />
+              </div>
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <span style={{ display: 'block', fontWeight: 600, fontSize: '0.8125rem', color: '#374151', marginBottom: 4 }}>User</span>
+                <MultiSelectDropdownField
+                  values={bulkEditUserIds}
+                  options={members
+                    .filter(member => bulkEditDepartmentIds.length === 0 || (member.department_id && bulkEditDepartmentIds.includes(member.department_id)))
+                    .map(member => ({ value: member.id, label: member.full_name }))}
+                  onChange={setBulkEditUserIds}
+                  allLabel="All people"
                 />
               </div>
               {bulkEditLoading && (
@@ -5633,8 +5689,8 @@ export default function OwnerShiftsPage() {
               )}
             </div>
 
-            <div style={{ padding: '16px 24px', overflowY: 'auto', flex: 1 }}>
-              {bulkEditError && <div style={{ ...errorBoxStyle, marginBottom: 12 }}>{bulkEditError}</div>}
+            <div style={{ padding: '16px 24px', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+              {bulkEditError && <div style={{ ...errorBoxStyle, marginBottom: 12, flexShrink: 0 }}>{bulkEditError}</div>}
               {bulkEditRows.length === 0 ? (
                 <div style={{ border: `1.5px dashed ${PANEL_BORDER}`, borderRadius: 12, padding: '32px 18px', textAlign: 'center' }}>
                   <div style={{ marginBottom: 6, display: 'flex', justifyContent: 'center' }}><Table2 size={20} color="#CBD5E1" /></div>
@@ -5643,14 +5699,26 @@ export default function OwnerShiftsPage() {
                   </p>
                 </div>
               ) : (
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                  <thead>
-                    <tr>
-                      {['Date', 'Start', 'End', 'Department', 'Assigned to', ''].map(h => (
-                        <th key={h} style={{ textAlign: 'left', padding: '8px 8px', fontSize: 11, fontWeight: 700, color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: `1px solid ${PANEL_BORDER}` }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
+                <div style={{ border: `1px solid ${PANEL_BORDER}`, borderRadius: 12, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                <div style={{ background: '#0F172A', flexShrink: 0, paddingRight: 17 }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+                    <colgroup>
+                      {BULK_EDIT_COLUMN_WIDTHS.map((w, i) => <col key={i} style={{ width: w }} />)}
+                    </colgroup>
+                    <thead>
+                      <tr>
+                        {['Date', 'Start', 'End', 'Department', 'Assigned To', ''].map(h => (
+                          <th key={h} style={{ textAlign: 'center', padding: '16px 8px', fontSize: 11, fontWeight: 700, color: 'rgba(255,255,255,0.55)', letterSpacing: '0.05em' }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                  </table>
+                </div>
+                <div style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, tableLayout: 'fixed' }}>
+                  <colgroup>
+                    {BULK_EDIT_COLUMN_WIDTHS.map((w, i) => <col key={i} style={{ width: w }} />)}
+                  </colgroup>
                   <tbody>
                     {bulkEditRows.map(row => {
                       const rowError = bulkEditRowErrors[row.id]
@@ -5670,12 +5738,12 @@ export default function OwnerShiftsPage() {
                             />
                           </td>
                           <td style={{ padding: '6px 8px', borderBottom: `1px solid ${PANEL_BORDER}` }}>
-                            <TimePicker compact disabled={isPast} value={row.start_time} onChange={v => updateBulkEditRow(row.id, { start_time: v, end_time: bumpEndTime(v, row.end_time) })} />
+                            <TimePicker disabled={isPast} value={row.start_time} onChange={v => updateBulkEditRow(row.id, { start_time: v, end_time: bumpEndTime(v, row.end_time) })} />
                           </td>
                           <td style={{ padding: '6px 8px', borderBottom: `1px solid ${PANEL_BORDER}` }}>
-                            <TimePicker compact disabled={isPast} value={row.end_time} onChange={v => updateBulkEditRow(row.id, { end_time: v })} minTime={row.start_time} />
+                            <TimePicker disabled={isPast} value={row.end_time} onChange={v => updateBulkEditRow(row.id, { end_time: v })} minTime={row.start_time} />
                           </td>
-                          <td style={{ padding: '6px 8px', borderBottom: `1px solid ${PANEL_BORDER}`, minWidth: 160 }}>
+                          <td style={{ padding: '6px 8px', borderBottom: `1px solid ${PANEL_BORDER}` }}>
                             <DropdownField
                               value={row.department_id}
                               options={departments.map(dept => ({ value: dept.id, label: dept.name }))}
@@ -5683,10 +5751,10 @@ export default function OwnerShiftsPage() {
                               disabled={isPast}
                             />
                           </td>
-                          <td style={{ padding: '6px 8px', borderBottom: `1px solid ${PANEL_BORDER}`, minWidth: 180 }}>
+                          <td style={{ padding: '6px 8px', borderBottom: `1px solid ${PANEL_BORDER}` }}>
                             <DropdownField
                               value={row.assigned_user_id}
-                              options={rowMembers.map(m => ({ value: m.id, label: `${m.full_name} · ${m.role}` }))}
+                              options={rowMembers.map(m => ({ value: m.id, label: m.full_name }))}
                               onChange={v => updateBulkEditRow(row.id, { assigned_user_id: v })}
                               placeholder={isPast ? 'Unassigned' : 'Open — needs staffing'}
                               disabled={isPast}
@@ -5718,11 +5786,12 @@ export default function OwnerShiftsPage() {
                     })}
                   </tbody>
                 </table>
+                </div>
+                </div>
               )}
             </div>
 
             <div style={{ padding: '14px 24px 20px', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, borderTop: '1px solid #F3F4F6', flexShrink: 0 }}>
-              <button type="button" onClick={closeBulkEditModal} disabled={bulkEditSaving} style={{ ...secondaryButtonStyle, height: 36 }}>Cancel</button>
               {(() => {
                 const hasEditableRows = bulkEditRows.some(row => row.shift_date >= todayStr)
                 const saveDisabled = bulkEditSaving || !hasEditableRows
@@ -5899,6 +5968,8 @@ const primaryButtonStyle: React.CSSProperties = {
   fontWeight: 600,
   cursor: 'pointer',
 }
+
+const BULK_EDIT_COLUMN_WIDTHS = ['18%', '16%', '16%', '23%', '20%', '7%']
 
 const secondaryButtonStyle: React.CSSProperties = {
   display: 'inline-flex',

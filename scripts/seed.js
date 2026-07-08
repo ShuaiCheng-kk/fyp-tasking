@@ -173,9 +173,19 @@ const TASK_TITLES_BY_DEPT = {
 }
 
 const ANNOUNCEMENT_TEMPLATES = [
-  { title: 'Office closed for public holiday', content: 'Reminder that the office will be closed next week for the public holiday. Please plan your shifts accordingly.' },
-  { title: 'New attendance policy rollout', content: 'Starting this month, clock-in is graced by 10 minutes past shift start. Please review the updated attendance guide.' },
-  { title: 'Town hall this Friday', content: 'Join us this Friday at 3pm for the quarterly town hall. We will be covering company updates and Q&A.' },
+  // authorRole 'owner' -> posted by the Owner (company-wide, shows under "My Announcements" for Owner login)
+  // authorRole 'manager' -> posted by a rotating department manager (shows under "From Others")
+  { title: 'Office closed for public holiday', content: 'Reminder that the office will be closed next week for the public holiday. Please plan your shifts accordingly.', authorRole: 'owner' },
+  { title: 'New attendance policy rollout', content: 'Starting this month, clock-in is graced by 10 minutes past shift start. Please review the updated attendance guide.', authorRole: 'manager' },
+  { title: 'Town hall this Friday', content: 'Join us this Friday at 3pm for the quarterly town hall. We will be covering company updates and Q&A.', authorRole: 'manager' },
+  { title: 'Company all-hands next month', content: 'Mark your calendars — the company all-hands is scheduled for next month. Agenda and dial-in details to follow.', authorRole: 'owner' },
+  { title: 'Updated expense reimbursement policy', content: 'The expense reimbursement policy has been updated effective this month. Please review the new claim limits before submitting.', authorRole: 'owner' },
+  { title: 'Welcome our new hires this quarter', content: 'Please join us in welcoming the new hires who joined this quarter across every department.', authorRole: 'owner' },
+  { title: 'Server maintenance this weekend', content: 'Scheduled server maintenance will occur this weekend. Some internal tools may be briefly unavailable.', authorRole: 'manager' },
+  { title: 'Customer feedback survey results', content: 'The latest customer feedback survey results are in — overall satisfaction is up compared to last quarter.', authorRole: 'manager' },
+  { title: 'New supply vendor onboarded', content: 'We have onboarded a new supply vendor to improve delivery times. Please direct any procurement requests accordingly.', authorRole: 'manager' },
+  { title: 'Reminder: submit timesheets by Friday', content: 'Please make sure all timesheets for this period are submitted by end of day Friday.', authorRole: 'manager' },
+  { title: 'Marketing campaign launch next week', content: 'The new marketing campaign launches next week. Please hold off on conflicting promotions until it wraps up.', authorRole: 'manager' },
 ]
 
 const MESSAGE_TEMPLATES = [
@@ -236,6 +246,11 @@ async function main() {
   const { error: offDayDeadlineErr } = await supabase.from('off_day_submission_deadline').delete().neq('company_id', '00000000-0000-0000-0000-000000000000')
   if (offDayDeadlineErr) console.warn(`  ! clear off_day_submission_deadline failed: ${offDayDeadlineErr.message}`)
   else console.log('  ok clear off_day_submission_deadline')
+  // shift_swap_settings has no `id` column (PK is company_id) and its updated_by FK blocks the
+  // users cleanup below if left in place — must be cleared before users.
+  const { error: swSettingsErr } = await supabase.from('shift_swap_settings').delete().neq('company_id', '00000000-0000-0000-0000-000000000000')
+  if (swSettingsErr) console.warn(`  ⚠ 清空 shift_swap_settings 失败: ${swSettingsErr.message}`)
+  else console.log('  ✓ 清空 shift_swap_settings')
   // Platform admin rows (User Admin / Marketing Admin) are excluded — the protect_admin_accounts
   // DB trigger rejects any attempt to delete them, which would otherwise fail this entire statement.
   const { error: uErr } = await supabase.from('users').delete().neq('id', '00000000-0000-0000-0000-000000000000')
@@ -867,13 +882,21 @@ async function main() {
   console.log('\nStep 13: 生成 Announcements...')
   let announcementCount = 0
   const announcementIds = []
+  let managerAnnCursor = 0
   for (let i = 0; i < ANNOUNCEMENT_TEMPLATES.length; i++) {
     const tpl = ANNOUNCEMENT_TEMPLATES[i]
-    // First announcement is company-wide (Owner), rest are per-department (rotating manager)
-    const isCompanyWide = i === 0
-    const deptIdx = i % deptByIndex.length
-    const fromUserId = isCompanyWide ? ownerUser.id : userIdMap[managersByDept[deptIdx][0]].internalId
-    const departmentId = isCompanyWide ? null : deptByIndex[deptIdx].id
+    const isOwner = tpl.authorRole === 'owner'
+    let fromUserId, departmentId
+    if (isOwner) {
+      fromUserId = ownerUser.id
+      departmentId = null
+    } else {
+      const deptIdx = managerAnnCursor % deptByIndex.length
+      const mgrIdx = Math.floor(managerAnnCursor / deptByIndex.length) % managersByDept[deptIdx].length
+      fromUserId = userIdMap[managersByDept[deptIdx][mgrIdx]].internalId
+      departmentId = deptByIndex[deptIdx].id
+      managerAnnCursor++
+    }
 
     const { data: ann, error: annErr } = await supabase.from('announcements').insert({
       from_user_id: fromUserId,

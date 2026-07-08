@@ -99,13 +99,16 @@ export const shiftRepository = {
     company_id: string,
     from: string,
     to: string,
+    department_id?: string,
   ): Promise<Shift[]> {
-    const { data, error } = await supabase
+    let query = supabase
       .from('shifts')
       .select('*')
       .eq('company_id', company_id)
       .gte('shift_date', from)
       .lte('shift_date', to)
+    if (department_id) query = query.eq('department_id', department_id)
+    const { data, error } = await query
       .order('shift_date', { ascending: true })
       .order('start_time', { ascending: true })
     if (error) throw new Error(error.message)
@@ -119,6 +122,51 @@ export const shiftRepository = {
       .eq('id', id)
       .single()
     return (data as Shift) ?? null
+  },
+
+  async getShiftsByIds(ids: string[]): Promise<Shift[]> {
+    if (ids.length === 0) return []
+    const { data, error } = await supabase
+      .from('shifts')
+      .select('*')
+      .in('id', ids)
+    if (error) throw new Error(error.message)
+    return (data ?? []) as Shift[]
+  },
+
+  async upsertShifts(shifts: Shift[]): Promise<Shift[]> {
+    if (shifts.length === 0) return []
+    const { data, error } = await supabase
+      .from('shifts')
+      .upsert(shifts, { onConflict: 'id' })
+      .select()
+    if (error) throw new Error(error.message)
+    return (data ?? []) as Shift[]
+  },
+
+  async restoreShifts(shifts: Shift[]): Promise<Shift[]> {
+    if (shifts.length === 0) return []
+    const { data, error } = await supabase
+      .from('shifts')
+      .insert(shifts)
+      .select()
+    if (error) throw new Error(error.message)
+    return (data ?? []) as Shift[]
+  },
+
+  async deleteShiftsByIds(ids: string[]): Promise<void> {
+    if (ids.length === 0) return
+    const { error } = await supabase.from('shifts').delete().in('id', ids)
+    if (error) throw new Error(error.message)
+  },
+
+  async updatePublicationStatusByIds(ids: string[], publication_status: 'draft' | 'published'): Promise<void> {
+    if (ids.length === 0) return
+    const { error } = await supabase
+      .from('shifts')
+      .update({ publication_status })
+      .in('id', ids)
+    if (error) throw new Error(error.message)
   },
 
   async updateShift(
@@ -140,14 +188,16 @@ export const shiftRepository = {
     date_from: string
     date_to: string
     publication_status: 'draft' | 'published'
+    department_id?: string
   }): Promise<Shift[]> {
-    const { data, error } = await supabase
+    let query = supabase
       .from('shifts')
       .update({ publication_status: input.publication_status })
       .eq('company_id', input.company_id)
       .gte('shift_date', input.date_from)
       .lte('shift_date', input.date_to)
-      .select()
+    if (input.department_id) query = query.eq('department_id', input.department_id)
+    const { data, error } = await query.select()
     if (error) throw new Error(error.message)
     return (data ?? []) as Shift[]
   },
@@ -162,6 +212,15 @@ export const shiftRepository = {
       .from('shift_assignments')
       .delete()
       .eq('shift_id', shift_id)
+    if (error) throw new Error(error.message)
+  },
+
+  async deleteAssignmentsByShiftIds(shift_ids: string[]): Promise<void> {
+    if (shift_ids.length === 0) return
+    const { error } = await supabase
+      .from('shift_assignments')
+      .delete()
+      .in('shift_id', shift_ids)
     if (error) throw new Error(error.message)
   },
 

@@ -15,7 +15,7 @@ import {
   Plus, X, Trash2, Pencil, Megaphone,
   Send, Search, SquarePen, Check, Bell, MessageSquare, Crown,
   Users, Globe, UserCog, UserRound, Pin, PinOff,
-  ImagePlus, Paperclip, FileText, Download, ChevronDown,
+  ImagePlus, Paperclip, FileText, Download, ChevronDown, Filter,
 } from 'lucide-react'
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
@@ -30,7 +30,12 @@ type Announcement = {
   title: string
   content: string
   created_at: string
+  updated_at?: string | null
   created_by_name?: string | null
+  created_by_photo_url?: string | null
+  poster_role?: string | null
+  poster_department_id?: string | null
+  poster_department_name?: string | null
 }
 
 type CompanyMember = { id: string; full_name: string; role: string; profile_photo_url?: string | null }
@@ -91,10 +96,32 @@ function formatTime(iso: string) {
   const d = new Date(iso)
   const now = new Date()
   const diff = now.getTime() - d.getTime()
-  if (diff < 60000) return 'just now'
+  if (diff < 60000) return 'Just Now'
   if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`
   if (diff < 86400000) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+}
+
+// Like formatTime, but once it falls back to a plain date it also appends the
+// post time — used where the exact time an announcement went out matters.
+function formatDateWithTime(iso: string) {
+  const d = new Date(iso)
+  const now = new Date()
+  const diff = now.getTime() - d.getTime()
+  if (diff < 60000) return 'Just Now'
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  if (diff < 86400000) return time
+  const day = String(d.getDate()).padStart(2, '0')
+  const month = d.toLocaleDateString([], { month: 'short' })
+  return `${day} ${month}, ${time}`
+}
+
+// Announcements only ever get `updated_at` set by an edit (never on insert),
+// so its presence means "this was edited" — show that instead of the post time.
+function formatAnnouncementTimestamp(ann: { created_at: string; updated_at?: string | null }) {
+  if (ann.updated_at) return `Edited ${formatDateWithTime(ann.updated_at)}`
+  return formatDateWithTime(ann.created_at)
 }
 
 function getReadIdsKey(companyId: string, userId: string) {
@@ -259,6 +286,10 @@ export default function OwnerCommunicationPage() {
   const [selectedAnn, setSelectedAnn] = useState<Announcement | null>(null)
   const [readIds, setReadIds] = useState<Set<string>>(new Set())
   const [annSearch, setAnnSearch] = useState('')
+  const [othersSearch, setOthersSearch] = useState('')
+  const [othersDeptFilter, setOthersDeptFilter] = useState<string>('all')
+  const [othersDeptFilterOpen, setOthersDeptFilterOpen] = useState(false)
+  const othersDeptFilterRef = useRef<HTMLDivElement>(null)
 
   const [showNewAnnModal, setShowNewAnnModal] = useState(false)
   const [annTitle, setAnnTitle] = useState('')
@@ -282,7 +313,6 @@ export default function OwnerCommunicationPage() {
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set())
   const [search, setSearch] = useState('')
   const [deletingConvId, setDeletingConvId] = useState<string | null>(null)
-  const [confirmDeleteConvId, setConfirmDeleteConvId] = useState<string | null>(null)
 
   // Multi-panel chat state (up to 4 panels)
   const [openPanelIds, setOpenPanelIds] = useState<string[]>([])
@@ -297,6 +327,8 @@ export default function OwnerCommunicationPage() {
   const panelPhotoRefs = useRef<Record<string, HTMLInputElement | null>>({})
   const panelFileRefs = useRef<Record<string, HTMLInputElement | null>>({})
   const panelEndRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const panelContainerRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const panelPrevRects = useRef<Record<string, DOMRect>>({})
 
   const [msgSubTab, setMsgSubTab] = useState<'messages' | 'invites'>('messages')
   // kept for backward compat (pendingPartnerId flow)
@@ -368,6 +400,13 @@ export default function OwnerCommunicationPage() {
         .catch(() => {})
     }
   }, [companyId])
+
+  useEffect(() => {
+    if (!othersDeptFilterOpen) return
+    const handler = (e: MouseEvent) => { if (!othersDeptFilterRef.current?.contains(e.target as Node)) setOthersDeptFilterOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [othersDeptFilterOpen])
 
   const fetchUnreadCount = useCallback(() => {
     if (!internalUserId || !companyId) return
@@ -512,6 +551,31 @@ export default function OwnerCommunicationPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [panelMessages])
 
+  // FLIP: after panels reorder (swap), slide each one from its previous
+  // screen position into its new one instead of snapping instantly.
+  useLayoutEffect(() => {
+    const prevRects = panelPrevRects.current
+    if (Object.keys(prevRects).length === 0) return
+    for (const id of openPanelIds) {
+      const el = panelContainerRefs.current[id]
+      const prev = prevRects[id]
+      if (!el || !prev) continue
+      const next = el.getBoundingClientRect()
+      const dx = prev.left - next.left
+      const dy = prev.top - next.top
+      if (!dx && !dy) continue
+      el.style.transition = 'none'
+      el.style.transform = `translate(${dx}px, ${dy}px)`
+      // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+      el.getBoundingClientRect() // force reflow before releasing the transition
+      requestAnimationFrame(() => {
+        el.style.transition = 'transform 0.28s cubic-bezier(0.22, 1, 0.36, 1)'
+        el.style.transform = ''
+      })
+    }
+    panelPrevRects.current = {}
+  }, [openPanelIds])
+
   useEffect(() => {
     if (!internalUserId) return
     const channel = supabase
@@ -655,7 +719,7 @@ export default function OwnerCommunicationPage() {
       if (!data.success) throw new Error(data.error ?? 'Failed to save')
       setShowEditModal(false)
       fetchAnnouncements()
-      setSelectedAnn(prev => prev ? { ...prev, title: editTitle, content: editContent, department_id: deptId } : prev)
+      setSelectedAnn(prev => prev ? { ...prev, title: editTitle, content: editContent, department_id: deptId, updated_at: new Date().toISOString() } : prev)
       showSuccessToast('Announcement updated')
     } catch (err: unknown) {
       setEditError(err instanceof Error ? err.message : 'An error occurred')
@@ -717,6 +781,7 @@ export default function OwnerCommunicationPage() {
   // step, since the recipient may just want to send a photo/file rather than text.
   function selectComposeRecipient(member: CompanyMember) {
     setComposeOpen(false)
+    replaceOpenPanels(member.id)
     setConversations(prev => {
       if (prev.some(c => c.partnerId === member.id)) return prev
       const placeholder: Conversation = {
@@ -729,11 +794,37 @@ export default function OwnerCommunicationPage() {
       }
       return [placeholder, ...prev]
     })
-    openPanel(member.id)
+    if (!panelMessages[member.id]) fetchPanelMessages(member.id)
   }
 
   // ── Panel management ──────────────────────────────────────────────────────────
 
+  // Replace whatever panels were open with just `keepId`, in one atomic update —
+  // no intermediate frame where the old panel and the new one are both/neither present.
+  function replaceOpenPanels(keepId: string) {
+    const closedIds = openPanelIds.filter(id => id !== keepId)
+    if (closedIds.length > 0) {
+      setPanelMessages(prev => { const n = { ...prev }; closedIds.forEach(id => delete n[id]); return n })
+      setPanelInputs(prev => { const n = { ...prev }; closedIds.forEach(id => delete n[id]); return n })
+      setPanelSending(prev => { const n = { ...prev }; closedIds.forEach(id => delete n[id]); return n })
+      setPanelAttachFiles(prev => { const n = { ...prev }; closedIds.forEach(id => delete n[id]); return n })
+      setPanelAttachPreviews(prev => { const n = { ...prev }; closedIds.forEach(id => delete n[id]); return n })
+      setPanelUploading(prev => { const n = { ...prev }; closedIds.forEach(id => delete n[id]); return n })
+    }
+    setOpenPanelIds([keepId])
+    if (!panelMessages[keepId]) fetchPanelMessages(keepId)
+  }
+
+  // Clicking a conversation always shows it full-screen (replaces whatever's open).
+  // Side-by-side split is only triggered by explicitly dragging a conversation
+  // onto an already-open panel — see the drop handlers below.
+  function openPanelSolo(partnerId: string) {
+    if (openPanelIds.length === 1 && openPanelIds[0] === partnerId) return
+    replaceOpenPanels(partnerId)
+  }
+
+  // Appends `partnerId` alongside whatever panels are already open (up to 4) —
+  // used only by the drag-to-split interaction, never by a plain click.
   function openPanel(partnerId: string) {
     setOpenPanelIds(prev => {
       if (prev.includes(partnerId)) return prev // already open
@@ -754,6 +845,17 @@ export default function OwnerCommunicationPage() {
     setPanelAttachFiles(prev => { const n = { ...prev }; delete n[partnerId]; return n })
     setPanelAttachPreviews(prev => { const n = { ...prev }; delete n[partnerId]; return n })
     setPanelUploading(prev => { const n = { ...prev }; delete n[partnerId]; return n })
+  }
+
+  // Closing the "X" button: if this conversation never had a message sent
+  // (a compose placeholder that was never used), drop it from the sidebar
+  // too — it was never a real conversation, just local scaffolding.
+  function handleClosePanel(partnerId: string) {
+    const conv = conversations.find(c => c.partnerId === partnerId)
+    if (conv && conv.lastMessage === '') {
+      setConversations(prev => prev.filter(c => c.partnerId !== partnerId))
+    }
+    closePanel(partnerId)
   }
 
   async function deleteConversation(partnerId: string) {
@@ -777,11 +879,16 @@ export default function OwnerCommunicationPage() {
       showErrorToast(err instanceof Error ? err.message : 'Failed to delete conversation')
     } finally {
       setDeletingConvId(null)
-      setConfirmDeleteConvId(null)
     }
   }
 
   function swapPanels(idA: string, idB: string) {
+    // Capture pre-swap positions so the layout effect below can FLIP-animate
+    // each panel sliding from its old spot into its new one.
+    openPanelIds.forEach(id => {
+      const el = panelContainerRefs.current[id]
+      if (el) panelPrevRects.current[id] = el.getBoundingClientRect()
+    })
     setOpenPanelIds(prev => {
       const next = [...prev]
       const iA = next.indexOf(idA)
@@ -904,13 +1011,80 @@ export default function OwnerCommunicationPage() {
     ? companyMembers.filter(m => m.full_name.toLowerCase().includes(composeSearch.toLowerCase()))
     : companyMembers
 
+  function matchesAnnSearch(ann: Announcement, term: string) {
+    return ann.title.toLowerCase().includes(term.toLowerCase()) ||
+      ann.content.toLowerCase().includes(term.toLowerCase()) ||
+      (ann.created_by_name ?? '').toLowerCase().includes(term.toLowerCase())
+  }
+
   const filteredAnnouncements = annSearch
-    ? announcements.filter(ann =>
-        ann.title.toLowerCase().includes(annSearch.toLowerCase()) ||
-        ann.content.toLowerCase().includes(annSearch.toLowerCase()) ||
-        (ann.created_by_name ?? '').toLowerCase().includes(annSearch.toLowerCase()),
-      )
+    ? announcements.filter(ann => matchesAnnSearch(ann, annSearch))
     : announcements
+
+  const myAnnouncements = filteredAnnouncements.filter(ann => ann.from_user_id === internalUserId)
+
+  const othersAnnouncements = announcements
+    .filter(ann => ann.from_user_id !== internalUserId)
+    .filter(ann => !othersSearch || matchesAnnSearch(ann, othersSearch))
+    .filter(ann => othersDeptFilter === 'all' || ann.poster_department_id === othersDeptFilter)
+
+  function renderAnnouncementCard(ann: Announcement, i: number, showAudience: boolean) {
+    const unread = !readIds.has(ann.id)
+    const selected = selectedAnn?.id === ann.id
+    const deptName = ann.department_id ? (departments.find(d => d.id === ann.department_id)?.name ?? 'Dept') : null
+    const isMine = ann.from_user_id === internalUserId
+    return (
+      <div
+        key={ann.id}
+        className="comm-ann-card"
+        onClick={() => handleSelectAnn(ann)}
+        style={{
+          display: 'flex', flexDirection: 'column', gap: 12, padding: '14px 16px 18px',
+          background: selected ? '#FFF7ED' : '#FFFFFF',
+          border: selected ? '1.5px solid rgba(249,115,22,0.35)' : '1.5px solid #EDF2F7',
+          borderRadius: 12, cursor: 'pointer', width: '100%', marginBottom: 8,
+          boxShadow: selected ? '0 6px 18px rgba(249,115,22,0.08)' : '0 1px 3px rgba(0,0,0,0.03)',
+          animationDelay: `${i * 0.04}s`,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          {showAudience
+            ? <DepartmentBadge departmentId={ann.department_id} departmentName={deptName} fallbackIcon={<Globe size={9} />} />
+            : <DepartmentBadge departmentId={ann.poster_department_id} departmentName={ann.poster_department_name} fallbackLabel="Owner/Partner" fallbackIcon={<Globe size={9} />} />}
+          <span style={{ fontSize: 11.5, color: '#9CA3AF', fontWeight: 500, flexShrink: 0 }}>{formatAnnouncementTimestamp(ann)}</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <span style={{ fontWeight: unread ? 800 : 600, fontSize: 13, lineHeight: '15px', color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>
+            {ann.title}
+          </span>
+          {isMine && (
+            <div style={{ display: 'flex', gap: 4, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+              <button
+                type="button"
+                onClick={() => handleOpenEdit(ann)}
+                title="Edit announcement"
+                style={{ border: 'none', background: 'transparent', color: '#6B7280', cursor: 'pointer', display: 'flex', padding: 6, borderRadius: 6 }}
+                onMouseEnter={e => { e.currentTarget.style.color = '#F97316'; e.currentTarget.style.background = '#FFF7ED' }}
+                onMouseLeave={e => { e.currentTarget.style.color = '#6B7280'; e.currentTarget.style.background = 'transparent' }}
+              >
+                <Pencil size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmId(ann.id)}
+                title="Delete announcement"
+                style={{ border: 'none', background: 'transparent', color: '#DC2626', cursor: 'pointer', display: 'flex', padding: 6, borderRadius: 6 }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#FEE2E2' }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   // ─── Render ────────────────────────────────────────────────────────────────
 
@@ -1064,37 +1238,37 @@ export default function OwnerCommunicationPage() {
           </div>
         </div>
 
-        {/* Content panel */}
+        {/* Content panel — each block (list, chat/detail area) is its own separate card;
+            no shared outer card wrapping them, matching the Shifts/Team page pattern. */}
         <div style={{ padding: '0 28px 28px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
-          <div style={{ background: '#FFFFFF', borderRadius: 16, border: '1px solid #E5E7EB', boxShadow: '0 1px 6px rgba(0,0,0,0.06)', flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
 
         {/* Main communication panel */}
         <section style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
           {/* ── Chat tab ── */}
           {activeTab === 'chat' && (
-            <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '300px minmax(0, 1fr)', gap: 12, overflow: 'hidden', padding: 12 }}>
+            <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '340px minmax(0, 1fr)', gap: 12, overflow: 'hidden' }}>
 
-              {/* Left: conversations — own card */}
-              <div style={{ minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+              {/* Left: conversations — own card, sized to fit its content (not stretched full height) */}
+              <div style={{ alignSelf: 'start', maxHeight: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
                 <div style={{ padding: '10px 12px 0', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div style={{ flex: 1, minWidth: 0, height: 36, display: 'flex', alignItems: 'center', gap: 8, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 9, padding: '0 11px' }}>
-                    <Search size={13} color="#94A3B8" />
+                  <div style={{ flex: 1, minWidth: 0, height: 44, display: 'flex', alignItems: 'center', gap: 8, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 10, padding: '0 13px' }}>
+                    <Search size={15} color="#94A3B8" />
                     <input
                       value={search} onChange={e => setSearch(e.target.value)}
                       placeholder="Search conversations..."
-                      style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: 12, color: '#0F172A', fontWeight: 500 }}
+                      style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: 13, color: '#0F172A', fontWeight: 500 }}
                     />
                   </div>
                   <button onClick={openCompose} disabled={!communicationReady} title="New message"
                     className={communicationReady ? 'comm-action-btn' : ''}
-                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, background: communicationReady ? '#F97316' : '#E5E7EB', border: 'none', borderRadius: 9, color: communicationReady ? '#fff' : '#9CA3AF', cursor: communicationReady ? 'pointer' : 'not-allowed', flexShrink: 0 }}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 44, height: 44, background: communicationReady ? '#F97316' : '#E5E7EB', border: 'none', borderRadius: 10, color: communicationReady ? '#fff' : '#9CA3AF', cursor: communicationReady ? 'pointer' : 'not-allowed', flexShrink: 0 }}
                   >
-                    <SquarePen size={16} strokeWidth={2.5} />
+                    <SquarePen size={18} strokeWidth={2.5} />
                   </button>
                 </div>
 
-                <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, padding: 10 }}>
+                <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, padding: '14px 10px 10px' }}>
                     {filteredConversations.length === 0 ? (
                       <div style={{ height: 180, borderRadius: 12, background: '#F8FAFC', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 8, fontWeight: 600, fontSize: 13 }}>
                         <MessageSquare size={26} strokeWidth={1.5} />
@@ -1104,61 +1278,66 @@ export default function OwnerCommunicationPage() {
                       const active = openPanelIds.includes(conv.partnerId)
                       const isPinned = pinnedIds.has(conv.partnerId)
                       // clean up preview text for attachments
-                      const previewText = conv.lastMessage.startsWith('[image:]') ? '📷 Photo'
-                        : conv.lastMessage.match(/^\[file:(.+?)\]/) ? `📎 ${conv.lastMessage.match(/^\[file:(.+?)\]/)![1]}`
-                        : conv.lastMessage
+                      const fileMatch = conv.lastMessage.match(/^\[file:(.+?)\]/)
+                      const isImagePreview = conv.lastMessage.startsWith('[image:]')
+                      const previewText = isImagePreview ? 'Photo' : fileMatch ? fileMatch[1] : conv.lastMessage
                       return (
                         <div
                           key={conv.partnerId}
                           className="comm-conv-card"
+                          draggable
+                          onDragStart={e => { e.dataTransfer.setData('listPartnerId', conv.partnerId) }}
+                          title="Drag onto an open conversation to view side by side"
                           style={{
-                            display: 'flex', alignItems: 'center', gap: 10, padding: '10px 10px',
-                            background: active ? '#FFF7ED' : 'transparent',
-                            border: 'none',
-                            borderRadius: 10, cursor: 'pointer', textAlign: 'left', width: '100%', marginBottom: 2,
+                            position: 'relative',
+                            display: 'flex', alignItems: 'center', gap: 10, padding: '12px 54px 12px 12px',
+                            background: active ? '#FFF7ED' : '#FFFFFF',
+                            border: active ? '1.5px solid rgba(249,115,22,0.35)' : '1.5px solid #EDF2F7',
+                            borderRadius: 12, cursor: 'grab', textAlign: 'left', width: '100%', marginBottom: 14,
+                            boxShadow: active ? '0 6px 18px rgba(249,115,22,0.08)' : '0 1px 3px rgba(0,0,0,0.03)',
                             animationDelay: `${i * 0.04}s`,
                           }}
                         >
-                          <button onClick={() => openPanel(conv.partnerId)} style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: 0 }}>
+                          <button onClick={() => openPanelSolo(conv.partnerId)} style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: 0 }}>
                             <Avatar name={conv.partnerName} size={40} role={conv.partnerRole} photoUrl={companyMembers.find(m => m.id === conv.partnerId)?.profile_photo_url ?? null} />
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
-                                  <span style={{ fontWeight: conv.unreadCount > 0 ? 800 : 600, fontSize: 13, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  <span style={{ fontWeight: conv.unreadCount > 0 ? 800 : 600, fontSize: 13.5, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                     {conv.partnerName}
                                   </span>
                                   {isPinned && (
-                                    <Pin size={10} strokeWidth={2.5} style={{ color: '#F97316', flexShrink: 0 }} />
+                                    <Pin size={12} strokeWidth={2.5} style={{ color: '#F97316', flexShrink: 0 }} />
                                   )}
                                   {conv.partnerDeleted && (
                                     <span style={{ background: '#F1F5F9', color: '#6B7280', fontSize: 10, padding: '1px 6px', borderRadius: 999, flexShrink: 0, fontWeight: 700 }}>removed</span>
                                   )}
                                 </div>
                               </div>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                                <span style={{ fontSize: 12, color: conv.unreadCount > 0 ? '#374151' : '#9CA3AF', fontWeight: conv.unreadCount > 0 ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                                  {previewText}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 3 }}>
+                                <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, color: conv.unreadCount > 0 ? '#374151' : '#9CA3AF', fontWeight: conv.unreadCount > 0 ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                                  {isImagePreview ? <ImagePlus size={12} strokeWidth={2} style={{ flexShrink: 0 }} /> : fileMatch ? <FileText size={12} strokeWidth={2} style={{ flexShrink: 0 }} /> : null}
+                                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{previewText}</span>
                                 </span>
                                 {conv.unreadCount > 0 && (
-                                  <div style={{ minWidth: 18, height: 18, borderRadius: 999, background: '#F97316', color: '#fff', fontSize: 10, fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px', flexShrink: 0 }}>
+                                  <div style={{ minWidth: 20, height: 20, borderRadius: 999, background: '#F97316', color: '#fff', fontSize: 11, fontWeight: 900, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 5px', flexShrink: 0 }}>
                                     {conv.unreadCount}
                                   </div>
                                 )}
                               </div>
                             </div>
                           </button>
-                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0, alignSelf: 'flex-start' }}>
-                            <span style={{ fontSize: 10.5, color: '#9CA3AF', fontWeight: 500 }}>{formatTime(conv.lastTime)}</span>
-                            <button
-                              onClick={() => setConfirmDeleteConvId(conv.partnerId)}
-                              title="Delete conversation"
-                              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, background: 'none', border: 'none', borderRadius: 6, cursor: 'pointer', color: '#CBD5E1', transition: 'color 0.15s' }}
-                              onMouseEnter={e => { e.currentTarget.style.color = '#DC2626' }}
-                              onMouseLeave={e => { e.currentTarget.style.color = '#CBD5E1' }}
-                            >
-                              <Trash2 size={13} strokeWidth={2} />
-                            </button>
-                          </div>
+                          <span style={{ position: 'absolute', top: 10, right: 12, fontSize: 11.5, color: '#9CA3AF', fontWeight: 500 }}>{formatTime(conv.lastTime)}</span>
+                          <button
+                            onClick={() => deleteConversation(conv.partnerId)}
+                            title="Delete conversation"
+                            disabled={deletingConvId === conv.partnerId}
+                            style={{ position: 'absolute', bottom: 10, right: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, background: 'none', border: 'none', borderRadius: 7, cursor: 'pointer', color: '#DC2626', transition: 'color 0.15s' }}
+                            onMouseEnter={e => { e.currentTarget.style.color = '#B91C1C' }}
+                            onMouseLeave={e => { e.currentTarget.style.color = '#DC2626' }}
+                          >
+                            {deletingConvId === conv.partnerId ? <Spinner size={12} /> : <Trash2 size={14} strokeWidth={2} />}
+                          </button>
                         </div>
                       )
                     })}
@@ -1169,13 +1348,20 @@ export default function OwnerCommunicationPage() {
               <div style={{ minWidth: 0, minHeight: 0, flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                 {openPanelIds.length === 0 ? (
                   /* Empty state */
-                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
+                  <div
+                    onDragOver={e => e.preventDefault()}
+                    onDrop={e => {
+                      e.preventDefault()
+                      const draggedListId = e.dataTransfer.getData('listPartnerId')
+                      if (draggedListId) openPanel(draggedListId)
+                    }}
+                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
                     <div style={{ textAlign: 'center', color: '#94A3B8' }}>
                       <div style={{ width: 56, height: 56, borderRadius: 18, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px', color: '#F97316' }}>
                         <MessageSquare size={24} strokeWidth={1.5} />
                       </div>
                       <p style={{ margin: 0, fontWeight: 700, fontSize: 14, color: '#374151' }}>Select a conversation to start chatting</p>
-                      <p style={{ margin: '6px 0 0', fontSize: 12, color: '#9CA3AF', fontWeight: 500 }}>You can open up to 4 conversations side by side</p>
+                      <p style={{ margin: '6px 0 0', fontSize: 12, color: '#9CA3AF', fontWeight: 500 }}>Drag a conversation onto an open one to view up to 4 side by side</p>
                     </div>
                   </div>
                 ) : (
@@ -1209,30 +1395,35 @@ export default function OwnerCommunicationPage() {
                       return (
                         <div
                           key={partnerId}
+                          ref={el => { panelContainerRefs.current[partnerId] = el }}
                           style={{
                             ...spanStyle,
                             display: 'flex', flexDirection: 'column', overflow: 'hidden',
                             background: '#FFFFFF', borderRadius: 14,
                             border: dragOver === partnerId ? '2px dashed #F97316' : '1px solid #E5E7EB',
                             boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
-                            transition: 'border-color 0.15s',
+                            opacity: draggingPanel === partnerId ? 0.45 : 1,
+                            transform: dragOver === partnerId ? 'scale(1.015)' : 'scale(1)',
+                            transition: 'border-color 0.15s, opacity 0.15s, transform 0.15s',
                           }}
                           onDragOver={e => { e.preventDefault(); setDragOver(partnerId) }}
                           onDragLeave={() => setDragOver(null)}
                           onDrop={e => {
                             e.preventDefault()
                             setDragOver(null)
-                            const draggedId = e.dataTransfer.getData('panelId')
-                            if (draggedId && draggedId !== partnerId) swapPanels(draggedId, partnerId)
+                            const draggedPanelId = e.dataTransfer.getData('panelId')
+                            const draggedListId = e.dataTransfer.getData('listPartnerId')
+                            if (draggedPanelId && draggedPanelId !== partnerId) swapPanels(draggedPanelId, partnerId)
+                            else if (draggedListId && draggedListId !== partnerId) openPanel(draggedListId)
                             setDraggingPanel(null)
                           }}
                         >
-                          {/* Panel header */}
+                          {/* Panel header — floating card */}
                           <div
                             draggable
                             onDragStart={e => { e.dataTransfer.setData('panelId', partnerId); setDraggingPanel(partnerId) }}
                             onDragEnd={() => setDraggingPanel(null)}
-                            style={{ padding: '14px 16px 0', background: '#FFFFFF', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, cursor: openPanelIds.length > 1 ? 'grab' : 'default', userSelect: 'none' }}
+                            style={{ width: '92%', margin: '12px auto 0', padding: '10px 12px', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, cursor: openPanelIds.length > 1 ? 'grab' : 'default', userSelect: 'none' }}
                             title={openPanelIds.length > 1 ? 'Drag to swap panels' : undefined}
                           >
                             <Avatar name={conv.partnerName} size={38} role={conv.partnerRole} photoUrl={companyMembers.find(m => m.id === conv.partnerId)?.profile_photo_url ?? null} />
@@ -1247,25 +1438,26 @@ export default function OwnerCommunicationPage() {
                             <button
                               onClick={() => togglePin(partnerId)}
                               title={isPinned ? 'Unpin' : 'Pin'}
-                              style={{ flexShrink: 0, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', background: isPinned ? '#FFF7ED' : '#F8FAFC', border: isPinned ? '1.5px solid rgba(249,115,22,0.35)' : '1.5px solid #E2E8F0', borderRadius: 9, cursor: 'pointer', color: isPinned ? '#F97316' : '#94A3B8', transition: 'all 0.15s' }}
-                              onMouseEnter={e => { if (!isPinned) { e.currentTarget.style.background = '#FFF7ED'; e.currentTarget.style.color = '#F97316' } }}
-                              onMouseLeave={e => { if (!isPinned) { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.color = '#94A3B8' } }}
+                              style={{ flexShrink: 0, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FFF7ED', border: isPinned ? '1.5px solid rgba(249,115,22,0.45)' : '1.5px solid rgba(249,115,22,0.25)', borderRadius: 9, cursor: 'pointer', color: '#F97316', transition: 'all 0.15s' }}
+                              onMouseEnter={e => { e.currentTarget.style.background = '#FFEDD5'; e.currentTarget.style.borderColor = 'rgba(249,115,22,0.55)' }}
+                              onMouseLeave={e => { e.currentTarget.style.background = '#FFF7ED'; e.currentTarget.style.borderColor = isPinned ? 'rgba(249,115,22,0.45)' : 'rgba(249,115,22,0.25)' }}
                             >
                               {isPinned ? <PinOff size={15} strokeWidth={2.5} /> : <Pin size={15} strokeWidth={2.5} />}
                             </button>
                             {/* Delete button */}
                             <button
-                              onClick={() => setConfirmDeleteConvId(partnerId)}
+                              onClick={() => deleteConversation(partnerId)}
                               title="Delete conversation"
-                              style={{ flexShrink: 0, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: 9, cursor: 'pointer', color: '#94A3B8', transition: 'all 0.15s' }}
-                              onMouseEnter={e => { e.currentTarget.style.background = '#FEF2F2'; e.currentTarget.style.color = '#DC2626'; e.currentTarget.style.borderColor = 'rgba(220,38,38,0.3)' }}
-                              onMouseLeave={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.color = '#94A3B8'; e.currentTarget.style.borderColor = '#E2E8F0' }}
+                              disabled={deletingConvId === partnerId}
+                              style={{ flexShrink: 0, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FEF2F2', border: '1.5px solid rgba(220,38,38,0.3)', borderRadius: 9, cursor: 'pointer', color: '#DC2626', transition: 'all 0.15s' }}
+                              onMouseEnter={e => { e.currentTarget.style.background = '#FEE2E2'; e.currentTarget.style.color = '#B91C1C'; e.currentTarget.style.borderColor = 'rgba(220,38,38,0.45)' }}
+                              onMouseLeave={e => { e.currentTarget.style.background = '#FEF2F2'; e.currentTarget.style.color = '#DC2626'; e.currentTarget.style.borderColor = 'rgba(220,38,38,0.3)' }}
                             >
-                              <Trash2 size={15} strokeWidth={2.5} />
+                              {deletingConvId === partnerId ? <Spinner size={13} /> : <Trash2 size={15} strokeWidth={2.5} />}
                             </button>
                             {/* Close button */}
                             <button
-                              onClick={() => closePanel(partnerId)}
+                              onClick={() => handleClosePanel(partnerId)}
                               title="Close"
                               style={{ flexShrink: 0, width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: 9, cursor: 'pointer', color: '#94A3B8', transition: 'all 0.15s' }}
                               onMouseEnter={e => { e.currentTarget.style.background = '#FEF2F2'; e.currentTarget.style.color = '#DC2626'; e.currentTarget.style.borderColor = 'rgba(220,38,38,0.3)' }}
@@ -1274,11 +1466,16 @@ export default function OwnerCommunicationPage() {
                               <X size={15} strokeWidth={2.5} />
                             </button>
                           </div>
-                          {/* Divider */}
-                          <div style={{ height: 1, background: '#111827', margin: '10px 0 0', flexShrink: 0 }} />
-
-                          {/* Messages */}
+                          {/* Messages — floating card, same width as the header/footer cards */}
+                          <div style={{ flex: 1, minHeight: 0, width: '92%', margin: '10px auto', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 7 }}>
+                            {msgs.length === 0 && (
+                              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+                                <Avatar name={conv.partnerName} size={64} role={conv.partnerRole} photoUrl={companyMembers.find(m => m.id === conv.partnerId)?.profile_photo_url ?? null} />
+                                <p style={{ margin: '16px 0 0', fontWeight: 700, fontSize: 15, color: '#374151' }}>No messages yet</p>
+                                <p style={{ margin: '5px 0 0', fontSize: 12.5, color: '#9CA3AF', fontWeight: 500 }}>Send a message to start chatting with {conv.partnerName}</p>
+                              </div>
+                            )}
                             {msgs.map(msg => {
                               const isMine = msg.from_user_id === internalUserId
                               const isImage = msg.content.startsWith('[image:]')
@@ -1295,10 +1492,10 @@ export default function OwnerCommunicationPage() {
                                       <a href={imgUrl} target="_blank" rel="noopener noreferrer" style={{ display: 'block', borderRadius: isMine ? '12px 12px 3px 12px' : '12px 12px 12px 3px', overflow: 'hidden', border: '1px solid #E2E8F0' }}>
                                         <img src={imgUrl} alt="attachment" style={{ display: 'block', maxWidth: '100%', maxHeight: 180, objectFit: 'cover' }} />
                                       </a>
-                                      <span style={{ fontSize: 10, color: '#94A3B8', fontWeight: 600 }}>{formatTime(msg.created_at)}</span>
+                                      <span style={{ fontSize: 11, color: '#94A3B8', fontWeight: 500 }}>{formatTime(msg.created_at)}</span>
                                     </div>
                                   ) : isFile && fileUrl ? (
-                                    <div style={{ maxWidth: '70%', padding: '8px 11px', borderRadius: isMine ? '13px 13px 3px 13px' : '13px 13px 13px 3px', background: isMine ? '#DBEAFE' : '#FFFFFF', border: isMine ? '1px solid #BFDBFE' : '1px solid #EDF2F7', boxShadow: '0 1px 4px rgba(15,23,42,0.04)' }}>
+                                    <div style={{ maxWidth: '70%', padding: '8px 11px', borderRadius: isMine ? '13px 13px 3px 13px' : '13px 13px 13px 3px', background: isMine ? '#FFEDD5' : '#FFFFFF', border: isMine ? '1px solid #FED7AA' : '1px solid #EDF2F7', boxShadow: '0 1px 4px rgba(15,23,42,0.04)' }}>
                                       <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                                         <div style={{ width: 30, height: 30, borderRadius: 8, background: '#EFF6FF', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}><FileText size={14} color="#3B82F6" /></div>
                                         <div style={{ minWidth: 0, flex: 1 }}>
@@ -1306,12 +1503,12 @@ export default function OwnerCommunicationPage() {
                                           <a href={fileUrl} target="_blank" rel="noopener noreferrer" download={fileName ?? true} style={{ fontSize: 10.5, color: '#3B82F6', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 2, marginTop: 1, textDecoration: 'none' }}><Download size={9} /> Download</a>
                                         </div>
                                       </div>
-                                      <div style={{ fontSize: 10, marginTop: 4, color: '#94A3B8', fontWeight: 600, textAlign: isMine ? 'right' : 'left' }}>{formatTime(msg.created_at)}</div>
+                                      <div style={{ fontSize: 11, marginTop: 4, color: '#94A3B8', fontWeight: 500, textAlign: isMine ? 'right' : 'left' }}>{formatTime(msg.created_at)}</div>
                                     </div>
                                   ) : (
-                                    <div style={{ maxWidth: '70%', padding: '8px 11px', borderRadius: isMine ? '13px 13px 3px 13px' : '13px 13px 13px 3px', background: isMine ? '#DBEAFE' : '#FFFFFF', border: isMine ? '1px solid #BFDBFE' : '1px solid #EDF2F7', color: '#0F172A', fontSize: 12.5, fontWeight: 500, lineHeight: 1.5, boxShadow: '0 1px 4px rgba(15,23,42,0.04)' }}>
+                                    <div style={{ maxWidth: '70%', padding: '8px 11px', borderRadius: isMine ? '13px 13px 3px 13px' : '13px 13px 13px 3px', background: isMine ? '#FFEDD5' : '#FFFFFF', border: isMine ? '1px solid #FED7AA' : '1px solid #EDF2F7', color: '#0F172A', fontSize: 15, fontWeight: 500, lineHeight: 1.5, boxShadow: '0 1px 4px rgba(15,23,42,0.04)' }}>
                                       {msg.content}
-                                      <div style={{ fontSize: 10, marginTop: 3, color: '#94A3B8', fontWeight: 600, textAlign: isMine ? 'right' : 'left' }}>{formatTime(msg.created_at)}</div>
+                                      <div style={{ fontSize: 11, marginTop: 8, color: '#94A3B8', fontWeight: 500, textAlign: isMine ? 'right' : 'left' }}>{formatTime(msg.created_at)}</div>
                                     </div>
                                   )}
                                 </div>
@@ -1319,10 +1516,12 @@ export default function OwnerCommunicationPage() {
                             })}
                             <div ref={el => { panelEndRefs.current[partnerId] = el }} />
                           </div>
+                          </div>
 
-                          {/* Attachment previews */}
+                          {/* Attachments + input — floating card, same width as the header card */}
+                          <div style={{ width: '92%', margin: '0 auto 12px', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, flexShrink: 0, overflow: 'hidden' }}>
                           {attachFiles.length > 0 && (
-                            <div style={{ padding: '6px 14px 0', background: '#FFFFFF', flexShrink: 0, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                            <div style={{ padding: '10px 12px 0', background: '#FFFFFF', flexShrink: 0, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                               {attachFiles.map((file, i) => (
                                 <div key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: 9, padding: '5px 9px', maxWidth: '100%' }}>
                                   {attachPreviews[i] ? (
@@ -1340,11 +1539,8 @@ export default function OwnerCommunicationPage() {
                             </div>
                           )}
 
-                          {/* Divider above input */}
-                          <div style={{ height: 1, background: '#111827', flexShrink: 0 }} />
-
                           {/* Input bar */}
-                          <div style={{ padding: '12px 14px', background: '#FFFFFF', display: 'flex', alignItems: 'center', gap: 9, flexShrink: 0 }}>
+                          <div style={{ padding: '10px 12px', background: '#FFFFFF', display: 'flex', alignItems: 'center', gap: 9, flexShrink: 0 }}>
                             {/* Hidden file inputs scoped to this panel */}
                             <input
                               type="file" accept="image/*" multiple style={{ display: 'none' }}
@@ -1358,22 +1554,23 @@ export default function OwnerCommunicationPage() {
                             />
                             {!conv.partnerDeleted && (
                               <button onClick={() => panelPhotoRefs.current[partnerId]?.click()} title="Send photo"
-                                style={{ flexShrink: 0, width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: 10, cursor: 'pointer', color: '#64748B', transition: 'all 0.15s' }}
-                                onMouseEnter={e => { e.currentTarget.style.background = '#FFF7ED'; e.currentTarget.style.borderColor = 'rgba(249,115,22,0.35)'; e.currentTarget.style.color = '#F97316' }}
-                                onMouseLeave={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.borderColor = '#E2E8F0'; e.currentTarget.style.color = '#64748B' }}>
+                                style={{ flexShrink: 0, width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FFF7ED', border: '1.5px solid rgba(249,115,22,0.25)', borderRadius: 10, cursor: 'pointer', color: '#F97316', transition: 'all 0.15s' }}
+                                onMouseEnter={e => { e.currentTarget.style.background = '#FFEDD5'; e.currentTarget.style.borderColor = 'rgba(249,115,22,0.45)' }}
+                                onMouseLeave={e => { e.currentTarget.style.background = '#FFF7ED'; e.currentTarget.style.borderColor = 'rgba(249,115,22,0.25)' }}>
                                 <ImagePlus size={18} strokeWidth={2} />
                               </button>
                             )}
                             {!conv.partnerDeleted && (
                               <button onClick={() => panelFileRefs.current[partnerId]?.click()} title="Send file"
-                                style={{ flexShrink: 0, width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC', border: '1.5px solid #E2E8F0', borderRadius: 10, cursor: 'pointer', color: '#64748B', transition: 'all 0.15s' }}
-                                onMouseEnter={e => { e.currentTarget.style.background = '#EFF6FF'; e.currentTarget.style.borderColor = 'rgba(59,130,246,0.35)'; e.currentTarget.style.color = '#3B82F6' }}
-                                onMouseLeave={e => { e.currentTarget.style.background = '#F8FAFC'; e.currentTarget.style.borderColor = '#E2E8F0'; e.currentTarget.style.color = '#64748B' }}>
+                                style={{ flexShrink: 0, width: 40, height: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#EFF6FF', border: '1.5px solid rgba(59,130,246,0.25)', borderRadius: 10, cursor: 'pointer', color: '#3B82F6', transition: 'all 0.15s' }}
+                                onMouseEnter={e => { e.currentTarget.style.background = '#DBEAFE'; e.currentTarget.style.borderColor = 'rgba(59,130,246,0.45)' }}
+                                onMouseLeave={e => { e.currentTarget.style.background = '#EFF6FF'; e.currentTarget.style.borderColor = 'rgba(59,130,246,0.25)' }}>
                                 <Paperclip size={17} strokeWidth={2} />
                               </button>
                             )}
                             <input
                               value={input}
+                              autoFocus={!conv.partnerDeleted}
                               onChange={e => setPanelInputs(p => ({ ...p, [partnerId]: e.target.value }))}
                               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !conv.partnerDeleted) { e.preventDefault(); if (attachFiles.length > 0) uploadAndSendPanelAttachment(partnerId); else handleSendMessage(partnerId) } }}
                               placeholder={conv.partnerDeleted ? "Account removed" : 'Type a message…'}
@@ -1391,6 +1588,7 @@ export default function OwnerCommunicationPage() {
                               </button>
                             )}
                           </div>
+                          </div>
                         </div>
                       )
                     })}
@@ -1402,66 +1600,102 @@ export default function OwnerCommunicationPage() {
 
           {/* ── Announcements tab ── */}
           {activeTab === 'announcements' && (
-            <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '300px minmax(0, 1fr)', gap: 12, overflow: 'hidden', padding: 12 }}>
+            <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '340px minmax(0, 1fr)', gap: 12, overflow: 'hidden' }}>
 
-              {/* Left: list */}
-              <div style={{ minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+              {/* Left: list — two stacked blocks, each sized to fit its content */}
+              <div style={{ maxHeight: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto' }}>
 
-                <div style={{ padding: '10px 12px 0', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div style={{ flex: 1, minWidth: 0, height: 36, display: 'flex', alignItems: 'center', gap: 8, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 9, padding: '0 11px' }}>
-                    <Search size={13} color="#94A3B8" />
-                    <input
-                      value={annSearch}
-                      onChange={e => setAnnSearch(e.target.value)}
-                      placeholder="Search announcements..."
-                      style={{ flex: 1, border: 'none', background: 'transparent', outline: 'none', fontSize: 12, color: '#0F172A', fontWeight: 500 }}
-                    />
+                {/* My Announcements */}
+                <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '16px 18px', borderBottom: '1px solid #E2E8F0', flexShrink: 0 }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <Megaphone size={15} style={{ color: '#F97316' }} />
+                    </div>
+                    <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>My Announcements</span>
                   </div>
-                  <button onClick={() => setShowNewAnnModal(true)} title="Post announcement"
-                    className="comm-action-btn"
-                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, background: '#F97316', border: 'none', borderRadius: 9, color: '#fff', cursor: 'pointer', flexShrink: 0 }}
-                  >
-                    <Plus size={16} strokeWidth={2.5} />
-                  </button>
+                  <div style={{ padding: '10px 12px 0', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{ flex: 1, minWidth: 0, height: 44, display: 'flex', alignItems: 'center', gap: 8, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 10, padding: '0 13px' }}>
+                      <Search size={15} color="#94A3B8" style={{ flexShrink: 0 }} />
+                      <input
+                        value={annSearch}
+                        onChange={e => setAnnSearch(e.target.value)}
+                        placeholder="Search"
+                        style={{ flex: 1, minWidth: 0, border: 'none', background: 'transparent', outline: 'none', fontSize: 13, color: '#0F172A', fontWeight: 500 }}
+                      />
+                    </div>
+                    <button onClick={() => setShowNewAnnModal(true)} title="Post announcement"
+                      className="comm-action-btn"
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 44, height: 44, background: '#F97316', border: 'none', borderRadius: 10, color: '#fff', cursor: 'pointer', flexShrink: 0 }}
+                    >
+                      <Plus size={18} strokeWidth={2.5} />
+                    </button>
+                  </div>
+
+                  <div style={{ overflowY: 'auto', maxHeight: 438, padding: '14px 10px 10px' }}>
+                    {myAnnouncements.length === 0 ? (
+                      <div style={{ height: 120, borderRadius: 12, background: '#F8FAFC', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 8, fontWeight: 600, fontSize: 13 }}>
+                        <Megaphone size={24} strokeWidth={1.5} />
+                        {annSearch ? 'No matching announcements' : 'No announcements yet'}
+                      </div>
+                    ) : myAnnouncements.map((ann, i) => renderAnnouncementCard(ann, i, true))}
+                  </div>
                 </div>
 
-                <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, padding: 10 }}>
-                  {filteredAnnouncements.length === 0 ? (
-                    <div style={{ height: 180, borderRadius: 12, background: '#F8FAFC', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 8, fontWeight: 600, fontSize: 13 }}>
-                      <Megaphone size={26} strokeWidth={1.5} />
-                      {annSearch ? 'No matching announcements' : 'No announcements yet'}
+                {/* From Others (Partners, Managers, etc.) */}
+                <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '16px 18px', borderBottom: '1px solid #E2E8F0', flexShrink: 0 }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <Users size={15} style={{ color: '#F97316' }} />
                     </div>
-                  ) : filteredAnnouncements.map((ann, i) => {
-                    const unread = !readIds.has(ann.id)
-                    const selected = selectedAnn?.id === ann.id
-                    const deptName = ann.department_id ? (departments.find(d => d.id === ann.department_id)?.name ?? 'Dept') : null
-                    return (
+                    <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>From Others</span>
+                  </div>
+                  <div style={{ padding: '10px 12px 0', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{ flex: 1, minWidth: 0, height: 44, display: 'flex', alignItems: 'center', gap: 8, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 10, padding: '0 13px' }}>
+                      <Search size={15} color="#94A3B8" style={{ flexShrink: 0 }} />
+                      <input
+                        value={othersSearch}
+                        onChange={e => setOthersSearch(e.target.value)}
+                        placeholder="Search"
+                        style={{ flex: 1, minWidth: 0, border: 'none', background: 'transparent', outline: 'none', fontSize: 13, color: '#0F172A', fontWeight: 500 }}
+                      />
+                    </div>
+                    <div ref={othersDeptFilterRef} style={{ position: 'relative', flexShrink: 0 }}>
                       <button
-                        key={ann.id}
-                        onClick={() => handleSelectAnn(ann)}
-                        className="comm-ann-card"
-                        style={{
-                          display: 'flex', flexDirection: 'column', gap: 6, padding: 12,
-                          background: selected ? '#FFF7ED' : '#FFFFFF',
-                          border: selected ? '1.5px solid rgba(249,115,22,0.35)' : '1.5px solid #EDF2F7',
-                          borderRadius: 12, cursor: 'pointer', textAlign: 'left', width: '100%', marginBottom: 8,
-                          boxShadow: selected ? '0 6px 18px rgba(249,115,22,0.08)' : '0 1px 3px rgba(0,0,0,0.03)',
-                          animationDelay: `${i * 0.04}s`,
-                        }}
+                        type="button"
+                        onClick={() => setOthersDeptFilterOpen(o => !o)}
+                        style={{ display: 'flex', alignItems: 'center', gap: 5, height: 44, padding: '0 12px', border: `1.5px solid ${othersDeptFilterOpen ? '#F97316' : '#E5E7EB'}`, borderRadius: 10, background: '#FFFFFF', color: '#374151', fontSize: 13, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', boxShadow: othersDeptFilterOpen ? '0 0 0 3px rgba(249,115,22,0.10)' : 'none', transition: 'border-color 0.15s' }}
                       >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                          <div style={{ width: 7, height: 7, borderRadius: 999, background: unread ? '#F97316' : '#CBD5E1', flexShrink: 0 }} />
-                          <span style={{ fontWeight: unread ? 800 : 600, fontSize: 13, color: '#0F172A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                            {ann.title}
-                          </span>
-                          <span style={{ fontSize: 11, color: '#94A3B8', whiteSpace: 'nowrap', flexShrink: 0, fontWeight: 600 }}>{formatTime(ann.created_at)}</span>
-                        </div>
-                        <div style={{ paddingLeft: 14 }}>
-                          <DepartmentBadge departmentId={ann.department_id} departmentName={deptName} fallbackIcon={<Globe size={9} />} />
-                        </div>
+                        <Filter size={12} style={{ color: '#9CA3AF', flexShrink: 0 }} />
+                        {othersDeptFilter === 'all' ? 'All Departments' : (departments.find(d => d.id === othersDeptFilter)?.name ?? 'All Departments')}
+                        <ChevronDown size={12} style={{ color: '#9CA3AF', flexShrink: 0, transform: othersDeptFilterOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
                       </button>
-                    )
-                  })}
+                      {othersDeptFilterOpen && (
+                        <div style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, minWidth: 170, background: '#FFFFFF', border: '1.5px solid #E5E7EB', borderRadius: 10, boxShadow: '0 8px 24px rgba(15,23,42,0.12)', zIndex: 50, padding: '4px 0', overflow: 'hidden' }}>
+                          {[{ id: 'all', name: 'All Departments' }, ...departments].map(dept => {
+                            const active = othersDeptFilter === dept.id
+                            return (
+                              <button key={dept.id} type="button"
+                                onClick={() => { setOthersDeptFilter(dept.id); setOthersDeptFilterOpen(false) }}
+                                style={{ display: 'block', width: '100%', padding: '8px 14px', textAlign: 'left', border: 'none', background: active ? '#FFF7ED' : 'transparent', color: active ? '#EA580C' : '#374151', fontWeight: active ? 700 : 400, fontSize: 13, cursor: 'pointer' }}
+                                onMouseEnter={e => { if (!active) e.currentTarget.style.background = '#F9FAFB' }}
+                                onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent' }}
+                              >
+                                {dept.name}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, padding: '10px 10px 10px' }}>
+                    {othersAnnouncements.length === 0 ? (
+                      <div style={{ height: 120, borderRadius: 12, background: '#F8FAFC', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 8, fontWeight: 600, fontSize: 13 }}>
+                        <Megaphone size={24} strokeWidth={1.5} />
+                        {othersSearch || othersDeptFilter !== 'all' ? 'No matching announcements' : 'No announcements from others yet'}
+                      </div>
+                    ) : othersAnnouncements.map((ann, i) => renderAnnouncementCard(ann, i, false))}
+                  </div>
                 </div>
               </div>
 
@@ -1469,38 +1703,53 @@ export default function OwnerCommunicationPage() {
               <div style={{ minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
                 {selectedAnn ? (
                   <>
-                    <div style={{ flexShrink: 0, background: '#FFFFFF', borderBottom: '1px solid #EDF2F7', padding: '16px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 18 }}>
+                    <div style={{ flexShrink: 0, background: '#FFFFFF', borderBottom: '1px solid #EDF2F7', padding: '16px 24px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-                        <div style={{ width: 40, height: 40, borderRadius: 12, background: '#FFF7ED', color: '#F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                          <Megaphone size={18} />
-                        </div>
-                        <div style={{ minWidth: 0 }}>
-                          <h2 style={{ margin: 0, color: '#0F172A', fontSize: 19, lineHeight: 1.2, fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedAnn.title}</h2>
-                          <p style={{ margin: '4px 0 0', color: '#64748B', fontSize: 12, fontWeight: 600 }}>
-                            {selectedAnn.created_by_name ?? 'Owner'} · {new Date(selectedAnn.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
-                          </p>
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                        <DepartmentBadge
-                          departmentId={selectedAnn.department_id}
-                          departmentName={selectedAnn.department_id ? (departments.find(d => d.id === selectedAnn.department_id)?.name ?? 'Department') : null}
-                          fallbackIcon={<Globe size={10} />}
-                        />
-                        {selectedAnn.from_user_id === internalUserId && (
-                          <>
-                            <button onClick={() => handleOpenEdit(selectedAnn)} title="Edit"
-                              style={{ width: 34, height: 34, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 9, cursor: 'pointer', color: '#374151', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                            ><Pencil size={14} /></button>
-                            <button onClick={() => setDeleteConfirmId(selectedAnn.id)} title="Delete"
-                              style={{ width: 34, height: 34, background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 9, cursor: 'pointer', color: '#DC2626', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                            ><Trash2 size={14} /></button>
-                          </>
+                        {selectedAnn.from_user_id !== internalUserId ? (
+                          selectedAnn.created_by_photo_url ? (
+                            <div style={{ width: 44, height: 44, borderRadius: '50%', overflow: 'hidden', flexShrink: 0 }}>
+                              <img src={selectedAnn.created_by_photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            </div>
+                          ) : (
+                            <div style={{
+                              width: 44, height: 44, borderRadius: '50%', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              background: selectedAnn.poster_role ? (ROLE_BG[selectedAnn.poster_role] ?? `${hashColor(selectedAnn.created_by_name ?? 'User')}18`) : `${hashColor(selectedAnn.created_by_name ?? 'User')}18`,
+                              color: selectedAnn.poster_role ? (ROLE_COLOR[selectedAnn.poster_role] ?? hashColor(selectedAnn.created_by_name ?? 'User')) : hashColor(selectedAnn.created_by_name ?? 'User'),
+                            }}>
+                              {selectedAnn.poster_role === 'Owner' || selectedAnn.poster_role === 'Partner' ? <Crown size={18} />
+                                : selectedAnn.poster_role === 'Manager' ? <UserCog size={18} />
+                                : <UserRound size={18} />}
+                            </div>
+                          )
+                        ) : (
+                          <div style={{ width: 40, height: 40, borderRadius: 12, background: '#FFF7ED', color: '#F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            <Megaphone size={18} />
+                          </div>
                         )}
+                        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4, flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                            <h2 style={{ margin: 0, minWidth: 0, color: '#0F172A', fontSize: 19, lineHeight: 1.2, fontWeight: 800, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedAnn.title}</h2>
+                            <div style={{ flexShrink: 0 }}>
+                              <DepartmentBadge
+                                departmentId={selectedAnn.department_id}
+                                departmentName={selectedAnn.department_id ? (departments.find(d => d.id === selectedAnn.department_id)?.name ?? 'Department') : null}
+                                fallbackIcon={<Globe size={11} />}
+                                large
+                              />
+                            </div>
+                          </div>
+                          <div style={{ color: '#9CA3AF', fontSize: 11.5, fontWeight: 500 }}>
+                            {selectedAnn.from_user_id !== internalUserId ? (
+                              <>Posted by <span style={{ color: '#334155', fontWeight: 700 }}>{selectedAnn.created_by_name ?? 'Unknown'}</span> at {formatAnnouncementTimestamp(selectedAnn)}</>
+                            ) : (
+                              formatAnnouncementTimestamp(selectedAnn)
+                            )}
+                          </div>
+                        </div>
                       </div>
                     </div>
                     <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 28 }}>
-                      <article style={{ maxWidth: 760, background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 16, padding: '28px 32px', boxShadow: '0 4px 20px rgba(15,23,42,0.05)' }}>
+                      <article style={{ background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 16, padding: '28px 32px', boxShadow: '0 4px 20px rgba(15,23,42,0.05)' }}>
                         <p style={{ margin: 0, color: '#334155', fontSize: 14.5, lineHeight: 1.85, whiteSpace: 'pre-wrap' }}>{selectedAnn.content}</p>
                       </article>
                     </div>
@@ -1567,8 +1816,7 @@ export default function OwnerCommunicationPage() {
             </div>
           )}
         </section>
-          </div>{/* /card inner */}
-        </div>{/* /card outer padding */}
+        </div>{/* /content panel padding */}
       </main>
 
       <Toast message={successToast} />
@@ -1704,30 +1952,6 @@ export default function OwnerCommunicationPage() {
                   </button>
                 ))}
               </div>
-            </div>
-          </ModalBox>
-        </ModalOverlay>
-      )}
-
-      {/* ── Delete Conversation Confirmation Modal ── */}
-      {confirmDeleteConvId && (
-        <ModalOverlay onClose={() => setConfirmDeleteConvId(null)} maxWidth="400px">
-          <ModalBox>
-            <ModalHeader title="Delete Conversation" icon={<Trash2 size={15} color="#fff" strokeWidth={2.5} />} iconBg="linear-gradient(135deg, #EF4444, #DC2626)" onClose={() => setConfirmDeleteConvId(null)} />
-            <div style={{ padding: '20px 24px 0' }}>
-              <p style={{ fontSize: '0.9375rem', color: '#374151', margin: 0, lineHeight: 1.6 }}>
-                Are you sure you want to delete this entire conversation? This cannot be undone.
-              </p>
-            </div>
-            <div style={{ padding: '20px 24px 20px', display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button onClick={() => setConfirmDeleteConvId(null)} disabled={deletingConvId === confirmDeleteConvId}
-                style={{ padding: '7px 16px', background: 'none', border: '1.5px solid #E5E7EB', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#6B7280', cursor: 'pointer' }}>
-                Cancel
-              </button>
-              <button onClick={() => deleteConversation(confirmDeleteConvId)} disabled={deletingConvId === confirmDeleteConvId}
-                style={{ padding: '7px 16px', background: '#DC2626', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.8125rem', color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
-                {deletingConvId === confirmDeleteConvId ? <Spinner size={13} /> : <Trash2 size={13} />} Delete
-              </button>
             </div>
           </ModalBox>
         </ModalOverlay>

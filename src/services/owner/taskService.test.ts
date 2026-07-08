@@ -23,6 +23,7 @@ vi.mock('@/repositories/owner/taskRepository', () => ({
     getShiftById: vi.fn(),
     hasShiftOnDate: vi.fn(),
     updateTask: vi.fn(),
+    replaceTaskAssignees: vi.fn(),
     updateSubTasksByParent: vi.fn(),
     deleteTask: vi.fn(),
     deleteSubTasksByParent: vi.fn(),
@@ -282,6 +283,57 @@ describe('taskService — Task (UC14-26)', () => {
     })
   })
 
+  describe('assignTask — multiple assignees', () => {
+    it('validates every id in assigned_user_ids, not just the primary', async () => {
+      vi.mocked(taskRepository.getUserById).mockImplementation(async (id: string) => {
+        if (id === 'owner-1') return { id: 'owner-1', role: 'Owner', company_id: 'company-1' } as any
+        if (id === 'manager-1') return { id: 'manager-1', role: 'Manager', company_id: 'company-1' } as any
+        if (id === 'employee-1') return { id: 'employee-1', role: 'Employee', company_id: 'company-1' } as any
+        return null
+      })
+
+      await expect(taskService.assignTask({
+        company_id: 'company-1', department_id: 'dept-1', title: 'Task',
+        assigned_by: 'owner-1', assigned_user_ids: ['manager-1', 'employee-1'],
+      })).rejects.toThrow('Owner tasks can only be assigned to Managers')
+      expect(taskRepository.createTask).not.toHaveBeenCalled()
+    })
+
+    it('creates the task with the first id as the primary and replaces assignees with the full set', async () => {
+      vi.mocked(taskRepository.getUserById).mockImplementation(async (id: string) => {
+        if (id === 'owner-1') return { id: 'owner-1', role: 'Owner', company_id: 'company-1' } as any
+        if (id === 'manager-1' || id === 'manager-2') return { id, role: 'Manager', company_id: 'company-1' } as any
+        return null
+      })
+      vi.mocked(taskRepository.createTask).mockResolvedValue({ ...baseTask, id: 'task-1', assigned_user_id: 'manager-1' })
+
+      const result = await taskService.assignTask({
+        company_id: 'company-1', department_id: 'dept-1', title: 'Stock shelves',
+        assigned_by: 'owner-1', assigned_user_ids: ['manager-1', 'manager-2'],
+      })
+
+      expect(result.id).toBe('task-1')
+      expect(taskRepository.createTask).toHaveBeenCalledWith(expect.objectContaining({ assigned_user_id: 'manager-1' }))
+      expect(taskRepository.replaceTaskAssignees).toHaveBeenCalledWith('task-1', ['manager-1', 'manager-2'], 'owner-1')
+    })
+
+    it('does not call replaceTaskAssignees for a single-assignee task', async () => {
+      vi.mocked(taskRepository.getUserById).mockImplementation(async (id: string) => {
+        if (id === 'owner-1') return { id: 'owner-1', role: 'Owner', company_id: 'company-1' } as any
+        if (id === 'manager-1') return { id: 'manager-1', role: 'Manager', company_id: 'company-1' } as any
+        return null
+      })
+      vi.mocked(taskRepository.createTask).mockResolvedValue(baseTask)
+
+      await taskService.assignTask({
+        company_id: 'company-1', department_id: 'dept-1', title: 'Stock shelves',
+        assigned_by: 'owner-1', assigned_user_ids: ['manager-1'],
+      })
+
+      expect(taskRepository.replaceTaskAssignees).not.toHaveBeenCalled()
+    })
+  })
+
   describe('editTask (UC16)', () => {
     it('requires an id', async () => {
       await expect(taskService.editTask('', { title: 'x' })).rejects.toThrow('Task id is required')
@@ -308,7 +360,7 @@ describe('taskService — Task (UC14-26)', () => {
       const result = await taskService.editTask('task-1', { status: 'In Progress' }, 'owner-1')
 
       expect(result.status).toBe('In Progress')
-      expect(taskRepository.updateTask).toHaveBeenCalledWith('task-1', { status: 'In Progress' })
+      expect(taskRepository.updateTask).toHaveBeenCalledWith('task-1', { status: 'In Progress' }, 'owner-1')
     })
 
     it('rejects when the acting user is not the one who assigned the task', async () => {
@@ -352,6 +404,37 @@ describe('taskService — Task (UC14-26)', () => {
 
       expect(taskRepository.updateSubTasksByParent).not.toHaveBeenCalled()
     })
+
+    it('replaces the assignee set when assigned_user_ids is provided, validating every id', async () => {
+      vi.mocked(taskRepository.getTaskById).mockResolvedValue(unassignedTask)
+      vi.mocked(taskRepository.getUserById).mockImplementation(async (id: string) => {
+        if (id === 'owner-1') return { id: 'owner-1', role: 'Owner', company_id: 'company-1' } as any
+        if (id === 'manager-1' || id === 'manager-2') return { id, role: 'Manager', company_id: 'company-1' } as any
+        return null
+      })
+      vi.mocked(taskRepository.updateTask).mockResolvedValue({ ...unassignedTask, assigned_user_id: 'manager-1' })
+
+      await taskService.editTask('task-1', { assigned_user_ids: ['manager-1', 'manager-2'] }, 'owner-1')
+
+      expect(taskRepository.updateTask).toHaveBeenCalledWith(
+        'task-1', expect.objectContaining({ assigned_user_id: 'manager-1' }), 'owner-1',
+      )
+      expect(taskRepository.replaceTaskAssignees).toHaveBeenCalledWith('task-1', ['manager-1', 'manager-2'], 'owner-1')
+    })
+
+    it('rejects when a co-assignee (not just the primary) fails the hierarchy check', async () => {
+      vi.mocked(taskRepository.getTaskById).mockResolvedValue(unassignedTask)
+      vi.mocked(taskRepository.getUserById).mockImplementation(async (id: string) => {
+        if (id === 'owner-1') return { id: 'owner-1', role: 'Owner', company_id: 'company-1' } as any
+        if (id === 'manager-1') return { id: 'manager-1', role: 'Manager', company_id: 'company-1' } as any
+        if (id === 'employee-1') return { id: 'employee-1', role: 'Employee', company_id: 'company-1' } as any
+        return null
+      })
+
+      await expect(taskService.editTask('task-1', { assigned_user_ids: ['manager-1', 'employee-1'] }, 'owner-1'))
+        .rejects.toThrow('Owner tasks can only be assigned to Managers')
+      expect(taskRepository.updateTask).not.toHaveBeenCalled()
+    })
   })
 
   describe('completeSubTask', () => {
@@ -374,7 +457,7 @@ describe('taskService — Task (UC14-26)', () => {
         id === 'sub-a' ? subA : parentInProgress
       )
       await expect(taskService.completeSubTask('sub-a', 'someone-else'))
-        .rejects.toThrow('Only the user assigned to this task can complete its sub-tasks')
+        .rejects.toThrow('Only a user assigned to this task can complete its sub-tasks')
     })
 
     it('rejects when the parent is not In Progress', async () => {
@@ -438,6 +521,19 @@ describe('taskService — Task (UC14-26)', () => {
 
       expect(updatedSub.is_completed).toBe(true)
       expect(taskRepository.updateTask).not.toHaveBeenCalled()
+    })
+
+    it('allows a co-assignee (not just the primary assigned_user_id) to complete a sub-task', async () => {
+      const multiAssigneeParent = { ...parentInProgress, assigned_user_ids: ['employee-1', 'employee-2'] }
+      vi.mocked(taskRepository.getTaskById).mockImplementation(async id =>
+        id === 'sub-a' ? subA : multiAssigneeParent
+      )
+      vi.mocked(taskRepository.getSubTasks).mockResolvedValue([subA, subB, subC])
+      vi.mocked(taskRepository.updateTask).mockResolvedValue({ ...subA, is_completed: true })
+
+      const [updatedSub] = await taskService.completeSubTask('sub-a', 'employee-2')
+
+      expect(updatedSub.is_completed).toBe(true)
     })
   })
 

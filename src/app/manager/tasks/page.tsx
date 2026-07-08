@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import ManagerSidebar from '@/components/ManagerSidebar'
+import MultiSelectDropdownField from '@/components/MultiSelectDropdownField'
 import { Task, TaskInput, KanbanGroup } from '@/types/Task'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 
@@ -427,7 +428,8 @@ function TaskCard({
     return () => document.removeEventListener('mousedown', h)
   }, [menuOpen])
 
-  const assignee = members.find(m => m.id === task.assigned_user_id)
+  const assigneeIds = task.assigned_user_ids ?? (task.assigned_user_id ? [task.assigned_user_id] : [])
+  const assignees = assigneeIds.map(id => members.find(m => m.id === id)).filter((m): m is Member => !!m)
   const priority = task.priority ? PRIORITY_COLORS[task.priority] : null
   const overdue = task.due_at && task.status !== 'Complete' && isDueOverdue(task.due_at)
 
@@ -525,13 +527,22 @@ function TaskCard({
 
       {/* Footer: assignee + deadline time */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-        {assignee ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div className="task-card-icon" style={{ width: 22, height: 22, borderRadius: '50%', background: '#EFF6FF', border: '1.5px solid #2563EB', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-              <UserCog size={12} color="#2563EB" strokeWidth={2} />
+        {assignees.length > 0 ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+            <div style={{ display: 'flex', flexShrink: 0 }}>
+              {assignees.slice(0, 3).map((assignee, i) => (
+                <div key={assignee.id} className="task-card-icon" style={{ width: 22, height: 22, borderRadius: '50%', background: '#EFF6FF', border: '1.5px solid #2563EB', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginLeft: i === 0 ? 0 : -6, boxShadow: i === 0 ? undefined : '0 0 0 1.5px #FFFFFF' }}>
+                  <UserCog size={12} color="#2563EB" strokeWidth={2} />
+                </div>
+              ))}
+              {assignees.length > 3 && (
+                <div style={{ width: 22, height: 22, borderRadius: '50%', background: '#F1F5F9', border: '1.5px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginLeft: -6, boxShadow: '0 0 0 1.5px #FFFFFF', fontSize: '0.6rem', fontWeight: 700, color: '#64748B' }}>
+                  +{assignees.length - 3}
+                </div>
+              )}
             </div>
             <span style={{ fontSize: '0.75rem', color: '#374151', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {assignee.full_name}
+              {assignees.map(a => a.full_name).join(', ')}
             </span>
           </div>
         ) : (
@@ -583,7 +594,8 @@ export default function ManagerTasksPage() {
   const canDragTask = (task: Task): boolean => {
     if (!internalUserId) return false
     if (task.assigned_by === internalUserId) return true
-    return task.assigned_user_id === internalUserId
+    const assigneeIds = task.assigned_user_ids ?? (task.assigned_user_id ? [task.assigned_user_id] : [])
+    return assigneeIds.includes(internalUserId)
   }
   const handleDropTaskOnColumn = async (task: Task, targetStatus: Task['status']) => {
     setDragOverCol(null)
@@ -656,7 +668,7 @@ export default function ManagerTasksPage() {
   const [editDescription, setEditDescription] = useState('')
   const [editPriority,    setEditPriority]    = useState('')
   const [editDeadlineTime,   setEditDeadlineTime]   = useState('')
-  const [editAssignee,       setEditAssignee]       = useState('')
+  const [editAssigneeIds,    setEditAssigneeIds]    = useState<string[]>([])
   const [editShiftId,        setEditShiftId]        = useState('')
   const [editStatus,      setEditStatus]      = useState<Task['status']>('Assigned')
   const [editPercent,     setEditPercent]     = useState(0)
@@ -676,7 +688,7 @@ export default function ManagerTasksPage() {
   const [newTitle,        setNewTitle]        = useState('')
   const [newDescription,  setNewDescription]  = useState('')
   const [newDeptId,       setNewDeptId]       = useState('')
-  const [newAssigneeId,   setNewAssigneeId]   = useState('')
+  const [newAssigneeIds,  setNewAssigneeIds]  = useState<string[]>([])
   const [newShiftId,      setNewShiftId]      = useState('')
   const [newPriority,     setNewPriority]     = useState('')
   const [newDeadlineTime, setNewDeadlineTime] = useState('')
@@ -808,7 +820,7 @@ export default function ManagerTasksPage() {
     setEditDescription(task.description ?? '')
     setEditPriority(task.priority ?? '')
     setEditDeadlineTime(task.due_at ? new Date(task.due_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '')
-    setEditAssignee(task.assigned_user_id ?? '')
+    setEditAssigneeIds(task.assigned_user_ids ?? (task.assigned_user_id ? [task.assigned_user_id] : []))
     setEditShiftId(task.shift_id ?? '')
     setEditStatus(task.status)
     setEditPercent(task.percentage_complete)
@@ -823,7 +835,7 @@ export default function ManagerTasksPage() {
 
   const handleSaveTask = async () => {
     if (!selectedTask || !editTitle.trim()) return
-    if (editAssignee && !editShiftId) { setPanelError('Please select a shift for the assignee'); return }
+    if (editAssigneeIds.length > 0 && !editShiftId) { setPanelError('Please select a shift for the assignee'); return }
     setEditLoading(true); setPanelError('')
     try {
       const resolvedShift = shiftOptions.find(x => x.id === editShiftId)
@@ -838,7 +850,7 @@ export default function ManagerTasksPage() {
         description: editDescription || null,
         priority: editPriority || null,
         due_at,
-        assigned_user_id: editAssignee || null,
+        assigned_user_ids: editAssigneeIds,
         shift_id: editShiftId || null,
         status: editStatus,
         percentage_complete: editPercent,
@@ -938,7 +950,7 @@ export default function ManagerTasksPage() {
         shift_id: editShiftId || selectedTask.shift_id,
         parent_task_id: selectedTask.id,
         title: subTaskTitle.trim(),
-        assigned_user_id: editAssignee || selectedTask.assigned_user_id,
+        assigned_user_id: editAssigneeIds[0] || selectedTask.assigned_user_id,
         assigned_by: internalUserId || null,
         status: 'Assigned',
         percentage_complete: 0,
@@ -960,7 +972,7 @@ export default function ManagerTasksPage() {
 
   const openNewTaskFor = (memberId: string, deptId: string) => {
     setNewDeptId(deptId)
-    setNewAssigneeId(memberId)
+    setNewAssigneeIds(memberId ? [memberId] : [])
     setNewShiftId('')
     setNewTitle(''); setNewDescription(''); setNewPriority(''); setNewDeadlineTime(''); setNewError('')
     setNewTaskModal(true)
@@ -968,7 +980,7 @@ export default function ManagerTasksPage() {
 
   const handleCreateTask = async () => {
     if (!newTitle.trim() || !newDeptId) { setNewError('Title and department are required'); return }
-    if (newAssigneeId && !newShiftId) { setNewError('Please select a shift for the assignee'); return }
+    if (newAssigneeIds.length > 0 && !newShiftId) { setNewError('Please select a shift for the assignee'); return }
     setNewLoading(true); setNewError('')
     try {
       const selShift = newTaskShiftOptions.find(s => s.id === newShiftId)
@@ -977,7 +989,7 @@ export default function ManagerTasksPage() {
         department_id: newDeptId,
         title: newTitle.trim(),
         description: newDescription || null,
-        assigned_user_id: newAssigneeId || null,
+        assigned_user_ids: newAssigneeIds,
         assigned_by: internalUserId || null,
         shift_id: newShiftId || null,
         priority: newPriority || null,
@@ -993,7 +1005,7 @@ export default function ManagerTasksPage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
       setNewTaskModal(false)
-      setNewTitle(''); setNewDescription(''); setNewDeptId(''); setNewAssigneeId(''); setNewShiftId(''); setNewPriority(''); setNewDeadlineTime('')
+      setNewTitle(''); setNewDescription(''); setNewDeptId(''); setNewAssigneeIds([]); setNewShiftId(''); setNewPriority(''); setNewDeadlineTime('')
       fetchKanban(companyId)
     } catch (err) { setNewError(err instanceof Error ? err.message : 'Failed to create task') }
     finally { setNewLoading(false) }
@@ -1030,7 +1042,7 @@ export default function ManagerTasksPage() {
     if (!kanban) return []
     return (kanban[col] ?? [])
       .filter(t => visibleDeptIds.has(t.department_id))
-      .filter(t => !selectedEmployeeId || t.assigned_user_id === selectedEmployeeId)
+      .filter(t => !selectedEmployeeId || (t.assigned_user_ids ?? (t.assigned_user_id ? [t.assigned_user_id] : [])).includes(selectedEmployeeId))
       .filter(t => {
         // Assigned/In Progress/Review tasks are still being worked on, so they stay visible no
         // matter which day is selected — only Complete is anchored to its date, since a finished
@@ -1048,8 +1060,10 @@ export default function ManagerTasksPage() {
 
   const assignableMembers = members.filter(m => m.role === 'Employee')
   const _todayStr = formatDateKey(new Date())
-  const newTaskShiftOptions = (newAssigneeId
-    ? shiftOptions.filter(s => s.user_id === newAssigneeId)
+  // The task's shift_id anchors to the primary (first) assignee's shift — a task links to one
+  // shift regardless of how many people share the task.
+  const newTaskShiftOptions = (newAssigneeIds[0]
+    ? shiftOptions.filter(s => s.user_id === newAssigneeIds[0])
     : newDeptId
       ? shiftOptions.filter(s => s.department_id === newDeptId)
       : shiftOptions
@@ -1062,8 +1076,8 @@ export default function ManagerTasksPage() {
     label: `${new Date(`${s.shift_date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} · ${s.start_time.slice(0, 5)} – ${s.end_time.slice(0, 5)}`,
   }))
   const editTaskShiftOptions = selectedTask ? shiftOptions.filter(shift => shift.department_id === selectedTask.department_id) : shiftOptions
-  const editAssigneeShiftOptions = editAssignee
-    ? editTaskShiftOptions.filter(s => s.user_id === editAssignee)
+  const editAssigneeShiftOptions = editAssigneeIds[0]
+    ? editTaskShiftOptions.filter(s => s.user_id === editAssigneeIds[0])
     : editTaskShiftOptions
   const editShiftDropdownOptions = editAssigneeShiftOptions.map(s => ({
     value: s.id,
@@ -1271,7 +1285,7 @@ export default function ManagerTasksPage() {
                     onClick={() => {
                       const emp = members.find(m => m.id === selectedEmployeeId)
                       setNewTitle(''); setNewDescription(''); setNewPriority(''); setNewShiftId(''); setNewDeadlineTime(''); setNewError('')
-                      setNewAssigneeId(selectedEmployeeId)
+                      setNewAssigneeIds([selectedEmployeeId])
                       setNewDeptId(emp?.department_id ?? departments[0]?.id ?? '')
                       setNewTaskModal(true)
                     }}
@@ -1296,7 +1310,7 @@ export default function ManagerTasksPage() {
                 {!selectedEmployeeId && departments.length > 0 && (() => {
                   const deptMembers = members.filter(m => m.role === 'Employee')
                   const allDateTasks = COLUMNS.flatMap(col => filteredTasks(col))
-                  const busyIds = new Set(allDateTasks.map(t => t.assigned_user_id).filter(Boolean) as string[])
+                  const busyIds = new Set(allDateTasks.flatMap(t => t.assigned_user_ids ?? (t.assigned_user_id ? [t.assigned_user_id] : [])))
                   const freeMembers = deptMembers.filter(m => !busyIds.has(m.id))
                   const busyMembers = deptMembers.filter(m => busyIds.has(m.id))
 
@@ -1401,7 +1415,7 @@ export default function ManagerTasksPage() {
                               const draggable = canDragTask(task)
                               const subTasks = subTasksByParent.get(task.id) ?? []
                               const isExpanded = expandedTaskIds.has(task.id)
-                              const canCheckOff = task.status === 'In Progress' && task.assigned_user_id === internalUserId
+                              const canCheckOff = task.status === 'In Progress' && (task.assigned_user_ids ?? (task.assigned_user_id ? [task.assigned_user_id] : [])).includes(internalUserId)
                               return (
                                 <div key={task.id}>
                                   <div
@@ -1496,8 +1510,9 @@ export default function ManagerTasksPage() {
 
       {/* ═══════════════ TASK VIEW PANEL ═══════════════ */}
       {selectedTask && taskViewMode && (() => {
-        const viewAssigneeName = selectedTask.assigned_user_id
-          ? (members.find(m => m.id === selectedTask.assigned_user_id)?.full_name ?? 'Unknown')
+        const viewAssigneeIds = selectedTask.assigned_user_ids ?? (selectedTask.assigned_user_id ? [selectedTask.assigned_user_id] : [])
+        const viewAssigneeName = viewAssigneeIds.length > 0
+          ? viewAssigneeIds.map(uid => members.find(m => m.id === uid)?.full_name ?? 'Unknown').join(', ')
           : null
         const viewShift = selectedTask.shift_id ? shiftOptions.find(s => s.id === selectedTask.shift_id) : null
         const viewDept = departments.find(d => d.id === selectedTask.department_id)
@@ -1637,14 +1652,14 @@ export default function ManagerTasksPage() {
                 </div>
                 <div>
                   <label style={modalLabelStyle}>Assign To</label>
-                  <DropdownField value={editAssignee} options={editAssigneeDropdownOptions} onChange={v => { setEditAssignee(v); setEditShiftId(''); setEditDeadlineTime('') }} placeholder="Unassigned" />
+                  <MultiSelectDropdownField values={editAssigneeIds} options={editAssigneeDropdownOptions} onChange={v => { setEditAssigneeIds(v); setEditShiftId(''); setEditDeadlineTime('') }} allLabel="Unassigned" />
                 </div>
               </div>
               <div style={{ borderTop: '1px dashed #E5E7EB' }} />
               <div>
                 <label style={modalLabelStyle}>
                   Shift
-                  {editAssignee && editAssigneeShiftOptions.length === 0 && (
+                  {editAssigneeIds.length > 0 && editAssigneeShiftOptions.length === 0 && (
                     <span style={{ fontWeight: 400, color: TASK_BLUE, marginLeft: 8, fontSize: '0.78rem' }}>no upcoming shifts</span>
                   )}
                 </label>
@@ -1652,8 +1667,8 @@ export default function ManagerTasksPage() {
                   value={editShiftId}
                   options={editShiftDropdownOptions}
                   onChange={v => { setEditShiftId(v); const s = editAssigneeShiftOptions.find(x => x.id === v); if (s) setEditDeadlineTime(s.end_time.slice(0, 5)) }}
-                  placeholder={editAssignee ? 'Select shift' : 'Select assignee first'}
-                  disabled={!editAssignee}
+                  placeholder={editAssigneeIds.length > 0 ? 'Select shift' : 'Select assignee first'}
+                  disabled={editAssigneeIds.length === 0}
                 />
               </div>
               <div>
@@ -1786,14 +1801,14 @@ export default function ManagerTasksPage() {
                 </div>
                 <div>
                   <label style={modalLabelStyle}>Assign To</label>
-                  <DropdownField value={newAssigneeId} options={newAssigneeDropdownOptions} onChange={v => { setNewAssigneeId(v); setNewShiftId(''); setNewDeadlineTime('') }} placeholder="Unassigned" />
+                  <MultiSelectDropdownField values={newAssigneeIds} options={newAssigneeDropdownOptions} onChange={v => { setNewAssigneeIds(v); setNewShiftId(''); setNewDeadlineTime('') }} allLabel="Unassigned" />
                 </div>
               </div>
               <div style={{ borderTop: '1px dashed #E5E7EB' }} />
               <div>
                 <label style={modalLabelStyle}>
                   Shift
-                  {newAssigneeId && newTaskShiftOptions.length === 0 && (
+                  {newAssigneeIds.length > 0 && newTaskShiftOptions.length === 0 && (
                     <span style={{ fontWeight: 400, color: TASK_BLUE, marginLeft: 8, fontSize: '0.78rem' }}>no upcoming shifts</span>
                   )}
                 </label>
@@ -1801,8 +1816,8 @@ export default function ManagerTasksPage() {
                   value={newShiftId}
                   options={newShiftDropdownOptions}
                   onChange={v => { setNewShiftId(v); const s = newTaskShiftOptions.find(x => x.id === v); if (s) setNewDeadlineTime(s.end_time.slice(0, 5)) }}
-                  placeholder={newAssigneeId ? 'Select shift' : 'Select assignee first'}
-                  disabled={!newAssigneeId}
+                  placeholder={newAssigneeIds.length > 0 ? 'Select shift' : 'Select assignee first'}
+                  disabled={newAssigneeIds.length === 0}
                 />
               </div>
               <div>
