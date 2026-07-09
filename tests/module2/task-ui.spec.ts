@@ -192,7 +192,7 @@ test('owner can use the Module 2 task UI end to end', async ({ page }) => {
   await openAssignTaskForManagerA(page)
   await page.getByPlaceholder('Task title...').fill('UI created task')
   await page.getByRole('button', { name: 'Select priority' }).click()
-  await page.getByRole('button', { name: 'High' }).click()
+  await page.getByRole('button', { name: 'High', exact: true }).click()
   await page.getByRole('button', { name: 'Select deadline' }).click()
   await page.getByRole('button', { name: taskUiDayLabel(), exact: true }).and(page.locator('button:visible')).first().click()
   await page.getByRole('button', { name: 'PM', exact: true }).click()
@@ -205,12 +205,18 @@ test('owner can use the Module 2 task UI end to end', async ({ page }) => {
   // Exact-match the title so this locator stays unique once "UI created task (copy)" exists too.
   const createdCard = page.locator('.task-card').filter({ has: page.getByText('UI created task', { exact: true }) })
   await createdCard.click()
+  // Duplicate doesn't copy immediately — it closes the Details panel and opens the Assign Task
+  // modal pre-filled with the task's details so the user can reassign/tweak before creating.
   await page.getByTestId('task-details-panel').getByRole('button', { name: 'Duplicate' }).click()
-  await expect(page.getByText('Task duplicated.')).toBeVisible() // duplicating closes the Details panel automatically
+  await expect(page.getByRole('heading', { name: 'Assign Task to Module 2 UI Manager A' })).toBeVisible()
+  await expect(page.getByPlaceholder('Task title...')).toHaveValue('UI created task (copy)')
+  await page.getByRole('button', { name: 'Create Task' }).click()
+  await expect(page.getByText('Task created successfully.')).toBeVisible({ timeout: 15000 })
+  await expect(page.getByText('UI created task (copy)')).toBeVisible()
 
   await createdCard.getByRole('button').first().click()
   await expect(page.getByRole('heading', { name: 'Edit Task' })).toBeVisible()
-  await page.getByRole('textbox').first().fill('UI edited task')
+  await page.getByPlaceholder('Task title...').fill('UI edited task')
   await page.getByRole('button', { name: 'Save Changes' }).click()
   await expect(page.getByText('UI edited task')).toBeVisible()
 
@@ -222,13 +228,27 @@ test('owner can use the Module 2 task UI end to end', async ({ page }) => {
   // auto-open the Archived Tasks list (that's a separate, manually-opened modal).
   await expect(page.getByText('UI edited task')).toHaveCount(0)
 
-  await page.getByRole('button', { name: 'Calendar' }).click()
+  await page.getByRole('button', { name: 'Deadline Calendar' }).click()
   await expect(page.getByText('Module 2 UI Manager A').first()).toBeVisible()
 
-  // Back out to the department grid, where the AI Assign button lives now.
+  // Deadline Calendar sidebar: Deadline Summary cards + multi-select Filter block.
+  await expect(page.getByText('Deadline Summary')).toBeVisible()
+  await expect(page.getByText('Due Today')).toBeVisible()
+  // Priority / Status / Department groups each render a "Select All" row with an "N selected" badge.
+  await expect(page.getByRole('button', { name: 'Clear All' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Select All/ })).toHaveCount(3)
+  // No rework tasks exist in this flow, so the rework-only filter must empty the calendar.
+  await page.getByRole('button', { name: 'Rework Tasks Only' }).click()
+  await expect(page.getByText('Module 2 UI Manager A')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Rework Tasks Only' }).click()
+  await expect(page.getByText('Module 2 UI Manager A').first()).toBeVisible()
+
+  // Back out to the department grid, where the AI Assign button lives now — the Departments
+  // panel only renders on the Kanban tab, so switch back first.
+  await page.getByRole('button', { name: 'Kanban' }).click()
   await page.getByRole('button', { name: 'Back to all departments' }).click()
   await page.getByRole('button', { name: 'AI Assign' }).first().click()
-  await expect(page.getByRole('heading', { name: 'AI Assign' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Auto Task Assignment' })).toBeVisible()
 })
 
 test('New Task modal blocks past start dates and the Deadline field selects date then time', async ({ page }) => {
@@ -268,47 +288,44 @@ test('New Task modal blocks past start dates and the Deadline field selects date
   await expect(page.getByRole('button', { name: /, 6:00 PM$/ })).toBeVisible()
 })
 
-test('Template button manages task templates and the New Task modal can use one', async ({ page }) => {
+test('Templates button beside Archive manages task templates and the New Task modal can use one', async ({ page }) => {
   await signInOwner(page)
   await page.goto('/owner/tasks')
 
-  await page.getByRole('button', { name: 'Template' }).click()
+  await page.getByRole('button', { name: 'Templates', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Task Templates' })).toBeVisible()
   await expect(page.getByText('No task templates yet')).toBeVisible()
 
-  // Create
+  // Create — the form modal replaces the list modal, and saving returns to the list.
   await page.getByRole('button', { name: 'New Template' }).click()
   await expect(page.getByRole('heading', { name: 'New Template' })).toBeVisible()
-  await page.getByPlaceholder('e.g. Daily Cleaning Checklist').fill('Daily Cleaning Checklist')
-  await page.getByPlaceholder('Task title this template creates...').fill('Clean front desk')
+  await page.getByPlaceholder('Task title...').fill('Clean front desk')
   await page.getByPlaceholder('Add more context...').fill('Wipe down and restock')
   await page.getByRole('button', { name: 'Select priority' }).click()
   await page.getByRole('button', { name: 'Medium' }).click()
   await page.getByRole('button', { name: 'Create Template' }).click()
   await expect(page.getByRole('heading', { name: 'Task Templates' })).toBeVisible()
-  await expect(page.getByText('Daily Cleaning Checklist')).toBeVisible()
+  await expect(page.getByText('Clean front desk')).toBeVisible()
 
-  // Edit
-  await page.getByTitle('Edit').click()
+  // Edit — same round trip back to the list.
+  await page.getByTitle('Edit template').click()
   await expect(page.getByRole('heading', { name: 'Edit Template' })).toBeVisible()
-  await page.getByPlaceholder('e.g. Daily Cleaning Checklist').fill('Weekly Cleaning Checklist')
+  await page.getByPlaceholder('Task title...').fill('Clean front desk daily')
   await page.getByRole('button', { name: 'Save Changes' }).click()
-  await expect(page.getByText('Weekly Cleaning Checklist')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Task Templates' })).toBeVisible()
+  await expect(page.getByText('Clean front desk daily')).toBeVisible()
 
   // Close, then use the template from the New Task modal via the "+" assign flow.
   await page.getByRole('heading', { name: 'Task Templates' }).locator('xpath=ancestor::div[3]').getByRole('button').first().click()
   await openAssignTaskForManagerA(page)
   await page.getByRole('button', { name: 'Use a template…' }).click()
-  await page.getByRole('button', { name: 'Weekly Cleaning Checklist' }).click()
-  await expect(page.getByPlaceholder('Task title...')).toHaveValue('Clean front desk')
+  await page.getByRole('button', { name: 'Clean front desk daily' }).click()
+  await expect(page.getByPlaceholder('Task title...')).toHaveValue('Clean front desk daily')
   await page.getByRole('heading', { name: 'Assign Task to Module 2 UI Manager A' }).locator('xpath=ancestor::div[3]').getByRole('button').first().click()
 
-  // Delete
-  await page.getByRole('button', { name: 'Template' }).click()
-  await page.getByTitle('Delete').click()
-  const deleteConfirmHeading = page.getByRole('heading', { name: 'Delete Template' })
-  await expect(deleteConfirmHeading).toBeVisible()
-  await deleteConfirmHeading.locator('xpath=ancestor::div[2]').getByRole('button', { name: 'Delete' }).click()
+  // Delete removes the template from the list in place.
+  await page.getByRole('button', { name: 'Templates', exact: true }).click()
+  await page.getByTitle('Delete template').click()
   await expect(page.getByText('No task templates yet')).toBeVisible()
 })
 
@@ -339,7 +356,7 @@ test('Kanban collapses a task with sub-tasks and expands them on click', async (
 
   await page.getByPlaceholder('Task title...').fill('Prepare opening')
   await page.getByRole('button', { name: 'Select priority' }).click()
-  await page.getByRole('button', { name: 'High' }).click()
+  await page.getByRole('button', { name: 'High', exact: true }).click()
   await page.getByRole('button', { name: 'Select deadline' }).click()
   const todayDay = taskUiDayLabel()
   await page.getByRole('button', { name: todayDay, exact: true }).and(page.locator('button:visible')).first().click()
@@ -403,10 +420,11 @@ test('Recurring replaces the top Deadline field with a Deadline rule picker', as
 
   await page.getByPlaceholder('Task title...').fill('Daily cleaning checklist')
   await page.getByRole('button', { name: 'Select priority' }).click()
-  await page.getByRole('button', { name: 'High' }).click()
+  await page.getByRole('button', { name: 'High', exact: true }).click()
 
   await page.getByRole('button', { name: 'Create Task' }).click()
-  await expect(page.getByText('Daily cleaning checklist')).toBeVisible({ timeout: 15000 })
+  // The dateless Kanban shows every occurrence of the recurring series at once, so match .first().
+  await expect(page.getByText('Daily cleaning checklist').first()).toBeVisible({ timeout: 15000 })
 })
 
 test('Edit Task defers sub-task changes until Save Changes and Recurring starts unselected', async ({ page }) => {
@@ -417,7 +435,7 @@ test('Edit Task defers sub-task changes until Save Changes and Recurring starts 
   await openAssignTaskForManagerA(page)
   await page.getByPlaceholder('Task title...').fill('Edit panel sub-task test')
   await page.getByRole('button', { name: 'Select priority' }).click()
-  await page.getByRole('button', { name: 'High' }).click()
+  await page.getByRole('button', { name: 'High', exact: true }).click()
   await page.getByRole('button', { name: 'Select deadline' }).click()
   const todayDay = taskUiDayLabel()
   await page.getByRole('button', { name: todayDay, exact: true }).and(page.locator('button:visible')).first().click()

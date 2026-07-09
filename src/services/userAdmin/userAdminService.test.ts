@@ -10,6 +10,7 @@ vi.mock('@/repositories/userAdminRepository', () => ({
   unsuspendCompany: vi.fn(),
   suspendUser: vi.fn(),
   unsuspendUser: vi.fn(),
+  getUserById: vi.fn(),
 }))
 
 import * as repo from '@/repositories/userAdminRepository'

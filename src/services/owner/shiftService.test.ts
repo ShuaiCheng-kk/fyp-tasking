@@ -30,7 +30,13 @@ vi.mock('@/repositories/owner/shiftRepository', () => ({
     markActionUndone: vi.fn(),
     markActionRedone: vi.fn(),
     restoreShift: vi.fn(),
+    restoreShifts: vi.fn(),
     restoreShiftAssignments: vi.fn(),
+    getShiftsByIds: vi.fn(),
+    upsertShifts: vi.fn(),
+    deleteShiftsByIds: vi.fn(),
+    deleteAssignmentsByShiftIds: vi.fn(),
+    updatePublicationStatusByIds: vi.fn(),
   },
 }))
 
@@ -1140,16 +1146,14 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
         undone: false,
         created_at: '2026-06-22T00:00:00.000Z',
       })
-      vi.mocked(shiftRepository.getShiftById).mockResolvedValue(baseShift)
+      vi.mocked(shiftRepository.getShiftsByIds).mockResolvedValue([baseShift])
       vi.mocked(shiftRepository.getAssignmentsByShiftIds).mockResolvedValue([])
-      vi.mocked(shiftRepository.deleteAssignmentsByShiftId).mockResolvedValue(undefined)
-      vi.mocked(shiftRepository.deleteShift).mockResolvedValue(undefined)
       vi.mocked(shiftRepository.markActionUndone).mockResolvedValue(undefined)
 
       const result = await shiftService.undoLastShiftAction('company-1', 'owner-1')
 
-      expect(shiftRepository.deleteAssignmentsByShiftId).toHaveBeenCalledWith('shift-1')
-      expect(shiftRepository.deleteShift).toHaveBeenCalledWith('shift-1')
+      expect(shiftRepository.deleteAssignmentsByShiftIds).toHaveBeenCalledWith(['shift-1'])
+      expect(shiftRepository.deleteShiftsByIds).toHaveBeenCalledWith(['shift-1'])
       expect(shiftRepository.markActionUndone).toHaveBeenCalledWith('history-1', expect.objectContaining({
         recreate_shifts: [baseShift],
       }))
@@ -1177,13 +1181,13 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
         undone: false,
         created_at: '2026-06-22T00:00:00.000Z',
       })
-      vi.mocked(shiftRepository.restoreShift).mockResolvedValue(baseShift)
+      vi.mocked(shiftRepository.restoreShifts).mockResolvedValue([baseShift])
       vi.mocked(shiftRepository.restoreShiftAssignments).mockResolvedValue(undefined)
       vi.mocked(shiftRepository.markActionUndone).mockResolvedValue(undefined)
 
       const result = await shiftService.undoLastShiftAction('company-1', 'owner-1')
 
-      expect(shiftRepository.restoreShift).toHaveBeenCalledWith(baseShift)
+      expect(shiftRepository.restoreShifts).toHaveBeenCalledWith([baseShift])
       expect(shiftRepository.restoreShiftAssignments).toHaveBeenCalledWith([deletedAssignment])
       expect(shiftRepository.markActionUndone).toHaveBeenCalledWith('history-2', {})
       expect(result.action_type).toBe('delete')
@@ -1201,16 +1205,15 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
         undone: false,
         created_at: '2026-06-22T00:00:00.000Z',
       })
-      vi.mocked(shiftRepository.getShiftById).mockResolvedValue(baseShift)
+      vi.mocked(shiftRepository.getShiftsByIds).mockResolvedValue([baseShift])
       vi.mocked(shiftRepository.getAssignmentsByShiftIds).mockResolvedValue([])
-      vi.mocked(shiftRepository.updateShift).mockResolvedValue(previousShift)
-      vi.mocked(shiftRepository.deleteAssignmentsByShiftId).mockResolvedValue(undefined)
       vi.mocked(shiftRepository.restoreShiftAssignments).mockResolvedValue(undefined)
       vi.mocked(shiftRepository.markActionUndone).mockResolvedValue(undefined)
 
       const result = await shiftService.undoLastShiftAction('company-1', 'owner-1')
 
-      expect(shiftRepository.updateShift).toHaveBeenCalledWith('shift-1', expect.objectContaining({ title: 'Old Title' }))
+      expect(shiftRepository.upsertShifts).toHaveBeenCalledWith([previousShift])
+      expect(shiftRepository.deleteAssignmentsByShiftIds).toHaveBeenCalledWith(['shift-1'])
       expect(shiftRepository.markActionUndone).toHaveBeenCalledWith('history-3', expect.objectContaining({
         next_shift: baseShift,
       }))
@@ -1228,16 +1231,14 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
         undone: false,
         created_at: '2026-06-22T00:00:00.000Z',
       })
-      vi.mocked(shiftRepository.getShiftById).mockResolvedValue(baseShift)
+      vi.mocked(shiftRepository.getShiftsByIds).mockResolvedValue([baseShift, { ...baseShift, id: 'shift-2' }])
       vi.mocked(shiftRepository.getAssignmentsByShiftIds).mockResolvedValue([])
-      vi.mocked(shiftRepository.deleteAssignmentsByShiftId).mockResolvedValue(undefined)
-      vi.mocked(shiftRepository.deleteShift).mockResolvedValue(undefined)
       vi.mocked(shiftRepository.markActionUndone).mockResolvedValue(undefined)
 
       await shiftService.undoLastShiftAction('company-1', 'owner-1')
 
-      expect(shiftRepository.deleteShift).toHaveBeenCalledWith('shift-1')
-      expect(shiftRepository.deleteShift).toHaveBeenCalledWith('shift-2')
+      expect(shiftRepository.deleteAssignmentsByShiftIds).toHaveBeenCalledWith(['shift-1', 'shift-2'])
+      expect(shiftRepository.deleteShiftsByIds).toHaveBeenCalledWith(['shift-1', 'shift-2'])
     })
 
     it('undoes a publish action by restoring each shift\'s previous publication_status', async () => {
@@ -1251,13 +1252,12 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
         undone: false,
         created_at: '2026-06-22T00:00:00.000Z',
       })
-      vi.mocked(shiftRepository.getShiftById).mockResolvedValue({ ...baseShift, publication_status: 'published' })
-      vi.mocked(shiftRepository.updateShift).mockResolvedValue({ ...baseShift, publication_status: 'draft' })
+      vi.mocked(shiftRepository.getShiftsByIds).mockResolvedValue([{ ...baseShift, publication_status: 'published' }])
       vi.mocked(shiftRepository.markActionUndone).mockResolvedValue(undefined)
 
       const result = await shiftService.undoLastShiftAction('company-1', 'owner-1')
 
-      expect(shiftRepository.updateShift).toHaveBeenCalledWith('shift-1', { publication_status: 'draft' })
+      expect(shiftRepository.updatePublicationStatusByIds).toHaveBeenCalledWith(['shift-1'], 'draft')
       expect(shiftRepository.markActionUndone).toHaveBeenCalledWith('history-5', expect.objectContaining({
         next_publication_statuses: [{ id: 'shift-1', publication_status: 'published' }],
       }))
@@ -1286,13 +1286,13 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
         undone: true,
         created_at: '2026-06-22T00:00:00.000Z',
       })
-      vi.mocked(shiftRepository.restoreShift).mockResolvedValue(baseShift)
+      vi.mocked(shiftRepository.restoreShifts).mockResolvedValue([baseShift])
       vi.mocked(shiftRepository.restoreShiftAssignments).mockResolvedValue(undefined)
       vi.mocked(shiftRepository.markActionRedone).mockResolvedValue(undefined)
 
       const result = await shiftService.redoLastUndoneAction('company-1', 'owner-1')
 
-      expect(shiftRepository.restoreShift).toHaveBeenCalledWith(baseShift)
+      expect(shiftRepository.restoreShifts).toHaveBeenCalledWith([baseShift])
       expect(shiftRepository.markActionRedone).toHaveBeenCalledWith('history-1')
       expect(result.action_type).toBe('create')
     })
@@ -1309,13 +1309,12 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
         undone: true,
         created_at: '2026-06-22T00:00:00.000Z',
       })
-      vi.mocked(shiftRepository.deleteAssignmentsByShiftId).mockResolvedValue(undefined)
-      vi.mocked(shiftRepository.deleteShift).mockResolvedValue(undefined)
       vi.mocked(shiftRepository.markActionRedone).mockResolvedValue(undefined)
 
       const result = await shiftService.redoLastUndoneAction('company-1', 'owner-1')
 
-      expect(shiftRepository.deleteShift).toHaveBeenCalledWith('shift-1')
+      expect(shiftRepository.deleteAssignmentsByShiftIds).toHaveBeenCalledWith(['shift-1'])
+      expect(shiftRepository.deleteShiftsByIds).toHaveBeenCalledWith(['shift-1'])
       expect(result.action_type).toBe('delete')
     })
 
@@ -1332,14 +1331,13 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
         undone: true,
         created_at: '2026-06-22T00:00:00.000Z',
       })
-      vi.mocked(shiftRepository.updateShift).mockResolvedValue(nextShift)
-      vi.mocked(shiftRepository.deleteAssignmentsByShiftId).mockResolvedValue(undefined)
       vi.mocked(shiftRepository.restoreShiftAssignments).mockResolvedValue(undefined)
       vi.mocked(shiftRepository.markActionRedone).mockResolvedValue(undefined)
 
       const result = await shiftService.redoLastUndoneAction('company-1', 'owner-1')
 
-      expect(shiftRepository.updateShift).toHaveBeenCalledWith('shift-1', expect.objectContaining({ title: 'New Title' }))
+      expect(shiftRepository.upsertShifts).toHaveBeenCalledWith([nextShift])
+      expect(shiftRepository.deleteAssignmentsByShiftIds).toHaveBeenCalledWith(['shift-1'])
       expect(result.action_type).toBe('edit')
     })
 
@@ -1355,12 +1353,11 @@ describe('shiftService — Shift (UC1-8, UC10, UC12)', () => {
         undone: true,
         created_at: '2026-06-22T00:00:00.000Z',
       })
-      vi.mocked(shiftRepository.updateShift).mockResolvedValue({ ...baseShift, publication_status: 'published' })
       vi.mocked(shiftRepository.markActionRedone).mockResolvedValue(undefined)
 
       const result = await shiftService.redoLastUndoneAction('company-1', 'owner-1')
 
-      expect(shiftRepository.updateShift).toHaveBeenCalledWith('shift-1', { publication_status: 'published' })
+      expect(shiftRepository.updatePublicationStatusByIds).toHaveBeenCalledWith(['shift-1'], 'published')
       expect(result.action_type).toBe('publish')
     })
   })

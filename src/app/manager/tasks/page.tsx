@@ -4,13 +4,12 @@ import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from 'rea
 import { useRouter } from 'next/navigation'
 import { createPortal } from 'react-dom'
 import {
-  Plus, X, ChevronDown, AlertCircle,
+  Plus, X, ChevronDown, AlertCircle, AlertTriangle, Check,
   CheckCircle, Clock, Eye, Layers, MoreHorizontal,
   Copy, UserCog, UserRound, Pencil, Trash2, CalendarDays, ChevronLeft, ChevronRight,
 } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
 import ManagerSidebar from '@/components/ManagerSidebar'
-import MultiSelectDropdownField from '@/components/MultiSelectDropdownField'
 import { Task, TaskInput, KanbanGroup } from '@/types/Task'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 
@@ -432,6 +431,8 @@ function TaskCard({
   const assignees = assigneeIds.map(id => members.find(m => m.id === id)).filter((m): m is Member => !!m)
   const priority = task.priority ? PRIORITY_COLORS[task.priority] : null
   const overdue = task.due_at && task.status !== 'Complete' && isDueOverdue(task.due_at)
+  // Rejected in Review and sent back — this card owes rework; the reason shows in Task Details.
+  const needsRework = !isSubTask && !!task.rejection_reason && task.status === 'In Progress'
 
   const MENU_ITEMS = [
     { label: 'Edit',      icon: <Pencil size={13} style={{ color: TASK_BLUE }} />,  action: onEdit,      color: '#374151' },
@@ -459,6 +460,11 @@ function TaskCard({
           {priority && task.priority && (
             <span style={{ fontSize: '0.75rem', fontWeight: 800, padding: '3px 9px', borderRadius: '99px', background: priority.bg, color: priority.text, letterSpacing: '0.01em' }}>
               {task.priority}
+            </span>
+          )}
+          {needsRework && (
+            <span title={task.rejection_reason ?? undefined} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', fontWeight: 800, padding: '3px 9px', borderRadius: '99px', background: '#FEF2F2', color: '#DC2626', letterSpacing: '0.01em' }}>
+              <AlertTriangle size={10} /> Rework
             </span>
           )}
           {!!subTaskCount && (
@@ -593,6 +599,9 @@ export default function ManagerTasksPage() {
   const [dragOverCol, setDragOverCol] = useState<Task['status'] | null>(null)
   const canDragTask = (task: Task): boolean => {
     if (!internalUserId) return false
+    // Once submitted to Review the card is locked — only the assigner's Approve/Reject can move
+    // it (approve → Complete, reject → back to In Progress). Complete is terminal.
+    if (task.status === 'Review' || task.status === 'Complete') return false
     if (task.assigned_by === internalUserId) return true
     const assigneeIds = task.assigned_user_ids ?? (task.assigned_user_id ? [task.assigned_user_id] : [])
     return assigneeIds.includes(internalUserId)
@@ -600,6 +609,7 @@ export default function ManagerTasksPage() {
   const handleDropTaskOnColumn = async (task: Task, targetStatus: Task['status']) => {
     setDragOverCol(null)
     setDraggingTaskId(null)
+    if (task.status === 'Review' || task.status === 'Complete') return
     const currentIdx = COLUMNS.indexOf(task.status)
     const targetIdx = COLUMNS.indexOf(targetStatus)
     if (targetIdx !== currentIdx + 1) return
@@ -664,6 +674,10 @@ export default function ManagerTasksPage() {
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [duplicateLoading, setDuplicateLoading] = useState(false)
   const [panelError,    setPanelError]    = useState('')
+  // Review sign-off (Approve / Reject) on tasks this manager assigned to Employees.
+  const [reviewActionLoading, setReviewActionLoading] = useState('')
+  const [rejectReasonOpen,    setRejectReasonOpen]    = useState(false)
+  const [rejectReason,        setRejectReason]        = useState('')
   const [editTitle,       setEditTitle]       = useState('')
   const [editDescription, setEditDescription] = useState('')
   const [editPriority,    setEditPriority]    = useState('')
@@ -829,13 +843,51 @@ export default function ManagerTasksPage() {
     setSubTaskTitle('')
   }
 
-  const closePanel = () => { setSelectedTask(null); setDeleteConfirm(false); setPanelError(''); setSubTaskTitle('') }
+  const closePanel = () => { setSelectedTask(null); setDeleteConfirm(false); setPanelError(''); setSubTaskTitle(''); setRejectReasonOpen(false); setRejectReason('') }
+
+  // ── Review sign-off on tasks this manager assigned (Manager → Employee) ────
+  // Approve → Complete; Reject (with reason) → back to In Progress as rework.
+
+  const handleApproveTask = async () => {
+    if (!selectedTask) return
+    setReviewActionLoading('approve'); setPanelError('')
+    try {
+      const res = await fetch('/api/task', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'approve', id: selectedTask.id, assigned_by: internalUserId || undefined }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      await fetchKanban(companyId)
+      closePanel()
+    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to approve task') }
+    finally { setReviewActionLoading('') }
+  }
+
+  const handleRejectTask = async () => {
+    if (!selectedTask || !rejectReason.trim()) return
+    setReviewActionLoading('reject'); setPanelError('')
+    try {
+      const res = await fetch('/api/task', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'reject', id: selectedTask.id, reason: rejectReason.trim(), assigned_by: internalUserId || undefined }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      await fetchKanban(companyId)
+      closePanel()
+    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to reject task') }
+    finally { setReviewActionLoading('') }
+  }
 
   // ── Save task ─────────────────────────────────────────────────────────────
 
   const handleSaveTask = async () => {
     if (!selectedTask || !editTitle.trim()) return
-    if (editAssigneeIds.length > 0 && !editShiftId) { setPanelError('Please select a shift for the assignee'); return }
+    if (!editAssigneeIds[0]) { setPanelError('Please select an assignee'); return }
+    if (!editShiftId) { setPanelError('Please select a shift for the assignee'); return }
     setEditLoading(true); setPanelError('')
     try {
       const resolvedShift = shiftOptions.find(x => x.id === editShiftId)
@@ -980,7 +1032,8 @@ export default function ManagerTasksPage() {
 
   const handleCreateTask = async () => {
     if (!newTitle.trim() || !newDeptId) { setNewError('Title and department are required'); return }
-    if (newAssigneeIds.length > 0 && !newShiftId) { setNewError('Please select a shift for the assignee'); return }
+    if (!newAssigneeIds[0]) { setNewError('Please select an assignee'); return }
+    if (!newShiftId) { setNewError('Please select a shift for the assignee'); return }
     setNewLoading(true); setNewError('')
     try {
       const selShift = newTaskShiftOptions.find(s => s.id === newShiftId)
@@ -1606,7 +1659,51 @@ export default function ManagerTasksPage() {
                     : <div style={viewEmpty}>No deadline set</div>
                   }
                 </div>
+                {selectedTask.rejection_reason && selectedTask.status !== 'Complete' && (
+                  <div>
+                    <label style={modalLabelStyle}>Rejected Reason</label>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 12px', borderRadius: 10, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', fontSize: 13, lineHeight: 1.5 }}>
+                      <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+                      <span style={{ whiteSpace: 'pre-wrap' }}>{selectedTask.rejection_reason}</span>
+                    </div>
+                  </div>
+                )}
+                <InlineError message={panelError} />
               </div>
+              {/* Review sign-off — only the user who assigned this task decides on submitted work */}
+              {selectedTask.status === 'Review' && selectedTask.assigned_by === internalUserId && (
+                <div style={{ padding: '0 24px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {rejectReasonOpen ? (
+                    <>
+                      <textarea
+                        autoFocus
+                        value={rejectReason}
+                        onChange={e => setRejectReason(e.target.value)}
+                        rows={2}
+                        placeholder="Explain what needs rework..."
+                        style={{ padding: '10px 12px', border: '1.5px solid #E5E7EB', borderRadius: 8, fontSize: '0.875rem', color: '#111827', resize: 'vertical', lineHeight: 1.55, outline: 'none', fontFamily: 'inherit' }}
+                      />
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                        <button type="button" onClick={() => { setRejectReasonOpen(false); setRejectReason('') }} style={{ height: 38, border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', color: '#334155', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                          Cancel
+                        </button>
+                        <button type="button" onClick={handleRejectTask} disabled={reviewActionLoading === 'reject' || !rejectReason.trim()} style={{ height: 38, border: 'none', borderRadius: 8, background: !rejectReason.trim() ? '#F3A8A8' : 'linear-gradient(135deg, #EF4444, #DC2626)', color: '#FFFFFF', fontSize: 12, fontWeight: 700, cursor: reviewActionLoading === 'reject' || !rejectReason.trim() ? 'not-allowed' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                          <X size={13} /> Confirm Reject
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                      <button type="button" onClick={handleApproveTask} disabled={reviewActionLoading === 'approve'} style={{ height: 38, border: 'none', borderRadius: 8, background: 'linear-gradient(135deg, #22C55E, #16A34A)', color: '#FFFFFF', fontSize: 12, fontWeight: 700, cursor: reviewActionLoading === 'approve' ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                        <Check size={13} /> Approve
+                      </button>
+                      <button type="button" onClick={() => setRejectReasonOpen(true)} style={{ height: 38, border: '1px solid #FECACA', borderRadius: 8, background: '#FEF2F2', color: '#DC2626', fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                        <X size={13} /> Reject
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
               <div style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end' }}>
                 <button style={ghostBtn} onClick={closePanel}>Close</button>
               </div>
@@ -1639,7 +1736,7 @@ export default function ManagerTasksPage() {
             <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16, maxHeight: 'calc(90vh - 140px)', overflowY: 'auto' }}>
               <div>
                 <label style={modalLabelStyle}>Title <span style={{ color: TASK_BLUE }}>*</span></label>
-                <input autoFocus value={editTitle} onChange={e => setEditTitle(e.target.value)} style={{ ...modalInputStyle, background: '#FAFAFA' }} onKeyDown={e => { if (e.key === 'Enter') handleSaveTask() }} />
+                <input ref={el => { if (el && !el.dataset.autofocused) { el.dataset.autofocused = '1'; el.focus(); el.setSelectionRange(0, 0); el.scrollLeft = 0 } }} value={editTitle} onChange={e => setEditTitle(e.target.value)} style={{ ...modalInputStyle, background: '#FAFAFA' }} onKeyDown={e => { if (e.key === 'Enter') handleSaveTask() }} />
               </div>
               <div>
                 <label style={modalLabelStyle}>Description <span style={{ color: '#D1D5DB', fontWeight: 400 }}>(optional)</span></label>
@@ -1652,7 +1749,7 @@ export default function ManagerTasksPage() {
                 </div>
                 <div>
                   <label style={modalLabelStyle}>Assign To</label>
-                  <MultiSelectDropdownField values={editAssigneeIds} options={editAssigneeDropdownOptions} onChange={v => { setEditAssigneeIds(v); setEditShiftId(''); setEditDeadlineTime('') }} allLabel="Unassigned" />
+                  <DropdownField value={editAssigneeIds[0] ?? ''} options={editAssigneeDropdownOptions} onChange={v => { setEditAssigneeIds(v ? [v] : []); setEditShiftId(''); setEditDeadlineTime('') }} placeholder="Select assignee" />
                 </div>
               </div>
               <div style={{ borderTop: '1px dashed #E5E7EB' }} />
@@ -1801,7 +1898,7 @@ export default function ManagerTasksPage() {
                 </div>
                 <div>
                   <label style={modalLabelStyle}>Assign To</label>
-                  <MultiSelectDropdownField values={newAssigneeIds} options={newAssigneeDropdownOptions} onChange={v => { setNewAssigneeIds(v); setNewShiftId(''); setNewDeadlineTime('') }} allLabel="Unassigned" />
+                  <DropdownField value={newAssigneeIds[0] ?? ''} options={newAssigneeDropdownOptions} onChange={v => { setNewAssigneeIds(v ? [v] : []); setNewShiftId(''); setNewDeadlineTime('') }} placeholder="Select assignee" />
                 </div>
               </div>
               <div style={{ borderTop: '1px dashed #E5E7EB' }} />

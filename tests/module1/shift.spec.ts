@@ -168,13 +168,15 @@ test('UC5 edits the shift and assigns it to an employee', async ({ request }) =>
 })
 
 test('UC11 surfaces a clopening conflict as a non-blocking warning', async ({ request }) => {
+  // The employee's existing shift ends 17:00 on 2026-07-01; starting again at 21:00 leaves
+  // only 4 hours of rest — under the 5-hour clopening threshold (MIN_REST_HOURS).
   const res = await request.post('/api/shift', {
     data: {
       company_id: seeded.companyId,
       department_id: departmentId,
-      shift_date: '2026-07-02',
-      start_time: '00:00',
-      end_time: '04:00',
+      shift_date: '2026-07-01',
+      start_time: '21:00',
+      end_time: '23:00',
       created_by: seeded.ownerId,
       assigned_user_id: employeeId,
     },

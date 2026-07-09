@@ -15,7 +15,7 @@ import {
   Plus, X, Trash2, Pencil, Megaphone,
   Send, Search, SquarePen, Check, Bell, MessageSquare, Crown,
   Users, Globe, UserCog, UserRound, Pin, PinOff,
-  ImagePlus, Paperclip, FileText, Download, ChevronDown, Filter,
+  ImagePlus, Paperclip, FileText, Download, ChevronDown,
 } from 'lucide-react'
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
@@ -1251,8 +1251,14 @@ export default function OwnerCommunicationPage() {
 
               {/* Left: conversations — own card, sized to fit its content (not stretched full height) */}
               <div style={{ alignSelf: 'start', maxHeight: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '16px 18px', borderBottom: '1px solid #E2E8F0', flexShrink: 0 }}>
+                  <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <MessageSquare size={15} style={{ color: '#F97316' }} />
+                  </div>
+                  <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Chatbox</span>
+                </div>
                 <div style={{ padding: '10px 12px 0', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div style={{ flex: 1, minWidth: 0, height: 44, display: 'flex', alignItems: 'center', gap: 8, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 10, padding: '0 13px' }}>
+                  <div style={{ flex: 1, minWidth: 0, height: 36, display: 'flex', alignItems: 'center', gap: 8, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 10, padding: '0 13px' }}>
                     <Search size={15} color="#94A3B8" />
                     <input
                       value={search} onChange={e => setSearch(e.target.value)}
@@ -1262,7 +1268,7 @@ export default function OwnerCommunicationPage() {
                   </div>
                   <button onClick={openCompose} disabled={!communicationReady} title="New message"
                     className={communicationReady ? 'comm-action-btn' : ''}
-                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 44, height: 44, background: communicationReady ? '#F97316' : '#E5E7EB', border: 'none', borderRadius: 10, color: communicationReady ? '#fff' : '#9CA3AF', cursor: communicationReady ? 'pointer' : 'not-allowed', flexShrink: 0 }}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, background: communicationReady ? '#F97316' : '#E5E7EB', border: 'none', borderRadius: 10, color: communicationReady ? '#fff' : '#9CA3AF', cursor: communicationReady ? 'pointer' : 'not-allowed', flexShrink: 0 }}
                   >
                     <SquarePen size={18} strokeWidth={2.5} />
                   </button>
@@ -1614,7 +1620,7 @@ export default function OwnerCommunicationPage() {
                     <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>My Announcements</span>
                   </div>
                   <div style={{ padding: '10px 12px 0', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ flex: 1, minWidth: 0, height: 44, display: 'flex', alignItems: 'center', gap: 8, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 10, padding: '0 13px' }}>
+                    <div style={{ flex: 1, minWidth: 0, height: 36, display: 'flex', alignItems: 'center', gap: 8, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 10, padding: '0 13px' }}>
                       <Search size={15} color="#94A3B8" style={{ flexShrink: 0 }} />
                       <input
                         value={annSearch}
@@ -1625,7 +1631,7 @@ export default function OwnerCommunicationPage() {
                     </div>
                     <button onClick={() => setShowNewAnnModal(true)} title="Post announcement"
                       className="comm-action-btn"
-                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 44, height: 44, background: '#F97316', border: 'none', borderRadius: 10, color: '#fff', cursor: 'pointer', flexShrink: 0 }}
+                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, background: '#F97316', border: 'none', borderRadius: 10, color: '#fff', cursor: 'pointer', flexShrink: 0 }}
                     >
                       <Plus size={18} strokeWidth={2.5} />
                     </button>
@@ -1650,7 +1656,7 @@ export default function OwnerCommunicationPage() {
                     <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>From Others</span>
                   </div>
                   <div style={{ padding: '10px 12px 0', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ flex: 1, minWidth: 0, height: 44, display: 'flex', alignItems: 'center', gap: 8, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 10, padding: '0 13px' }}>
+                    <div style={{ flex: 1, minWidth: 0, height: 36, display: 'flex', alignItems: 'center', gap: 8, background: '#F8FAFC', border: '1px solid #E2E8F0', borderRadius: 10, padding: '0 13px' }}>
                       <Search size={15} color="#94A3B8" style={{ flexShrink: 0 }} />
                       <input
                         value={othersSearch}
@@ -1663,9 +1669,8 @@ export default function OwnerCommunicationPage() {
                       <button
                         type="button"
                         onClick={() => setOthersDeptFilterOpen(o => !o)}
-                        style={{ display: 'flex', alignItems: 'center', gap: 5, height: 44, padding: '0 12px', border: `1.5px solid ${othersDeptFilterOpen ? '#F97316' : '#E5E7EB'}`, borderRadius: 10, background: '#FFFFFF', color: '#374151', fontSize: 13, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', boxShadow: othersDeptFilterOpen ? '0 0 0 3px rgba(249,115,22,0.10)' : 'none', transition: 'border-color 0.15s' }}
+                        style={{ display: 'flex', alignItems: 'center', gap: 5, height: 36, padding: '0 12px', border: `1.5px solid ${othersDeptFilterOpen ? '#F97316' : '#E5E7EB'}`, borderRadius: 10, background: '#FFFFFF', color: '#374151', fontSize: 13, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', boxShadow: othersDeptFilterOpen ? '0 0 0 3px rgba(249,115,22,0.10)' : 'none', transition: 'border-color 0.15s' }}
                       >
-                        <Filter size={12} style={{ color: '#9CA3AF', flexShrink: 0 }} />
                         {othersDeptFilter === 'all' ? 'All Departments' : (departments.find(d => d.id === othersDeptFilter)?.name ?? 'All Departments')}
                         <ChevronDown size={12} style={{ color: '#9CA3AF', flexShrink: 0, transform: othersDeptFilterOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
                       </button>

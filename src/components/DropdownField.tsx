@@ -4,6 +4,7 @@
 // of a native <select> for any dropdown field. Do not redesign here.
 
 import { useState, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { ChevronDown } from 'lucide-react'
 
 export default function DropdownField({ value, options, onChange, placeholder, disabled = false, compact = false, fontSize }: {
@@ -60,7 +61,10 @@ export default function DropdownField({ value, options, onChange, placeholder, d
         </span>
         <ChevronDown size={13} style={{ color: '#94A3B8', flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
       </button>
-      {open && (
+      {/* Portal to body: the menu uses viewport (fixed) coordinates, but a transformed/animated
+          ancestor (e.g. a panel entry animation with `fill: both`) would otherwise become its
+          containing block and shift it away from the trigger. */}
+      {open && createPortal(
         <div ref={dropdownRef} style={{
           position: 'fixed', top: pos.top, left: pos.left, width: pos.width,
           background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 10,
@@ -83,7 +87,8 @@ export default function DropdownField({ value, options, onChange, placeholder, d
               >{opt.label}</button>
             )
           })}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )

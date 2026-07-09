@@ -17,6 +17,7 @@ export async function GET(req: NextRequest) {
   const activity_feed = searchParams.get('activity_feed') === 'true'
   const calendar = searchParams.get('calendar') === 'true'
   const archived = searchParams.get('archived') === 'true'
+  const delay_threshold = searchParams.get('delay_threshold') === 'true'
   const suggestion = searchParams.get('suggestion')
   const task_id = searchParams.get('task_id') ?? undefined
   const date_from = searchParams.get('date_from') ?? undefined
@@ -64,9 +65,13 @@ export async function GET(req: NextRequest) {
       const reassignmentSuggestion = await taskService.getTaskReassignmentSuggestion(task_id)
       return NextResponse.json({ success: true, suggestion: reassignmentSuggestion })
     }
-    if (suggestion === 'stalled') {
-      const alerts = await taskService.getStalledTaskAlerts(company_id, department_id, assigned_by)
+    if (suggestion === 'delay') {
+      const alerts = await taskService.getTaskDelayAlerts(company_id, department_id, assigned_by)
       return NextResponse.json({ success: true, alerts })
+    }
+    if (delay_threshold) {
+      const settings = await taskService.getTaskDelayThreshold(company_id)
+      return NextResponse.json({ success: true, settings })
     }
     if (shift_id) {
       const tasks = await taskService.getTasksByCompanyShift(company_id, shift_id)
@@ -89,6 +94,33 @@ export async function POST(req: NextRequest) {
   }
 
   const b = body as Record<string, unknown>
+
+  if (b.action === 'set_delay_threshold') {
+    if (!b.company_id || typeof b.company_id !== 'string')
+      return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
+    try {
+      const settings = await taskService.updateTaskDelayThreshold(
+        b.company_id,
+        Number(b.threshold_percent),
+        b.updated_by as string | undefined,
+      )
+      return NextResponse.json({ success: true, settings })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to update delay threshold'
+      return NextResponse.json({ success: false, message }, { status: 400 })
+    }
+  }
+
+  if (b.action === 'mark_delay_alerts_read') {
+    try {
+      const task_ids = Array.isArray(b.task_ids) ? b.task_ids.filter((v): v is string => typeof v === 'string') : []
+      await taskService.markTaskDelayAlertsRead(task_ids)
+      return NextResponse.json({ success: true })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to mark delay alerts as read'
+      return NextResponse.json({ success: false, message }, { status: 400 })
+    }
+  }
 
   // Handle duplicate action
   if (b.action === 'duplicate' && typeof b.id === 'string') {
@@ -167,6 +199,26 @@ export async function PATCH(req: NextRequest) {
   const b = body as Record<string, unknown>
   if (!b.id || typeof b.id !== 'string')
     return NextResponse.json({ success: false, message: 'id is required' }, { status: 400 })
+
+  if (b.action === 'approve') {
+    try {
+      const task = await taskService.approveTask(b.id, b.assigned_by as string | undefined)
+      return NextResponse.json({ success: true, task })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to approve task'
+      return NextResponse.json({ success: false, message }, { status: 400 })
+    }
+  }
+
+  if (b.action === 'reject') {
+    try {
+      const task = await taskService.rejectTask(b.id, String(b.reason ?? ''), b.assigned_by as string | undefined)
+      return NextResponse.json({ success: true, task })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to reject task'
+      return NextResponse.json({ success: false, message }, { status: 400 })
+    }
+  }
 
   if (b.action === 'archive') {
     try {

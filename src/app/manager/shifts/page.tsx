@@ -1468,7 +1468,7 @@ export default function ManagerShiftsPage() {
                   <div style={{ width: 30, height: 30, borderRadius: 9, background: BLUE_LIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <CalendarDays size={15} style={{ color: BLUE }} />
                   </div>
-                  <h2 style={{ margin: 0, color: TEXT, fontSize: 14, fontWeight: 700, letterSpacing: '-0.2px' }}>Shift Timeline</h2>
+                  <h2 style={{ margin: 0, color: TEXT, fontSize: 14, fontWeight: 700, letterSpacing: '-0.2px' }}>{shiftViewMode === 'calendar' ? 'Weekly Shift' : 'Shift Timeline'}</h2>
                 </div>
                 {timelineDeleteError ? (
                   <p style={{ margin: 0, color: '#DC2626', fontSize: 12, fontWeight: 700 }}>{timelineDeleteError}</p>
