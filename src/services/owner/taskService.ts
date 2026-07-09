@@ -14,7 +14,8 @@ import {
   TaskDeadlineRule,
   TaskReassignmentSuggestion,
   TaskWorkloadSuggestion,
-  StalledTaskAlert,
+  TaskDelayAlert,
+  TaskDelayAlertSettings,
 } from '@/types/Task'
 import { User } from '@/types/auth.types'
 
@@ -35,21 +36,20 @@ export const taskService = {
     if (!input.company_id || !input.department_id || !input.title?.trim()) {
       throw new Error('company_id, department_id, and title are required')
     }
-    // When a caller provides the full assignee set, the first id becomes the primary
-    // (tasks.assigned_user_id) that every existing single-assignee code path keeps reasoning
-    // about; every id in the set (not just the primary) still goes through the same one-level-down
-    // role check.
+    // A task belongs to exactly one assignee. assigned_user_ids is still accepted as a
+    // single-element alias for assigned_user_id, but 2+ ids are rejected here so the rule holds
+    // even for callers that bypass the UI and hit the API directly.
     const assigneeIds = input.assigned_user_ids?.filter(Boolean) ?? []
-    if (assigneeIds.length > 0) {
+    if (assigneeIds.length > 1) {
+      throw new Error('A task can only be assigned to one person')
+    }
+    if (assigneeIds.length === 1) {
       input = { ...input, assigned_user_id: assigneeIds[0] }
     }
-    await validateTaskAssignment(input)
-    if (assigneeIds.length > 1) {
-      const creator = input.assigned_by ? await taskRepository.getUserById(input.assigned_by) : null
-      for (const assigneeId of assigneeIds.slice(1)) {
-        await validateAssignee(creator, assigneeId, input)
-      }
+    if (!input.assigned_user_id && !input.parent_task_id) {
+      throw new Error('A task must be assigned to a user')
     }
+    await validateTaskAssignment(input)
     if (input.percentage_complete !== undefined) {
       if (input.percentage_complete < 0 || input.percentage_complete > 100) {
         throw new Error('percentage_complete must be between 0 and 100')
@@ -63,14 +63,12 @@ export const taskService = {
         throw new Error('Only the user who assigned this task can perform this action')
       }
       // Sub-tasks inherit the parent's priority/deadline so they stay aligned with the main task
-      // in UI and recurrence flows. They are not scored separately for workload/stalled alerts.
-      input = { ...input, priority: parent.priority, due_at: parent.due_at }
+      // in UI and recurrence flows. They are not scored separately for workload/delay alerts.
+      // They also inherit the parent's assignee when none is given, so a sub-task never ends up
+      // unassigned even though the assignee-required check above only covers top-level tasks.
+      input = { ...input, priority: parent.priority, due_at: parent.due_at, assigned_user_id: input.assigned_user_id ?? parent.assigned_user_id }
     }
-    const task = await taskRepository.createTask(input)
-    if (assigneeIds.length > 1) {
-      await taskRepository.replaceTaskAssignees(task.id, assigneeIds, input.assigned_by ?? null)
-    }
-    return task
+    return taskRepository.createTask(input)
   },
 
   // UC22 Create Sub Task / UC28 Set Task Dependencies — sub_tasks are created under the
@@ -110,11 +108,17 @@ export const taskService = {
   async editTask(id: string, input: Partial<TaskInput>, actingUserId?: string | null): Promise<Task> {
     if (!id) throw new Error('Task id is required')
     const existing = await assertIsTaskOwner(id, actingUserId)
-    // Same primary-sync as assignTask — when the caller sends the full assignee set, the first id
-    // becomes the new tasks.assigned_user_id and every id gets the same role check.
+    // Same single-assignee rule as assignTask — assigned_user_ids is only a one-element alias
+    // for assigned_user_id, and an edit can reassign the task but never unassign it.
     const assigneeIds = input.assigned_user_ids?.filter(Boolean) ?? null
+    if (assigneeIds && assigneeIds.length > 1) {
+      throw new Error('A task can only be assigned to one person')
+    }
     if (assigneeIds) {
       input = { ...input, assigned_user_id: assigneeIds[0] ?? null }
+    }
+    if (existing.parent_task_id === null && input.assigned_user_id === null) {
+      throw new Error('A task must be assigned to a user')
     }
     const mergedInput = {
       ...existing,
@@ -124,12 +128,6 @@ export const taskService = {
       title: input.title ?? existing.title,
     }
     await validateTaskAssignment(mergedInput)
-    if (assigneeIds && assigneeIds.length > 1) {
-      const creator = mergedInput.assigned_by ? await taskRepository.getUserById(mergedInput.assigned_by) : null
-      for (const assigneeId of assigneeIds.slice(1)) {
-        await validateAssignee(creator, assigneeId, mergedInput)
-      }
-    }
     if (input.status && !VALID_STATUSES.includes(input.status as typeof VALID_STATUSES[number])) {
       throw new Error(`status must be one of: ${VALID_STATUSES.join(', ')}`)
     }
@@ -138,10 +136,11 @@ export const taskService = {
         throw new Error('percentage_complete must be between 0 and 100')
       }
     }
-    const updated = await taskRepository.updateTask(id, input, actingUserId)
-    if (assigneeIds && assigneeIds.length > 1) {
-      await taskRepository.replaceTaskAssignees(id, assigneeIds, actingUserId ?? null)
+    // A new deadline is a new delay window — un-dismiss the Task Delay Alert so it can re-fire.
+    if (input.due_at !== undefined && input.due_at !== existing.due_at && existing.delay_alert_read_at) {
+      input = { ...input, delay_alert_read_at: null }
     }
+    const updated = await taskRepository.updateTask(id, input, actingUserId)
     if (existing.parent_task_id === null) {
       const cascade: Partial<TaskInput> = {}
       if (input.assigned_user_id !== undefined && input.assigned_user_id !== existing.assigned_user_id) {
@@ -422,7 +421,51 @@ export const taskService = {
     if (percentage_complete < 0 || percentage_complete > 100) {
       throw new Error('percentage_complete must be between 0 and 100')
     }
+    // Review is the assigner's checkpoint: once the assignee submits work there, the only ways
+    // out are approveTask (→ Complete) or rejectTask (→ In Progress with a reason). The drag
+    // path can therefore never move a Review card, and can never reach Complete on its own.
+    const existing = await taskRepository.getTaskById(id)
+    if (existing.status === 'Review') {
+      throw new Error('Tasks in Review can only be approved or rejected by the user who assigned them')
+    }
+    if (status === 'Complete') {
+      throw new Error('Tasks reach Complete only when the user who assigned them approves the review')
+    }
     return taskRepository.updateTask(id, { status, percentage_complete })
+  },
+
+  // Assigner's sign-off on a task the assignee submitted for Review — the only way a task
+  // reaches Complete. Clears any earlier rejection so the rework notice disappears.
+  async approveTask(id: string, actingUserId?: string | null): Promise<Task> {
+    if (!id) throw new Error('Task id is required')
+    const task = await assertIsTaskOwner(id, actingUserId)
+    if (task.status !== 'Review') throw new Error('Only tasks in Review can be approved')
+    const updated = await taskRepository.updateTask(id, {
+      status: 'Complete',
+      percentage_complete: 100,
+      rejection_reason: null,
+      rejected_at: null,
+      completed_at: new Date().toISOString(),
+    })
+    await taskRepository.updateSubTasksByParent(id, { status: 'Complete', percentage_complete: 100 })
+    return updated
+  },
+
+  // Assigner found problems in the submitted work — the task returns to In Progress carrying a
+  // required reason, which the assignee's board surfaces as a rework notice until re-submission.
+  async rejectTask(id: string, reason: string, actingUserId?: string | null): Promise<Task> {
+    if (!id) throw new Error('Task id is required')
+    if (!reason?.trim()) throw new Error('A rejection reason is required')
+    const task = await assertIsTaskOwner(id, actingUserId)
+    if (task.status !== 'Review') throw new Error('Only tasks in Review can be rejected')
+    const updated = await taskRepository.updateTask(id, {
+      status: 'In Progress',
+      percentage_complete: 33,
+      rejection_reason: reason.trim(),
+      rejected_at: new Date().toISOString(),
+    })
+    await taskRepository.updateSubTasksByParent(id, { status: 'In Progress', percentage_complete: 33 })
+    return updated
   },
 
   // To-do checkbox for a sub-task — only meaningful while the parent is In Progress (the work is
@@ -543,8 +586,18 @@ export const taskService = {
 
     const departmentIds = department_id ? [department_id] : [...new Set(activeTasks.map(task => task.department_id))]
 
-    const suggestions: TaskWorkloadSuggestion[] = []
-    for (const deptId of departmentIds) {
+    // One shift-eligibility lookup per (user, date) pair for the whole computation — the naive
+    // per-candidate-per-task await chain is what made this endpoint visibly slower than the
+    // locally-derived Task Delay Alert.
+    const shiftOnDateCache = new Map<string, Promise<boolean>>()
+    const hasShiftOnDateCached = (userId: string, date: string): Promise<boolean> => {
+      const key = `${userId}|${date}`
+      let hit = shiftOnDateCache.get(key)
+      if (!hit) { hit = taskRepository.hasShiftOnDate(userId, company_id, date); shiftOnDateCache.set(key, hit) }
+      return hit
+    }
+
+    const suggestionsByDept = await Promise.all(departmentIds.map(async (deptId): Promise<TaskWorkloadSuggestion | null> => {
       const scores = new Map<string, number>()
       const taskCounts = new Map<string, number>()
       const managers = await taskRepository.getManagersByDepartment(company_id, deptId)
@@ -555,27 +608,31 @@ export const taskService = {
         scores.set(task.assigned_user_id!, (scores.get(task.assigned_user_id!) ?? 0) + taskWorkloadWeight(task))
         taskCounts.set(task.assigned_user_id!, (taskCounts.get(task.assigned_user_id!) ?? 0) + 1)
       }
-      if (scores.size < 2) continue
+      if (scores.size < 2) return null
 
       // Compared against the lightest-loaded person, not the group average — averaging in the
       // overloaded person's own score pulls the average up toward them, which (with only two
       // people) makes "overloaded > 2x average" algebraically impossible to ever trigger.
       const ranked = [...scores.entries()].sort((a, b) => b[1] - a[1])
       const [overloaded_user_id, overloaded_score] = ranked[0]
-      if ((taskCounts.get(overloaded_user_id) ?? 0) < 2) continue
+      if ((taskCounts.get(overloaded_user_id) ?? 0) < 2) return null
 
       let suggestedTask: Task | undefined
       let recommended_user_id = ''
       let recommended_score = 0
       let bestPostSpread = Number.POSITIVE_INFINITY
       const currentSpread = ranked[0][1] - ranked[ranked.length - 1][1]
+      // Never suggest moving a task that is already in Review (the work is done, awaiting the
+      // assigner's sign-off) or one carrying a rejection (rework) — only the original assignee
+      // has the context to redo a rejected task, so it must stay with them.
       const movableTasks = activeTasks
         .filter(task => task.department_id === deptId && task.assigned_user_id === overloaded_user_id)
+        .filter(task => task.status !== 'Review' && !task.rejection_reason)
         .sort((a, b) => taskWorkloadWeight(b) - taskWorkloadWeight(a))
       for (const [candidateUserId, candidateScore] of ranked.slice(1).reverse()) {
         if (overloaded_score <= candidateScore * 2) continue
         for (const task of movableTasks) {
-          if (task.task_date && !(await taskRepository.hasShiftOnDate(candidateUserId, company_id, task.task_date))) continue
+          if (task.task_date && !(await hasShiftOnDateCached(candidateUserId, task.task_date))) continue
           const taskWeight = taskWorkloadWeight(task)
           const postScores = new Map(scores)
           postScores.set(overloaded_user_id, overloaded_score - taskWeight)
@@ -590,11 +647,11 @@ export const taskService = {
           }
         }
       }
-      if (!suggestedTask) continue
+      if (!suggestedTask) return null
 
       const improvement = currentSpread - bestPostSpread
-      if (improvement <= 0) continue
-      suggestions.push({
+      if (improvement <= 0) return null
+      return {
         type: 'rebalance',
         message: `Move one active task from ${overloaded_user_id} to ${recommended_user_id}.`,
         department_id: deptId,
@@ -607,10 +664,10 @@ export const taskService = {
         score_gap_after: bestPostSpread,
         overloaded_score,
         recommended_score,
-      })
-    }
+      } satisfies TaskWorkloadSuggestion
+    }))
 
-    return suggestions
+    return suggestionsByDept.filter((s): s is TaskWorkloadSuggestion => s !== null)
   },
 
   async getWorkloadRebalancingSuggestion(company_id: string, department_id?: string): Promise<TaskWorkloadSuggestion> {
@@ -637,15 +694,20 @@ export const taskService = {
     }
   },
 
-  // UC22 — flags a top-level task once the time elapsed since it was assigned (created_at) exceeds 50% of
-  // its total assigned-to-deadline window, as long as it hasn't reached Review yet. A task already
-  // in Review or Complete is past the point this alert is meant to catch, so it's excluded
-  // regardless of how much time has elapsed.
-  async getStalledTaskAlerts(company_id: string, department_id?: string, assigned_by?: string): Promise<StalledTaskAlert[]> {
+  // UC22 Task Delay Alert — flags a top-level task that is still sitting in Assigned (the
+  // assignee never pulled it into In Progress) once the time elapsed since assignment
+  // (created_at) exceeds the company's threshold percentage of the total assigned-to-deadline
+  // window. Threshold is configurable per company (default 50). A task already In Progress is
+  // being worked on, so it never triggers this alert.
+  async getTaskDelayAlerts(company_id: string, department_id?: string, assigned_by?: string): Promise<TaskDelayAlert[]> {
     const now = Date.now()
+    const { threshold_percent } = await this.getTaskDelayThreshold(company_id)
     return (await taskRepository.getTasksByCompany(company_id, assigned_by))
-      .filter(task => task.status === 'Assigned' || task.status === 'In Progress')
+      .filter(task => task.status === 'Assigned')
       .filter(task => task.parent_task_id === null)
+      .filter(task => !!task.due_at)
+      // Marked as read by the assigner — stays dismissed until the deadline changes.
+      .filter(task => !task.delay_alert_read_at)
       .filter(task => !department_id || task.department_id === department_id)
       .map(task => {
         const createdAt = new Date(task.created_at).getTime()
@@ -654,16 +716,39 @@ export const taskService = {
         const percentElapsed = totalWindow > 0 ? ((now - createdAt) / totalWindow) * 100 : 100
         return { task, percentElapsed }
       })
-      .filter(row => row.percentElapsed > 50)
+      .filter(row => row.percentElapsed > threshold_percent)
       .map(row => ({
         task_id: row.task.id,
         title: row.task.title,
         status: row.task.status,
         percent_elapsed: Math.round(row.percentElapsed),
         message: row.percentElapsed >= 100
-          ? `"${row.task.title}" is past its deadline and hasn't moved to Review.`
-          : `"${row.task.title}" is past the halfway point to its deadline and hasn't moved to Review.`,
+          ? `"${row.task.title}" is past its deadline and still hasn't been started.`
+          : `"${row.task.title}" has used ${Math.round(row.percentElapsed)}% of its time before the deadline and still hasn't been started.`,
       }))
+  },
+
+  async getTaskDelayThreshold(company_id: string): Promise<TaskDelayAlertSettings> {
+    if (!company_id) throw new Error('company_id is required')
+    const stored = await taskRepository.getTaskDelayThreshold(company_id)
+    return { threshold_percent: stored ?? 50 }
+  },
+
+  async updateTaskDelayThreshold(company_id: string, threshold_percent: number, updated_by?: string | null): Promise<TaskDelayAlertSettings> {
+    if (!company_id) throw new Error('company_id is required')
+    if (!Number.isInteger(threshold_percent) || threshold_percent < 1 || threshold_percent > 100) {
+      throw new Error('threshold_percent must be an integer between 1 and 100')
+    }
+    await taskRepository.upsertTaskDelayThreshold(company_id, threshold_percent, updated_by ?? null)
+    return { threshold_percent }
+  },
+
+  // "Mark as read" on the Task Delay Alert — the assigner has seen the delayed tasks; the alert
+  // is dismissed for exactly those tasks. A task that becomes delayed later still alerts.
+  async markTaskDelayAlertsRead(task_ids: string[]): Promise<void> {
+    if (!Array.isArray(task_ids) || task_ids.length === 0) throw new Error('task_ids is required')
+    if (task_ids.some(id => typeof id !== 'string' || !id)) throw new Error('task_ids must be non-empty strings')
+    await taskRepository.markDelayAlertsRead(task_ids)
   },
 
 }

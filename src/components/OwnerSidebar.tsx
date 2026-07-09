@@ -182,11 +182,11 @@ export default function OwnerSidebar({
         const fetchTaskAlerts = () => {
           Promise.all([
             fetch(`/api/task?company_id=${cid}&suggestion=workload&assigned_by=${internalId}`).then(r => r.json()).catch(() => ({ success: false })),
-            fetch(`/api/task?company_id=${cid}&suggestion=stalled&assigned_by=${internalId}`).then(r => r.json()).catch(() => ({ success: false })),
-          ]).then(([workloadData, stalledData]) => {
+            fetch(`/api/task?company_id=${cid}&suggestion=delay&assigned_by=${internalId}`).then(r => r.json()).catch(() => ({ success: false })),
+          ]).then(([workloadData, delayData]) => {
             const workloadCount = workloadData.success ? (workloadData.suggestions ?? []).filter((s: { type: string }) => s.type === 'rebalance').length : 0
-            const stalledCount = stalledData.success ? (stalledData.alerts ?? []).length : 0
-            setTaskAlertCount(workloadCount + stalledCount)
+            const delayCount = delayData.success ? (delayData.alerts ?? []).length : 0
+            setTaskAlertCount(workloadCount + delayCount)
           }).catch(() => {})
         }
         fetchTaskAlertsRef.current = fetchTaskAlerts

@@ -9,15 +9,14 @@
  *   5. 插入 Casual Workers（含 date_of_birth, phone_number, worker_status 等）
  *   6. 生成 Shifts（过去7天 + 未来7天，每个 Employee/Manager 每天一个班）
  *   7. 生成 Attendance Records（仅对过去的 shift，混合准时/迟到/缺勤/各审批状态）
- *   8. 生成 Tasks（每个部门若干条，混合状态：Assigned/In Progress/Review/Complete）
- *   9. 生成 Communication 数据（Announcements + Manager-Employee 对话）
+ *   8. 生成 Communication 数据（Announcements + Manager-Employee 对话）
  *
  * 测试账号结构：
  *   1 Owner, 2 Partner, 8 Manager, 8 Employee, 10 Casual Worker
  *   1 Company, 4 Department, 2 Manager/dept, 2 Employee/dept
  *
  * 日期全部基于脚本运行当天动态推算，没有任何写死的绝对日期 —— 每次运行都会以
- * "今天"为锚点重新生成过去/未来的 Shift、Attendance、Task 数据。
+ * "今天"为锚点重新生成过去/未来的 Shift、Attendance 数据。
  *
  * 使用方法：
  *   node scripts/seed.js
@@ -162,15 +161,6 @@ const legacyTestEmailsToDelete = [
 
 const SHIFT_DAYS_PAST = 7
 const SHIFT_DAYS_FUTURE = 7
-const TASK_PRIORITIES = ['Low', 'Medium', 'High', 'Urgent']
-const TASK_STATUSES = ['Assigned', 'In Progress', 'Review', 'Complete']
-
-const TASK_TITLES_BY_DEPT = {
-  Operations: ['Restock supply room', 'Audit equipment checklist', 'Update SOP document', 'Coordinate vendor delivery', 'Prepare weekly ops report'],
-  Marketing: ['Draft social media calendar', 'Review campaign analytics', 'Design promo banner', 'Schedule email newsletter', 'Brief design freelancer'],
-  Engineering: ['Fix login page bug', 'Review pull request', 'Update API documentation', 'Investigate performance issue', 'Deploy hotfix to staging'],
-  'Customer Support': ['Resolve escalated ticket', 'Update FAQ article', 'Follow up with unhappy customer', 'Review support macros', 'Train new support agent'],
-}
 
 const ANNOUNCEMENT_TEMPLATES = [
   // authorRole 'owner' -> posted by the Owner (company-wide, shows under "My Announcements" for Owner login)
@@ -195,10 +185,6 @@ const MESSAGE_TEMPLATES = [
   'Got it, I will clock in on time.',
   'Appreciate it — let me know if anything changes.',
 ]
-
-function pick(arr, i) {
-  return arr[i % arr.length]
-}
 
 // ─── 主流程 ────────────────────────────────────────────────────────────────────
 
@@ -805,81 +791,8 @@ async function main() {
   }
   console.log(`  ✓ 生成 ${cwAttCount} 条 CW attendance_records（混合 approved/pending/manager_reviewed/rejected/late，10% 缺勤）`)
 
-  // ── Step 11c: Casual Worker Tasks（Employee 分配给 Casual Worker，任务层级的最后一级）──
-  // 完整展示真实的任务分配链：Owner→Manager、Manager→Employee（见 Step 12），
-  // Employee→Casual Worker（这里）。每个 active CW 从负责监督自己的 Employee 那里
-  // 拿到一条挂在自己班次上的任务 —— 这条链路此前后端完全没实现，种子数据也从来
-  // 没生成过，现在 taskService.validateTaskAssignment 已经支持了就一并补上。
-  console.log('\nStep 11c: 生成 Casual Worker Tasks（Employee 分配给 Casual Worker）...')
-  let cwTaskCount = 0
-  const latestCwAssignmentByEmail = new Map()
-  for (const a of cwAssignmentInfo) {
-    const existing = latestCwAssignmentByEmail.get(a.email)
-    if (!existing || a.shiftDate > existing.shiftDate) latestCwAssignmentByEmail.set(a.email, a)
-  }
-  for (const a of latestCwAssignmentByEmail.values()) {
-    const dept = deptByIndex[a.deptIdx]
-    const title = `Assist with ${dept.name.toLowerCase()} floor duties`
-    const { error: cwTaskErr } = await supabase.from('tasks').insert({
-      company_id: company.id,
-      department_id: dept.id,
-      shift_id: a.shiftId,
-      title,
-      description: `${title} during the shift on ${a.shiftDate}.`,
-      assigned_user_id: a.userId,
-      assigned_by: a.supervisorId,
-      status: 'Assigned',
-      percentage_complete: 0,
-      priority: 'Medium',
-      due_at: new Date(`${a.shiftDate}T${a.endTime}:00Z`).toISOString(),
-      task_date: a.shiftDate,
-    })
-    if (cwTaskErr) console.warn(`  ⚠ CW task 失败 (${a.email}): ${cwTaskErr.message}`)
-    else cwTaskCount++
-  }
-  console.log(`  ✓ 生成 ${cwTaskCount} 条 Casual Worker tasks（由负责监督的 Employee 分配）`)
-
-  // ── Step 12: Tasks（每个未来 shift 挂一条 task，保证 Shift Swap 的 Task Changes
-  // 预览、Kanban 等 UI 都能看到真实数据 —— tasks.shift_id 之前完全没设置，导致任何
-  // 依赖 shift_id 关联的功能（如批准 swap 时的 task 转移预览）永远查不到东西）────
-  console.log('\nStep 12: 生成 Tasks（挂在每个未来 shift 上）...')
-  let taskCount = 0
-  const percentByStatus = { Assigned: 0, 'In Progress': 40, Review: 80, Complete: 100 }
-  const futureStaffAssignments = assignmentInfo.filter(a => !a.isPast)
-  for (let i = 0; i < futureStaffAssignments.length; i++) {
-    const a = futureStaffAssignments[i]
-    const dept = deptByIndex[a.deptIdx]
-    const titles = TASK_TITLES_BY_DEPT[dept.name] || []
-    if (titles.length === 0) continue
-    const isManager = managerEmails.includes(a.email)
-    // Owner assigns Manager tasks; Manager assigns Employee tasks (one level down, per the
-    // company hierarchy — never skip a level and never self-assign).
-    const assignedByUserId = isManager ? ownerUser.id : userIdMap[managersByDept[a.deptIdx][0]].internalId
-    const title = pick(titles, i)
-    const status = pick(TASK_STATUSES, i)
-    const priority = pick(TASK_PRIORITIES, i)
-
-    const { error: taskErr } = await supabase.from('tasks').insert({
-      company_id: company.id,
-      department_id: dept.id,
-      shift_id: a.shiftId,
-      title,
-      description: `${title} for the ${dept.name} team.`,
-      assigned_user_id: a.userId,
-      assigned_by: assignedByUserId,
-      status,
-      percentage_complete: percentByStatus[status],
-      priority,
-      due_at: new Date(`${a.shiftDate}T${a.endTime}:00Z`).toISOString(),
-      task_date: a.shiftDate,
-    })
-    if (taskErr) console.warn(`  ⚠ 创建 task 失败 (${a.email}, ${a.shiftDate}): ${taskErr.message}`)
-    else taskCount++
-  }
-  console.log(`  ✓ 生成 ${taskCount} 条 tasks（每个未来 shift 一条，挂在对应 shift_id 上，混合 Assigned/In Progress/Review/Complete）`)
-
-  // ── Step 13: Communication — Announcements ──────────────────────────────
-  console.log('\nStep 13: 生成 Announcements...')
+  // ── Step 12: Communication — Announcements ──────────────────────────────
+  console.log('\nStep 12: 生成 Announcements...')
   let announcementCount = 0
   const announcementIds = []
   let managerAnnCursor = 0
@@ -910,8 +823,8 @@ async function main() {
   }
   console.log(`  ✓ 生成 ${announcementCount} 条 announcements`)
 
-  // ── Step 14: Communication — Messages（每个部门一组 Manager-Employee 对话）──
-  console.log('\nStep 14: 生成 Messages...')
+  // ── Step 13: Communication — Messages（每个部门一组 Manager-Employee 对话）──
+  console.log('\nStep 13: 生成 Messages...')
   let messageCount = 0
   for (let deptIdx = 0; deptIdx < deptByIndex.length; deptIdx++) {
     const managerEmail = managersByDept[deptIdx][0]
@@ -941,6 +854,212 @@ async function main() {
   }
   console.log(`  ✓ 生成 ${messageCount} 条 messages（${deptByIndex.length} 组 Manager-Employee 对话）`)
 
+  // ── Step 13b: Tasks + Sub-tasks + Task Templates + Archive ──────────────
+  // 专门覆盖 Task 页面的测试点：
+  //   · Workload Suggestion — Operations 里 manager1 重度超载（4 个活跃任务，Urgent/High
+  //     + 临近死线），manager2 零活跃任务 → 触发 rebalance 建议（其余部门保持均衡不触发）
+  //   · Task Delay Alert — 若干 status='Assigned' 的任务把 created_at 回写到过去，使
+  //     elapsed% 超过默认阈值 50（含一条已过期 >100% 的），delay_alert_read_at 全部留空
+  //   · Search Bar — 每条任务标题/描述都是可区分的关键词（inventory / roster / campaign…）
+  //   · Priority 排序 — Urgent / High / Medium / Low 四档全覆盖
+  //   · 三个排序条件 — priority（四档混排）/ deadline（due_at 各不相同，含已过期与
+  //     即将到期）/ newest（created_at 各不相同，从 -3 天到 -1 小时都有）
+  //   · Template — task_templates 3 条（含 sub_task_titles）
+  //   · Archive — 2 条 is_archived=true 的已完成顶层任务
+  //   · Edit / 删除 — Owner 页面的任务全部 assigned_by=Owner（只有 assigner 能编辑/删除）
+  //   · 附带 Manager→Employee、Employee→CW 各一小组任务，让下级角色页面也有数据
+  console.log('\nStep 13b: 生成 Tasks + Task Templates...')
+
+  const hoursFromNow = h => new Date(Date.now() + h * 3600000).toISOString()
+  // Workload rebalance 要求候选人在 task_date 当天有已发布 shift（hasShiftOnDate），
+  // 内部员工的 shift 只种在工作日，所以 task_date 必须避开周末。
+  function weekdayKey(offset) {
+    let d = addDays(TODAY, offset)
+    while (isWeekend(d)) d = addDays(d, 1)
+    return dateKey(d)
+  }
+  const todayKey = weekdayKey(0)
+
+  async function insertTask(row) {
+    const { data, error } = await supabase.from('tasks').insert({
+      shift_id: null,
+      percentage_complete: 0,
+      is_archived: false,
+      is_completed: false,
+      ...row,
+    }).select('id').single()
+    if (error) { console.warn(`  ⚠ 创建 task 失败 (${row.title}): ${error.message}`); return null }
+    return data.id
+  }
+
+  const mgrId = email => userIdMap[email].internalId
+  let taskCount = 0
+
+  // ── Owner → Manager 任务（Owner Task 页面的主数据）──
+  const ownerTaskDefs = [
+    // Operations：manager1 超载（4 个活跃）→ Workload Suggestion
+    { dept: 0, assignee: 'manager1@test.com', title: 'Prepare monthly inventory report', description: 'Compile stock counts across all storage rooms into the July inventory report.', priority: 'Urgent', status: 'Assigned', createdH: -30, dueH: 6, taskDate: todayKey }, // Delay Alert ~83%
+    { dept: 0, assignee: 'manager1@test.com', title: 'Renew supplier contracts', description: 'Renegotiate and renew the three expiring beverage supplier contracts.', priority: 'High', status: 'Assigned', createdH: -72, dueH: -5, taskDate: todayKey }, // Delay Alert 已过期 >100%
+    { dept: 0, assignee: 'manager1@test.com', title: 'Plan Q3 roster coverage', description: 'Draft the Q3 roster and confirm coverage for peak weekends.', priority: 'High', status: 'In Progress', pct: 40, createdH: -20, dueH: 48, taskDate: todayKey, subTasks: ['Collect leave requests', 'Draft coverage matrix', 'Confirm with department leads'] },
+    { dept: 0, assignee: 'manager1@test.com', title: 'Audit storeroom safety compliance', description: 'Walk through both storerooms against the fire-safety checklist.', priority: 'Medium', status: 'Assigned', createdH: -2, dueH: 120, taskDate: weekdayKey(2) }, // 刚分配，不触发 Delay Alert
+    { dept: 0, assignee: 'manager1@test.com', title: 'Update vendor price list', description: 'Refresh the shared vendor price list with the latest quotations.', priority: 'Low', status: 'Review', pct: 100, createdH: -50, dueH: 24, taskDate: todayKey },
+    // manager2 只有一条 Complete（不计入 workload）→ 成为 rebalance 推荐对象
+    { dept: 0, assignee: 'manager2@test.com', title: 'Submit weekly ops summary', description: 'Summarize last week\'s operations KPIs for the leadership sync.', priority: 'Medium', status: 'Complete', pct: 100, completed: true, createdH: -80, dueH: -48, taskDate: todayKey },
+    // Marketing：manager3 / manager4 均衡，不触发建议
+    { dept: 1, assignee: 'manager3@test.com', title: 'Draft July newsletter', description: 'Write and schedule the July customer newsletter.', priority: 'High', status: 'In Progress', pct: 60, createdH: -10, dueH: 30, taskDate: todayKey },
+    { dept: 1, assignee: 'manager3@test.com', title: 'Launch summer campaign brief', description: 'Finalize the summer campaign brief and share it with the agency.', priority: 'Urgent', status: 'Assigned', createdH: -1, dueH: 96, taskDate: weekdayKey(1) },
+    { dept: 1, assignee: 'manager4@test.com', title: 'Refresh homepage banners', description: 'Swap the homepage hero banners to the summer visuals.', priority: 'Medium', status: 'Assigned', createdH: -3, dueH: 72, taskDate: weekdayKey(1) },
+    { dept: 1, assignee: 'manager4@test.com', title: 'Compile competitor pricing scan', description: 'Collect current pricing from the top five competitors.', priority: 'Low', status: 'In Progress', pct: 25, createdH: -36, dueH: 120, taskDate: todayKey },
+    // Engineering：一条带 rejection_reason 的返工任务
+    { dept: 2, assignee: 'manager5@test.com', title: 'Fix clock-in kiosk firmware', description: 'Patch the kiosk firmware so clock-in works after the OS update.', priority: 'Urgent', status: 'In Progress', pct: 70, createdH: -14, dueH: 10, taskDate: todayKey, rejection: 'Kiosk 3 still fails after the patch — please re-test on all devices.' },
+    { dept: 2, assignee: 'manager6@test.com', title: 'Evaluate new POS hardware', description: 'Assess the two shortlisted POS terminals and recommend one.', priority: 'Medium', status: 'Assigned', createdH: -4, dueH: 144, taskDate: weekdayKey(3) },
+    // Customer Support
+    { dept: 3, assignee: 'manager7@test.com', title: 'Resolve escalated refund cases', description: 'Close out the five escalated refund tickets from last week.', priority: 'High', status: 'Review', pct: 100, createdH: -40, dueH: 20, taskDate: todayKey },
+    { dept: 3, assignee: 'manager8@test.com', title: 'Update support macros', description: 'Rewrite the canned replies to match the new tone guide.', priority: 'Low', status: 'Assigned', createdH: -6, dueH: 96, taskDate: weekdayKey(2) },
+  ]
+
+  for (const def of ownerTaskDefs) {
+    const taskId = await insertTask({
+      company_id: company.id,
+      department_id: deptByIndex[def.dept].id,
+      title: def.title,
+      description: def.description,
+      assigned_user_id: mgrId(def.assignee),
+      assigned_by: ownerUser.id,
+      status: def.status,
+      percentage_complete: def.pct ?? 0,
+      is_completed: def.completed ?? false,
+      priority: def.priority,
+      due_at: hoursFromNow(def.dueH),
+      task_date: def.taskDate,
+      created_at: hoursFromNow(def.createdH),
+      rejection_reason: def.rejection ?? null,
+      rejected_at: def.rejection ? hoursFromNow(-5) : null,
+    })
+    if (!taskId) continue
+    taskCount++
+
+    if (def.subTasks) {
+      for (let s = 0; s < def.subTasks.length; s++) {
+        const subId = await insertTask({
+          company_id: company.id,
+          department_id: deptByIndex[def.dept].id,
+          parent_task_id: taskId,
+          sequence_order: s + 1,
+          title: def.subTasks[s],
+          description: null,
+          assigned_user_id: mgrId(def.assignee),
+          assigned_by: ownerUser.id,
+          status: s === 0 ? 'Complete' : 'Assigned',
+          percentage_complete: s === 0 ? 100 : 0,
+          is_completed: s === 0,
+          priority: def.priority,
+          task_date: def.taskDate,
+          created_at: hoursFromNow(def.createdH),
+        })
+        if (subId) taskCount++
+      }
+    }
+  }
+
+  // ── Archived：顶层已完成任务，验证 Archive 视图 ──
+  const archivedTaskDefs = [
+    { dept: 0, assignee: 'manager1@test.com', title: 'Organize June team offsite', description: 'Book the venue and run the June team offsite.', priority: 'Medium', createdH: -240, dueH: -168 },
+    { dept: 0, assignee: 'manager2@test.com', title: 'Migrate legacy attendance sheets', description: 'Move the old Excel attendance sheets into the system.', priority: 'Low', createdH: -320, dueH: -240 },
+  ]
+  let archivedCount = 0
+  for (const def of archivedTaskDefs) {
+    const id = await insertTask({
+      company_id: company.id,
+      department_id: deptByIndex[def.dept].id,
+      title: def.title,
+      description: def.description,
+      assigned_user_id: mgrId(def.assignee),
+      assigned_by: ownerUser.id,
+      status: 'Complete',
+      percentage_complete: 100,
+      is_completed: true,
+      is_archived: true,
+      priority: def.priority,
+      due_at: hoursFromNow(def.dueH),
+      task_date: dateKey(addDays(TODAY, Math.round(def.dueH / 24))),
+      created_at: hoursFromNow(def.createdH),
+    })
+    if (id) { taskCount++; archivedCount++ }
+  }
+
+  // ── Manager → Employee 任务（manager1 的 Task 页面数据，含一条 Delay Alert）──
+  const managerTaskDefs = [
+    { assignee: 'employee1@test.com', title: 'Restock front shelves', description: 'Restock and face all front-of-house shelves before opening.', priority: 'High', status: 'Assigned', createdH: -26, dueH: 4, taskDate: todayKey }, // manager1 视角的 Delay Alert
+    { assignee: 'employee2@test.com', title: 'Deep clean espresso machines', description: 'Full descale and deep clean of both espresso machines.', priority: 'Medium', status: 'In Progress', pct: 50, createdH: -8, dueH: 30, taskDate: todayKey },
+    { assignee: 'employee1@test.com', title: 'Verify delivery invoices', description: 'Cross-check this week\'s delivery invoices against goods received.', priority: 'Low', status: 'Complete', pct: 100, completed: true, createdH: -60, dueH: -30, taskDate: todayKey },
+  ]
+  for (const def of managerTaskDefs) {
+    const id = await insertTask({
+      company_id: company.id,
+      department_id: deptByIndex[0].id,
+      title: def.title,
+      description: def.description,
+      assigned_user_id: mgrId(def.assignee),
+      assigned_by: mgrId('manager1@test.com'),
+      status: def.status,
+      percentage_complete: def.pct ?? 0,
+      is_completed: def.completed ?? false,
+      priority: def.priority,
+      due_at: hoursFromNow(def.dueH),
+      task_date: def.taskDate,
+      created_at: hoursFromNow(def.createdH),
+    })
+    if (id) taskCount++
+  }
+
+  // ── Employee → Casual Worker 任务（employee1 的 Task 页面数据）──
+  const employeeTaskDefs = [
+    { assignee: 'cw1@test.com', title: 'Sort recycling bins', description: 'Separate and tag the recycling bins behind the loading bay.', priority: 'Medium', status: 'Assigned', createdH: -20, dueH: 5, taskDate: todayKey }, // employee1 视角的 Delay Alert
+    { assignee: 'cw2@test.com', title: 'Wipe down display counters', description: 'Clean and polish all glass display counters.', priority: 'Low', status: 'In Progress', pct: 30, createdH: -5, dueH: 20, taskDate: todayKey },
+  ]
+  for (const def of employeeTaskDefs) {
+    const id = await insertTask({
+      company_id: company.id,
+      department_id: deptByIndex[0].id,
+      title: def.title,
+      description: def.description,
+      assigned_user_id: mgrId(def.assignee),
+      assigned_by: mgrId('employee1@test.com'),
+      status: def.status,
+      percentage_complete: def.pct ?? 0,
+      priority: def.priority,
+      due_at: hoursFromNow(def.dueH),
+      task_date: def.taskDate,
+      created_at: hoursFromNow(def.createdH),
+    })
+    if (id) taskCount++
+  }
+
+  // ── Task Templates ──
+  const taskTemplateDefs = [
+    { name: 'Daily Opening Checklist', title: 'Complete daily opening checklist', description: 'Run through the standard opening procedure before doors open.', priority: 'High', sub_task_titles: ['Unlock storefront and disarm alarm', 'Count and verify POS float', 'Brief the morning team'] },
+    { name: 'Weekly Stock Audit', title: 'Run weekly stock audit', description: 'Count high-turnover SKUs and flag discrepancies above 2%.', priority: 'Medium', sub_task_titles: ['Print current stock list', 'Count storeroom shelves', 'Log discrepancies'] },
+    { name: 'New Hire Onboarding', title: 'Onboard new team member', description: 'Standard first-week onboarding for a new hire.', priority: 'Low', sub_task_titles: [] },
+  ]
+  let taskTemplateCount = 0
+  for (const def of taskTemplateDefs) {
+    const { error } = await supabase.from('task_templates').insert({
+      company_id: company.id,
+      name: def.name,
+      title: def.title,
+      description: def.description,
+      priority: def.priority,
+      sub_task_titles: def.sub_task_titles,
+      created_by: ownerUser.id,
+    })
+    if (error) console.warn(`  ⚠ 创建 task_template 失败 (${def.name}): ${error.message}`)
+    else taskTemplateCount++
+  }
+
+  console.log(`  ✓ 生成 ${taskCount} 条 tasks（含 sub-tasks、${archivedCount} 条 archived、多 assignee、rejection 返工、3 条 Delay Alert 触发项、Operations 超载触发 Workload Suggestion）`)
+  console.log(`  ✓ 生成 ${taskTemplateCount} 条 task_templates`)
+
   // ── 完成 ───────────────────────────────────────────────────────────────
   console.log('\n═══════════════════════════════════════════')
   console.log('  ✅ Seed 完成！')
@@ -969,13 +1088,13 @@ async function main() {
   console.log(`  Attendance:  ${attendanceCount} 条（Internal Staff，混合 approved/pending/manager_reviewed/rejected/late，~5% 缺勤）`)
   console.log(`  CW Shifts:   ${cwShiftCount} 个（Casual Worker，过去 ${SHIFT_DAYS_PAST} 天，跳过周末，含 Shift Job + One-Off）`)
   console.log(`  CW Attend.:  ${cwAttCount} 条（Casual Worker，混合 approved/pending/manager_reviewed/rejected/late，10% 缺勤）`)
-  console.log(`  CW Tasks:    ${cwTaskCount} 条（Employee 分配给自己监督的 Casual Worker）`)
-  console.log(`  Tasks:       ${taskCount} 条（混合 Assigned/In Progress/Review/Complete）`)
   console.log(`  Announcements: ${announcementCount} 条`)
   console.log(`  Messages:    ${messageCount} 条`)
+  console.log(`  Tasks:       ${taskCount} 条（Owner→Manager 14 + 子任务 + archived 2 + Manager→Employee 3 + Employee→CW 2）`)
+  console.log(`  TaskTmpl:    ${taskTemplateCount} 条 task_templates`)
 
-  // ── Step 15: Shift Swap Requests（大量数据填满 Action Needed + Processed Requests）──
-  console.log('\nStep 15: 生成 Shift Swap Requests...')
+  // ── Step 14: Shift Swap Requests（大量数据填满 Action Needed + Processed Requests）──
+  console.log('\nStep 14: 生成 Shift Swap Requests...')
   let swapCount = 0
   const futureAssignments = assignmentInfo.filter(a => !a.isPast)
   const futureAssignmentsByEmail = new Map()
@@ -1127,10 +1246,10 @@ async function main() {
 
   console.log(`  ✓ 生成 ${swapCount} 条 shift_swap_requests（~20 pending Action Needed + 20 processed）`)
 
-  // ── Step 15b: 给 Owner 发未读消息（触发 Chat 红点）─────────────────────────
+  // ── Step 14b: 给 Owner 发未读消息（触发 Chat 红点）─────────────────────────
   // manager1 和 employee1 各给 Owner 发一条未读消息，让 Owner 的 Communication > Chat
   // tab 显示红点。
-  console.log('\nStep 15b: 给 Owner 发未读消息...')
+  console.log('\nStep 14b: 给 Owner 发未读消息...')
   const ownerMsgSenders = [
     { email: 'manager1@test.com', content: 'Hi Sarah, can you review the Operations shift schedule for next week?' },
     { email: 'employee1@test.com', content: 'Just a heads up — I may need to leave early on Friday.' },
@@ -1152,11 +1271,11 @@ async function main() {
   }
   console.log(`  ✓ 生成 ${ownerMsgCount} 条发给 Owner 的未读消息`)
 
-  // ── Step 15c: Fixed Off Day Requests（触发 Fixed Day Off 红点）─────────────
+  // ── Step 14c: Fixed Off Day Requests（触发 Fixed Day Off 红点）─────────────
   // Manager AND Employee submissions both route directly to one unified Owner queue now —
   // there is no separate Manager-review step. Owner's only two live decisions are
   // Approve / Modify (see attendanceService.decideFixedOffDayRequestGroup).
-  console.log('\nStep 15c: 生成 Fixed Off Day Requests...')
+  console.log('\nStep 14c: 生成 Fixed Off Day Requests...')
 
   const offDayDeadlineWeekday = 5 // Friday, matching resolveDeadlineDateForWeek's Sun=0..Sat=6 convention
   const offDayDeadlineTime = '17:00'
@@ -1280,11 +1399,11 @@ async function main() {
   }
   console.log(`  ok seeded ${fixedOffCount} employee_off_day_requests (${pendingFixedOffSeeders.length} pending for week ${activeWeekStartKey} + ${historicalFixedOffSeeders.length} historical across 4 past weeks)`)
 
-  // ── Step 16: Job Postings（Recruitment 页面的 Jobs 标签页 + Review 标签页数据）──
+  // ── Step 15: Job Postings（Recruitment 页面的 Jobs 标签页 + Review 标签页数据）──
   // Jobs 标签页只显示 status in ('open','closed') 的职位（见 owner/recruitment/page.tsx
   // 的 jobsPostings 过滤逻辑）；Review 标签页显示 status = 'pending_approval' 的职位，
   // 由 Manager 提交、Owner 审批（submitter_name 取自 created_by）。
-  console.log('\nStep 16: 生成 Job Postings（Jobs + Review）...')
+  console.log('\nStep 15: 生成 Job Postings（Jobs + Review）...')
   const jobStartDate = addDays(TODAY, 5)
   const jobPostingDefs = [
     // ── "All Jobs" tab data: status open/closed, mix of Shift Job / One-Off ──
@@ -1434,10 +1553,10 @@ async function main() {
   const pendingCount = jobPostingDefs.filter(d => d.status === 'pending_approval').length
   console.log(`  ✓ 生成 ${jobPostingCount} 条 job_postings（Jobs 标签页 ${openClosedCount} 条 open/closed，Review 标签页 ${pendingCount} 条 pending_approval）`)
 
-  // ── Step 16b: Job Applicants（只对 status='open' 的职位投递，跟真实使用场景一致——
+  // ── Step 15b: Job Applicants（只对 status='open' 的职位投递，跟真实使用场景一致——
   // 已关闭/待审批的职位不该有公开申请）。混合 pending/accepted/rejected，让 Owner
   // 的 "All Jobs" 卡片能看到红点（有 pending 申请）和真实的申请人详情。──────────
-  console.log('\nStep 16b: 生成 Job Applicants...')
+  console.log('\nStep 15b: 生成 Job Applicants...')
   const applicantDefs = [
     { title: 'Warehouse Assistant',        guest: 'guest1@test.com', status: 'pending' },
     { title: 'Warehouse Assistant',        guest: 'guest2@test.com', status: 'accepted' },
@@ -1481,12 +1600,12 @@ async function main() {
   }
   console.log(`  ✓ 生成 ${jobApplicantCount} 条 job_applicants（混合 pending/accepted/rejected，只投给 open 状态的职位）`)
 
-  // ── Step 16c: 给部分 CW 的 shift 补上 source_job_posting_id ──────────────
+  // ── Step 15c: 给部分 CW 的 shift 补上 source_job_posting_id ──────────────
   // 演示 Attendance Record 弹窗里点击 "Job Title" 能看到当初发布的 job posting 详情——
   // 挑每个部门第一个 active CW，把他们所有的 shift 都指回该部门一个 open 状态的 job
   // posting（模拟"这个 CW 就是从这个招聘广告招进来的"）。其余 CW 保持不关联，因为现实
   // 中不是每个 CW 都一定是通过发布的 job posting 招进来的。
-  console.log('\nStep 16c: 关联部分 Casual Worker shift 与 Job Posting...')
+  console.log('\nStep 15c: 关联部分 Casual Worker shift 与 Job Posting...')
   const cwToJobPostingTitle = {
     'cw1@test.com': 'Warehouse Assistant',
     'cw3@test.com': 'Social Media Assistant',
@@ -1505,8 +1624,8 @@ async function main() {
   }
   console.log(`  ✓ 关联了 ${cwJobLinkCount} 个 CW shift 到对应的 job_posting`)
 
-  // ── Step 17: Job Templates（Owner 自己配置的可复用招聘模板）──────────────
-  console.log('\nStep 17: 生成 Job Templates...')
+  // ── Step 16: Job Templates（Owner 自己配置的可复用招聘模板）──────────────
+  console.log('\nStep 16: 生成 Job Templates...')
   const jobTemplateDefs = [
     { name: 'Warehouse Helper Template', title: 'Warehouse Helper', description: 'General warehouse support duties.', requirements: 'Able to lift 15kg.', employment_type: 'casual', form_type: 'oneoff' },
     { name: 'Weekend Cashier Template', title: 'Weekend Cashier', description: 'Run the register during weekend shifts.', requirements: 'Friendly, detail-oriented.', employment_type: 'part-time', form_type: 'shift' },
@@ -1529,8 +1648,8 @@ async function main() {
   }
   console.log(`  ✓ 生成 ${jobTemplateCount} 条 job_templates`)
 
-  // ── Step 18: Shift Templates（Owner 自己配置的可复用班次时段模板）────────
-  console.log('\nStep 18: 生成 Shift Templates...')
+  // ── Step 17: Shift Templates（Owner 自己配置的可复用班次时段模板）────────
+  console.log('\nStep 17: 生成 Shift Templates...')
   const shiftTemplateDefs = [
     { name: 'Morning Shift', start_time: '09:00', end_time: '17:00' },
     { name: 'Afternoon Shift', start_time: '11:00', end_time: '18:00' },
@@ -1550,33 +1669,11 @@ async function main() {
   }
   console.log(`  ✓ 生成 ${shiftTemplateCount} 条 shift_templates`)
 
-  // ── Step 19: Task Templates（Owner 自己配置的可复用任务模板）─────────────
-  console.log('\nStep 19: 生成 Task Templates...')
-  const taskTemplateDefs = [
-    { name: 'Weekly Report', title: 'Prepare weekly report', description: 'Compile and submit the weekly department report.', priority: 'Medium' },
-    { name: 'Equipment Check', title: 'Audit equipment checklist', description: 'Walk through and verify equipment condition.', priority: 'Low' },
-    { name: 'Customer Follow-up', title: 'Follow up with customer', description: 'Reach out regarding an open ticket.', priority: 'High' },
-  ]
-  let taskTemplateCount = 0
-  for (const def of taskTemplateDefs) {
-    const { error } = await supabase.from('task_templates').insert({
-      company_id: company.id,
-      name: def.name,
-      title: def.title,
-      description: def.description,
-      priority: def.priority,
-      created_by: ownerUser.id,
-    })
-    if (error) console.warn(`  ⚠ 创建 task_template 失败 (${def.name}): ${error.message}`)
-    else taskTemplateCount++
-  }
-  console.log(`  ✓ 生成 ${taskTemplateCount} 条 task_templates`)
-
-  // ── Step 20: Time Off / Break Waiver Requests ────────────────────────────
+  // ── Step 18: Time Off / Break Waiver Requests ────────────────────────────
   // time_off_requests 没有被 UC55/UC57 那次重构删掉——它还是 schedulingRuleService
   // (AI 排班) 判断"这个人这天是不是在请假"的真实数据源，Manager/Employee/CW 的
   // Attendance 页面也还有提交入口，所以要真种，不能当成废弃表跳过。
-  console.log('\nStep 20: 生成 Time Off / Break Waiver Requests...')
+  console.log('\nStep 18: 生成 Time Off / Break Waiver Requests...')
   const timeOffFutureAssignments = assignmentInfo.filter(a => !a.isPast)
   const timeOffDefs = [
     { email: 'employee2@test.com', request_type: 'time_off', reason: 'Family trip out of town.', status: 'approved' },
@@ -1604,11 +1701,11 @@ async function main() {
   }
   console.log(`  ✓ 生成 ${timeOffCount} 条 time_off_requests（混合 time_off/break_waiver，pending/approved/rejected）`)
 
-  // ── Step 21: Company Activity Logs ───────────────────────────────────────
+  // ── Step 19: Company Activity Logs ───────────────────────────────────────
   // 这张表真实场景下是 owner/team 页面在做增删改操作时自动写入的副作用记录，不是用户
   // 手填的表单——这里直接模拟几条历史操作，让 Owner 一进 Team 页面就有活动记录可看，
   // 不用先手动操作一遍才有数据。
-  console.log('\nStep 21: 生成 Company Activity Logs...')
+  console.log('\nStep 19: 生成 Company Activity Logs...')
   const activityLogDefs = [
     { action: 'invite_member', target_name: 'David Lim', detail: 'Manager' },
     { action: 'change_department', target_name: 'Chloe Yeo', detail: 'Operations' },
@@ -1629,10 +1726,10 @@ async function main() {
   }
   console.log(`  ✓ 生成 ${activityLogCount} 条 company_activity_logs`)
 
-  // ── Step 22: Announcement Reads ──────────────────────────────────────────
+  // ── Step 20: Announcement Reads ──────────────────────────────────────────
   // 同样是自动产生的副作用记录（用户打开公告时才会写入），这里模拟"部分员工已读"，
   // 好让 Owner 端看公告时不是每条都显示 0 已读。
-  console.log('\nStep 22: 生成 Announcement Reads...')
+  console.log('\nStep 20: 生成 Announcement Reads...')
   let announcementReadCount = 0
   if (announcementIds.length > 0) {
     const readerEmails = [managersByDept[0][0], employeesByDept[0][0], managersByDept[1][0]]

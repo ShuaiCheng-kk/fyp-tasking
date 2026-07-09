@@ -157,7 +157,7 @@ export const ownerTeamRepository = {
       const { error: swapByAssignmentError } = await supabase
         .from('shift_swap_requests')
         .delete()
-        .in('shift_assignment_id', assignmentIds)
+        .or(`requester_assignment_id.in.(${assignmentIds.join(',')}),counterpart_assignment_id.in.(${assignmentIds.join(',')})`)
       if (swapByAssignmentError) throw new Error(swapByAssignmentError.message)
 
       const { error: timeOffByAssignmentError } = await supabase
@@ -182,7 +182,7 @@ export const ownerTeamRepository = {
     const { error: swapByUserError } = await supabase
       .from('shift_swap_requests')
       .delete()
-      .or(`requester_id.eq.${user_id},replacement_user_id.eq.${user_id}`)
+      .or(`requester_id.eq.${user_id},counterpart_id.eq.${user_id}`)
     if (swapByUserError) throw new Error(swapByUserError.message)
 
     const { error: swapReviewedByError } = await supabase
@@ -222,6 +222,14 @@ export const ownerTeamRepository = {
       .update({ assigned_by: reassigned_by })
       .eq('assigned_by', user_id)
     if (tasksCreatedError) throw new Error(tasksCreatedError.message)
+
+    // task_assignments.user_id cascades on user delete, but assigned_by has no on-delete action —
+    // reassign it like tasks.assigned_by above so deleting the user doesn't hit the FK.
+    const { error: taskAssignmentsByError } = await supabase
+      .from('task_assignments')
+      .update({ assigned_by: reassigned_by })
+      .eq('assigned_by', user_id)
+    if (taskAssignmentsByError) throw new Error(taskAssignmentsByError.message)
 
     const { error: shiftsCreatedError } = await supabase
       .from('shifts')

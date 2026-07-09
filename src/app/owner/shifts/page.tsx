@@ -3313,7 +3313,7 @@ export default function OwnerShiftsPage() {
                 </button>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                   <span style={{ width: 10, height: 10, borderRadius: 999, background: deptColor(selectedDepartment.id), flexShrink: 0 }} />
-                  <h2 style={{ margin: 0, ...DEPARTMENT_NAME_STYLE, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  <h2 style={{ margin: 0, ...SECTION_TITLE_STYLE, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {selectedDepartment.name}
                   </h2>
                 </div>
@@ -3589,7 +3589,7 @@ export default function OwnerShiftsPage() {
                 <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   <CalendarDays size={15} style={{ color: '#F97316' }} />
                 </div>
-                <span style={SECTION_TITLE_STYLE}>{selectedDepartment ? `${selectedDepartment.name} Shift Timeline` : 'All Departments Shift Timeline'}</span>
+                <span style={SECTION_TITLE_STYLE}>{shiftViewMode === 'calendar' ? (selectedDepartment ? `${selectedDepartment.name} Weekly Shift` : 'All Department Weekly Shift') : (selectedDepartment ? `${selectedDepartment.name} Shift Timeline` : 'All Departments Shift Timeline')}</span>
                 {companyId && (
                   <button
                     type="button"

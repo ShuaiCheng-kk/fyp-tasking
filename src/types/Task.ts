@@ -18,6 +18,15 @@ export interface Task {
   source_task_id: string | null
   is_archived: boolean
   is_completed: boolean
+  // Set when the assigner rejects the task in Review — it returns to In Progress and the
+  // assignee sees the reason as a rework notice until it is re-submitted / approved.
+  rejection_reason?: string | null
+  rejected_at?: string | null
+  // Set when the assigner marks this task's Task Delay Alert as read — the alert stays dismissed
+  // until the deadline changes (editTask clears this so a new delay window can re-alert).
+  delay_alert_read_at?: string | null
+  // Stamped when the assigner approves the task in Review — the only path to Complete.
+  completed_at?: string | null
   created_at: string
   updated_at?: string
   shift_date?: string | null
@@ -45,6 +54,10 @@ export interface TaskInput {
   source_task_id?: string | null
   is_archived?: boolean
   is_completed?: boolean
+  rejection_reason?: string | null
+  rejected_at?: string | null
+  delay_alert_read_at?: string | null
+  completed_at?: string | null
   // Full desired assignee set. When provided, assigned_user_id is derived as the first entry and
   // every id is validated against the same one-level-down role check. Omit for single-assignee
   // behavior identical to today.
@@ -137,12 +150,17 @@ export interface TaskReassignmentSuggestion {
   reason: string
 }
 
-export interface StalledTaskAlert {
+export interface TaskDelayAlert {
   task_id: string
   title: string
   status: Task['status']
   // How much of the assigned-to-deadline window has elapsed, as a percentage (50 = halfway,
-  // 100 = exactly at the deadline, >100 = overdue). Alerts fire once this reaches 50.
+  // 100 = exactly at the deadline, >100 = overdue). Alerts fire for tasks still sitting in
+  // Assigned once this passes the company's configurable threshold (default 50).
   percent_elapsed: number
   message: string
+}
+
+export interface TaskDelayAlertSettings {
+  threshold_percent: number
 }

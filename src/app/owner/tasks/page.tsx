@@ -4,10 +4,11 @@ import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo, Fra
 import { useRouter } from 'next/navigation'
 import { createPortal } from 'react-dom'
 import {
-  Plus, X, ChevronDown, Calendar, AlertCircle, ArrowRight,
+  Plus, X, ChevronDown, AlertCircle, ArrowRight,
   CheckCircle, Clock, Eye, Layers, Users,
   Crown, UserCog, UserRound, Pencil, Trash2, CalendarDays, ChevronLeft, ChevronRight,
-  Sparkles, Check, Archive, ArchiveRestore, Repeat, Copy, GitBranch, Bell, ArrowRightLeft, LayoutTemplate, AlertTriangle, RefreshCw,
+  Sparkles, Check, Archive, ArchiveRestore, Repeat, Copy, GitBranch, Bell, ArrowRightLeft, LayoutTemplate, AlertTriangle, RefreshCw, MailOpen, Search,
+  CalendarClock, Filter as FilterIcon, Flag, RotateCw,
 } from 'lucide-react'
 import { AiAssignSuggestion } from '@/types/AI'
 import { createBrowserClient } from '@supabase/ssr'
@@ -16,8 +17,7 @@ import Toast from '@/components/Toast'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import DepartmentBadge from '@/components/DepartmentBadge'
-import MultiSelectDropdownField from '@/components/MultiSelectDropdownField'
-import { Task, TaskInput, KanbanGroup, TaskWorkloadSuggestion, StalledTaskAlert } from '@/types/Task'
+import { Task, TaskInput, KanbanGroup, TaskWorkloadSuggestion, TaskDelayAlert } from '@/types/Task'
 import { TaskTemplate } from '@/types/TaskTemplate'
 import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 
@@ -27,26 +27,30 @@ const TASK_ORANGE = '#F97316'
 const TASK_BORDER = '#E2E8F0'
 const TASK_TEXT   = '#0F172A'
 
-function formatDeadlineDisplay(value: string | null | undefined): string {
+function formatDeadlineTime(value: string | null | undefined): string {
   if (!value) return ''
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return ''
-  const dayMonth = date.toLocaleDateString('en-US', { day: 'numeric', month: 'long' })
   const hours = date.getHours()
   const minutes = date.getMinutes()
   const hour12 = hours % 12 || 12
   const suffix = hours < 12 ? 'AM' : 'PM'
-  const time = minutes === 0 ? `${hour12}${suffix}` : `${hour12}:${String(minutes).padStart(2, '0')}${suffix}`
+  return minutes === 0 ? `${hour12}${suffix}` : `${hour12}:${String(minutes).padStart(2, '0')}${suffix}`
+}
+
+function formatDeadlineDisplay(value: string | null | undefined): string {
+  const time = formatDeadlineTime(value)
+  if (!time) return ''
+  const dayMonth = new Date(value!).toLocaleDateString('en-US', { day: 'numeric', month: 'long' })
   return `${dayMonth}, ${time}`
 }
 
 
 // ─── Task Date Picker ──────────────────────────────────────────────────────────
 
-function TaskDatePicker({ value, onChange, taskDates, minDate, accentColor, fullWidth, compact }: {
+function TaskDatePicker({ value, onChange, minDate, accentColor, fullWidth, compact }: {
   value: string
   onChange: (date: string) => void
-  taskDates: Set<string>
   minDate: string
   accentColor: string
   fullWidth?: boolean
@@ -119,8 +123,6 @@ function TaskDatePicker({ value, onChange, taskDates, minDate, accentColor, full
           }
           const isSel = date === value
           const isToday = date === todayStr
-          const isPast = date < todayStr
-          const hasTask = taskDates.has(date)
           return (
             <button key={date} type="button" onClick={() => { onChange(date); setOpen(false) }}
               style={{ height: 36, width: '100%', border: isToday && !isSel ? `2px solid ${accentColor}` : 'none', borderRadius: 8, background: isSel ? accentColor : 'transparent', color: isSel ? '#FFFFFF' : isToday ? accentColor : TASK_TEXT, fontWeight: isSel || isToday ? 700 : 400, fontSize: 13, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 2, padding: 0 }}
@@ -128,7 +130,6 @@ function TaskDatePicker({ value, onChange, taskDates, minDate, accentColor, full
               onMouseLeave={e => { if (!isSel) e.currentTarget.style.background = 'transparent' }}
             >
               <span style={{ lineHeight: 1 }}>{parseInt(date.split('-')[2])}</span>
-              {hasTask && <span style={{ width: 4, height: 4, borderRadius: '50%', background: isPast ? '#94A3B8' : isSel ? 'rgba(255,255,255,0.8)' : accentColor, flexShrink: 0 }} />}
             </button>
           )
         })}
@@ -314,6 +315,10 @@ const PRIORITY_COLORS: Record<string, { bg: string; text: string }> = {
   Urgent: { bg: '#FEE2E2', text: '#B91C1C' },
 }
 
+// Deadline Calendar sidebar filter option lists.
+const CALENDAR_PRIORITY_OPTIONS: PriorityLevel[] = ['Urgent', 'High', 'Medium', 'Low']
+const CALENDAR_STATUS_OPTIONS: Task['status'][] = ['Assigned', 'In Progress', 'Review']
+
 const WEEKDAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
 const TIME_OPTIONS: { value: string; label: string }[] = (() => {
   const res: { value: string; label: string }[] = []
@@ -365,13 +370,6 @@ function kanbanDateKey(task: Task): string {
   return formatDateKey(new Date(task.created_at))
 }
 
-// Assigned/In Progress/Review tasks are still being worked on, so they stay visible on the
-// Kanban board no matter which day is selected — only Complete is anchored to its start date,
-// since a finished task is a historical record of that specific day.
-function isKanbanVisibleOnDate(task: Task, taskDate: string): boolean {
-  return task.status === 'Complete' ? kanbanDateKey(task) === taskDate : true
-}
-
 function addDays(date: Date, days: number): Date {
   const next = new Date(date)
   next.setDate(next.getDate() + days)
@@ -406,14 +404,6 @@ function deptCardBorder(deptId: string): string {
   const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16)
   return `rgba(${r},${g},${b},0.22)`
 }
-// Lighter, opaque tint of a department/priority color — used for sub-task calendar bars so they
-// read as visually subordinate to the main task's solid bar, with dark text for contrast on it.
-function lightenColor(hex: string, amount: number): string {
-  const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16)
-  const blend = (c: number) => Math.round(c + (255 - c) * amount)
-  return `rgb(${blend(r)},${blend(g)},${blend(b)})`
-}
-
 const PRIORITY_ORDER: Record<string, number> = { Urgent: 0, High: 1, Medium: 2, Low: 3 }
 
 // ─── Modal helpers ────────────────────────────────────────────────────────────
@@ -498,13 +488,17 @@ function InlineError({ message }: { message: string }) {
 
 // ─── Custom Dropdown Field ────────────────────────────────────────────────────
 
-function DropdownField({ value, options, onChange, placeholder, disabled = false, badgeColors }: {
+function DropdownField({ value, options, onChange, placeholder, disabled = false, badgeColors, fontSize, fontWeight }: {
   value: string
   options: { value: string; label: string }[]
   onChange: (v: string) => void
   placeholder?: string
   disabled?: boolean
   badgeColors?: Record<string, { bg: string; text: string }>
+  // Trigger-text overrides so a toolbar dropdown can match adjacent buttons (e.g. Archive:
+  // 13px / 700). Placeholder text keeps its own lighter weight regardless.
+  fontSize?: string
+  fontWeight?: number
 }) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState({ top: 0, left: 0, width: 0 })
@@ -542,8 +536,8 @@ function DropdownField({ value, options, onChange, placeholder, disabled = false
           width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           padding: '9px 12px', border: `1.5px solid ${open ? '#F97316' : '#E5E7EB'}`, borderRadius: 8,
           background: disabled ? '#F9FAFB' : '#FFFFFF', cursor: canOpen ? 'pointer' : 'default',
-          fontSize: '0.8125rem', color: selected ? '#111827' : '#9CA3AF',
-          fontWeight: selected ? 500 : 400, outline: 'none', boxSizing: 'border-box',
+          fontSize: fontSize ?? '0.8125rem', color: selected ? '#111827' : '#9CA3AF',
+          fontWeight: selected ? (fontWeight ?? 500) : 400, outline: 'none', boxSizing: 'border-box',
           transition: 'border-color 0.15s', minHeight: 40,
         }}>
         {selected && badgeColors?.[selected.value] ? (
@@ -557,7 +551,10 @@ function DropdownField({ value, options, onChange, placeholder, disabled = false
         )}
         <ChevronDown size={13} style={{ color: '#9CA3AF', flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
       </button>
-      {open && (
+      {/* Portal to body: the menu uses viewport (fixed) coordinates, and transformed/animated
+          ancestors (panel entry animations with fill `both`) would otherwise hijack its
+          containing block and shift it away from the trigger. */}
+      {open && createPortal(
         <div ref={dropdownRef} style={{
           position: 'fixed', top: pos.top, left: pos.left, width: pos.width,
           background: '#FFFFFF', border: '1.5px solid #E5E7EB', borderRadius: 10,
@@ -587,7 +584,8 @@ function DropdownField({ value, options, onChange, placeholder, disabled = false
               </button>
             )
           })}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )
@@ -959,7 +957,7 @@ function SubTaskOrderList({ items, onReorder, onRemove, onRename, disabled, acce
 // ─── Task Card ────────────────────────────────────────────────────────────────
 
 function TaskCard({
-  task, members, shiftOptions, departments, showDept, onClick, onEdit, subTaskCount, expanded, onToggleExpand, clickable = true, isOwner = true, highlighted = false, noOuterMargin = false, fillHeight = false, isSubTask = false,
+  task, members, shiftOptions, departments, showDept, onClick, onEdit, subTaskCount, expanded, onToggleExpand, clickable = true, isOwner = true, highlighted = false, noOuterMargin = false, fillHeight = false, isSubTask = false, compact = false,
 }: {
   task: Task
   members: Member[]
@@ -977,6 +975,9 @@ function TaskCard({
   noOuterMargin?: boolean
   fillHeight?: boolean
   isSubTask?: boolean
+  // Deadline Calendar cards: the cell already gives the assignee (row) and date (column),
+  // so hide the assignee and show only the deadline's time.
+  compact?: boolean
 }) {
   const assigneeIds = task.assigned_user_ids ?? (task.assigned_user_id ? [task.assigned_user_id] : [])
   const assignees = assigneeIds.map(id => members.find(m => m.id === id)).filter((m): m is Member => !!m)
@@ -985,7 +986,9 @@ function TaskCard({
   const deadlineWarning = task.due_at && task.status !== 'Complete' && (isDueOverdue(task.due_at) || isDueWithinHours(task.due_at, 2))
   const dept = showDept && !isSubTask ? departments.find(d => d.id === task.department_id) : null
   const showStack = !!subTaskCount && !expanded
-  const hasTopRowBadges = !!(priority && task.priority) || !!dept || !!subTaskCount
+  // Rejected in Review and back to In Progress — the assignee owes rework on this one.
+  const needsRework = !isSubTask && !!task.rejection_reason && task.status === 'In Progress'
+  const hasTopRowBadges = !!(priority && task.priority) || !!dept || !!subTaskCount || needsRework
 
   return (
     <div style={{ position: 'relative', marginBottom: noOuterMargin ? 0 : (showStack ? 22 : 14), height: fillHeight ? '100%' : undefined }}>
@@ -1011,12 +1014,15 @@ function TaskCard({
           boxSizing: 'border-box',
           display: fillHeight ? 'flex' : undefined,
           flexDirection: fillHeight ? 'column' : undefined,
-          justifyContent: fillHeight ? 'space-between' : undefined,
+          // Compact calendar cards pack content from the top (badges → title → time) so the
+          // title hugs its neighbours; leftover space in the fixed-height card sits at the bottom.
+          justifyContent: fillHeight ? (compact ? 'flex-start' : 'space-between') : undefined,
           boxShadow: highlighted ? '0 0 0 3px rgba(249,115,22,0.16), 0 10px 28px rgba(249,115,22,0.16)' : undefined,
         }}
       >
-      {/* Edit pencil: absolutely positioned so it never reserves flow height when there are no badges */}
-      {clickable && isOwner && (
+      {/* Edit pencil: absolutely positioned so it never reserves flow height when there are no badges.
+          Hidden once the task reaches Review/Complete — submitted/approved work is no longer editable. */}
+      {clickable && isOwner && task.status !== 'Review' && task.status !== 'Complete' && (
         <button
           onClick={e => { e.stopPropagation(); onEdit() }}
           style={{ position: 'absolute', top: 12, right: 12, background: 'none', border: 'none', cursor: 'pointer', padding: 4, display: 'flex', alignItems: 'center', color: '#9CA3AF', borderRadius: 6, flexShrink: 0, zIndex: 1 }}
@@ -1029,10 +1035,15 @@ function TaskCard({
 
       {/* Top row: priority / department / sub-task badges */}
       {hasTopRowBadges && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12, paddingRight: 24 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: compact ? 8 : 12, paddingRight: 24 }}>
           {priority && task.priority && (
-            <span style={{ fontSize: '0.72rem', fontWeight: 800, padding: '4px 10px', borderRadius: '99px', background: priority.bg, color: priority.text, letterSpacing: '0.01em' }}>
+            <span style={{ fontSize: compact ? '0.65rem' : '0.72rem', fontWeight: 800, padding: compact ? '3px 8px' : '4px 10px', borderRadius: '99px', background: priority.bg, color: priority.text, letterSpacing: '0.01em' }}>
               {task.priority}
+            </span>
+          )}
+          {needsRework && (
+            <span title={task.rejection_reason ?? undefined} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: compact ? '0.65rem' : '0.72rem', fontWeight: 800, padding: compact ? '3px 8px' : '4px 10px', borderRadius: '99px', background: '#FEF2F2', color: '#DC2626', letterSpacing: '0.01em' }}>
+              <AlertTriangle size={10} /> Rework
             </span>
           )}
           {dept && <DepartmentBadge departmentId={dept.id} departmentName={dept.name} />}
@@ -1040,7 +1051,7 @@ function TaskCard({
             <button
               type="button"
               onClick={e => { e.stopPropagation(); onToggleExpand?.() }}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.65rem', fontWeight: 700, padding: '2px 7px', borderRadius: '99px', background: '#F1F5F9', color: '#475569', border: 'none', cursor: 'pointer' }}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: compact ? '0.6rem' : '0.65rem', fontWeight: 700, padding: '2px 7px', borderRadius: '99px', background: '#F1F5F9', color: '#475569', border: 'none', cursor: 'pointer' }}
             >
               <GitBranch size={10} />
               {subTaskCount}
@@ -1051,13 +1062,14 @@ function TaskCard({
       )}
 
       {/* Title */}
-      <p style={{ fontWeight: 600, fontSize: isSubTask ? '0.8rem' : '0.875rem', color: '#111827', margin: '0 0 16px', lineHeight: 1.4, paddingRight: !clickable || !isOwner || hasTopRowBadges ? 0 : 24 }}>
+      <p title={compact ? task.title : undefined} style={{ fontWeight: 600, fontSize: isSubTask ? (compact ? '0.75rem' : '0.8rem') : (compact ? '0.8rem' : '0.875rem'), color: '#111827', margin: (!compact || (!isSubTask && task.due_at)) ? (compact ? '0 0 8px' : '0 0 16px') : 0, lineHeight: compact ? 1.55 : 1.4, paddingRight: !clickable || !isOwner || hasTopRowBadges ? 0 : 24, ...(compact ? { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as const, overflow: 'hidden', minHeight: '3.1em' } : {}) }}>
         {task.title}
       </p>
 
-      {/* Footer: assignee + deadline time */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-        {assignees.length > 0 ? (
+      {/* Footer: assignee + deadline time (compact cards drop the assignee and the date) */}
+      {(!compact || (!isSubTask && task.due_at)) && (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: compact ? 'flex-end' : 'space-between', gap: 8 }}>
+        {!compact && (assignees.length > 0 ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
             <div style={{ display: 'flex', flexShrink: 0 }}>
               {assignees.slice(0, 3).map((assignee, i) => (
@@ -1079,16 +1091,17 @@ function TaskCard({
           </div>
         ) : (
           <span style={{ fontSize: '0.75rem', color: '#CBD5E1', fontStyle: 'italic' }}>No assignee</span>
-        )}
+        ))}
         {!isSubTask && task.due_at && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
             {deadlineWarning ? <AlertCircle size={11} color="#EF4444" /> : <Clock size={11} color="#9CA3AF" />}
             <span style={{ fontSize: '0.7rem', fontWeight: 600, color: deadlineWarning ? '#EF4444' : '#9CA3AF', whiteSpace: 'nowrap' }}>
-              {formatDeadlineDisplay(task.due_at)}
+              {compact ? formatDeadlineTime(task.due_at) : formatDeadlineDisplay(task.due_at)}
             </span>
           </div>
         )}
       </div>
+      )}
       </div>
     </div>
   )
@@ -1115,8 +1128,15 @@ export default function OwnerTasksPage() {
   const [shiftOptions, setShiftOptions] = useState<ShiftOption[]>([])
 
   // Department selector
-  const [selectedDeptId,  setSelectedDeptId]  = useState('') // '' = All
+  const [selectedDeptId,  setSelectedDeptIdRaw]  = useState('') // '' = All
   const [deptTaskStats,   setDeptTaskStats]    = useState<DeptTaskStats[]>([])
+  // Manager selector (within a selected department) — narrows the Kanban to just that person's
+  // tasks. Cleared whenever the department changes so a stale filter can't survive a nav change.
+  const [selectedMemberId, setSelectedMemberId] = useState('')
+  const setSelectedDeptId = useCallback((id: string) => {
+    setSelectedDeptIdRaw(id)
+    setSelectedMemberId('')
+  }, [])
 
   const [kanban,        setKanban]        = useState<KanbanGroup | null>(null)
   const [kanbanLoading, setKanbanLoading] = useState(false)
@@ -1167,6 +1187,9 @@ export default function OwnerTasksPage() {
   const [editPercent,     setEditPercent]     = useState(0)
   const [deleteConfirm,   setDeleteConfirm]   = useState(false)
   const [deleteTaskModal, setDeleteTaskModal] = useState<Task | null>(null)
+  // Active Deadline Summary bucket — clicking a count pill filters the Deadline Calendar to
+  // that bucket's tasks; clicking the same pill again clears it (null = no bucket filter).
+  const [deadlineBucketFilter, setDeadlineBucketFilter] = useState<'overdue' | 'today' | 'week' | null>(null)
   const [deleteTaskLoading, setDeleteTaskLoading] = useState(false)
   const [deleteTaskError, setDeleteTaskError] = useState('')
   const [subTaskTitle,    setSubTaskTitle]    = useState('')
@@ -1190,17 +1213,93 @@ export default function OwnerTasksPage() {
   const [workloadApplyLoadingId, setWorkloadApplyLoadingId] = useState('')
   const [workloadApplyError, setWorkloadApplyError] = useState('')
   const [profileMember, setProfileMember] = useState<Member | null>(null)
-  const [stalledAlerts, setStalledAlerts] = useState<StalledTaskAlert[]>([])
   const [workloadInsightOpen, setWorkloadInsightOpen] = useState(false)
-  const [highlightedStalledTaskId, setHighlightedStalledTaskId] = useState('')
+  // Clicking the delay count sorts every delayed task to the top of its Kanban column and
+  // highlights them in place — no modal, no jumping into a department.
+  const [highlightedDelayTaskIds, setHighlightedDelayTaskIds] = useState<Set<string>>(new Set())
   const [insightLoading, setInsightLoading] = useState('')
   const [insightError, setInsightError] = useState('')
+  // Task Delay Alert threshold — percent of a task's assigned-to-deadline window that may pass
+  // before an un-started (still Assigned) task is flagged. Clicking the label opens the modal.
+  const [delayThresholdPercent, setDelayThresholdPercent] = useState(50)
+  const [delayThresholdModalOpen, setDelayThresholdModalOpen] = useState(false)
+  const [delayThresholdInput, setDelayThresholdInput] = useState('50')
+  const [delayThresholdSaving, setDelayThresholdSaving] = useState(false)
+  const [delayThresholdError, setDelayThresholdError] = useState('')
+
+  // Real-time delay detection — computed purely from data already in memory (kanban, already kept
+  // fresh by the Supabase realtime subscription above), no network round trip needed to check for
+  // new delays. `delayNowTick` is a virtual "now" that's only bumped at the exact moment an
+  // Assigned task is scheduled to cross the threshold (see the scheduling effect below), so the
+  // badge updates to the second without polling the server or re-rendering anything else.
+  const [delayNowTick, setDelayNowTick] = useState(() => Date.now())
+  const delayAlerts = useMemo<TaskDelayAlert[]>(() => {
+    if (!kanban) return []
+    const now = delayNowTick
+    return (kanban.Assigned ?? [])
+      .filter(t => !t.parent_task_id && !!t.due_at)
+      // Marked as read stays dismissed (green) until the deadline changes server-side.
+      .filter(t => !t.delay_alert_read_at)
+      .filter(t => !selectedDeptId || t.department_id === selectedDeptId)
+      .map(t => {
+        const createdAt = new Date(t.created_at).getTime()
+        const dueAt = new Date(t.due_at!).getTime()
+        const totalWindow = dueAt - createdAt
+        const percentElapsed = totalWindow > 0 ? ((now - createdAt) / totalWindow) * 100 : 100
+        return { t, percentElapsed }
+      })
+      .filter(row => row.percentElapsed > delayThresholdPercent)
+      .map(row => ({
+        task_id: row.t.id,
+        title: row.t.title,
+        status: row.t.status,
+        percent_elapsed: Math.round(row.percentElapsed),
+        message: row.percentElapsed >= 100
+          ? `"${row.t.title}" is past its deadline and still hasn't been started.`
+          : `"${row.t.title}" has used ${Math.round(row.percentElapsed)}% of its time before the deadline and still hasn't been started.`,
+      }))
+  }, [kanban, selectedDeptId, delayThresholdPercent, delayNowTick])
+
+  // Keep the highlight set in sync with reality: a task that got started (dragged out of
+  // Assigned) or fell out of the alert list must lose its highlight automatically.
+  useEffect(() => {
+    setHighlightedDelayTaskIds(prev => {
+      if (prev.size === 0) return prev
+      const alertIds = new Set(delayAlerts.map(a => a.task_id))
+      const next = new Set([...prev].filter(id => alertIds.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [delayAlerts])
+
+  // Kanban toolbar — priority filter, title/description search, and board-wide sort order
+  const [kanbanSearch, setKanbanSearch] = useState('')
+  const [kanbanPriorityFilter, setKanbanPriorityFilter] = useState('')
+  const [kanbanReworkFilter, setKanbanReworkFilter] = useState('')
+  const [kanbanSortBy, setKanbanSortBy] = useState<'priority' | 'deadline' | 'newest'>('priority')
+
+  // Deadline Calendar sidebar filters — checkbox groups; the set holds the checked values, and
+  // every option starts checked ("Select All"). An empty set therefore means "show nothing".
+  // Departments are checked as they load via the seenCalendarDeptIds effect below orderedDepartments.
+  const [calendarPriorityFilter, setCalendarPriorityFilter] = useState<Set<string>>(new Set(CALENDAR_PRIORITY_OPTIONS))
+  const [calendarStatusFilter, setCalendarStatusFilter] = useState<Set<Task['status']>>(new Set(CALENDAR_STATUS_OPTIONS))
+  const [calendarDeptFilter, setCalendarDeptFilter] = useState<Set<string>>(new Set())
+  const seenCalendarDeptIds = useRef<Set<string>>(new Set())
+  const [calendarReworkOnly, setCalendarReworkOnly] = useState(false)
+  // Deadline Calendar cell carousel — one card shown per assignee/day cell, keyed
+  // `${rowKey}_${date}`; the index is clamped at render time when the cell shrinks.
+  const [calendarCellPage, setCalendarCellPage] = useState<Record<string, number>>({})
+  const [calendarSearch, setCalendarSearch] = useState('')
+  const [collapsedFilterGroups, setCollapsedFilterGroups] = useState<Set<string>>(new Set())
 
   // Board view mode (Kanban / Calendar) + animated tab indicator
   const [boardViewMode, setBoardViewMode] = useState<'kanban' | 'calendar'>('kanban')
   const boardTabBarRef = useRef<HTMLDivElement>(null)
   const boardTabButtonRefs = useRef<Record<'kanban' | 'calendar', HTMLButtonElement | null>>({ kanban: null, calendar: null })
   const [boardTabIndicator, setBoardTabIndicator] = useState({ left: 0, width: 0, opacity: 0 })
+
+  // The Kanban tab shows a notification dot (same UI as Attendance's Requests tab); the dot
+  // widens the button, so the indicator must re-measure when it appears/disappears.
+  const hasTaskNotifications = delayAlerts.length > 0 || workloadSuggestions.length > 0
 
   useLayoutEffect(() => {
     const container = boardTabBarRef.current
@@ -1209,7 +1308,7 @@ export default function OwnerTasksPage() {
     const containerRect = container.getBoundingClientRect()
     const activeRect = activeButton.getBoundingClientRect()
     setBoardTabIndicator({ left: activeRect.left - containerRect.left, width: activeRect.width, opacity: 1 })
-  }, [boardViewMode])
+  }, [boardViewMode, hasTaskNotifications])
 
   // Department card order (drag-to-reorder, local-only like the Shifts page)
   const [departmentOrder, setDepartmentOrder] = useState<string[]>([])
@@ -1219,6 +1318,11 @@ export default function OwnerTasksPage() {
 
   // New task modal
   const [newTaskModal,    setNewTaskModal]    = useState(false)
+  const newTitleInputRef  = useRef<HTMLInputElement>(null)
+  // Title may be prefilled (e.g. from a template) — focus it with the caret at the start, not the end.
+  useEffect(() => {
+    if (newTaskModal) { newTitleInputRef.current?.focus(); newTitleInputRef.current?.setSelectionRange(0, 0) }
+  }, [newTaskModal])
   const [newTitle,        setNewTitle]        = useState('')
   const [newDescription,  setNewDescription]  = useState('')
   const [newDeptId,       setNewDeptId]       = useState('')
@@ -1296,6 +1400,11 @@ export default function OwnerTasksPage() {
   // Task Template management modal
   const [taskTemplates,        setTaskTemplates]        = useState<TaskTemplate[]>([])
   const [templateModalOpen,    setTemplateModalOpen]    = useState(false)
+  const templateTitleInputRef = useRef<HTMLInputElement>(null)
+  // Title is prefilled when editing — focus it with the caret at the start, not the end.
+  useEffect(() => {
+    if (templateModalOpen) { templateTitleInputRef.current?.focus(); templateTitleInputRef.current?.setSelectionRange(0, 0) }
+  }, [templateModalOpen])
   const [templateFormMode,     setTemplateFormMode]     = useState<'create' | 'edit'>('create')
   const [templateFormId,       setTemplateFormId]       = useState('')
   const [templateFormTitle,    setTemplateFormTitle]    = useState('')
@@ -1308,6 +1417,11 @@ export default function OwnerTasksPage() {
   const [templateLoading,      setTemplateLoading]      = useState(false)
   const [templateError,        setTemplateError]        = useState('')
   const [deleteTemplateLoading, setDeleteTemplateLoading] = useState(false)
+  // Templates list modal — opened from the button beside Archive in the board header.
+  const [templatesModalOpen,   setTemplatesModalOpen]   = useState(false)
+  // Review sign-off (Approve / Reject) on a task the assignee submitted to Review.
+  const [rejectReasonOpen,     setRejectReasonOpen]     = useState(false)
+  const [rejectReason,         setRejectReason]         = useState('')
   const [archiveModalOpen,     setArchiveModalOpen]     = useState(false)
   const [archivedTasks,        setArchivedTasks]        = useState<Task[]>([])
   const [archiveListLoading,   setArchiveListLoading]   = useState(false)
@@ -1532,12 +1646,15 @@ export default function OwnerTasksPage() {
   // ── Open task panel ────────────────────────────────────────────────────────
 
   const openTask = (task: Task, viewOnly = false) => {
-    const existingSubTasks = kanban
-      ? COLUMNS.flatMap(col => kanban[col])
-          .filter(row => row.parent_task_id === task.id)
-          .sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0))
-          .map(row => ({ id: row.id, title: row.title }))
-      : []
+    // An archived parent's sub-tasks live in archivedTasks, not on the board — search both,
+    // deduped by id with the board copy winning over a stale archived snapshot.
+    const subTaskPool = new Map<string, Task>()
+    for (const row of [...archivedTasks, ...(kanban ? COLUMNS.flatMap(col => kanban[col]) : [])]) {
+      if (row.parent_task_id === task.id) subTaskPool.set(row.id, row)
+    }
+    const existingSubTasks = Array.from(subTaskPool.values())
+      .sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0))
+      .map(row => ({ id: row.id, title: row.title }))
     // Recurrence isn't stored as a rule on the task row — it's only expressed as the actual
     // generated sibling occurrences sharing recurrence_group_id. Re-derive the rule/end date
     // (and the deadline rule, from how due_at moves relative to task_date) from those siblings
@@ -1595,8 +1712,10 @@ export default function OwnerTasksPage() {
     }
     // Only the user who assigned this task may edit it — everyone else always gets the
     // read-only Details view, regardless of which entry point (pencil, calendar bar, etc.) was used.
+    // Review/Complete tasks are never editable, even by the assigner: submitted work can only be
+    // approved/rejected, and approved work is final.
     const isTaskOwner = !!internalUserId && task.assigned_by === internalUserId
-    setTaskViewMode(viewOnly || !isTaskOwner)
+    setTaskViewMode(viewOnly || !isTaskOwner || task.status === 'Review' || task.status === 'Complete')
     setSelectedTask(task)
     setEditTitle(task.title)
     setEditDescription(task.description ?? '')
@@ -1605,7 +1724,8 @@ export default function OwnerTasksPage() {
     setEditPriority(task.priority ?? '')
     setEditDueAt(task.due_at ? formatDateKey(new Date(task.due_at)) : '')
     setEditDeadlineTime(task.due_at ? new Date(task.due_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '')
-    setEditAssigneeIds(task.assigned_user_ids ?? (task.assigned_user_id ? [task.assigned_user_id] : []))
+    // One Manager per task — a legacy multi-assignee task collapses to its primary on edit.
+    setEditAssigneeIds(task.assigned_user_id ? [task.assigned_user_id] : [])
     setEditShiftId(task.shift_id ?? '')
     setEditStatus(task.status)
     setEditPercent(task.percentage_complete)
@@ -1629,7 +1749,7 @@ export default function OwnerTasksPage() {
     setEditRecurringCollapsed(true)
   }
 
-  const closePanel = () => { setSelectedTask(null); setDeleteConfirm(false); setPanelError(''); setSubTaskTitle('') }
+  const closePanel = () => { setSelectedTask(null); setDeleteConfirm(false); setPanelError(''); setSubTaskTitle(''); setRejectReasonOpen(false); setRejectReason('') }
 
   // ── Save task ─────────────────────────────────────────────────────────────
 
@@ -1638,6 +1758,7 @@ export default function OwnerTasksPage() {
       setPanelError('Title, department, start date, priority, and deadline are required')
       return
     }
+    if (!editAssigneeIds[0]) { setPanelError('Please select an assignee'); return }
     setEditLoading(true); setPanelError('')
     try {
       const due_at = new Date(`${editDueAt}T${editDeadlineTime}:00`).toISOString()
@@ -1831,23 +1952,39 @@ export default function OwnerTasksPage() {
     finally { setDeleteTaskLoading(false) }
   }
 
-  const handleDuplicateTask = async () => {
+  // Duplicate doesn't create the copy immediately — it opens the Assign Task modal pre-filled
+  // with this task's details so the user can reassign or tweak anything before creating.
+  const handleDuplicateTask = () => {
     if (!selectedTask) return
-    setTaskActionLoading('duplicate'); setPanelError('')
-    try {
-      const res = await fetch('/api/task', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'duplicate', id: selectedTask.id, assigned_by: internalUserId || undefined }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message)
-      await fetchKanban(companyId)
-      await refreshAllTaskInsights()
-      closePanel()
-      showTaskToast('Task duplicated.')
-    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to duplicate task') }
-    finally { setTaskActionLoading('') }
+    const task = selectedTask
+    // Same sub-task pool as openTask: board + archived, deduped with the board copy winning.
+    const subTaskPool = new Map<string, Task>()
+    for (const row of [...archivedTasks, ...(kanban ? COLUMNS.flatMap(col => kanban[col]) : [])]) {
+      if (row.parent_task_id === task.id) subTaskPool.set(row.id, row)
+    }
+    const subTasks = Array.from(subTaskPool.values())
+      .sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0))
+      .map(row => ({ id: crypto.randomUUID(), title: row.title }))
+    const startDate = kanbanDateKey(task)
+    closePanel()
+    // The Assign Task modal sits below the Workload Suggestion modal, so close that one too
+    // in case this Details panel was opened from a suggestion's task card.
+    setWorkloadInsightOpen(false)
+    setNewTitle(`${task.title} (copy)`)
+    setNewDescription(task.description ?? '')
+    setNewDeptId(task.department_id)
+    setNewAssigneeIds(task.assigned_user_id ? [task.assigned_user_id] : [])
+    setNewShiftId('')
+    // A task can't start in the past — keep the original start date only if it's still ahead.
+    setNewStartDate(startDate > todayTaskDate ? startDate : todayTaskDate)
+    setNewPriority(task.priority ?? '')
+    setNewDeadlineDate(task.due_at ? formatDateKey(new Date(task.due_at)) : '')
+    setNewDeadlineTime(task.due_at ? new Date(task.due_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '')
+    setNewError(''); setNewTemplateId('')
+    setNewSubTaskEnabled(subTasks.length > 0); setNewSubTasks(subTasks); setNewSubTaskDraft(''); setNewSubTaskCollapsed(subTasks.length > 0)
+    setNewRecurringEnabled(false); setNewRecurringCollapsed(false); setNewRecurrenceRule(''); setNewRecurrenceEndDate(''); setNewCustomIntervalDays(14); setNewCustomIntervalTouched(false)
+    setNewDeadlineRuleType(''); setNewDeadlineRuleTime(''); setNewDeadlineRuleWeekday(null); setNewDeadlineRuleOffsetAmount(1); setNewDeadlineRuleOffsetUnit('days')
+    setNewTaskModal(true)
   }
 
   const handleArchiveTask = async () => {
@@ -1866,6 +2003,46 @@ export default function OwnerTasksPage() {
       closePanel()
       showTaskToast('Task archived.')
     } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to archive task') }
+    finally { setTaskActionLoading('') }
+  }
+
+  // ── Review sign-off: Approve → Complete, Reject (with reason) → back to In Progress ──
+
+  const handleApproveTask = async () => {
+    if (!selectedTask) return
+    setTaskActionLoading('approve'); setPanelError('')
+    try {
+      const res = await fetch('/api/task', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'approve', id: selectedTask.id, assigned_by: internalUserId || undefined }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      await fetchKanban(companyId)
+      await refreshAllTaskInsights()
+      closePanel()
+      showTaskToast('Task approved and completed.')
+    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to approve task') }
+    finally { setTaskActionLoading('') }
+  }
+
+  const handleRejectTask = async () => {
+    if (!selectedTask || !rejectReason.trim()) return
+    setTaskActionLoading('reject'); setPanelError('')
+    try {
+      const res = await fetch('/api/task', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'reject', id: selectedTask.id, reason: rejectReason.trim(), assigned_by: internalUserId || undefined }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      await fetchKanban(companyId)
+      await refreshAllTaskInsights()
+      closePanel()
+      showTaskToast('Task sent back for rework.')
+    } catch (err) { setPanelError(err instanceof Error ? err.message : 'Failed to reject task') }
     finally { setTaskActionLoading('') }
   }
 
@@ -1951,72 +2128,155 @@ export default function OwnerTasksPage() {
     setEditSubTasks(prev => prev.filter(s => s.id !== subTaskId))
   }
 
-  const refreshTaskInsights = useCallback(async (kind: 'workload' | 'stalled') => {
+  // Workload Suggestion still needs a network round trip — it's a real computation over the
+  // company's task distribution, not a pure function of data already on this page.
+  const refreshWorkloadSuggestion = useCallback(async () => {
     if (!companyId || !internalUserId) return
-    setInsightLoading(kind); setInsightError('')
+    setInsightLoading('workload'); setInsightError('')
     try {
-      const deptParam = selectedDeptId ? `&department_id=${selectedDeptId}` : ''
       const userParam = `&assigned_by=${encodeURIComponent(internalUserId)}`
-      const query = kind === 'workload'
-        ? `/api/task?company_id=${companyId}&suggestion=workload${userParam}`
-        : `/api/task?company_id=${companyId}&suggestion=stalled${deptParam}${userParam}`
-      const res = await fetch(query)
+      const res = await fetch(`/api/task?company_id=${companyId}&suggestion=workload${userParam}`)
       const data = await res.json()
       if (!data.success) throw new Error(data.message)
-      if (kind === 'workload') {
-        const suggestions = (data.suggestions ?? []).filter((item: TaskWorkloadSuggestion) => item.type === 'rebalance')
-        setWorkloadSuggestions(suggestions)
-        if (suggestions.length === 0) setWorkloadInsightOpen(false)
-      } else {
-        const alerts = data.alerts ?? []
-        setStalledAlerts(alerts)
-        if (alerts.length === 0) setHighlightedStalledTaskId('')
-      }
+      const suggestions = (data.suggestions ?? []).filter((item: TaskWorkloadSuggestion) => item.type === 'rebalance')
+      setWorkloadSuggestions(suggestions)
+      if (suggestions.length === 0) setWorkloadInsightOpen(false)
     } catch (err) { setInsightError(err instanceof Error ? err.message : 'Failed to refresh task insight') }
     finally { setInsightLoading('') }
-  }, [companyId, selectedDeptId, internalUserId])
+  }, [companyId, internalUserId])
 
+  // Task Delay Alert never needs a network call to refresh — delayAlerts is derived straight from
+  // kanban + the current time (see the useMemo above), so "refresh" here just re-anchors the tick.
   const refreshAllTaskInsights = useCallback(async () => {
-    await Promise.all([refreshTaskInsights('workload'), refreshTaskInsights('stalled')])
+    await refreshWorkloadSuggestion()
+    setDelayNowTick(Date.now())
     window.dispatchEvent(new Event('task-insights-updated'))
-  }, [refreshTaskInsights])
+  }, [refreshWorkloadSuggestion])
 
   // ── Create task ────────────────────────────────────────────────────────────
 
-  const highlightFirstStalledTask = useCallback(() => {
-    const alert = stalledAlerts[0]
-    if (!alert) return
-    if (highlightedStalledTaskId === alert.task_id) {
-      setHighlightedStalledTaskId('')
+  // Phase-locks a notification badge's blink to the document timeline (startTime = 0), so badges
+  // that mount at different moments (Workload waits on its fetch; Task Delay is instant) still
+  // pulse in unison. CSS alone can't do this — each element's animation clock starts at its own
+  // mount time. Idempotent, so re-runs on re-render are harmless.
+  const syncBlinkPhase = useCallback((el: HTMLSpanElement | null) => {
+    if (!el) return
+    requestAnimationFrame(() => {
+      for (const anim of el.getAnimations()) anim.startTime = 0
+    })
+  }, [])
+
+  // Step 1 of the alert flow — clicking the delay count highlights every delayed task and floats
+  // it to the top of its Kanban column, right where the user already is. Once every current alert
+  // is on display the badge turns into a Mark-as-read button (step 2 below).
+  const showDelayHighlights = useCallback(() => {
+    setBoardViewMode('kanban')
+    setHighlightedDelayTaskIds(new Set(delayAlerts.map(a => a.task_id)))
+  }, [delayAlerts])
+
+  // Step 2 — the Owner has seen the delayed tasks (they can only follow up in person, not act on
+  // the board), so Mark as read dismisses exactly those alerts and the card turns green. A task
+  // that becomes delayed later, or whose deadline is edited, alerts again.
+  const [delayMarkReadLoading, setDelayMarkReadLoading] = useState(false)
+  const handleMarkDelayAlertsRead = useCallback(async () => {
+    const readIds = delayAlerts.map(a => a.task_id)
+    if (readIds.length === 0 || delayMarkReadLoading) return
+    setDelayMarkReadLoading(true)
+    try {
+      const res = await fetch('/api/task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'mark_delay_alerts_read', task_ids: readIds }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      // Flip the local copies too so the card turns green immediately instead of waiting for the
+      // realtime subscription to echo the update back.
+      const readAt = new Date().toISOString()
+      const readSet = new Set(readIds)
+      setKanban(prev => prev ? { ...prev, Assigned: (prev.Assigned ?? []).map(t => readSet.has(t.id) ? { ...t, delay_alert_read_at: readAt } : t) } : prev)
+      setHighlightedDelayTaskIds(new Set())
+      window.dispatchEvent(new Event('task-insights-updated'))
+      showTaskToast(`${readIds.length} delay alert${readIds.length === 1 ? '' : 's'} marked as read.`)
+    } catch (err) { setInsightError(err instanceof Error ? err.message : 'Failed to mark delay alerts as read') }
+    finally { setDelayMarkReadLoading(false) }
+  }, [delayAlerts, delayMarkReadLoading, showTaskToast])
+
+  useEffect(() => {
+    if (!companyId) return
+    void refreshWorkloadSuggestion()
+  }, [companyId, selectedDeptId, refreshWorkloadSuggestion])
+
+  // Fetch the company's delay-alert threshold once the company is known.
+  useEffect(() => {
+    if (!companyId) return
+    fetch(`/api/task?company_id=${companyId}&delay_threshold=true`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.success && data.settings?.threshold_percent) {
+          setDelayThresholdPercent(data.settings.threshold_percent)
+          setDelayThresholdInput(String(data.settings.threshold_percent))
+        }
+      })
+      .catch(() => {})
+  }, [companyId])
+
+  const handleSaveDelayThreshold = async () => {
+    const parsed = Number(delayThresholdInput)
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 100) {
+      setDelayThresholdError('Enter a whole number between 1 and 100.')
       return
     }
-    setHighlightedStalledTaskId(alert.task_id)
-    setBoardViewMode('kanban')
+    setDelayThresholdSaving(true); setDelayThresholdError('')
+    try {
+      const res = await fetch('/api/task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'set_delay_threshold', company_id: companyId, threshold_percent: parsed, updated_by: internalUserId || undefined }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message)
+      setDelayThresholdPercent(parsed) // delayAlerts recomputes automatically from this
+      setDelayThresholdModalOpen(false)
+      showTaskToast(`Delay alert threshold set to ${parsed}%.`)
+    } catch (err) { setDelayThresholdError(err instanceof Error ? err.message : 'Failed to save threshold') }
+    finally { setDelayThresholdSaving(false) }
+  }
 
-    const task = kanban
-      ? COLUMNS.flatMap(col => kanban[col] ?? []).find(row => row.id === alert.task_id)
-      : null
-    if (!task) return
-    setSelectedDeptId(task.department_id)
-    setTaskDate(kanbanDateKey(task))
-  }, [highlightedStalledTaskId, kanban, stalledAlerts])
-
+  // Delay-alert status is purely time-based (percent elapsed toward due_at), so a task can cross
+  // the threshold with zero data changing — nothing to poll for. Instead, schedule exactly one
+  // timer for the next moment any Assigned task will cross it, then let it re-chain itself: firing
+  // bumps delayNowTick, which reruns this effect and schedules the next upcoming crossing. This
+  // updates the badge to the second with no network traffic and no full-page refresh.
   useEffect(() => {
-    if (!companyId) return
-    void refreshTaskInsights('workload')
-    void refreshTaskInsights('stalled')
-  }, [companyId, selectedDeptId, refreshTaskInsights])
+    if (!kanban) return
+    const now = Date.now()
+    const upcomingAlertTimes = (kanban.Assigned ?? [])
+      .filter(t => !t.parent_task_id && !!t.due_at)
+      .filter(t => !t.delay_alert_read_at)
+      .filter(t => !selectedDeptId || t.department_id === selectedDeptId)
+      .map(t => {
+        const createdAt = new Date(t.created_at).getTime()
+        const dueAt = new Date(t.due_at!).getTime()
+        const totalWindow = dueAt - createdAt
+        return totalWindow > 0 ? createdAt + totalWindow * (delayThresholdPercent / 100) : createdAt
+      })
+      .filter(alertAt => alertAt > now)
+    if (upcomingAlertTimes.length === 0) return
+    const nextAlertAt = Math.min(...upcomingAlertTimes)
+    const timer = setTimeout(() => setDelayNowTick(Date.now()), nextAlertAt - now + 250)
+    return () => clearTimeout(timer)
+  }, [kanban, selectedDeptId, delayThresholdPercent, delayNowTick])
 
-  // Stalled-task status is time-based (percent elapsed toward due_at), so a task can cross the
-  // alert threshold purely from time passing while the page sits open with no user interaction.
-  // Poll periodically so the notification reflects that without requiring a manual refresh.
+  // Background/sleeping tabs throttle or pause timers, so the scheduled moment above can be
+  // missed silently. Catch up the instant the tab becomes visible again instead of waiting.
   useEffect(() => {
-    if (!companyId) return
-    const interval = setInterval(() => {
-      void refreshTaskInsights('stalled')
-    }, 5 * 60 * 1000)
-    return () => clearInterval(interval)
-  }, [companyId, refreshTaskInsights])
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') setDelayNowTick(Date.now())
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
+  }, [])
 
   const handleCreateSubTask = () => {
     if (!subTaskTitle.trim()) return
@@ -2027,6 +2287,7 @@ export default function OwnerTasksPage() {
 
   const handleCreateTask = async () => {
     if (!newTitle.trim() || !newDeptId || !newPriority || !newStartDate) { setNewError('Title, department, priority, and start date are required'); return }
+    if (!newAssigneeIds[0]) { setNewError('Please select an assignee'); return }
     if (!newRecurringEnabled && (!newDeadlineDate || !newDeadlineTime)) { setNewError('Deadline is required'); return }
     if (newRecurringEnabled && !newRecurrenceRule) { setNewError('Choose how often this task repeats'); return }
     if (newRecurringEnabled && !newRecurrenceEndDate) { setNewError('Repeat until date is required for recurring tasks'); return }
@@ -2235,6 +2496,8 @@ export default function OwnerTasksPage() {
       if (!data.success) throw new Error(data.message || 'Failed to save template')
       await fetchTaskTemplates(companyId)
       setTemplateModalOpen(false)
+      // The form is always entered from the Templates list modal — return there after saving.
+      setTemplatesModalOpen(true)
       showTaskToast(isEdit ? 'Template updated.' : 'Template created.')
     } catch (err) {
       setTemplateError(err instanceof Error ? err.message : 'Failed to save template')
@@ -2275,7 +2538,6 @@ export default function OwnerTasksPage() {
     (date: string) => shiftUserIdsByDate.get(date) ?? EMPTY_USER_ID_SET,
     [shiftUserIdsByDate],
   )
-  const userIdsWithShiftOnTaskDate = useMemo(() => userIdsWithShiftOnDate(taskDate), [userIdsWithShiftOnDate, taskDate])
 
   // ── Dates that have tasks (for calendar dots) ─────────────────────────────
 
@@ -2293,6 +2555,57 @@ export default function OwnerTasksPage() {
     kanban ? COLUMNS.flatMap(col => kanban[col] ?? []) : []
   ), [kanban])
 
+  // Deadline Summary buckets (Deadline Calendar sidebar) — top-level, non-Complete tasks with a
+  // deadline. Overdue = deadline already passed. Due Today = deadline falls on today — so a task
+  // due earlier today counts in both. Due <week end> = deadline inside the week the calendar is
+  // showing (label = that week's Sunday, so it follows the ‹ › week navigation), but only
+  // deadlines after today — earlier ones already sit in Overdue / Due Today.
+  // delayNowTick keeps "Overdue" honest when a deadline crosses while the page sits open.
+  const deadlineSummary = useMemo(() => {
+    const now = new Date(delayNowTick)
+    const todayKey = formatDateKey(now)
+    const weekAnchor = new Date(`${taskDate}T00:00:00`)
+    const weekStart = addDays(weekAnchor, -((weekAnchor.getDay() + 6) % 7))
+    const weekEnd = addDays(weekStart, 6)
+    const weekStartKey = formatDateKey(weekStart)
+    const weekEndKey = formatDateKey(weekEnd)
+    const overdue: Task[] = []
+    const dueToday: Task[] = []
+    const dueThisWeek: Task[] = []
+    for (const t of allKanbanTasks) {
+      if (t.parent_task_id || t.status === 'Complete' || !t.due_at) continue
+      const due = new Date(t.due_at)
+      if (Number.isNaN(due.getTime())) continue
+      const dueKey = formatDateKey(due)
+      if (due.getTime() < now.getTime()) overdue.push(t)
+      if (dueKey === todayKey) dueToday.push(t)
+      else if (dueKey > todayKey && dueKey >= weekStartKey && dueKey <= weekEndKey) dueThisWeek.push(t)
+    }
+    const byDue = (a: Task, b: Task) => new Date(a.due_at!).getTime() - new Date(b.due_at!).getTime()
+    overdue.sort(byDue)
+    dueToday.sort(byDue)
+    dueThisWeek.sort(byDue)
+    const weekEndLabel = `${weekEnd.getDate()} ${weekEnd.toLocaleDateString('en-AU', { month: 'short' })}`
+    return { overdue, dueToday, dueThisWeek, weekEndLabel }
+  }, [allKanbanTasks, delayNowTick, taskDate])
+
+  // Re-bucket the Deadline Summary at the exact moment it next changes — the earliest upcoming
+  // deadline (a Due Today task becomes Overdue) or midnight (the week bucket rolls into Today) — by bumping
+  // the shared virtual "now". Same precise-setTimeout pattern as the delay-alert scheduler above;
+  // no polling. Midnight is always < 24h away, so the delay never overflows setTimeout.
+  useEffect(() => {
+    const now = delayNowTick
+    const nextMidnight = new Date(now)
+    nextMidnight.setHours(24, 0, 0, 0)
+    const upcomingDueTimes = allKanbanTasks
+      .filter(t => !t.parent_task_id && t.status !== 'Complete' && !!t.due_at)
+      .map(t => new Date(t.due_at!).getTime())
+      .filter(dueAt => dueAt > now)
+    const nextChangeAt = Math.min(nextMidnight.getTime(), ...upcomingDueTimes)
+    const timer = setTimeout(() => setDelayNowTick(Date.now()), nextChangeAt - now + 250)
+    return () => clearTimeout(timer)
+  }, [allKanbanTasks, delayNowTick])
+
   useEffect(() => {
     if (hasAutoSelectedTaskDateRef.current || datesWithTasks.size === 0) return
     if (datesWithTasks.has(taskDate)) {
@@ -2306,32 +2619,79 @@ export default function OwnerTasksPage() {
     hasAutoSelectedTaskDateRef.current = true
   }, [datesWithTasks, taskDate])
 
-  // Floor for the Start Date field itself — a task can't start in the past. Board navigation (Kanban day / Calendar week) is unrestricted, like the Shifts page.
+  // Floor for the Start Date field itself — a task can't start in the past. Board navigation (Calendar week) is unrestricted, like the Shifts page.
   const todayTaskDate = useMemo(() => formatDateKey(new Date()), [])
-  // Effectively-unrestricted floor for the Kanban day picker, since the picker component requires a minDate prop
-  const boardNavMinDate = '1970-01-01'
 
   // ── Filtered tasks per column ──────────────────────────────────────────────
+  // The Kanban board is dateless: it always shows the live state of every non-archived task.
+
+  // "Newest Assigned Task" uses created_at — a task is assigned at creation, so creation
+  // time IS the assignment time.
+  const kanbanSortComparator = (a: Task, b: Task): number => {
+    switch (kanbanSortBy) {
+      case 'deadline': {
+        const aTime = a.due_at ? new Date(a.due_at).getTime() : Infinity
+        const bTime = b.due_at ? new Date(b.due_at).getTime() : Infinity
+        return aTime - bTime
+      }
+      case 'newest':
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      default:
+        return (PRIORITY_ORDER[a.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.priority ?? ''] ?? 4)
+    }
+  }
 
   const filteredTasks = (col: Task['status']): Task[] => {
     if (!kanban) return []
+    const search = kanbanSearch.trim().toLowerCase()
     return (kanban[col] ?? [])
       .filter(t => !selectedDeptId || t.department_id === selectedDeptId)
-      .filter(t => isKanbanVisibleOnDate(t, taskDate))
-      .sort((a, b) => (PRIORITY_ORDER[a.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.priority ?? ''] ?? 4))
+      .filter(t => !selectedMemberId || (t.assigned_user_ids ?? (t.assigned_user_id ? [t.assigned_user_id] : [])).includes(selectedMemberId))
+      // Priority filter and search only gate top-level cards — sub-tasks render nested under
+      // their parent, so dropping them here would punch holes in an expanded parent's sequence.
+      .filter(t => !!t.parent_task_id || !kanbanPriorityFilter || t.priority === kanbanPriorityFilter)
+      // Rework = rejected in review and sent back to In Progress (same rule as the card badge).
+      .filter(t => !!t.parent_task_id || kanbanReworkFilter !== 'rework' || (!!t.rejection_reason && t.status === 'In Progress'))
+      .filter(t => !!t.parent_task_id || !search ||
+        t.title.toLowerCase().includes(search) ||
+        (t.description ?? '').toLowerCase().includes(search))
+      .sort((a, b) =>
+        // Highlighted delay-alert tasks float to the top of their column, then the chosen sort.
+        (highlightedDelayTaskIds.has(b.id) ? 1 : 0) - (highlightedDelayTaskIds.has(a.id) ? 1 : 0) ||
+        kanbanSortComparator(a, b) ||
+        (PRIORITY_ORDER[a.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.priority ?? ''] ?? 4))
   }
 
   const allVisibleTasks = useMemo(() => {
     if (!kanban) return []
-    return COLUMNS
-      .flatMap(col => kanban[col] ?? [])
-      .filter(t => !selectedDeptId || t.department_id === selectedDeptId)
+    // Deadline Calendar sidebar filters gate top-level tasks only — a sub-task follows its
+    // parent, so an expanded parent never renders with holes in its sequence.
+    const search = calendarSearch.trim().toLowerCase()
+    const bucketTaskIds = deadlineBucketFilter
+      ? new Set(({ overdue: deadlineSummary.overdue, today: deadlineSummary.dueToday, week: deadlineSummary.dueThisWeek })[deadlineBucketFilter].map(t => t.id))
+      : null
+    const matchesCalendarFilters = (t: Task) => (
+      // The Deadline Calendar tracks upcoming/missed deadlines — Complete tasks never show.
+      t.status !== 'Complete' &&
+      (!bucketTaskIds || bucketTaskIds.has(t.id)) &&
+      // "Everything checked" passes tasks whose priority/department falls outside the option
+      // list (e.g. no priority set) — only an explicit uncheck starts excluding.
+      (calendarPriorityFilter.size >= CALENDAR_PRIORITY_OPTIONS.length || calendarPriorityFilter.has(t.priority ?? '')) &&
+      calendarStatusFilter.has(t.status) &&
+      (calendarDeptFilter.size >= departments.length || calendarDeptFilter.has(t.department_id)) &&
+      (!calendarReworkOnly || (!!t.rejection_reason && t.status === 'In Progress')) &&
+      (!search || t.title.toLowerCase().includes(search) || (t.description ?? '').toLowerCase().includes(search))
+    )
+    const all = COLUMNS.flatMap(col => kanban[col] ?? [])
+    const keptTopLevelIds = new Set(all.filter(t => !t.parent_task_id && matchesCalendarFilters(t)).map(t => t.id))
+    return all
+      .filter(t => keptTopLevelIds.has(t.parent_task_id ?? t.id))
       .sort((a, b) => {
         const aTime = a.due_at ? new Date(a.due_at).getTime() : 0
         const bTime = b.due_at ? new Date(b.due_at).getTime() : 0
         return aTime - bTime || (PRIORITY_ORDER[a.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.priority ?? ''] ?? 4)
       })
-  }, [kanban, selectedDeptId])
+  }, [kanban, calendarPriorityFilter, calendarStatusFilter, calendarDeptFilter, calendarReworkOnly, calendarSearch, deadlineBucketFilter, deadlineSummary, departments])
 
   const calendarWeekDates = useMemo(() => {
     const anchor = new Date(`${taskDate}T00:00:00`)
@@ -2361,26 +2721,29 @@ export default function OwnerTasksPage() {
 
     // Sub-tasks only render once their parent is expanded — collapsed by default, same as Kanban.
     const visibleTasks = allVisibleTasks.filter(t => !t.parent_task_id || expandedTaskIds.has(t.parent_task_id))
-    // Bar spans from the task's assigned start date (task_date, set when assigning) to its deadline date
+    // A card sits on the task's deadline date only (falling back to its assigned date when it has
+    // no deadline) — a task assigned Mon with a Fri deadline shows one card in Friday's cell.
+    // Sub-tasks always sit in their PARENT card's cell: expanding a parent lists its sequence
+    // right under it, never scattering sub-tasks across other days.
+    const cardDate = (task: Task) => task.due_at ? formatDateKey(new Date(task.due_at)) : kanbanDateKey(task)
     return visibleTasks.flatMap(task => {
-      const startDate = kanbanDateKey(task)
-      const endDate = task.due_at ? formatDateKey(new Date(task.due_at)) : startDate
-      if (endDate < calendarWeekDates[0] || startDate > calendarWeekDates[6]) return []
+      const parent = task.parent_task_id ? allVisibleTasks.find(t => t.id === task.parent_task_id) : null
+      const deadlineDate = parent ? cardDate(parent) : cardDate(task)
+      if (deadlineDate < calendarWeekDates[0] || deadlineDate > calendarWeekDates[6]) return []
       return [{
         task,
-        startDate: startDate < endDate ? startDate : endDate,
-        endDate: endDate > startDate ? endDate : startDate,
+        deadlineDate,
         subTaskCount: task.parent_task_id ? 0 : (subTasksByParent.get(task.id)?.length ?? 0),
         subTaskIndex: task.parent_task_id ? subTaskIndexById.get(task.id) ?? null : null,
       }]
-    }).sort((a, b) => (PRIORITY_ORDER[a.task.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.task.priority ?? ''] ?? 4) || a.startDate.localeCompare(b.startDate))
+    }).sort((a, b) => (PRIORITY_ORDER[a.task.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.task.priority ?? ''] ?? 4) || a.deadlineDate.localeCompare(b.deadlineDate))
   }, [allVisibleTasks, calendarWeekDates, expandedTaskIds])
 
   const renderTaskCalendarView = () => {
     const todayStr = formatDateKey(new Date())
-    const ROW_HEIGHT = 58
     const NAME_COL = 180
-    const dayIndex = (date: string) => calendarWeekDates.indexOf(date)
+    // Department-boundary edge — same as the Shifts page weekly calendar.
+    const DEPT_EDGE = '2px solid rgba(15,23,42,0.45)'
     const taskCalendarRows = (() => {
       const rows = new Map<string, {
         key: string
@@ -2388,7 +2751,7 @@ export default function OwnerTasksPage() {
         items: typeof taskCalendarItems
       }>()
       for (const item of taskCalendarItems) {
-        // A multi-assignee task gets its own bar in every assignee's row — same principle as
+        // A multi-assignee task gets its own card in every assignee's row — same principle as
         // Shift timelines showing one row per person, not one row per shift.
         const assigneeIds = item.task.assigned_user_ids ?? (item.task.assigned_user_id ? [item.task.assigned_user_id] : [])
         const keys = assigneeIds.length > 0 ? assigneeIds : [`unassigned_${item.task.department_id ?? 'none'}`]
@@ -2399,25 +2762,46 @@ export default function OwnerTasksPage() {
         }
       }
 
-      return [...rows.values()].map(row => {
-        row.items = [...row.items].sort((a, b) => (
-          (PRIORITY_ORDER[a.task.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.task.priority ?? ''] ?? 4) ||
-          a.startDate.localeCompare(b.startDate) ||
-          a.task.title.localeCompare(b.task.title)
-        ))
-        return row
-      }).sort((a, b) => {
+      // Rows group by department (same order as the department list), then by name — so
+      // teammates sit together instead of being interleaved by task priority.
+      const rowDeptIndex = (row: { items: typeof taskCalendarItems }) => {
+        const idx = departments.findIndex(d => d.id === row.items[0]?.task.department_id)
+        return idx === -1 ? departments.length : idx
+      }
+      return [...rows.values()].sort((a, b) => {
         const aName = a.assignee?.full_name ?? 'Unassigned'
         const bName = b.assignee?.full_name ?? 'Unassigned'
-        const aPriority = Math.min(...a.items.map(item => PRIORITY_ORDER[item.task.priority ?? ''] ?? 4))
-        const bPriority = Math.min(...b.items.map(item => PRIORITY_ORDER[item.task.priority ?? ''] ?? 4))
-        return aPriority - bPriority || aName.localeCompare(bName)
+        return rowDeptIndex(a) - rowDeptIndex(b) || aName.localeCompare(bName)
       })
     })()
 
+    // Cards inside one day cell: top-level tasks by deadline time (earliest first), each
+    // immediately followed by its expanded sub-tasks; sub-tasks whose parent card sits in a
+    // different row (sub assigned to someone else) come last, in sequence order.
+    const cellItems = (items: typeof taskCalendarItems, date: string) => {
+      const inCell = items.filter(item => item.deadlineDate === date)
+      const dueTime = (t: Task) => t.due_at ? new Date(t.due_at).getTime() : Number.MAX_SAFE_INTEGER
+      const topLevel = inCell.filter(item => !item.task.parent_task_id).sort((a, b) => (
+        dueTime(a.task) - dueTime(b.task) ||
+        (PRIORITY_ORDER[a.task.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.task.priority ?? ''] ?? 4) ||
+        a.task.title.localeCompare(b.task.title)
+      ))
+      const subs = inCell.filter(item => item.task.parent_task_id)
+      const ordered: typeof inCell = []
+      for (const item of topLevel) {
+        ordered.push(item, ...subs.filter(s => s.task.parent_task_id === item.task.id).sort((a, b) => (a.subTaskIndex ?? 0) - (b.subTaskIndex ?? 0)))
+      }
+      ordered.push(...subs
+        .filter(s => !topLevel.some(p => p.task.id === s.task.parent_task_id))
+        .sort((a, b) => (a.subTaskIndex ?? 0) - (b.subTaskIndex ?? 0)))
+      return ordered
+    }
+
     return (
       <div className="task-tab-content" style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '14px 16px 18px' }}>
-        <div style={{ minWidth: 880, border: `1px solid ${TASK_BORDER}`, borderRadius: 12, overflow: 'visible', background: '#FFFFFF' }}>
+        {/* overflow: clip (not hidden) rounds the grid's corners like the Shifts Calendar while
+            still letting the date header stick — hidden would break position: sticky. */}
+        <div style={{ minWidth: 1240, border: `1px solid ${TASK_BORDER}`, borderRadius: 12, overflow: 'clip', background: '#FFFFFF' }}>
           {/* Header row — matches Shifts page Calendar tab date header */}
           <div style={{ position: 'sticky', top: 0, zIndex: 20, display: 'grid', gridTemplateColumns: `${NAME_COL}px repeat(7, 1fr)`, background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', height: 54, overflow: 'hidden' }}>
             <div style={{ position: 'relative', marginLeft: -1, borderRight: '1px solid rgba(255,255,255,0.08)', background: '#0F172A' }} />
@@ -2427,9 +2811,19 @@ export default function OwnerTasksPage() {
               const dayNum = String(day.getDate()).padStart(2, '0')
               const month = day.toLocaleDateString('en-AU', { month: 'short' })
               const weekday = day.toLocaleDateString('en-AU', { weekday: 'long' })
+              // Top-level tasks due this day — sub-tasks stay out so the count doesn't jump
+              // when a parent card is expanded or collapsed.
+              const dayCount = taskCalendarItems.filter(item => !item.task.parent_task_id && item.deadlineDate === date).length
               return (
                 <div key={date} style={{ padding: '10px 8px', borderRight: '1px solid rgba(255,255,255,0.08)', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-                  <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: isToday ? TASK_ORANGE : 'rgba(255,255,255,0.85)', letterSpacing: '0.01em', lineHeight: 1.2 }}>{dayNum} {month}</p>
+                  <p style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 6, fontSize: 14, fontWeight: 700, color: isToday ? TASK_ORANGE : 'rgba(255,255,255,0.85)', letterSpacing: '0.01em', lineHeight: 1.2 }}>
+                    {dayNum} {month}
+                    {dayCount > 0 && (
+                      <span style={{ minWidth: 18, height: 18, padding: '0 5px', borderRadius: 999, background: isToday ? 'rgba(249,115,22,0.22)' : 'rgba(255,255,255,0.14)', color: isToday ? TASK_ORANGE : 'rgba(255,255,255,0.85)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 800, boxSizing: 'border-box' }}>
+                        {dayCount}
+                      </span>
+                    )}
+                  </p>
                   <p style={{ margin: '3px 0 0', fontSize: 12, fontWeight: 500, color: isToday ? TASK_ORANGE : 'rgba(255,255,255,0.5)', letterSpacing: '0.01em', lineHeight: 1.2 }}>{weekday}</p>
                 </div>
               )
@@ -2442,58 +2836,26 @@ export default function OwnerTasksPage() {
               <p style={{ margin: 0, fontWeight: 700, fontSize: 14 }}>{selectedDept ? `No tasks for ${selectedDept.name} this week` : 'No tasks this week'}</p>
             </div>
           ) : (
-            <div>
-              {taskCalendarRows.map(row => {
+            // Same divider system as the Shifts page weekly calendar: a thin border between
+            // teammates in one department, a thick dark edge at each department boundary and
+            // around the body.
+            <div style={{ borderLeft: DEPT_EDGE, borderRight: DEPT_EDGE, borderBottom: DEPT_EDGE }}>
+              {taskCalendarRows.map((row, rowIdx) => {
                 const rowDept = departments.find(d => d.id === row.items[0]?.task.department_id)
                 const rowColor = rowDept ? deptColor(rowDept.id) : STATUS_CONFIG[row.items[0]?.task.status ?? 'Assigned'].color
-                // Every top-level task gets its own dedicated lane (no packing two unrelated tasks
-                // into one lane just because their dates don't overlap) — assigned once, up front, so
-                // every bar in the row agrees on the same layout instead of each recomputing "who
-                // overlaps me" and centering independently. An expanded task's sub-task rows are
-                // inserted directly under their own parent's lane, never interleaved with siblings.
-                const primaryItemsForLanes = row.items
-                  .filter(item => !item.task.parent_task_id)
-                  .sort((a, b) => (
-                    a.startDate.localeCompare(b.startDate) || a.endDate.localeCompare(b.endDate) || a.task.title.localeCompare(b.task.title)
-                  ))
-                // Sub-task bars wrap their title onto two lines instead of truncating, so their
-                // lane needs to reserve more height (44px bar) than a main-task lane (28px bar).
-                const LANE_GAP = 6
-                const MAIN_BAR_HEIGHT = 28
-                const SUB_BAR_HEIGHT = 34
-                const laneByTaskId = new Map<string, number>()
-                const laneTopByTaskId = new Map<string, number>()
-                const laneHeightByTaskId = new Map<string, number>()
-                let nextLane = 0
-                let stackHeightAcc = 0
-                for (const primary of primaryItemsForLanes) {
-                  laneByTaskId.set(primary.task.id, nextLane)
-                  laneTopByTaskId.set(primary.task.id, stackHeightAcc)
-                  laneHeightByTaskId.set(primary.task.id, MAIN_BAR_HEIGHT)
-                  stackHeightAcc += MAIN_BAR_HEIGHT + LANE_GAP
-                  nextLane += 1
-                  const subItems = row.items
-                    .filter(sub => sub.task.parent_task_id === primary.task.id)
-                    .sort((a, b) => (a.subTaskIndex ?? 0) - (b.subTaskIndex ?? 0))
-                  for (const sub of subItems) {
-                    laneByTaskId.set(sub.task.id, nextLane)
-                    laneTopByTaskId.set(sub.task.id, stackHeightAcc)
-                    laneHeightByTaskId.set(sub.task.id, SUB_BAR_HEIGHT)
-                    stackHeightAcc += SUB_BAR_HEIGHT + LANE_GAP
-                    nextLane += 1
-                  }
-                }
-                const laneCount = nextLane
-                const stackHeight = Math.max(0, stackHeightAcc - LANE_GAP)
-                const rowHeight = Math.max(ROW_HEIGHT, stackHeight + 18)
+                const prevRow = taskCalendarRows[rowIdx - 1]
+                const isDeptBoundary = rowIdx > 0 && prevRow.items[0]?.task.department_id !== row.items[0]?.task.department_id
+                // The thin teammate separator sits on the name/day cells (not the row itself)
+                // so it never cuts through the department color bar on the left edge.
+                const rowSepBorder = rowIdx > 0 && !isDeptBoundary ? `1px solid ${TASK_BORDER}` : 'none'
                 const assignee = row.assignee
                 const isManager = assignee?.role === 'Manager'
                 return (
-                  <div key={row.key} style={{ display: 'grid', gridTemplateColumns: `${NAME_COL}px repeat(7, 1fr)`, minHeight: rowHeight, borderBottom: '1px solid #CBD5E1', boxSizing: 'border-box' }}>
+                  <div key={row.key} style={{ display: 'grid', gridTemplateColumns: `${NAME_COL}px repeat(7, 1fr)`, minHeight: 104, borderTop: isDeptBoundary ? DEPT_EDGE : 'none', background: '#FFFFFF', boxSizing: 'border-box' }}>
                     {/* Assignee column */}
                     <div style={{ display: 'flex', alignItems: 'center', borderRight: `1px solid ${TASK_BORDER}`, overflow: 'hidden' }}>
                       <div style={{ width: 8, alignSelf: 'stretch', flexShrink: 0, background: rowColor, opacity: 0.85 }} />
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px 0 12px', minWidth: 0, flex: 1 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 10px 0 12px', minWidth: 0, flex: 1, alignSelf: 'stretch', borderTop: rowSepBorder, boxSizing: 'border-box' }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: assignee?.profile_photo_url ? 'transparent' : (isManager ? '#FFF7ED' : '#F3F4F6'), color: isManager ? '#EA580C' : '#4B5563', borderRadius: 999, overflow: 'hidden' }}>
                           {assignee?.profile_photo_url
                             ? <img src={assignee.profile_photo_url} alt={assignee.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -2504,98 +2866,73 @@ export default function OwnerTasksPage() {
                         </span>
                       </div>
                     </div>
-                    {calendarWeekDates.map((date, i) => (
-                      <div key={date} style={{ gridColumn: i + 2, gridRow: 1, borderRight: i < 6 ? `1px solid ${TASK_BORDER}` : 'none', background: '#FFFFFF' }} />
-                    ))}
-                    {[...row.items].sort((a, b) => (
-                      (PRIORITY_ORDER[a.task.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.task.priority ?? ''] ?? 4) ||
-                      a.startDate.localeCompare(b.startDate) ||
-                      a.task.title.localeCompare(b.task.title)
-                    )).map(item => {
-                      const dept = departments.find(d => d.id === item.task.department_id)
-                      const baseColor = dept ? deptColor(dept.id) : TASK_ORANGE
-                      const isSubTask = !!item.task.parent_task_id
-                      const color = isSubTask ? lightenColor(baseColor, 0.72) : baseColor
-                      const startCol = Math.max(0, dayIndex(item.startDate))
-                      const endCol = dayIndex(item.endDate) === -1 ? 6 : dayIndex(item.endDate)
-                      const truncatedStart = item.startDate < calendarWeekDates[0]
-                      const truncatedEnd = item.endDate > calendarWeekDates[6]
-                      const barHeight = laneHeightByTaskId.get(item.task.id) ?? MAIN_BAR_HEIGHT
-                      const stackTop = Math.max(0, (rowHeight - stackHeight) / 2) + (laneTopByTaskId.get(item.task.id) ?? 0)
-                      return (
+                    {calendarWeekDates.map((date, i) => {
+                      const items = cellItems(row.items, date)
+                      // One card per cell — extra tasks page horizontally instead of stacking,
+                      // so a person with many tasks on one day doesn't stretch the whole row.
+                      const pageKey = `${row.key}_${date}`
+                      const page = Math.min(calendarCellPage[pageKey] ?? 0, Math.max(0, items.length - 1))
+                      const item = items[page]
+                      const goTo = (next: number) => setCalendarCellPage(prev => ({ ...prev, [pageKey]: next }))
+                      const pagerBtn = (disabled: boolean, onClick: () => void, icon: React.ReactNode, label: string) => (
                         <button
-                          key={item.task.id}
                           type="button"
-                          onClick={isSubTask ? undefined : () => openTask(item.task, false)}
-                          title={`${item.task.title} | ${item.startDate} - ${item.endDate}`}
-                          style={{
-                            gridColumn: `${startCol + 2} / ${endCol + 3}`,
-                            gridRow: 1,
-                            alignSelf: 'start',
-                            position: 'relative',
-                            margin: isSubTask ? `${stackTop}px 22px 0` : `${stackTop}px 6px 0`,
-                            height: barHeight,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: isSubTask ? 'flex-start' : 'center',
-                            padding: isSubTask ? '2px 12px' : '0 12px',
-                            border: 'none',
-                            borderRadius: isSubTask ? 10 : 999,
-                            background: color,
-                            cursor: isSubTask ? 'default' : 'pointer',
-                            overflow: 'hidden',
-                          }}
-                          onMouseEnter={isSubTask ? undefined : e => { e.currentTarget.style.filter = 'brightness(1.08)' }}
-                          onMouseLeave={isSubTask ? undefined : e => { e.currentTarget.style.filter = 'none' }}
+                          onClick={onClick}
+                          disabled={disabled}
+                          aria-label={label}
+                          style={{ width: 20, height: 20, border: 'none', borderRadius: 999, background: '#F1F5F9', color: '#475569', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.35 : 1, transition: 'background 0.15s ease' }}
+                          onMouseEnter={e => { if (!disabled) e.currentTarget.style.background = '#E2E8F0' }}
+                          onMouseLeave={e => { e.currentTarget.style.background = '#F1F5F9' }}
                         >
-                          {truncatedStart && (
-                            <span
-                              role="button"
-                              aria-label="View previous week"
-                              title="View previous week"
-                              onClick={e => { e.stopPropagation(); setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), -7))) }}
-                              style={{ position: 'absolute', left: 2, top: 2, bottom: 2, width: 24, borderRadius: 999, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'transparent', transition: 'background 0.12s ease' }}
-                              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.25)' }}
-                              onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
-                            >
-                              <ChevronLeft size={13} color="#FFFFFF" strokeWidth={3} style={{ flexShrink: 0 }} />
-                            </span>
-                          )}
-                          {item.subTaskIndex !== null && (
-                            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 16, height: 16, borderRadius: '50%', background: isSubTask ? 'rgba(0,0,0,0.1)' : 'rgba(255,255,255,0.3)', color: isSubTask ? baseColor : '#FFFFFF', fontSize: 9, fontWeight: 800, flexShrink: 0, marginRight: 5 }}>
-                              {item.subTaskIndex}
-                            </span>
-                          )}
-                          <span style={isSubTask
-                            ? { fontSize: 11, fontWeight: 700, color: baseColor, lineHeight: 1.25, display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: 2, overflow: 'hidden', textAlign: 'left' }
-                            : { fontSize: 12, fontWeight: 700, color: '#FFFFFF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }
-                          }>{item.task.title}</span>
-                          {item.subTaskCount > 0 && (
-                            <span
-                              role="button"
-                              aria-label={expandedTaskIds.has(item.task.id) ? 'Collapse sub-tasks' : 'Expand sub-tasks'}
-                              onClick={e => { e.stopPropagation(); toggleTaskExpanded(item.task.id) }}
-                              style={{ display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: 6, flexShrink: 0, padding: '2px 6px', borderRadius: 999, background: 'rgba(255,255,255,0.25)', cursor: 'pointer', transition: 'background 0.12s ease' }}
-                              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.4)' }}
-                              onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.25)' }}
-                            >
-                              <ChevronDown size={11} color="#FFFFFF" strokeWidth={3} style={{ transform: expandedTaskIds.has(item.task.id) ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
-                            </span>
-                          )}
-                          {truncatedEnd && (
-                            <span
-                              role="button"
-                              aria-label="View next week"
-                              title="View next week"
-                              onClick={e => { e.stopPropagation(); setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), 7))) }}
-                              style={{ position: 'absolute', right: 2, top: 2, bottom: 2, width: 24, borderRadius: 999, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', background: 'transparent', transition: 'background 0.12s ease' }}
-                              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.25)' }}
-                              onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
-                            >
-                              <ChevronRight size={13} color="#FFFFFF" strokeWidth={3} style={{ flexShrink: 0 }} />
-                            </span>
-                          )}
+                          {icon}
                         </button>
+                      )
+                      const isSubTask = !!item?.task.parent_task_id
+                      return (
+                        <div key={date} style={{ borderRight: i < 6 ? `1px solid ${TASK_BORDER}` : 'none', borderTop: rowSepBorder, background: '#FFFFFF', padding: items.length > 0 ? '10px 8px' : 0, display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0, boxSizing: 'border-box' }}>
+                          {item && (
+                            <div key={item.task.id} className={removingTaskIds.has(item.task.id) ? 'task-card-removing' : undefined} style={{ display: 'flex', alignItems: 'stretch', gap: 6 }}>
+                              {isSubTask && (
+                                <span style={{ width: 18, height: 18, marginTop: 10, borderRadius: '50%', background: '#FFF3E8', color: '#EA580C', fontSize: 10, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                  {item.subTaskIndex}
+                                </span>
+                              )}
+                              {/* Fixed height so every calendar card is the same size regardless of content —
+                                  sized to badges + a reserved 2-line title + time + 16px padding, so the
+                                  space under the time equals the card's top padding. */}
+                              <div style={{ flex: 1, minWidth: 0, height: 124 }}>
+                                <TaskCard
+                                  task={item.task}
+                                  members={members}
+                                  shiftOptions={shiftOptions}
+                                  departments={departments}
+                                  showDept={false}
+                                  onClick={() => openTask(item.task, true)}
+                                  onEdit={() => openTask(item.task, false)}
+                                  subTaskCount={item.subTaskCount}
+                                  expanded={expandedTaskIds.has(item.task.id)}
+                                  onToggleExpand={() => toggleTaskExpanded(item.task.id)}
+                                  clickable={!isSubTask}
+                                  isOwner={!!internalUserId && item.task.assigned_by === internalUserId}
+                                  highlighted={highlightedDelayTaskIds.has(item.task.id)}
+                                  noOuterMargin
+                                  isSubTask={isSubTask}
+                                  compact
+                                  fillHeight
+                                />
+                              </div>
+                            </div>
+                          )}
+                          {items.length > 1 && (
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                              {pagerBtn(page === 0, () => goTo(page - 1), <ChevronLeft size={12} strokeWidth={2.5} />, 'Previous task')}
+                              <span style={{ fontSize: 11, fontWeight: 700, color: '#64748B', letterSpacing: '0.02em', whiteSpace: 'nowrap' }}>
+                                {page + 1} / {items.length}
+                              </span>
+                              {pagerBtn(page === items.length - 1, () => goTo(page + 1), <ChevronRight size={12} strokeWidth={2.5} />, 'Next task')}
+                            </div>
+                          )}
+                        </div>
                       )
                     })}
                   </div>
@@ -2660,7 +2997,7 @@ export default function OwnerTasksPage() {
     newDeadlineRuleType === 'fixed_day' ? newDeadlineRuleTime !== '' && newDeadlineRuleWeekday !== null :
     newDeadlineRuleOffsetAmount >= 1
   )
-  const isNewTaskValid = newTitle.trim() !== '' && newDeptId !== '' && newPriority !== '' && newStartDate !== ''
+  const isNewTaskValid = newTitle.trim() !== '' && newDeptId !== '' && newPriority !== '' && newStartDate !== '' && newAssigneeIds.length > 0
     && (newRecurringEnabled ? (newRecurrenceRule !== '' && newRecurrenceEndDate !== '' && newRecurrenceEndDate > newStartDate && (newRecurrenceRule !== 'custom' || newCustomIntervalDays >= 1) && isNewDeadlineRuleValid) : (newDeadlineDate !== '' && newDeadlineTime !== ''))
   // When editing a sibling occurrence (not the original), the original's own task_date is
   // earlier than editStartDate — look it up from the loaded siblings so the Preview can still
@@ -2714,15 +3051,22 @@ export default function OwnerTasksPage() {
     ((!editDeptId || m.department_id === editDeptId) && userIdsWithShiftOnDate(editStartDate).has(m.id))
   )
   const editAssigneeDropdownOptions = editTaskDeptMembers.map(m => ({ value: m.id, label: m.full_name }))
-  const isEditTaskValid = editTitle.trim() !== '' && editDeptId !== '' && editStartDate !== '' && editPriority !== '' && editDueAt !== '' && editDeadlineTime !== ''
+  const isEditTaskValid = editTitle.trim() !== '' && editDeptId !== '' && editStartDate !== '' && editPriority !== '' && editDueAt !== '' && editDeadlineTime !== '' && editAssigneeIds.length > 0
   const isEditRecurringFormValid = !editRecurringEnabled || (
     recurrenceEndDate !== '' && recurrenceEndDate > editStartDate && (recurrenceRule !== 'custom' || editCustomIntervalDays >= 1) && isEditDeadlineRuleValid
   )
   // The server-persisted sub-tasks as of when the panel was opened — used as the "before" side
   // of the diff handleSaveTask runs against editSubTasks (the local draft) on Save Changes.
-  const selectedSubTasksUnordered = selectedTask && kanban
-    ? COLUMNS.flatMap(col => kanban[col]).filter(task => task.parent_task_id === selectedTask.id)
-    : []
+  const selectedSubTasksUnordered = useMemo(() => {
+    if (!selectedTask) return []
+    // Same pool as openTask: board + archived, deduped with the board copy winning, so the
+    // save-time diff sees an archived parent's sub-tasks too.
+    const pool = new Map<string, Task>()
+    for (const row of [...archivedTasks, ...(kanban ? COLUMNS.flatMap(col => kanban[col]) : [])]) {
+      if (row.parent_task_id === selectedTask.id) pool.set(row.id, row)
+    }
+    return Array.from(pool.values())
+  }, [selectedTask, kanban, archivedTasks])
   const visibleArchivedTasks = useMemo(
     () => archivedTasks.filter(t => !t.parent_task_id && !t.source_task_id),
     [archivedTasks],
@@ -2740,6 +3084,15 @@ export default function OwnerTasksPage() {
     const orderedIds = saved.length > 0 ? [...saved, ...remaining] : departments.map(d => d.id)
     return orderedIds.map(id => byId.get(id)!).filter(Boolean)
   }, [departments, departmentOrder])
+
+  // Departments load async — check newly seen ones in the Deadline Calendar filter as they
+  // arrive, without resurrecting departments the user has explicitly unchecked.
+  useEffect(() => {
+    const newIds = orderedDepartments.map(d => d.id).filter(id => !seenCalendarDeptIds.current.has(id))
+    if (newIds.length === 0) return
+    newIds.forEach(id => seenCalendarDeptIds.current.add(id))
+    setCalendarDeptFilter(prev => new Set([...prev, ...newIds]))
+  }, [orderedDepartments])
 
   const activeDeptIds = useMemo(() => {
     const ids = new Set<string>()
@@ -2842,6 +3195,12 @@ export default function OwnerTasksPage() {
           to   { opacity: 0; transform: scale(0.92); max-height: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; }
         }
         .task-card-removing { overflow: hidden; animation: taskCardRemove 0.22s ease forwards; }
+
+        /* Notification badge blink (Workload / Task Delay alerts present). Every badge is
+           phase-locked to the document timeline via the syncBlinkPhase ref (animation
+           startTime = 0), so badges mounted at different times still blink in unison. */
+        @keyframes notifBlink { 0%, 100% { opacity: 1 } 50% { opacity: 0.2 } }
+        .notif-badge-blink { animation: notifBlink 1s ease-in-out infinite; }
 
         /* Kanban task cards */
         .task-card {
@@ -2975,7 +3334,7 @@ export default function OwnerTasksPage() {
               />
               {([
                 { id: 'kanban' as const, label: 'Kanban' },
-                { id: 'calendar' as const, label: 'Calendar' },
+                { id: 'calendar' as const, label: 'Deadline Calendar' },
               ]).map(tab => {
                 const active = boardViewMode === tab.id
                 return (
@@ -2997,11 +3356,17 @@ export default function OwnerTasksPage() {
                       fontWeight: 700,
                       cursor: 'pointer',
                       boxShadow: 'none',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 8,
                       transition: 'color 0.18s ease, transform 0.18s ease',
                       transform: active ? 'translateY(-0.5px)' : 'translateY(0)',
                     }}
                   >
                     {tab.label}
+                    {tab.id === 'kanban' && hasTaskNotifications && (
+                      <span style={{ width: 10, height: 10, borderRadius: 999, background: '#EF4444', flexShrink: 0, border: active ? '1.5px solid #111827' : '1.5px solid #fff' }} />
+                    )}
                   </button>
                 )
               })}
@@ -3017,17 +3382,198 @@ export default function OwnerTasksPage() {
           ) : (
             <div style={{ display: 'flex', gap: 16, alignItems: 'stretch', flex: 1, minHeight: 0 }}>
 
-              {/* ── DEPARTMENT PANEL ───────────────────────────────────────── */}
+              {/* ── SIDEBAR PANEL ──────────────────────────────────────────── */}
               <div style={{ width: 326, flexShrink: 0, alignSelf: 'flex-start', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {boardViewMode === 'calendar' ? (
+                <>
+                {/* ── Deadline Summary (Deadline Calendar sidebar) ── */}
+                <section style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px', borderBottom: '1px solid #F3F4F6' }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <CalendarClock size={15} style={{ color: '#F97316' }} />
+                    </div>
+                    <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A' }}>Deadline Summary</span>
+                  </div>
+                  <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    {([
+                      { key: 'overdue' as const, label: 'Overdue', count: deadlineSummary.overdue.length, icon: <AlertCircle size={14} />, iconBg: '#FEF2F2', iconColor: '#DC2626' },
+                      { key: 'today' as const, label: 'Due Today', count: deadlineSummary.dueToday.length, icon: <Clock size={14} />, iconBg: '#FFF7ED', iconColor: '#EA580C' },
+                      { key: 'week' as const, label: `Due ${deadlineSummary.weekEndLabel}`, count: deadlineSummary.dueThisWeek.length, icon: <CalendarDays size={14} />, iconBg: '#EEF2FF', iconColor: '#4F46E5' },
+                    ]).map(card => {
+                      const active = deadlineBucketFilter === card.key
+                      const clickable = card.count > 0 || active
+                      const ring = `0 0 0 2px #FFFFFF, 0 0 0 3.5px ${card.iconColor}`
+                      return (
+                        <div key={card.key} style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#F9FAFB', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <span style={{ width: 28, height: 28, borderRadius: 9, background: card.iconBg, color: card.iconColor, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            {card.icon}
+                          </span>
+                          <p style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 600, color: '#374151', lineHeight: 1.2, flex: 1, minWidth: 0 }}>{card.label}</p>
+                          {/* Only the count pill is clickable — it filters the Deadline Calendar to
+                              this bucket's tasks; clicking again clears the filter. */}
+                          <button
+                            type="button"
+                            onClick={clickable ? () => {
+                              if (active) { setDeadlineBucketFilter(null); return }
+                              setDeadlineBucketFilter(card.key)
+                              // Snap the calendar to the current week so the bucket's tasks are in
+                              // view — except the week bucket, which refers to the displayed week.
+                              if (card.key !== 'week') setTaskDate(formatDateKey(new Date()))
+                            } : undefined}
+                            disabled={!clickable}
+                            title={active ? 'Clear filter' : clickable ? `Show ${card.label} tasks in the calendar` : undefined}
+                            style={{ minWidth: 30, height: 30, padding: '0 9px', border: 'none', borderRadius: 999, background: clickable ? card.iconBg : '#F3F4F6', color: clickable ? card.iconColor : '#6B7280', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 800, flexShrink: 0, boxSizing: 'border-box', cursor: clickable ? 'pointer' : 'default', boxShadow: active ? ring : 'none', transition: 'box-shadow 0.15s ease, transform 0.15s ease' }}
+                            onMouseEnter={e => { if (clickable) { e.currentTarget.style.boxShadow = ring; e.currentTarget.style.transform = 'scale(1.08)' } }}
+                            onMouseLeave={e => { e.currentTarget.style.boxShadow = active ? ring : 'none'; e.currentTarget.style.transform = 'none' }}
+                          >
+                            {card.count}
+                          </button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </section>
+
+                {/* ── Filter (Deadline Calendar sidebar) ── */}
+                <section style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px', borderBottom: '1px solid #F3F4F6' }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <FilterIcon size={15} style={{ color: '#F97316' }} />
+                    </div>
+                    <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A' }}>Filter</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCalendarPriorityFilter(new Set(CALENDAR_PRIORITY_OPTIONS))
+                        setCalendarStatusFilter(new Set(CALENDAR_STATUS_OPTIONS))
+                        setCalendarDeptFilter(new Set(orderedDepartments.map(d => d.id)))
+                        setCalendarReworkOnly(false)
+                      }}
+                      style={{ marginLeft: 'auto', border: 'none', background: 'transparent', color: '#F97316', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer', padding: '4px 0', flexShrink: 0, transition: 'color 0.15s ease' }}
+                      onMouseEnter={e => { e.currentTarget.style.color = '#C2410C' }}
+                      onMouseLeave={e => { e.currentTarget.style.color = '#F97316' }}
+                    >
+                      Clear All
+                    </button>
+                  </div>
+                  <div style={{ padding: '0 16px 6px', display: 'flex', flexDirection: 'column' }}>
+                    {(() => {
+                      const toggleIn = <T,>(setter: React.Dispatch<React.SetStateAction<Set<T>>>, value: T) =>
+                        setter(prev => {
+                          const next = new Set(prev)
+                          if (next.has(value)) next.delete(value)
+                          else next.add(value)
+                          return next
+                        })
+                      const checkbox = (checked: boolean) => (
+                        <span style={{ width: 18, height: 18, borderRadius: 5, border: checked ? '1.5px solid #F97316' : '1.5px solid #CBD5E1', background: checked ? '#F97316' : '#FFFFFF', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxSizing: 'border-box', transition: 'background 0.15s ease, border-color 0.15s ease' }}>
+                          {checked && <Check size={12} strokeWidth={3.5} color="#FFFFFF" />}
+                        </span>
+                      )
+                      const option = (key: string, checked: boolean, label: React.ReactNode, onToggle: () => void, dot?: string, icon?: React.ReactNode) => (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={onToggle}
+                          style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '7px 8px', border: 'none', borderRadius: 8, background: 'transparent', cursor: 'pointer', textAlign: 'left', transition: 'background 0.15s ease' }}
+                          onMouseEnter={e => { e.currentTarget.style.background = '#F9FAFB' }}
+                          onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                        >
+                          {checkbox(checked)}
+                          {icon && <span style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0 }}>{icon}</span>}
+                          {dot && <span style={{ width: 8, height: 8, borderRadius: '50%', background: dot, flexShrink: 0 }} />}
+                          <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#374151', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
+                        </button>
+                      )
+                      const group = (
+                        title: string,
+                        icon: React.ReactNode,
+                        iconColor: string,
+                        selectAll: { count: number; onToggle: () => void } | null,
+                        children: React.ReactNode,
+                        first?: boolean,
+                      ) => {
+                        const collapsed = collapsedFilterGroups.has(title)
+                        return (
+                          <div key={title} style={{ borderTop: first ? 'none' : '1px solid #F3F4F6' }}>
+                            <button
+                              type="button"
+                              onClick={() => toggleIn(setCollapsedFilterGroups, title)}
+                              style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', padding: '12px 2px 7px', border: 'none', background: 'transparent', cursor: 'pointer', textAlign: 'left' }}
+                            >
+                              <span style={{ display: 'inline-flex', alignItems: 'center', color: iconColor, flexShrink: 0 }}>{icon}</span>
+                              <span style={{ fontWeight: 700, fontSize: '0.9rem', color: '#0F172A' }}>{title}</span>
+                              <ChevronDown size={14} color="#64748B" style={{ marginLeft: 'auto', transform: collapsed ? 'rotate(-90deg)' : 'none', transition: 'transform 0.18s ease', flexShrink: 0 }} />
+                            </button>
+                            {!collapsed && selectAll && (
+                              <button
+                                type="button"
+                                onClick={selectAll.onToggle}
+                                style={{ display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '6px 2px', border: 'none', background: 'transparent', cursor: 'pointer', textAlign: 'left' }}
+                              >
+                                {checkbox(selectAll.count > 0)}
+                                <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#0F172A' }}>Select All</span>
+                                <span style={{ marginLeft: 'auto', fontSize: '0.72rem', fontWeight: 600, color: '#64748B', background: '#F1F5F9', borderRadius: 999, padding: '3px 10px', flexShrink: 0 }}>
+                                  {selectAll.count} selected
+                                </span>
+                              </button>
+                            )}
+                            {!collapsed && (selectAll
+                              ? <div style={{ margin: '2px 0 10px 10px', paddingLeft: 8, borderLeft: '1px solid #E5E7EB', display: 'flex', flexDirection: 'column' }}>{children}</div>
+                              : <div style={{ paddingBottom: 10, display: 'flex', flexDirection: 'column' }}>{children}</div>)}
+                          </div>
+                        )
+                      }
+                      const deptSelectedCount = orderedDepartments.filter(d => calendarDeptFilter.has(d.id)).length
+                      return (
+                        <>
+                          {group('Priority', <Flag size={14} />, '#F97316', {
+                            count: calendarPriorityFilter.size,
+                            onToggle: () => setCalendarPriorityFilter(prev =>
+                              prev.size >= CALENDAR_PRIORITY_OPTIONS.length ? new Set() : new Set(CALENDAR_PRIORITY_OPTIONS)),
+                          }, <>
+                            {CALENDAR_PRIORITY_OPTIONS.map(p =>
+                              option(p, calendarPriorityFilter.has(p), (
+                                // Same pill as the priority badge on Kanban task cards.
+                                <span style={{ display: 'inline-block', fontSize: '0.72rem', fontWeight: 800, padding: '4px 10px', borderRadius: '99px', background: PRIORITY_COLORS[p].bg, color: PRIORITY_COLORS[p].text, letterSpacing: '0.01em' }}>
+                                  {p}
+                                </span>
+                              ), () => toggleIn<string>(setCalendarPriorityFilter, p)))}
+                          </>, true)}
+                          {group('Status', <Clock size={14} />, '#3B82F6', {
+                            count: calendarStatusFilter.size,
+                            onToggle: () => setCalendarStatusFilter(prev =>
+                              prev.size >= CALENDAR_STATUS_OPTIONS.length ? new Set() : new Set(CALENDAR_STATUS_OPTIONS)),
+                          }, <>
+                            {CALENDAR_STATUS_OPTIONS.map(s =>
+                              option(s, calendarStatusFilter.has(s), s, () => toggleIn(setCalendarStatusFilter, s), undefined,
+                                // Same icon + color as the Kanban column header for this status.
+                                <span style={{ display: 'inline-flex', alignItems: 'center', color: STATUS_CONFIG[s].color }}>{STATUS_CONFIG[s].icon}</span>))}
+                          </>)}
+                          {group('Department', <Users size={14} />, '#8B5CF6', {
+                            count: deptSelectedCount,
+                            onToggle: () => setCalendarDeptFilter(
+                              deptSelectedCount >= orderedDepartments.length ? new Set() : new Set(orderedDepartments.map(d => d.id))),
+                          }, <>
+                            {orderedDepartments.map(d =>
+                              option(d.id, calendarDeptFilter.has(d.id), d.name, () => toggleIn(setCalendarDeptFilter, d.id), deptColor(d.id)))}
+                          </>)}
+                          {group('Rework', <RotateCw size={14} />, '#10B981', null,
+                            option('rework-only', calendarReworkOnly, 'Rework Tasks Only', () => setCalendarReworkOnly(v => !v)))}
+                        </>
+                      )
+                    })()}
+                  </div>
+                </section>
+                </>
+                ) : (
+                <>
                 <section style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'hidden' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px', borderBottom: '1px solid #F3F4F6' }}>
                     <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       <Bell size={15} style={{ color: '#F97316' }} />
                     </div>
                     <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A' }}>Notification</span>
-                    {(stalledAlerts.length > 0 || workloadSuggestions.length > 0) && (
-                      <span style={{ width: 9, height: 9, borderRadius: '50%', background: '#EF4444', border: '1.5px solid #fff', marginLeft: 2, flexShrink: 0 }} />
-                    )}
                     <button
                       type="button"
                       onClick={() => void refreshAllTaskInsights()}
@@ -3053,40 +3599,69 @@ export default function OwnerTasksPage() {
                             type="button"
                             onClick={() => {
                               if (hasIssue) { setWorkloadApplyError(''); setWorkloadInsightOpen(true) }
-                              else void refreshTaskInsights('workload')
+                              else void refreshWorkloadSuggestion()
                             }}
                             disabled={insightLoading === 'workload'}
                             title={hasIssue ? 'View workload suggestion' : 'Refresh'}
-                            style={{ width: 30, height: 30, border: 'none', borderRadius: 999, background: hasIssue ? '#FEF3C7' : '#DCFCE7', color: hasIssue ? '#D97706' : '#16A34A', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: insightLoading === 'workload' ? 'default' : 'pointer' }}
+                            style={{ width: 30, height: 30, border: 'none', borderRadius: 999, background: hasIssue ? '#FEF3C7' : '#DCFCE7', color: hasIssue ? '#D97706' : '#16A34A', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: insightLoading === 'workload' ? 'default' : 'pointer', fontSize: 13, fontWeight: 800 }}
                           >
-                            {insightLoading === 'workload' ? <Spinner size={12} dark /> : hasIssue ? <AlertTriangle size={15} /> : <Check size={15} strokeWidth={3} />}
+                            {insightLoading === 'workload' ? <Spinner size={12} dark /> : hasIssue ? <span className="notif-badge-blink" ref={syncBlinkPhase}>{workloadSuggestions.length}</span> : <Check size={15} strokeWidth={3} />}
                           </button>
                         </div>
                       )
                     })()}
 
                     {(() => {
-                      const hasIssue = stalledAlerts.length > 0
+                      const hasIssue = delayAlerts.length > 0
                       return (
                         <div style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#F9FAFB', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
                           <span style={{ width: 28, height: 28, borderRadius: 9, background: hasIssue ? '#FEF2F2' : '#F0FDF4', color: hasIssue ? '#DC2626' : '#16A34A', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                             <Bell size={14} />
                           </span>
                           <div style={{ minWidth: 0, flex: 1 }}>
-                            <p style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 600, color: '#374151', lineHeight: 1.2 }}>Stalled Tasks</p>
+                            {/* Clicking the label opens the threshold modal (Task Delay Alert Threshold) */}
+                            <button
+                              type="button"
+                              onClick={() => { setDelayThresholdInput(String(delayThresholdPercent)); setDelayThresholdError(''); setDelayThresholdModalOpen(true) }}
+                              title="Set delay alert threshold"
+                              style={{ WebkitAppearance: 'none', appearance: 'none', fontFamily: 'inherit', margin: 0, padding: 0, border: 'none', background: 'transparent', fontSize: '0.9375rem', fontWeight: 600, color: '#374151', lineHeight: 1.2, cursor: 'pointer', transition: 'color 0.15s ease' }}
+                              onMouseEnter={e => { e.currentTarget.style.color = TASK_ORANGE }}
+                              onMouseLeave={e => { e.currentTarget.style.color = '#374151' }}
+                            >
+                              Task Delay Alert
+                            </button>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (hasIssue) highlightFirstStalledTask()
-                              else void refreshTaskInsights('stalled')
-                            }}
-                            disabled={insightLoading === 'stalled'}
-                            title={hasIssue ? 'Highlight stalled task' : 'Refresh'}
-                            style={{ width: 30, height: 30, border: 'none', borderRadius: 999, background: hasIssue ? '#FEF3C7' : '#DCFCE7', color: hasIssue ? '#D97706' : '#16A34A', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: insightLoading === 'stalled' ? 'default' : 'pointer' }}
-                          >
-                            {insightLoading === 'stalled' ? <Spinner size={12} dark /> : hasIssue ? <AlertTriangle size={15} /> : <Check size={15} strokeWidth={3} />}
-                          </button>
+                          {(() => {
+                            // Two-step dismissal: the count first (click = show the delayed tasks on
+                            // the board), then, once every alert is on display, a Mark-as-read button
+                            // that dismisses them and turns the card green.
+                            const allShown = hasIssue && delayAlerts.every(a => highlightedDelayTaskIds.has(a.task_id))
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (!hasIssue) setDelayNowTick(Date.now())
+                                  else if (allShown) void handleMarkDelayAlertsRead()
+                                  else showDelayHighlights()
+                                }}
+                                disabled={delayMarkReadLoading}
+                                title={!hasIssue
+                                  ? 'Always live — no refresh needed'
+                                  : allShown
+                                    ? 'Mark as read — dismiss these alerts'
+                                    : `${delayAlerts.length} delayed task${delayAlerts.length === 1 ? '' : 's'} — click to highlight on the board`}
+                                style={{ width: 30, height: 30, border: 'none', borderRadius: 999, background: hasIssue ? '#FEF3C7' : '#DCFCE7', color: hasIssue ? '#D97706' : '#16A34A', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, cursor: delayMarkReadLoading ? 'default' : 'pointer', fontSize: 13, fontWeight: 800 }}
+                              >
+                                {delayMarkReadLoading
+                                  ? <Spinner size={12} dark />
+                                  : !hasIssue
+                                    ? <Check size={15} strokeWidth={3} />
+                                    : allShown
+                                      ? <MailOpen size={15} />
+                                      : <span className="notif-badge-blink" ref={syncBlinkPhase}>{delayAlerts.length}</span>}
+                              </button>
+                            )
+                          })()}
                         </div>
                       )
                     })()}
@@ -3129,27 +3704,18 @@ export default function OwnerTasksPage() {
 
                     if (!dept) {
                       // ── Department cards grid (draggable to reorder) ──
-                      // Kanban tab: tasks due on the selected day. Calendar tab: tasks overlapping the visible week.
-                      const dayTasks = COLUMNS.flatMap(col => (kanban?.[col] ?? [])).filter(t => {
-                        if (t.parent_task_id) return false
-                        if (boardViewMode === 'calendar') {
-                          const startDate = kanbanDateKey(t)
-                          const endDate = t.due_at ? formatDateKey(new Date(t.due_at)) : startDate
-                          return endDate >= calendarWeekDates[0] && startDate <= calendarWeekDates[6]
-                        }
-                        return isKanbanVisibleOnDate(t, taskDate)
-                      })
+                      // Task count = the department's live workload: every top-level task still in
+                      // Assigned / In Progress / Review. Complete tasks are done and drop out.
+                      const activeTasks = (['Assigned', 'In Progress', 'Review'] as Task['status'][])
+                        .flatMap(col => kanban?.[col] ?? [])
+                        .filter(t => !t.parent_task_id)
                       return (
                         <>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 12 }}>
                             {orderedDepartments.map((d, deptIdx) => {
-                              const managerCount = members.filter(m => m.department_id === d.id && m.role === 'Manager' && userIdsWithShiftOnTaskDate.has(m.id)).length
-                              // A recurring task's occurrences all count as one task — same principle as a
-                              // task with sub-tasks still being one task — so dedupe by recurrence_group_id
-                              // (falling back to the task's own id when it isn't part of a series).
-                              const taskCount = new Set(
-                                dayTasks.filter(t => t.department_id === d.id).map(t => t.recurrence_group_id ?? t.id)
-                              ).size
+                              // Every Manager who belongs to this department, shift or not.
+                              const managerCount = members.filter(m => m.department_id === d.id && m.role === 'Manager').length
+                              const taskCount = activeTasks.filter(t => t.department_id === d.id).length
                               const isDragging = draggingDepartmentId === d.id
                               const isDragOver = dragOverDepartmentId === d.id
                               return (
@@ -3254,19 +3820,26 @@ export default function OwnerTasksPage() {
                       )
                     }
 
-                    // ── Department selected: manager list ──
-                    const deptMembers = members.filter(m => m.department_id === dept.id && m.role === 'Manager' && userIdsWithShiftOnTaskDate.has(m.id))
-                    // Count tasks due on the selected date only, so the panel matches what's visible in the Kanban
-                    const dateTaskCountByUser = COLUMNS
-                      .flatMap(col => filteredTasks(col))
-                      .filter(t => !t.parent_task_id)
+                    // ── Department selected: manager list (everyone in the department) ──
+                    const deptMembers = members.filter(m => m.department_id === dept.id && m.role === 'Manager')
+                    // Live workload per person: tasks still in Assigned / In Progress / Review.
+                    // Scoped to the department only (not selectedMemberId) — these badges must keep
+                    // showing every member's real count even while one member's tasks are isolated
+                    // on the Kanban board.
+                    const dateTaskCountByUser = (['Assigned', 'In Progress', 'Review'] as Task['status'][])
+                      .flatMap(col => kanban?.[col] ?? [])
+                      .filter(t => t.department_id === dept.id && !t.parent_task_id)
                       .reduce<Record<string, number>>((acc, t) => {
                         const ids = t.assigned_user_ids ?? (t.assigned_user_id ? [t.assigned_user_id] : [])
                         for (const id of ids) acc[id] = (acc[id] ?? 0) + 1
                         return acc
                       }, {})
-                    const freeMembers = deptMembers.filter(m => (dateTaskCountByUser[m.id] ?? 0) === 0)
-                    const busyMembers = deptMembers.filter(m => (dateTaskCountByUser[m.id] ?? 0) > 0)
+                    // Grouped by today's shift, not workload — a Manager who's off today can still
+                    // be assigned a task right now (the assignment just waits for them), so this
+                    // split is purely informational and never blocks the "+" button below.
+                    const todayShiftUserIds = userIdsWithShiftOnDate(todayTaskDate)
+                    const onShiftMembers = deptMembers.filter(m => todayShiftUserIds.has(m.id))
+                    const offShiftMembers = deptMembers.filter(m => !todayShiftUserIds.has(m.id))
 
                     const workloadColor = (count: number) => {
                       if (count === 0) return { bg: '#F3F4F6', text: '#6B7280' }
@@ -3278,8 +3851,15 @@ export default function OwnerTasksPage() {
                     const renderMember = (m: Member) => {
                       const count = dateTaskCountByUser[m.id] ?? 0
                       const wc = workloadColor(count)
+                      const isSelected = selectedMemberId === m.id
                       return (
-                        <div key={m.id} className="member-card" style={{ display: 'flex', alignItems: 'center', gap: 10, border: '1px solid #F1F5F9', borderRadius: 12, padding: '12px 14px', background: '#FFFFFF', justifyContent: 'space-between' }}>
+                        <div
+                          key={m.id}
+                          className="member-card"
+                          onClick={() => setSelectedMemberId(prev => prev === m.id ? '' : m.id)}
+                          title={isSelected ? 'Showing this manager’s tasks — click to clear' : `Show ${m.full_name}’s tasks on the Kanban`}
+                          style={{ display: 'flex', alignItems: 'center', gap: 10, border: `1px solid ${isSelected ? '#FDBA74' : '#F1F5F9'}`, borderRadius: 12, padding: '12px 14px', background: isSelected ? '#FFF7ED' : '#FFFFFF', justifyContent: 'space-between', cursor: 'pointer', transition: 'border-color 0.15s ease, background 0.15s ease' }}
+                        >
                           <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
                             <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 38, height: 38, borderRadius: 999, background: m.profile_photo_url ? 'transparent' : (m.role === 'Manager' ? '#FFF7ED' : '#F3F4F6'), color: m.role === 'Manager' ? '#EA580C' : '#4B5563', flexShrink: 0, overflow: 'hidden' }}>
                               {m.profile_photo_url
@@ -3298,7 +3878,7 @@ export default function OwnerTasksPage() {
                             </div>
                           </div>
                           <button
-                            onClick={() => openNewTaskFor(m.id, dept.id)}
+                            onClick={e => { e.stopPropagation(); openNewTaskFor(m.id, dept.id) }}
                             className="assign-task-btn"
                             style={{ flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, background: '#FFF7ED', border: '1px solid #FDBA74', borderRadius: 8, color: '#EA580C', cursor: 'pointer' }}
                             title="Assign Task"
@@ -3311,18 +3891,18 @@ export default function OwnerTasksPage() {
 
                     return (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {/* Free members first */}
-                        {freeMembers.length > 0 && (
+                        {/* On shift today first */}
+                        {onShiftMembers.length > 0 && (
                           <>
-                            <p style={{ margin: '0 2px 6px', fontWeight: 600, fontSize: '0.875rem', color: '#374151' }}>Available</p>
-                            {freeMembers.map(renderMember)}
+                            <p style={{ margin: '0 2px 6px', fontWeight: 600, fontSize: '0.875rem', color: '#374151' }}>On Shift Today</p>
+                            {onShiftMembers.map(renderMember)}
                           </>
                         )}
-                        {/* Busy members below */}
-                        {busyMembers.length > 0 && (
+                        {/* Off today below — still assignable, they just aren't working right now */}
+                        {offShiftMembers.length > 0 && (
                           <>
-                            <p style={{ margin: `${freeMembers.length > 0 ? '10px' : '0'} 2px 6px`, fontWeight: 600, fontSize: '0.875rem', color: '#374151' }}>Has Tasks</p>
-                            {busyMembers.map(renderMember)}
+                            <p style={{ margin: `${onShiftMembers.length > 0 ? '10px' : '0'} 2px 6px`, fontWeight: 600, fontSize: '0.875rem', color: '#374151' }}>Off Today</p>
+                            {offShiftMembers.map(renderMember)}
                           </>
                         )}
                       </div>
@@ -3330,96 +3910,105 @@ export default function OwnerTasksPage() {
                   })()}
                 </div>
               </section>
-
-              <section className="task-template-panel" style={{ width: '100%', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'visible' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 18px', borderBottom: '1px solid #F3F4F6' }}>
-                  <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <LayoutTemplate size={15} style={{ color: '#F97316' }} />
-                  </div>
-                  <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A' }}>Templates</span>
-                </div>
-                <div style={{ padding: 14 }}>
-                  {taskTemplates.length === 0 ? (
-                    <div style={{ borderRadius: 12, background: '#F8FAFC', padding: 18, color: '#94A3B8', fontSize: 13, fontWeight: 600, textAlign: 'center', marginBottom: 10 }}>
-                      No task templates yet.
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 10 }}>
-                      {taskTemplates.map(t => {
-                        const priorityStyle = t.priority ? PRIORITY_COLORS[t.priority] : null
-                        return (
-                          <div key={t.id} className="task-template-card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, border: '1px solid #E5E7EB', borderRadius: 12, padding: '13px 14px', background: '#F9FAFB' }}>
-                            <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
-                              {priorityStyle && (
-                                <span style={{ flexShrink: 0, fontSize: '0.65rem', fontWeight: 800, padding: '2px 7px', borderRadius: '99px', background: priorityStyle.bg, color: priorityStyle.text, letterSpacing: '0.01em' }}>
-                                  {t.priority}
-                                </span>
-                              )}
-                              <p style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 600, color: '#374151', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</p>
-                            </div>
-                            <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                              <button
-                                type="button"
-                                onClick={() => openEditTemplate(t)}
-                                title="Edit template"
-                                style={{ border: 'none', background: 'transparent', color: '#6B7280', cursor: 'pointer', display: 'flex', padding: 6, borderRadius: 6 }}
-                                onMouseEnter={e => { e.currentTarget.style.color = TASK_ORANGE; e.currentTarget.style.background = '#FFF7ED' }}
-                                onMouseLeave={e => { e.currentTarget.style.color = '#6B7280'; e.currentTarget.style.background = 'transparent' }}
-                              >
-                                <Pencil size={14} />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => useTaskTemplate(t)}
-                                title="Apply template"
-                                style={{ border: 'none', background: 'transparent', color: '#6B7280', cursor: 'pointer', display: 'flex', padding: 6, borderRadius: 6 }}
-                                onMouseEnter={e => { e.currentTarget.style.color = '#16A34A'; e.currentTarget.style.background = '#F0FDF4' }}
-                                onMouseLeave={e => { e.currentTarget.style.color = '#6B7280'; e.currentTarget.style.background = 'transparent' }}
-                              >
-                                <ArrowRight size={14} />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => void handleDeleteTemplate(t.id)}
-                                disabled={deleteTemplateLoading}
-                                title="Delete template"
-                                style={{ border: 'none', background: 'transparent', color: '#DC2626', cursor: deleteTemplateLoading ? 'default' : 'pointer', display: 'flex', padding: 6, borderRadius: 6, opacity: deleteTemplateLoading ? 0.5 : 1 }}
-                                onMouseEnter={e => { if (!deleteTemplateLoading) e.currentTarget.style.background = '#FEE2E2' }}
-                                onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
-                              >
-                                {deleteTemplateLoading ? <Spinner size={13} /> : <Trash2 size={14} />}
-                              </button>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )}
-                  {companyId && (
-                    <div style={{ display: 'flex', justifyContent: 'center' }}>
-                      <button
-                        type="button"
-                        onClick={openCreateTemplate}
-                        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 'none', borderRadius: 10, background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-                      >
-                        <Plus size={15} strokeWidth={2.5} /> New Template
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </section>
+                </>
+                )}
               </div>
 
               {/* ── BOARD PANEL ────────────────────────────────────────────── */}
               <section className="task-board-panel" style={{ flex: 1, minWidth: 0, minHeight: 0, alignSelf: 'stretch', display: 'flex', flexDirection: 'column', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'hidden' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 18px', borderBottom: '1px solid #F3F4F6', flexWrap: 'wrap', flexShrink: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                     <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       {boardViewMode === 'calendar'
                         ? <CalendarDays size={15} style={{ color: '#F97316' }} />
                         : <Layers size={15} style={{ color: '#F97316' }} />}
                     </div>
-                    <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A' }}>{boardViewMode === 'calendar' ? 'Calendar' : 'Kanban'}</span>
+                    <span style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A' }}>{boardViewMode === 'calendar' ? 'Deadline Calendar' : 'Kanban'}</span>
+                    {boardViewMode === 'calendar' && (
+                      <div style={{ position: 'relative', marginLeft: 10 }}>
+                        <Search size={14} style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: '#94A3B8', pointerEvents: 'none' }} />
+                        <input
+                          value={calendarSearch}
+                          onChange={e => setCalendarSearch(e.target.value)}
+                          placeholder="Search tasks..."
+                          onFocus={e => { e.currentTarget.style.borderColor = '#F97316' }}
+                          onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
+                          style={{ height: 40, width: 200, padding: '0 30px 0 32px', border: '1.5px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', color: '#111827', fontSize: '0.8125rem', outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s' }}
+                        />
+                        {calendarSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setCalendarSearch('')}
+                            style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, border: 'none', borderRadius: 6, background: 'transparent', color: '#94A3B8', cursor: 'pointer', display: 'inline-grid', placeItems: 'center' }}
+                            title="Clear search"
+                          ><X size={13} /></button>
+                        )}
+                      </div>
+                    )}
+                    {boardViewMode === 'kanban' && (
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginLeft: 10 }}>
+                        <div style={{ position: 'relative' }}>
+                          <Search size={14} style={{ position: 'absolute', left: 11, top: '50%', transform: 'translateY(-50%)', color: '#94A3B8', pointerEvents: 'none' }} />
+                          <input
+                            value={kanbanSearch}
+                            onChange={e => setKanbanSearch(e.target.value)}
+                            placeholder="Search tasks..."
+                            onFocus={e => { e.currentTarget.style.borderColor = '#F97316' }}
+                            onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
+                            style={{ height: 40, width: 200, padding: '0 30px 0 32px', border: '1.5px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', color: '#111827', fontSize: '0.8125rem', outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s' }}
+                          />
+                          {kanbanSearch && (
+                            <button
+                              type="button"
+                              onClick={() => setKanbanSearch('')}
+                              style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', width: 22, height: 22, border: 'none', borderRadius: 6, background: 'transparent', color: '#94A3B8', cursor: 'pointer', display: 'inline-grid', placeItems: 'center' }}
+                              title="Clear search"
+                            ><X size={13} /></button>
+                          )}
+                        </div>
+                        <div style={{ width: 132 }}>
+                          <DropdownField
+                            value={kanbanPriorityFilter}
+                            onChange={setKanbanPriorityFilter}
+                            fontSize="13px"
+                            fontWeight={700}
+                            badgeColors={PRIORITY_COLORS}
+                            options={[
+                              { value: '', label: 'All Priorities' },
+                              { value: 'Urgent', label: 'Urgent' },
+                              { value: 'High', label: 'High' },
+                              { value: 'Medium', label: 'Medium' },
+                              { value: 'Low', label: 'Low' },
+                            ]}
+                          />
+                        </div>
+                        <div style={{ width: 186 }}>
+                          <DropdownField
+                            value={kanbanSortBy}
+                            onChange={v => setKanbanSortBy(v as 'priority' | 'deadline' | 'newest')}
+                            fontSize="13px"
+                            fontWeight={700}
+                            options={[
+                              { value: 'deadline', label: 'Nearest Deadline' },
+                              { value: 'priority', label: 'Highest Priority' },
+                              { value: 'newest', label: 'Latest Assigned Task' },
+                            ]}
+                          />
+                        </div>
+                        <div style={{ width: 140 }}>
+                          <DropdownField
+                            value={kanbanReworkFilter}
+                            onChange={setKanbanReworkFilter}
+                            fontSize="13px"
+                            fontWeight={700}
+                            options={[
+                              { value: '', label: 'All Tasks' },
+                              { value: 'rework', label: 'Rework Tasks' },
+                            ]}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                     <button
@@ -3430,7 +4019,15 @@ export default function OwnerTasksPage() {
                     >
                       <Archive size={15} /> Archive
                     </button>
-                    {boardViewMode === 'calendar' ? (
+                    <button
+                      type="button"
+                      onClick={() => setTemplatesModalOpen(true)}
+                      disabled={!companyId}
+                      style={{ height: 38, padding: '0 14px', border: `1px solid ${TASK_BORDER}`, borderRadius: 8, background: '#FFFFFF', color: companyId ? TASK_TEXT : '#94A3B8', fontSize: 13, fontWeight: 700, cursor: companyId ? 'pointer' : 'not-allowed', display: 'inline-flex', alignItems: 'center', gap: 7 }}
+                    >
+                      <LayoutTemplate size={15} /> Templates
+                    </button>
+                    {boardViewMode === 'calendar' && (
                       <>
                         <button
                           type="button"
@@ -3443,26 +4040,6 @@ export default function OwnerTasksPage() {
                         <button
                           type="button"
                           onClick={() => setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), 7)))}
-                          style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${TASK_BORDER}`, background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: 'pointer', color: TASK_TEXT }}
-                        ><ChevronRight size={16} /></button>
-                      </>
-                    ) : (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => setTaskDate(formatDateKey(new Date()))}
-                          className="today-btn"
-                          style={{ height: 38, padding: '0 14px', border: `1px solid ${TASK_BORDER}`, borderRadius: 8, background: taskDate === formatDateKey(new Date()) ? '#F97316' : '#FFFFFF', color: taskDate === formatDateKey(new Date()) ? '#FFFFFF' : TASK_TEXT, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-                        >Today</button>
-                        <button
-                          type="button"
-                          onClick={() => setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), -1)))}
-                          style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${TASK_BORDER}`, background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: 'pointer', color: TASK_TEXT }}
-                        ><ChevronLeft size={16} /></button>
-                        <TaskDatePicker value={taskDate} onChange={setTaskDate} taskDates={datesWithTasks} minDate={boardNavMinDate} accentColor={TASK_ORANGE} />
-                        <button
-                          type="button"
-                          onClick={() => setTaskDate(formatDateKey(addDays(new Date(`${taskDate}T00:00:00`), 1)))}
                           style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${TASK_BORDER}`, background: '#FFFFFF', display: 'inline-grid', placeItems: 'center', cursor: 'pointer', color: TASK_TEXT }}
                         ><ChevronRight size={16} /></button>
                       </>
@@ -3526,7 +4103,7 @@ export default function OwnerTasksPage() {
                                       expanded={isExpanded}
                                       onToggleExpand={() => toggleTaskExpanded(task.id)}
                                       isOwner={!!internalUserId && task.assigned_by === internalUserId}
-                                      highlighted={highlightedStalledTaskId === task.id}
+                                      highlighted={highlightedDelayTaskIds.has(task.id)}
                                     />
                                     {isExpanded && subTasks.length > 0 && (
                                       <div style={{ marginTop: -6, marginBottom: 14, paddingLeft: 6, paddingRight: 20 }}>
@@ -3588,7 +4165,8 @@ export default function OwnerTasksPage() {
         const viewEmpty: React.CSSProperties = { ...viewFieldValue, color: '#9CA3AF', fontStyle: 'italic' }
         const isOwner = !!internalUserId && selectedTask.assigned_by === internalUserId
         return (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: `${panelClosing ? 'overlayFadeOut' : 'overlayFadeIn'} 0.18s ease-out` }}>
+          // Above the Workload Suggestion modal (110) when opened from its task card, like the member profile modal
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: workloadInsightOpen ? 130 : 100, animation: `${panelClosing ? 'overlayFadeOut' : 'overlayFadeIn'} 0.18s ease-out` }}>
             <div
               ref={panelRef}
               onClick={e => e.stopPropagation()}
@@ -3631,14 +4209,78 @@ export default function OwnerTasksPage() {
                   </div>
                 </div>
 
+                {/* Completed Time — when the assigner approved the Review (completed_at is only
+                    stamped by approveTask; older Complete rows were backfilled from updated_at) */}
+                {selectedTask.status === 'Complete' && (
+                  <div>
+                    <label style={modalLabelStyle}>Completed Time</label>
+                    {(selectedTask.completed_at ?? selectedTask.updated_at)
+                      ? (
+                        <div style={viewFieldValue}>
+                          {new Date(selectedTask.completed_at ?? selectedTask.updated_at!).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      )
+                      : <div style={viewEmpty}>Unknown</div>
+                    }
+                  </div>
+                )}
+
+                {/* Rework reason from the most recent rejection */}
+                {selectedTask.rejection_reason && selectedTask.status !== 'Complete' && (
+                  <div>
+                    <label style={modalLabelStyle}>Rejected Reason</label>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 12px', borderRadius: 10, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', fontSize: 13, lineHeight: 1.5 }}>
+                      <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+                      <span style={{ whiteSpace: 'pre-wrap' }}>{selectedTask.rejection_reason}</span>
+                    </div>
+                  </div>
+                )}
+
                 <InlineError message={panelError} />
               </div>
 
-              {/* Footer — only the user who assigned this task may operate on it */}
-              {isOwner && (
+              {/* Review sign-off — the assigner decides whether submitted work is done */}
+              {isOwner && selectedTask.status === 'Review' && (
+                <div style={{ padding: '0 20px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {rejectReasonOpen ? (
+                    <>
+                      <textarea
+                        autoFocus
+                        value={rejectReason}
+                        onChange={e => setRejectReason(e.target.value)}
+                        rows={2}
+                        placeholder="Explain what needs rework..."
+                        style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
+                      />
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                        <button type="button" onClick={() => { setRejectReasonOpen(false); setRejectReason('') }} style={{ height: 38, border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', color: '#334155', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+                          Cancel
+                        </button>
+                        <button type="button" onClick={handleRejectTask} disabled={taskActionLoading === 'reject' || !rejectReason.trim()} style={{ height: 38, border: 'none', borderRadius: 8, background: !rejectReason.trim() ? '#F3A8A8' : 'linear-gradient(135deg, #EF4444, #DC2626)', color: '#FFFFFF', fontSize: 12, fontWeight: 700, cursor: taskActionLoading === 'reject' || !rejectReason.trim() ? 'not-allowed' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                          {taskActionLoading === 'reject' ? <Spinner size={12} /> : <X size={13} />} Confirm Reject
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                      <button type="button" onClick={handleApproveTask} disabled={taskActionLoading === 'approve'} style={{ height: 38, border: 'none', borderRadius: 8, background: 'linear-gradient(135deg, #22C55E, #16A34A)', color: '#FFFFFF', fontSize: 12, fontWeight: 700, cursor: taskActionLoading === 'approve' ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                        {taskActionLoading === 'approve' ? <Spinner size={12} /> : <Check size={13} />} Approve
+                      </button>
+                      <button type="button" onClick={() => setRejectReasonOpen(true)} style={{ height: 38, border: '1px solid #FECACA', borderRadius: 8, background: '#FEF2F2', color: '#DC2626', fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                        <X size={13} /> Reject
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Footer — only the user who assigned this task may operate on it. Hidden entirely
+                  once the task reached Review/Complete: submitted/approved work only offers the
+                  Approve/Reject sign-off above, no Duplicate/Archive/Delete. */}
+              {isOwner && selectedTask.status !== 'Review' && selectedTask.status !== 'Complete' && (
                 <div style={{ padding: '0 20px 18px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-                  <button type="button" onClick={handleDuplicateTask} disabled={taskActionLoading === 'duplicate'} style={{ height: 36, border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', color: '#334155', fontSize: 12, fontWeight: 700, cursor: taskActionLoading ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                    {taskActionLoading === 'duplicate' ? <Spinner size={12} dark /> : <Copy size={13} />} Duplicate
+                  <button type="button" onClick={handleDuplicateTask} style={{ height: 36, border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', color: '#334155', fontSize: 12, fontWeight: 700, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                    <Copy size={13} /> Duplicate
                   </button>
                   <button type="button" onClick={handleArchiveTask} disabled={taskActionLoading === 'archive'} style={{ height: 36, border: '1px solid #FED7AA', borderRadius: 8, background: '#FFF7ED', color: '#C2410C', fontSize: 12, fontWeight: 700, cursor: taskActionLoading ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                     {taskActionLoading === 'archive' ? <Spinner size={12} dark /> : <Archive size={13} />} Archive
@@ -3691,7 +4333,7 @@ export default function OwnerTasksPage() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                 <div>
                   <label style={modalLabelStyle}>Title</label>
-                  <input autoFocus value={editTitle} onChange={e => setEditTitle(e.target.value)} placeholder="Task title..." style={modalInputStyle} onKeyDown={e => { if (e.key === 'Enter') handleSaveTask() }} />
+                  <input ref={el => { if (el && !el.dataset.autofocused) { el.dataset.autofocused = '1'; el.focus(); el.setSelectionRange(0, 0); el.scrollLeft = 0 } }} value={editTitle} onChange={e => setEditTitle(e.target.value)} placeholder="Task title..." style={modalInputStyle} onKeyDown={e => { if (e.key === 'Enter') handleSaveTask() }} />
                 </div>
                 <div>
                   <label style={modalLabelStyle}>Priority</label>
@@ -3724,11 +4366,11 @@ export default function OwnerTasksPage() {
                 </div>
                 <div>
                   <label style={modalLabelStyle}>Assign To</label>
-                  <MultiSelectDropdownField
-                    values={editAssigneeIds}
+                  <DropdownField
+                    value={editAssigneeIds[0] ?? ''}
                     options={editAssigneeDropdownOptions}
-                    onChange={v => { setEditAssigneeIds(v); setEditShiftId('') }}
-                    allLabel="Unassigned"
+                    onChange={v => { setEditAssigneeIds(v ? [v] : []); setEditShiftId('') }}
+                    placeholder="Select assignee"
                   />
                 </div>
               </div>
@@ -3743,7 +4385,6 @@ export default function OwnerTasksPage() {
                   <TaskDatePicker
                     value={editStartDate || formatDateKey(new Date())}
                     onChange={setEditStartDate}
-                    taskDates={datesWithTasks}
                     minDate={todayTaskDate}
                     accentColor={TASK_ORANGE}
                     fullWidth
@@ -4045,7 +4686,7 @@ export default function OwnerTasksPage() {
             aria-modal="true"
             aria-labelledby="workload-suggestion-title"
             onClick={e => e.stopPropagation()}
-            style={{ width: 'min(560px, calc(100vw - 36px))', maxHeight: '88vh', background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)', display: 'flex', flexDirection: 'column' }}
+            style={{ width: 'min(720px, calc(100vw - 36px))', maxHeight: '88vh', background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)', display: 'flex', flexDirection: 'column' }}
           >
             <div style={{ padding: '18px 20px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -4072,7 +4713,8 @@ export default function OwnerTasksPage() {
                 const loading = workloadApplyLoadingId === suggestion.suggested_task_id
                 return (
                   <div key={`${suggestion.department_id}-${suggestion.suggested_task_id}`} style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: 10, background: '#FFFFFF' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '260px 40px 150px', alignItems: 'stretch', justifyContent: 'center', gap: 12 }}>
+                    {/* Task card takes the full remaining row width (Kanban-card width), everything vertically centered */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 44px 190px', alignItems: 'center', gap: 14 }}>
                       <div style={{ minWidth: 0 }}>
                         {suggestedTask ? (
                           <TaskCard
@@ -4081,15 +4723,13 @@ export default function OwnerTasksPage() {
                             shiftOptions={shiftOptions}
                             departments={departments}
                             showDept
-                            onClick={() => {}}
+                            onClick={() => openTask(suggestedTask, true)}
                             onEdit={() => {}}
-                            clickable={false}
                             isOwner={false}
                             noOuterMargin
-                            fillHeight
                           />
                         ) : (
-                          <div className="task-card" style={{ height: '100%', boxSizing: 'border-box', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 10, padding: '16px 16px', color: TASK_TEXT, fontSize: 14, fontWeight: 800 }}>
+                          <div className="task-card" style={{ boxSizing: 'border-box', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 10, padding: '16px 16px', color: TASK_TEXT, fontSize: 14, fontWeight: 800 }}>
                             {suggestion.suggested_task_title ?? 'Task'}
                           </div>
                         )}
@@ -4108,13 +4748,13 @@ export default function OwnerTasksPage() {
                         </button>
                       </div>
 
-                      <div style={{ minWidth: 0, width: 150, justifySelf: 'stretch', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                      <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
                         <button
                           type="button"
                           aria-label={`Open ${recommendedName} profile`}
                           onClick={() => { if (recommendedMember) setProfileMember(recommendedMember) }}
                           className="internal-member-card"
-                          style={{ width: 126, height: '100%', padding: '10px 8px', borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', boxShadow: '0 1px 3px rgba(15,23,42,0.06)', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', cursor: recommendedMember ? 'pointer' : 'default', textAlign: 'center', transition: 'box-shadow 0.22s ease, border-color 0.22s ease, transform 0.22s ease, background 0.22s ease' }}
+                          style={{ width: '100%', padding: '14px 10px', borderRadius: 10, border: '1.5px solid #E5E7EB', background: '#FFFFFF', boxShadow: '0 1px 3px rgba(15,23,42,0.06)', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', cursor: recommendedMember ? 'pointer' : 'default', textAlign: 'center', transition: 'box-shadow 0.22s ease, border-color 0.22s ease, transform 0.22s ease, background 0.22s ease' }}
                           onMouseEnter={e => { if (recommendedMember) { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.boxShadow = '0 3px 10px rgba(0,0,0,0.10)'; e.currentTarget.style.background = '#FFFFFF' } }}
                           onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.boxShadow = '0 1px 3px rgba(15,23,42,0.06)'; e.currentTarget.style.background = '#FFFFFF' }}
                         >
@@ -4253,11 +4893,9 @@ export default function OwnerTasksPage() {
                   <AlertCircle size={15} color="#fff" strokeWidth={2.5} />
                 </div>
                 <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
-                  {newAssigneeMembers.length === 1
+                  {newAssigneeMembers.length > 0
                     ? `Assign Task to ${newAssigneeMembers[0].full_name}`
-                    : newAssigneeMembers.length > 1
-                      ? `Assign Task to ${newAssigneeMembers.length} Managers`
-                      : 'New Task'}
+                    : 'New Task'}
                 </h2>
               </div>
               <button onClick={() => setNewTaskModal(false)} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
@@ -4295,7 +4933,7 @@ export default function OwnerTasksPage() {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                 <div>
                   <label style={modalLabelStyle}>Title</label>
-                  <input autoFocus value={newTitle} onChange={e => setNewTitle(e.target.value)} placeholder="Task title..." style={modalInputStyle} onKeyDown={e => { if (e.key === 'Enter') handleCreateTask() }} />
+                  <input ref={newTitleInputRef} value={newTitle} onChange={e => setNewTitle(e.target.value)} placeholder="Task title..." style={modalInputStyle} onKeyDown={e => { if (e.key === 'Enter') handleCreateTask() }} />
                 </div>
                 <div>
                   <label style={modalLabelStyle}>Priority</label>
@@ -4309,14 +4947,14 @@ export default function OwnerTasksPage() {
                 </div>
               </div>
 
-              {/* Assign To — multiple Managers can share the same task */}
+              {/* Assign To — one Manager per task */}
               <div>
                 <label style={modalLabelStyle}>Assign To</label>
-                <MultiSelectDropdownField
-                  values={newAssigneeIds}
+                <DropdownField
+                  value={newAssigneeIds[0] ?? ''}
                   options={newAssigneeDropdownOptions}
-                  onChange={setNewAssigneeIds}
-                  allLabel="Unassigned"
+                  onChange={v => setNewAssigneeIds(v ? [v] : [])}
+                  placeholder="Select assignee"
                 />
               </div>
 
@@ -4336,7 +4974,6 @@ export default function OwnerTasksPage() {
                   <TaskDatePicker
                     value={newStartDate || formatDateKey(new Date())}
                     onChange={setNewStartDate}
-                    taskDates={datesWithTasks}
                     minDate={todayTaskDate}
                     accentColor={TASK_ORANGE}
                     fullWidth
@@ -4641,6 +5278,182 @@ export default function OwnerTasksPage() {
         </div>
       )}
 
+      {/* ═══════════════ TASK DELAY ALERT THRESHOLD MODAL ═══════════════ */}
+      {delayThresholdModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: 400, maxWidth: 'calc(100vw - 48px)', background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
+            <div style={{ padding: '18px 20px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Bell size={15} color="#fff" strokeWidth={2.5} />
+                </div>
+                <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>Task Delay Alert Threshold</h2>
+              </div>
+              <button onClick={() => setDelayThresholdModalOpen(false)} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+                onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ fontSize: 13.5, color: '#374151', lineHeight: 1.6 }}>
+                Notify me if a task is still <strong>Assigned</strong> after this percentage of its assigned time has passed.
+              </div>
+
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <label style={{ ...modalLabelStyle, margin: 0 }}>Threshold</label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                    <input
+                      value={delayThresholdInput}
+                      onChange={e => { setDelayThresholdInput(e.target.value.replace(/[^0-9]/g, '')); setDelayThresholdError('') }}
+                      inputMode="numeric"
+                      style={{ ...modalInputStyle, width: 56, textAlign: 'center', minHeight: 32, padding: '4px 6px', fontWeight: 700, color: '#111827' }}
+                    />
+                    <span style={{ fontSize: 14, fontWeight: 700, color: '#111827' }}>%</span>
+                  </div>
+                </div>
+                <input
+                  type="range"
+                  min={1}
+                  max={100}
+                  value={Number(delayThresholdInput) >= 1 && Number(delayThresholdInput) <= 100 ? Number(delayThresholdInput) : delayThresholdPercent}
+                  onChange={e => { setDelayThresholdInput(e.target.value); setDelayThresholdError('') }}
+                  style={{ width: '100%', accentColor: TASK_ORANGE, cursor: 'pointer' }}
+                />
+              </div>
+
+              {(() => {
+                // Live timeline pinned to a 10-hour window (12:00 PM → 10:00 PM) so the marker's
+                // position and the alert time both move together as the user drags the slider.
+                const percent = Math.min(100, Math.max(1, Number(delayThresholdInput) || delayThresholdPercent))
+                const minutesIn = Math.round(600 * percent / 100)
+                const alertTime = new Date(2026, 0, 1, 12, minutesIn)
+                  .toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+                return (
+                  <div style={{ borderRadius: 12, border: '1px solid #E5E7EB', background: '#F9FAFB', padding: '14px 16px 12px' }}>
+                    <p style={{ margin: '0 0 14px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#9CA3AF' }}>Example</p>
+                    <div style={{ position: 'relative', height: 34 }}>
+                      <div style={{ position: 'absolute', top: 5, left: 0, right: 0, height: 2, background: '#E2E8F0', borderRadius: 2 }} />
+                      <div style={{ position: 'absolute', top: 5, left: 0, width: `${percent}%`, height: 2, background: TASK_ORANGE, borderRadius: 2, transition: 'width 0.1s linear' }} />
+                      <span style={{ position: 'absolute', top: 0, left: 0, width: 12, height: 12, borderRadius: '50%', background: '#FFFFFF', border: '2px solid #CBD5E1' }} />
+                      <span style={{ position: 'absolute', top: 0, right: 0, width: 12, height: 12, borderRadius: '50%', background: '#FFFFFF', border: '2px solid #CBD5E1' }} />
+                      <span style={{ position: 'absolute', top: -2, left: `${percent}%`, transform: 'translateX(-50%)', color: '#374151', fontSize: 12, lineHeight: 1, transition: 'left 0.1s linear' }}>▼</span>
+                      <span style={{ position: 'absolute', top: 20, left: 0, fontSize: 11.5, fontWeight: 700, color: '#374151' }}>12:00 PM</span>
+                      <span style={{ position: 'absolute', top: 20, left: '50%', transform: 'translateX(-50%)', fontSize: 12, fontWeight: 700, color: '#111827', whiteSpace: 'nowrap' }}>Alert at {alertTime}</span>
+                      <span style={{ position: 'absolute', top: 20, right: 0, fontSize: 11.5, fontWeight: 700, color: '#374151' }}>10:00 PM</span>
+                    </div>
+                  </div>
+                )
+              })()}
+              <InlineError message={delayThresholdError} />
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                <button type="button" onClick={() => setDelayThresholdModalOpen(false)} style={{ height: 38, padding: '0 16px', border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', color: '#334155', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                  Cancel
+                </button>
+                <button type="button" onClick={handleSaveDelayThreshold} disabled={delayThresholdSaving} style={{ height: 38, padding: '0 18px', border: 'none', borderRadius: 8, background: delayThresholdSaving ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', fontSize: 13, fontWeight: 700, cursor: delayThresholdSaving ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  {delayThresholdSaving ? <Spinner size={13} /> : <Check size={14} />} Save
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════ TASK TEMPLATES MODAL ═══════════════ */}
+      {templatesModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: 460, maxWidth: 'calc(100vw - 48px)', maxHeight: '88vh', overflowY: 'auto', background: '#FFFFFF', borderRadius: 20, overflow: 'hidden', boxShadow: '0 24px 64px rgba(0,0,0,0.16), 0 4px 16px rgba(0,0,0,0.08)', animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)' }}>
+            <div style={{ padding: '18px 20px 16px', borderBottom: '1px solid #F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 32, height: 32, borderRadius: 9, background: 'linear-gradient(135deg, #F97316, #EA580C)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <LayoutTemplate size={15} color="#fff" strokeWidth={2.5} />
+                </div>
+                <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>Task Templates</h2>
+              </div>
+              <button onClick={() => setTemplatesModalOpen(false)} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
+                onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {taskTemplates.length === 0 ? (
+                <div style={{ height: 140, borderRadius: 12, background: '#F8FAFC', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 8, fontWeight: 600, fontSize: 13 }}>
+                  <LayoutTemplate size={26} strokeWidth={1.5} />
+                  No task templates yet
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {taskTemplates.map(t => {
+                    const priorityStyle = t.priority ? PRIORITY_COLORS[t.priority] : null
+                    return (
+                      <div key={t.id} className="task-card" style={{ position: 'relative', border: '1px solid #E5E7EB', borderRadius: 10, padding: '12px 16px', background: '#FFFFFF' }}>
+                        {priorityStyle && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 10, paddingRight: 88 }}>
+                            <span style={{ fontSize: '0.72rem', fontWeight: 800, padding: '4px 10px', borderRadius: '99px', background: priorityStyle.bg, color: priorityStyle.text, letterSpacing: '0.01em' }}>
+                              {t.priority}
+                            </span>
+                          </div>
+                        )}
+                        <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: 0, lineHeight: 1.4, paddingRight: 88, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</p>
+                        <div style={{ position: 'absolute', top: 12, right: 12, display: 'flex', alignItems: 'center', gap: 4, zIndex: 1 }}>
+                          <button
+                            type="button"
+                            onClick={() => { setTemplatesModalOpen(false); openEditTemplate(t) }}
+                            title="Edit template"
+                            style={{ width: 24, height: 24, border: 'none', borderRadius: 6, background: 'transparent', color: '#9CA3AF', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}
+                            onMouseEnter={e => { e.currentTarget.style.background = '#E5E7EB'; e.currentTarget.style.color = '#F97316' }}
+                            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#9CA3AF' }}
+                          >
+                            <Pencil size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setTemplatesModalOpen(false); useTaskTemplate(t) }}
+                            title="Apply template"
+                            style={{ width: 24, height: 24, border: 'none', borderRadius: 6, background: 'transparent', color: '#16A34A', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}
+                            onMouseEnter={e => { e.currentTarget.style.background = '#DCFCE7' }}
+                            onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                          >
+                            <ArrowRight size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleDeleteTemplate(t.id)}
+                            disabled={deleteTemplateLoading}
+                            title="Delete template"
+                            style={{ width: 24, height: 24, border: 'none', borderRadius: 6, background: 'transparent', color: '#DC2626', cursor: deleteTemplateLoading ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, opacity: deleteTemplateLoading ? 0.55 : 1 }}
+                            onMouseEnter={e => { if (!deleteTemplateLoading) e.currentTarget.style.background = '#FEE2E2' }}
+                            onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                          >
+                            {deleteTemplateLoading ? <Spinner size={12} dark /> : <Trash2 size={14} />}
+                          </button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+              {companyId && (
+                <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 4 }}>
+                  <button
+                    type="button"
+                    onClick={() => { setTemplatesModalOpen(false); openCreateTemplate() }}
+                    style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 'none', borderRadius: 10, background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                  >
+                    <Plus size={15} strokeWidth={2.5} /> New Template
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ═══════════════ ARCHIVED TASKS MODAL ═══════════════ */}
       {archiveModalOpen && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, animation: 'overlayFadeIn 0.18s ease-out' }}>
@@ -4686,6 +5499,8 @@ export default function OwnerTasksPage() {
                         .sort((a, b) => (a.sequence_order ?? 0) - (b.sequence_order ?? 0))
                       const isExpanded = expandedArchivedTaskIds.has(task.id)
                       const hasBadges = !!(priorityStyle && task.priority) || !!dept || subTasks.length > 0
+                      const canEdit = !!internalUserId && task.assigned_by === internalUserId
+                      const actionsWidth = canEdit ? 86 : 58
                       return (
                         <Fragment key={task.id}>
                           <div
@@ -4703,6 +5518,19 @@ export default function OwnerTasksPage() {
                             }}
                           >
                             <div style={{ position: 'absolute', top: 12, right: 12, display: 'flex', alignItems: 'center', gap: 4, zIndex: 1 }}>
+                              {canEdit && (
+                                <button
+                                  type="button"
+                                  onClick={event => { event.stopPropagation(); setArchiveModalOpen(false); setSelectedArchivedTask(null); openTask(task, false) }}
+                                  disabled={busy}
+                                  title="Edit"
+                                  style={{ width: 24, height: 24, border: 'none', borderRadius: 6, background: 'transparent', color: '#9CA3AF', cursor: busy ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 0, opacity: busy ? 0.55 : 1 }}
+                                  onMouseEnter={e => { if (!busy) { e.currentTarget.style.background = '#E5E7EB'; e.currentTarget.style.color = '#F97316' } }}
+                                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#9CA3AF' }}
+                                >
+                                  <Pencil size={14} />
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 onClick={event => { event.stopPropagation(); handleUnarchiveTask(task.id) }}
@@ -4727,7 +5555,7 @@ export default function OwnerTasksPage() {
                               </button>
                             </div>
                             {hasBadges && (
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12, paddingRight: 58 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 12, paddingRight: actionsWidth }}>
                                 {priorityStyle && task.priority && (
                                   <span style={{ fontSize: '0.72rem', fontWeight: 800, padding: '4px 10px', borderRadius: '99px', background: priorityStyle.bg, color: priorityStyle.text, letterSpacing: '0.01em' }}>
                                     {task.priority}
@@ -4747,7 +5575,7 @@ export default function OwnerTasksPage() {
                                 )}
                               </div>
                             )}
-                            <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: '0 0 12px', lineHeight: 1.4, paddingRight: 58, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: '0 0 12px', lineHeight: 1.4, paddingRight: hasBadges ? 0 : actionsWidth, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                               {task.title}
                             </p>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
@@ -4859,6 +5687,15 @@ export default function OwnerTasksPage() {
                     {new Date(task.created_at).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                   </div>
                 </div>
+
+                {task.status === 'Complete' && (task.completed_at ?? task.updated_at) && (
+                  <div>
+                    <label style={modalLabelStyle}>Completed Time</label>
+                    <div style={viewFieldValue}>
+                      {new Date(task.completed_at ?? task.updated_at!).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -4895,7 +5732,7 @@ export default function OwnerTasksPage() {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                     <div>
                       <label style={modalLabelStyle}>Title</label>
-                      <input autoFocus value={templateFormTitle} onChange={e => setTemplateFormTitle(e.target.value)} placeholder="Task title..." style={modalInputStyle} />
+                      <input ref={templateTitleInputRef} value={templateFormTitle} onChange={e => setTemplateFormTitle(e.target.value)} placeholder="Task title..." style={modalInputStyle} />
                     </div>
                     <div>
                       <label style={modalLabelStyle}>Priority</label>
@@ -4996,7 +5833,7 @@ export default function OwnerTasksPage() {
             <div style={{ padding: '0 20px 18px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
               <button
                 type="button"
-                onClick={() => setTemplateModalOpen(false)}
+                onClick={() => { setTemplateModalOpen(false); setTemplatesModalOpen(true) }}
                 style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: `1px solid ${TASK_BORDER}`, borderRadius: 10, background: '#FFFFFF', color: TASK_TEXT, height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
               >
                 Cancel
@@ -5062,7 +5899,7 @@ export default function OwnerTasksPage() {
         }
 
         const handleCreate = async () => {
-          if (!aiSuggestion || !aiDeptId || !aiDueDate || !aiDueTime) return
+          if (!aiSuggestion || !aiDeptId || !aiManagerId || !aiDueDate || !aiDueTime) return
           setAiCreateLoading(true); setAiError('')
           try {
             const due_at = new Date(`${aiDueDate}T${aiDueTime}:00`).toISOString()

@@ -329,20 +329,59 @@ test('UC26 shows a task reassignment suggestion', async ({ request }) => {
   })
 })
 
-test('UC27 shows stalled task alerts', async ({ request }) => {
+test('UC27 shows task delay alerts for tasks still sitting in Assigned', async ({ request }) => {
   // created_at isn't client-settable through the API (DB default) — set it directly so taskId is
-  // deterministically past the halfway point to its deadline.
+  // deterministically past the default 50% threshold of its assigned-to-deadline window.
   const pastHalfway = new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString()
   const dueIn3Hours = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString()
-  await admin.from('tasks').update({ created_at: pastHalfway, due_at: dueIn3Hours }).eq('id', taskId)
+  await admin.from('tasks').update({ created_at: pastHalfway, due_at: dueIn3Hours, status: 'Assigned' }).eq('id', taskId)
 
-  const res = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=stalled`)
+  const res = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=delay`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   expect(body.alerts).toEqual(expect.arrayContaining([expect.objectContaining({ task_id: taskId })]))
 })
 
-test('workload and stalled insights scope to a single department when department_id is passed', async ({ request }) => {
+test('task delay alert threshold is configurable per company and changes what gets flagged', async ({ request }) => {
+  // Default threshold is 50 when the company never customised it.
+  const defaults = await request.get(`/api/task?company_id=${seeded.companyId}&delay_threshold=true`)
+  expect(defaults.status()).toBe(200)
+  expect((await defaults.json()).settings).toEqual({ threshold_percent: 50 })
+
+  // taskId sits at ~62.5% elapsed (set up in UC27 above) — raising the threshold to 80 unflags it.
+  const raise = await request.post('/api/task', {
+    data: { action: 'set_delay_threshold', company_id: seeded.companyId, threshold_percent: 80, updated_by: seeded.ownerId },
+  })
+  expect(raise.status()).toBe(200)
+  expect((await raise.json()).settings).toEqual({ threshold_percent: 80 })
+
+  const flaggedAt80 = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=delay`)
+  const flaggedAt80Body = await flaggedAt80.json()
+  expect(flaggedAt80Body.alerts).not.toEqual(expect.arrayContaining([expect.objectContaining({ task_id: taskId })]))
+
+  // An In Progress task never triggers the alert — the whole point is "hasn't been started".
+  await admin.from('tasks').update({ status: 'In Progress' }).eq('id', taskId)
+  await request.post('/api/task', {
+    data: { action: 'set_delay_threshold', company_id: seeded.companyId, threshold_percent: 10, updated_by: seeded.ownerId },
+  })
+  const inProgressCheck = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=delay`)
+  const inProgressBody = await inProgressCheck.json()
+  expect(inProgressBody.alerts).not.toEqual(expect.arrayContaining([expect.objectContaining({ task_id: taskId })]))
+  await admin.from('tasks').update({ status: 'Assigned' }).eq('id', taskId)
+
+  // Out-of-range values are rejected.
+  const invalid = await request.post('/api/task', {
+    data: { action: 'set_delay_threshold', company_id: seeded.companyId, threshold_percent: 0, updated_by: seeded.ownerId },
+  })
+  expect(invalid.status()).toBe(400)
+
+  // Restore the default so later tests see the standard behavior.
+  await request.post('/api/task', {
+    data: { action: 'set_delay_threshold', company_id: seeded.companyId, threshold_percent: 50, updated_by: seeded.ownerId },
+  })
+})
+
+test('workload and delay insights scope to a single department when department_id is passed', async ({ request }) => {
   const { data: otherDept, error: otherDeptError } = await admin
     .from('departments')
     .insert({ company_id: seeded.companyId, name: 'Other Department' })
@@ -373,13 +412,43 @@ test('workload and stalled insights scope to a single department when department
   const dueIn3Hours = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString()
   await admin.from('tasks').update({ created_at: pastHalfway, due_at: dueIn3Hours }).eq('id', otherDeptTask.id)
 
-  const stalledOther = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=stalled&department_id=${otherDept.id}`)
-  expect(stalledOther.status()).toBe(200)
-  const stalledOtherBody = await stalledOther.json()
-  expect(stalledOtherBody.alerts).toEqual([expect.objectContaining({ task_id: otherDeptTask.id })])
+  const delayOther = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=delay&department_id=${otherDept.id}`)
+  expect(delayOther.status()).toBe(200)
+  const delayOtherBody = await delayOther.json()
+  expect(delayOtherBody.alerts).toEqual([expect.objectContaining({ task_id: otherDeptTask.id })])
 
   await admin.from('tasks').delete().eq('id', otherDeptTask.id)
   await admin.from('departments').delete().eq('id', otherDept.id)
+})
+
+test('marking a delay alert as read dismisses it until the deadline changes', async ({ request }) => {
+  // taskId is Assigned and past the default 50% threshold (set up in UC27 above) — flagged.
+  const before = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=delay`)
+  expect((await before.json()).alerts).toEqual(expect.arrayContaining([expect.objectContaining({ task_id: taskId })]))
+
+  // Mark as read → the alert disappears even though the task is still sitting in Assigned.
+  const markRead = await request.post('/api/task', {
+    data: { action: 'mark_delay_alerts_read', task_ids: [taskId] },
+  })
+  expect(markRead.status()).toBe(200)
+  expect((await markRead.json()).success).toBe(true)
+
+  const after = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=delay`)
+  expect((await after.json()).alerts).not.toEqual(expect.arrayContaining([expect.objectContaining({ task_id: taskId })]))
+
+  // An empty task_ids list is rejected.
+  const invalid = await request.post('/api/task', { data: { action: 'mark_delay_alerts_read', task_ids: [] } })
+  expect(invalid.status()).toBe(400)
+
+  // Editing the deadline clears the read mark — a new delay window can re-raise the alert.
+  const newDue = new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString()
+  const edit = await request.patch('/api/task', {
+    data: { id: taskId, due_at: newDue, assigned_by: seeded.ownerId },
+  })
+  expect(edit.status()).toBe(200)
+
+  const reflagged = await request.get(`/api/task?company_id=${seeded.companyId}&suggestion=delay`)
+  expect((await reflagged.json()).alerts).toEqual(expect.arrayContaining([expect.objectContaining({ task_id: taskId })]))
 })
 
 test('UC22 creates a sub-task under a parent task', async ({ request }) => {
@@ -404,8 +473,9 @@ test('UC22 creates a main task together with its sub-tasks in one request', asyn
       company_id: seeded.companyId,
       department_id: departmentId,
       title: 'Open the store',
+      assigned_user_id: managerA.userId,
       assigned_by: seeded.ownerId,
-      task_date: '2026-07-02',
+      task_date: '2026-07-01',
       sub_tasks: [{ title: 'Unlock doors' }, { title: 'Turn on lights' }],
     },
   })
@@ -757,45 +827,124 @@ test('completes sub-tasks in order while In Progress, and auto-promotes the pare
   await admin.from('tasks').delete().in('id', [subA.id, subB.id, parent.id])
 })
 
-test('a task can be assigned to multiple managers, both see it on the Kanban board, and either can move its status', async ({ request }) => {
-  const task = await createTask(request, {
-    title: 'Shared prep task', shift_id: null, assigned_user_ids: [managerA.userId, managerB.userId],
+test('a task is always assigned to exactly one person — multi-assign and unassign both reject', async ({ request }) => {
+  // Creating with two managers is rejected outright.
+  const createRes = await request.post('/api/task', {
+    data: {
+      company_id: seeded.companyId, department_id: departmentId, shift_id: null,
+      title: 'Shared prep task', assigned_by: seeded.ownerId,
+      task_date: '2026-07-01',
+      assigned_user_ids: [managerA.userId, managerB.userId],
+    },
   })
+  expect(createRes.status()).toBe(400)
+  const createBody = await createRes.json()
+  expect(createBody.message).toContain('one person')
 
-  // The first id in assigned_user_ids becomes the primary assignee.
-  expect(task).toMatchObject({ assigned_user_id: managerA.userId })
-
-  const { data: assignments, error: assignmentsError } = await admin
-    .from('task_assignments')
-    .select('user_id')
-    .eq('task_id', task.id)
-  expect(assignmentsError).toBeNull()
-  expect((assignments ?? []).map((a: { user_id: string }) => a.user_id).sort())
-    .toEqual([managerA.userId, managerB.userId].sort())
-
-  const kanban = await request.get(`/api/task?company_id=${seeded.companyId}&kanban=true`)
-  const kanbanBody = await kanban.json()
-  const allTasks = [...kanbanBody.groups.Assigned, ...kanbanBody.groups['In Progress'], ...kanbanBody.groups.Review, ...kanbanBody.groups.Complete]
-  const kanbanTask = allTasks.find((t: { id: string }) => t.id === task.id)
-  expect(kanbanTask.assigned_user_ids.slice().sort()).toEqual([managerA.userId, managerB.userId].sort())
-
-  // Either co-assignee (not just the primary) can move the task's status forward.
-  const dragForward = await request.patch('/api/task', {
-    data: { id: task.id, status: 'In Progress', percentage_complete: 33 },
+  // Creating with no assignee at all is rejected too.
+  const unassignedRes = await request.post('/api/task', {
+    data: {
+      company_id: seeded.companyId, department_id: departmentId, shift_id: null,
+      title: 'Unassigned prep task', assigned_by: seeded.ownerId,
+      task_date: '2026-07-01',
+    },
   })
-  expect(dragForward.status()).toBe(200)
-  const dragBody = await dragForward.json()
-  expect(dragBody.task.status).toBe('In Progress')
+  expect(unassignedRes.status()).toBe(400)
+  const unassignedBody = await unassignedRes.json()
+  expect(unassignedBody.message).toContain('must be assigned')
 
-  // Editing the assignee set down to a single manager clears the co-assignee's row.
-  const shrinkRes = await request.patch('/api/task', {
+  // A single-manager task cannot be edited onto two managers either.
+  const task = await createTask(request, { title: 'Single-manager task', shift_id: null })
+  const editRes = await request.patch('/api/task', {
+    data: { id: task.id, assigned_by: seeded.ownerId, assigned_user_ids: [managerA.userId, managerB.userId] },
+  })
+  expect(editRes.status()).toBe(400)
+  const editBody = await editRes.json()
+  expect(editBody.message).toContain('one person')
+
+  // Nor can it be edited into an unassigned task.
+  const unassignEditRes = await request.patch('/api/task', {
+    data: { id: task.id, assigned_by: seeded.ownerId, assigned_user_ids: [] },
+  })
+  expect(unassignEditRes.status()).toBe(400)
+
+  // Reassigning to a different single manager still works, and task_assignments follows.
+  const reassignRes = await request.patch('/api/task', {
     data: { id: task.id, assigned_by: seeded.ownerId, assigned_user_ids: [managerB.userId] },
   })
-  expect(shrinkRes.status()).toBe(200)
-  const shrinkBody = await shrinkRes.json()
-  expect(shrinkBody.task.assigned_user_id).toBe(managerB.userId)
-  const { data: afterShrink } = await admin.from('task_assignments').select('user_id').eq('task_id', task.id)
-  expect((afterShrink ?? []).map((a: { user_id: string }) => a.user_id)).toEqual([managerB.userId])
+  expect(reassignRes.status()).toBe(200)
+  const reassignBody = await reassignRes.json()
+  expect(reassignBody.task.assigned_user_id).toBe(managerB.userId)
+  const { data: afterReassign } = await admin.from('task_assignments').select('user_id').eq('task_id', task.id)
+  expect((afterReassign ?? []).map((a: { user_id: string }) => a.user_id)).toEqual([managerB.userId])
+
+  await admin.from('task_assignments').delete().eq('task_id', task.id)
+  await admin.from('tasks').delete().eq('id', task.id)
+})
+
+test('review flow: work submitted to Review can only leave via the assigner\'s Approve or Reject', async ({ request }) => {
+  const task = await createTask(request, { title: 'Review flow task', shift_id: null })
+
+  // Assignee works the task forward: Assigned -> In Progress -> Review (the drag path).
+  for (const step of [{ status: 'In Progress', percentage_complete: 33 }, { status: 'Review', percentage_complete: 66 }]) {
+    const res = await request.patch('/api/task', { data: { id: task.id, ...step } })
+    expect(res.status()).toBe(200)
+  }
+
+  // Once in Review the drag path is locked — no plain status move can touch it.
+  const dragOutOfReview = await request.patch('/api/task', {
+    data: { id: task.id, status: 'Complete', percentage_complete: 100 },
+  })
+  expect(dragOutOfReview.status()).toBe(400)
+
+  // Reject requires a reason, and only the assigner may do it.
+  const rejectNoReason = await request.patch('/api/task', {
+    data: { id: task.id, action: 'reject', assigned_by: seeded.ownerId },
+  })
+  expect(rejectNoReason.status()).toBe(400)
+  const rejectWrongUser = await request.patch('/api/task', {
+    data: { id: task.id, action: 'reject', reason: 'Not the assigner', assigned_by: managerA.userId },
+  })
+  expect(rejectWrongUser.status()).toBe(400)
+
+  // A valid reject sends it back to In Progress carrying the reason as a rework notice.
+  const rejectRes = await request.patch('/api/task', {
+    data: { id: task.id, action: 'reject', reason: 'Checklist section is incomplete', assigned_by: seeded.ownerId },
+  })
+  expect(rejectRes.status()).toBe(200)
+  const rejectBody = await rejectRes.json()
+  expect(rejectBody.task).toMatchObject({ status: 'In Progress', rejection_reason: 'Checklist section is incomplete' })
+
+  // The rework notice travels with the Kanban payload so the assignee's board can show it.
+  const kanban = await request.get(`/api/task?company_id=${seeded.companyId}&kanban=true`)
+  const kanbanBody = await kanban.json()
+  const reworkTask = kanbanBody.groups['In Progress'].find((t: { id: string }) => t.id === task.id)
+  expect(reworkTask.rejection_reason).toBe('Checklist section is incomplete')
+
+  // Assignee re-submits, and only the assigner may approve — approval completes the task
+  // and clears the old rejection reason.
+  const resubmit = await request.patch('/api/task', {
+    data: { id: task.id, status: 'Review', percentage_complete: 66 },
+  })
+  expect(resubmit.status()).toBe(200)
+  const approveWrongUser = await request.patch('/api/task', {
+    data: { id: task.id, action: 'approve', assigned_by: managerA.userId },
+  })
+  expect(approveWrongUser.status()).toBe(400)
+  const approveRes = await request.patch('/api/task', {
+    data: { id: task.id, action: 'approve', assigned_by: seeded.ownerId },
+  })
+  expect(approveRes.status()).toBe(200)
+  const approveBody = await approveRes.json()
+  expect(approveBody.task).toMatchObject({ status: 'Complete', percentage_complete: 100, rejection_reason: null })
+  // Approval stamps the Completed Time shown in the task's Details.
+  expect(approveBody.task.completed_at).toEqual(expect.any(String))
+
+  // Approve/Reject only apply while the task is actually in Review.
+  const approveAgain = await request.patch('/api/task', {
+    data: { id: task.id, action: 'approve', assigned_by: seeded.ownerId },
+  })
+  expect(approveAgain.status()).toBe(400)
 
   await admin.from('task_assignments').delete().eq('task_id', task.id)
   await admin.from('tasks').delete().eq('id', task.id)

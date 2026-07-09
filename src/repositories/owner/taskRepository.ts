@@ -71,7 +71,7 @@ export const taskRepository = {
   async getTasksByCompany(company_id: string, assigned_by?: string): Promise<Task[]> {
     let query = supabase
       .from('tasks')
-      .select('id, shift_id, company_id, department_id, parent_task_id, sequence_order, title, description, assigned_user_id, assigned_by, status, percentage_complete, priority, due_at, task_date, recurrence_group_id, source_task_id, is_archived, created_at, updated_at, shifts(shift_date)')
+      .select('id, shift_id, company_id, department_id, parent_task_id, sequence_order, title, description, assigned_user_id, assigned_by, status, percentage_complete, priority, due_at, task_date, recurrence_group_id, source_task_id, is_archived, rejection_reason, rejected_at, delay_alert_read_at, completed_at, created_at, updated_at, shifts(shift_date)')
       .eq('company_id', company_id)
       .eq('is_archived', false)
     if (assigned_by) query = query.eq('assigned_by', assigned_by)
@@ -87,7 +87,7 @@ export const taskRepository = {
   async getArchivedTasksByCompany(company_id: string): Promise<Task[]> {
     const { data, error } = await supabase
       .from('tasks')
-      .select('id, shift_id, company_id, department_id, parent_task_id, sequence_order, title, description, assigned_user_id, assigned_by, status, percentage_complete, priority, due_at, task_date, recurrence_group_id, source_task_id, is_archived, created_at, updated_at, shifts(shift_date)')
+      .select('id, shift_id, company_id, department_id, parent_task_id, sequence_order, title, description, assigned_user_id, assigned_by, status, percentage_complete, priority, due_at, task_date, recurrence_group_id, source_task_id, is_archived, rejection_reason, rejected_at, delay_alert_read_at, completed_at, created_at, updated_at, shifts(shift_date)')
       .eq('company_id', company_id)
       .eq('is_archived', true)
       // Sub-tasks and recurring sibling occurrences (source_task_id set) archive alongside their
@@ -463,6 +463,32 @@ export const taskRepository = {
       .neq('status', 'Complete')
     if (error) throw new Error(error.message)
     return (data ?? []) as { assigned_user_id: string; priority: string | null; due_at: string | null }[]
+  },
+
+  // Task Delay Alert threshold — one row per company; null means the company never customised it.
+  async getTaskDelayThreshold(company_id: string): Promise<number | null> {
+    const { data, error } = await supabase
+      .from('task_delay_alert_settings')
+      .select('threshold_percent')
+      .eq('company_id', company_id)
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    return data ? (data as { threshold_percent: number }).threshold_percent : null
+  },
+
+  async upsertTaskDelayThreshold(company_id: string, threshold_percent: number, updated_by: string | null): Promise<void> {
+    const { error } = await supabase
+      .from('task_delay_alert_settings')
+      .upsert({ company_id, threshold_percent, updated_by, updated_at: new Date().toISOString() }, { onConflict: 'company_id' })
+    if (error) throw new Error(error.message)
+  },
+
+  async markDelayAlertsRead(task_ids: string[]): Promise<void> {
+    const { error } = await supabase
+      .from('tasks')
+      .update({ delay_alert_read_at: new Date().toISOString() })
+      .in('id', task_ids)
+    if (error) throw new Error(error.message)
   },
 
 }

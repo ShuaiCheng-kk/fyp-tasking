@@ -54,7 +54,7 @@ export const plans = {
       'Task templates & duplication',
       'Recurring tasks & task dependencies',
       'AI task assignment suggestions',
-      'Workload rebalancing & stalled task alerts',
+      'Workload rebalancing & task delay alerts',
       'Activate / deactivate casual workers',
       'Invite members & import departments by CSV',
       'Job templates & duplication',
@@ -112,7 +112,7 @@ export const comparisonTable: {
     { type: 'row', feature: 'Duplicate task', free: false, pro: true },
     { type: 'row', feature: 'Set recurring task', free: false, pro: true },
     { type: 'row', feature: 'View workload rebalancing alert', free: false, pro: true },
-    { type: 'row', feature: 'View stalled task alert', free: false, pro: true },
+    { type: 'row', feature: 'View task delay alert', free: false, pro: true },
     { type: 'row', feature: 'Set task dependencies', free: false, pro: true },
 
     { type: 'group', label: 'Team / Company' },
