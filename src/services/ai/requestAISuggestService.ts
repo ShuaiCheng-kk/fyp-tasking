@@ -5,6 +5,32 @@ import { openAIService } from '@/services/ai/openAIService'
 import { attendanceRepository } from '@/repositories/owner/attendanceRepository'
 import { ownerTeamRepository } from '@/repositories/owner/ownerTeamRepository'
 import { MIN_MANAGERS_PER_DAY, MIN_EMPLOYEES_PER_DAY, weekStart } from '@/lib/schedulingConstants'
+import { FixedOffDayRequestView } from '@/types/Attendance'
+
+// One pending weekly submission's verdict inside a whole-queue analysis. `key` matches the
+// frontend's group key convention (`${user_id}_${week_start}`, see groupFixedOff) so results can
+// be mapped straight back onto the Requests-queue cards.
+export interface FixedOffDayQueueItemVerdict {
+  key: string
+  user_id: string
+  requester_name: string
+  week_start: string
+  ids: string[]
+  request_dates: string[]
+  verdict: 'safe' | 'flagged'
+  problem_dates: string[]
+  problem_reasons: Record<string, string>
+  // The recommended full replacement day set: safe requested days kept as-is, each flagged day
+  // swapped for the next staffing-safe day (same week first, then the following week). For a safe
+  // item this is simply request_dates. Pre-seeds the Owner's Modify picker.
+  suggested_dates: string[]
+}
+
+export interface FixedOffDayQueueSuggestion {
+  safe_count: number
+  flagged_count: number
+  items: FixedOffDayQueueItemVerdict[]
+}
 
 export interface RequestAISuggestion {
   recommendation: 'approve' | 'modify'
@@ -219,6 +245,148 @@ export const requestAISuggestService = {
       reason: buildReason(perDate),
       problem_dates: problems.map(d => d.date),
       problem_reasons: Object.fromEntries(problems.map(p => [p.date, buildDateReason(p)])),
+    }
+  },
+
+  // Analyzes the ENTIRE pending queue in one pass, first-come-first-served: walk the pending
+  // weekly submissions in submission order, and for each one check its dates against the
+  // department roster minus everyone already decided off PLUS everyone earlier in the queue whose
+  // request came back safe (simulated as approved, since the Owner is about to approve them in
+  // bulk). A submission whose every date survives that check is 'safe' — the Owner can approve it
+  // without looking; one that collides with an already-taken day is 'flagged' and stays in the
+  // queue for the per-request Suggestion/modify flow.
+  //
+  // Deliberately no LLM call here: the safe/flagged rule is fully deterministic, and running one
+  // structured-output call per queue entry would make the button slow for no added signal. The
+  // per-request suggestFixedOffDayGroup above keeps the LLM for picking replacement dates.
+  async suggestFixedOffDayQueue(input: {
+    company_id: string
+    rows: FixedOffDayRequestView[]
+  }): Promise<FixedOffDayQueueSuggestion> {
+    const pendingRows = input.rows.filter(r => r.status === 'pending')
+
+    // Group by requester + week — same unit the Owner decides on (see groupFixedOff frontend-side
+    // and decideFixedOffDayRequestGroup service-side).
+    const groups = new Map<string, {
+      key: string
+      user_id: string
+      requester_name: string
+      requester_role: string
+      department_id: string | null
+      week_start: string
+      created_at: string
+      ids: string[]
+      request_dates: string[]
+    }>()
+    for (const row of pendingRows) {
+      const key = `${row.user_id}_${row.week_start}`
+      const existing = groups.get(key)
+      if (existing) {
+        existing.ids.push(row.id)
+        existing.request_dates.push(row.request_date)
+        if (new Date(row.created_at ?? 0).getTime() < new Date(existing.created_at ?? 0).getTime()) existing.created_at = row.created_at
+      } else {
+        groups.set(key, {
+          key, user_id: row.user_id, requester_name: row.requester_name, requester_role: row.requester_role,
+          department_id: row.department_id, week_start: row.week_start, created_at: row.created_at,
+          ids: [row.id], request_dates: [row.request_date],
+        })
+      }
+    }
+    const orderedGroups = [...groups.values()].sort((a, b) => {
+      const diff = new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime()
+      return diff !== 0 ? diff : a.key.localeCompare(b.key)
+    })
+
+    // Department rosters — one lookup per distinct department across the queue.
+    const departmentIds = [...new Set(orderedGroups.map(g => g.department_id).filter((id): id is string => id !== null))]
+    const [employees, managersPerDept] = await Promise.all([
+      departmentIds.length > 0 ? attendanceRepository.getEmployeesByCompany(input.company_id) : Promise.resolve([]),
+      Promise.all(departmentIds.map(id => ownerTeamRepository.findManagersByDepartment(input.company_id, id))),
+    ])
+    const rosters = new Map(departmentIds.map((deptId, i) => [deptId, {
+      managerIds: new Set(managersPerDept[i].map(m => m.id)),
+      employeeIds: new Set(employees.filter(e => e.department_id === deptId).map(e => e.id)),
+    }]))
+
+    // Same reservation rule as suggestFixedOffDayGroup: only ALREADY-DECIDED off-days reserve a
+    // date. Simulated entries are the safe queue entries approved-so-far during this walk.
+    const decidedRows = input.rows.filter(r => r.status === 'approved' || r.status === 'modified')
+    const simulated: Array<{ department_id: string; date: string; user_id: string; isManager: boolean }> = []
+    const othersAlreadyOff = (departmentId: string, date: string, selfId: string): { managers: number; employees: number } => {
+      const roster = rosters.get(departmentId)
+      let managers = 0
+      let employees = 0
+      if (!roster) return { managers, employees }
+      for (const row of decidedRows) {
+        if (row.request_date !== date || row.user_id === selfId) continue
+        if (roster.managerIds.has(row.user_id)) managers++
+        else if (roster.employeeIds.has(row.user_id)) employees++
+      }
+      for (const sim of simulated) {
+        if (sim.date !== date || sim.department_id !== departmentId || sim.user_id === selfId) continue
+        if (sim.isManager) managers++
+        else employees++
+      }
+      return { managers, employees }
+    }
+
+    const items: FixedOffDayQueueItemVerdict[] = []
+    for (const group of orderedGroups) {
+      const role: 'Manager' | 'Employee' = group.requester_role === 'Manager' ? 'Manager' : 'Employee'
+      const departmentId = group.department_id
+      const roster = departmentId ? rosters.get(departmentId) : undefined
+      const staffingFlags = (date: string): { managerShort: boolean; employeeShort: boolean } => {
+        if (!departmentId || !roster) return { managerShort: false, employeeShort: false }
+        const { managers, employees } = othersAlreadyOff(departmentId, date, group.user_id)
+        const managersRemaining = roster.managerIds.size - managers - (role === 'Manager' ? 1 : 0)
+        const employeesRemaining = roster.employeeIds.size - employees - (role === 'Employee' ? 1 : 0)
+        return { managerShort: managersRemaining < MIN_MANAGERS_PER_DAY, employeeShort: employeesRemaining < MIN_EMPLOYEES_PER_DAY }
+      }
+      const wouldBeUnderstaffed = (date: string): boolean => {
+        const flags = staffingFlags(date)
+        return flags.managerShort || flags.employeeShort
+      }
+      const perDate = group.request_dates.map(date => ({ date, ...staffingFlags(date) }))
+      const problems = perDate.filter(d => d.managerShort || d.employeeShort)
+      if (problems.length === 0) {
+        if (departmentId) {
+          for (const date of group.request_dates) {
+            simulated.push({ department_id: departmentId, date, user_id: group.user_id, isManager: role === 'Manager' })
+          }
+        }
+        items.push({
+          key: group.key, user_id: group.user_id, requester_name: group.requester_name,
+          week_start: group.week_start, ids: group.ids, request_dates: group.request_dates,
+          verdict: 'safe', problem_dates: [], problem_reasons: {},
+          suggested_dates: group.request_dates,
+        })
+      } else {
+        // Recommended replacement set: keep the safe requested days, and swap each flagged day
+        // for the next staffing-safe day — same week first, spilling into the following week.
+        const problemDates = problems.map(p => p.date)
+        const suggested = group.request_dates.filter(d => !problemDates.includes(d))
+        const candidateDates = Array.from({ length: 14 }, (_, i) => addDaysToDateKey(group.week_start, i))
+        for (let n = 0; n < problemDates.length; n++) {
+          const pick = candidateDates.find(date =>
+            !group.request_dates.includes(date) && !suggested.includes(date) && !wouldBeUnderstaffed(date))
+          if (pick) suggested.push(pick)
+        }
+        items.push({
+          key: group.key, user_id: group.user_id, requester_name: group.requester_name,
+          week_start: group.week_start, ids: group.ids, request_dates: group.request_dates,
+          verdict: 'flagged',
+          problem_dates: problemDates,
+          problem_reasons: Object.fromEntries(problems.map(p => [p.date, buildDateReason(p)])),
+          suggested_dates: suggested,
+        })
+      }
+    }
+
+    return {
+      safe_count: items.filter(i => i.verdict === 'safe').length,
+      flagged_count: items.filter(i => i.verdict === 'flagged').length,
+      items,
     }
   },
 

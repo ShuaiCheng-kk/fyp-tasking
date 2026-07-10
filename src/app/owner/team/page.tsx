@@ -975,15 +975,13 @@ function ProfileField({ label, value }: { label: string; value: string }) {
   )
 }
 
+// "01 Jul 2026" — fixed 3-letter months (en-GB Intl renders September as "Sept")
+const DATE_DISPLAY_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 function formatDateDisplay(value: string | null | undefined, empty = '—') {
   if (!value) return empty
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return empty
-  return new Intl.DateTimeFormat('en-GB', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  }).format(date)
+  return `${String(date.getDate()).padStart(2, '0')} ${DATE_DISPLAY_MONTHS[date.getMonth()]} ${date.getFullYear()}`
 }
 
 function formatLongDateTime(value: string | null | undefined, empty = '—') {

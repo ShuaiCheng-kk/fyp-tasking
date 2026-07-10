@@ -251,7 +251,9 @@ export const taskService = {
       }
     }
 
-    const baseDate = original.task_date ?? original.due_at?.slice(0, 10)
+    // due_at encodes a LOCAL wall-clock deadline (see moveIsoDate below) — take its local
+    // calendar date, not the UTC slice, or early-morning deadlines anchor a day early.
+    const baseDate = original.task_date ?? (original.due_at ? formatDateKey(new Date(original.due_at)) : undefined)
     if (!baseDate) throw new Error('Task needs task_date or due_at before recurrence can be created')
     if (input.recurrence_end_date <= baseDate) {
       throw new Error('recurrence_end_date must be after the task date')
@@ -534,7 +536,9 @@ export const taskService = {
     if (date_to < date_from) throw new Error('date_to must be on or after date_from')
     const tasks = await taskRepository.getTasksByCompany(company_id)
     return tasks
-      .map(task => ({ ...task, calendar_date: task.task_date ?? task.due_at?.slice(0, 10) ?? '' }))
+      // due_at encodes a LOCAL wall-clock deadline — bucket it by its local calendar date,
+      // not the UTC slice, or early-morning deadlines land on the previous day's cell.
+      .map(task => ({ ...task, calendar_date: task.task_date ?? (task.due_at ? formatDateKey(new Date(task.due_at)) : '') }))
       .filter(task => task.calendar_date >= date_from && task.calendar_date <= date_to)
   },
 

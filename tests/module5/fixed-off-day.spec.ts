@@ -319,11 +319,14 @@ test.describe('Fixed Day Off — submission, routing, quota, deadline', () => {
   })
 
   test('rejects submission once the currently open week has shifted past a closed deadline', async ({ request }) => {
-    const todayDow = new Date().getDay()
-    const pastDeadlineDow = (todayDow + 6) % 7 // a weekday that already passed this week
+    // The service resolves deadline moments in UTC (resolveDeadlineMoment appends 'Z'), so build
+    // the "already passed" deadline in UTC too: today's UTC weekday at 00:00 UTC has always
+    // passed by the time this runs. A local-weekday "yesterday at 17:00" is NOT reliably past —
+    // between local midnight and the UTC-offset hour it still sits in the future in UTC.
+    const pastDeadlineDow = new Date().getUTCDay()
 
     const setDeadline = await request.post('/api/attendance/off-day-settings', {
-      data: { action: 'set_deadline', company_id: seeded.companyId, owner_id: seeded.ownerId, deadline_weekday: pastDeadlineDow, deadline_time: '17:00' },
+      data: { action: 'set_deadline', company_id: seeded.companyId, owner_id: seeded.ownerId, deadline_weekday: pastDeadlineDow, deadline_time: '00:00' },
     })
     expect(setDeadline.status()).toBe(200)
 
@@ -335,6 +338,111 @@ test.describe('Fixed Day Off — submission, routing, quota, deadline', () => {
     expect(res.status()).toBe(400)
     const body = await res.json()
     expect(body.message).toContain('currently open week')
+  })
+})
+
+test.describe('Fixed Day Off — whole-queue AI analysis (first-come-first-served)', () => {
+  let seeded: TestOwner
+  let departmentId: string
+  let managerAId: string
+  let managerBId: string
+  let employeeId: string
+  let contestedDay: string
+
+  test.beforeAll(async () => {
+    seeded = await seedTestOwnerAndCompany('offday-queue')
+
+    const { data: dept, error: deptErr } = await admin.from('departments').insert({
+      name: 'Queue Dept', color: '#8B5CF6', company_id: seeded.companyId,
+    }).select().single()
+    if (deptErr || !dept) throw new Error(`Dept insert failed: ${deptErr?.message}`)
+    departmentId = dept.id as string
+
+    managerAId = await createUser('QA', seeded.companyId, 'Manager')
+    managerBId = await createUser('QB', seeded.companyId, 'Manager')
+    // One employee on the roster so the employee pool stays above minimum for manager requests.
+    employeeId = await createUser('QE', seeded.companyId, 'Employee')
+
+    for (const managerId of [managerAId, managerBId]) {
+      const { error } = await admin.from('manager_departments').insert({
+        manager_id: managerId, department_id: departmentId, company_id: seeded.companyId, assigned_by: seeded.ownerId,
+      })
+      if (error) throw new Error(`manager_departments insert failed: ${error.message}`)
+    }
+    const { error: empDeptErr } = await admin.from('employee_departments').insert({
+      employee_id: employeeId, department_id: departmentId, company_id: seeded.companyId,
+    })
+    if (empDeptErr) throw new Error(`employee_departments insert failed: ${empDeptErr.message}`)
+
+    const todayKey = new Date().toISOString().slice(0, 10)
+    contestedDay = addDaysLocal(weekStartOf(todayKey), 8) // upcoming week's Tuesday
+  })
+
+  test.afterAll(async () => {
+    await admin.from('employee_off_day_requests').delete().eq('company_id', seeded.companyId)
+    await admin.from('off_day_quota_settings').delete().eq('company_id', seeded.companyId)
+    await admin.from('manager_departments').delete().eq('company_id', seeded.companyId)
+    await admin.from('employee_departments').delete().eq('company_id', seeded.companyId)
+    for (const id of [managerAId, managerBId, employeeId]) {
+      const { data: u } = await admin.from('users').select('supabase_auth_id').eq('id', id).single()
+      await admin.from('users').delete().eq('id', id)
+      if (u?.supabase_auth_id) await admin.auth.admin.deleteUser(u.supabase_auth_id).catch(() => undefined)
+    }
+    await cleanupTestOwnerAndCompany(seeded)
+  })
+
+  test('queue analysis marks the first submitter safe and flags the later collision, then bulk approval reserves for real', async ({ request }) => {
+    const setQuota = await request.post('/api/attendance/off-day-settings', {
+      data: { action: 'set_default_quota', company_id: seeded.companyId, owner_id: seeded.ownerId, role: 'Manager', max_days_per_week: 1 },
+    })
+    expect(setQuota.status()).toBe(200)
+
+    // Both managers want the same day; A submits first. Roster has 2 managers, min 1 must remain —
+    // so the day fits exactly one of them.
+    const submitA = await request.post('/api/attendance', {
+      data: { action: 'submit_fixed_off_day', user_id: managerAId, company_id: seeded.companyId, dates: [contestedDay] },
+    })
+    expect(submitA.status()).toBe(200)
+    const submitB = await request.post('/api/attendance', {
+      data: { action: 'submit_fixed_off_day', user_id: managerBId, company_id: seeded.companyId, dates: [contestedDay] },
+    })
+    expect(submitB.status()).toBe(200)
+
+    const analyze = await request.post('/api/attendance/ai-suggest', {
+      data: { request_type: 'fixed_off_day_queue', company_id: seeded.companyId },
+    })
+    expect(analyze.status()).toBe(200)
+    const analyzeBody = await analyze.json()
+    expect(analyzeBody.success).toBe(true)
+    expect(analyzeBody.suggestion.safe_count).toBe(1)
+    expect(analyzeBody.suggestion.flagged_count).toBe(1)
+    const [first, second] = analyzeBody.suggestion.items
+    expect(first.user_id).toBe(managerAId)
+    expect(first.verdict).toBe('safe')
+    expect(second.user_id).toBe(managerBId)
+    expect(second.verdict).toBe('flagged')
+    expect(second.problem_dates).toEqual([contestedDay])
+    expect(typeof second.problem_reasons[contestedDay]).toBe('string')
+    // The flagged one carries a recommended replacement — the contested Tuesday swapped for the
+    // week's first staffing-safe day (Monday).
+    expect(second.suggested_dates).toEqual([addDaysLocal(contestedDay, -1)])
+
+    // Bulk approval path: approve the safe one exactly as the frontend would, then re-analyze —
+    // B is still flagged, now against A's real (decided) reservation instead of a simulated one.
+    const approve = await request.patch('/api/attendance', {
+      data: { action: 'decide_fixed_off_day', ids: first.ids, reviewer_id: seeded.ownerId, decision: 'approved' },
+    })
+    expect(approve.status()).toBe(200)
+    expect((await approve.json()).success).toBe(true)
+
+    const reAnalyze = await request.post('/api/attendance/ai-suggest', {
+      data: { request_type: 'fixed_off_day_queue', company_id: seeded.companyId },
+    })
+    expect(reAnalyze.status()).toBe(200)
+    const reAnalyzeBody = await reAnalyze.json()
+    expect(reAnalyzeBody.suggestion.items).toHaveLength(1)
+    expect(reAnalyzeBody.suggestion.items[0].user_id).toBe(managerBId)
+    expect(reAnalyzeBody.suggestion.items[0].verdict).toBe('flagged')
   })
 })
 

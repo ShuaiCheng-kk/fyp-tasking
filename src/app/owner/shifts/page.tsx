@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import {
   AlertTriangle,
+  Calendar as CalendarIcon,
   CalendarDays,
   Check,
   CheckCheck,
@@ -809,6 +810,8 @@ export default function OwnerShiftsPage() {
   const [shiftTabIndicator, setShiftTabIndicator] = useState({ left: 0, width: 0, opacity: 0 })
   const [calWeekRows, setCalWeekRows] = useState<TimelineRow[]>([])
   const [calWeekLoading, setCalWeekLoading] = useState(false)
+  // approved fixed off days — purple "Off Day" pill on the calendar/timeline (same as Attendance Records)
+  const [fixedOffDayRequests, setFixedOffDayRequests] = useState<{ user_id: string; request_date: string; status: string }[]>([])
   const [selectedTimelineUserIds, setSelectedTimelineUserIds] = useState<string[]>([])
   const [timelineBulkDeleting, setTimelineBulkDeleting] = useState(false)
   const [timelineDeleteError, setTimelineDeleteError] = useState('')
@@ -1147,6 +1150,15 @@ export default function OwnerShiftsPage() {
     setShiftTemplates(data.success ? data.templates ?? [] : [])
   }, [])
 
+  const fetchFixedOffDays = useCallback(async (cid: string) => {
+    if (!cid) return
+    try {
+      const res = await fetch(`/api/attendance?company_id=${cid}&resource=fixed_off_days`)
+      const data = await res.json()
+      setFixedOffDayRequests(data.requests ?? [])
+    } catch {}
+  }, [])
+
   const fetchCalWeek = useCallback(async (cid: string, anchorDate: string) => {
     if (!cid || !anchorDate) return
     setCalWeekLoading(true)
@@ -1204,9 +1216,10 @@ export default function OwnerShiftsPage() {
       fetchTimeline(companyId, timelineDate),
       fetchFutureRows(companyId),
       fetchCalWeek(companyId, timelineDate),
+      fetchFixedOffDays(companyId),
     ])
     setLastRefreshed(new Date())
-  }, [companyId, fetchCalWeek, fetchFutureRows, fetchTimeline, timelineDate])
+  }, [companyId, fetchCalWeek, fetchFutureRows, fetchTimeline, fetchFixedOffDays, timelineDate])
 
   useEffect(() => {
     if (!companyId) return
@@ -1215,13 +1228,23 @@ export default function OwnerShiftsPage() {
       fetchTimeline(companyId, timelineDate),
       fetchFutureRows(companyId),
       fetchShiftTemplates(companyId),
+      fetchFixedOffDays(companyId),
     ]).then(() => setLastRefreshed(new Date()))
-  }, [companyId, fetchAssignmentData, fetchFutureRows, fetchTimeline, fetchShiftTemplates, timelineDate])
+  }, [companyId, fetchAssignmentData, fetchFutureRows, fetchTimeline, fetchShiftTemplates, fetchFixedOffDays, timelineDate])
 
   useEffect(() => {
     if (!companyId || shiftViewMode !== 'calendar') return
     void fetchCalWeek(companyId, timelineDate)
   }, [companyId, shiftViewMode, timelineDate, fetchCalWeek])
+
+  // approved fixed off: `${user_id}|${YYYY-MM-DD}` → true (same keying as the Attendance page)
+  const fixedOffByUserDate = useMemo(() => {
+    const map = new Map<string, boolean>()
+    fixedOffDayRequests.forEach(r => {
+      if (r.status === 'approved') map.set(`${r.user_id}|${r.request_date}`, true)
+    })
+    return map
+  }, [fixedOffDayRequests])
 
   const membersByDepartment = useMemo(() => {
     const map = new Map<string, TeamMember[]>()
@@ -2882,6 +2905,14 @@ export default function OwnerShiftsPage() {
             <div key={`grid-${h}`} style={{ position: 'absolute', top: 0, bottom: 0, left: `${tlPad(h * 60)}%`, width: 0, borderLeft: '1px dashed rgba(15,23,42,0.55)', pointerEvents: 'none', zIndex: 2 }} />
           ))}
           {row.shifts.length === 0 && row.user_id && (() => {
+            if (fixedOffByUserDate.get(`${row.user_id}|${timelineDate}`)) {
+              return (
+                <div title={`${row.full_name} — approved off day`} style={{ position: 'absolute', top: 10, bottom: 10, left: `${TL_PAD}%`, right: `${TL_PAD}%`, borderRadius: 999, background: '#F5F3FF', border: '1.5px solid #C4B5FD', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, zIndex: 1 }}>
+                  <CalendarIcon size={12} color="#7C3AED" />
+                  <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#7C3AED', whiteSpace: 'nowrap' }}>Off Day</span>
+                </div>
+              )
+            }
             const dept = departments.find(d => d.id === row.department_id)
             const isTimelinePast = timelineDate < formatDateKey(new Date())
             return (
@@ -2936,7 +2967,7 @@ export default function OwnerShiftsPage() {
                   justifyContent: 'center',
                   gap: 4,
                 }}
-                title={`${isOpenRow ? 'Open shift — needs staffing' : isUnassignedRow ? 'Unassigned shift' : row.full_name} ${formatShiftHour(shift.start_time)}–${formatShiftHour(shift.end_time)}${isDraft ? ' (Draft)' : ''}`}
+                title={`${isOpenRow ? 'Open shift — needs staffing' : isUnassignedRow ? 'Unassigned shift' : row.full_name} ${formatShiftHour(shift.start_time)} – ${formatShiftHour(shift.end_time)}${isDraft ? ' (Draft)' : ''}`}
               >
                 {isOpenRow && width > 8 && <AlertTriangle size={10} style={{ flexShrink: 0 }} />}
                 <span style={{ fontSize: '0.72rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -3055,6 +3086,12 @@ export default function OwnerShiftsPage() {
                         return (
                           <div key={date} style={{ padding: '0 6px', borderRight: `1px solid ${BORDER}`, height: rowHeight, overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'stretch', justifyContent: 'center' }}>
                             {dayShifts.length === 0 ? (
+                              fixedOffByUserDate.get(`${row.user_id}|${date}`) ? (
+                                <div title={`${row.full_name} — approved off day`} style={{ borderRadius: 999, background: '#F5F3FF', border: '1.5px solid #C4B5FD', display: 'flex', alignItems: 'center', justifyContent: 'center', height: 24, gap: 4 }}>
+                                  <CalendarIcon size={10} color="#7C3AED" />
+                                  <span style={{ fontSize: 10, fontWeight: 600, color: '#7C3AED', whiteSpace: 'nowrap' }}>Off Day</span>
+                                </div>
+                              ) : (
                               <div style={{ borderRadius: 999, background: '#E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', height: 24, cursor: isPastDate ? 'default' : 'pointer', transition: 'background 0.15s' }}
                                 onClick={() => {
                                   if (isPastDate) return
@@ -3068,13 +3105,14 @@ export default function OwnerShiftsPage() {
                               >
                                 <span style={{ fontSize: 10, fontWeight: 600, color: '#94A3B8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Off</span>
                               </div>
+                              )
                             ) : dayShifts.map((shift: TimelineShiftBlock) => {
                                 const isDraft = shift.publication_status === 'draft'
                                 return (
                                 <button
                                   key={shift.id}
                                   onClick={() => openShiftDetail(shift, row, isPastDate)}
-                                  title={`${formatShiftHour(shift.start_time)}–${formatShiftHour(shift.end_time)}${isDraft ? ' (Draft)' : ''}`}
+                                  title={`${formatShiftHour(shift.start_time)} – ${formatShiftHour(shift.end_time)}${isDraft ? ' (Draft)' : ''}`}
                                   style={{
                                     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
                                     padding: '0 8px', height: 28, flexShrink: 0,
@@ -3087,7 +3125,7 @@ export default function OwnerShiftsPage() {
                                   onMouseLeave={e => { e.currentTarget.style.filter = 'none' }}
                                 >
                                   <span style={{ fontSize: 10.5, fontWeight: 600, color: '#FFFFFF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                    {formatShiftHour(shift.start_time)}–{formatShiftHour(shift.end_time)}
+                                    {formatShiftHour(shift.start_time)} – {formatShiftHour(shift.end_time)}
                                   </span>
                                   {isDraft && <span style={{ fontSize: '0.55rem', fontWeight: 700, color: '#FFFFFF', textTransform: 'uppercase', letterSpacing: '0.04em', opacity: 0.85, flexShrink: 0 }}>Draft</span>}
                                 </button>
@@ -4286,11 +4324,11 @@ export default function OwnerShiftsPage() {
                                                     <button
                                                       type="button"
                                                       onClick={() => aiScheduleGenerationStore.setSelected(prev => { const next = new Set(prev); if (next.has(selectionKey)) next.delete(selectionKey); else next.add(selectionKey); return next })}
-                                                      title={`${slot.shift_label} ${formatShiftHour(slot.start_time)}–${formatShiftHour(slot.end_time)}`}
+                                                      title={`${slot.shift_label} ${formatShiftHour(slot.start_time)} – ${formatShiftHour(slot.end_time)}`}
                                                       style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, border: 'none', background: 'transparent', cursor: 'pointer', height: '100%', minWidth: 0, padding: 0 }}
                                                     >
                                                       <span style={{ fontSize: 10, fontWeight: 700, color: checked ? '#FFFFFF' : '#374151', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                                        {formatShiftHour(slot.start_time)}–{formatShiftHour(slot.end_time)}
+                                                        {formatShiftHour(slot.start_time)} – {formatShiftHour(slot.end_time)}
                                                       </span>
                                                     </button>
                                                     <button
@@ -5034,7 +5072,7 @@ export default function OwnerShiftsPage() {
                       }
                       return (
                         <div key={t.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '7px 10px', border: `1px solid ${PANEL_BORDER}`, borderRadius: 8 }}>
-                          <span style={{ fontSize: 12.5, color: TEXT_DARK }}>{t.name} · {formatShiftHour(t.start_time)}–{formatShiftHour(t.end_time)}</span>
+                          <span style={{ fontSize: 12.5, color: TEXT_DARK }}>{t.name} · {formatShiftHour(t.start_time)} – {formatShiftHour(t.end_time)}</span>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
                             <button
                               type="button"

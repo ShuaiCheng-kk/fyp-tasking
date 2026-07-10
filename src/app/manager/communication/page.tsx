@@ -94,12 +94,10 @@ const ACCENT_LIGHT = '#EFF6FF'
 
 function formatTime(iso: string) {
   const d = new Date(iso)
-  const now = new Date()
-  const diff = now.getTime() - d.getTime()
-  if (diff < 60000) return 'just now'
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`
-  if (diff < 86400000) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+  const day = String(d.getDate()).padStart(2, '0')
+  const month = d.toLocaleDateString([], { month: 'short' })
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }).replace(/\s/g, '')
+  return `${day} ${month}, ${time}`
 }
 
 

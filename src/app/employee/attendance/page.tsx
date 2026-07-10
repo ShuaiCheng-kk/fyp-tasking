@@ -484,7 +484,7 @@ export default function EmployeeAttendancePage() {
                           {formatDate(shift.shift.shift_date)} · {formatTime(shift.shift.start_time)} – {formatTime(shift.shift.end_time)}
                           {clockedIn && <> · In {formatTime(shift.record?.clock_in_time)}</>}
                           {onBreak && <> · On break since {formatTime(shift.record?.break_in_time)}</>}
-                          {breakDone && <> · Break {formatTime(shift.record?.break_in_time)}–{formatTime(shift.record?.break_out_time)}</>}
+                          {breakDone && <> · Break {formatTime(shift.record?.break_in_time)} – {formatTime(shift.record?.break_out_time)}</>}
                           {clockedOut && <> · Out {formatTime(shift.record?.clock_out_time)}</>}
                         </p>
                       </div>
@@ -853,8 +853,11 @@ export default function EmployeeAttendancePage() {
                       <div key={req.id} style={{ padding: '12px 16px', borderBottom: i < mySwaps.length - 1 ? `1px solid #F8FAFC` : 'none', display: 'flex', alignItems: 'center', gap: 10 }}>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontSize: 13, fontWeight: 600, color: TEXT }}>Swap with {req.counterpart_name}</div>
-                          <div style={{ fontSize: 11.5, color: MUTED }}>{req.requester_shift_title ?? 'Shift'} · {req.requester_shift_date ?? '—'} · {formatTime(req.requester_start_time)}–{formatTime(req.requester_end_time)}</div>
+                          <div style={{ fontSize: 11.5, color: MUTED }}>{req.requester_shift_title ?? 'Shift'} · {req.requester_shift_date ?? '—'} · {formatTime(req.requester_start_time)} – {formatTime(req.requester_end_time)}</div>
                           {req.reason && <div style={{ fontSize: 11.5, color: '#4B5563', marginTop: 2 }}>{req.reason}</div>}
+                          {req.owner_review_reason && (
+                            <span style={{ display: 'inline-block', marginTop: 4, fontSize: 10.5, fontWeight: 700, color: '#B91C1C', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 999, padding: '2px 8px' }}>{req.owner_review_reason}</span>
+                          )}
                         </div>
                         {statusChip(req.status)}
                       </div>

@@ -601,11 +601,14 @@ export default function OwnerAttendancePage() {
                           <strong style={{ fontSize: '0.875rem', color: '#111827' }}>{request.counterpart_name}</strong>
                         </div>
                         <p style={{ margin: 0, fontSize: '0.775rem', color: '#6B7280' }}>
-                          {request.requester_shift_title ?? 'Shift'} · {request.requester_shift_date ?? '—'} · {formatTime(request.requester_start_time)}–{formatTime(request.requester_end_time)}
+                          {request.requester_shift_title ?? 'Shift'} · {request.requester_shift_date ?? '—'} · {formatTime(request.requester_start_time)} – {formatTime(request.requester_end_time)}
                         </p>
                       </div>
                       <span style={{ background: color.bg, color: color.text, borderRadius: 999, padding: '2px 9px', fontSize: '0.65rem', fontWeight: 900, flexShrink: 0, height: 'fit-content' }}>{request.status}</span>
                     </div>
+                    {request.owner_review_reason && (
+                      <span style={{ display: 'inline-block', margin: '0 0 8px', fontSize: '0.68rem', fontWeight: 700, color: '#B91C1C', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 999, padding: '3px 10px' }}>{request.owner_review_reason}</span>
+                    )}
                     {request.reason && (
                       <p style={{ margin: '0 0 10px', fontSize: '0.78rem', color: '#4B5563', lineHeight: 1.4 }}>{request.reason}</p>
                     )}
@@ -642,7 +645,7 @@ export default function OwnerAttendancePage() {
                         <strong style={{ fontSize: '0.875rem', color: '#111827', textTransform: 'capitalize' }}>{request.request_type.replace('_', ' ')}</strong>
                         <p style={{ margin: '3px 0 0', fontSize: '0.775rem', color: '#374151', fontWeight: 600 }}>{request.requester_name}</p>
                         <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: '#6B7280' }}>
-                          {request.shift_date ?? '—'} · {formatTime(request.start_time)}–{formatTime(request.end_time)}
+                          {request.shift_date ?? '—'} · {formatTime(request.start_time)} – {formatTime(request.end_time)}
                         </p>
                       </div>
                       <span style={{ background: color.bg, color: color.text, borderRadius: 999, padding: '2px 9px', fontSize: '0.65rem', fontWeight: 900, flexShrink: 0, height: 'fit-content' }}>{request.status}</span>

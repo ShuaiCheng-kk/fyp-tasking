@@ -338,3 +338,130 @@ describe('requestAISuggestService.suggestFixedOffDayGroup', () => {
     expect(ownerTeamRepository.findManagersByDepartment).not.toHaveBeenCalled()
   })
 })
+
+// Rows as the queue analysis receives them — FixedOffDayRequestView shape (base row + the
+// requester_name/requester_role/department_id the Owner view resolves).
+function queueRow(overrides: Partial<{
+  id: string; user_id: string; request_date: string; week_start: string; status: string
+  created_at: string; requester_name: string; requester_role: string; department_id: string | null
+}> = {}) {
+  return {
+    id: `row-${Math.random()}`,
+    company_id: 'company-1',
+    week_start: '2026-07-13',
+    source: 'submitted',
+    reviewed_by: null,
+    reviewed_at: null,
+    created_at: '2026-07-08T01:00:00Z',
+    user_id: 'mgr-1',
+    request_date: '2026-07-13',
+    status: 'pending',
+    requester_name: 'Manager One',
+    requester_role: 'Manager',
+    department_id: 'dept-ops',
+    ...overrides,
+  } as any
+}
+
+describe('requestAISuggestService.suggestFixedOffDayQueue', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(ownerTeamRepository.findManagersByDepartment).mockResolvedValue([
+      { id: 'mgr-1', full_name: 'Manager One' },
+      { id: 'mgr-2', full_name: 'Manager Two' },
+    ])
+    vi.mocked(attendanceRepository.getEmployeesByCompany).mockResolvedValue([
+      { id: 'emp-1', full_name: 'Employee One', department_id: 'dept-ops' },
+      { id: 'emp-2', full_name: 'Employee Two', department_id: 'dept-ops' },
+    ] as any)
+  })
+
+  // The heart of the feature: the first submitter always comes back safe, and once their day is
+  // (simulated-)taken, a later submitter colliding with it gets flagged instead — without a single
+  // per-request Suggestion click.
+  it('marks the earlier submitter safe and flags a later one colliding with the now-taken day', async () => {
+    const result = await requestAISuggestService.suggestFixedOffDayQueue({
+      company_id: 'company-1',
+      rows: [
+        queueRow({ user_id: 'mgr-1', requester_name: 'Manager One', request_date: '2026-07-14', created_at: '2026-07-08T01:00:00Z' }),
+        queueRow({ user_id: 'mgr-2', requester_name: 'Manager Two', request_date: '2026-07-14', created_at: '2026-07-08T02:00:00Z' }),
+      ],
+    })
+
+    expect(result.safe_count).toBe(1)
+    expect(result.flagged_count).toBe(1)
+    const [first, second] = result.items
+    expect(first.key).toBe('mgr-1_2026-07-13')
+    expect(first.verdict).toBe('safe')
+    expect(first.suggested_dates).toEqual(['2026-07-14'])
+    expect(second.key).toBe('mgr-2_2026-07-13')
+    expect(second.verdict).toBe('flagged')
+    expect(second.problem_dates).toEqual(['2026-07-14'])
+    expect(second.problem_reasons['2026-07-14']).toBe('Tuesday [14 Jul] already has too many managers off.')
+    // Recommended replacement: the contested Tuesday swapped for the first staffing-safe day (Monday).
+    expect(second.suggested_dates).toEqual(['2026-07-13'])
+  })
+
+  it('orders the queue by submission time, not by row order — the earlier submitter wins the contested day', async () => {
+    const result = await requestAISuggestService.suggestFixedOffDayQueue({
+      company_id: 'company-1',
+      rows: [
+        queueRow({ user_id: 'mgr-1', request_date: '2026-07-14', created_at: '2026-07-08T02:00:00Z' }),
+        queueRow({ user_id: 'mgr-2', requester_name: 'Manager Two', request_date: '2026-07-14', created_at: '2026-07-08T01:00:00Z' }),
+      ],
+    })
+
+    expect(result.items[0].key).toBe('mgr-2_2026-07-13')
+    expect(result.items[0].verdict).toBe('safe')
+    expect(result.items[1].key).toBe('mgr-1_2026-07-13')
+    expect(result.items[1].verdict).toBe('flagged')
+  })
+
+  // A weekly submission is decided as one unit: one bad date flags the whole group, and a flagged
+  // group must NOT reserve its safe dates either (it isn't being approved), so a later request for
+  // one of those dates stays safe.
+  it('flags a whole group on one bad date and does not let the flagged group reserve its other dates', async () => {
+    const result = await requestAISuggestService.suggestFixedOffDayQueue({
+      company_id: 'company-1',
+      rows: [
+        queueRow({ id: 'a1', user_id: 'mgr-1', request_date: '2026-07-14', created_at: '2026-07-08T01:00:00Z' }),
+        queueRow({ id: 'b1', user_id: 'mgr-2', requester_name: 'Manager Two', request_date: '2026-07-14', created_at: '2026-07-08T02:00:00Z' }),
+        queueRow({ id: 'b2', user_id: 'mgr-2', requester_name: 'Manager Two', request_date: '2026-07-15', created_at: '2026-07-08T02:00:00Z' }),
+        queueRow({ id: 'c1', user_id: 'emp-1', requester_name: 'Employee One', requester_role: 'Employee', request_date: '2026-07-15', created_at: '2026-07-08T03:00:00Z' }),
+      ],
+    })
+
+    const flagged = result.items.find(i => i.user_id === 'mgr-2')!
+    expect(flagged.verdict).toBe('flagged')
+    expect(flagged.ids).toEqual(['b1', 'b2'])
+    // Only the contested Tuesday is the problem — Wednesday was fine as requested.
+    expect(flagged.problem_dates).toEqual(['2026-07-14'])
+    // Recommendation keeps the safe Wednesday and swaps Tuesday for the first safe day (Monday).
+    expect(flagged.suggested_dates).toEqual(['2026-07-15', '2026-07-13'])
+    // And the employee requesting Wednesday is judged against the employee pool, not the managers'.
+    expect(result.items.find(i => i.user_id === 'emp-1')!.verdict).toBe('safe')
+  })
+
+  it('counts already-decided off-days as reserved before the queue even starts', async () => {
+    const result = await requestAISuggestService.suggestFixedOffDayQueue({
+      company_id: 'company-1',
+      rows: [
+        queueRow({ user_id: 'mgr-2', request_date: '2026-07-14', status: 'approved' }),
+        queueRow({ user_id: 'mgr-1', request_date: '2026-07-14', created_at: '2026-07-08T01:00:00Z' }),
+      ],
+    })
+
+    expect(result.items).toHaveLength(1)
+    expect(result.items[0].verdict).toBe('flagged')
+  })
+
+  it('treats a requester without a department as safe and skips roster lookups when the queue has no departments', async () => {
+    const result = await requestAISuggestService.suggestFixedOffDayQueue({
+      company_id: 'company-1',
+      rows: [queueRow({ department_id: null })],
+    })
+
+    expect(result.items[0].verdict).toBe('safe')
+    expect(ownerTeamRepository.findManagersByDepartment).not.toHaveBeenCalled()
+  })
+})

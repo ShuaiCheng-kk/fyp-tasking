@@ -4,7 +4,7 @@
 import { supabase } from '@/lib/supabase'
 import { ShiftSwapSettings, ShiftSwapSettingsUpsertInput } from '@/types/Attendance'
 
-const SETTINGS_COLUMNS = 'company_id, auto_approval_enabled, monthly_swap_limit, deadline_weekday, deadline_time, require_review_on_limit_exceeded, require_review_on_deadline_exceeded, updated_by, updated_at'
+const SETTINGS_COLUMNS = 'company_id, auto_approval_enabled, monthly_swap_limit, deadline_hours_before_shift, require_review_on_limit_exceeded, require_review_on_deadline_exceeded, updated_by, updated_at'
 
 export const shiftSwapSettingsRepository = {
   async getSettings(company_id: string): Promise<ShiftSwapSettings | null> {
@@ -24,8 +24,7 @@ export const shiftSwapSettingsRepository = {
         company_id: input.company_id,
         auto_approval_enabled: input.auto_approval_enabled,
         monthly_swap_limit: input.monthly_swap_limit,
-        deadline_weekday: input.deadline_weekday,
-        deadline_time: input.deadline_time,
+        deadline_hours_before_shift: input.deadline_hours_before_shift,
         require_review_on_limit_exceeded: input.require_review_on_limit_exceeded,
         require_review_on_deadline_exceeded: input.require_review_on_deadline_exceeded,
         updated_by: input.updated_by,

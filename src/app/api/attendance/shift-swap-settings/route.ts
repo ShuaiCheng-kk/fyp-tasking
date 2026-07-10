@@ -45,20 +45,18 @@ export async function POST(req: NextRequest) {
         typeof b.owner_id !== 'string' ||
         typeof b.auto_approval_enabled !== 'boolean' ||
         (b.monthly_swap_limit !== null && typeof b.monthly_swap_limit !== 'number') ||
-        (b.deadline_weekday !== null && typeof b.deadline_weekday !== 'number') ||
-        (b.deadline_time !== null && typeof b.deadline_time !== 'string') ||
+        (b.deadline_hours_before_shift !== null && typeof b.deadline_hours_before_shift !== 'number') ||
         typeof b.require_review_on_limit_exceeded !== 'boolean' ||
         typeof b.require_review_on_deadline_exceeded !== 'boolean'
       ) {
-        return NextResponse.json({ success: false, message: 'company_id, owner_id, auto_approval_enabled, monthly_swap_limit, deadline_weekday, deadline_time, require_review_on_limit_exceeded and require_review_on_deadline_exceeded are required' }, { status: 400 })
+        return NextResponse.json({ success: false, message: 'company_id, owner_id, auto_approval_enabled, monthly_swap_limit, deadline_hours_before_shift, require_review_on_limit_exceeded and require_review_on_deadline_exceeded are required' }, { status: 400 })
       }
       const settings = await shiftSwapSettingsService.setSettings({
         company_id: b.company_id,
         owner_id: b.owner_id,
         auto_approval_enabled: b.auto_approval_enabled,
         monthly_swap_limit: b.monthly_swap_limit as number | null,
-        deadline_weekday: b.deadline_weekday as number | null,
-        deadline_time: b.deadline_time as string | null,
+        deadline_hours_before_shift: b.deadline_hours_before_shift as number | null,
         require_review_on_limit_exceeded: b.require_review_on_limit_exceeded,
         require_review_on_deadline_exceeded: b.require_review_on_deadline_exceeded,
       })

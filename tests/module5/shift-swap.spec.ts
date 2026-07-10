@@ -117,17 +117,14 @@ test('POST /api/attendance — submit_shift_swap creates a pending request', asy
   swapRequestId = body.request.id
 })
 
-test('GET /api/attendance?resource=shift_swaps — returns the request with both shift details', async ({ request }) => {
+test('GET /api/attendance?resource=shift_swaps — hides a request still awaiting the counterpart', async ({ request }) => {
+  // The reviewer's queue only shows swaps both parties have agreed on — a freshly submitted
+  // request (counterpart hasn't answered yet) must not clutter the Owner's list.
   const res = await request.get(`/api/attendance?company_id=${seeded.companyId}&resource=shift_swaps`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   expect(body.success).toBe(true)
-  const found = body.requests.find((r: { id: string }) => r.id === swapRequestId)
-  expect(found).toBeTruthy()
-  expect(found.requester_name).toBeTruthy()
-  expect(found.counterpart_name).toBeTruthy()
-  expect(found.requester_shift_date).toBeTruthy()
-  expect(found.counterpart_shift_date).toBeTruthy()
+  expect(body.requests.some((r: { id: string }) => r.id === swapRequestId)).toBe(false)
 })
 
 test('PATCH /api/attendance — respond_shift_swap counterpart approves', async ({ request }) => {
@@ -139,6 +136,19 @@ test('PATCH /api/attendance — respond_shift_swap counterpart approves', async 
   expect(body.success).toBe(true)
   expect(body.request.counterpart_status).toBe('approved')
   expect(body.request.status).toBe('pending')
+})
+
+test('GET /api/attendance?resource=shift_swaps — surfaces the request with both shift details once the counterpart accepts', async ({ request }) => {
+  const res = await request.get(`/api/attendance?company_id=${seeded.companyId}&resource=shift_swaps`)
+  expect(res.status()).toBe(200)
+  const body = await res.json()
+  expect(body.success).toBe(true)
+  const found = body.requests.find((r: { id: string }) => r.id === swapRequestId)
+  expect(found).toBeTruthy()
+  expect(found.requester_name).toBeTruthy()
+  expect(found.counterpart_name).toBeTruthy()
+  expect(found.requester_shift_date).toBeTruthy()
+  expect(found.counterpart_shift_date).toBeTruthy()
 })
 
 test('PATCH /api/attendance — decide_shift_swap owner approves and swaps assignments', async ({ request }) => {
@@ -668,7 +678,7 @@ test.describe('Shift swap — auto-approval settings', () => {
       data: {
         action: 'set_settings', company_id: seeded8.companyId, owner_id: seeded8.ownerId,
         auto_approval_enabled: true, monthly_swap_limit: null,
-        deadline_weekday: null, deadline_time: null,
+        deadline_hours_before_shift: null,
         require_review_on_limit_exceeded: true, require_review_on_deadline_exceeded: true,
       },
     })
@@ -703,13 +713,14 @@ test.describe('Shift swap — auto-approval settings', () => {
     expect(asnB?.user_id).toBe(mgrP)
   })
 
-  test('blocks submission outright once a party hits the monthly swap limit, when review-on-limit is off', async ({ request }) => {
-    // mgrP already used its one approved swap above — a limit of 1 puts it at capacity.
+  test('auto-rejects at accept time once a party hits the monthly limit of SUCCESSFUL swaps, when the rule action is Auto Reject', async ({ request }) => {
+    // mgrP already completed its one successful swap above — a limit of 1 puts it at capacity.
+    // Submission itself must still succeed: rules are evaluated when the counterpart accepts.
     const settingsRes = await request.post('/api/attendance/shift-swap-settings', {
       data: {
         action: 'set_settings', company_id: seeded8.companyId, owner_id: seeded8.ownerId,
         auto_approval_enabled: true, monthly_swap_limit: 1,
-        deadline_weekday: null, deadline_time: null,
+        deadline_hours_before_shift: null,
         require_review_on_limit_exceeded: false, require_review_on_deadline_exceeded: true,
       },
     })
@@ -722,21 +733,31 @@ test.describe('Shift swap — auto-approval settings', () => {
         action: 'submit_shift_swap', company_id: seeded8.companyId,
         requester_id: mgrP, requester_assignment_id: assignmentA,
         counterpart_id: mgrR, counterpart_assignment_id: assignmentB,
-        reason: 'Should be blocked by monthly limit',
+        reason: 'Over the monthly limit — should auto-reject on accept',
       },
     })
-    expect(submitRes.status()).toBe(400)
-    const body = await submitRes.json()
-    expect(body.success).toBe(false)
-    expect(body.message).toContain('Monthly shift swap limit')
+    expect(submitRes.status()).toBe(200)
+    const swapId = (await submitRes.json()).request.id as string
+
+    const respondRes = await request.patch('/api/attendance', {
+      data: { action: 'respond_shift_swap', id: swapId, counterpart_id: mgrR, decision: 'approved' },
+    })
+    expect(respondRes.status()).toBe(200)
+    const respondBody = await respondRes.json()
+    expect(respondBody.request.status).toBe('rejected')
+    expect(respondBody.request.owner_review_reason).toBe('Monthly swap limit exceeded')
+
+    // Shifts stayed put
+    const { data: asnA } = await admin.from('shift_assignments').select('user_id').eq('id', assignmentA).single()
+    expect(asnA?.user_id).toBe(mgrP)
   })
 
-  test('allows submission but routes to the Owner for manual decision when the monthly limit is exceeded and review-on-limit is on', async ({ request }) => {
+  test('escalates to the Owner with a reason when the monthly limit is exceeded and the rule action is Send to Owner', async ({ request }) => {
     const settingsRes = await request.post('/api/attendance/shift-swap-settings', {
       data: {
         action: 'set_settings', company_id: seeded8.companyId, owner_id: seeded8.ownerId,
         auto_approval_enabled: true, monthly_swap_limit: 1,
-        deadline_weekday: null, deadline_time: null,
+        deadline_hours_before_shift: null,
         require_review_on_limit_exceeded: true, require_review_on_deadline_exceeded: true,
       },
     })
@@ -760,10 +781,13 @@ test.describe('Shift swap — auto-approval settings', () => {
     })
     expect(respondRes.status()).toBe(200)
     const respondBody = await respondRes.json()
-    // Both parties agreed, but it must still wait for the Owner — auto-approval is skipped
-    // because this request was flagged requires_owner_review at submission time.
+    // Both parties agreed, but the limit breach (evaluated NOW, at accept time) sends it to the
+    // Owner instead of auto-approving, with the reason recorded on the request.
     expect(respondBody.request.status).toBe('pending')
+    expect(respondBody.request.requires_owner_review).toBe(true)
+    expect(respondBody.request.owner_review_reason).toBe('Monthly swap limit exceeded')
 
+    // The Owner can still approve the exception manually
     const decideRes = await request.patch('/api/attendance', {
       data: { action: 'decide_shift_swap', id: swapId, reviewer_id: seeded8.ownerId, decision: 'approved' },
     })
@@ -771,12 +795,105 @@ test.describe('Shift swap — auto-approval settings', () => {
     expect((await decideRes.json()).request.status).toBe('approved')
   })
 
+  test('escalates to the Owner when accepted less than N hours before the earliest shift', async ({ request }) => {
+    // Shifts are tomorrow/day-after (< 72h away), so a 72h deadline is always already passed.
+    const settingsRes = await request.post('/api/attendance/shift-swap-settings', {
+      data: {
+        action: 'set_settings', company_id: seeded8.companyId, owner_id: seeded8.ownerId,
+        auto_approval_enabled: true, monthly_swap_limit: null,
+        deadline_hours_before_shift: 72,
+        require_review_on_limit_exceeded: true, require_review_on_deadline_exceeded: true,
+      },
+    })
+    expect(settingsRes.status()).toBe(200)
+
+    const { assignmentA, assignmentB } = await makeSwapPair(mgrQ, mgrR)
+
+    const submitRes = await request.post('/api/attendance', {
+      data: {
+        action: 'submit_shift_swap', company_id: seeded8.companyId,
+        requester_id: mgrQ, requester_assignment_id: assignmentA,
+        counterpart_id: mgrR, counterpart_assignment_id: assignmentB,
+        reason: 'Too close to the shift',
+      },
+    })
+    expect(submitRes.status()).toBe(200)
+    const swapId = (await submitRes.json()).request.id as string
+
+    const respondRes = await request.patch('/api/attendance', {
+      data: { action: 'respond_shift_swap', id: swapId, counterpart_id: mgrR, decision: 'approved' },
+    })
+    expect(respondRes.status()).toBe(200)
+    const respondBody = await respondRes.json()
+    expect(respondBody.request.status).toBe('pending')
+    expect(respondBody.request.requires_owner_review).toBe(true)
+    expect(respondBody.request.owner_review_reason).toBe('Submitted after deadline')
+  })
+
+  test('a rejected swap does not use up monthly quota — only SUCCESSFUL swaps count', async ({ request }) => {
+    // Fresh pair with zero approved swaps and a limit of 1. Attempt 1 is rejected by the
+    // counterpart; under the old (approved+rejected) counting that would have used up both
+    // parties' quota — attempt 2 must still auto-approve because rejections don't count.
+    const settingsRes = await request.post('/api/attendance/shift-swap-settings', {
+      data: {
+        action: 'set_settings', company_id: seeded8.companyId, owner_id: seeded8.ownerId,
+        auto_approval_enabled: true, monthly_swap_limit: 1,
+        deadline_hours_before_shift: null,
+        require_review_on_limit_exceeded: true, require_review_on_deadline_exceeded: true,
+      },
+    })
+    expect(settingsRes.status()).toBe(200)
+
+    const mgrS = await createManager('AA-S', seeded8.companyId)
+    const mgrT = await createManager('AA-T', seeded8.companyId)
+    await admin.from('manager_departments').insert([
+      { manager_id: mgrS, department_id: departmentId8, company_id: seeded8.companyId, assigned_by: seeded8.ownerId },
+      { manager_id: mgrT, department_id: departmentId8, company_id: seeded8.companyId, assigned_by: seeded8.ownerId },
+    ])
+
+    // Attempt 1 — counterpart rejects
+    const pair1 = await makeSwapPair(mgrS, mgrT)
+    const submit1 = await request.post('/api/attendance', {
+      data: {
+        action: 'submit_shift_swap', company_id: seeded8.companyId,
+        requester_id: mgrS, requester_assignment_id: pair1.assignmentA,
+        counterpart_id: mgrT, counterpart_assignment_id: pair1.assignmentB,
+        reason: 'Will be rejected',
+      },
+    })
+    expect(submit1.status()).toBe(200)
+    const swap1 = (await submit1.json()).request.id as string
+    const reject1 = await request.patch('/api/attendance', {
+      data: { action: 'respond_shift_swap', id: swap1, counterpart_id: mgrT, decision: 'rejected' },
+    })
+    expect(reject1.status()).toBe(200)
+    expect((await reject1.json()).request.status).toBe('rejected')
+
+    // Attempt 2 — must still pass the limit check and auto-approve
+    const pair2 = await makeSwapPair(mgrS, mgrT)
+    const submit2 = await request.post('/api/attendance', {
+      data: {
+        action: 'submit_shift_swap', company_id: seeded8.companyId,
+        requester_id: mgrS, requester_assignment_id: pair2.assignmentA,
+        counterpart_id: mgrT, counterpart_assignment_id: pair2.assignmentB,
+        reason: 'Rejected attempts must not count',
+      },
+    })
+    expect(submit2.status()).toBe(200)
+    const swap2 = (await submit2.json()).request.id as string
+    const respond2 = await request.patch('/api/attendance', {
+      data: { action: 'respond_shift_swap', id: swap2, counterpart_id: mgrT, decision: 'approved' },
+    })
+    expect(respond2.status()).toBe(200)
+    expect((await respond2.json()).request.status).toBe('approved')
+  })
+
   test('rejects a non-Owner trying to change shift swap settings', async ({ request }) => {
     const res = await request.post('/api/attendance/shift-swap-settings', {
       data: {
         action: 'set_settings', company_id: seeded8.companyId, owner_id: mgrP,
         auto_approval_enabled: true, monthly_swap_limit: null,
-        deadline_weekday: null, deadline_time: null,
+        deadline_hours_before_shift: null,
         require_review_on_limit_exceeded: true, require_review_on_deadline_exceeded: true,
       },
     })

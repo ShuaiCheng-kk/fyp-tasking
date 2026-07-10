@@ -35,13 +35,14 @@ function formatDeadlineTime(value: string | null | undefined): string {
   const minutes = date.getMinutes()
   const hour12 = hours % 12 || 12
   const suffix = hours < 12 ? 'AM' : 'PM'
-  return minutes === 0 ? `${hour12}${suffix}` : `${hour12}:${String(minutes).padStart(2, '0')}${suffix}`
+  return `${String(hour12).padStart(2, '0')}:${String(minutes).padStart(2, '0')}${suffix}`
 }
 
 function formatDeadlineDisplay(value: string | null | undefined): string {
   const time = formatDeadlineTime(value)
   if (!time) return ''
-  const dayMonth = new Date(value!).toLocaleDateString('en-US', { day: 'numeric', month: 'long' })
+  const d = new Date(value!)
+  const dayMonth = `${String(d.getDate()).padStart(2, '0')} ${d.toLocaleDateString('en-US', { month: 'short' })}`
   return `${dayMonth}, ${time}`
 }
 
@@ -385,11 +386,13 @@ function isDueWithinHours(due: string, hours: number): boolean {
   return msRemaining > 0 && msRemaining <= hours * 60 * 60 * 1000
 }
 
+// "01 Jul 2026" — fixed 3-letter months (en-GB Intl renders September as "Sept")
+const DATE_DISPLAY_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 function formatDateDisplay(value: string | null | undefined, empty = '—'): string {
   if (!value) return empty
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return empty
-  return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(date)
+  return `${String(date.getDate()).padStart(2, '0')} ${DATE_DISPLAY_MONTHS[date.getMonth()]} ${date.getFullYear()}`
 }
 
 function formatShiftOptionLabel(shift: ShiftOption): string {
@@ -3225,6 +3228,10 @@ export default function OwnerTasksPage() {
         .task-dept-panel {
           animation: blockPopIn 0.42s cubic-bezier(0.34,1.56,0.64,1) both 0.05s;
         }
+        /* Sidebar sections + the small cards inside them pop in on tab switch, same feel as
+           the Departments panel / dept cards on the Kanban side. */
+        .task-side-section { animation: blockPopIn 0.42s cubic-bezier(0.34,1.56,0.64,1) both; }
+        .task-side-card { animation: cardStagger 0.30s ease both; }
         .task-board-panel {
           animation: blockSlideUp 0.38s ease both 0.12s;
         }
@@ -3383,11 +3390,13 @@ export default function OwnerTasksPage() {
             <div style={{ display: 'flex', gap: 16, alignItems: 'stretch', flex: 1, minHeight: 0 }}>
 
               {/* ── SIDEBAR PANEL ──────────────────────────────────────────── */}
-              <div style={{ width: 326, flexShrink: 0, alignSelf: 'flex-start', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {/* Keyed on the view mode so switching Kanban ⇄ Deadline Calendar replays the
+                  same tabContentIn entrance the board content gets — matching the Shifts page. */}
+              <div key={`sidebar-${boardViewMode}`} className="task-tab-content" style={{ width: 326, flexShrink: 0, alignSelf: 'flex-start', display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {boardViewMode === 'calendar' ? (
                 <>
                 {/* ── Deadline Summary (Deadline Calendar sidebar) ── */}
-                <section style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'hidden' }}>
+                <section className="task-side-section" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'hidden', animationDelay: '0.05s' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px', borderBottom: '1px solid #F3F4F6' }}>
                     <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       <CalendarClock size={15} style={{ color: '#F97316' }} />
@@ -3399,12 +3408,12 @@ export default function OwnerTasksPage() {
                       { key: 'overdue' as const, label: 'Overdue', count: deadlineSummary.overdue.length, icon: <AlertCircle size={14} />, iconBg: '#FEF2F2', iconColor: '#DC2626' },
                       { key: 'today' as const, label: 'Due Today', count: deadlineSummary.dueToday.length, icon: <Clock size={14} />, iconBg: '#FFF7ED', iconColor: '#EA580C' },
                       { key: 'week' as const, label: `Due ${deadlineSummary.weekEndLabel}`, count: deadlineSummary.dueThisWeek.length, icon: <CalendarDays size={14} />, iconBg: '#EEF2FF', iconColor: '#4F46E5' },
-                    ]).map(card => {
+                    ]).map((card, cardIdx) => {
                       const active = deadlineBucketFilter === card.key
                       const clickable = card.count > 0 || active
                       const ring = `0 0 0 2px #FFFFFF, 0 0 0 3.5px ${card.iconColor}`
                       return (
-                        <div key={card.key} style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#F9FAFB', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div key={card.key} className="task-side-card" style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#F9FAFB', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 10, animationDelay: `${0.12 + cardIdx * 0.06}s` }}>
                           <span style={{ width: 28, height: 28, borderRadius: 9, background: card.iconBg, color: card.iconColor, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                             {card.icon}
                           </span>
@@ -3435,7 +3444,7 @@ export default function OwnerTasksPage() {
                 </section>
 
                 {/* ── Filter (Deadline Calendar sidebar) ── */}
-                <section style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'hidden' }}>
+                <section className="task-side-section" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'hidden', animationDelay: '0.12s' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px', borderBottom: '1px solid #F3F4F6' }}>
                     <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       <FilterIcon size={15} style={{ color: '#F97316' }} />
@@ -3568,7 +3577,7 @@ export default function OwnerTasksPage() {
                 </>
                 ) : (
                 <>
-                <section style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'hidden' }}>
+                <section className="task-side-section" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'hidden', animationDelay: '0.05s' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px', borderBottom: '1px solid #F3F4F6' }}>
                     <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       <Bell size={15} style={{ color: '#F97316' }} />
@@ -3588,7 +3597,7 @@ export default function OwnerTasksPage() {
                     {(() => {
                       const hasIssue = workloadSuggestions.length > 0
                       return (
-                        <div style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#F9FAFB', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div className="task-side-card" style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#F9FAFB', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 10, animationDelay: '0.12s' }}>
                           <span style={{ width: 28, height: 28, borderRadius: 9, background: '#EEF2FF', color: '#4F46E5', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                             <ArrowRightLeft size={14} />
                           </span>
@@ -3614,7 +3623,7 @@ export default function OwnerTasksPage() {
                     {(() => {
                       const hasIssue = delayAlerts.length > 0
                       return (
-                        <div style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#F9FAFB', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div className="task-side-card" style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#F9FAFB', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 10, animationDelay: '0.18s' }}>
                           <span style={{ width: 28, height: 28, borderRadius: 9, background: hasIssue ? '#FEF2F2' : '#F0FDF4', color: hasIssue ? '#DC2626' : '#16A34A', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                             <Bell size={14} />
                           </span>
@@ -4855,7 +4864,8 @@ export default function OwnerTasksPage() {
                 { label: 'Department', value: departments.find(d => d.id === profileMember.department_id)?.name ?? '—' },
               ].map(field => (
                 <div key={field.label} style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
-                  <label style={{ display: 'block', fontWeight: 700, fontSize: '0.8125rem', color: '#374151', marginBottom: 4 }}>{field.label}</label>
+                  {/* matches the shared modalLabelStyle used by the Team member-profile modal */}
+                  <label style={{ display: 'block', fontWeight: 600, fontSize: '0.875rem', color: '#374151', marginBottom: 4 }}>{field.label}</label>
                   <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, sans-serif" }}>{field.value}</p>
                 </div>
               ))}
