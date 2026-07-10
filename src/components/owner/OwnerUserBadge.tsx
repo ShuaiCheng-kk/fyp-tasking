@@ -48,11 +48,13 @@ function BigAvatar({ photoUrl, name, size = 44 }: { photoUrl?: string | null; na
   )
 }
 
+// "01 Jul 2026" — fixed 3-letter months (en-GB Intl renders September as "Sept")
+const DATE_DISPLAY_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 function formatDateDisplay(value: string | null | undefined): string {
   if (!value) return '—'
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return '—'
-  return new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(d)
+  return `${String(d.getDate()).padStart(2, '0')} ${DATE_DISPLAY_MONTHS[d.getMonth()]} ${d.getFullYear()}`
 }
 
 const inputStyle: React.CSSProperties = {
@@ -60,9 +62,10 @@ const inputStyle: React.CSSProperties = {
   borderRadius: 8, fontSize: '0.9375rem', fontFamily: "'Inter', system-ui, sans-serif",
   color: '#111827', outline: 'none', boxSizing: 'border-box', background: '#FFFFFF',
 }
+// Matches the shared modalLabelStyle used by the Team member-profile modal
 const labelStyle: React.CSSProperties = {
-  display: 'block', fontWeight: 600, fontSize: '0.75rem',
-  color: '#6B7280', marginBottom: 4, letterSpacing: '0.05em',
+  display: 'block', fontWeight: 600, fontSize: '0.875rem',
+  color: '#374151', marginBottom: 4,
 }
 
 interface ProfileData {
@@ -236,21 +239,21 @@ export default function OwnerUserBadge({ userId, companyId }: { userId: string; 
               {/* Email — read only */}
               <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
                 <label style={labelStyle}>Email Address</label>
-                <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{profile?.email_address ?? '—'}</p>
+                <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, sans-serif" }}>{profile?.email_address ?? '—'}</p>
               </div>
               {/* Full Name */}
               <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
                 <label style={labelStyle}>Full Name</label>
                 {editing
                   ? <input value={name} onChange={e => setName(e.target.value)} style={inputStyle} autoFocus />
-                  : <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{profile?.full_name ?? '—'}</p>}
+                  : <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, sans-serif" }}>{profile?.full_name ?? '—'}</p>}
               </div>
               {/* Date of Birth */}
               <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
                 <label style={labelStyle}>Date of Birth</label>
                 {editing
                   ? <DatePickerField value={dob} onChange={setDob} placeholder="Select date" max={(() => { const d = new Date(); d.setFullYear(d.getFullYear() - 16); return d.toISOString().slice(0, 10) })()} />
-                  : <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{formatDateDisplay(profile?.date_of_birth)}</p>}
+                  : <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, sans-serif" }}>{formatDateDisplay(profile?.date_of_birth)}</p>}
               </div>
               {/* Phone */}
               <div style={{ padding: '14px 0', borderBottom: editing && error ? '1px solid #F3F4F6' : 'none' }}>
@@ -264,7 +267,7 @@ export default function OwnerUserBadge({ userId, companyId }: { userId: string; 
                       style={inputStyle}
                       placeholder="91234567"
                     />
-                  : <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{profile?.phone_number ?? '—'}</p>}
+                  : <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, sans-serif" }}>{profile?.phone_number ?? '—'}</p>}
               </div>
               {editing && error && (
                 <div style={{ padding: '12px 0 4px' }}>

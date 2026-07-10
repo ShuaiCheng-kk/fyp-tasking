@@ -24,6 +24,7 @@ import {
   ShiftSwapRequest,
   ShiftSwapRequestCreateInput,
   ShiftSwapRequestView,
+  ShiftSwapSettings,
   ShiftSwapWithdrawInput,
   TimeOffRequestView,
 } from '@/types/Attendance'
@@ -182,11 +183,14 @@ export function resolveDeadlineDateForWeek(weekStartKey: string, deadlineWeekday
   return addDays(weekStartKey, offsetFromMonday)
 }
 
-// Combines the deadline's weekday + time-of-day into the exact UTC instant submissions close,
-// matching this file's toISOString()-based "todayKey" convention throughout.
+// Combines the deadline's weekday + time-of-day into the exact instant submissions close.
+// deadline_time is the wall-clock time the Owner picked in the UI, so it is parsed WITHOUT a
+// 'Z' suffix — i.e. in the server's local timezone, which in dev/demo matches the user's.
+// (Shift start/end times elsewhere in this file stay UTC-anchored via combineDateTime because
+// they are only compared against other stored timestamps, never against a user-facing clock.)
 function resolveDeadlineMoment(weekStartKey: string, deadline: { deadline_weekday: number; deadline_time: string }): Date {
   const deadlineDate = resolveDeadlineDateForWeek(weekStartKey, deadline.deadline_weekday)
-  return new Date(`${deadlineDate}T${deadline.deadline_time}:00.000Z`)
+  return new Date(`${deadlineDate}T${deadline.deadline_time}:00`)
 }
 
 // The week currently open for submission — normally "this week + 7", but once that window's own
@@ -202,7 +206,7 @@ export function resolveActiveSubmissionWeekStart(todayKey: string, deadline: { d
   }
 }
 
-// [start, end) bounds of the current UTC calendar month, matching created_at's timestamptz storage.
+// [start, end) bounds of the current UTC calendar month, matching reviewed_at's timestamptz storage.
 function currentCalendarMonthRange(): { start: string; end: string } {
   const now = new Date()
   const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString()
@@ -210,50 +214,48 @@ function currentCalendarMonthRange(): { start: string; end: string } {
   return { start, end }
 }
 
-// Swap requests are near-term by construction (assertShiftIsSwappable already requires tomorrow
-// or later), so a deadline tied to the shift's own week would make almost every submission "late"
-// by definition. Instead this is a recurring weekly cutoff evaluated against submission time: once
-// [deadline_weekday, deadline_time] passes in the current week, new submissions are "late" until
-// the cycle resets the following Monday — same weekday+time picker as Weekly Day Off, different
-// (submission-time-relative, not shift-date-relative) meaning.
-function isShiftSwapPastDeadline(deadline: { deadline_weekday: number; deadline_time: string }): boolean {
-  const todayKey = new Date().toISOString().slice(0, 10)
-  const thisWeekStart = computeWeekStart(todayKey)
-  return Date.now() > resolveDeadlineMoment(thisWeekStart, deadline).getTime()
+export const SWAP_REASON_LIMIT_EXCEEDED = 'Monthly swap limit exceeded'
+export const SWAP_REASON_PAST_DEADLINE = 'Submitted after deadline'
+
+// The swap deadline is relative to the swap itself: the request must be fully agreed at least
+// N hours before the EARLIEST of the two shifts starts. Checked at counterpart-accept time.
+function isPastSwapDeadline(hoursBeforeShift: number, shifts: Shift[]): boolean {
+  const earliestStart = Math.min(...shifts.map(s => combineDateTime(s.shift_date, s.start_time).getTime()))
+  return Date.now() > earliestStart - hoursBeforeShift * 3_600_000
 }
 
-// Evaluated once at submission time (UC52). Returns whether the request must wait for manual
-// Owner review even after both parties accept. Throws instead when a breached rule's "require
-// owner review" checkbox is off — that rule is a hard submission block, not just a review flag.
-async function evaluateShiftSwapRuleBreach(input: {
-  company_id: string
-  requester_id: string
-  counterpart_id: string
-}): Promise<boolean> {
-  const settings = await shiftSwapSettingsRepository.getSettings(input.company_id)
-  if (!settings) return false
+type ShiftSwapRuleVerdict =
+  | { outcome: 'pass' }
+  | { outcome: 'escalate' | 'reject'; reason: string }
 
-  let limitExceeded = false
+// Evaluated when the counterpart ACCEPTS (not at submission) — the monthly count and the
+// deadline can both change while the request waits for the counterpart, so the state at the
+// moment both parties have agreed is the one that matters. Each rule's require_review_on_*
+// setting picks what a breach does: true = escalate to the Owner (with the reason recorded),
+// false = auto-reject the request outright.
+async function evaluateShiftSwapRules(
+  settings: ShiftSwapSettings | null,
+  request: ShiftSwapRequest,
+  shifts: Shift[],
+): Promise<ShiftSwapRuleVerdict> {
+  if (!settings) return { outcome: 'pass' }
+
   if (settings.monthly_swap_limit != null) {
     const { start, end } = currentCalendarMonthRange()
     const [requesterCount, counterpartCount] = await Promise.all([
-      attendanceRepository.countDecidedShiftSwapsForUser(input.company_id, input.requester_id, start, end),
-      attendanceRepository.countDecidedShiftSwapsForUser(input.company_id, input.counterpart_id, start, end),
+      attendanceRepository.countApprovedShiftSwapsForUser(request.company_id, request.requester_id, start, end),
+      attendanceRepository.countApprovedShiftSwapsForUser(request.company_id, request.counterpart_id, start, end),
     ])
-    limitExceeded = requesterCount >= settings.monthly_swap_limit || counterpartCount >= settings.monthly_swap_limit
+    if (requesterCount >= settings.monthly_swap_limit || counterpartCount >= settings.monthly_swap_limit) {
+      return { outcome: settings.require_review_on_limit_exceeded ? 'escalate' : 'reject', reason: SWAP_REASON_LIMIT_EXCEEDED }
+    }
   }
 
-  const deadlineExceeded = settings.deadline_weekday != null && settings.deadline_time != null &&
-    isShiftSwapPastDeadline({ deadline_weekday: settings.deadline_weekday, deadline_time: settings.deadline_time })
-
-  if (limitExceeded && !settings.require_review_on_limit_exceeded) {
-    throw new Error('Monthly shift swap limit reached for one of the parties. This request cannot be submitted.')
-  }
-  if (deadlineExceeded && !settings.require_review_on_deadline_exceeded) {
-    throw new Error('This swap request is past the submission deadline and cannot be submitted.')
+  if (settings.deadline_hours_before_shift != null && isPastSwapDeadline(settings.deadline_hours_before_shift, shifts)) {
+    return { outcome: settings.require_review_on_deadline_exceeded ? 'escalate' : 'reject', reason: SWAP_REASON_PAST_DEADLINE }
   }
 
-  return (limitExceeded && settings.require_review_on_limit_exceeded) || (deadlineExceeded && settings.require_review_on_deadline_exceeded)
+  return { outcome: 'pass' }
 }
 
 async function resolveDepartmentIdsByUser(
@@ -545,18 +547,21 @@ export const attendanceService = {
       req.status = 'rejected'
     }))
 
-    let requests = allRequests
+    // Requests still waiting for the counterpart's answer are hidden from every approval queue —
+    // the reviewer only sees a swap once both parties have agreed (or it's already decided).
+    // Requesters still see their own awaiting requests via getMyRequests.
+    let requests = allRequests.filter(req => !(req.status === 'pending' && req.counterpart_status === 'pending'))
     if (options?.managerId) {
       const managedDeptIds = new Set(
         (await ownerTeamRepository.findManagerDepartments(options.managerId, company_id)).map(d => d.department_id),
       )
-      requests = allRequests.filter(req => {
+      requests = requests.filter(req => {
         if (usersById.get(req.requester_id)?.role !== 'Employee') return false
         const deptId = assignmentsById.get(req.requester_assignment_id)?.shifts?.department_id
         return !!deptId && managedDeptIds.has(deptId)
       })
     } else {
-      requests = allRequests.filter(req => usersById.get(req.requester_id)?.role !== 'Employee')
+      requests = requests.filter(req => usersById.get(req.requester_id)?.role !== 'Employee')
     }
     if (requests.length === 0) return []
 
@@ -586,12 +591,31 @@ export const attendanceService = {
     const depts = await attendanceRepository.getDepartmentsByIds(deptIds)
     const deptsById = new Map(depts.map(d => [d.id, d.name]))
 
+    // Live rule check for the reviewer, per pending request — evaluated NOW rather than reusing
+    // the accept-time verdict, because the Owner may have configured (or changed) the settings
+    // after these requests arrived. Also computes each party's remaining monthly quota so the
+    // reviewer can see e.g. "David 2/3 left, Rachel 0/3 left" while deciding.
+    const settings = await shiftSwapSettingsRepository.getSettings(company_id)
+    const swapsLeftByUser = new Map<string, number>()
+    if (settings?.monthly_swap_limit != null) {
+      const pendingUserIds = [...new Set(requests.filter(r => r.status === 'pending').flatMap(r => [r.requester_id, r.counterpart_id]))]
+      const { start, end } = currentCalendarMonthRange()
+      await Promise.all(pendingUserIds.map(async userId => {
+        const used = await attendanceRepository.countApprovedShiftSwapsForUser(company_id, userId, start, end)
+        swapsLeftByUser.set(userId, Math.max(0, settings.monthly_swap_limit! - used))
+      }))
+    }
+
     return requests.map(req => {
       const reqAss = assignmentsById.get(req.requester_assignment_id)
       const ctrAss = assignmentsById.get(req.counterpart_assignment_id)
       const requester = usersById.get(req.requester_id)
       const counterpart = usersById.get(req.counterpart_id)
       const deptName = deptsById.get(reqAss?.shifts?.department_id ?? '') ?? null
+      const isPending = req.status === 'pending'
+      const requesterSwapsLeft = isPending && settings?.monthly_swap_limit != null ? swapsLeftByUser.get(req.requester_id) ?? null : null
+      const counterpartSwapsLeft = isPending && settings?.monthly_swap_limit != null ? swapsLeftByUser.get(req.counterpart_id) ?? null : null
+      const ruleShifts = [reqAss?.shifts, ctrAss?.shifts].filter(Boolean) as Shift[]
       return {
         ...req,
         requester_name: requester?.full_name ?? 'Unknown',
@@ -613,6 +637,15 @@ export const attendanceService = {
         counterpart_task_count: taskCountById.get(req.counterpart_assignment_id) ?? 0,
         requester_movable_tasks: movableTasksById.get(req.requester_assignment_id) ?? [],
         counterpart_movable_tasks: movableTasksById.get(req.counterpart_assignment_id) ?? [],
+        monthly_swap_limit: settings?.monthly_swap_limit ?? null,
+        requester_swaps_left: requesterSwapsLeft,
+        counterpart_swaps_left: counterpartSwapsLeft,
+        limit_exceeded: isPending && settings?.monthly_swap_limit != null
+          ? (requesterSwapsLeft ?? 0) <= 0 || (counterpartSwapsLeft ?? 0) <= 0
+          : null,
+        deadline_exceeded: isPending && settings?.deadline_hours_before_shift != null && ruleShifts.length > 0
+          ? isPastSwapDeadline(settings.deadline_hours_before_shift, ruleShifts)
+          : null,
       }
     })
   },
@@ -761,13 +794,9 @@ export const attendanceService = {
     if (reqLocks.length > 0) throw new Error('Your shift already has a pending swap request')
     if (ctrLocks.length > 0) throw new Error('The counterpart shift already has a pending swap request')
 
-    const requiresOwnerReview = await evaluateShiftSwapRuleBreach({
-      company_id: input.company_id,
-      requester_id: input.requester_id,
-      counterpart_id: input.counterpart_id,
-    })
-
-    return attendanceRepository.createShiftSwapRequest({ ...input, requires_owner_review: requiresOwnerReview })
+    // Limit/deadline rules are deliberately NOT checked here — they're evaluated when the
+    // counterpart accepts (evaluateShiftSwapRules), since both can change while this waits.
+    return attendanceRepository.createShiftSwapRequest(input)
   },
 
   // Counterpart responds to a swap request
@@ -788,17 +817,34 @@ export const attendanceService = {
     if (input.decision === 'rejected') fields.status = 'rejected'
 
     const updated = await attendanceRepository.updateShiftSwapRequest(input.id, fields)
+    if (input.decision !== 'approved') return updated
 
-    // Both parties have now agreed — auto-approve immediately if the company has auto-approval
-    // on and this request didn't trip a rule that requires manual Owner review (evaluated at
-    // submission time and stored on the row as requires_owner_review).
-    if (input.decision === 'approved') {
-      const settings = await shiftSwapSettingsRepository.getSettings(request.company_id)
-      if (settings?.auto_approval_enabled && !request.requires_owner_review) {
-        return finalizeApprovedShiftSwap({ ...request, counterpart_status: 'approved' }, null)
-      }
+    // Both parties have now agreed — THIS is when the limit/deadline rules are evaluated
+    // (not at submission), so the verdict reflects the state at agreement time.
+    const [reqAss, ctrAss] = await Promise.all([
+      attendanceRepository.getShiftAssignmentById(request.requester_assignment_id),
+      attendanceRepository.getShiftAssignmentById(request.counterpart_assignment_id),
+    ])
+    const shifts = [reqAss?.shifts, ctrAss?.shifts].filter(Boolean) as Shift[]
+    const settings = await shiftSwapSettingsRepository.getSettings(request.company_id)
+    const verdict = await evaluateShiftSwapRules(settings, request, shifts)
+
+    if (verdict.outcome === 'reject') {
+      return attendanceRepository.updateShiftSwapRequest(input.id, {
+        status: 'rejected',
+        reviewed_at: new Date().toISOString(),
+        owner_review_reason: verdict.reason,
+      })
     }
-
+    if (verdict.outcome === 'escalate') {
+      return attendanceRepository.updateShiftSwapRequest(input.id, {
+        requires_owner_review: true,
+        owner_review_reason: verdict.reason,
+      })
+    }
+    if (settings?.auto_approval_enabled) {
+      return finalizeApprovedShiftSwap({ ...request, counterpart_status: 'approved' }, null)
+    }
     return updated
   },
 

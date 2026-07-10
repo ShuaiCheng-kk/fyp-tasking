@@ -44,6 +44,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, suggestion })
     }
 
+    // Whole-queue pass: every pending weekly submission for the company, walked in submission
+    // order — returns a safe/flagged verdict per submission so the safe ones can be bulk-approved.
+    if (request_type === 'fixed_off_day_queue') {
+      const rows = await attendanceService.getFixedOffDayRequests(company_id)
+      const suggestion = await requestAISuggestService.suggestFixedOffDayQueue({ company_id, rows })
+      return NextResponse.json({ success: true, suggestion })
+    }
+
     return NextResponse.json({ success: false, message: 'Unsupported request_type' }, { status: 400 })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'AI suggestion failed'

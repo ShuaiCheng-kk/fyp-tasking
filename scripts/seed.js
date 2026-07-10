@@ -251,10 +251,19 @@ async function main() {
   else console.log('  ✓ 清空 companies')
 
   // ── Step 2: 删除旧 auth 账号 ──────────────────────────────────────────────
+  // auth 用户可能远超 1000（Playwright 集成测试会不断创建一次性账号），listUsers 单页
+  // 最多返回 1000 条 —— 必须翻页取全量，否则 Step 2b 会漏找 madmin/uadmin 而重复创建。
   console.log('\nStep 2: 删除旧 auth 账号...')
-  const { data: existingUsers } = await supabase.auth.admin.listUsers({ perPage: 1000 })
+  const allAuthUsers = []
+  for (let page = 1; ; page++) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 1000 })
+    if (error) { console.warn(`  ⚠ listUsers 第 ${page} 页失败: ${error.message}`); break }
+    allAuthUsers.push(...(data?.users ?? []))
+    if (!data?.users?.length || data.users.length < 1000) break
+  }
+  console.log(`  · auth 用户总数: ${allAuthUsers.length}`)
   const testEmails = new Set(legacyTestEmailsToDelete)
-  for (const u of (existingUsers?.users ?? [])) {
+  for (const u of allAuthUsers) {
     if (testEmails.has(u.email)) {
       await supabase.auth.admin.deleteUser(u.id)
       console.log(`  ✓ 删除 auth: ${u.email}`)
@@ -266,7 +275,7 @@ async function main() {
   // 重跑都是"不存在才创建"，绝不删除重建，避免撞上 protect_admin_accounts 触发器。
   console.log('\nStep 2b: 确保平台级 Admin 账号存在...')
   for (const admin of platformAdmins) {
-    let authId = existingUsers?.users?.find(u => u.email === admin.email)?.id
+    let authId = allAuthUsers.find(u => u.email === admin.email)?.id
 
     if (!authId) {
       const { data, error } = await supabase.auth.admin.createUser({
@@ -1094,9 +1103,35 @@ async function main() {
   console.log(`  TaskTmpl:    ${taskTemplateCount} 条 task_templates`)
 
   // ── Step 14: Shift Swap Requests（大量数据填满 Action Needed + Processed Requests）──
+  // 严格贴合 attendanceService 的真实规则：
+  //   · assertShiftIsSwappable — 可换的班最早是"明天"，今天的班一进列表就会被
+  //     autoExpireSwapRequestIfNeeded 自动 reject，所以候选池只取明天及以后的班。
+  //   · 同一个 shift_assignment 同时只能挂一个 pending 请求（requester 和 counterpart
+  //     两侧都算），用 lockedPendingAssignmentIds 统一去重。
+  //   · 同部门 + 同角色才能互换（submitShiftSwapRequest 校验）。
+  //   · Owner 页有两种 pending：counterpart 已同意的 Action Needed + 还在等
+  //     counterpart 回复的 Awaiting Counterpart，两种都要有数据。
   console.log('\nStep 14: 生成 Shift Swap Requests...')
+
+  // Owner-configured swap rules（对应 Shift Swap Settings 弹窗）：人工审批、每人每月最多
+  // 3 次成功换班、最早班次开始前 48 小时截止，两条规则违规都升级 Owner 而不是自动拒绝。
+  // 48h 是刻意选的：让"明天开始的班"无论脚本几点跑都必然踩线（距现在 <33h），而
+  // "TODAY+3 之后开始的班"必然合规（距现在 >57h）—— 下面的 Rule Check 场景才能确定复现。
+  const { error: swapSettingsErr } = await supabase.from('shift_swap_settings').insert({
+    company_id: company.id,
+    auto_approval_enabled: false,
+    monthly_swap_limit: 3,
+    deadline_hours_before_shift: 48,
+    require_review_on_limit_exceeded: true,
+    require_review_on_deadline_exceeded: true,
+    updated_by: ownerUser.id,
+  })
+  if (swapSettingsErr) console.warn(`  ⚠ 生成 shift_swap_settings 失败: ${swapSettingsErr.message}`)
+  else console.log('  ✓ 生成 shift_swap_settings（人工审批，limit 3/月，deadline 48h，违规升级 Owner）')
+
   let swapCount = 0
-  const futureAssignments = assignmentInfo.filter(a => !a.isPast)
+  const tomorrowKey = dateKey(addDays(TODAY, 1))
+  const futureAssignments = assignmentInfo.filter(a => !a.isPast && a.shiftDate >= tomorrowKey)
   const futureAssignmentsByEmail = new Map()
   for (const assignment of futureAssignments) {
     if (!futureAssignmentsByEmail.has(assignment.email)) futureAssignmentsByEmail.set(assignment.email, [])
@@ -1105,26 +1140,34 @@ async function main() {
   for (const list of futureAssignmentsByEmail.values()) {
     list.sort((a, b) => a.shiftDate.localeCompare(b.shiftDate) || a.startTime.localeCompare(b.startTime))
   }
-  const pickDifferentDateAndTimeSwap = (requesterEmail, counterpartEmail, seed = 0, excludedCounterpartAssignmentIds = new Set()) => {
-    const requesterAssignments = futureAssignmentsByEmail.get(requesterEmail) ?? []
-    const counterpartAssignments = futureAssignmentsByEmail.get(counterpartEmail) ?? []
+  const pickDifferentDateAndTimeSwap = (requesterEmail, counterpartEmail, seed = 0, lockedAssignmentIds = new Set(), poolByEmail = futureAssignmentsByEmail) => {
+    const requesterAssignments = poolByEmail.get(requesterEmail) ?? []
+    const counterpartAssignments = poolByEmail.get(counterpartEmail) ?? []
     if (requesterAssignments.length === 0 || counterpartAssignments.length === 0) return null
 
-    const reqAsgn = requesterAssignments[seed % requesterAssignments.length]
+    // Requester side also honours the pending lock — start from `seed` for variety, then walk
+    // forward until an unlocked assignment is found.
+    let reqAsgn = null
+    for (let i = 0; i < requesterAssignments.length; i++) {
+      const candidate = requesterAssignments[(seed + i) % requesterAssignments.length]
+      if (!lockedAssignmentIds.has(candidate.assignmentId)) { reqAsgn = candidate; break }
+    }
+    if (!reqAsgn) return null
+
     const cpAsgn =
       counterpartAssignments.find((assignment, idx) =>
         idx >= seed &&
-        !excludedCounterpartAssignmentIds.has(assignment.assignmentId) &&
+        !lockedAssignmentIds.has(assignment.assignmentId) &&
         assignment.shiftDate !== reqAsgn.shiftDate &&
         (assignment.startTime !== reqAsgn.startTime || assignment.endTime !== reqAsgn.endTime)
       ) ??
       counterpartAssignments.find(assignment =>
-        !excludedCounterpartAssignmentIds.has(assignment.assignmentId) &&
+        !lockedAssignmentIds.has(assignment.assignmentId) &&
         assignment.shiftDate !== reqAsgn.shiftDate &&
         (assignment.startTime !== reqAsgn.startTime || assignment.endTime !== reqAsgn.endTime)
       ) ??
       counterpartAssignments.find(assignment =>
-        !excludedCounterpartAssignmentIds.has(assignment.assignmentId) &&
+        !lockedAssignmentIds.has(assignment.assignmentId) &&
         assignment.shiftDate !== reqAsgn.shiftDate
       )
 
@@ -1154,34 +1197,144 @@ async function main() {
     'Mutually agreed swap — kindly approve.',
   ]
 
-  // ── Action Needed: pending swaps — requester/counterpart use different dates and times ──
+  // ── Action Needed: 每对同事最多 1 条 pending —— 每部门 2 条（1 条 Manager 对 +
+  // 1 条 Employee 对），共 8 条。Manager 对的 4 条进 Owner 队列，按部门各覆盖一种
+  // Rule Check 场景（对照 attendanceService.evaluateShiftSwapRules 的实时计算）：
+  //   · dept0 Operations       — 完全合规（Within monthly limit + Before deadline）
+  //   · dept1 Marketing        — 超月度限额（该对本月已各有 3 次 approved，见下方补种）
+  //   · dept2 Engineering      — 过截止线（双方班次都在 48h 截止窗内 → 专门造明天/后天的班）
+  //   · dept3 Customer Support — 两条同时违规（3 次 approved + 明天/后天的班）
+  // Employee 对的 4 条进各部门 Manager 的队列，保持干净合规。
+  // 合规判定的确定性：deadline 48h + 干净池只取 TODAY+3 之后的班（>57h），违规池只用
+  // 明天开始的班（<33h），与脚本运行时刻无关。
   let reasonIdx = 0
-  const usedPendingCounterpartAssignmentIds = new Set()
+  let pendingSwapCount = 0
+  const lockedPendingAssignmentIds = new Set()
+  const cleanCutoffKey = dateKey(addDays(TODAY, 3))
+  const cleanAssignmentsByEmail = new Map()
+  for (const [email, list] of futureAssignmentsByEmail) {
+    cleanAssignmentsByEmail.set(email, list.filter(a => a.shiftDate >= cleanCutoffKey))
+  }
+
+  // deadline 违规场景专用：直接造一个明天/后天的班 + assignment（不与常规池冲突，
+  // 明天可能是周末也没关系 —— 只是演示数据）。
+  async function createDedicatedSwapShift(deptIdx, email, dayOffset, startTime, endTime) {
+    const dept = deptByIndex[deptIdx]
+    const shiftDateStr = dateKey(addDays(TODAY, dayOffset))
+    const userId = userIdMap[email].internalId
+    const { data: shift, error: shiftErr } = await supabase.from('shifts').insert({
+      company_id: company.id,
+      department_id: dept.id,
+      title: `${dept.name} Shift`,
+      shift_date: shiftDateStr,
+      start_time: startTime,
+      end_time: endTime,
+      status: 'active',
+      publication_status: 'published',
+      created_by: ownerUser.id,
+    }).select('id').single()
+    if (shiftErr) { console.warn(`  ⚠ dedicated swap shift 失败 (${email}): ${shiftErr.message}`); return null }
+    const { data: assignment, error: assignErr } = await supabase.from('shift_assignments').insert({
+      shift_id: shift.id,
+      user_id: userId,
+      assigned_by: ownerUser.id,
+    }).select('id').single()
+    if (assignErr) { console.warn(`  ⚠ dedicated swap assignment 失败 (${email}): ${assignErr.message}`); return null }
+    return { assignmentId: assignment.id, shiftId: shift.id, shiftDate: shiftDateStr, startTime, endTime, email, userId }
+  }
+
+  // 给换班双方在"被换的那个班"上种任务 —— movable task 的判定是
+  // tasks.shift_id = 该班 + assigned_user_id = 该人 + status in (Assigned, In Progress)，
+  // 这样 Owner 审批页的 Current Task Assignment / Task Assignment After Swap 才有内容。
+  const SWAP_TASK_TITLES = [
+    'Run the opening checklist',
+    'Reconcile till float',
+    'Check incoming delivery manifest',
+    'Brief the afternoon crew',
+    'Restock service counter supplies',
+    'Update the shift handover notes',
+    'Clear the escalated ticket queue',
+    'Test the clock-in kiosk',
+    'Audit display pricing labels',
+    'Prepare weekly stock summary',
+    'Review chat transcripts for QA',
+    'Pack outgoing courier orders',
+  ]
+  let swapTaskSeq = 0
+  let swapTaskCount = 0
+  async function seedSwapShiftTasks(asgn, deptIdx, count, subTaskCount, assignedById) {
+    for (let t = 0; t < count; t++) {
+      const title = SWAP_TASK_TITLES[swapTaskSeq % SWAP_TASK_TITLES.length]
+      swapTaskSeq++
+      const status = t % 2 === 0 ? 'Assigned' : 'In Progress'
+      const taskId = await insertTask({
+        company_id: company.id,
+        department_id: deptByIndex[deptIdx].id,
+        shift_id: asgn.shiftId,
+        title,
+        description: `${title} during the ${asgn.shiftDate} shift.`,
+        assigned_user_id: asgn.userId,
+        assigned_by: assignedById,
+        status,
+        percentage_complete: status === 'In Progress' ? 40 : 0,
+        priority: ['High', 'Medium', 'Low'][swapTaskSeq % 3],
+        due_at: new Date(`${asgn.shiftDate}T${asgn.endTime}:00Z`).toISOString(),
+        task_date: asgn.shiftDate,
+      })
+      if (!taskId) continue
+      swapTaskCount++
+      // 第一条任务可以带 sub-tasks（同班同人，同样会出现在 movable 列表里）
+      if (t === 0 && subTaskCount > 0) {
+        for (let s = 0; s < subTaskCount; s++) {
+          const subId = await insertTask({
+            company_id: company.id,
+            department_id: deptByIndex[deptIdx].id,
+            shift_id: asgn.shiftId,
+            parent_task_id: taskId,
+            sequence_order: s + 1,
+            title: `${title} — step ${s + 1}`,
+            assigned_user_id: asgn.userId,
+            assigned_by: assignedById,
+            status: 'Assigned',
+            priority: 'Medium',
+            task_date: asgn.shiftDate,
+          })
+          if (subId) swapTaskCount++
+        }
+      }
+    }
+  }
+
+  const managerScenarioByDept = ['clean', 'limit', 'deadline', 'both']
   for (let deptIdx = 0; deptIdx < deptByIndex.length; deptIdx++) {
     const [mgrEmail1, mgrEmail2] = managersByDept[deptIdx]
-    const mgrId1 = userIdMap[mgrEmail1].internalId
-    const mgrId2 = userIdMap[mgrEmail2].internalId
     const [empEmail1, empEmail2] = employeesByDept[deptIdx]
-    const empId1 = userIdMap[empEmail1].internalId
-    const empId2 = userIdMap[empEmail2].internalId
-    // A swap is only ever valid between two users with the same role in the same department
-    // (see attendanceService.submitShiftSwapRequest) — each dept only has one manager pair and
-    // one employee pair, so we alternate direction across those two valid pairs to fill 5 slots.
-    const pendingPairs = [
-      [mgrEmail1, mgrEmail2, mgrId1, mgrId2],
-      [empEmail1, empEmail2, empId1, empId2],
-      [mgrEmail2, mgrEmail1, mgrId2, mgrId1],
-      [empEmail2, empEmail1, empId2, empId1],
-      [mgrEmail1, mgrEmail2, mgrId1, mgrId2],
+    const actionNeededPairs = [
+      { reqEmail: mgrEmail1, cpEmail: mgrEmail2, scenario: managerScenarioByDept[deptIdx] },
+      { reqEmail: empEmail1, cpEmail: empEmail2, scenario: 'clean' },
     ]
+    for (let k = 0; k < actionNeededPairs.length; k++) {
+      const { reqEmail, cpEmail, scenario } = actionNeededPairs[k]
+      const reqId = userIdMap[reqEmail].internalId
+      const cpId = userIdMap[cpEmail].internalId
 
-    // 5 pending swaps per dept. Manager shifts are 09:00-17:00 and employee shifts
-    // are 11:00-18:00, so every request highlights a different date and time.
-    for (let k = 0; k < pendingPairs.length; k++) {
-      const [reqEmail, cpEmail, reqId, cpId] = pendingPairs[k]
-      const picked = pickDifferentDateAndTimeSwap(reqEmail, cpEmail, deptIdx * pendingPairs.length + k, usedPendingCounterpartAssignmentIds)
-      if (!picked) continue
-      const { reqAsgn, cpAsgn } = picked
+      let reqAsgn = null
+      let cpAsgn = null
+      if (scenario === 'deadline' || scenario === 'both') {
+        reqAsgn = await createDedicatedSwapShift(deptIdx, reqEmail, 1, '09:00', '17:00')
+        cpAsgn = await createDedicatedSwapShift(deptIdx, cpEmail, 2, '11:00', '18:00')
+      } else {
+        const picked = pickDifferentDateAndTimeSwap(reqEmail, cpEmail, deptIdx + k, lockedPendingAssignmentIds, cleanAssignmentsByEmail)
+        if (picked) ({ reqAsgn, cpAsgn } = picked)
+      }
+      if (!reqAsgn || !cpAsgn) { console.warn(`  ⚠ swap pending 无可用班次 (dept${deptIdx} k${k})`); continue }
+
+      // 与真实流程一致：counterpart 接受时 evaluateShiftSwapRules 判 escalate 会把原因
+      // 记进 owner_review_reason（limit 优先于 deadline，见服务层的判定顺序）。
+      const ownerReviewReason = scenario === 'limit' || scenario === 'both'
+        ? 'Monthly swap limit exceeded'
+        : scenario === 'deadline' ? 'Submitted after deadline' : null
+
       const { error } = await supabase.from('shift_swap_requests').insert({
         company_id: company.id,
         requester_id: reqId,
@@ -1191,20 +1344,88 @@ async function main() {
         reason: pendingReasons[reasonIdx++ % pendingReasons.length],
         status: 'pending',
         counterpart_status: 'approved',
-        counterpart_reviewed_at: new Date(Date.now() - (k + 1) * 3600000).toISOString(),
+        counterpart_reviewed_at: new Date(Date.now() - (deptIdx * 2 + k + 1) * 1800000).toISOString(),
+        owner_review_reason: ownerReviewReason,
       })
-      if (error) console.warn(`  ⚠ swap pending 失败 (dept${deptIdx} k${k}): ${error.message}`)
-      else {
-        usedPendingCounterpartAssignmentIds.add(cpAsgn.assignmentId)
-        swapCount++
-      }
+      if (error) { console.warn(`  ⚠ swap pending 失败 (dept${deptIdx} k${k}): ${error.message}`); continue }
+      lockedPendingAssignmentIds.add(reqAsgn.assignmentId)
+      lockedPendingAssignmentIds.add(cpAsgn.assignmentId)
+      swapCount++
+      pendingSwapCount++
+
+      // 双方都要有任务：requester 2 条（部分带 sub-tasks），counterpart 1-2 条
+      const assignerId = managerEmails.includes(reqEmail) ? ownerUser.id : userIdMap[managersByDept[deptIdx][0]].internalId
+      const requesterSubTasks = (k === 0 && deptIdx === 0) || (k === 1 && deptIdx === 1) ? 2 : 0
+      await seedSwapShiftTasks(reqAsgn, deptIdx, 2, requesterSubTasks, assignerId)
+      await seedSwapShiftTasks(cpAsgn, deptIdx, (deptIdx + k) % 2 === 0 ? 1 : 2, 0, assignerId)
     }
+  }
+
+  // ── 限额违规的前置数据：dept1 / dept3 的 Manager 对本月再补 2 条 approved ──
+  // （下面的 processed cycle 已各给 1 条 approved → 共 3 条 = monthly_swap_limit，
+  // 让上面两条 pending 的 Rule Check 显示 Monthly limit exceeded、swaps left 0/3。）
+  const limitExceededPairs = [managersByDept[1], managersByDept[3]]
+  let limitTopUpCount = 0
+  for (const [e1, e2] of limitExceededPairs) {
+    for (let n = 0; n < 2; n++) {
+      const picked = pickDifferentDateAndTimeSwap(e1, e2, 40 + n * 2)
+      if (!picked) continue
+      const { reqAsgn, cpAsgn } = picked
+      const { error } = await supabase.from('shift_swap_requests').insert({
+        company_id: company.id,
+        requester_id: userIdMap[e1].internalId,
+        requester_assignment_id: reqAsgn.assignmentId,
+        counterpart_id: userIdMap[e2].internalId,
+        counterpart_assignment_id: cpAsgn.assignmentId,
+        reason: processedReasons[n % processedReasons.length],
+        status: 'approved',
+        counterpart_status: 'approved',
+        counterpart_reviewed_at: new Date(Date.now() - (26 + n * 20) * 3600000).toISOString(),
+        reviewed_by: ownerUser.id,
+        reviewed_at: new Date(Date.now() - (24 + n * 20) * 3600000).toISOString(),
+      })
+      if (error) console.warn(`  ⚠ limit top-up swap 失败 (${e1}): ${error.message}`)
+      else { swapCount++; limitTopUpCount++ }
+    }
+  }
+
+  // ── Auto-Approved：每部门 Manager 对 1 条系统自动批准的换班 ──
+  // 走 respondShiftSwapRequest 的 auto-approval 分支时 reviewed_by 为 null（没有人工
+  // 审批人可归属），Completed Requests 卡片会据此显示 Auto-Approved 徽标。
+  // 必须用 Manager 对：Owner 的列表只含 Manager 发起的换班（Employee 的进各部门
+  // Manager 队列），种在 Employee 对上 Owner 端永远看不到。
+  // 注意这也会计入当月 used 数：dept0/dept2 的 Manager 变成 2/3 已用（仍合规），
+  // dept1/dept3 变成 4 次（本就超限，场景不变）。
+  let autoApprovedCount = 0
+  for (let deptIdx = 0; deptIdx < deptByIndex.length; deptIdx++) {
+    const [m1, m2] = managersByDept[deptIdx]
+    const picked = pickDifferentDateAndTimeSwap(m1, m2, 60 + deptIdx)
+    if (!picked) continue
+    const { reqAsgn, cpAsgn } = picked
+    const { error } = await supabase.from('shift_swap_requests').insert({
+      company_id: company.id,
+      requester_id: userIdMap[m1].internalId,
+      requester_assignment_id: reqAsgn.assignmentId,
+      counterpart_id: userIdMap[m2].internalId,
+      counterpart_assignment_id: cpAsgn.assignmentId,
+      reason: processedReasons[deptIdx % processedReasons.length],
+      status: 'approved',
+      counterpart_status: 'approved',
+      counterpart_reviewed_at: new Date(Date.now() - (deptIdx + 2) * 3600000).toISOString(),
+      reviewed_by: null,
+      reviewed_at: new Date(Date.now() - (deptIdx + 2) * 3600000).toISOString(),
+    })
+    if (error) console.warn(`  ⚠ auto-approved swap 失败 (${m1}): ${error.message}`)
+    else { swapCount++; autoApprovedCount++ }
   }
 
   // ── Processed Requests: 20 approved/rejected swaps ──
   // Same rule as pending: only same-role, same-department pairs are valid, so each dept
   // contributes 5 entries alternating between its one manager pair and one employee pair.
-  const processedStatusCycle = ['approved', 'rejected', 'approved', 'rejected', 'approved']
+  // Status is fixed per position（前两条 approved，后三条 rejected）—— 这里给每人本月
+  // 1 次 approved 打底；dept1/dept3 的 Manager 对由上面的"限额补种"再加 2 条到满额 3，
+  // 其余人远低于 monthly_swap_limit=3，保持 Rule Check 场景分布不被打乱。
+  const processedStatusCycle = ['approved', 'approved', 'rejected', 'rejected', 'rejected']
   const processedPairs = []
   for (let deptIdx = 0; deptIdx < deptByIndex.length; deptIdx++) {
     const [mgrEmail1, mgrEmail2] = managersByDept[deptIdx]
@@ -1217,7 +1438,7 @@ async function main() {
       [mgrEmail1, mgrEmail2],
     ]
     deptRolePairs.forEach(([reqEmail, cpEmail], i) => {
-      processedPairs.push([reqEmail, cpEmail, processedStatusCycle[(deptIdx + i) % processedStatusCycle.length], 20 + deptIdx * 5 + i])
+      processedPairs.push([reqEmail, cpEmail, processedStatusCycle[i], 20 + deptIdx * 5 + i])
     })
   }
   let procReasonIdx = 0
@@ -1244,7 +1465,7 @@ async function main() {
     else swapCount++
   }
 
-  console.log(`  ✓ 生成 ${swapCount} 条 shift_swap_requests（~20 pending Action Needed + 20 processed）`)
+  console.log(`  ✓ 生成 ${swapCount} 条 shift_swap_requests（${pendingSwapCount} pending：Owner 队列 4 条覆盖 clean/limit/deadline/both 四种 Rule Check 场景 + Manager 队列 4 条干净件；processed 含 ${autoApprovedCount} 条 Auto-Approved（reviewed_by null）+ ${limitTopUpCount} 条限额补种；换班双方共 ${swapTaskCount} 条班上任务（含 sub-tasks））`)
 
   // ── Step 14b: 给 Owner 发未读消息（触发 Chat 红点）─────────────────────────
   // manager1 和 employee1 各给 Owner 发一条未读消息，让 Owner 的 Communication > Chat

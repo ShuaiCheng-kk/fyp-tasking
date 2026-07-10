@@ -606,7 +606,7 @@ export default function ManagerAttendancePage() {
                           {fmtDate(shift.shift.shift_date)} · {fmtTime(shift.shift.start_time)} – {fmtTime(shift.shift.end_time)}
                           {clockedIn && <> · In {fmtTime(shift.record?.clock_in_time)}</>}
                           {onBreak && <> · On break since {fmtTime(shift.record?.break_in_time)}</>}
-                          {breakDone && <> · Break {fmtTime(shift.record?.break_in_time)}–{fmtTime(shift.record?.break_out_time)}</>}
+                          {breakDone && <> · Break {fmtTime(shift.record?.break_in_time)} – {fmtTime(shift.record?.break_out_time)}</>}
                           {clockedOut && <> · Out {fmtTime(shift.record?.clock_out_time)}</>}
                         </p>
                       </div>
@@ -884,7 +884,14 @@ export default function ManagerAttendancePage() {
                         <td style={{ padding: '12px 14px', borderBottom: `1px solid ${BORDER}`, fontSize: 12, color: MUTED, textAlign: 'center' }}>{req.requester_shift_title ?? '—'}</td>
                         <td style={{ padding: '12px 14px', borderBottom: `1px solid ${BORDER}`, fontSize: 12, color: MUTED, textAlign: 'center', whiteSpace: 'nowrap' }}>{fmtDate(req.requester_shift_date)}</td>
                         <td style={{ padding: '12px 14px', borderBottom: `1px solid ${BORDER}`, fontSize: 12, color: MUTED, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{req.reason ?? '—'}</td>
-                        <td style={{ padding: '12px 14px', borderBottom: `1px solid ${BORDER}`, textAlign: 'center' }}>{statusChip(req.status)}</td>
+                        <td style={{ padding: '12px 14px', borderBottom: `1px solid ${BORDER}`, textAlign: 'center' }}>
+                          <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 5 }}>
+                            {statusChip(req.status)}
+                            {req.owner_review_reason && (
+                              <span style={{ fontSize: 10.5, fontWeight: 700, color: '#B91C1C', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 999, padding: '2px 8px', whiteSpace: 'nowrap' }}>{req.owner_review_reason}</span>
+                            )}
+                          </div>
+                        </td>
                         <td style={{ padding: '12px 14px', borderBottom: `1px solid ${BORDER}`, textAlign: 'center' }}>
                           {req.status === 'pending' && (
                             <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
@@ -1103,8 +1110,11 @@ export default function ManagerAttendancePage() {
                       <div key={req.id} style={{ padding: '12px 16px', borderBottom: i < mySwaps.length - 1 ? `1px solid #F8FAFC` : 'none', display: 'flex', alignItems: 'center', gap: 10 }}>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontSize: 13, fontWeight: 600, color: TEXT }}>Swap with {req.counterpart_name}</div>
-                          <div style={{ fontSize: 11.5, color: MUTED }}>{req.requester_shift_title ?? 'Shift'} · {req.requester_shift_date ?? '—'} · {fmtTime(req.requester_start_time)}–{fmtTime(req.requester_end_time)}</div>
+                          <div style={{ fontSize: 11.5, color: MUTED }}>{req.requester_shift_title ?? 'Shift'} · {req.requester_shift_date ?? '—'} · {fmtTime(req.requester_start_time)} – {fmtTime(req.requester_end_time)}</div>
                           {req.reason && <div style={{ fontSize: 11.5, color: '#4B5563', marginTop: 2 }}>{req.reason}</div>}
+                          {req.owner_review_reason && (
+                            <span style={{ display: 'inline-block', marginTop: 4, fontSize: 10.5, fontWeight: 700, color: '#B91C1C', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 999, padding: '2px 8px' }}>{req.owner_review_reason}</span>
+                          )}
                         </div>
                         {statusChip(req.status)}
                       </div>

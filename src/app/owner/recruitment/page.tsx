@@ -347,6 +347,11 @@ export default function OwnerRecruitmentPage() {
   const [drafts, setDrafts] = useState<JobPostingSummary[]>([])
   const [pendingPostings, setPendingPostings] = useState<JobPostingPendingApproval[]>([])
   const [selectedLiveId, setSelectedLiveId] = useState('')
+  // deep link: /owner/recruitment?job=<id> — jump straight to that posting (e.g. from an
+  // Attendance record's Job Title link); consumed once after the first postings load
+  const deepLinkJobIdRef = useRef<string | null>(
+    typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('job') : null,
+  )
   const [applicants, setApplicants] = useState<JobApplicant[]>([])
   const [recommendations, setRecommendations] = useState<CandidateRecommendation[]>([])
 
@@ -609,6 +614,21 @@ export default function OwnerRecruitmentPage() {
     void run()
     return () => { cancelled = true }
   }, [router, fetchAll])
+
+  useEffect(() => {
+    const jobId = deepLinkJobIdRef.current
+    if (!jobId || livePostings.length === 0) return
+    const posting = livePostings.find(p => p.id === jobId)
+    if (!posting) return
+    deepLinkJobIdRef.current = null
+    if (posting.status === 'archived') {
+      setActiveTab('post')
+      setSelectedArchivedId(jobId)
+    } else {
+      setActiveTab('jobs')
+      setSelectedLiveId(jobId)
+    }
+  }, [livePostings])
 
   useEffect(() => {
     void fetchApplicants(selectedLiveId)

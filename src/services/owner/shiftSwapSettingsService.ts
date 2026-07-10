@@ -8,8 +8,7 @@ import { ShiftSwapSettings, ShiftSwapSettingsUpsertInput } from '@/types/Attenda
 const DEFAULT_SETTINGS: Omit<ShiftSwapSettings, 'company_id' | 'updated_by' | 'updated_at'> = {
   auto_approval_enabled: false,
   monthly_swap_limit: null,
-  deadline_weekday: null,
-  deadline_time: null,
+  deadline_hours_before_shift: null,
   require_review_on_limit_exceeded: true,
   require_review_on_deadline_exceeded: true,
 }
@@ -34,8 +33,7 @@ export const shiftSwapSettingsService = {
     owner_id: string
     auto_approval_enabled: boolean
     monthly_swap_limit: number | null
-    deadline_weekday: number | null
-    deadline_time: string | null
+    deadline_hours_before_shift: number | null
     require_review_on_limit_exceeded: boolean
     require_review_on_deadline_exceeded: boolean
   }): Promise<ShiftSwapSettings> {
@@ -44,22 +42,15 @@ export const shiftSwapSettingsService = {
     if (input.monthly_swap_limit !== null && (!Number.isInteger(input.monthly_swap_limit) || input.monthly_swap_limit < 1)) {
       throw new Error('monthly_swap_limit must be a positive integer, or null for no limit')
     }
-    if ((input.deadline_weekday === null) !== (input.deadline_time === null)) {
-      throw new Error('deadline_weekday and deadline_time must be set together')
-    }
-    if (input.deadline_weekday !== null && (!Number.isInteger(input.deadline_weekday) || input.deadline_weekday < 0 || input.deadline_weekday > 6)) {
-      throw new Error('deadline_weekday must be an integer between 0 and 6')
-    }
-    if (input.deadline_time !== null && !/^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(input.deadline_time)) {
-      throw new Error('deadline_time must be in HH:MM 24-hour format')
+    if (input.deadline_hours_before_shift !== null && (!Number.isInteger(input.deadline_hours_before_shift) || input.deadline_hours_before_shift < 1)) {
+      throw new Error('deadline_hours_before_shift must be a positive integer, or null for no deadline')
     }
 
     const upsertInput: ShiftSwapSettingsUpsertInput = {
       company_id: input.company_id,
       auto_approval_enabled: input.auto_approval_enabled,
       monthly_swap_limit: input.monthly_swap_limit,
-      deadline_weekday: input.deadline_weekday,
-      deadline_time: input.deadline_time,
+      deadline_hours_before_shift: input.deadline_hours_before_shift,
       require_review_on_limit_exceeded: input.require_review_on_limit_exceeded,
       require_review_on_deadline_exceeded: input.require_review_on_deadline_exceeded,
       updated_by: input.owner_id,

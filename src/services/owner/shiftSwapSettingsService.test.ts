@@ -30,8 +30,7 @@ const validSettingsInput = {
   owner_id: 'owner-1',
   auto_approval_enabled: true,
   monthly_swap_limit: 3,
-  deadline_weekday: 2,
-  deadline_time: '17:00',
+  deadline_hours_before_shift: 12,
   require_review_on_limit_exceeded: true,
   require_review_on_deadline_exceeded: true,
 }
@@ -64,7 +63,7 @@ describe('shiftSwapSettingsService', () => {
     })
 
     it('returns the stored row when one exists', async () => {
-      const stored = { company_id: 'company-1', auto_approval_enabled: true, monthly_swap_limit: 3, deadline_weekday: 2, deadline_time: '17:00', require_review_on_limit_exceeded: true, require_review_on_deadline_exceeded: true, updated_by: 'owner-1', updated_at: '2026-01-01T00:00:00Z' }
+      const stored = { company_id: 'company-1', auto_approval_enabled: true, monthly_swap_limit: 3, deadline_hours_before_shift: 12, require_review_on_limit_exceeded: true, require_review_on_deadline_exceeded: true, updated_by: 'owner-1', updated_at: '2026-01-01T00:00:00Z' }
       vi.mocked(shiftSwapSettingsRepository.getSettings).mockResolvedValue(stored)
 
       const result = await shiftSwapSettingsService.getSettings('company-1', 'owner-1')
@@ -81,8 +80,7 @@ describe('shiftSwapSettingsService', () => {
         company_id: 'company-1',
         auto_approval_enabled: false,
         monthly_swap_limit: null,
-        deadline_weekday: null,
-        deadline_time: null,
+        deadline_hours_before_shift: null,
         require_review_on_limit_exceeded: true,
         require_review_on_deadline_exceeded: true,
       }))
@@ -109,24 +107,19 @@ describe('shiftSwapSettingsService', () => {
       await expect(shiftSwapSettingsService.setSettings({ ...validSettingsInput, monthly_swap_limit: null })).resolves.toBeDefined()
     })
 
-    it('rejects deadline_weekday set without deadline_time', async () => {
-      await expect(shiftSwapSettingsService.setSettings({ ...validSettingsInput, deadline_time: null }))
-        .rejects.toThrow('must be set together')
+    it('rejects a non-positive deadline_hours_before_shift', async () => {
+      await expect(shiftSwapSettingsService.setSettings({ ...validSettingsInput, deadline_hours_before_shift: 0 }))
+        .rejects.toThrow('positive integer')
     })
 
-    it('rejects deadline_time set without deadline_weekday', async () => {
-      await expect(shiftSwapSettingsService.setSettings({ ...validSettingsInput, deadline_weekday: null }))
-        .rejects.toThrow('must be set together')
+    it('rejects a non-integer deadline_hours_before_shift', async () => {
+      await expect(shiftSwapSettingsService.setSettings({ ...validSettingsInput, deadline_hours_before_shift: 1.5 }))
+        .rejects.toThrow('positive integer')
     })
 
-    it('rejects a deadline_weekday outside 0-6', async () => {
-      await expect(shiftSwapSettingsService.setSettings({ ...validSettingsInput, deadline_weekday: 7 }))
-        .rejects.toThrow('0 and 6')
-    })
-
-    it('rejects a deadline_time not in HH:MM 24-hour format', async () => {
-      await expect(shiftSwapSettingsService.setSettings({ ...validSettingsInput, deadline_time: '5:00 PM' }))
-        .rejects.toThrow('HH:MM')
+    it('allows a null deadline_hours_before_shift (no deadline)', async () => {
+      vi.mocked(shiftSwapSettingsRepository.upsertSettings).mockResolvedValue({ ...validSettingsInput, deadline_hours_before_shift: null, updated_by: 'owner-1', updated_at: '2026-01-01T00:00:00Z' })
+      await expect(shiftSwapSettingsService.setSettings({ ...validSettingsInput, deadline_hours_before_shift: null })).resolves.toBeDefined()
     })
 
     it('upserts a valid settings payload', async () => {
@@ -138,8 +131,7 @@ describe('shiftSwapSettingsService', () => {
         company_id: 'company-1',
         auto_approval_enabled: true,
         monthly_swap_limit: 3,
-        deadline_weekday: 2,
-        deadline_time: '17:00',
+        deadline_hours_before_shift: 12,
         require_review_on_limit_exceeded: true,
         require_review_on_deadline_exceeded: true,
         updated_by: 'owner-1',

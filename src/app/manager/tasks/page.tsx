@@ -182,6 +182,18 @@ function isDueOverdue(due: string): boolean {
   return new Date(due) < new Date()
 }
 
+function formatDeadlineDisplay(value: string | null | undefined): string {
+  if (!value) return ''
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  const hours = d.getHours()
+  const minutes = d.getMinutes()
+  const hour12 = hours % 12 || 12
+  const suffix = hours < 12 ? 'AM' : 'PM'
+  const dayMonth = `${String(d.getDate()).padStart(2, '0')} ${d.toLocaleDateString('en-US', { month: 'short' })}`
+  return `${dayMonth}, ${String(hour12).padStart(2, '0')}:${String(minutes).padStart(2, '0')}${suffix}`
+}
+
 import { deptColor, setDeptColorOverrides } from '@/lib/deptColor'
 
 const PRIORITY_ORDER: Record<string, number> = { Urgent: 0, High: 1, Medium: 2, Low: 3 }
@@ -558,7 +570,7 @@ function TaskCard({
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
             {overdue && <AlertCircle size={11} color="#EF4444" />}
             <span style={{ fontSize: '0.7rem', fontWeight: 600, color: overdue ? '#EF4444' : '#9CA3AF' }}>
-              {new Date(task.due_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}
+              {formatDeadlineDisplay(task.due_at)}
             </span>
           </div>
         )}
@@ -1075,7 +1087,8 @@ export default function ManagerTasksPage() {
         const date = t.shift_date ?? shiftOptions.find(s => s.id === t.shift_id)?.shift_date ?? null
         if (date) dates.add(date)
       } else if (t.due_at) {
-        dates.add(t.due_at.slice(0, 10))
+        // due_at encodes a local wall-clock deadline — use its local calendar date, not the UTC slice.
+        dates.add(formatDateKey(new Date(t.due_at)))
       }
     }
     return dates
@@ -1105,7 +1118,7 @@ export default function ManagerTasksPage() {
           const date = t.shift_date ?? shiftOptions.find(s => s.id === t.shift_id)?.shift_date ?? null
           return date === taskDate
         }
-        if (t.due_at) return t.due_at.slice(0, 10) === taskDate
+        if (t.due_at) return formatDateKey(new Date(t.due_at)) === taskDate
         return false
       })
       .sort((a, b) => (PRIORITY_ORDER[a.priority ?? ''] ?? 4) - (PRIORITY_ORDER[b.priority ?? ''] ?? 4))

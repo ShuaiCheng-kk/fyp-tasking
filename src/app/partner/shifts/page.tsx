@@ -1517,7 +1517,7 @@ export default function OwnerShiftsPage() {
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}
-                title={`${row.full_name} ${formatShiftHour(shift.start_time)}–${formatShiftHour(shift.end_time)}`}
+                title={`${row.full_name} ${formatShiftHour(shift.start_time)} – ${formatShiftHour(shift.end_time)}`}
               >
                 <span style={{ fontSize: '0.72rem', fontWeight: 900, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {formatShiftHour(shift.start_time)} – {formatShiftHour(shift.end_time)}
@@ -1658,7 +1658,7 @@ export default function OwnerShiftsPage() {
                                   onMouseLeave={e => { e.currentTarget.style.filter = 'none' }}
                                 >
                                   <span style={{ fontSize: 10.5, fontWeight: 700, color: '#FFFFFF', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                    {formatShiftHour(shift.start_time)}–{formatShiftHour(shift.end_time)}
+                                    {formatShiftHour(shift.start_time)} – {formatShiftHour(shift.end_time)}
                                   </span>
                                 </button>
                               ))}

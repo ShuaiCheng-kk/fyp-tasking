@@ -149,6 +149,7 @@ export interface ShiftSwapRequest {
   ai_recommendation: string | null
   ai_reason: string | null
   requires_owner_review: boolean
+  owner_review_reason: string | null
   created_at: string
   updated_at: string
 }
@@ -203,6 +204,14 @@ export interface ShiftSwapRequestView extends ShiftSwapRequest {
   // Active (non-Complete, non-archived) tasks that will move to the other party if approved
   requester_movable_tasks: ShiftSwapMovableTask[]
   counterpart_movable_tasks: ShiftSwapMovableTask[]
+  // Live rule check for the reviewer, evaluated when the queue is read (NOT the stored
+  // accept-time verdict — settings may have been configured after the request arrived).
+  // null/undefined = that rule isn't configured, so there is nothing to comply with.
+  monthly_swap_limit?: number | null
+  requester_swaps_left?: number | null
+  counterpart_swaps_left?: number | null
+  limit_exceeded?: boolean | null
+  deadline_exceeded?: boolean | null
 }
 
 export interface ShiftSwapMovableTask {
@@ -217,14 +226,15 @@ export interface ShiftSwapMovableTask {
 
 // Company-wide config for Shift Swap auto-approval. A single row per company — no per-role/
 // per-user overrides (unlike Off Day quotas), since the Owner's spec is one shared limit/deadline
-// for everyone. null monthly_swap_limit / deadline_weekday+deadline_time means "not configured yet",
-// which submitShiftSwapRequest treats as "nothing to enforce" (existing always-manual behavior).
+// for everyone. null monthly_swap_limit / deadline_hours_before_shift means "nothing to enforce".
+// require_review_on_* pick the action when that rule is breached: true = escalate to the Owner,
+// false = auto-reject the request. Rules are evaluated when the counterpart accepts, not at
+// submission (the monthly count / deadline may change while the request waits).
 export interface ShiftSwapSettings {
   company_id: string
   auto_approval_enabled: boolean
   monthly_swap_limit: number | null
-  deadline_weekday: number | null
-  deadline_time: string | null
+  deadline_hours_before_shift: number | null
   require_review_on_limit_exceeded: boolean
   require_review_on_deadline_exceeded: boolean
   updated_by: string | null
@@ -235,8 +245,7 @@ export interface ShiftSwapSettingsUpsertInput {
   company_id: string
   auto_approval_enabled: boolean
   monthly_swap_limit: number | null
-  deadline_weekday: number | null
-  deadline_time: string | null
+  deadline_hours_before_shift: number | null
   require_review_on_limit_exceeded: boolean
   require_review_on_deadline_exceeded: boolean
   updated_by: string

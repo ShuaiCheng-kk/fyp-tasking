@@ -106,9 +106,9 @@ export const attendanceRepository = {
   },
 
   async getShiftSwapRequestsByCompany(company_id: string): Promise<ShiftSwapRequest[]> {
-    // No counterpart_status filter — the Owner view needs both requests still awaiting the
-    // counterpart (shown with an "Awaiting" badge) and ones ready for a final decision, plus
-    // already-decided ones for the Processed list.
+    // No counterpart_status filter here — the service needs awaiting-counterpart rows too, to
+    // lazily auto-expire them on read. It then hides them from the approval queues (the reviewer
+    // only sees requests both parties have agreed on, plus decided ones for the Processed list).
     const { data, error } = await supabase
       .from('shift_swap_requests')
       .select('*')
@@ -161,7 +161,7 @@ export const attendanceRepository = {
 
   async updateShiftSwapRequest(
     id: string,
-    fields: Partial<Pick<ShiftSwapRequest, 'status' | 'reviewed_by' | 'reviewed_at' | 'counterpart_status' | 'counterpart_reviewed_at' | 'ai_recommendation' | 'ai_reason' | 'requires_owner_review'>>,
+    fields: Partial<Pick<ShiftSwapRequest, 'status' | 'reviewed_by' | 'reviewed_at' | 'counterpart_status' | 'counterpart_reviewed_at' | 'ai_recommendation' | 'ai_reason' | 'requires_owner_review' | 'owner_review_reason'>>,
   ): Promise<ShiftSwapRequest> {
     const { data, error } = await supabase
       .from('shift_swap_requests')
@@ -216,8 +216,9 @@ export const attendanceRepository = {
 
   // Movable tasks currently owned by this assignment's user on this shift — only 'Assigned' and
   // 'In Progress' truly transfer on a swap; 'Review' work is awaiting sign-off on what THIS person
-  // did and 'Complete' is done, so both stay with the original owner. Non-archived only. This is
-  // exactly the set reassignTasksForShiftSwap moves if the swap is approved.
+  // did and 'Complete' is done, so both stay with the original owner. Non-archived only.
+  // Top-level tasks only: sub-tasks travel with their parent on approval (reassignTasksForShiftSwap
+  // moves them too) but are not listed as separate cards in the swap preview.
   async getMovableTasksByShiftAssignment(assignment_id: string): Promise<Array<{ id: string; title: string; description: string | null; status: string; priority: string | null; due_at: string | null; created_at: string }>> {
     const { data: assignment, error: aErr } = await supabase
       .from('shift_assignments')
@@ -234,6 +235,7 @@ export const attendanceRepository = {
       .eq('assigned_user_id', assignment.user_id)
       .in('status', ['Assigned', 'In Progress'])
       .eq('is_archived', false)
+      .is('parent_task_id', null)
     if (error) throw new Error(error.message)
     return (data ?? []) as Array<{ id: string; title: string; description: string | null; status: string; priority: string | null; due_at: string | null; created_at: string }>
   },
@@ -261,6 +263,7 @@ export const attendanceRepository = {
       .in('shift_id', shift_ids)
       .in('status', ['Assigned', 'In Progress'])
       .eq('is_archived', false)
+      .is('parent_task_id', null)
     if (error) throw new Error(error.message)
     return (data ?? []) as Array<{ id: string; title: string; description: string | null; status: string; priority: string | null; due_at: string | null; created_at: string; shift_id: string; assigned_user_id: string | null }>
   },
@@ -327,7 +330,6 @@ export const attendanceRepository = {
     counterpart_id: string
     counterpart_assignment_id: string
     reason: string | null
-    requires_owner_review: boolean
   }): Promise<ShiftSwapRequest> {
     const { data, error } = await supabase
       .from('shift_swap_requests')
@@ -338,17 +340,18 @@ export const attendanceRepository = {
     return data as ShiftSwapRequest
   },
 
-  // Counts this user's shift swap requests (as either side) that reached a final result
-  // (approved or rejected) within [fromISO, toISO) — used to enforce the Owner's monthly swap
-  // limit. Pending/withdrawn requests haven't "used up" a swap yet.
-  async countDecidedShiftSwapsForUser(company_id: string, user_id: string, fromISO: string, toISO: string): Promise<number> {
+  // Counts this user's SUCCESSFUL shift swaps (as either side) decided within [fromISO, toISO) —
+  // used to enforce the Owner's monthly swap limit. Only approved swaps use up quota; rejected,
+  // withdrawn, and auto-expired requests don't count (Owner-confirmed business rule). The window
+  // filters on reviewed_at (when the swap actually succeeded), not created_at.
+  async countApprovedShiftSwapsForUser(company_id: string, user_id: string, fromISO: string, toISO: string): Promise<number> {
     const { count, error } = await supabase
       .from('shift_swap_requests')
       .select('id', { count: 'exact', head: true })
       .eq('company_id', company_id)
-      .in('status', ['approved', 'rejected'])
-      .gte('created_at', fromISO)
-      .lt('created_at', toISO)
+      .eq('status', 'approved')
+      .gte('reviewed_at', fromISO)
+      .lt('reviewed_at', toISO)
       .or(`requester_id.eq.${user_id},counterpart_id.eq.${user_id}`)
     if (error) throw new Error(error.message)
     return count ?? 0

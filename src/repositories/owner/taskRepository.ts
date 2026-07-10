@@ -320,7 +320,10 @@ export const taskRepository = {
   },
 
   async getTaskStatsByCompany(company_id: string): Promise<TaskStats> {
-    const todayStr = new Date().toISOString().split('T')[0]
+    // Local calendar day, matching how due_at encodes a local wall-clock deadline — a UTC
+    // todayStr would show the previous day's stats between local midnight and the UTC offset.
+    const now = new Date()
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
     // Fetch tasks whose linked shift is today, or whose due_at falls today (no shift)
     const { data, error } = await supabase
       .from('tasks')
@@ -331,7 +334,11 @@ export const taskRepository = {
     const allRows = (data ?? []) as unknown as { id: string; title: string; status: string; priority: string | null; percentage_complete: number; assigned_user_id: string | null; created_at: string; shift_id: string | null; due_at: string | null; shifts: { shift_date: string }[] | null }[]
     const rows = allRows.filter(r => {
       if (r.shift_id && r.shifts && r.shifts.length > 0) return r.shifts[0].shift_date === todayStr
-      if (r.due_at) return r.due_at.slice(0, 10) === todayStr
+      if (r.due_at) {
+        const due = new Date(r.due_at)
+        const dueKey = `${due.getFullYear()}-${String(due.getMonth() + 1).padStart(2, '0')}-${String(due.getDate()).padStart(2, '0')}`
+        return dueKey === todayStr
+      }
       return false
     })
 
