@@ -5,6 +5,13 @@ vi.mock('@/lib/supabase', () => ({
   createClient: () => ({}),
 }))
 
+vi.mock('@/services/email/emailService', () => ({
+  emailService: {
+    sendApplicationAcceptedEmail: vi.fn(),
+    sendOfferConfirmedEmail: vi.fn(),
+  },
+}))
+
 vi.mock('@/repositories/owner/recruitmentRepository', () => ({
   recruitmentRepository: {
     getPublicJobPostings: vi.fn(),
@@ -32,6 +39,17 @@ vi.mock('@/repositories/owner/recruitmentRepository', () => ({
     getAcceptedCasualWorkersByAssignedEmployee: vi.fn(),
     updateCasualWorkerStatus: vi.fn(),
     sweepExpiredJobPostings: vi.fn(),
+    getWorkerCancellationCounts: vi.fn(),
+    getConfirmedWorkersByJob: vi.fn(),
+    setApplicantStatus: vi.fn(),
+    cancelAcceptedInvitationByApplicant: vi.fn(),
+    cancelOpenInvitationsForJob: vi.fn(),
+    markPendingApplicantsJobClosed: vi.fn(),
+    getShiftsForJobWorker: vi.fn(),
+    cancelShiftsByIds: vi.fn(),
+    cancelFutureShiftsForJob: vi.fn(),
+    insertRecruitmentCancellation: vi.fn(),
+    reopenJobPosting: vi.fn(),
   },
 }))
 
@@ -73,13 +91,17 @@ const basePosting: JobPosting = {
   break_start_time: null,
   break_end_time: null,
   job_start_time: null,
-  assigned_employee_id: null,
+  assigned_employee_id: 'emp-1',
   rejection_reason: null,
   expires_at: null,
   template_id: null,
   experience_required: null,
   minimum_age: null,
+  openings: 1,
+  form_type: null,
+  shift_days: null,
   uniform_required: false,
+  uniform_type: null,
   uniform_details: null,
 }
 
@@ -93,6 +115,14 @@ const baseApplicant: JobApplicant = {
   cover_letter: null,
   status: 'pending',
   applied_at: '2026-06-01T00:00:00.000Z',
+  relevant_experience: null,
+  additional_note: null,
+  skills_snapshot: null,
+  certificates_snapshot: null,
+  age_at_apply: null,
+  ai_score: null,
+  ai_summary: null,
+  ai_computed_at: null,
 }
 
 const baseInput: JobPostingInput = {
@@ -100,11 +130,13 @@ const baseInput: JobPostingInput = {
   created_by: 'owner-1',
   title: 'Weekend Cashier',
   description: 'Run the front register',
+  assigned_employee_id: 'emp-1',
 }
 
 describe('recruitmentService — Recruitment', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(recruitmentRepository.getWorkerCancellationCounts).mockResolvedValue(new Map())
   })
 
   describe('createJobPosting (UC35)', () => {
@@ -168,16 +200,84 @@ describe('recruitmentService — Recruitment', () => {
         expect.objectContaining({ template_id: 'template-1' })
       )
     })
+
+    it('throws when publishing without a responsible employee', async () => {
+      await expect(recruitmentService.createJobPosting({ ...baseInput, assigned_employee_id: null }))
+        .rejects.toThrow('A responsible employee is required to publish a job')
+    })
+
+    it('allows a draft without a responsible employee', async () => {
+      vi.mocked(recruitmentRepository.createJobPosting).mockResolvedValue(basePosting)
+
+      await recruitmentService.createJobPosting({ ...baseInput, assigned_employee_id: null, status: 'draft' })
+
+      expect(recruitmentRepository.createJobPosting).toHaveBeenCalled()
+    })
+
+    it('throws when minimum_age is not a plausible whole number', async () => {
+      await expect(recruitmentService.createJobPosting({ ...baseInput, minimum_age: 7 }))
+        .rejects.toThrow('minimum_age must be a whole number between 13 and 99')
+      await expect(recruitmentService.createJobPosting({ ...baseInput, minimum_age: 21.5 }))
+        .rejects.toThrow('minimum_age must be a whole number between 13 and 99')
+    })
+
+    it('throws when openings is below 1', async () => {
+      await expect(recruitmentService.createJobPosting({ ...baseInput, openings: 0 }))
+        .rejects.toThrow('openings must be a whole number of at least 1')
+    })
   })
 
-  describe('editJobPosting (UC37)', () => {
-    it('edits an existing job posting', async () => {
-      vi.mocked(recruitmentRepository.updateJobPosting).mockResolvedValue({ ...basePosting, title: 'Updated' })
+  describe('editJobPosting — published jobs are immutable', () => {
+    it('edits a draft posting', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({ ...basePosting, status: 'draft' })
+      vi.mocked(recruitmentRepository.updateJobPosting).mockResolvedValue({ ...basePosting, status: 'draft', title: 'Updated' })
 
       const result = await recruitmentService.editJobPosting('job-1', { title: 'Updated' })
 
       expect(recruitmentRepository.updateJobPosting).toHaveBeenCalledWith('job-1', { title: 'Updated' })
       expect(result.title).toBe('Updated')
+    })
+
+    it('edits a rejected posting so it can be fixed and resubmitted', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({ ...basePosting, status: 'rejected' })
+      vi.mocked(recruitmentRepository.updateJobPosting).mockResolvedValue({ ...basePosting, status: 'rejected', salary_amount: 18 })
+
+      await recruitmentService.editJobPosting('job-1', { salary_amount: 18 })
+
+      expect(recruitmentRepository.updateJobPosting).toHaveBeenCalled()
+    })
+
+    it('rejects any edit to an open (published) posting — applicants must never see changed terms', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(basePosting)
+
+      await expect(recruitmentService.editJobPosting('job-1', { salary_amount: 5 }))
+        .rejects.toThrow('A published job cannot be edited')
+      await expect(recruitmentService.editJobPosting('job-1', { title: 'Different Role' }))
+        .rejects.toThrow('A published job cannot be edited')
+      expect(recruitmentRepository.updateJobPosting).not.toHaveBeenCalled()
+    })
+
+    it('rejects edits to archived and pending_approval postings', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({ ...basePosting, status: 'archived' })
+      await expect(recruitmentService.editJobPosting('job-1', { description: 'x' }))
+        .rejects.toThrow('A published job cannot be edited')
+
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({ ...basePosting, status: 'pending_approval' })
+      await expect(recruitmentService.editJobPosting('job-1', { description: 'x' }))
+        .rejects.toThrow('A published job cannot be edited')
+    })
+
+    it('allows extending only the application deadline on an open posting (UC43)', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(basePosting)
+      vi.mocked(recruitmentRepository.updateJobPosting).mockResolvedValue({ ...basePosting, expires_at: '2026-09-01T00:00:00.000Z' })
+
+      await recruitmentService.editJobPosting('job-1', { expires_at: '2026-09-01T00:00:00.000Z' })
+
+      expect(recruitmentRepository.updateJobPosting).toHaveBeenCalledWith('job-1', { expires_at: '2026-09-01T00:00:00.000Z' })
+
+      // …but not the deadline bundled with anything else
+      await expect(recruitmentService.editJobPosting('job-1', { expires_at: '2026-09-01T00:00:00.000Z', salary_amount: 5 }))
+        .rejects.toThrow('A published job cannot be edited')
     })
 
     it('throws when job_id is missing', async () => {
@@ -230,13 +330,44 @@ describe('recruitmentService — Recruitment', () => {
       )
       expect(result.title).toBe('Weekend Cashier (copy)')
     })
+
+    it('republishes a copy of a live posting as open', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({ ...basePosting, status: 'open' })
+      vi.mocked(recruitmentRepository.createJobPosting).mockResolvedValue({ ...basePosting, id: 'job-2' })
+
+      await recruitmentService.duplicateJobPosting('job-1', 'owner-1')
+
+      expect(recruitmentRepository.createJobPosting).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'open' })
+      )
+    })
+
+    it('keeps a duplicated draft as a draft', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({ ...basePosting, status: 'draft' })
+      vi.mocked(recruitmentRepository.createJobPosting).mockResolvedValue({ ...basePosting, id: 'job-2', status: 'draft' })
+
+      await recruitmentService.duplicateJobPosting('job-1', 'owner-1')
+
+      expect(recruitmentRepository.createJobPosting).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'draft' })
+      )
+    })
   })
 
   describe('draft lifecycle (UC40)', () => {
     it('publishes a draft', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(basePosting)
       vi.mocked(recruitmentRepository.updateJobPosting).mockResolvedValue({ ...basePosting, status: 'open' })
       await recruitmentService.publishDraft('job-1')
       expect(recruitmentRepository.updateJobPosting).toHaveBeenCalledWith('job-1', { status: 'open' })
+    })
+
+    it('refuses to publish a draft without a responsible employee', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({ ...basePosting, assigned_employee_id: null })
+
+      await expect(recruitmentService.publishDraft('job-1'))
+        .rejects.toThrow('A responsible employee is required to publish a job')
+      expect(recruitmentRepository.updateJobPosting).not.toHaveBeenCalled()
     })
 
     it('deletes a draft', async () => {
@@ -247,9 +378,17 @@ describe('recruitmentService — Recruitment', () => {
 
   describe('submitForReview (UC41)', () => {
     it('sets status to pending_approval', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(basePosting)
       vi.mocked(recruitmentRepository.updateJobPosting).mockResolvedValue({ ...basePosting, status: 'pending_approval' })
       await recruitmentService.submitForReview('job-1')
       expect(recruitmentRepository.updateJobPosting).toHaveBeenCalledWith('job-1', { status: 'pending_approval' })
+    })
+
+    it('refuses to submit for review without a responsible employee', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({ ...basePosting, assigned_employee_id: null })
+
+      await expect(recruitmentService.submitForReview('job-1'))
+        .rejects.toThrow('A responsible employee is required to publish a job')
     })
   })
 
@@ -272,18 +411,106 @@ describe('recruitmentService — Recruitment', () => {
   })
 
   describe('getApplicants (UC44)', () => {
-    it('returns applicants with resolved full_name and email_address', async () => {
+    it('returns applicants with resolved full_name, email_address, and cancellation history count', async () => {
       vi.mocked(recruitmentRepository.getApplicantsByJob).mockResolvedValue([baseApplicant])
+      vi.mocked(recruitmentRepository.getWorkerCancellationCounts).mockResolvedValue(new Map([['user-1', 2]]))
 
       const result = await recruitmentService.getApplicants('job-1')
 
-      expect(result).toEqual([baseApplicant])
       expect(result[0].full_name).toBe('Jane Applicant')
       expect(result[0].email_address).toBe('jane@example.com')
+      expect(result[0].worker_cancellation_count).toBe(2)
     })
 
     it('throws when job_id is missing', async () => {
       await expect(recruitmentService.getApplicants('')).rejects.toThrow('job_id is required')
+    })
+  })
+
+  describe('removeConfirmedWorker / cancelJob — employer-side exits', () => {
+    const confirmedApplicant = { ...baseApplicant, status: 'accepted' as const }
+
+    beforeEach(() => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(basePosting)
+      vi.mocked(recruitmentRepository.getApplicantById).mockResolvedValue(confirmedApplicant)
+      vi.mocked(recruitmentRepository.getShiftsForJobWorker).mockResolvedValue([
+        { id: 'shift-1', shift_date: '2030-05-04', start_time: '09:00', status: 'active' },
+      ])
+      vi.mocked(recruitmentRepository.getUsersByIds).mockResolvedValue([{ id: 'user-1', full_name: 'Jane Applicant' } as never])
+      vi.mocked(recruitmentRepository.getConfirmedWorkersByJob).mockResolvedValue([
+        { invitation_id: 'inv-1', applicant_id: 'applicant-1', user_id: 'user-1', full_name: 'Jane Applicant', email_address: 'jane@example.com' },
+      ])
+    })
+
+    it('removeConfirmedWorker requires a reason', async () => {
+      await expect(recruitmentService.removeConfirmedWorker({
+        job_id: 'job-1', applicant_id: 'applicant-1', removed_by: 'owner-1', reason: '   ',
+      })).rejects.toThrow('A reason is required')
+    })
+
+    it('removeConfirmedWorker cancels the shift, marks the applicant cancelled_by_employer, and records history', async () => {
+      await recruitmentService.removeConfirmedWorker({
+        job_id: 'job-1', applicant_id: 'applicant-1', removed_by: 'owner-1', reason: 'Requirements changed',
+      })
+
+      expect(recruitmentRepository.cancelShiftsByIds).toHaveBeenCalledWith(['shift-1'])
+      expect(recruitmentRepository.cancelAcceptedInvitationByApplicant).toHaveBeenCalledWith('applicant-1')
+      // NOT 'rejected' — the worker WAS hired, then cancelled on.
+      expect(recruitmentRepository.setApplicantStatus).toHaveBeenCalledWith('applicant-1', 'cancelled_by_employer')
+      expect(recruitmentRepository.insertRecruitmentCancellation).toHaveBeenCalledWith(
+        expect.objectContaining({ cancelled_role: 'employer', scope: 'worker', reason: 'Requirements changed' }),
+      )
+    })
+
+    it('removeConfirmedWorker reopens a job that had auto-closed on becoming full', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({ ...basePosting, status: 'closed' })
+
+      await recruitmentService.removeConfirmedWorker({
+        job_id: 'job-1', applicant_id: 'applicant-1', removed_by: 'owner-1', reason: 'Requirements changed',
+      })
+
+      expect(recruitmentRepository.reopenJobPosting).toHaveBeenCalledWith('job-1')
+    })
+
+    it('removeConfirmedWorker never reopens an expired job', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({
+        ...basePosting, status: 'closed', expires_at: '2020-01-01T00:00:00.000Z',
+      })
+
+      await recruitmentService.removeConfirmedWorker({
+        job_id: 'job-1', applicant_id: 'applicant-1', removed_by: 'owner-1', reason: 'Requirements changed',
+      })
+
+      expect(recruitmentRepository.reopenJobPosting).not.toHaveBeenCalled()
+    })
+
+    it('removeConfirmedWorker refuses once the shift has started — Attendance owns it', async () => {
+      vi.mocked(recruitmentRepository.getShiftsForJobWorker).mockResolvedValue([
+        { id: 'shift-1', shift_date: '2020-01-01', start_time: '09:00', status: 'active' },
+      ])
+
+      await expect(recruitmentService.removeConfirmedWorker({
+        job_id: 'job-1', applicant_id: 'applicant-1', removed_by: 'owner-1', reason: 'Too late',
+      })).rejects.toThrow('Attendance')
+      expect(recruitmentRepository.cancelShiftsByIds).not.toHaveBeenCalled()
+    })
+
+    it('cancelJob requires a reason', async () => {
+      await expect(recruitmentService.cancelJob({ job_id: 'job-1', cancelled_by: 'owner-1', reason: '' }))
+        .rejects.toThrow('A reason is required')
+    })
+
+    it('cancelJob voids shifts, offers, and applications, then closes the job for good', async () => {
+      await recruitmentService.cancelJob({ job_id: 'job-1', cancelled_by: 'owner-1', reason: 'Event called off' })
+
+      expect(recruitmentRepository.cancelFutureShiftsForJob).toHaveBeenCalledWith('job-1', expect.any(String))
+      expect(recruitmentRepository.cancelOpenInvitationsForJob).toHaveBeenCalledWith('job-1')
+      expect(recruitmentRepository.setApplicantStatus).toHaveBeenCalledWith('applicant-1', 'cancelled_by_employer')
+      expect(recruitmentRepository.markPendingApplicantsJobClosed).toHaveBeenCalledWith('job-1')
+      expect(recruitmentRepository.insertRecruitmentCancellation).toHaveBeenCalledWith(
+        expect.objectContaining({ cancelled_role: 'employer', scope: 'job', applicant_id: null }),
+      )
+      expect(recruitmentRepository.updateJobPosting).toHaveBeenCalledWith('job-1', expect.objectContaining({ status: 'closed' }))
     })
   })
 

@@ -45,6 +45,24 @@ export const ownerTeamService = {
       throw new Error('Insufficient permissions to remove a Partner')
     }
 
+    // An Employee who is the responsible supervisor on live recruitment jobs or upcoming casual
+    // shifts cannot simply vanish — the workers hired through them would lose their on-site
+    // contact and the attendance chain its first approver. The supervisor must be reassigned
+    // before removal.
+    if (target.role === 'Employee') {
+      const today = new Date()
+      const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+      const [activePostings, upcomingShifts] = await Promise.all([
+        ownerTeamRepository.countSupervisedActivePostings(user_id_to_remove),
+        ownerTeamRepository.countSupervisedUpcomingShifts(user_id_to_remove, todayKey),
+      ])
+      if (activePostings > 0 || upcomingShifts > 0) {
+        throw new Error(
+          'This employee is the responsible supervisor for active recruitment jobs or upcoming casual shifts. Assign another supervisor to those first, then remove them.'
+        )
+      }
+    }
+
     const supabaseAuthId = target.supabase_auth_id
 
     await ownerTeamRepository.deleteInboxByUserId(user_id_to_remove)

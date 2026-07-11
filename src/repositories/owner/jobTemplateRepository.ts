@@ -21,6 +21,7 @@ export const jobTemplateRepository = {
         salary_amount: input.salary_amount ?? null,
         salary_type: input.salary_type ?? null,
         uniform_required: input.uniform_required ?? false,
+        uniform_type: input.uniform_type ?? null,
         uniform_details: input.uniform_details ?? null,
         experience_required: input.experience_required ?? null,
         minimum_age: input.minimum_age ?? null,

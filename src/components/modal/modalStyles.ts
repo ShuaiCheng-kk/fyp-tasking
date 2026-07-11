@@ -46,11 +46,12 @@ export const modalGhostButtonStyle: React.CSSProperties = {
 }
 
 // Default (non-destructive) primary action — orange gradient, lighter solid orange while disabled/loading.
+// Transparent border keeps its height identical to the ghost button even when rendered alone.
 export function modalPrimaryButtonStyle(disabled = false): React.CSSProperties {
   return {
     padding: '7px 18px',
     background: disabled ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)',
-    border: 'none',
+    border: '1.5px solid transparent',
     borderRadius: 8,
     fontWeight: 600,
     fontSize: '0.8125rem',

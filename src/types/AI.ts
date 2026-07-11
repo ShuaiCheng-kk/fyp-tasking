@@ -22,6 +22,9 @@ export interface CandidateRecommendation {
   reasons: string[]
   risks: string[]
   suggested_next_step: string
+  // True when the applicant supplied no skills/certificates/resume/note at all — shown as
+  // "insufficient information" instead of a misleading low score, and never sent to the AI.
+  insufficient?: boolean
 }
 
 export interface JobDescriptionDraft {

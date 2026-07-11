@@ -1232,7 +1232,7 @@ export default function OwnerCommunicationPage() {
 
           {/* ── Chat tab ── */}
           {activeTab === 'chat' && (
-            <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '340px minmax(0, 1fr)', gap: 12, overflow: 'hidden' }}>
+            <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '400px minmax(0, 1fr)', gap: 12, overflow: 'hidden' }}>
 
               {/* Left: conversations — own card, sized to fit its content (not stretched full height) */}
               <div style={{ alignSelf: 'start', maxHeight: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
@@ -1281,7 +1281,7 @@ export default function OwnerCommunicationPage() {
                           title="Drag onto an open conversation to view side by side"
                           style={{
                             position: 'relative',
-                            display: 'flex', alignItems: 'center', gap: 10, padding: '12px 54px 12px 12px',
+                            display: 'flex', alignItems: 'center', gap: 12, padding: '18px 54px 18px 14px',
                             background: active ? '#FFF7ED' : '#FFFFFF',
                             border: active ? '1.5px solid rgba(249,115,22,0.35)' : '1.5px solid #EDF2F7',
                             borderRadius: 12, cursor: 'grab', textAlign: 'left', width: '100%', marginBottom: 14,
@@ -1290,7 +1290,7 @@ export default function OwnerCommunicationPage() {
                           }}
                         >
                           <button onClick={() => openPanelSolo(conv.partnerId)} style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: 0 }}>
-                            <Avatar name={conv.partnerName} size={40} role={conv.partnerRole} photoUrl={companyMembers.find(m => m.id === conv.partnerId)?.profile_photo_url ?? null} />
+                            <Avatar name={conv.partnerName} size={44} role={conv.partnerRole} photoUrl={companyMembers.find(m => m.id === conv.partnerId)?.profile_photo_url ?? null} />
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 5, minWidth: 0 }}>
@@ -1305,7 +1305,7 @@ export default function OwnerCommunicationPage() {
                                   )}
                                 </div>
                               </div>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 3 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 6 }}>
                                 <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13, color: conv.unreadCount > 0 ? '#374151' : '#9CA3AF', fontWeight: conv.unreadCount > 0 ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                                   {isImagePreview ? <ImagePlus size={12} strokeWidth={2} style={{ flexShrink: 0 }} /> : fileMatch ? <FileText size={12} strokeWidth={2} style={{ flexShrink: 0 }} /> : null}
                                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{previewText}</span>
@@ -1318,12 +1318,12 @@ export default function OwnerCommunicationPage() {
                               </div>
                             </div>
                           </button>
-                          <span style={{ position: 'absolute', top: 10, right: 12, fontSize: 11.5, color: '#9CA3AF', fontWeight: 500 }}>{formatTime(conv.lastTime)}</span>
+                          <span style={{ position: 'absolute', top: 16, right: 12, fontSize: 11.5, color: '#9CA3AF', fontWeight: 500 }}>{formatTime(conv.lastTime)}</span>
                           <button
                             onClick={() => deleteConversation(conv.partnerId)}
                             title="Delete conversation"
                             disabled={deletingConvId === conv.partnerId}
-                            style={{ position: 'absolute', bottom: 10, right: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, background: 'none', border: 'none', borderRadius: 7, cursor: 'pointer', color: '#DC2626', transition: 'color 0.15s' }}
+                            style={{ position: 'absolute', bottom: 16, right: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, background: 'none', border: 'none', borderRadius: 7, cursor: 'pointer', color: '#DC2626', transition: 'color 0.15s' }}
                             onMouseEnter={e => { e.currentTarget.style.color = '#B91C1C' }}
                             onMouseLeave={e => { e.currentTarget.style.color = '#DC2626' }}
                           >
@@ -1591,7 +1591,7 @@ export default function OwnerCommunicationPage() {
 
           {/* ── Announcements tab ── */}
           {activeTab === 'announcements' && (
-            <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '340px minmax(0, 1fr)', gap: 12, overflow: 'hidden' }}>
+            <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '400px minmax(0, 1fr)', gap: 12, overflow: 'hidden' }}>
 
               {/* Left: list — two stacked blocks, each sized to fit its content */}
               <div style={{ maxHeight: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto' }}>

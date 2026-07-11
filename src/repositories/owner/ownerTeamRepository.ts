@@ -130,6 +130,30 @@ export const ownerTeamRepository = {
     if (error) throw new Error(error.message)
   },
 
+  // Postings where this user is the responsible supervisor and hiring is still live — a worker
+  // hired through them must always have someone to report to.
+  async countSupervisedActivePostings(user_id: string): Promise<number> {
+    const { count, error } = await supabase
+      .from('job_postings')
+      .select('id', { count: 'exact', head: true })
+      .eq('assigned_employee_id', user_id)
+      .in('status', ['open', 'pending_approval'])
+    if (error) throw new Error(error.message)
+    return count ?? 0
+  },
+
+  // Future (or today's) non-cancelled shifts hired through a posting this user supervises.
+  async countSupervisedUpcomingShifts(user_id: string, fromDateKey: string): Promise<number> {
+    const { data, error } = await supabase
+      .from('job_postings')
+      .select('id, shifts!shifts_source_job_posting_id_fkey!inner(id, shift_date, status)')
+      .eq('assigned_employee_id', user_id)
+      .gte('shifts.shift_date', fromDateKey)
+      .neq('shifts.status', 'cancelled')
+    if (error) throw new Error(error.message)
+    return (data ?? []).reduce((total, row) => total + ((row as unknown as { shifts: unknown[] }).shifts?.length ?? 0), 0)
+  },
+
   async deleteEmployeeDepartmentsByUserId(user_id: string): Promise<void> {
     const { error } = await supabase
       .from('employee_departments')

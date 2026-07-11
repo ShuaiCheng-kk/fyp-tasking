@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { Check, CreditCard, User } from 'lucide-react'
 import CasualSidebar from '@/components/CasualSidebar'
+import WorkerProfileSections from '@/components/worker/WorkerProfileSections'
 
 const pageKeyframes = `
   @keyframes blockSlideUp { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
@@ -15,6 +16,7 @@ type PaymentMethod = 'paynow' | 'bank_transfer'
 export default function CasualProfilePage() {
   const router = useRouter()
   const [internalUserId, setInternalUserId] = useState('')
+  const [authUserId, setAuthUserId] = useState('')
   const [userName, setUserName] = useState('')
   const [loading, setLoading] = useState(true)
 
@@ -55,6 +57,7 @@ export default function CasualProfilePage() {
 
       const u = profileData.profile.user
       setInternalUserId(u.id)
+      setAuthUserId(userId)
       setUserName(u.full_name ?? 'Casual Worker')
       if (u.payment_method) setPaymentMethod(u.payment_method as PaymentMethod)
       if (u.payment_account) setPaymentAccount(u.payment_account)
@@ -107,7 +110,10 @@ export default function CasualProfilePage() {
         </div>
 
         {!loading && (
-          <div style={{ maxWidth: 480, animation: 'blockSlideUp 0.38s ease both 0.06s' }}>
+          <div style={{ maxWidth: 480, animation: 'blockSlideUp 0.38s ease both 0.06s', display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* Worker Profile — skills, certificates, resume (shared with the Guest profile page) */}
+            {authUserId && <WorkerProfileSections authId={authUserId} onToast={showToast} />}
+
             {/* Payment Information */}
             <div style={{ background: '#FFFFFF', borderRadius: 14, border: '1.5px solid #E5E7EB', padding: '20px 24px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>

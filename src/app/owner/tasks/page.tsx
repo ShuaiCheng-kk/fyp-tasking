@@ -3820,9 +3820,9 @@ export default function OwnerTasksPage() {
                             <button
                               type="button"
                               onClick={openAiAssign}
-                              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 36, padding: '0 24px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+                              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
                             >
-                              <Sparkles size={14} /> AI Assign
+                              <Sparkles size={15} strokeWidth={2.5} /> AI Assign
                             </button>
                           </div>
                         </>
@@ -5961,7 +5961,7 @@ export default function OwnerTasksPage() {
                     <Sparkles size={15} color="#fff" strokeWidth={2} />
                   </div>
                   <div>
-                    <h2 style={{ margin: 0, fontWeight: 700, fontSize: '1rem', color: '#111827' }}>Auto Task Assignment</h2>
+                    <h2 style={{ margin: 0, fontWeight: 700, fontSize: '1rem', color: '#111827', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>Auto Task Assignment</h2>
                   </div>
                 </div>
                 <button onClick={() => setAiModal(false)} style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: '6px', borderRadius: 8 }}>

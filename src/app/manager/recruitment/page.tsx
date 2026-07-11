@@ -652,6 +652,7 @@ export default function ManagerRecruitmentPage() {
     break_end_time: formJobType === 'shift' ? (formBreakEnd || null) : null,
     job_start_time: formJobType === 'oneoff' ? (formJobStartTime || null) : null,
     assigned_employee_id: formAssignedEmployeeId || null,
+    openings: formOpenings,
     expires_at: formExpiresAt || null,
     expiry_preset: formExpiryPreset || 'none',
     status,
@@ -713,6 +714,7 @@ export default function ManagerRecruitmentPage() {
     if (!formTitle.trim()) { setFormError('Title is required'); return }
     if (status === 'pending_approval' && formJobType === 'oneoff' && !formJobStartTime) { setFormError('Start time is required to submit for approval'); return }
     if (status === 'pending_approval' && !formDescription.trim()) { setFormError('Description is required to send for review'); return }
+    if (status === 'pending_approval' && !formAssignedEmployeeId) { setFormError('Supervisor is required to submit for approval'); return }
     setActionLoading(true); setFormError('')
     try {
       const body = buildBody(status)

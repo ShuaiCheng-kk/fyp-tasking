@@ -1,0 +1,35 @@
+export interface WorkerCertificate {
+  id: string
+  user_id: string
+  name: string
+  file_url: string | null
+  created_at: string
+}
+
+export interface WorkerProfile {
+  id: string
+  full_name: string
+  email_address: string
+  phone_number: string | null
+  date_of_birth: string | null
+  profile_photo_url: string | null
+  role: string
+  supabase_auth_id: string
+  skills: string | null
+  resume_url: string | null
+  certificates: WorkerCertificate[]
+}
+
+// Preset names keep spelling consistent so the AI matcher and the employer see the same label
+// ("Food Hygiene" vs "Food Hygine" vs "食品卫生" would never match). Workers can still add a
+// custom name for anything not listed.
+export const PRESET_CERTIFICATES = [
+  'Food Hygiene Certificate',
+  'First Aid Certificate (CPR + AED)',
+  'WSQ Food Safety Course Level 1',
+  'Forklift Licence',
+  'Security Officer Licence',
+  'Class 3 Driving Licence',
+  'Barista Certification',
+  'Lifeguard Certification',
+] as const

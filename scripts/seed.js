@@ -1727,6 +1727,50 @@ async function main() {
       employment_type: 'casual', salary_amount: 105, urgency: 'normal', estimated_hours: '5',
       job_start_time: '09:30', createdBy: 'manager2@test.com',
     },
+
+    // ── "Drafts" data: status draft — postings saved half-way from the Post Job form ──
+    {
+      dept: 0, status: 'draft', is_recurring: true, title: 'Night Shift Stocker',
+      description: 'Restock shelves and prepare deliveries during the overnight window.',
+      requirements: 'Able to work overnight hours. Physically fit.',
+      employment_type: 'part-time', salary_amount: 17,
+      shift_start_time: '22:00', shift_end_time: '06:00', break_start_time: '02:00', break_end_time: '02:30',
+      recurrence_interval: 1, recurrence_unit: 'week', createdBy: 'owner',
+      experience_required: 'Not Required', minimum_age: 18, uniform_type: 'company', uniform_details: 'Hi-vis vest (provided)',
+    },
+    {
+      dept: 1, status: 'draft', is_recurring: false, title: 'Product Photoshoot Assistant',
+      description: 'Assist the photographer during a one-day product shoot — props, steaming, staging.',
+      requirements: 'Detail-oriented, comfortable on set.',
+      employment_type: 'casual', salary_amount: 95, urgency: 'normal', estimated_hours: '6',
+      job_start_time: '10:00', createdBy: 'owner',
+      experience_required: 'Preferred', minimum_age: 16, uniform_type: 'none',
+    },
+    {
+      dept: 2, status: 'draft', is_recurring: true, title: 'Weekend NOC Monitor',
+      description: 'Monitor system dashboards over the weekend and escalate incidents.',
+      requirements: 'Basic understanding of uptime monitoring tools.',
+      employment_type: 'part-time', salary_amount: 19,
+      shift_start_time: '08:00', shift_end_time: '16:00', break_start_time: '12:00', break_end_time: '12:30',
+      recurrence_interval: 1, recurrence_unit: 'week', createdBy: 'owner',
+      experience_required: '6+ Months', minimum_age: 18, uniform_type: 'none',
+    },
+    {
+      // 故意残缺的草稿：只有标题和一半描述，模拟写到一半就点了 Save Draft
+      dept: 3, status: 'draft', is_recurring: false, title: 'Holiday Hotline Backup',
+      description: 'Cover the customer hotline during the public holiday period.',
+      requirements: null,
+      employment_type: 'casual', salary_amount: null, urgency: 'normal', estimated_hours: null,
+      job_start_time: null, createdBy: 'owner',
+    },
+    {
+      dept: 1, status: 'draft', is_recurring: false, title: 'Roadshow Flyer Distributor',
+      description: 'Hand out flyers and direct footfall to the roadshow booth.',
+      requirements: 'Energetic and comfortable approaching the public.',
+      employment_type: 'casual', salary_amount: 80, urgency: 'high', estimated_hours: '4',
+      job_start_time: '11:00', createdBy: 'owner',
+      experience_required: 'Not Required', minimum_age: 16, uniform_type: 'dress_code', uniform_details: 'Plain white top, dark bottoms',
+    },
   ]
 
   let jobPostingCount = 0
@@ -1766,13 +1810,19 @@ async function main() {
       job_start_time: def.is_recurring ? null : (def.job_start_time ?? null),
       assigned_employee_id: assignedEmployeeId,
       expiry_preset: 'none',
+      experience_required: def.experience_required ?? null,
+      minimum_age: def.minimum_age ?? null,
+      uniform_required: def.uniform_type === 'company' || def.uniform_type === 'dress_code',
+      uniform_type: def.uniform_type ?? 'none',
+      uniform_details: def.uniform_details ?? null,
     }).select('id').single()
     if (jpErr) console.warn(`  ⚠ 创建 job_posting 失败 (${def.title}): ${jpErr.message}`)
     else { jobPostingCount++; postingIdByTitle.set(def.title, jp.id); console.log(`  ✓ Job Posting: ${def.title} [${def.status}] (${dept.name})`) }
   }
   const openClosedCount = jobPostingDefs.filter(d => d.status === 'open' || d.status === 'closed').length
   const pendingCount = jobPostingDefs.filter(d => d.status === 'pending_approval').length
-  console.log(`  ✓ 生成 ${jobPostingCount} 条 job_postings（Jobs 标签页 ${openClosedCount} 条 open/closed，Review 标签页 ${pendingCount} 条 pending_approval）`)
+  const draftCount = jobPostingDefs.filter(d => d.status === 'draft').length
+  console.log(`  ✓ 生成 ${jobPostingCount} 条 job_postings（Jobs 标签页 ${openClosedCount} 条 open/closed，Review 标签页 ${pendingCount} 条 pending_approval，Drafts ${draftCount} 条 draft）`)
 
   // ── Step 15b: Job Applicants（只对 status='open' 的职位投递，跟真实使用场景一致——
   // 已关闭/待审批的职位不该有公开申请）。混合 pending/accepted/rejected，让 Owner
@@ -1846,25 +1896,117 @@ async function main() {
   console.log(`  ✓ 关联了 ${cwJobLinkCount} 个 CW shift 到对应的 job_posting`)
 
   // ── Step 16: Job Templates（Owner 自己配置的可复用招聘模板）──────────────
+  // 20 条贴合 Sunrise Hospitality Group（酒店/餐饮/活动公司）的模板，覆盖全部 4 个部门、
+  // shift 与 oneoff 两种类型，并填满模板的所有字段（部门/薪资/着装/经验/年龄/时长/紧急度）。
   console.log('\nStep 16: 生成 Job Templates...')
   const jobTemplateDefs = [
-    { name: 'Warehouse Helper Template', title: 'Warehouse Helper', description: 'General warehouse support duties.', requirements: 'Able to lift 15kg.', employment_type: 'casual', form_type: 'oneoff' },
-    { name: 'Weekend Cashier Template', title: 'Weekend Cashier', description: 'Run the register during weekend shifts.', requirements: 'Friendly, detail-oriented.', employment_type: 'part-time', form_type: 'shift' },
-    { name: 'Event Crew Template', title: 'Event Crew', description: 'Setup/teardown crew for one-off events.', requirements: 'Comfortable with physical work.', employment_type: 'casual', form_type: 'oneoff' },
+    // ── Shift jobs（长期排班岗位，per hour）──
+    { dept: 'Operations', title: 'Barista', form_type: 'shift', salary: 14,
+      description: 'Prepare espresso-based drinks, serve customers at the counter, keep the coffee station stocked and clean throughout the shift.',
+      requirements: 'Latte art basics preferred, comfortable during morning rush, good customer manner.',
+      experience: 'Preferred', age: 16, uniform: 'Black polo and apron (provided)' },
+    { dept: 'Operations', title: 'Weekend Cashier', form_type: 'shift', salary: 13,
+      description: 'Run the register during weekend shifts, handle cash and card payments, reconcile the till at closing.',
+      requirements: 'Basic arithmetic, detail-oriented, friendly with customers.',
+      experience: 'Not Required', age: 16, uniform: null },
+    { dept: 'Operations', title: 'Banquet Server', form_type: 'shift', salary: 15,
+      description: 'Serve plated courses at banquets and corporate dinners, set and clear tables, respond to guest requests.',
+      requirements: 'Able to carry a loaded tray, well groomed, prior banquet or F&B service experience.',
+      experience: '6+ Months', age: 18, uniform: 'White shirt, black slacks, black shoes', uniformType: 'dress_code' },
+    { dept: 'Operations', title: 'Kitchen Steward', form_type: 'shift', salary: 14,
+      description: 'Wash and sanitise kitchenware, keep prep areas clean, support chefs with basic ingredient prep.',
+      requirements: 'Comfortable standing full shift, food hygiene awareness.',
+      experience: 'Not Required', age: 18, uniform: null },
+    { dept: 'Operations', title: 'Housekeeping Attendant', form_type: 'shift', salary: 14,
+      description: 'Clean and reset function rooms and guest areas, restock supplies, report damage or maintenance issues.',
+      requirements: 'Thorough and reliable, able to follow room checklists.',
+      experience: 'Not Required', age: 18, uniform: null },
+    { dept: 'Operations', title: 'Security Officer', form_type: 'shift', salary: 17,
+      description: 'Man the entrance during events, check invitations and wristbands, patrol the venue and handle incidents calmly.',
+      requirements: 'Valid security licence, clear communication, physically fit.',
+      experience: '1+ Year', age: 21, uniform: 'Company security uniform (provided)' },
+    { dept: 'Customer Support', title: 'Front Desk Receptionist', form_type: 'shift', salary: 16,
+      description: 'Greet walk-in guests, manage event check-ins, answer phone enquiries and direct them to the right team.',
+      requirements: 'Polished phone manner, basic Excel, fluent English.',
+      experience: '1+ Year', age: 18, uniform: null },
+    { dept: 'Customer Support', title: 'Call Center Agent', form_type: 'shift', salary: 15,
+      description: 'Handle inbound booking and billing calls, log every case in the CRM, escalate complex complaints to the duty manager.',
+      requirements: 'Clear speaking voice, patient under pressure, typing 40+ wpm.',
+      experience: '6+ Months', age: 18, uniform: null },
+    { dept: 'Customer Support', title: 'Live Chat Support Agent', form_type: 'shift', salary: 16,
+      description: 'Answer customer chats across web and social channels, resolve booking changes, keep response time under two minutes.',
+      requirements: 'Strong written English, multitasking across chats, CRM experience.',
+      experience: '1+ Year', age: 18, uniform: null },
+    { dept: 'Marketing', title: 'Social Media Coordinator', form_type: 'shift', salary: 18,
+      description: 'Draft and schedule posts for upcoming events, reply to comments and DMs, compile a weekly engagement summary.',
+      requirements: 'Portfolio of managed accounts, Canva or basic photo editing, good copywriting.',
+      experience: '1+ Year', age: 18, uniform: null },
+    { dept: 'Engineering', title: 'AV Technician', form_type: 'shift', salary: 20,
+      description: 'Operate sound and projection during live events, run mic checks with speakers, troubleshoot AV faults on the spot.',
+      requirements: 'Hands-on with digital mixers and projectors, calm under live-show pressure.',
+      experience: '2+ Years', age: 18, uniform: null },
+    { dept: 'Engineering', title: 'Maintenance Technician', form_type: 'shift', salary: 19,
+      description: 'Carry out preventive maintenance rounds, fix minor electrical and plumbing faults, log all works in the maintenance system.',
+      requirements: 'Electrical or facilities background, able to read equipment manuals, safety-first mindset.',
+      experience: '2+ Years', age: 21, uniform: null },
+    // ── One-off jobs（单次任务，flat rate）──
+    { dept: 'Operations', title: 'Event Setup Crew', form_type: 'oneoff', salary: 120, hours: '6', urgency: 'normal',
+      description: 'Set up tables, chairs, staging and signage for a corporate dinner before doors open.',
+      requirements: 'Able to lift 15kg, follows floor plans accurately, punctual.',
+      experience: 'Not Required', age: 16, uniform: null },
+    { dept: 'Operations', title: 'Banquet Teardown Crew', form_type: 'oneoff', salary: 100, hours: '5', urgency: 'high',
+      description: 'Clear and pack down the ballroom after a wedding banquet — stack furniture, bag linens, load equipment onto trolleys.',
+      requirements: 'Comfortable with late-night physical work, works fast in a team.',
+      experience: 'Not Required', age: 18, uniform: null },
+    { dept: 'Operations', title: 'Warehouse Stocktake Assistant', form_type: 'oneoff', salary: 110, hours: '6', urgency: 'urgent',
+      description: 'Count and tag F&B and equipment inventory at the central store, record quantities into the stocktake sheet.',
+      requirements: 'Able to lift 15kg, careful counter, basic spreadsheet entry.',
+      experience: 'Not Required', age: 18, uniform: null },
+    { dept: 'Marketing', title: 'Flyer Distribution Crew', form_type: 'oneoff', salary: 80, hours: '4', urgency: 'normal',
+      description: 'Distribute event flyers around the CBD lunch crowd and record rough handout counts per location.',
+      requirements: 'Outgoing, comfortable approaching strangers, reliable timekeeping.',
+      experience: 'Not Required', age: 16, uniform: 'Branded t-shirt (provided)' },
+    { dept: 'Marketing', title: 'Brand Ambassador — Product Launch', form_type: 'oneoff', salary: 180, hours: '8', urgency: 'high',
+      description: 'Front the demo booth at a product launch, walk guests through the product and collect sign-up leads.',
+      requirements: 'Confident presenter, well groomed, prior roadshow or promo experience.',
+      experience: 'Preferred', age: 18, uniform: 'Branded polo (provided)' },
+    { dept: 'Marketing', title: 'Event Photographer Assistant', form_type: 'oneoff', salary: 150, hours: '8', urgency: 'normal',
+      description: 'Assist the lead photographer at a wedding — manage lighting gear, wrangle group shots, back up memory cards.',
+      requirements: 'Familiar with DSLR gear, discreet around guests, own transport preferred.',
+      experience: 'Preferred', age: 18, uniform: null },
+    { dept: 'Engineering', title: 'Stage Lighting Rig Crew', form_type: 'oneoff', salary: 200, hours: '10', urgency: 'high',
+      description: 'Rig and focus stage lighting for a concert — truss work, cabling, and assisting the lighting designer through the plot.',
+      requirements: 'Working-at-height certified, knows DMX basics, prior rigging experience.',
+      experience: '2+ Years', age: 18, uniform: null },
+    { dept: 'Engineering', title: 'Sound Check Technician', form_type: 'oneoff', salary: 160, hours: '5', urgency: 'normal',
+      description: 'Run the afternoon sound check for a live band — patch inputs, ring out monitors, document the desk scene for the evening engineer.',
+      requirements: 'Live mixing experience, familiar with digital consoles, methodical.',
+      experience: '1+ Year', age: 18, uniform: null },
   ]
   let jobTemplateCount = 0
   for (const def of jobTemplateDefs) {
+    const dept = depts.find(d => d.name === def.dept)
     const { error } = await supabase.from('job_templates').insert({
       company_id: company.id,
-      name: def.name,
+      name: `${def.title} Template`,
       title: def.title,
       description: def.description,
       requirements: def.requirements,
-      employment_type: def.employment_type,
+      employment_type: def.form_type === 'shift' ? 'part-time' : 'casual',
       form_type: def.form_type,
+      department_id: dept ? dept.id : null,
+      salary_amount: def.salary,
+      salary_type: def.form_type === 'shift' ? 'per hour' : 'flat rate',
+      uniform_required: !!def.uniform,
+      uniform_type: def.uniform ? (def.uniformType || 'company') : 'none',
+      uniform_details: def.uniform || null,
+      experience_required: def.experience,
+      minimum_age: def.age,
+      estimated_hours: def.form_type === 'oneoff' ? def.hours : null,
+      urgency: def.form_type === 'oneoff' ? def.urgency : null,
       created_by: ownerUser.id,
     })
-    if (error) console.warn(`  ⚠ 创建 job_template 失败 (${def.name}): ${error.message}`)
+    if (error) console.warn(`  ⚠ 创建 job_template 失败 (${def.title}): ${error.message}`)
     else jobTemplateCount++
   }
   console.log(`  ✓ 生成 ${jobTemplateCount} 条 job_templates`)

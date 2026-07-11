@@ -11,9 +11,10 @@ export interface JobTemplate {
   salary_amount: number | null
   salary_type: string | null
   uniform_required: boolean
+  uniform_type: string | null
   uniform_details: string | null
   experience_required: string | null
-  minimum_age: string | null
+  minimum_age: number | null
   estimated_hours: string | null
   urgency: string | null
   created_by: string
@@ -33,9 +34,10 @@ export interface JobTemplateInput {
   salary_amount?: number | null
   salary_type?: string | null
   uniform_required?: boolean
+  uniform_type?: string | null
   uniform_details?: string | null
   experience_required?: string | null
-  minimum_age?: string | null
+  minimum_age?: number | null
   estimated_hours?: string | null
   urgency?: string | null
   created_by: string
@@ -59,9 +61,10 @@ export interface JobTemplateUpdateInput {
   salary_amount?: number | null
   salary_type?: string | null
   uniform_required?: boolean
+  uniform_type?: string | null
   uniform_details?: string | null
   experience_required?: string | null
-  minimum_age?: string | null
+  minimum_age?: number | null
   estimated_hours?: string | null
   urgency?: string | null
 }

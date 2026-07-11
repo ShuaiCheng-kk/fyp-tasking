@@ -41,6 +41,7 @@ export const jobTemplateService = {
     const salary_amount = fields.salary_amount !== undefined ? fields.salary_amount : existing.salary_amount
     const salary_type = fields.salary_type !== undefined ? fields.salary_type : existing.salary_type
     const uniform_required = fields.uniform_required !== undefined ? fields.uniform_required : existing.uniform_required
+    const uniform_type = fields.uniform_type !== undefined ? fields.uniform_type : existing.uniform_type
     const uniform_details = fields.uniform_details !== undefined ? fields.uniform_details : existing.uniform_details
     const experience_required = fields.experience_required !== undefined ? fields.experience_required : existing.experience_required
     const minimum_age = fields.minimum_age !== undefined ? fields.minimum_age : existing.minimum_age
@@ -49,7 +50,7 @@ export const jobTemplateService = {
     return jobTemplateRepository.updateTemplate(id, {
       name, title, description, requirements, employment_type, form_type,
       department_id, salary_amount, salary_type,
-      uniform_required, uniform_details, experience_required, minimum_age,
+      uniform_required, uniform_type, uniform_details, experience_required, minimum_age,
       estimated_hours, urgency,
     })
   },

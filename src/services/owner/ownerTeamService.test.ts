@@ -26,6 +26,8 @@ vi.mock('@/repositories/owner/ownerTeamRepository', () => ({
     deleteManagerDepartmentsByUserId: vi.fn(),
     deleteEmployeeDepartmentsByUserId: vi.fn(),
     cleanupUserOperationalReferences: vi.fn(),
+    countSupervisedActivePostings: vi.fn(),
+    countSupervisedUpcomingShifts: vi.fn(),
     findManagerDepartments: vi.fn(),
     findDepartmentManagers: vi.fn(),
     assignManagerDepartment: vi.fn(),
@@ -59,6 +61,9 @@ const makeUser = (overrides: Partial<User> = {}): User => ({
 describe('ownerTeamService', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // Employees with no live supervised jobs/shifts pass the removal guard by default.
+    vi.mocked(ownerTeamRepository.countSupervisedActivePostings).mockResolvedValue(0)
+    vi.mocked(ownerTeamRepository.countSupervisedUpcomingShifts).mockResolvedValue(0)
   })
 
   describe('getTeamByCompany (UC28)', () => {
@@ -146,6 +151,23 @@ describe('ownerTeamService', () => {
       vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue(makeUser({ id: 'user-2', role: 'Owner' }))
       await expect(ownerTeamService.removeMember('company-1', 'user-2', 'partner-1'))
         .rejects.toThrow('Insufficient permissions to remove a Partner')
+    })
+
+    it('blocks removing an Employee who supervises live recruitment jobs or upcoming casual shifts', async () => {
+      vi.mocked(ownerTeamRepository.findCompanyById).mockResolvedValue(company)
+      vi.mocked(ownerTeamRepository.findUserByAuthIdOrInternalId).mockResolvedValue(requester)
+      vi.mocked(ownerTeamRepository.findUserById).mockResolvedValue(target)
+      vi.mocked(ownerTeamRepository.countSupervisedActivePostings).mockResolvedValue(1)
+
+      await expect(ownerTeamService.removeMember('company-1', 'user-2', 'owner-1'))
+        .rejects.toThrow('Assign another supervisor')
+      expect(ownerTeamRepository.deleteUserById).not.toHaveBeenCalled()
+
+      // Also blocked when the postings are done but hired shifts are still upcoming.
+      vi.mocked(ownerTeamRepository.countSupervisedActivePostings).mockResolvedValue(0)
+      vi.mocked(ownerTeamRepository.countSupervisedUpcomingShifts).mockResolvedValue(2)
+      await expect(ownerTeamService.removeMember('company-1', 'user-2', 'owner-1'))
+        .rejects.toThrow('Assign another supervisor')
     })
 
     it('removes a member: cleans up references, deletes the row, and deletes the auth user', async () => {

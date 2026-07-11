@@ -17,6 +17,7 @@ test.describe.configure({ mode: 'serial' })
 
 let seeded: TestOwner
 let departmentId: string
+let employeeId: string
 const createdJobIds: string[] = []
 const createdGuestAuthIds: string[] = []
 const createdGuestUserIds: string[] = []
@@ -32,6 +33,28 @@ test.beforeAll(async () => {
     .single()
   if (deptError || !department) throw new Error(`Failed to create department: ${deptError?.message}`)
   departmentId = department.id
+
+  // Every published posting must name a responsible employee (the worker's on-site contact
+  // and the start of the attendance approval chain), so seed one for the whole file.
+  const employeeEmail = `test-recruitment-employee-${Date.now()}@tasking-tests.local`
+  const { data: employeeAuth, error: employeeAuthError } = await admin.auth.admin.createUser({
+    email: employeeEmail, password: 'Test-Password-123!', email_confirm: true,
+  })
+  if (employeeAuthError || !employeeAuth.user) throw new Error(`Failed to create employee auth user: ${employeeAuthError?.message}`)
+  createdGuestAuthIds.push(employeeAuth.user.id)
+  const { data: employee, error: employeeError } = await admin
+    .from('users')
+    .insert({
+      supabase_auth_id: employeeAuth.user.id,
+      full_name: 'Test Supervisor Employee',
+      email_address: employeeEmail,
+      role: 'Employee',
+      company_id: seeded.companyId,
+    })
+    .select('id')
+    .single()
+  if (employeeError || !employee) throw new Error(`Failed to create employee: ${employeeError?.message}`)
+  employeeId = employee.id
 })
 
 test.afterAll(async () => {
@@ -55,6 +78,7 @@ test.afterAll(async () => {
   for (const authId of createdGuestAuthIds) {
     await admin.auth.admin.deleteUser(authId).catch(() => undefined)
   }
+  if (employeeId) await admin.from('users').delete().eq('id', employeeId)
   await admin.from('departments').delete().eq('id', departmentId)
   await cleanupTestOwnerAndCompany(seeded)
 })
@@ -89,6 +113,7 @@ test('UC35 rejects publishing a one-off job without a job_start_time', async ({ 
       company_id: seeded.companyId,
       department_id: departmentId,
       created_by: seeded.ownerId,
+      assigned_employee_id: employeeId,
       title: 'Event Setup Crew',
       description: 'Help set up chairs and tables.',
       formType: 'oneoff',
@@ -107,6 +132,7 @@ test('UC35 publishes a one-off job with a job_start_time', async ({ request }) =
       company_id: seeded.companyId,
       department_id: departmentId,
       created_by: seeded.ownerId,
+      assigned_employee_id: employeeId,
       title: 'Event Setup Crew',
       description: 'Help set up chairs and tables.',
       formType: 'oneoff',
@@ -127,6 +153,7 @@ test('UC49: accepting an invitation to a one-off job creates a published, open-e
       company_id: seeded.companyId,
       department_id: departmentId,
       created_by: seeded.ownerId,
+      assigned_employee_id: employeeId,
       title: 'Promo Table Staff',
       description: 'Hand out flyers at the entrance.',
       formType: 'oneoff',
@@ -193,6 +220,7 @@ test('UC49: accepting an invitation to a shift job creates a published shift wit
       company_id: seeded.companyId,
       department_id: departmentId,
       created_by: seeded.ownerId,
+      assigned_employee_id: employeeId,
       title: 'Weekend Cashier',
       description: 'Run the front register on Saturdays.',
       formType: 'shift',
@@ -250,6 +278,7 @@ test('GET /api/recruitment?resource=job_posting returns the full posting a shift
       company_id: seeded.companyId,
       department_id: departmentId,
       created_by: seeded.ownerId,
+      assigned_employee_id: employeeId,
       title: 'Stockroom Assistant',
       description: 'Organize incoming deliveries in the stockroom.',
       requirements: 'Able to lift boxes up to 10kg.',
@@ -347,6 +376,7 @@ test('template usage stats reflect jobs created from a template', async ({ reque
       company_id: seeded.companyId,
       department_id: departmentId,
       created_by: seeded.ownerId,
+      assigned_employee_id: employeeId,
       title: 'Event Crew',
       description: 'Set up and tear down event equipment',
       formType: 'oneoff',
@@ -365,6 +395,7 @@ test('template usage stats reflect jobs created from a template', async ({ reque
       company_id: seeded.companyId,
       department_id: departmentId,
       created_by: seeded.ownerId,
+      assigned_employee_id: employeeId,
       title: 'Event Crew',
       description: 'Set up and tear down event equipment',
       formType: 'oneoff',
@@ -396,7 +427,7 @@ test('applying a template carries Experience Required, Minimum Age, and Uniform 
       description: 'Serve customers, prep orders',
       form_type: 'oneoff',
       experience_required: '1+ Year',
-      minimum_age: '18+',
+      minimum_age: 18,
       uniform_required: true,
       uniform_details: 'Black polo + apron',
     },
@@ -405,7 +436,7 @@ test('applying a template carries Experience Required, Minimum Age, and Uniform 
   const template = (await templateRes.json()).template
   createdTemplateIds.push(template.id)
   expect(template.experience_required).toBe('1+ Year')
-  expect(template.minimum_age).toBe('18+')
+  expect(template.minimum_age).toBe(18)
   expect(template.uniform_required).toBe(true)
   expect(template.uniform_details).toBe('Black polo + apron')
 
@@ -414,6 +445,7 @@ test('applying a template carries Experience Required, Minimum Age, and Uniform 
       company_id: seeded.companyId,
       department_id: departmentId,
       created_by: seeded.ownerId,
+      assigned_employee_id: employeeId,
       title: template.title,
       description: template.description,
       formType: 'oneoff',
@@ -430,7 +462,7 @@ test('applying a template carries Experience Required, Minimum Age, and Uniform 
   const posting = (await postingRes.json()).posting
   createdJobIds.push(posting.id)
   expect(posting.experience_required).toBe('1+ Year')
-  expect(posting.minimum_age).toBe('18+')
+  expect(posting.minimum_age).toBe(18)
   expect(posting.uniform_required).toBe(true)
   expect(posting.uniform_details).toBe('Black polo + apron')
 })
@@ -441,6 +473,7 @@ test('UC43 persists an application deadline (date + time) on a job posting', asy
       company_id: seeded.companyId,
       department_id: departmentId,
       created_by: seeded.ownerId,
+      assigned_employee_id: employeeId,
       title: 'Holiday Warehouse Staff',
       description: 'Pack and sort seasonal orders.',
       formType: 'shift',
@@ -470,6 +503,7 @@ test('UC43 auto-archives an open posting once its deadline has passed', async ({
       company_id: seeded.companyId,
       department_id: departmentId,
       created_by: seeded.ownerId,
+      assigned_employee_id: employeeId,
       title: 'Past-Deadline Cashier',
       description: 'Should auto-archive once listed after its deadline.',
       formType: 'oneoff',
@@ -503,6 +537,7 @@ test('UC44 view applicant list resolves full_name and email_address from the app
       company_id: seeded.companyId,
       department_id: departmentId,
       created_by: seeded.ownerId,
+      assigned_employee_id: employeeId,
       title: 'Front Desk Assistant',
       description: 'Greet visitors and manage bookings.',
       formType: 'oneoff',
@@ -537,6 +572,7 @@ test('UC41/UC42: manager submits a job for approval, owner approves it', async (
       company_id: seeded.companyId,
       department_id: departmentId,
       created_by: seeded.ownerId,
+      assigned_employee_id: employeeId,
       title: 'Pending Review Role',
       description: 'Needs owner sign-off before going live.',
       formType: 'oneoff',
@@ -567,6 +603,7 @@ test('UC42: owner rejects a pending job posting with a reason', async ({ request
       company_id: seeded.companyId,
       department_id: departmentId,
       created_by: seeded.ownerId,
+      assigned_employee_id: employeeId,
       title: 'Needs More Detail Role',
       description: 'Missing pay information.',
       formType: 'oneoff',
@@ -587,18 +624,19 @@ test('UC42: owner rejects a pending job posting with a reason', async ({ request
   expect(rejectBody.posting.rejection_reason).toBe('Please add the salary details.')
 })
 
-test('UC37 edits an existing job posting\'s fields', async ({ request }) => {
+test('UC40 edits a draft posting\'s fields before publishing', async ({ request }) => {
   const jobRes = await request.post('/api/recruitment', {
     data: {
       company_id: seeded.companyId,
       department_id: departmentId,
       created_by: seeded.ownerId,
+      assigned_employee_id: employeeId,
       title: 'Title Before Edit',
       description: 'Original description.',
       formType: 'oneoff',
       shift_date: '2030-03-09',
       job_start_time: '09:00',
-      status: 'open',
+      status: 'draft',
     },
   })
   expect(jobRes.status()).toBe(201)
@@ -627,6 +665,7 @@ test('UC38 archives and unarchives a job posting', async ({ request }) => {
       company_id: seeded.companyId,
       department_id: departmentId,
       created_by: seeded.ownerId,
+      assigned_employee_id: employeeId,
       title: 'To Be Archived',
       description: 'Will be archived then restored.',
       formType: 'oneoff',
@@ -661,6 +700,7 @@ test('UC39 duplicates a job posting as a new, independently-published copy', asy
       company_id: seeded.companyId,
       department_id: departmentId,
       created_by: seeded.ownerId,
+      assigned_employee_id: employeeId,
       title: 'Original Posting To Copy',
       description: 'Source posting for duplication.',
       formType: 'oneoff',
@@ -694,6 +734,7 @@ test('UC40 saves a job posting as a draft, lists it, then publishes it', async (
       company_id: seeded.companyId,
       department_id: departmentId,
       created_by: seeded.ownerId,
+      assigned_employee_id: employeeId,
       title: 'Draft To Publish Later',
       description: 'Not ready to post yet.',
       formType: 'oneoff',
@@ -726,6 +767,7 @@ test('UC40 deletes a draft job posting without publishing it', async ({ request 
       company_id: seeded.companyId,
       department_id: departmentId,
       created_by: seeded.ownerId,
+      assigned_employee_id: employeeId,
       title: 'Draft To Delete',
       description: 'Will be deleted before publishing.',
       formType: 'oneoff',
@@ -744,4 +786,162 @@ test('UC40 deletes a draft job posting without publishing it', async ({ request 
   const listRes = await request.get(`/api/recruitment?company_id=${seeded.companyId}&resource=drafts&user_id=${seeded.ownerId}`)
   const { drafts } = await listRes.json()
   expect(drafts.some((d: { id: string }) => d.id === jobId)).toBe(false)
+})
+
+test('UC35 rejects publishing without a responsible employee, but allows saving as draft', async ({ request }) => {
+  const base = {
+    company_id: seeded.companyId,
+    department_id: departmentId,
+    created_by: seeded.ownerId,
+    title: 'No Supervisor Role',
+    description: 'Should not publish without a responsible employee.',
+    formType: 'oneoff',
+    shift_date: '2030-03-14',
+    job_start_time: '09:00',
+  }
+
+  const publishRes = await request.post('/api/recruitment', { data: { ...base, status: 'open' } })
+  expect(publishRes.status()).toBe(400)
+  expect((await publishRes.json()).message).toContain('responsible employee')
+
+  const draftRes = await request.post('/api/recruitment', { data: { ...base, status: 'draft' } })
+  expect(draftRes.status()).toBe(201)
+  const draftId = (await draftRes.json()).posting.id as string
+  createdJobIds.push(draftId)
+
+  // Publishing that supervisor-less draft later must be blocked the same way.
+  const publishDraftRes = await request.patch('/api/recruitment', {
+    data: { action: 'publish_draft', job_id: draftId },
+  })
+  expect(publishDraftRes.status()).toBe(400)
+  expect((await publishDraftRes.json()).message).toContain('responsible employee')
+})
+
+test('UC35 stores minimum_age as a number and defaults openings to 1', async ({ request }) => {
+  const res = await request.post('/api/recruitment', {
+    data: {
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      created_by: seeded.ownerId,
+      assigned_employee_id: employeeId,
+      title: 'Adults-Only Bartender',
+      description: 'Serve drinks at the bar.',
+      formType: 'oneoff',
+      shift_date: '2030-03-15',
+      job_start_time: '18:00',
+      status: 'open',
+      minimum_age: 21,
+    },
+  })
+  expect(res.status()).toBe(201)
+  const posting = (await res.json()).posting
+  createdJobIds.push(posting.id)
+  expect(posting.minimum_age).toBe(21)
+  expect(posting.openings).toBe(1)
+
+  const badRes = await request.post('/api/recruitment', {
+    data: {
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      created_by: seeded.ownerId,
+      assigned_employee_id: employeeId,
+      title: 'Implausible Age Role',
+      description: 'minimum_age below any legal working age must be rejected.',
+      formType: 'oneoff',
+      shift_date: '2030-03-15',
+      job_start_time: '18:00',
+      status: 'open',
+      minimum_age: 7,
+    },
+  })
+  expect(badRes.status()).toBe(400)
+  expect((await badRes.json()).message).toContain('minimum_age')
+})
+
+test('published postings are immutable: any edit is rejected except extending the deadline (UC43)', async ({ request }) => {
+  const jobRes = await request.post('/api/recruitment', {
+    data: {
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      created_by: seeded.ownerId,
+      assigned_employee_id: employeeId,
+      title: 'Immutable Once Published',
+      description: 'Applicants must never see changed terms.',
+      formType: 'oneoff',
+      shift_date: '2030-03-16',
+      job_start_time: '09:00',
+      status: 'open',
+      minimum_age: 18,
+      salary_amount: 15,
+    },
+  })
+  expect(jobRes.status()).toBe(201)
+  const jobId = (await jobRes.json()).posting.id as string
+  createdJobIds.push(jobId)
+
+  // Pay cut after publishing — the bait-and-switch this rule exists to prevent.
+  const payEdit = await request.patch('/api/recruitment', {
+    data: { action: 'edit_posting', job_id: jobId, salary_amount: 5 },
+  })
+  expect(payEdit.status()).toBe(400)
+  expect((await payEdit.json()).message).toContain('cannot be edited')
+
+  // Schedule, description, supervisor — all equally frozen.
+  const timeEdit = await request.patch('/api/recruitment', {
+    data: { action: 'edit_posting', job_id: jobId, job_start_time: '10:00' },
+  })
+  expect(timeEdit.status()).toBe(400)
+  const textEdit = await request.patch('/api/recruitment', {
+    data: { action: 'edit_posting', job_id: jobId, description: 'Changed copy.' },
+  })
+  expect(textEdit.status()).toBe(400)
+
+  // Only exception: the application deadline on its own.
+  const deadlineEdit = await request.patch('/api/recruitment', {
+    data: { action: 'edit_posting', job_id: jobId, expires_at: '2030-04-01T15:30:00.000Z' },
+  })
+  expect(deadlineEdit.status()).toBe(200)
+  expect((await deadlineEdit.json()).posting.expires_at).toContain('2030-04-01')
+
+  // Deadline bundled with anything else is still rejected.
+  const bundledEdit = await request.patch('/api/recruitment', {
+    data: { action: 'edit_posting', job_id: jobId, expires_at: '2030-05-01T15:30:00.000Z', salary_amount: 20 },
+  })
+  expect(bundledEdit.status()).toBe(400)
+})
+
+test('a rejected posting can be edited and resubmitted for approval', async ({ request }) => {
+  const jobRes = await request.post('/api/recruitment', {
+    data: {
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      created_by: seeded.ownerId,
+      assigned_employee_id: employeeId,
+      title: 'Rejected Then Fixed Role',
+      description: 'First version, missing details.',
+      formType: 'oneoff',
+      shift_date: '2030-03-17',
+      job_start_time: '09:00',
+      status: 'pending_approval',
+    },
+  })
+  const jobId = (await jobRes.json()).posting.id as string
+  createdJobIds.push(jobId)
+
+  const rejectRes = await request.patch('/api/recruitment', {
+    data: { action: 'reject_posting', job_id: jobId, rejection_reason: 'Add salary details.' },
+  })
+  expect(rejectRes.status()).toBe(200)
+
+  // Rejected postings were never publicly visible, so they stay editable.
+  const editRes = await request.patch('/api/recruitment', {
+    data: { action: 'edit_posting', job_id: jobId, description: 'Second version, with salary details.', salary_amount: 18 },
+  })
+  expect(editRes.status()).toBe(200)
+
+  const resubmitRes = await request.patch('/api/recruitment', {
+    data: { action: 'submit_for_review', job_id: jobId },
+  })
+  expect(resubmitRes.status()).toBe(200)
+  expect((await resubmitRes.json()).posting.status).toBe('pending_approval')
 })

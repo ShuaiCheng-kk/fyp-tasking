@@ -5,10 +5,10 @@ import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import {
-  Archive, ArchiveRestore, ArrowRight, Briefcase, Building2, Cake, CalendarDays, Check, CheckCircle, ChevronDown, ChevronLeft, ChevronRight,
-  ClipboardList, Clock, Coffee, Copy, Crown, DollarSign, Eye, Filter, FileText, LayoutGrid, MapPin,
-  MoreHorizontal, Pencil, Plus, Repeat, Send, Shirt, Sparkles, Timer, Trash2, UserCheck, UserX, Users,
-  X, XCircle, Zap,
+  Archive, ArchiveRestore, ArrowRight, Award, Briefcase, Building2, Cake, CalendarDays, Check, CheckCircle, ChevronDown, ChevronLeft, ChevronRight,
+  ClipboardList, Clock, Coffee, Copy, Crown, DollarSign, Eye, FileText, LayoutGrid, MapPin,
+  MoreHorizontal, Paperclip, Pencil, Plus, Repeat, Send, Shirt, Sparkles, Timer, Trash2, UserCheck, UserX, Users,
+  Wrench, X, XCircle, Zap,
 } from 'lucide-react'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
@@ -22,15 +22,21 @@ import Spinner from '@/components/Spinner'
 import Toast from '@/components/Toast'
 import { CandidateRecommendation } from '@/types/AI'
 import { JobApplicant, JobPostingPendingApproval, JobPostingSummary } from '@/types/Recruitment'
-import { JobTemplate } from '@/types/JobTemplate'
+import { JobTemplate, JobTemplateUsageStats } from '@/types/JobTemplate'
 import { deptColor, setDeptColorOverrides } from '@/lib/deptColor'
 import DepartmentBadge from '@/components/DepartmentBadge'
 import RoleAvatar from '@/components/RoleAvatar'
+import DatePickerField from '@/components/DatePickerField'
 
 type Tab = 'jobs' | 'review' | 'post'
 type Department = { id: string; name: string }
 
 // ─── shared tiny styles ──────────────────────────────────────────────────────
+
+// number inputs natively accept e/E (scientific notation) and +/- — block them
+const blockNonNumericKeys = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  if (['e', 'E', '+', '-'].includes(e.key)) e.preventDefault()
+}
 
 const inputStyle: React.CSSProperties = {
   width: '100%',
@@ -64,11 +70,106 @@ const EXPERIENCE_REQUIRED_OPTIONS = [
   { value: '1+ Year', label: '1+ Year' },
   { value: '2+ Years', label: '2+ Years' },
 ]
+const APPLICANT_EXPERIENCE_LABELS: Record<string, string> = {
+  none: 'No experience',
+  less_than_1: 'Less than 1 year',
+  '1_to_2': '1–2 years',
+  more_than_2: 'More than 2 years',
+}
+
+// The profile snapshot frozen onto an application at apply time — what the applicant looked
+// like when they applied, immune to later profile edits. Shared by the live and archived
+// applicant lists.
+function ApplicantSnapshotBody({ applicant }: { applicant: JobApplicant }) {
+  const rowStyle: React.CSSProperties = { display: 'flex', alignItems: 'flex-start', gap: 7, fontSize: '0.8rem', color: '#374151', lineHeight: 1.5 }
+  const hasSnapshot = applicant.age_at_apply != null || applicant.relevant_experience || applicant.skills_snapshot
+    || (applicant.certificates_snapshot && applicant.certificates_snapshot.length > 0) || applicant.additional_note || applicant.resume_url
+
+  if (!hasSnapshot && !applicant.cover_letter) return null
+
+  return (
+    <div style={{ margin: '10px 0 0', paddingLeft: 41, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {(applicant.age_at_apply != null || applicant.relevant_experience) && (
+        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+          {applicant.age_at_apply != null && (
+            <span style={{ ...rowStyle, alignItems: 'center' }}>
+              <Cake size={13} color="#F97316" style={{ flexShrink: 0 }} />
+              Age {applicant.age_at_apply}
+            </span>
+          )}
+          {applicant.relevant_experience && (
+            <span style={{ ...rowStyle, alignItems: 'center' }}>
+              <Briefcase size={13} color="#F97316" style={{ flexShrink: 0 }} />
+              {APPLICANT_EXPERIENCE_LABELS[applicant.relevant_experience] ?? applicant.relevant_experience} in this role
+            </span>
+          )}
+        </div>
+      )}
+      {applicant.skills_snapshot && (
+        <div style={rowStyle}>
+          <Wrench size={13} color="#F97316" style={{ flexShrink: 0, marginTop: 2 }} />
+          <span>{applicant.skills_snapshot}</span>
+        </div>
+      )}
+      {applicant.certificates_snapshot && applicant.certificates_snapshot.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {applicant.certificates_snapshot.map((cert, idx) => cert.file_url ? (
+            <a key={idx} href={cert.file_url} target="_blank" rel="noreferrer"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 700, color: '#15803D', background: '#DCFCE7', border: '1px solid #BBF7D0', borderRadius: 999, padding: '2px 9px', textDecoration: 'none' }}>
+              <Award size={11} /> {cert.name} <Paperclip size={10} />
+            </a>
+          ) : (
+            <span key={idx}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 700, color: '#4B5563', background: '#F3F4F6', border: '1px solid #E5E7EB', borderRadius: 999, padding: '2px 9px' }}>
+              <Award size={11} /> {cert.name}
+            </span>
+          ))}
+        </div>
+      )}
+      {applicant.additional_note && (
+        <p style={{ margin: 0, color: '#4B5563', fontSize: '0.8rem', lineHeight: 1.55, fontStyle: 'italic' }}>
+          “{applicant.additional_note}”
+        </p>
+      )}
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        {applicant.resume_url && (
+          <a href={applicant.resume_url} target="_blank" rel="noreferrer"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.78rem', fontWeight: 700, color: '#EA580C', textDecoration: 'none' }}>
+            <FileText size={13} /> View Resume
+          </a>
+        )}
+        {/* Legacy pre-rework applications stored the cover letter as an uploaded file URL */}
+        {applicant.cover_letter && applicant.cover_letter.startsWith('http') && (
+          <a href={applicant.cover_letter} target="_blank" rel="noreferrer"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.78rem', fontWeight: 700, color: '#6B7280', textDecoration: 'none' }}>
+            <FileText size={13} /> Cover Letter
+          </a>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Values are plain numbers (stored as integer in the DB) so the age gate can compare them
+// against an applicant's date of birth; the "+" is display-only.
 const MINIMUM_AGE_OPTIONS = [
-  { value: '16+', label: '16+' },
-  { value: '18+', label: '18+' },
-  { value: '21+', label: '21+' },
+  { value: '16', label: '16+' },
+  { value: '18', label: '18+' },
+  { value: '21', label: '21+' },
 ]
+// 3-way uniform mode: makes it clear to applicants whether the company provides the
+// uniform ('company') or they must dress themselves to a code ('dress_code').
+const UNIFORM_TYPE_OPTIONS = [
+  { value: 'none', label: 'Not Required' },
+  { value: 'company', label: 'Company Uniform Provided' },
+  { value: 'dress_code', label: 'Specific Dress Code' },
+]
+type UniformType = 'none' | 'company' | 'dress_code'
+// Legacy rows predate uniform_type: uniform_required=true was company-provided attire.
+function uniformTypeOf(row: { uniform_type?: string | null; uniform_required?: boolean | null }): UniformType {
+  if (row.uniform_type === 'company' || row.uniform_type === 'dress_code' || row.uniform_type === 'none') return row.uniform_type
+  return row.uniform_required ? 'company' : 'none'
+}
 
 // Local calendar-date key (not UTC) — used to hydrate the deadline date input from a stored
 // expires_at timestamp without shifting a day when the local timezone is behind/ahead of UTC.
@@ -76,17 +177,16 @@ function localDateKey(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-// Posted/submitted timestamp shown on job posting cards, e.g. "Thu, 2 Jul, 10:59AM"
-function formatPostedAt(iso: string): string {
+// Compact list-card timestamp matching the Communication page, e.g. "02 Jul, 10:59AM"
+function formatCompactAt(iso: string): string {
   const d = new Date(iso)
-  const weekday = d.toLocaleDateString('en-GB', { weekday: 'short' })
-  const month = d.toLocaleDateString('en-GB', { month: 'short' })
-  const hours24 = d.getHours()
-  const minutes = String(d.getMinutes()).padStart(2, '0')
-  const ampm = hours24 >= 12 ? 'PM' : 'AM'
-  const hours12 = hours24 % 12 || 12
-  return `${weekday}, ${d.getDate()} ${month}, ${hours12}:${minutes}${ampm}`
+  const day = String(d.getDate()).padStart(2, '0')
+  const month = d.toLocaleDateString([], { month: 'short' })
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }).replace(/\s/g, '')
+  return `${day} ${month}, ${time}`
 }
+
+
 
 const pageKeyframes = `
   @keyframes blockSlideUp  { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
@@ -97,9 +197,24 @@ const pageKeyframes = `
   @media (max-width: 1100px) {
     .recruitment-grid { grid-template-columns: minmax(0, 1fr); }
   }
-  .template-edit-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+  .template-edit-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.95fr); gap: 64px; align-items: start; max-width: 1800px; margin: 0 auto; width: 100%; }
+  /* Edit → Preview arrow sits on the gap between column 1 and 2 (fr ratio 1 : 1 : 0.95 → total 2.95) */
+  .flow-arrow-mid { left: calc((100% - 128px) / 2.95 + 32px); transform: translateX(-50%); }
+  /* Preview → Template Information arrow: gap between column 2 and 3 */
+  .flow-arrow-end { left: calc((100% - 128px) / 2.95 * 2 + 96px); transform: translateX(-50%); }
+  @media (max-width: 1500px) {
+    .template-edit-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    .template-info-panel { grid-column: 1 / -1; }
+    .flow-arrow-mid { left: 50%; }
+    .flow-arrow-end { display: none; }
+  }
   @media (max-width: 900px) {
-    .template-edit-grid { grid-template-columns: minmax(0, 1fr); }
+    .template-edit-grid { grid-template-columns: minmax(0, 1fr); max-width: 640px; }
+  }
+  /* Flow arrows between the template hub panels — vertically aligned with the "Template" menu card */
+  .flow-arrow { position: absolute; top: 296px; width: 28px; height: 28px; border-radius: 50%; background: linear-gradient(135deg, #F97316, #EA580C); color: #FFFFFF; display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(249,115,22,0.35); z-index: 2; }
+  @media (max-width: 1100px) {
+    .flow-arrow { display: none; }
   }
 `
 
@@ -155,7 +270,7 @@ function RDrop({ value, options, onChange, placeholder, disabled = false, autoFo
         </span>
         <ChevronRight size={13} style={{ color: '#9CA3AF', flexShrink: 0, transform: open ? 'rotate(270deg)' : 'rotate(90deg)', transition: 'transform 0.15s' }} />
       </button>
-      {open && (
+      {open && typeof document !== 'undefined' && createPortal(
         <div ref={dropRef} style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width, background: '#FFFFFF', border: '1.5px solid #E5E7EB', borderRadius: 10, boxShadow: '0 8px 24px rgba(15,23,42,0.12)', zIndex: 9999, maxHeight: 208, overflowY: 'auto', padding: '4px 0' }}>
           {options.map(opt => {
             const isSel = opt.value === value
@@ -168,9 +283,34 @@ function RDrop({ value, options, onChange, placeholder, disabled = false, autoFo
               </button>
             )
           })}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
+  )
+}
+
+// Est. Hours input (one-off jobs only) — whole field is clickable, "hours" suffix rendered after the number
+function HoursField({ value, onChange, placeholder = 'e.g. 5' }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+  const [focused, setFocused] = useState(false)
+  return (
+    <label style={{ display: 'flex', alignItems: 'center', gap: 6, border: `1.5px solid ${focused ? '#F97316' : '#E5E7EB'}`, borderRadius: 8, minHeight: 40, padding: '10px 12px', background: '#FFFFFF', boxSizing: 'border-box', cursor: 'text', transition: 'border-color 0.15s' }}>
+      <input
+        type="text"
+        inputMode="decimal"
+        value={value}
+        placeholder={placeholder}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        onChange={e => {
+          const cleaned = e.target.value.replace(/[^0-9.]/g, '')
+          const parts = cleaned.split('.')
+          onChange(parts.length > 1 ? `${parts[0]}.${parts.slice(1).join('')}` : cleaned)
+        }}
+        style={{ width: `${Math.max((value || placeholder).length, 1)}ch`, minWidth: 10, border: 'none', outline: 'none', padding: 0, fontSize: '0.9375rem', color: '#111827', background: 'transparent', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}
+      />
+      <span style={{ fontSize: '0.9375rem', color: '#111827' }}>hours</span>
+    </label>
   )
 }
 
@@ -317,7 +457,7 @@ function RTimePicker({ value, onChange }: { value: string; onChange: (v: string)
   return (
     <div style={{ position: 'relative', width: '100%' }}>
       <button ref={triggerRef} type="button" onClick={handleOpen}
-        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4, border: '1.5px solid #E5E7EB', borderRadius: 8, background: '#FAFAFA', cursor: 'pointer', padding: '10px 12px', fontSize: '0.9375rem', fontWeight: 500, color: '#111827', fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box' }}>
+        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4, border: `1.5px solid ${open ? '#F97316' : '#E5E7EB'}`, borderRadius: 8, background: '#FFFFFF', cursor: 'pointer', padding: '10px 12px', fontSize: '0.9375rem', fontWeight: 500, color: '#111827', fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s' }}>
         <span style={{ userSelect: 'none' }}>{displayLabel}</span>
         <ChevronRight size={13} style={{ color: '#9CA3AF', flexShrink: 0, transform: open ? 'rotate(270deg)' : 'rotate(90deg)', transition: 'transform 0.15s' }} />
       </button>
@@ -358,7 +498,9 @@ export default function OwnerRecruitmentPage() {
   // ui state
   const [activeTab, setActiveTab] = useState<Tab>('jobs')
   const [postView, setPostView] = useState<'none' | 'archived' | 'drafts' | 'template'>('none')
-  const [templatesOpen, setTemplatesOpen] = useState(false)
+  // Job Sources accordion: which card's dropdown is expanded. Template opens by default;
+  // opening one automatically closes the others — never more than one open at a time.
+  const [openSource, setOpenSource] = useState<'none' | 'drafts' | 'archived' | 'templates'>('templates')
   const [loading, setLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
   const [aiLoading, setAiLoading] = useState(false)
@@ -407,13 +549,15 @@ export default function OwnerRecruitmentPage() {
   const [formRequirements, setFormRequirements] = useState('')
   const [formExperienceRequired, setFormExperienceRequired] = useState('')
   const [formMinimumAge, setFormMinimumAge] = useState('')
-  const [formUniformRequired, setFormUniformRequired] = useState(false)
+  // '' = not chosen yet — the Uniform dropdown must be an explicit choice, never defaulted
+  const [formUniformType, setFormUniformType] = useState<UniformType | ''>('')
   const [formUniformDetails, setFormUniformDetails] = useState('')
   const [formIndustry, setFormIndustry] = useState('')
   const [formCompanyName, setFormCompanyName] = useState('')
   const [formBenefits, setFormBenefits] = useState('')
   const [formOpenings, setFormOpenings] = useState(1)
-  const [formDeadlineEnabled, setFormDeadlineEnabled] = useState(false)
+  // Deadline is a mandatory choice: '' = not chosen yet, 'never' = open until filled, 'date' = expires at a set date/time
+  const [formDeadlineChoice, setFormDeadlineChoice] = useState<'' | 'never' | 'date'>('')
   const [formExpiresAt, setFormExpiresAt] = useState('')
   const [formDeadlineTime, setFormDeadlineTime] = useState('23:59')
   // shift-specific
@@ -444,6 +588,13 @@ export default function OwnerRecruitmentPage() {
 
   // job templates (UC36)
   const [templates, setTemplates] = useState<JobTemplate[]>([])
+  // Apply Template wizard step — mirrors the New Template steps (1 Job Information, 2 Requirements
+  // & Payment) plus step 3 (Schedule & Post). Applying a template opens directly at step 3;
+  // steps 1–2 hold the template-derived fields and stay reachable via the back circles.
+  const [applyStep, setApplyStep] = useState<1 | 2 | 3>(3)
+  // Create Job wizard sub-step after the AI generator: 3 = Requirements & Payment, 4 = Schedule & Post
+  const [createStep, setCreateStep] = useState<3 | 4>(3)
+  const [shiftOptionsLoading, setShiftOptionsLoading] = useState(false)
   const [showTemplates, setShowTemplates] = useState(false)
   const [templateActionLoading, setTemplateActionLoading] = useState(false)
   const [newTemplateModalOpen, setNewTemplateModalOpen] = useState(false)
@@ -451,8 +602,9 @@ export default function OwnerRecruitmentPage() {
   const [tplTitle, setTplTitle] = useState('')
   const [tplDescription, setTplDescription] = useState('')
   const [tplRequirements, setTplRequirements] = useState('')
-  const [tplUniformRequired, setTplUniformRequired] = useState<boolean | null>(null)
+  const [tplUniformType, setTplUniformType] = useState<UniformType | ''>('')
   const [tplUniformDetails, setTplUniformDetails] = useState('')
+  const [tplUsage, setTplUsage] = useState<JobTemplateUsageStats | null>(null)
   const [tplExperienceRequired, setTplExperienceRequired] = useState('')
   const [tplMinimumAge, setTplMinimumAge] = useState('')
   const [tplEstimatedHours, setTplEstimatedHours] = useState('')
@@ -464,11 +616,12 @@ export default function OwnerRecruitmentPage() {
   // New Template modal — deliberately separate state from the tpl* fields above (which back
   // the Edit Template panel) so opening "New Template" while a template is being edited can't
   // clobber the in-progress edit sitting behind the modal.
+  const [ntplStep, setNtplStep] = useState<1 | 2>(1)
   const [ntplFormType, setNtplFormType] = useState<'shift' | 'oneoff' | ''>('')
   const [ntplTitle, setNtplTitle] = useState('')
   const [ntplDescription, setNtplDescription] = useState('')
   const [ntplRequirements, setNtplRequirements] = useState('')
-  const [ntplUniformRequired, setNtplUniformRequired] = useState<boolean | null>(null)
+  const [ntplUniformType, setNtplUniformType] = useState<UniformType | ''>('')
   const [ntplUniformDetails, setNtplUniformDetails] = useState('')
   const [ntplExperienceRequired, setNtplExperienceRequired] = useState('')
   const [ntplMinimumAge, setNtplMinimumAge] = useState('')
@@ -658,15 +811,16 @@ export default function OwnerRecruitmentPage() {
     setFormTitle(''); setFormDeptId(''); setFormEmpType('casual')
     setFormLocation(''); setFormSalaryAmt(''); setFormSalaryType('per hour')
     setFormDescription(''); setFormRequirements(''); setFormIndustry('')
-    setFormExperienceRequired(''); setFormMinimumAge(''); setFormUniformRequired(false); setFormUniformDetails('')
+    setFormExperienceRequired(''); setFormMinimumAge(''); setFormUniformType(''); setFormUniformDetails('')
     setFormCompanyName(''); setFormBenefits(''); setFormOpenings(1)
-    setFormDeadlineEnabled(false); setFormExpiresAt(''); setFormDeadlineTime('23:59')
+    setFormDeadlineChoice(''); setFormExpiresAt(''); setFormDeadlineTime('23:59')
     setFormShiftStart('09:00'); setFormShiftEnd('17:00'); setFormBreakStart('12:00'); setFormBreakEnd('13:00'); setFormShiftDays([])
     setFormIsRecurring(false); setFormRecurInterval(1); setFormRecurUnit('week')
     setFormShiftDate(''); setFormAssignedEmployeeId('')
     setShiftDeptEmployees([]); setShiftAvailableDates([]); setShiftDateEmployees([])
     setFormJobDate(''); setFormJobEndDate(''); setFormEstHours(''); setFormUrgency('normal'); setFormJobStartTime('09:00')
     setAiPrompt(''); setAiPreview(null); setFormError('')
+    setCreateStep(3)
   }
 
   const openEditForm = async (p: JobPostingSummary, isDraft = false) => {
@@ -679,12 +833,13 @@ export default function OwnerRecruitmentPage() {
     setFormEmpType(p.employment_type ?? 'casual'); setFormLocation(p.location ?? '')
     setFormSalaryAmt(p.salary_amount?.toString() ?? ''); setFormSalaryType(p.salary_type ?? (isShift ? 'per hour' : 'flat rate'))
     setFormDescription(p.description); setFormRequirements(p.requirements ?? '')
-    setFormExperienceRequired(p.experience_required ?? ''); setFormMinimumAge(p.minimum_age ?? '')
-    setFormUniformRequired(p.uniform_required ?? false); setFormUniformDetails(p.uniform_details ?? '')
+    setFormExperienceRequired(p.experience_required ?? ''); setFormMinimumAge(p.minimum_age != null ? String(p.minimum_age) : '')
+    setFormUniformType(uniformTypeOf(p)); setFormUniformDetails(p.uniform_details ?? '')
     setFormIndustry(''); setFormCompanyName(companyName); setFormBenefits('')
-    setFormOpenings(1)
+    setFormOpenings(p.openings ?? 1)
     const savedExpiresAt = typeof raw.expires_at === 'string' && raw.expires_at ? new Date(raw.expires_at) : null
-    setFormDeadlineEnabled(!!savedExpiresAt)
+    // Published postings without expiry were deliberately posted as open-until-filled; drafts may simply not have chosen yet
+    setFormDeadlineChoice(savedExpiresAt ? 'date' : (isDraft ? '' : 'never'))
     setFormExpiresAt(savedExpiresAt ? localDateKey(savedExpiresAt) : '')
     setFormDeadlineTime(savedExpiresAt ? `${String(savedExpiresAt.getHours()).padStart(2, '0')}:${String(savedExpiresAt.getMinutes()).padStart(2, '0')}` : '23:59')
     setFormIsRecurring(false); setFormRecurInterval(1); setFormRecurUnit('week')
@@ -755,9 +910,11 @@ export default function OwnerRecruitmentPage() {
     description: formDescription,
     requirements: formRequirements || null,
     experience_required: formExperienceRequired || null,
-    minimum_age: formMinimumAge || null,
-    uniform_required: formUniformRequired,
-    uniform_details: formUniformRequired ? (formUniformDetails || null) : null,
+    minimum_age: formMinimumAge ? Number(formMinimumAge) : null,
+    openings: formOpenings,
+    uniform_required: formUniformType === 'company' || formUniformType === 'dress_code',
+    uniform_type: formUniformType || 'none',
+    uniform_details: formUniformType === 'company' || formUniformType === 'dress_code' ? (formUniformDetails || null) : null,
     location: formLocation || null,
     employment_type: formEmpType || null,
     company_name: formCompanyName || companyName || null,
@@ -774,7 +931,7 @@ export default function OwnerRecruitmentPage() {
     break_end_time: formJobType === 'shift' ? (formBreakEnd || null) : null,
     job_start_time: formJobType === 'oneoff' ? (formJobStartTime || null) : null,
     assigned_employee_id: formAssignedEmployeeId || null,
-    expires_at: (formDeadlineEnabled && formExpiresAt && formDeadlineTime)
+    expires_at: (formDeadlineChoice === 'date' && formExpiresAt && formDeadlineTime)
       ? new Date(`${formExpiresAt}T${formDeadlineTime}:00`).toISOString()
       : null,
     template_id: formTemplateId || null,
@@ -791,25 +948,63 @@ export default function OwnerRecruitmentPage() {
     setFormDescription(t.description ?? '')
     setFormRequirements(t.requirements ?? '')
     setFormExperienceRequired(t.experience_required ?? '')
-    setFormMinimumAge(t.minimum_age ?? '')
-    setFormUniformRequired(t.uniform_required ?? false)
+    setFormMinimumAge(t.minimum_age != null ? String(t.minimum_age) : '')
+    setFormUniformType(uniformTypeOf(t))
     setFormUniformDetails(t.uniform_details ?? '')
     setFormDeptId(t.department_id ?? '')
     setFormSalaryAmt(t.salary_amount?.toString() ?? '')
     setFormEstHours(t.estimated_hours ?? '')
     setFormUrgency(t.urgency ?? 'normal')
     // Deadline is never part of a template — always start fresh so it's set deliberately each time.
-    setFormDeadlineEnabled(false)
+    setFormDeadlineChoice('')
     setFormExpiresAt('')
     setFormDeadlineTime('23:59')
+    // The template carries a department, so load that department's shift dates/employees
+    // immediately — otherwise Shift Date shows "No scheduled shifts" until the user
+    // re-selects the department by hand.
+    void loadDeptShiftOptions(t.department_id ?? '')
     setShowTemplates(false)
     setWizardStep('form')
+    setApplyStep(3)
     showToast('Template applied')
   }
 
+  // Loads the shift dates + employees selectable for a department in the posting form,
+  // clearing any date/employee picked under the previous department.
+  const loadDeptShiftOptions = async (deptId: string) => {
+    setFormShiftDate(''); setFormAssignedEmployeeId('')
+    setShiftDeptEmployees([]); setShiftAvailableDates([]); setShiftDateEmployees([])
+    if (!deptId) return
+    setShiftOptionsLoading(true)
+    try {
+      const res = await fetch(`/api/shifts/department-employees?company_id=${companyId}&department_id=${deptId}`)
+      const data = await res.json()
+      if (data.success) {
+        const employees = data.employees ?? []
+        setShiftDeptEmployees(employees)
+        const dateMap = new Map<string, { start_time: string; end_time: string }>()
+        employees.forEach((emp: { shifts?: { shift_date: string; start_time: string; end_time: string }[] }) => {
+          (emp.shifts ?? []).forEach((s) => { if (!dateMap.has(s.shift_date)) dateMap.set(s.shift_date, { start_time: s.start_time, end_time: s.end_time }) })
+        })
+        setShiftAvailableDates(Array.from(dateMap.entries()).sort(([a], [b]) => a.localeCompare(b)).filter(([date]) => date >= new Date().toISOString().slice(0, 10)).map(([date, tm]) => ({ date, start_time: tm.start_time, end_time: tm.end_time })))
+      }
+    } finally {
+      setShiftOptionsLoading(false)
+    }
+  }
+
   const saveAsTemplate = async () => {
-    if (!companyId || !internalUserId || !formTitle.trim()) return
-    setTemplateActionLoading(true)
+    if (!companyId || !internalUserId) return
+    if (!formTitle.trim()) { setFormError('Job title is required to save a template'); return }
+    if (!formDescription.trim()) { setFormError('Description is required to save a template'); return }
+    if (!formRequirements.trim()) { setFormError('Requirements are required to save a template'); return }
+    if (formJobType === 'oneoff' && !formEstHours) { setFormError('Estimated hours are required to save a template'); return }
+    if ((formUniformType === 'company' || formUniformType === 'dress_code') && !formUniformDetails.trim()) { setFormError('Uniform details are required to save a template'); return }
+    if (!formExperienceRequired) { setFormError('Experience requirement is required to save a template'); return }
+    if (!formMinimumAge) { setFormError('Minimum age is required to save a template'); return }
+    if (!formDeptId) { setFormError('Department is required to save a template'); return }
+    if (!formSalaryAmt || Number(formSalaryAmt) <= 0) { setFormError('Pay amount is required to save a template'); return }
+    setTemplateActionLoading(true); setFormError('')
     try {
       const res = await fetch('/api/job-template', {
         method: 'POST',
@@ -818,6 +1013,16 @@ export default function OwnerRecruitmentPage() {
           company_id: companyId, created_by: internalUserId, name: formTitle.trim(),
           title: formTitle, description: formDescription || null, requirements: formRequirements || null,
           employment_type: formEmpType || null, form_type: formJobType,
+          department_id: formDeptId || null,
+          salary_amount: formSalaryAmt ? Number(formSalaryAmt) : null,
+          salary_type: formJobType === 'shift' ? 'per hour' : 'flat rate',
+          uniform_required: formUniformType === 'company' || formUniformType === 'dress_code',
+          uniform_type: formUniformType || 'none',
+          uniform_details: formUniformType === 'company' || formUniformType === 'dress_code' ? (formUniformDetails || null) : null,
+          experience_required: formExperienceRequired || null,
+          minimum_age: formMinimumAge || null,
+          estimated_hours: formJobType === 'oneoff' ? (formEstHours || null) : null,
+          urgency: formJobType === 'oneoff' ? (formUrgency || 'normal') : null,
         }),
       })
       const data = await res.json()
@@ -832,8 +1037,9 @@ export default function OwnerRecruitmentPage() {
   }
 
   const resetNewTemplateForm = () => {
+    setNtplStep(1)
     setNtplFormType(''); setNtplTitle(''); setNtplDescription(''); setNtplRequirements('')
-    setNtplUniformRequired(null); setNtplUniformDetails(''); setNtplExperienceRequired(''); setNtplMinimumAge('')
+    setNtplUniformType(''); setNtplUniformDetails(''); setNtplExperienceRequired(''); setNtplMinimumAge('')
     setNtplEstimatedHours(''); setNtplUrgency('normal')
     setNtplDepartmentId(''); setNtplSalaryAmt(''); setNtplError('')
   }
@@ -842,8 +1048,15 @@ export default function OwnerRecruitmentPage() {
     if (!companyId || !internalUserId) return
     if (!ntplFormType) { setNtplError('Job type is required'); return }
     if (!ntplTitle.trim()) { setNtplError('Job title is required'); return }
-    if (!ntplDescription.trim()) { setNtplError('Job scope is required'); return }
+    if (!ntplDescription.trim()) { setNtplError('Responsibilities are required'); return }
+    if (!ntplRequirements.trim()) { setNtplError('Skills & qualifications are required'); return }
+    if (ntplFormType === 'oneoff' && !ntplEstimatedHours) { setNtplError('Estimated hours are required'); return }
+    if (!ntplUniformType) { setNtplError('Uniform requirement is required'); return }
+    if ((ntplUniformType === 'company' || ntplUniformType === 'dress_code') && !ntplUniformDetails.trim()) { setNtplError('Uniform details are required'); return }
+    if (!ntplExperienceRequired) { setNtplError('Experience requirement is required'); return }
+    if (!ntplMinimumAge) { setNtplError('Minimum age is required'); return }
     if (!ntplDepartmentId) { setNtplError('Department is required'); return }
+    if (!ntplSalaryAmt || Number(ntplSalaryAmt) <= 0) { setNtplError('Pay amount is required'); return }
     setTemplateActionLoading(true); setNtplError('')
     try {
       const res = await fetch('/api/job-template', {
@@ -856,8 +1069,9 @@ export default function OwnerRecruitmentPage() {
           department_id: ntplDepartmentId || null,
           salary_amount: ntplSalaryAmt ? Number(ntplSalaryAmt) : null,
           salary_type: ntplFormType === 'shift' ? 'per hour' : 'flat rate',
-          uniform_required: ntplUniformRequired === true,
-          uniform_details: ntplUniformRequired ? (ntplUniformDetails || null) : null,
+          uniform_required: ntplUniformType === 'company' || ntplUniformType === 'dress_code',
+          uniform_type: ntplUniformType || 'none',
+          uniform_details: ntplUniformType === 'company' || ntplUniformType === 'dress_code' ? (ntplUniformDetails || null) : null,
           experience_required: ntplExperienceRequired || null,
           minimum_age: ntplMinimumAge || null,
           estimated_hours: ntplFormType === 'oneoff' ? (ntplEstimatedHours || null) : null,
@@ -884,16 +1098,24 @@ export default function OwnerRecruitmentPage() {
     setTplTitle(t.title)
     setTplDescription(t.description ?? '')
     setTplRequirements(t.requirements ?? '')
-    setTplUniformRequired(t.uniform_required ?? false)
+    setTplUniformType(uniformTypeOf(t))
     setTplUniformDetails(t.uniform_details ?? '')
     setTplExperienceRequired(t.experience_required ?? '')
-    setTplMinimumAge(t.minimum_age ?? '')
+    setTplMinimumAge(t.minimum_age != null ? String(t.minimum_age) : '')
     setTplEstimatedHours(t.estimated_hours ?? '')
     setTplUrgency(t.urgency ?? 'normal')
     setTplDepartmentId(t.department_id ?? '')
     setTplSalaryAmt(t.salary_amount?.toString() ?? '')
     setTplError('')
     setPostView('template')
+    setTplUsage(null)
+    void (async () => {
+      try {
+        const res = await fetch(`/api/job-template/${t.id}/usage`)
+        const data = await res.json()
+        if (data.success) setTplUsage(data.stats)
+      } catch { /* usage stats are informational only */ }
+    })()
   }
 
   const saveTemplateEdits = async () => {
@@ -901,7 +1123,13 @@ export default function OwnerRecruitmentPage() {
     if (!tplFormType) { setTplError('Job type is required'); return }
     if (!tplTitle.trim()) { setTplError('Job title is required'); return }
     if (!tplDescription.trim()) { setTplError('Job scope is required'); return }
+    if (!tplRequirements.trim()) { setTplError('Skills & qualifications are required'); return }
+    if (tplFormType === 'oneoff' && !tplEstimatedHours) { setTplError('Estimated hours are required'); return }
+    if ((tplUniformType === 'company' || tplUniformType === 'dress_code') && !tplUniformDetails.trim()) { setTplError('Uniform details are required'); return }
+    if (!tplExperienceRequired) { setTplError('Experience requirement is required'); return }
+    if (!tplMinimumAge) { setTplError('Minimum age is required'); return }
     if (!tplDepartmentId) { setTplError('Department is required'); return }
+    if (!tplSalaryAmt || Number(tplSalaryAmt) <= 0) { setTplError('Pay amount is required'); return }
     setTemplateActionLoading(true); setTplError('')
     try {
       const res = await fetch(`/api/job-template/${selectedTemplateId}`, {
@@ -914,8 +1142,9 @@ export default function OwnerRecruitmentPage() {
           department_id: tplDepartmentId || null,
           salary_amount: tplSalaryAmt ? Number(tplSalaryAmt) : null,
           salary_type: tplFormType === 'shift' ? 'per hour' : 'flat rate',
-          uniform_required: tplUniformRequired === true,
-          uniform_details: tplUniformRequired ? (tplUniformDetails || null) : null,
+          uniform_required: tplUniformType === 'company' || tplUniformType === 'dress_code',
+          uniform_type: tplUniformType || 'none',
+          uniform_details: tplUniformType === 'company' || tplUniformType === 'dress_code' ? (tplUniformDetails || null) : null,
           experience_required: tplExperienceRequired || null,
           minimum_age: tplMinimumAge || null,
           estimated_hours: tplFormType === 'oneoff' ? (tplEstimatedHours || null) : null,
@@ -952,9 +1181,24 @@ export default function OwnerRecruitmentPage() {
   const saveForm = async (status: 'open' | 'draft') => {
     if (!companyId || !internalUserId) return
     if (!formTitle.trim()) { setFormError('Title is required'); return }
-    if (status === 'open' && !formDescription.trim()) { setFormError('Description is required to publish'); return }
-    if (status === 'open' && formJobType === 'oneoff' && !formJobStartTime) { setFormError('Start time is required to publish'); return }
-    if (formDeadlineEnabled && (!formExpiresAt || !formDeadlineTime)) { setFormError('Please set a full deadline date and time, or turn off the deadline'); return }
+    if (status === 'open') {
+      if (!formDescription.trim()) { setFormError('Description is required to publish'); return }
+      if (!formRequirements.trim()) { setFormError('Requirements are required to publish'); return }
+      if (!formExperienceRequired) { setFormError('Experience requirement is required to publish'); return }
+      if (!formMinimumAge) { setFormError('Minimum age is required to publish'); return }
+      if (!formUniformType) { setFormError('Uniform requirement is required to publish'); return }
+      if ((formUniformType === 'company' || formUniformType === 'dress_code') && !formUniformDetails.trim()) { setFormError('Uniform details are required to publish'); return }
+      if (formJobType === 'oneoff' && !formEstHours) { setFormError('Estimated hours are required to publish'); return }
+      if (formJobType === 'oneoff' && !formJobStartTime) { setFormError('Start time is required to publish'); return }
+      if (!formDeptId) { setFormError('Department is required to publish'); return }
+      if (!formShiftDate) { setFormError('Available shift is required to publish'); return }
+      if (!formAssignedEmployeeId) { setFormError('Supervisor is required to publish'); return }
+      if (formJobType === 'shift' && (!formShiftStart || !formShiftEnd)) { setFormError('Shift start and end times are required to publish'); return }
+      if (formJobType === 'shift' && (!formBreakStart || !formBreakEnd)) { setFormError('Break start and end times are required to publish'); return }
+      if (!formSalaryAmt || Number(formSalaryAmt) <= 0) { setFormError('Pay amount is required to publish'); return }
+      if (!formDeadlineChoice) { setFormError('Application deadline is required to publish — choose a date or "No Deadline"'); return }
+    }
+    if (formDeadlineChoice === 'date' && (!formExpiresAt || !formDeadlineTime)) { setFormError('Please set a full deadline date and time'); return }
     setActionLoading(true); setFormError('')
     try {
       const body = buildBody(status)
@@ -1035,8 +1279,10 @@ export default function OwnerRecruitmentPage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed')
       await fetchAll(companyId, internalUserId)
-      if (data.posting?.id) setSelectedLiveId(data.posting.id)
-      showToast(action === 'archive_posting' ? 'Job archived' : 'Job updated')
+      // Archiving removes the job from the Active Jobs list — clear the detail selection too
+      if (action === 'archive_posting') setSelectedLiveId('')
+      else if (data.posting?.id && data.posting.status !== 'draft') setSelectedLiveId(data.posting.id)
+      showToast(action === 'archive_posting' ? 'Job archived' : action === 'duplicate_posting' ? 'Duplicated' : 'Job updated')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update job')
     } finally { setActionLoading(false) }
@@ -1054,6 +1300,7 @@ export default function OwnerRecruitmentPage() {
       if (!data.success) throw new Error(data.message || 'Failed')
       setSelectedArchivedId('')
       setArchivedSelected(new Set())
+      setPostView('none')
       await fetchAll(companyId, internalUserId)
       showToast(action === 'unarchive_posting' ? 'Job unarchived' : 'Job deleted')
       if (action === 'unarchive_posting') setActiveTab('jobs')
@@ -1076,6 +1323,56 @@ export default function OwnerRecruitmentPage() {
       showToast(decision === 'accepted' ? 'Applicant accepted' : 'Applicant rejected')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update applicant')
+    } finally { setActionLoading(false) }
+  }
+
+  // Remove ONE confirmed worker (job keeps hiring) or cancel the WHOLE job — both need a
+  // written reason since a committed worker is being cancelled on.
+  const [removeWorkerTarget, setRemoveWorkerTarget] = useState<JobApplicant | null>(null)
+  const [cancelJobOpen, setCancelJobOpen] = useState(false)
+  const [cancelReason, setCancelReason] = useState('')
+  const [cancelSubmitError, setCancelSubmitError] = useState('')
+
+  const submitRemoveWorker = async () => {
+    if (!removeWorkerTarget || !internalUserId) return
+    if (!cancelReason.trim()) { setCancelSubmitError('A reason is required.'); return }
+    setActionLoading(true); setCancelSubmitError('')
+    try {
+      const res = await fetch('/api/recruitment', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'remove_worker', job_id: selectedLiveId, applicant_id: removeWorkerTarget.id,
+          removed_by: internalUserId, reason: cancelReason.trim(),
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to remove worker')
+      setRemoveWorkerTarget(null); setCancelReason('')
+      await Promise.all([fetchApplicants(selectedLiveId), fetchAll(companyId, internalUserId)])
+      showToast('Worker removed — they have been notified')
+    } catch (err) {
+      setCancelSubmitError(err instanceof Error ? err.message : 'Failed to remove worker')
+    } finally { setActionLoading(false) }
+  }
+
+  const submitCancelJob = async () => {
+    if (!selectedLiveId || !internalUserId) return
+    if (!cancelReason.trim()) { setCancelSubmitError('A reason is required.'); return }
+    setActionLoading(true); setCancelSubmitError('')
+    try {
+      const res = await fetch('/api/recruitment', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'cancel_job', job_id: selectedLiveId, cancelled_by: internalUserId, reason: cancelReason.trim(),
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to cancel job')
+      setCancelJobOpen(false); setCancelReason('')
+      await Promise.all([fetchApplicants(selectedLiveId), fetchAll(companyId, internalUserId)])
+      showToast('Job cancelled — all confirmed workers notified')
+    } catch (err) {
+      setCancelSubmitError(err instanceof Error ? err.message : 'Failed to cancel job')
     } finally { setActionLoading(false) }
   }
 
@@ -1140,6 +1437,7 @@ export default function OwnerRecruitmentPage() {
           experience_required: draft.experience_required ?? null,
           minimum_age: draft.minimum_age ?? null,
           uniform_required: draft.uniform_required ?? false,
+          uniform_type: draft.uniform_type ?? null,
           uniform_details: draft.uniform_details ?? null,
           location: draft.location ?? null,
           employment_type: draft.employment_type ?? null,
@@ -1376,15 +1674,15 @@ export default function OwnerRecruitmentPage() {
         <div style={{ padding: '0 0 16px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: 4, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 999, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
             {([
-              { key: 'jobs' as Tab,   label: 'All Jobs' },
-              { key: 'review' as Tab, label: 'Review Requests' },
+              { key: 'jobs' as Tab,   label: 'Active Jobs' },
+              { key: 'review' as Tab, label: 'Pending Approval' },
               { key: 'post' as Tab,   label: 'Post Job' },
             ]).map(tab => {
               const active = activeTab === tab.key
               return (
                 <button
                   key={tab.key}
-                  onClick={() => { setActiveTab(tab.key); setPostView('none'); setSelectedArchivedId(''); setArchivedSelected(new Set()); setSelectedDraftId(''); setSelectedTemplateId(''); setSelectedPendingId(''); setJobsSelected(new Set()) }}
+                  onClick={() => { setActiveTab(tab.key); setPostView('none'); setOpenSource('templates'); setSelectedArchivedId(''); setArchivedSelected(new Set()); setSelectedDraftId(''); setSelectedTemplateId(''); setSelectedPendingId(''); setJobsSelected(new Set()) }}
                   style={{
                     height: 36, padding: '0 16px', borderRadius: '99px', cursor: 'pointer', fontWeight: 700, fontSize: '0.8125rem',
                     border: 'none',
@@ -1427,7 +1725,7 @@ export default function OwnerRecruitmentPage() {
                   <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <Briefcase size={15} style={{ color: '#F97316' }} />
                   </div>
-                  <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, flex: 1 }}>All Jobs</span>
+                  <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, flex: 1 }}>Active Jobs</span>
                   {jobsSelected.size > 0 && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <button
@@ -1459,7 +1757,7 @@ export default function OwnerRecruitmentPage() {
                         onClick={() => setJobsDeptDropdownOpen(o => !o)}
                         style={{ display: 'flex', alignItems: 'center', gap: 5, height: 36, padding: '0 10px', border: `1.5px solid ${jobsDeptDropdownOpen ? '#F97316' : '#E5E7EB'}`, borderRadius: 8, background: '#FFFFFF', color: '#374151', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', boxShadow: jobsDeptDropdownOpen ? '0 0 0 3px rgba(249,115,22,0.10)' : 'none', transition: 'border-color 0.15s' }}
                       >
-                        <Filter size={11} style={{ color: '#9CA3AF', flexShrink: 0 }} />
+
                         {jobsDeptFilter === 'all' ? 'All Departments' : jobsDeptFilter}
                         <ChevronDown size={11} style={{ color: '#9CA3AF', flexShrink: 0, transform: jobsDeptDropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
                       </button>
@@ -1497,17 +1795,16 @@ export default function OwnerRecruitmentPage() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                   {filteredJobsPostings.map((p, idx) => {
                   const isSelected = selectedLiveId === p.id
-                  const checked = jobsSelected.has(p.id)
-                  const active = isSelected || checked
+                  const active = isSelected
                   const dc = p.department_id ? deptColor(p.department_id) : '#94A3B8'
                   return (
                     <article
                       key={p.id}
                       onClick={() => setSelectedLiveId(p.id)}
                       style={{
-                        display: 'flex', flexDirection: 'column', gap: 12,
+                        display: 'flex', flexDirection: 'column', gap: 10,
                         border: `1px solid ${active ? dc : PANEL_BORDER}`,
-                        borderRadius: 10, padding: '16px 18px',
+                        borderRadius: 10, padding: '14px 16px',
                         background: active ? `${dc}0d` : '#F9FAFB',
                         cursor: 'pointer', overflow: 'hidden',
                         transition: 'box-shadow 0.18s, transform 0.18s, border-color 0.18s, background 0.18s',
@@ -1526,13 +1823,27 @@ export default function OwnerRecruitmentPage() {
                             : <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE', whiteSpace: 'nowrap', flexShrink: 0 }}>One-Off Job</span>
                           }
                         </div>
-                        <button
-                          type="button"
-                          onClick={e => { e.stopPropagation(); setJobsSelected(prev => { const s = new Set(prev); checked ? s.delete(p.id) : s.add(p.id); return s }) }}
-                          style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 5, border: checked ? '2px solid #F97316' : '2px solid #D1D5DB', background: checked ? '#F97316' : '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0 }}
-                        >
-                          {checked && <Check size={11} color="#FFFFFF" strokeWidth={3} />}
-                        </button>
+                        {/* Card actions — same placement as the Template cards */}
+                        <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                          <button
+                            type="button"
+                            onClick={e => { e.stopPropagation(); void runPostingAction('archive_posting', p.id) }}
+                            disabled={actionLoading}
+                            title="Archive job"
+                            style={{ border: 'none', background: 'transparent', color: '#EA580C', cursor: actionLoading ? 'default' : 'pointer', display: 'flex', padding: 6, borderRadius: 6, opacity: actionLoading ? 0.5 : 1 }}
+                            onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FFEDD5' }}
+                            onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                          ><Archive size={14} /></button>
+                          <button
+                            type="button"
+                            onClick={e => { e.stopPropagation(); setDeleteConfirm({ id: p.id, title: p.title, isDraft: false }) }}
+                            disabled={actionLoading}
+                            title="Delete job"
+                            style={{ border: 'none', background: 'transparent', color: '#DC2626', cursor: actionLoading ? 'default' : 'pointer', display: 'flex', padding: 6, borderRadius: 6, opacity: actionLoading ? 0.5 : 1 }}
+                            onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FEE2E2' }}
+                            onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                          ><Trash2 size={14} /></button>
+                        </div>
                       </div>
                       {/* Title row */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
@@ -1544,8 +1855,8 @@ export default function OwnerRecruitmentPage() {
                           />
                         )}
                       </div>
-                      {/* Applicant / confirmed count + posted date row */}
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                      {/* Applicant / confirmed counts (left) + posted date (right) on one line */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, minWidth: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 18, minWidth: 0 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 7 }} title="Applicants">
                             <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 999, background: '#FFF7ED', color: '#EA580C', flexShrink: 0 }}>
@@ -1560,7 +1871,7 @@ export default function OwnerRecruitmentPage() {
                             <span style={{ color: '#111827', fontSize: 15, fontWeight: 700 }}>{p.accepted_count}</span>
                           </div>
                         </div>
-                        <span style={{ fontSize: '0.78rem', color: '#94A3B8', flexShrink: 0 }}>{formatPostedAt(p.created_at)}</span>
+                        <span style={{ fontSize: '0.75rem', color: '#9CA3AF', flexShrink: 0 }}>Posted {formatCompactAt(p.created_at)}</span>
                       </div>
                     </article>
                   )
@@ -1570,231 +1881,194 @@ export default function OwnerRecruitmentPage() {
                 </div>
               </div>
 
-              {/* Right: posting detail + applicants */}
-              <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                {!selectedLive ? (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, padding: '32px 24px' }}>
-                    <div style={{ padding: '40px 48px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14, width: '100%' }}>
-                      <ClipboardList size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
-                      <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>Select a job posting</p>
-                    </div>
+              {/* Right: posting detail + applicants — same two-block design as the Archived view */}
+              {!selectedLive ? (
+                <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <div style={{ padding: '40px 48px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14, width: '100%' }}>
+                    <ClipboardList size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
+                    <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>Select a job posting</p>
                   </div>
-                ) : (
-                  <>
-                    {/* Posting header — split to mirror the two-column body */}
-                    <div style={{ borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center' }}>
-                      {/* Left section: title + badge + action buttons */}
-                      <div style={{ flex: '0 0 min(860px, 62%)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '18px 24px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flexWrap: 'nowrap' }}>
-                          <h2 style={{ margin: 0, fontSize: '1.1rem', color: '#111827', fontWeight: 700, lineHeight: 1, alignSelf: 'center' }}>{selectedLive.title}</h2>
-                          {selectedLive.is_recurring ? (
-                            <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                              Shift Job
-                            </span>
-                          ) : (
-                            <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                              One-Off Job
-                            </span>
-                          )}
-                        </div>
-                        <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-                          <button
-                            onClick={() => void runPostingAction('archive_posting')}
-                            disabled={actionLoading}
-                            title="Archive job"
-                            style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid #FED7AA', background: '#FFF7ED', color: '#EA580C', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}
-                            onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FFEDD5' }}
-                            onMouseLeave={e => { e.currentTarget.style.background = '#FFF7ED' }}
-                          ><Archive size={14} /></button>
-                          <button
-                            onClick={() => setDeleteConfirm({ id: selectedLive.id, title: selectedLive.title, isDraft: false })}
-                            disabled={actionLoading}
-                            title="Delete job"
-                            style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid #FECACA', background: '#FEF2F2', color: '#DC2626', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}
-                            onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FEE2E2' }}
-                            onMouseLeave={e => { e.currentTarget.style.background = '#FEF2F2' }}
-                          ><Trash2 size={14} /></button>
-                        </div>
-                      </div>
-                      {/* Right section: empty — applicants header is inside the column */}
-                      <div style={{ flex: 1 }} />
+                </div>
+              ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.6fr) minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
+                {/* Job detail — read-only preview */}
+                <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ padding: '17px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <Briefcase size={15} style={{ color: '#F97316' }} />
                     </div>
+                    <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedLive.title} Detail</span>
+                    {/* Supervisor is owner-facing info — applicants never see it, so it lives up here, not in the preview */}
+                    {selectedLive.assigned_employee_name && (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                        <Users size={11} />{selectedLive.assigned_employee_name}
+                      </span>
+                    )}
+                  </div>
+                  {/* Job details body — mirrors the Template Preview design, plus a Schedule section */}
+                  {(() => {
+                    const p = selectedLive
+                    const toMins = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m }
+                    const isShiftJob = p.is_recurring
+                    const fmt12 = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return `${h12}:${String(m).padStart(2, '0')} ${ap}` }
+                    let totalAmt: number | null = null
+                    if (isShiftJob && p.salary_amount != null && p.shift_start_time && p.shift_end_time) {
+                      let worked = toMins(p.shift_end_time) - toMins(p.shift_start_time)
+                      if (p.break_start_time && p.break_end_time) worked -= (toMins(p.break_end_time) - toMins(p.break_start_time))
+                      if (worked > 0) totalAmt = Math.round(p.salary_amount * (worked / 60) * 100) / 100
+                    }
+                    const payLabel = p.salary_amount != null
+                      ? (isShiftJob ? `$${p.salary_amount}/hr${totalAmt != null ? ` ($${totalAmt % 1 === 0 ? totalAmt.toFixed(0) : totalAmt.toFixed(2)})` : ''}` : `$${p.salary_amount} flat rate`)
+                      : null
+                    const uniformLabel = p.uniform_type === 'dress_code' ? 'Specific Dress Code' : (p.uniform_type === 'company' || p.uniform_required) ? 'Company Uniform Provided' : null
+                    const metaRow: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10 }
+                    const metaText: React.CSSProperties = { fontSize: '0.875rem', color: '#374151' }
+                    const metaIcon: React.CSSProperties = { flexShrink: 0 }
+                    return (
+                      <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+                        {/* Job Board card look-alike */}
+                        <div style={{ background: '#FFFFFF', border: '1.5px solid #EDE9E3', borderRadius: 16, padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            {!isShiftJob && (p.urgency === 'high' || p.urgency === 'urgent') && (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#FFF1F2', color: '#E11D48', fontSize: '0.75rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999 }}>
+                                <Zap size={12} />{p.urgency === 'urgent' ? 'Urgent' : 'High'}
+                              </span>
+                            )}
+                            {p.minimum_age && (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#EEF2FF', color: '#4F46E5', fontSize: '0.75rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999 }}>
+                                <Cake size={12} />{p.minimum_age}+
+                              </span>
+                            )}
+                            {p.experience_required && p.experience_required !== 'Not Required' && (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#ECFEFF', color: '#0891B2', fontSize: '0.75rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999 }}>
+                                <UserCheck size={12} />{p.experience_required}
+                              </span>
+                            )}
+                            {uniformLabel && (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#FFFBEB', color: '#B45309', fontSize: '0.75rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999 }}>
+                                <Shirt size={12} />{p.uniform_type === 'dress_code' ? 'Dress Code' : 'Uniform Provided'}
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <p style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827', lineHeight: 1.35, margin: 0 }}>{p.title}</p>
+                            <p style={{ fontSize: '0.875rem', fontWeight: 500, color: '#6B7280', margin: 0 }}>{p.company_name ?? companyName ?? '—'}</p>
+                          </div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                            {/* Location always comes from the company profile — same source and format as the Template preview */}
+                            {(companyLocation || p.company_location) && (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', fontWeight: 800, color: '#4B5563', background: '#F3F4F6', borderRadius: 999, padding: '4px 10px' }}>
+                                <MapPin size={12} strokeWidth={2.5} />{companyLocation || p.company_location}
+                              </span>
+                            )}
+                            {p.salary_amount != null && (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', fontWeight: 800, color: '#065F46', background: '#ECFDF5', borderRadius: 999, padding: '4px 10px' }}>
+                                ${p.salary_amount}{isShiftJob ? '/hr' : ''}
+                              </span>
+                            )}
+                            {!isShiftJob && p.estimated_hours && (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', fontWeight: 800, color: '#1D4ED8', background: '#EFF6FF', borderRadius: 999, padding: '4px 10px' }}>
+                                <Clock size={12} />{p.estimated_hours}h
+                              </span>
+                            )}
+                          </div>
+                        </div>
 
-                    {/* ── Two-column body ── */}
-                    <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-
-                      {/* LEFT: job details */}
-                      {(() => {
-                        const fmt = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return `${h12}:${String(m).padStart(2, '0')} ${ap}` }
-                        const toMins = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m }
-                        const isShiftJob = selectedLive.is_recurring
-                        const shiftDate = selectedLive.shift_date
-                        const shiftStart = selectedLive.shift_start_time
-                        const shiftEnd = selectedLive.shift_end_time
-                        const breakStart = selectedLive.break_start_time
-                        const breakEnd = selectedLive.break_end_time
-                        const estimatedHours = selectedLive.estimated_hours
-                        const urgency = selectedLive.urgency ?? 'normal'
-                        const urgencyLabel = urgency === 'urgent' ? 'Urgent' : urgency === 'high' ? 'High' : 'Normal'
-                        let totalAmt: number | null = null
-                        if (isShiftJob && selectedLive.salary_amount != null && shiftStart && shiftEnd) {
-                          let worked = toMins(shiftEnd) - toMins(shiftStart)
-                          if (breakStart && breakEnd) worked -= (toMins(breakEnd) - toMins(breakStart))
-                          if (worked > 0) totalAmt = Math.round(selectedLive.salary_amount * (worked / 60) * 100) / 100
-                        }
-                        const fmtShort = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return m === 0 ? `${h12}${ap}` : `${h12}:${String(m).padStart(2, '0')}${ap}` }
-                        const infoRow: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: '1px solid #F3F4F6' }
-                        const statCard: React.CSSProperties = { borderRadius: 12, padding: '10px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'center', minHeight: 72 }
-                        const statLabel: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }
-                        const statLabelText = (color: string): React.CSSProperties => ({ fontSize: '0.75rem', fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: '0.06em' })
-                        const statValue: React.CSSProperties = { margin: 0, fontSize: '0.8rem', fontWeight: 600, color: '#374151', lineHeight: 1.3 }
-                        const statSub: React.CSSProperties = { margin: '3px 0 0', fontSize: '0.7rem', color: '#9CA3AF', fontWeight: 400 }
-                        return (
-                          <div style={{ flex: '0 0 min(860px, 62%)', borderRight: '1px solid #F0F4F8', overflowY: 'auto', padding: '20px 24px 24px' }}>
-
-                            {/* ── Key Stats ── */}
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 20 }}>
-                              {/* Pay */}
-                              {selectedLive.salary_amount != null ? (
-                                <div style={{ ...statCard, background: '#FFF7ED', border: '1px solid #FED7AA' }}>
-                                  <div style={statLabel}>
-                                    <DollarSign size={11} style={{ color: '#F97316' }} />
-                                    <span style={statLabelText('#F97316')}>{isShiftJob ? 'Pay' : 'Flat Rate'}</span>
-                                  </div>
-                                  <p style={statValue}>
-                                    {isShiftJob
-                                      ? `$${selectedLive.salary_amount}/Hr${totalAmt != null ? ` ($${totalAmt % 1 === 0 ? totalAmt.toFixed(0) : totalAmt.toFixed(2)})` : ''}`
-                                      : `$${selectedLive.salary_amount}`}
-                                  </p>
-                                </div>
-                              ) : (
-                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}>
-                                  <span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No pay set</span>
-                                </div>
+                        {/* Job detail look-alike */}
+                        <div style={{ border: '1.5px solid #EDE9E3', borderRadius: 16, padding: '24px 22px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+                          <div>
+                            <h2 style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827', lineHeight: 1.35, margin: '0 0 4px' }}>{p.title}</h2>
+                            <p style={{ fontSize: '0.875rem', fontWeight: 500, color: '#6B7280', margin: '0 0 14px' }}>{p.company_name ?? companyName ?? '—'}</p>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                              {p.department_name && (
+                                <div style={metaRow}><LayoutGrid size={14} color="#F97316" strokeWidth={2} style={metaIcon} /><span style={metaText}>{p.department_name}</span></div>
                               )}
-                              {/* Date */}
-                              {shiftDate ? (
-                                <div style={{ ...statCard, background: '#F0F9FF', border: '1px solid #BAE6FD' }}>
-                                  <div style={statLabel}>
-                                    <CalendarDays size={11} style={{ color: '#0284C7' }} />
-                                    <span style={statLabelText('#0284C7')}>Date</span>
-                                  </div>
-                                  <p style={statValue}>{new Date(shiftDate).toLocaleDateString('en-SG', { weekday: 'short', day: 'numeric', month: 'short' })}</p>
-                                </div>
-                              ) : (
-                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}>
-                                  <span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No date set</span>
-                                </div>
+                              {p.minimum_age && (
+                                <div style={metaRow}><Cake size={14} color="#F97316" strokeWidth={2} style={metaIcon} /><span style={metaText}>{p.minimum_age}+</span></div>
                               )}
-                              {/* Hours */}
-                              {isShiftJob ? ((shiftStart || shiftEnd) ? (
-                                <div style={{ ...statCard, background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
-                                  <div style={statLabel}>
-                                    <Clock size={11} style={{ color: '#059669' }} />
-                                    <span style={statLabelText('#059669')}>Hours</span>
-                                  </div>
-                                  <p style={statValue}>{shiftStart ? fmtShort(shiftStart) : '—'} – {shiftEnd ? fmtShort(shiftEnd) : '—'}</p>
-                                </div>
-                              ) : (
-                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}>
-                                  <span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No hours set</span>
-                                </div>
-                              )) : (estimatedHours ? (
-                                <div style={{ ...statCard, background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
-                                  <div style={statLabel}>
-                                    <Clock size={11} style={{ color: '#059669' }} />
-                                    <span style={statLabelText('#059669')}>Estimation</span>
-                                  </div>
-                                  <p style={statValue}>{estimatedHours} Hours</p>
-                                </div>
-                              ) : (
-                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}>
-                                  <span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No hours set</span>
-                                </div>
-                              ))}
-                              {/* Break / Urgency */}
-                              {isShiftJob ? ((breakStart || breakEnd) ? (
-                                <div style={{ ...statCard, background: '#FDF4FF', border: '1px solid #E9D5FF' }}>
-                                  <div style={statLabel}>
-                                    <Coffee size={11} style={{ color: '#9333EA' }} />
-                                    <span style={statLabelText('#9333EA')}>Break</span>
-                                  </div>
-                                  <p style={statValue}>{breakStart ? fmtShort(breakStart) : '—'} – {breakEnd ? fmtShort(breakEnd) : '—'}</p>
-                                </div>
-                              ) : (
-                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}>
-                                  <span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No break</span>
-                                </div>
-                              )) : (
-                                <div style={{ ...statCard, background: '#FFF1F2', border: '1px solid #FECDD3' }}>
-                                  <div style={statLabel}>
-                                    <Zap size={11} style={{ color: '#E11D48' }} />
-                                    <span style={statLabelText('#E11D48')}>Urgency</span>
-                                  </div>
-                                  <p style={statValue}>{urgencyLabel}</p>
-                                </div>
+                              {p.experience_required && p.experience_required !== 'Not Required' && (
+                                <div style={metaRow}><UserCheck size={14} color="#F97316" strokeWidth={2} style={metaIcon} /><span style={metaText}>Experience {p.experience_required}</span></div>
+                              )}
+                              {uniformLabel && (
+                                <div style={metaRow}><Shirt size={14} color="#F97316" strokeWidth={2} style={metaIcon} /><span style={metaText}>{uniformLabel}</span></div>
+                              )}
+                              {!isShiftJob && p.estimated_hours && (
+                                <div style={metaRow}><Clock size={14} color="#F97316" strokeWidth={2} style={metaIcon} /><span style={metaText}>Est. {p.estimated_hours} hours</span></div>
+                              )}
+                              {payLabel && (
+                                <div style={metaRow}><DollarSign size={14} color="#F97316" strokeWidth={2} style={metaIcon} /><span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#059669' }}>{payLabel}</span></div>
                               )}
                             </div>
+                          </div>
 
-                            {/* ── Secondary info rows ── */}
-                            {(selectedLive.department_name || selectedLive.assigned_employee_name) && (
-                              <div style={{ display: 'flex', borderTop: '1px solid #F3F4F6', border: '1px solid #E5E7EB', borderRadius: 10, overflow: 'hidden', marginTop: 4 }}>
-                                {/* Left half — Department */}
-                                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 0', borderRight: '1px solid #E5E7EB', background: '#FAFAFA' }}>
-                                  <LayoutGrid size={14} style={{ color: '#9CA3AF', flexShrink: 0 }} />
-                                  <span style={{ fontSize: '0.875rem', color: '#374151' }}>{selectedLive.department_name ?? '—'}</span>
-                                </div>
-                                {/* Right half — Employee */}
-                                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 0', background: '#FAFAFA' }}>
-                                  <UserCheck size={14} style={{ color: '#9CA3AF', flexShrink: 0 }} />
-                                  <span style={{ fontSize: '0.875rem', color: '#374151' }}>{selectedLive.assigned_employee_name ?? '—'}</span>
-                                </div>
-                              </div>
-                            )}
-
-                            {/* ── Scope & Requirements ── */}
-                            {(selectedLive.description || selectedLive.requirements) && (
-                              <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                                {selectedLive.description && (
-                                  <div style={{ background: '#FFFFFF', borderRadius: 10, padding: '14px 16px', border: '1px solid #E5E7EB' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                                      <FileText size={13} style={{ color: '#F97316' }} />
-                                      <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Scope</span>
-                                    </div>
-                                    <p style={{ margin: 0, fontSize: '0.875rem', color: '#374151', lineHeight: 1.75 }}>{selectedLive.description}</p>
-                                  </div>
+                          {/* Schedule — posting-only facts (a template never has these) */}
+                          {(p.shift_date || (isShiftJob && (p.shift_start_time || p.shift_end_time || p.break_start_time || p.break_end_time)) || (!isShiftJob && p.job_start_time)) && (
+                            <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
+                              <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Schedule</p>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                {p.shift_date && (
+                                  <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Date:</span> {new Date(p.shift_date).toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
                                 )}
-                                {selectedLive.requirements && (
-                                  <div style={{ background: '#FFFFFF', borderRadius: 10, padding: '14px 16px', border: '1px solid #E5E7EB' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                                      <ClipboardList size={13} style={{ color: '#F97316' }} />
-                                      <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Requirements</span>
-                                    </div>
-                                    <p style={{ margin: 0, fontSize: '0.875rem', color: '#374151', lineHeight: 1.75, whiteSpace: 'pre-wrap' }}>{selectedLive.requirements}</p>
-                                  </div>
+                                {isShiftJob && (p.shift_start_time || p.shift_end_time) && (
+                                  <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Working Hours:</span> {p.shift_start_time ? fmt12(p.shift_start_time) : '—'} – {p.shift_end_time ? fmt12(p.shift_end_time) : '—'}</p>
+                                )}
+                                {isShiftJob && (p.break_start_time || p.break_end_time) && (
+                                  <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Break Time:</span> {p.break_start_time ? fmt12(p.break_start_time) : '—'} – {p.break_end_time ? fmt12(p.break_end_time) : '—'}</p>
+                                )}
+                                {!isShiftJob && p.job_start_time && (
+                                  <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Start Time:</span> {fmt12(p.job_start_time)}</p>
                                 )}
                               </div>
-                            )}
-                          </div>
-                        )
-                      })()}
+                            </div>
+                          )}
 
-                      {/* RIGHT: applicants */}
-                      <div style={{ flex: 1, overflowY: 'auto', padding: '20px 20px 24px', background: '#FAFAFA', borderRadius: '0 0 16px 0' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-                          <div>
-                            <p style={{ margin: 0, fontSize: '0.75rem', fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Applicants</p>
+                          <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
+                            <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Responsibilities</p>
+                            <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{p.description || '—'}</p>
                           </div>
-                          <button
-                            onClick={recommendCandidates}
-                            disabled={aiLoading || applicants.length === 0}
-                            style={{ height: 36, padding: '0 16px', background: '#F97316', color: '#fff', border: 'none', borderRadius: 9, cursor: aiLoading || applicants.length === 0 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontWeight: 700, fontSize: 13, flexShrink: 0 }}
-                            onMouseEnter={e => { if (!aiLoading && applicants.length > 0) e.currentTarget.style.background = '#EA580C' }}
-                            onMouseLeave={e => { e.currentTarget.style.background = '#F97316' }}
-                          >
-                            {aiLoading ? <Spinner size={14} /> : <Sparkles size={14} />} AI Recommend
-                          </button>
+                          <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
+                            <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Skills &amp; Qualifications</p>
+                            <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{p.requirements || '—'}</p>
+                          </div>
+                          {uniformLabel && p.uniform_details && (
+                            <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
+                              <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>{p.uniform_type === 'dress_code' ? 'Dress Code' : 'Uniform Details'}</p>
+                              <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{p.uniform_details}</p>
+                            </div>
+                          )}
                         </div>
+                      </div>
+                    )
+                  })()}
+                </div>
+
+                {/* Applicants */}
+                <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <Users size={15} style={{ color: '#F97316' }} />
+                    </div>
+                    <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, flex: 1 }}>Applicants</span>
+                    <button
+                      onClick={() => { setCancelJobOpen(true); setCancelReason(''); setCancelSubmitError('') }}
+                      disabled={actionLoading}
+                      style={{ height: 36, padding: '0 14px', background: '#FFFFFF', color: '#DC2626', border: '1px solid #FECACA', borderRadius: 9, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, flexShrink: 0 }}
+                      onMouseEnter={e => { e.currentTarget.style.background = '#FEF2F2' }}
+                      onMouseLeave={e => { e.currentTarget.style.background = '#FFFFFF' }}
+                    >
+                      <XCircle size={14} /> Cancel Job
+                    </button>
+                    <button
+                      onClick={recommendCandidates}
+                      disabled={aiLoading || applicants.length === 0}
+                      style={{ height: 36, padding: '0 16px', background: '#F97316', color: '#fff', border: 'none', borderRadius: 9, cursor: aiLoading || applicants.length === 0 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontWeight: 700, fontSize: 13, flexShrink: 0 }}
+                      onMouseEnter={e => { if (!aiLoading && applicants.length > 0) e.currentTarget.style.background = '#EA580C' }}
+                      onMouseLeave={e => { e.currentTarget.style.background = '#F97316' }}
+                    >
+                      {aiLoading ? <Spinner size={14} /> : <Sparkles size={14} />} AI Recommend
+                    </button>
+                  </div>
+                  <div style={{ padding: '18px 20px' }}>
                         {applicants.length === 0 ? (
                           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '48px 24px', background: '#FFFFFF', borderRadius: 12, border: '1.5px dashed #E5E7EB' }}>
                             <div style={{ width: 48, height: 48, borderRadius: 14, background: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
@@ -1818,16 +2092,19 @@ export default function OwnerRecruitmentPage() {
                                 </div>
                                 {statusBadge(applicant.status)}
                               </div>
-                              {applicant.cover_letter && (
-                                <p style={{ margin: '8px 0 0', color: '#4B5563', fontSize: '0.8rem', lineHeight: 1.55, paddingLeft: 41 }}>{applicant.cover_letter}</p>
-                              )}
-                              {rec && (
+                              <ApplicantSnapshotBody applicant={applicant} />
+                              {rec && (rec.insufficient ? (
+                                <div style={{ marginTop: 10, padding: '10px 12px', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 8, fontSize: '0.775rem', lineHeight: 1.5 }}>
+                                  <strong style={{ color: '#6B7280' }}>AI: Insufficient information</strong>
+                                  <p style={{ margin: '4px 0 0', color: '#6B7280' }}>{rec.reasons[0]}</p>
+                                </div>
+                              ) : (
                                 <div style={{ marginTop: 10, padding: '10px 12px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, fontSize: '0.775rem', lineHeight: 1.5 }}>
                                   <strong style={{ color: '#059669' }}>AI Score: {rec.score}/100 — {rec.recommendation}</strong>
                                   <p style={{ margin: '4px 0 0', color: '#374151' }}>{rec.reasons[0] ?? rec.suggested_next_step}</p>
                                   {rec.risks[0] && <p style={{ margin: '3px 0 0', color: '#B45309' }}>{rec.risks[0]}</p>}
                                 </div>
-                              )}
+                              ))}
                               {applicant.status === 'pending' && (
                                 <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
                                   <button onClick={() => decideApplicant(applicant.id, 'accepted')} disabled={actionLoading}
@@ -1838,39 +2115,63 @@ export default function OwnerRecruitmentPage() {
                                   ><UserX size={13} /> Reject</button>
                                 </div>
                               )}
+                              {applicant.status === 'accepted' && applicant.invitation_status === 'accepted' && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.75rem', fontWeight: 700, color: '#15803D', background: '#DCFCE7', border: '1px solid #BBF7D0', borderRadius: 999, padding: '3px 11px' }}>
+                                    <UserCheck size={12} /> Confirmed
+                                  </span>
+                                  {(applicant.worker_cancellation_count ?? 0) > 0 && (
+                                    <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#B45309' }}>
+                                      Cancelled {applicant.worker_cancellation_count} confirmed shift{applicant.worker_cancellation_count === 1 ? '' : 's'} before
+                                    </span>
+                                  )}
+                                  <button onClick={() => { setRemoveWorkerTarget(applicant); setCancelReason(''); setCancelSubmitError('') }} disabled={actionLoading}
+                                    style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 5, border: '1px solid #FECACA', borderRadius: 7, background: '#FEF2F2', color: '#DC2626', padding: '5px 11px', cursor: 'pointer', fontSize: '0.775rem', fontWeight: 700 }}
+                                    onMouseEnter={e => { e.currentTarget.style.background = '#FEE2E2' }}
+                                    onMouseLeave={e => { e.currentTarget.style.background = '#FEF2F2' }}
+                                  ><UserX size={13} /> Remove Worker</button>
+                                </div>
+                              )}
                             </div>
                           )
                         })}
-                      </div>
-                    </div>
-                  </>
-                )}
+                  </div>
+                </div>
               </div>
+              )}
             </div>
           )}
 
           {/* ══ POST JOB hub tab ═══════════════════════════════════════════════ */}
           {activeTab === 'post' && (
-            <div className="recruitment-grid">
-            <section className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 14, overflow: 'hidden' }}>
-              <div style={{ padding: '17px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div className="recruitment-grid" style={postView === 'template' ? { gap: 40, height: '100%', minHeight: 0, gridTemplateRows: 'minmax(0, 1fr)' } : undefined}>
+            {/* Capped at viewport height — the template list below scrolls internally instead of the page */}
+            <section className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: postView === 'template' ? '100%' : 'calc(100vh - 162px)' }}>
+              <div style={{ padding: '17px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                 <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   <Plus size={15} style={{ color: '#F97316' }} />
                 </div>
-                <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Posting a Job</span>
+                <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Job Sources</span>
+                {/* AI action — purple gradient button, same treatment as the other AI features */}
+                <button
+                  type="button"
+                  onClick={() => { resetForm(); setFormOpen(true) }}
+                  style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
+                >
+                  <Sparkles size={15} strokeWidth={2.5} /> AI Job Builder
+                </button>
               </div>
-              <div style={{ padding: '12px 14px', display: 'grid', gap: 10 }}>
+              <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0, overflowY: 'auto' }}>
                 {([
-                  { key: 'ai' as const,       icon: Sparkles, title: 'AI Post Job', onClick: () => { setTemplatesOpen(false); resetForm(); setFormOpen(true) } },
-                  { key: 'archived' as const, icon: Archive,  title: 'Archived', onClick: () => { setTemplatesOpen(false); setPostView('archived'); setSelectedArchivedId(''); setArchivedSelected(new Set()) } },
-                  { key: 'drafts' as const,   icon: FileText, title: 'Drafts', onClick: () => { setTemplatesOpen(false); setPostView('drafts'); setSelectedDraftId(''); setDraftsSelected(new Set()) } },
-                  { key: 'templates' as const, icon: ClipboardList, title: 'Template', onClick: () => { setPostView('none'); setTemplatesOpen(v => !v) } },
+                  { key: 'drafts' as const,   icon: FileText, title: 'Drafts', onClick: () => { setOpenSource(o => o === 'drafts' ? 'none' : 'drafts'); setPostView('none'); setSelectedDraftId(''); setDraftsSelected(new Set()) } },
+                  { key: 'archived' as const, icon: Archive,  title: 'Archived', onClick: () => { setOpenSource(o => o === 'archived' ? 'none' : 'archived'); setPostView('none'); setSelectedArchivedId(''); setArchivedSelected(new Set()) } },
+                  { key: 'templates' as const, icon: ClipboardList, title: 'Template', onClick: () => { setPostView('none'); setOpenSource(o => o === 'templates' ? 'none' : 'templates') } },
                 ]).map((card, idx) => {
                   const Icon = card.icon
-                  const isSelected = card.key === 'templates' ? templatesOpen : postView === card.key
+                  const isSelected = openSource === card.key
                   return (
+                    <div key={card.key} style={{ display: 'flex', flexDirection: 'column', gap: 10, flexShrink: 0 }}>
                     <article
-                      key={card.key}
                       onClick={card.onClick}
                       style={{
                         display: 'flex', alignItems: 'center', gap: 10,
@@ -1889,16 +2190,135 @@ export default function OwnerRecruitmentPage() {
                         <Icon size={14} style={{ color: '#F97316' }} />
                       </div>
                       <h3 style={{ margin: 0, flex: 1, fontSize: '0.9375rem', fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{card.title}</h3>
-                      {card.key === 'templates' && (
-                        <ChevronDown size={15} style={{ color: isSelected ? '#F97316' : '#9CA3AF', flexShrink: 0, transition: 'transform 0.18s', transform: templatesOpen ? 'rotate(180deg)' : 'rotate(0deg)' }} />
-                      )}
+                      <ChevronDown size={15} style={{ color: isSelected ? '#F97316' : '#9CA3AF', flexShrink: 0, transition: 'transform 0.18s', transform: isSelected ? 'rotate(180deg)' : 'rotate(0deg)' }} />
                     </article>
-                  )
-                })}
-              </div>
 
-              {templatesOpen && (
-                <div style={{ padding: '10px 14px 14px 28px', display: 'flex', flexDirection: 'column', gap: 10, animation: 'deptCardIn 0.2s ease both' }}>
+                    {/* ── Drafts dropdown ── */}
+                    {isSelected && card.key === 'drafts' && (
+                      <div style={{ padding: '0 0 4px 14px', display: 'flex', flexDirection: 'column', gap: 10, animation: 'deptCardIn 0.2s ease both' }}>
+                        {drafts.length === 0 ? (
+                          <div style={{ padding: '20px 16px', textAlign: 'center', background: '#F8FAFC', borderRadius: 12 }}>
+                            <FileText size={20} style={{ color: '#CBD5E1', margin: '0 auto 6px', display: 'block' }} />
+                            <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No drafts saved.</p>
+                          </div>
+                        ) : (
+                          drafts.map((p, i) => (
+                            <div key={p.id} style={{
+                              display: 'flex', flexDirection: 'column', gap: 16,
+                              border: '1px solid #E5E7EB', borderRadius: 10, padding: '16px 16px 18px', background: '#F9FAFB',
+                              animation: `deptCardIn 0.28s ease both ${i * 55}ms`,
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                                  <DepartmentBadge departmentId={p.department_id} departmentName={p.department_name} />
+                                  {p.is_recurring
+                                    ? <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', whiteSpace: 'nowrap', flexShrink: 0 }}>Shift Job</span>
+                                    : <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE', whiteSpace: 'nowrap', flexShrink: 0 }}>One-Off Job</span>
+                                  }
+                                </div>
+                                <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => void runPostingAction('duplicate_posting', p.id)}
+                                    disabled={actionLoading}
+                                    title="Duplicate draft"
+                                    style={{ border: 'none', background: 'transparent', color: '#16A34A', cursor: actionLoading ? 'default' : 'pointer', display: 'flex', padding: 6, borderRadius: 6, opacity: actionLoading ? 0.5 : 1 }}
+                                    onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#DCFCE7' }}
+                                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                                  ><Copy size={14} /></button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setDeleteConfirm({ id: p.id, title: p.title, isDraft: true })}
+                                    disabled={actionLoading}
+                                    title="Delete draft"
+                                    style={{ border: 'none', background: 'transparent', color: '#DC2626', cursor: actionLoading ? 'default' : 'pointer', display: 'flex', padding: 6, borderRadius: 6, opacity: actionLoading ? 0.5 : 1 }}
+                                    onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FEE2E2' }}
+                                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                                  ><Trash2 size={14} /></button>
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, minWidth: 0 }}>
+                                <button
+                                  type="button"
+                                  onClick={() => { setPostView('drafts'); setSelectedDraftId(p.id) }}
+                                  title="View draft"
+                                  style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700, color: selectedDraftId === p.id && postView === 'drafts' ? '#F97316' : '#0F172A', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', border: 'none', background: 'transparent', padding: 0, textAlign: 'left', cursor: 'pointer' }}
+                                  onMouseEnter={e => { e.currentTarget.style.color = '#F97316' }}
+                                  onMouseLeave={e => { e.currentTarget.style.color = selectedDraftId === p.id && postView === 'drafts' ? '#F97316' : '#0F172A' }}
+                                >{p.title}</button>
+                                <span style={{ fontSize: '0.75rem', color: '#9CA3AF', flexShrink: 0 }}>Saved {formatCompactAt(p.created_at)}</span>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+
+                    {/* ── Archived dropdown ── */}
+                    {isSelected && card.key === 'archived' && (
+                      <div style={{ padding: '0 0 4px 14px', display: 'flex', flexDirection: 'column', gap: 10, animation: 'deptCardIn 0.2s ease both' }}>
+                        {archivedPostings.length === 0 ? (
+                          <div style={{ padding: '20px 16px', textAlign: 'center', background: '#F8FAFC', borderRadius: 12 }}>
+                            <Archive size={20} style={{ color: '#CBD5E1', margin: '0 auto 6px', display: 'block' }} />
+                            <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No archived jobs.</p>
+                          </div>
+                        ) : (
+                          archivedPostings.map((p, i) => (
+                            <div key={p.id} style={{
+                              display: 'flex', flexDirection: 'column', gap: 16,
+                              border: '1px solid #E5E7EB', borderRadius: 10, padding: '16px 16px 18px', background: '#F9FAFB',
+                              animation: `deptCardIn 0.28s ease both ${i * 55}ms`,
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                                  <DepartmentBadge departmentId={p.department_id} departmentName={p.department_name} />
+                                  {p.is_recurring
+                                    ? <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', whiteSpace: 'nowrap', flexShrink: 0 }}>Shift Job</span>
+                                    : <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE', whiteSpace: 'nowrap', flexShrink: 0 }}>One-Off Job</span>
+                                  }
+                                </div>
+                                <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                                  <button
+                                    type="button"
+                                    onClick={() => void runArchivedAction('unarchive_posting', p.id)}
+                                    disabled={actionLoading}
+                                    title="Unarchive job"
+                                    style={{ border: 'none', background: 'transparent', color: '#16A34A', cursor: actionLoading ? 'default' : 'pointer', display: 'flex', padding: 6, borderRadius: 6, opacity: actionLoading ? 0.5 : 1 }}
+                                    onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#DCFCE7' }}
+                                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                                  ><ArchiveRestore size={14} /></button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void runArchivedAction('delete_posting', p.id)}
+                                    disabled={actionLoading}
+                                    title="Delete job"
+                                    style={{ border: 'none', background: 'transparent', color: '#DC2626', cursor: actionLoading ? 'default' : 'pointer', display: 'flex', padding: 6, borderRadius: 6, opacity: actionLoading ? 0.5 : 1 }}
+                                    onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FEE2E2' }}
+                                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+                                  ><Trash2 size={14} /></button>
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, minWidth: 0 }}>
+                                <button
+                                  type="button"
+                                  onClick={() => { setPostView('archived'); setSelectedArchivedId(p.id) }}
+                                  title="View archived job"
+                                  style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700, color: selectedArchivedId === p.id && postView === 'archived' ? '#F97316' : '#0F172A', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', border: 'none', background: 'transparent', padding: 0, textAlign: 'left', cursor: 'pointer' }}
+                                  onMouseEnter={e => { e.currentTarget.style.color = '#F97316' }}
+                                  onMouseLeave={e => { e.currentTarget.style.color = selectedArchivedId === p.id && postView === 'archived' ? '#F97316' : '#0F172A' }}
+                                >{p.title}</button>
+                                <span style={{ fontSize: '0.75rem', color: '#9CA3AF', flexShrink: 0 }}>Archived {formatCompactAt(p.created_at)}</span>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+
+                    {/* ── Template dropdown ── */}
+                    {isSelected && card.key === 'templates' && (
+                <div style={{ padding: '0 0 4px 14px', display: 'flex', flexDirection: 'column', gap: 10, animation: 'deptCardIn 0.2s ease both', minHeight: 0 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {templates.length === 0 ? (
                     <div style={{ padding: '20px 16px', textAlign: 'center', background: '#F8FAFC', borderRadius: 12 }}>
                       <ClipboardList size={20} style={{ color: '#CBD5E1', margin: '0 auto 6px', display: 'block' }} />
@@ -1907,8 +2327,8 @@ export default function OwnerRecruitmentPage() {
                   ) : (
                     templates.map((t, idx) => (
                       <div key={t.id} style={{
-                        display: 'flex', flexDirection: 'column', gap: 10,
-                        border: '1px solid #E5E7EB', borderRadius: 10, padding: '14px 16px', background: '#F9FAFB',
+                        display: 'flex', flexDirection: 'column', gap: 16,
+                        border: '1px solid #E5E7EB', borderRadius: 10, padding: '16px 16px 18px', background: '#F9FAFB',
                         animation: `deptCardIn 0.28s ease both ${idx * 55}ms`,
                       }}>
                         {/* Department + job type badge row */}
@@ -1925,7 +2345,9 @@ export default function OwnerRecruitmentPage() {
                             type="button"
                             onClick={() => { resetForm(); applyTemplate(t); setFormOpen(true) }}
                             title="Use template"
-                            style={{ border: 'none', background: 'transparent', color: '#6B7280', cursor: 'pointer', display: 'flex', padding: 6, borderRadius: 6 }}
+                            style={{ border: 'none', background: 'transparent', color: '#16A34A', cursor: 'pointer', display: 'flex', padding: 6, borderRadius: 6 }}
+                            onMouseEnter={e => { e.currentTarget.style.background = '#DCFCE7' }}
+                            onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
                           ><ArrowRight size={14} /></button>
                           <button
                             type="button"
@@ -1937,27 +2359,34 @@ export default function OwnerRecruitmentPage() {
                           </div>
                         </div>
                         {/* Title row */}
-                        <button
-                          type="button"
-                          onClick={() => openTemplateDetail(t)}
-                          title="View template details"
-                          style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700, color: selectedTemplateId === t.id && postView === 'template' ? '#F97316' : '#0F172A', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', border: 'none', background: 'transparent', padding: 0, textAlign: 'left', cursor: 'pointer' }}
-                          onMouseEnter={e => { e.currentTarget.style.color = '#F97316' }}
-                          onMouseLeave={e => { e.currentTarget.style.color = selectedTemplateId === t.id && postView === 'template' ? '#F97316' : '#0F172A' }}
-                        >{t.title}</button>
-                        <p style={{ margin: 0, fontSize: '0.75rem', color: '#9CA3AF' }}>Updated {formatPostedAt(t.updated_at)}</p>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, minWidth: 0 }}>
+                          <button
+                            type="button"
+                            onClick={() => openTemplateDetail(t)}
+                            title="View template details"
+                            style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700, color: selectedTemplateId === t.id && postView === 'template' ? '#F97316' : '#0F172A', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', border: 'none', background: 'transparent', padding: 0, textAlign: 'left', cursor: 'pointer' }}
+                            onMouseEnter={e => { e.currentTarget.style.color = '#F97316' }}
+                            onMouseLeave={e => { e.currentTarget.style.color = selectedTemplateId === t.id && postView === 'template' ? '#F97316' : '#0F172A' }}
+                          >{t.title}</button>
+                          <span style={{ fontSize: '0.75rem', color: '#9CA3AF', flexShrink: 0 }}>Updated {formatCompactAt(t.updated_at)}</span>
+                        </div>
                       </div>
                     ))
                   )}
+                  </div>
                   <button
                     type="button"
                     onClick={() => { resetNewTemplateForm(); setNewTemplateModalOpen(true) }}
-                    style={{ alignSelf: 'center', marginTop: 2, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 'none', borderRadius: 10, background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                    style={{ alignSelf: 'center', marginTop: 2, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 'none', borderRadius: 10, background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
                   >
                     <Plus size={15} strokeWidth={2.5} /> New Template
                   </button>
                 </div>
-              )}
+                    )}
+                    </div>
+                  )
+                })}
+              </div>
             </section>
 
             {postView === 'none' && (
@@ -1969,265 +2398,172 @@ export default function OwnerRecruitmentPage() {
               </div>
             )}
 
-            {postView === 'archived' && (
-              <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                {!selectedArchived ? (
-                  <>
-                <div style={{ padding: '14px 18px 12px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <Archive size={15} style={{ color: '#F97316' }} />
-                  </div>
-                  <span className="font-heading" style={{ fontSize: 15, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.3px', flex: 1 }}>Archived</span>
-                  {archivedSelected.size > 0 && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <button
-                        onClick={unarchiveArchivedSelected}
-                        disabled={actionLoading}
-                        title={`Unarchive ${archivedSelected.size} selected`}
-                        style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid #BBF7D0', background: '#F0FDF4', color: '#059669', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}
-                        onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#DCFCE7' }}
-                        onMouseLeave={e => { e.currentTarget.style.background = '#F0FDF4' }}
-                      >
-                        <ArchiveRestore size={14} />
-                      </button>
-                      <button
-                        onClick={deleteArchivedSelected}
-                        disabled={actionLoading}
-                        title={`Delete ${archivedSelected.size} selected`}
-                        style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid #FECACA', background: '#FEF2F2', color: '#DC2626', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}
-                        onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FEE2E2' }}
-                        onMouseLeave={e => { e.currentTarget.style.background = '#FEF2F2' }}
-                      >
-                        {actionLoading ? <Spinner size={12} dark /> : <Trash2 size={14} />}
-                      </button>
+            {/* Archived detail — read-only view opened by clicking an archived job in the Job Sources dropdown */}
+            {postView === 'archived' && selectedArchived != null && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.6fr) minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
+                {/* Job detail — read-only */}
+                <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                  {/* 20px vertical padding (vs 17px elsewhere): keeps this divider level with the Job Sources header, whose 36px AI button makes it 6px taller */}
+                  <div style={{ padding: '20px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <Archive size={15} style={{ color: '#F97316' }} />
                     </div>
-                  )}
-                </div>
-                    <div style={{ flex: 1, overflowY: 'auto' }}>
-                {loading ? (
-                  <div style={{ padding: '24px 18px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-                    <Spinner size={14} dark /> Loading...
+                    <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedArchived.title} Detail</span>
+                    {/* Supervisor is owner-facing info — applicants never see it, so it lives up here, not in the preview */}
+                    {selectedArchived.assigned_employee_name && (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                        <Users size={11} />{selectedArchived.assigned_employee_name}
+                      </span>
+                    )}
                   </div>
-                ) : archivedPostings.length === 0 ? (
-                  <div style={{ margin: '12px 14px', padding: '28px 16px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
-                    <Archive size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
-                    <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No archived postings.</p>
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '12px 14px' }}>
-                  {archivedPostings.map((p, idx) => {
-                  const isSelected = selectedArchivedId === p.id
-                  const checked = archivedSelected.has(p.id)
-                  return (
-                    <div
-                      key={p.id}
-                      className="dept-card"
-                      onClick={() => setSelectedArchivedId(p.id)}
-                      style={{
-                        animationDelay: `${idx * 55}ms`,
-                        border: (isSelected || checked) ? '2px solid #F97316' : '2px solid #E5E7EB',
-                        borderRadius: 14,
-                        padding: '14px 14px 12px',
-                        background: '#FFFFFF',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        cursor: 'pointer',
-                        boxShadow: (isSelected || checked) ? '0 0 0 3px rgba(249,115,22,0.10)' : '0 1px 3px rgba(0,0,0,0.06)',
-                        transition: 'border-color 0.15s, box-shadow 0.15s, transform 0.15s',
-                      }}
-                      onMouseEnter={e => {
-                        if (isSelected || checked) return
-                        e.currentTarget.style.transform = 'translateY(-2px)'
-                        e.currentTarget.style.boxShadow = '0 6px 18px rgba(0,0,0,0.10)'
-                        e.currentTarget.style.borderColor = '#FDBA74'
-                      }}
-                      onMouseLeave={e => {
-                        if (isSelected || checked) return
-                        e.currentTarget.style.transform = 'none'
-                        e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.06)'
-                        e.currentTarget.style.borderColor = '#E5E7EB'
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 8 }}>
-                        <strong style={{ fontSize: '0.875rem', color: '#1C1C1E', lineHeight: 1.4, flex: 1, minWidth: 0 }}>{p.title}</strong>
-                        <button
-                          type="button"
-                          onClick={e => { e.stopPropagation(); setArchivedSelected(prev => { const s = new Set(prev); checked ? s.delete(p.id) : s.add(p.id); return s }) }}
-                          style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 5, border: checked ? '2px solid #F97316' : '2px solid #D1D5DB', background: checked ? '#F97316' : '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0 }}
-                        >
-                          {checked && <Check size={11} color="#FFFFFF" strokeWidth={3} />}
-                        </button>
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                        <span style={{ fontSize: '0.725rem', color: '#C4C9D4' }}>{formatPostedAt(p.created_at)}</span>
-                      </div>
-                    </div>
-                  )
-                  })}
-                  </div>
-                )}
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    {/* Header */}
-                    <div style={{ borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center' }}>
-                      <div style={{ flex: '0 0 min(860px, 62%)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '18px 24px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flexWrap: 'nowrap' }}>
-                          <button onClick={() => setSelectedArchivedId('')} title="Back to list" style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid #E5E7EB', background: '#FFFFFF', color: '#374151', display: 'grid', placeItems: 'center', cursor: 'pointer', flexShrink: 0 }}
-                            onMouseEnter={e => { e.currentTarget.style.background = '#F9FAFB' }}
-                            onMouseLeave={e => { e.currentTarget.style.background = '#FFFFFF' }}
-                          ><ChevronLeft size={16} /></button>
-                          <h2 style={{ margin: 0, fontSize: '1.1rem', color: '#111827', fontWeight: 700, lineHeight: 1, alignSelf: 'center' }}>{selectedArchived.title}</h2>
-                          {selectedArchived.is_recurring ? (
-                            <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', whiteSpace: 'nowrap', flexShrink: 0 }}>Shift Job</span>
-                          ) : (
-                            <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE', whiteSpace: 'nowrap', flexShrink: 0 }}>One-Off Job</span>
-                          )}
-                        </div>
-                        <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-                          <button
-                            onClick={() => void runArchivedAction('unarchive_posting', selectedArchived.id)}
-                            disabled={actionLoading}
-                            title="Unarchive job"
-                            style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid #BBF7D0', background: '#F0FDF4', color: '#059669', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}
-                            onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#DCFCE7' }}
-                            onMouseLeave={e => { e.currentTarget.style.background = '#F0FDF4' }}
-                          ><ArchiveRestore size={14} /></button>
-                          <button
-                            onClick={() => setDeleteConfirm({ id: selectedArchived.id, title: selectedArchived.title, isDraft: false })}
-                            disabled={actionLoading}
-                            title="Delete job"
-                            style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid #FECACA', background: '#FEF2F2', color: '#DC2626', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}
-                            onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FEE2E2' }}
-                            onMouseLeave={e => { e.currentTarget.style.background = '#FEF2F2' }}
-                          ><Trash2 size={14} /></button>
-                        </div>
-                      </div>
-                      <div style={{ flex: 1 }} />
-                    </div>
-                    <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-                      {/* LEFT: job details */}
+                      {/* Job details body — mirrors the Template Preview design, plus a Schedule section
+                          for the posting-only facts a template never has (date, hours, break) */}
                       {(() => {
+                        const p = selectedArchived
                         const toMins = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m }
-                        const isShiftJob = selectedArchived.is_recurring
-                        const shiftDate = selectedArchived.shift_date
-                        const shiftStart = selectedArchived.shift_start_time
-                        const shiftEnd = selectedArchived.shift_end_time
-                        const breakStart = selectedArchived.break_start_time
-                        const breakEnd = selectedArchived.break_end_time
-                        const estimatedHours = selectedArchived.estimated_hours
-                        const urgency = selectedArchived.urgency ?? 'normal'
-                        const urgencyLabel = urgency === 'urgent' ? 'Urgent' : urgency === 'high' ? 'High' : 'Normal'
+                        const isShiftJob = p.is_recurring
+                        const fmt12 = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return `${h12}:${String(m).padStart(2, '0')} ${ap}` }
                         let totalAmt: number | null = null
-                        if (isShiftJob && selectedArchived.salary_amount != null && shiftStart && shiftEnd) {
-                          let worked = toMins(shiftEnd) - toMins(shiftStart)
-                          if (breakStart && breakEnd) worked -= (toMins(breakEnd) - toMins(breakStart))
-                          if (worked > 0) totalAmt = Math.round(selectedArchived.salary_amount * (worked / 60) * 100) / 100
+                        if (isShiftJob && p.salary_amount != null && p.shift_start_time && p.shift_end_time) {
+                          let worked = toMins(p.shift_end_time) - toMins(p.shift_start_time)
+                          if (p.break_start_time && p.break_end_time) worked -= (toMins(p.break_end_time) - toMins(p.break_start_time))
+                          if (worked > 0) totalAmt = Math.round(p.salary_amount * (worked / 60) * 100) / 100
                         }
-                        const fmtShort = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return m === 0 ? `${h12}${ap}` : `${h12}:${String(m).padStart(2, '0')}${ap}` }
-                        const statCard: React.CSSProperties = { borderRadius: 12, padding: '10px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'center', minHeight: 72 }
-                        const statLabel: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }
-                        const statLabelText = (color: string): React.CSSProperties => ({ fontSize: '0.75rem', fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: '0.06em' })
-                        const statValue: React.CSSProperties = { margin: 0, fontSize: '0.8rem', fontWeight: 600, color: '#374151', lineHeight: 1.3 }
+                        const payLabel = p.salary_amount != null
+                          ? (isShiftJob ? `$${p.salary_amount}/hr${totalAmt != null ? ` ($${totalAmt % 1 === 0 ? totalAmt.toFixed(0) : totalAmt.toFixed(2)})` : ''}` : `$${p.salary_amount} flat rate`)
+                          : null
+                        const uniformLabel = p.uniform_type === 'dress_code' ? 'Specific Dress Code' : (p.uniform_type === 'company' || p.uniform_required) ? 'Company Uniform Provided' : null
+                        const metaRow: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10 }
+                        const metaText: React.CSSProperties = { fontSize: '0.875rem', color: '#374151' }
+                        const metaIcon: React.CSSProperties = { flexShrink: 0 }
                         return (
-                          <div style={{ flex: '0 0 min(860px, 62%)', borderRight: '1px solid #F0F4F8', overflowY: 'auto', padding: '20px 24px 24px' }}>
-                            {/* Stat cards */}
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 20 }}>
-                              {/* Pay */}
-                              {selectedArchived.salary_amount != null ? (
-                                <div style={{ ...statCard, background: '#FFF7ED', border: '1px solid #FED7AA' }}>
-                                  <div style={statLabel}><DollarSign size={11} style={{ color: '#F97316' }} /><span style={statLabelText('#F97316')}>{isShiftJob ? 'Pay' : 'Flat Rate'}</span></div>
-                                  <p style={statValue}>{isShiftJob ? `$${selectedArchived.salary_amount}/Hr${totalAmt != null ? ` ($${totalAmt % 1 === 0 ? totalAmt.toFixed(0) : totalAmt.toFixed(2)})` : ''}` : `$${selectedArchived.salary_amount}`}</p>
+                          <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+                            {/* Job Board card look-alike */}
+                            <div style={{ background: '#FFFFFF', border: '1.5px solid #EDE9E3', borderRadius: 16, padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                {!isShiftJob && (p.urgency === 'high' || p.urgency === 'urgent') && (
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#FFF1F2', color: '#E11D48', fontSize: '0.75rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999 }}>
+                                    <Zap size={12} />{p.urgency === 'urgent' ? 'Urgent' : 'High'}
+                                  </span>
+                                )}
+                                {p.minimum_age && (
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#EEF2FF', color: '#4F46E5', fontSize: '0.75rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999 }}>
+                                    <Cake size={12} />{p.minimum_age}+
+                                  </span>
+                                )}
+                                {p.experience_required && p.experience_required !== 'Not Required' && (
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#ECFEFF', color: '#0891B2', fontSize: '0.75rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999 }}>
+                                    <UserCheck size={12} />{p.experience_required}
+                                  </span>
+                                )}
+                                {uniformLabel && (
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#FFFBEB', color: '#B45309', fontSize: '0.75rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999 }}>
+                                    <Shirt size={12} />{p.uniform_type === 'dress_code' ? 'Dress Code' : 'Uniform Provided'}
+                                  </span>
+                                )}
+                              </div>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                <p style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827', lineHeight: 1.35, margin: 0 }}>{p.title}</p>
+                                <p style={{ fontSize: '0.875rem', fontWeight: 500, color: '#6B7280', margin: 0 }}>{p.company_name ?? companyName ?? '—'}</p>
+                              </div>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                {/* Location always comes from the company profile — same source and format as the Template preview */}
+                                {(companyLocation || p.company_location) && (
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', fontWeight: 800, color: '#4B5563', background: '#F3F4F6', borderRadius: 999, padding: '4px 10px' }}>
+                                    <MapPin size={12} strokeWidth={2.5} />{companyLocation || p.company_location}
+                                  </span>
+                                )}
+                                {p.salary_amount != null && (
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', fontWeight: 800, color: '#065F46', background: '#ECFDF5', borderRadius: 999, padding: '4px 10px' }}>
+                                    ${p.salary_amount}{isShiftJob ? '/hr' : ''}
+                                  </span>
+                                )}
+                                {!isShiftJob && p.estimated_hours && (
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', fontWeight: 800, color: '#1D4ED8', background: '#EFF6FF', borderRadius: 999, padding: '4px 10px' }}>
+                                    <Clock size={12} />{p.estimated_hours}h
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Job detail look-alike */}
+                            <div style={{ border: '1.5px solid #EDE9E3', borderRadius: 16, padding: '24px 22px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+                              <div>
+                                <h2 style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827', lineHeight: 1.35, margin: '0 0 4px' }}>{p.title}</h2>
+                                <p style={{ fontSize: '0.875rem', fontWeight: 500, color: '#6B7280', margin: '0 0 14px' }}>{p.company_name ?? companyName ?? '—'}</p>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                  {p.department_name && (
+                                    <div style={metaRow}><LayoutGrid size={14} color="#F97316" strokeWidth={2} style={metaIcon} /><span style={metaText}>{p.department_name}</span></div>
+                                  )}
+                                  {p.minimum_age && (
+                                    <div style={metaRow}><Cake size={14} color="#F97316" strokeWidth={2} style={metaIcon} /><span style={metaText}>{p.minimum_age}+</span></div>
+                                  )}
+                                  {p.experience_required && p.experience_required !== 'Not Required' && (
+                                    <div style={metaRow}><UserCheck size={14} color="#F97316" strokeWidth={2} style={metaIcon} /><span style={metaText}>Experience {p.experience_required}</span></div>
+                                  )}
+                                  {uniformLabel && (
+                                    <div style={metaRow}><Shirt size={14} color="#F97316" strokeWidth={2} style={metaIcon} /><span style={metaText}>{uniformLabel}</span></div>
+                                  )}
+                                  {!isShiftJob && p.estimated_hours && (
+                                    <div style={metaRow}><Clock size={14} color="#F97316" strokeWidth={2} style={metaIcon} /><span style={metaText}>Est. {p.estimated_hours} hours</span></div>
+                                  )}
+                                  {payLabel && (
+                                    <div style={metaRow}><DollarSign size={14} color="#F97316" strokeWidth={2} style={metaIcon} /><span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#059669' }}>{payLabel}</span></div>
+                                  )}
                                 </div>
-                              ) : (
-                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}><span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No pay set</span></div>
+                              </div>
+
+                              {/* Schedule — posting-only facts (a template never has these) */}
+                              {(p.shift_date || (isShiftJob && (p.shift_start_time || p.shift_end_time || p.break_start_time || p.break_end_time)) || (!isShiftJob && p.job_start_time)) && (
+                                <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
+                                  <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Schedule</p>
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                    {p.shift_date && (
+                                      <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Date:</span> {new Date(p.shift_date).toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                                    )}
+                                    {isShiftJob && (p.shift_start_time || p.shift_end_time) && (
+                                      <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Working Hours:</span> {p.shift_start_time ? fmt12(p.shift_start_time) : '—'} – {p.shift_end_time ? fmt12(p.shift_end_time) : '—'}</p>
+                                    )}
+                                    {isShiftJob && (p.break_start_time || p.break_end_time) && (
+                                      <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Break Time:</span> {p.break_start_time ? fmt12(p.break_start_time) : '—'} – {p.break_end_time ? fmt12(p.break_end_time) : '—'}</p>
+                                    )}
+                                    {!isShiftJob && p.job_start_time && (
+                                      <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Start Time:</span> {fmt12(p.job_start_time)}</p>
+                                    )}
+                                  </div>
+                                </div>
                               )}
-                              {/* Date */}
-                              {shiftDate ? (
-                                <div style={{ ...statCard, background: '#F0F9FF', border: '1px solid #BAE6FD' }}>
-                                  <div style={statLabel}><CalendarDays size={11} style={{ color: '#0284C7' }} /><span style={statLabelText('#0284C7')}>Date</span></div>
-                                  <p style={statValue}>{new Date(shiftDate).toLocaleDateString('en-SG', { weekday: 'short', day: 'numeric', month: 'short' })}</p>
-                                </div>
-                              ) : (
-                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}><span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No date set</span></div>
-                              )}
-                              {/* Hours / Estimation */}
-                              {isShiftJob ? ((shiftStart || shiftEnd) ? (
-                                <div style={{ ...statCard, background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
-                                  <div style={statLabel}><Clock size={11} style={{ color: '#059669' }} /><span style={statLabelText('#059669')}>Hours</span></div>
-                                  <p style={statValue}>{shiftStart ? fmtShort(shiftStart) : '—'} – {shiftEnd ? fmtShort(shiftEnd) : '—'}</p>
-                                </div>
-                              ) : (
-                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}><span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No hours set</span></div>
-                              )) : (estimatedHours ? (
-                                <div style={{ ...statCard, background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
-                                  <div style={statLabel}><Clock size={11} style={{ color: '#059669' }} /><span style={statLabelText('#059669')}>Estimation</span></div>
-                                  <p style={statValue}>{estimatedHours} Hours</p>
-                                </div>
-                              ) : (
-                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}><span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No hours set</span></div>
-                              ))}
-                              {/* Break / Urgency */}
-                              {isShiftJob ? ((breakStart || breakEnd) ? (
-                                <div style={{ ...statCard, background: '#FDF4FF', border: '1px solid #E9D5FF' }}>
-                                  <div style={statLabel}><Coffee size={11} style={{ color: '#9333EA' }} /><span style={statLabelText('#9333EA')}>Break</span></div>
-                                  <p style={statValue}>{breakStart ? fmtShort(breakStart) : '—'} – {breakEnd ? fmtShort(breakEnd) : '—'}</p>
-                                </div>
-                              ) : (
-                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}><span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No break</span></div>
-                              )) : (
-                                <div style={{ ...statCard, background: '#FFF1F2', border: '1px solid #FECDD3' }}>
-                                  <div style={statLabel}><Zap size={11} style={{ color: '#E11D48' }} /><span style={statLabelText('#E11D48')}>Urgency</span></div>
-                                  <p style={statValue}>{urgencyLabel}</p>
+
+                              <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
+                                <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Responsibilities</p>
+                                <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{p.description || '—'}</p>
+                              </div>
+                              <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
+                                <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Skills &amp; Qualifications</p>
+                                <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{p.requirements || '—'}</p>
+                              </div>
+                              {uniformLabel && p.uniform_details && (
+                                <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
+                                  <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>{p.uniform_type === 'dress_code' ? 'Dress Code' : 'Uniform Details'}</p>
+                                  <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{p.uniform_details}</p>
                                 </div>
                               )}
                             </div>
-
-                            {/* Department + Employee row */}
-                            {(selectedArchived.department_name || selectedArchived.assigned_employee_name) && (
-                              <div style={{ display: 'flex', border: '1px solid #E5E7EB', borderRadius: 10, overflow: 'hidden', marginTop: 4 }}>
-                                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 0', borderRight: '1px solid #E5E7EB', background: '#FAFAFA' }}>
-                                  <LayoutGrid size={14} style={{ color: '#9CA3AF', flexShrink: 0 }} />
-                                  <span style={{ fontSize: '0.875rem', color: '#374151' }}>{selectedArchived.department_name ?? '—'}</span>
-                                </div>
-                                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 0', background: '#FAFAFA' }}>
-                                  <UserCheck size={14} style={{ color: '#9CA3AF', flexShrink: 0 }} />
-                                  <span style={{ fontSize: '0.875rem', color: '#374151' }}>{selectedArchived.assigned_employee_name ?? '—'}</span>
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Scope & Requirements */}
-                            {(selectedArchived.description || selectedArchived.requirements) && (
-                              <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                                {selectedArchived.description && (
-                                  <div style={{ background: '#FFFFFF', borderRadius: 10, padding: '14px 16px', border: '1px solid #E5E7EB' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                                      <FileText size={13} style={{ color: '#F97316' }} />
-                                      <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Scope</span>
-                                    </div>
-                                    <p style={{ margin: 0, fontSize: '0.875rem', color: '#374151', lineHeight: 1.75 }}>{selectedArchived.description}</p>
-                                  </div>
-                                )}
-                                {selectedArchived.requirements && (
-                                  <div style={{ background: '#FFFFFF', borderRadius: 10, padding: '14px 16px', border: '1px solid #E5E7EB' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                                      <ClipboardList size={13} style={{ color: '#F97316' }} />
-                                      <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Requirements</span>
-                                    </div>
-                                    <p style={{ margin: 0, fontSize: '0.875rem', color: '#374151', lineHeight: 1.75, whiteSpace: 'pre-wrap' }}>{selectedArchived.requirements}</p>
-                                  </div>
-                                )}
-                              </div>
-                            )}
                           </div>
                         )
                       })()}
+                </div>
 
-                      {/* RIGHT: applicants (view-only) */}
-                      <div style={{ flex: 1, overflowY: 'auto', padding: '20px 20px 24px', background: '#FAFAFA', borderRadius: '0 0 16px 0' }}>
-                        <p style={{ margin: '0 0 16px', fontSize: '0.75rem', fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Applicants</p>
+                {/* Applicants — read-only */}
+                <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                  {/* 20px vertical padding (vs 17px elsewhere): keeps this divider level with the Job Sources header, whose 36px AI button makes it 6px taller */}
+                  <div style={{ padding: '20px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <Users size={15} style={{ color: '#F97316' }} />
+                    </div>
+                    <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Applicants</span>
+                  </div>
+                  <div style={{ padding: '18px 20px' }}>
                         {archivedApplicants.length === 0 ? (
                           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '48px 24px', background: '#FFFFFF', borderRadius: 12, border: '1.5px dashed #E5E7EB' }}>
                             <div style={{ width: 48, height: 48, borderRadius: 14, background: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
@@ -2249,15 +2585,11 @@ export default function OwnerRecruitmentPage() {
                               </div>
                               {statusBadge(applicant.status)}
                             </div>
-                            {applicant.cover_letter && (
-                              <p style={{ margin: '8px 0 0', color: '#4B5563', fontSize: '0.8rem', lineHeight: 1.55, paddingLeft: 41 }}>{applicant.cover_letter}</p>
-                            )}
+                            <ApplicantSnapshotBody applicant={applicant} />
                           </div>
                         ))}
-                      </div>
-                    </div>
-                  </>
-                )}
+                  </div>
+                </div>
               </div>
             )}
 
@@ -2360,7 +2692,7 @@ export default function OwnerRecruitmentPage() {
                       {/* Title + date row */}
                       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10 }}>
                         <strong style={{ fontSize: '0.9rem', color: '#1C1C1E', lineHeight: 1.4, flex: 1, minWidth: 0 }}>{p.title}</strong>
-                        <span style={{ fontSize: '0.75rem', color: '#C4C9D4', flexShrink: 0 }}>{formatPostedAt(p.created_at)}</span>
+                        <span style={{ fontSize: '0.75rem', color: '#C4C9D4', flexShrink: 0 }}>{formatCompactAt(p.created_at)}</span>
                       </div>
                     </div>
                   )
@@ -2526,10 +2858,18 @@ export default function OwnerRecruitmentPage() {
                   <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>Template not found</p>
                 </div>
               ) : (
-                <div className="template-edit-grid">
+                <div className="template-edit-grid" style={{ position: 'relative', height: '100%', minHeight: 0, gridTemplateRows: 'minmax(0, 1fr)' }}>
+                  {/* Flow arrows: Edit → Preview → Template Information — same horizontal line as the Template menu card */}
+                  <div className="flow-arrow flow-arrow-mid">
+                    <ArrowRight size={15} strokeWidth={2.5} />
+                  </div>
+                  <div className="flow-arrow flow-arrow-end">
+                    <ArrowRight size={15} strokeWidth={2.5} />
+                  </div>
                   {/* LEFT: Edit Template form */}
-                  <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                    <div style={{ padding: '17px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                  <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: '100%' }}>
+                    {/* 20px vertical padding (vs 17px elsewhere): keeps this divider level with the Job Sources header, whose 36px AI button makes it 6px taller */}
+                    <div style={{ padding: '20px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                       <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                         <Pencil size={15} style={{ color: '#F97316' }} />
                       </div>
@@ -2537,13 +2877,19 @@ export default function OwnerRecruitmentPage() {
                     </div>
                     <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
 
+                      {/* ── Section: Job Information (mirrors New Template wizard step 1) ── */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div style={{ flex: 1, borderTop: '1.5px dashed #FDBA74' }} />
+                        <span style={{ fontSize: '0.8125rem', fontWeight: 800, color: '#EA580C', textTransform: 'uppercase', letterSpacing: '0.06em', flexShrink: 0 }}>Job Information</span>
+                        <div style={{ flex: 1, borderTop: '1.5px dashed #FDBA74' }} />
+                      </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                         <div style={{ minWidth: 0 }}>
                           <label style={modalLabelStyle}>Job Type</label>
                           <RDrop
                             value={tplFormType}
                             placeholder="Select job type"
-                            options={[{ value: 'oneoff', label: 'One-off' }, { value: 'shift', label: 'Shift' }]}
+                            options={[{ value: 'oneoff', label: 'One-Off' }, { value: 'shift', label: 'Shift' }]}
                             onChange={v => setTplFormType(v === 'shift' ? 'shift' : 'oneoff')}
                           />
                         </div>
@@ -2560,7 +2906,7 @@ export default function OwnerRecruitmentPage() {
                         </div>
                       </div>
                       <div>
-                        <label style={modalLabelStyle}>Job Scope</label>
+                        <label style={modalLabelStyle}>Responsibilities</label>
                         <textarea
                           value={tplDescription}
                           onChange={e => setTplDescription(e.target.value)}
@@ -2572,7 +2918,7 @@ export default function OwnerRecruitmentPage() {
                         />
                       </div>
                       <div>
-                        <label style={modalLabelStyle}>Requirements</label>
+                        <label style={modalLabelStyle}>Skills &amp; Qualifications</label>
                         <textarea
                           value={tplRequirements}
                           onChange={e => setTplRequirements(e.target.value)}
@@ -2583,38 +2929,11 @@ export default function OwnerRecruitmentPage() {
                           onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
                         />
                       </div>
-                      <div style={tplUniformRequired ? { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 } : undefined}>
-                        <div style={{ minWidth: 0 }}>
-                          <label style={modalLabelStyle}>Attire Required</label>
-                          <RDrop
-                            value={tplUniformRequired === null ? '' : (tplUniformRequired ? 'yes' : 'no')}
-                            placeholder="Select requirements"
-                            options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]}
-                            onChange={v => setTplUniformRequired(v === 'yes')}
-                          />
-                        </div>
-                        {tplUniformRequired && (
-                          <div style={{ minWidth: 0 }}>
-                            <label style={modalLabelStyle}>Attire Details</label>
-                            <input value={tplUniformDetails} onChange={e => setTplUniformDetails(e.target.value)} placeholder="e.g. Black polo + apron" style={modalInputStyle} />
-                          </div>
-                        )}
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                        <div style={{ minWidth: 0 }}>
-                          <label style={modalLabelStyle}>Experience Required</label>
-                          <RDrop value={tplExperienceRequired} placeholder="Select preferences" options={EXPERIENCE_REQUIRED_OPTIONS} onChange={setTplExperienceRequired} />
-                        </div>
-                        <div style={{ minWidth: 0 }}>
-                          <label style={modalLabelStyle}>Minimum Age</label>
-                          <RDrop value={tplMinimumAge} placeholder="Select minimum age" options={MINIMUM_AGE_OPTIONS} onChange={setTplMinimumAge} />
-                        </div>
-                      </div>
                       {tplFormType === 'oneoff' && (
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                           <div style={{ minWidth: 0 }}>
                             <label style={modalLabelStyle}>Est. Hours</label>
-                            <input type="number" min={0} step={0.5} value={tplEstimatedHours} onChange={e => setTplEstimatedHours(e.target.value)} placeholder="e.g. 5" style={modalInputStyle} />
+                            <HoursField value={tplEstimatedHours} onChange={setTplEstimatedHours} />
                           </div>
                           <div style={{ minWidth: 0 }}>
                             <label style={modalLabelStyle}>Urgency</label>
@@ -2626,7 +2945,46 @@ export default function OwnerRecruitmentPage() {
                           </div>
                         </div>
                       )}
-                      <div style={{ borderTop: '1px dashed #E5E7EB' }} />
+
+                      {/* ── Section: Requirements & Payment (mirrors New Template wizard step 2) ── */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
+                        <div style={{ flex: 1, borderTop: '1.5px dashed #FDBA74' }} />
+                        <span style={{ fontSize: '0.8125rem', fontWeight: 800, color: '#EA580C', textTransform: 'uppercase', letterSpacing: '0.06em', flexShrink: 0 }}>Requirements &amp; Payment</span>
+                        <div style={{ flex: 1, borderTop: '1.5px dashed #FDBA74' }} />
+                      </div>
+                      <div style={{ minWidth: 0 }}>
+                        <label style={modalLabelStyle}>Uniform</label>
+                        <RDrop
+                          value={tplUniformType}
+                          placeholder="Select uniform requirement"
+                          options={UNIFORM_TYPE_OPTIONS}
+                          onChange={v => setTplUniformType(v as UniformType)}
+                        />
+                      </div>
+                      {(tplUniformType === 'company' || tplUniformType === 'dress_code') && (
+                        <div style={{ minWidth: 0 }}>
+                          <label style={modalLabelStyle}>{tplUniformType === 'company' ? 'Uniform Details' : 'Dress Code'}</label>
+                          <textarea
+                            value={tplUniformDetails}
+                            onChange={e => setTplUniformDetails(e.target.value)}
+                            rows={2}
+                            placeholder={tplUniformType === 'company' ? 'e.g. Black polo shirt, black apron' : 'e.g. Black shirt, black pants, black shoes'}
+                            style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
+                            onFocus={e => { e.currentTarget.style.borderColor = '#F97316' }}
+                            onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
+                          />
+                        </div>
+                      )}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        <div style={{ minWidth: 0 }}>
+                          <label style={modalLabelStyle}>Experience Required</label>
+                          <RDrop value={tplExperienceRequired} placeholder="Select preferences" options={EXPERIENCE_REQUIRED_OPTIONS} onChange={setTplExperienceRequired} />
+                        </div>
+                        <div style={{ minWidth: 0 }}>
+                          <label style={modalLabelStyle}>Minimum Age</label>
+                          <RDrop value={tplMinimumAge} placeholder="Select minimum age" options={MINIMUM_AGE_OPTIONS} onChange={setTplMinimumAge} />
+                        </div>
+                      </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                         <div style={{ minWidth: 0 }}>
                           <label style={modalLabelStyle}>Department</label>
@@ -2636,14 +2994,14 @@ export default function OwnerRecruitmentPage() {
                           <label style={modalLabelStyle}>{tplFormType === 'shift' ? 'Pay/Hr' : 'Flat Rate'}</label>
                           <div style={{ position: 'relative' }}>
                             <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#6B7280', fontSize: '0.9375rem', pointerEvents: 'none' }}>$</span>
-                            <input type="number" min={0} step={0.5} value={tplSalaryAmt} onChange={e => setTplSalaryAmt(e.target.value)} placeholder="0.00" style={{ ...modalInputStyle, paddingLeft: 26 }} />
+                            <input type="number" min={0} step={0.5} onKeyDown={blockNonNumericKeys} value={tplSalaryAmt} onChange={e => setTplSalaryAmt(e.target.value)} placeholder="0.00" style={{ ...modalInputStyle, paddingLeft: 26 }} />
                           </div>
                         </div>
                       </div>
 
                       {tplError && <div style={modalErrorBoxStyle}>{tplError}</div>}
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '16px 24px', borderTop: '1px solid #F0F4F8' }}>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '16px 24px', borderTop: '1px solid #F0F4F8', flexShrink: 0 }}>
                       <button type="button" onClick={() => { setPostView('none'); setSelectedTemplateId('') }} style={modalGhostButtonStyle}>Cancel</button>
                       <button
                         type="button"
@@ -2657,40 +3015,36 @@ export default function OwnerRecruitmentPage() {
                   </div>
 
                   {/* RIGHT: live preview */}
-                  <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden' }}>
-                    <div style={{ padding: '17px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: '100%' }}>
+                    <div style={{ padding: '20px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                       <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                         <Eye size={15} style={{ color: '#F97316' }} />
                       </div>
                       <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Preview</span>
                     </div>
-                    <div style={{ padding: '18px 20px' }}>
+                    <div style={{ padding: '18px 20px', flex: 1, minHeight: 0, overflowY: 'auto' }}>
 
                       {/* Job Board card look-alike */}
                       <div style={{ background: '#FFFFFF', border: '1.5px solid #EDE9E3', borderRadius: 16, padding: 20, display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
                         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                           {tplFormType === 'oneoff' && (tplUrgency === 'high' || tplUrgency === 'urgent') && (
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#FFF1F2', color: '#E11D48', fontSize: '0.72rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999 }}>
-                              <Zap size={11} />{tplUrgency === 'urgent' ? 'Urgent' : 'High'}
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#FFF1F2', color: '#E11D48', fontSize: '0.75rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999 }}>
+                              <Zap size={12} />{tplUrgency === 'urgent' ? 'Urgent' : 'High'}
                             </span>
                           )}
-                          {tplFormType === 'shift'
-                            ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#FFF7ED', color: '#C2410C', fontSize: '0.72rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999 }}><Repeat size={11} />Shift Job</span>
-                            : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#F5F3FF', color: '#7C3AED', fontSize: '0.72rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999 }}><CalendarDays size={11} />One-Off Job</span>
-                          }
                           {tplMinimumAge && (
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#EEF2FF', color: '#4F46E5', fontSize: '0.72rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999 }}>
-                              <Cake size={11} />{tplMinimumAge}
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#EEF2FF', color: '#4F46E5', fontSize: '0.75rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999 }}>
+                              <Cake size={12} />{tplMinimumAge}+
                             </span>
                           )}
                           {tplExperienceRequired && tplExperienceRequired !== 'Not Required' && (
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#ECFEFF', color: '#0891B2', fontSize: '0.72rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999 }}>
-                              <UserCheck size={11} />{tplExperienceRequired}
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#ECFEFF', color: '#0891B2', fontSize: '0.75rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999 }}>
+                              <UserCheck size={12} />{tplExperienceRequired}
                             </span>
                           )}
-                          {tplUniformRequired && (
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#FFFBEB', color: '#B45309', fontSize: '0.72rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999 }}>
-                              <Shirt size={11} />Attire
+                          {(tplUniformType === 'company' || tplUniformType === 'dress_code') && (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#FFFBEB', color: '#B45309', fontSize: '0.75rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999 }}>
+                              <Shirt size={12} />{tplUniformType === 'company' ? 'Uniform Provided' : 'Dress Code'}
                             </span>
                           )}
                         </div>
@@ -2700,125 +3054,173 @@ export default function OwnerRecruitmentPage() {
                         </div>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                           {companyLocation && (
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 800, color: '#4B5563', background: '#F3F4F6', borderRadius: 999, padding: '4px 10px' }}>
-                              <MapPin size={11} strokeWidth={2.5} />
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', fontWeight: 800, color: '#4B5563', background: '#F3F4F6', borderRadius: 999, padding: '4px 10px' }}>
+                              <MapPin size={12} strokeWidth={2.5} />
                               {companyLocation}
                             </span>
                           )}
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 800, color: '#065F46', background: '#ECFDF5', borderRadius: 999, padding: '4px 10px' }}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', fontWeight: 800, color: '#065F46', background: '#ECFDF5', borderRadius: 999, padding: '4px 10px' }}>
                             ${tplSalaryAmt || '0'}{tplFormType === 'shift' ? '/hr' : ''}
                           </span>
                           {tplFormType === 'oneoff' && tplEstimatedHours && (
-                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 800, color: '#1D4ED8', background: '#EFF6FF', borderRadius: 999, padding: '4px 10px' }}>
-                              <Clock size={11} />{tplEstimatedHours}h
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', fontWeight: 800, color: '#1D4ED8', background: '#EFF6FF', borderRadius: 999, padding: '4px 10px' }}>
+                              <Clock size={12} />{tplEstimatedHours}h
                             </span>
                           )}
                         </div>
                       </div>
 
                       {/* Job detail panel look-alike */}
-                      <div style={{ border: '1px solid #EDE9E3', borderRadius: 20, padding: '24px 22px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+                      <div style={{ border: '1.5px solid #EDE9E3', borderRadius: 16, padding: '24px 22px', display: 'flex', flexDirection: 'column', gap: 20 }}>
                         <div>
-                          <h2 style={{ fontWeight: 800, fontSize: '1.25rem', color: '#111827', lineHeight: 1.25, margin: '0 0 4px' }}>{tplTitle || 'Untitled Role'}</h2>
+                          <h2 style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827', lineHeight: 1.35, margin: '0 0 4px' }}>{tplTitle || 'Untitled Role'}</h2>
                           <p style={{ fontSize: '0.875rem', fontWeight: 500, color: '#6B7280', margin: '0 0 14px' }}>{companyName || '—'}</p>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                             {departments.find(d => d.id === tplDepartmentId)?.name && (
                               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                <LayoutGrid size={14} color="#9CA3AF" strokeWidth={1.75} style={{ flexShrink: 0 }} />
+                                <LayoutGrid size={14} color="#F97316" strokeWidth={2} style={{ flexShrink: 0 }} />
                                 <span style={{ fontSize: '0.875rem', color: '#374151' }}>{departments.find(d => d.id === tplDepartmentId)?.name}</span>
                               </div>
                             )}
                             {tplMinimumAge && (
                               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                <Cake size={14} color="#9CA3AF" strokeWidth={1.75} style={{ flexShrink: 0 }} />
+                                <Cake size={14} color="#F97316" strokeWidth={2} style={{ flexShrink: 0 }} />
                                 <span style={{ fontSize: '0.875rem', color: '#374151' }}>{tplMinimumAge}</span>
                               </div>
                             )}
                             {tplExperienceRequired && tplExperienceRequired !== 'Not Required' && (
                               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                <UserCheck size={14} color="#9CA3AF" strokeWidth={1.75} style={{ flexShrink: 0 }} />
-                                <span style={{ fontSize: '0.875rem', color: '#374151' }}>{tplExperienceRequired}</span>
+                                <UserCheck size={14} color="#F97316" strokeWidth={2} style={{ flexShrink: 0 }} />
+                                <span style={{ fontSize: '0.875rem', color: '#374151' }}>Experience {tplExperienceRequired}</span>
                               </div>
                             )}
-                            {tplUniformRequired && (
+                            {(tplUniformType === 'company' || tplUniformType === 'dress_code') && (
                               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                <Shirt size={14} color="#9CA3AF" strokeWidth={1.75} style={{ flexShrink: 0 }} />
-                                <span style={{ fontSize: '0.875rem', color: '#374151' }}>Attire Required</span>
+                                <Shirt size={14} color="#F97316" strokeWidth={2} style={{ flexShrink: 0 }} />
+                                <span style={{ fontSize: '0.875rem', color: '#374151' }}>{tplUniformType === 'company' ? 'Company Uniform Provided' : 'Specific Dress Code'}</span>
                               </div>
                             )}
                             {tplFormType === 'oneoff' && tplEstimatedHours && (
                               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                <Clock size={14} color="#9CA3AF" strokeWidth={1.75} style={{ flexShrink: 0 }} />
+                                <Clock size={14} color="#F97316" strokeWidth={2} style={{ flexShrink: 0 }} />
                                 <span style={{ fontSize: '0.875rem', color: '#374151' }}>Est. {tplEstimatedHours} hours</span>
                               </div>
                             )}
                             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                              <DollarSign size={14} color="#9CA3AF" strokeWidth={1.75} style={{ flexShrink: 0 }} />
+                              <DollarSign size={14} color="#F97316" strokeWidth={2} style={{ flexShrink: 0 }} />
                               <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#059669' }}>${tplSalaryAmt || '0'}{tplFormType === 'shift' ? '/hr' : ' flat rate'}</span>
                             </div>
                           </div>
                         </div>
 
-                        <div>
-                          <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Job Scope</p>
+                        <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
+                          <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Responsibilities</p>
                           <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{tplDescription || '—'}</p>
                         </div>
 
                         <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
-                          <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Requirements</p>
+                          <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Skills &amp; Qualifications</p>
                           <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{tplRequirements || '—'}</p>
                         </div>
 
-                        {tplUniformRequired && (
+                        {(tplUniformType === 'company' || tplUniformType === 'dress_code') && (
                           <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
-                            <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Attire</p>
+                            <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>{tplUniformType === 'company' ? 'Uniform Details' : 'Dress Code'}</p>
                             <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{tplUniformDetails || '—'}</p>
                           </div>
                         )}
 
-                        <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
-                          <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Company profile</p>
-                          <div style={{ background: '#FAFAF9', border: '1px solid #EDE9E3', borderRadius: 14, padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
-                            <p style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0 }}>{companyName || '—'}</p>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                              {companyLocation && (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                  <MapPin size={14} color="#9CA3AF" strokeWidth={1.75} style={{ flexShrink: 0 }} />
-                                  <span style={{ fontSize: '0.8125rem', color: '#4B5563' }}>{companyLocation}</span>
-                                </div>
-                              )}
-                              {companySize && (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                  <Users size={14} color="#9CA3AF" strokeWidth={1.75} style={{ flexShrink: 0 }} />
-                                  <span style={{ fontSize: '0.8125rem', color: '#4B5563' }}>{companySize} employees</span>
-                                </div>
-                              )}
-                              {companyIndustry && (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                                  <Briefcase size={14} color="#9CA3AF" strokeWidth={1.75} style={{ flexShrink: 0 }} />
-                                  <span style={{ fontSize: '0.8125rem', color: '#4B5563' }}>{companyIndustry}</span>
-                                </div>
-                              )}
-                              {companyDescription && (
-                                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, paddingTop: 4, borderTop: '1px solid #EDE9E3', marginTop: 2 }}>
-                                  <FileText size={14} color="#9CA3AF" strokeWidth={1.75} style={{ flexShrink: 0, marginTop: 3 }} />
-                                  <span style={{ fontSize: '0.8125rem', color: '#6B7280', lineHeight: 1.7 }}>{companyDescription}</span>
-                                </div>
-                              )}
-                            </div>
-                          </div>
+                      </div>
+
+                    </div>
+                  </div>
+
+                  {/* RIGHT: template information */}
+                  <div className="recruitment-panel template-info-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden' }}>
+                    <div style={{ padding: '20px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <FileText size={15} style={{ color: '#F97316' }} />
+                      </div>
+                      <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Template Information</span>
+                    </div>
+                    <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                      {/* Key facts — 2 cards on top, 3 below */}
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: '12px 14px', background: '#FFFFFF', minWidth: 0 }}>
+                          <p style={{ ...modalLabelStyle, margin: '0 0 6px' }}>Department</p>
+                          <p style={{ margin: 0, fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{departments.find(d => d.id === tplDepartmentId)?.name ?? '—'}</p>
+                        </div>
+                        <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: '12px 14px', background: '#FFFFFF', minWidth: 0 }}>
+                          <p style={{ ...modalLabelStyle, margin: '0 0 6px' }}>{tplFormType === 'shift' ? 'Pay/Hr' : 'Flat Rate'}</p>
+                          <p style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600, color: '#059669' }}>${tplSalaryAmt || '0'}{tplFormType === 'shift' ? '/hr' : ''}</p>
+                        </div>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+                        <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: '12px 14px', background: '#FFFFFF', minWidth: 0 }}>
+                          <p style={{ ...modalLabelStyle, margin: '0 0 6px' }}>Created</p>
+                          <p style={{ margin: 0, fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, whiteSpace: 'nowrap' }}>{formatCompactAt(selectedTemplate.created_at)}</p>
+                        </div>
+                        <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: '12px 14px', background: '#FFFFFF', minWidth: 0 }}>
+                          <p style={{ ...modalLabelStyle, margin: '0 0 6px' }}>Updated</p>
+                          <p style={{ margin: 0, fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, whiteSpace: 'nowrap' }}>{formatCompactAt(selectedTemplate.updated_at)}</p>
+                        </div>
+                        <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: '12px 14px', background: '#FFFFFF', minWidth: 0 }}>
+                          <p style={{ ...modalLabelStyle, margin: '0 0 6px' }}>Posted</p>
+                          <p style={{ margin: 0, fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, whiteSpace: 'nowrap' }}>{tplUsage ? `${tplUsage.published_jobs} ${tplUsage.published_jobs === 1 ? 'time' : 'times'}` : '—'}</p>
                         </div>
                       </div>
 
-                      <div style={{ display: 'flex', justifyContent: 'center', marginTop: 16 }}>
-                        <button
-                          type="button"
-                          onClick={() => { resetForm(); applyTemplate(selectedTemplate); setFormOpen(true) }}
-                          style={{ padding: '10px 28px', borderRadius: 10, background: '#F97316', border: 'none', color: '#FFFFFF', fontWeight: 700, fontSize: '0.9375rem', cursor: 'pointer' }}
-                        >
-                          Post Template
-                        </button>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
+                        <div style={{ flex: 1, borderTop: '1.5px dashed #FDBA74' }} />
+                        <span style={{ fontSize: '0.8125rem', fontWeight: 800, color: '#EA580C', textTransform: 'uppercase', letterSpacing: '0.06em', flexShrink: 0 }}>Completed When Posting</span>
+                        <div style={{ flex: 1, borderTop: '1.5px dashed #FDBA74' }} />
                       </div>
+                      {(() => {
+                        // Mirrors the Post Job wizard: these fields are never stored on a template
+                        // (schedule/deadline are set fresh per posting), plus any template field
+                        // still left blank — rendered as greyed-out fields so the Owner sees at a
+                        // glance what posting will still ask for.
+                        const toFill: { label: string; hint: string }[] = []
+                        if (!tplDepartmentId) toFill.push({ label: 'Department', hint: 'Select department' })
+                        if (!tplSalaryAmt || Number(tplSalaryAmt) <= 0) toFill.push({ label: tplFormType === 'shift' ? 'Pay/Hr' : 'Flat Rate', hint: '$ 0.00' })
+                        if ((tplUniformType === 'company' || tplUniformType === 'dress_code') && !tplUniformDetails.trim()) toFill.push({ label: tplUniformType === 'company' ? 'Uniform Details' : 'Dress Code', hint: 'e.g. Black polo shirt, black apron' })
+                        if (tplFormType === 'oneoff' && !tplEstimatedHours) toFill.push({ label: 'Est. Hours', hint: 'e.g. 5' })
+                        if (tplFormType === 'shift') {
+                          toFill.push(
+                            { label: 'Available Shift', hint: 'Select shift' },
+                            { label: 'Supervisor', hint: 'Select supervisor' },
+                            { label: 'Start & End Time', hint: 'Set start & end time' },
+                            { label: 'Break Time', hint: 'Set break time' },
+                            { label: 'Application Deadline', hint: 'Set deadline' },
+                          )
+                        } else {
+                          toFill.push(
+                            { label: 'Start Time', hint: 'Set start time' },
+                            { label: 'Available Shift', hint: 'Select shift' },
+                            { label: 'Supervisor', hint: 'Select supervisor' },
+                            { label: 'Application Deadline', hint: 'Set deadline' },
+                          )
+                        }
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                            {toFill.map(item => (
+                              <div key={item.label} style={{ minWidth: 0 }}>
+                                <label style={modalLabelStyle}>{item.label}</label>
+                                <div style={{ ...modalInputStyle, background: '#F3F4F6', color: '#9CA3AF', cursor: 'not-allowed', userSelect: 'none' }}>{item.hint}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      })()}
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, padding: '16px 24px', borderTop: '1px solid #F0F4F8' }}>
+                      <button
+                        type="button"
+                        onClick={() => { resetForm(); applyTemplate(selectedTemplate); setFormOpen(true) }}
+                        style={modalPrimaryButtonStyle(false)}
+                      >
+                        <Send size={13} /> Apply Template
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -2846,7 +3248,6 @@ export default function OwnerRecruitmentPage() {
                       onClick={() => setReviewDeptDropdownOpen(o => !o)}
                       style={{ display: 'flex', alignItems: 'center', gap: 5, height: 36, padding: '0 10px', border: `1.5px solid ${reviewDeptDropdownOpen ? '#F97316' : '#E5E7EB'}`, borderRadius: 8, background: '#FFFFFF', color: '#374151', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', boxShadow: reviewDeptDropdownOpen ? '0 0 0 3px rgba(249,115,22,0.10)' : 'none', transition: 'border-color 0.15s' }}
                     >
-                      <Filter size={11} style={{ color: '#9CA3AF', flexShrink: 0 }} />
                       {reviewDeptFilter === 'all' ? 'All Departments' : reviewDeptFilter}
                       <ChevronDown size={11} style={{ color: '#9CA3AF', flexShrink: 0, transform: reviewDeptDropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
                     </button>
@@ -2917,7 +3318,7 @@ export default function OwnerRecruitmentPage() {
                           <RoleAvatar role="Manager" size={22} photoUrl={p.submitter_photo_url} />
                           <span style={{ color: '#111827', fontSize: 13, fontWeight: 400 }}>{p.submitter_name ?? 'Manager'}</span>
                         </div>
-                        <span style={{ fontSize: '0.78rem', color: '#94A3B8', flexShrink: 0 }}>{formatPostedAt(p.created_at)}</span>
+                        <span style={{ fontSize: '0.75rem', color: '#9CA3AF', flexShrink: 0 }}>Submitted {formatCompactAt(p.created_at)}</span>
                       </div>
                     </article>
                   )
@@ -3131,6 +3532,85 @@ export default function OwnerRecruitmentPage() {
       )}
 
 
+      {/* ══ Remove Worker modal — employer cancels ONE confirmed worker; job keeps hiring ══ */}
+      {removeWorkerTarget && createPortal(
+        <ModalOverlay onClose={() => { setRemoveWorkerTarget(null); setCancelReason('') }} maxWidth="420px">
+          <ModalBox>
+            <ModalHeader
+              title="Remove Confirmed Worker"
+              icon={<UserX size={15} color="#fff" strokeWidth={2.5} />}
+              iconBg="linear-gradient(135deg, #EF4444, #DC2626)"
+              onClose={() => { setRemoveWorkerTarget(null); setCancelReason('') }}
+            />
+            <div style={{ padding: '20px 24px 0' }}>
+              <p style={{ margin: '0 0 14px', color: '#6B7280', fontSize: '0.9rem', lineHeight: 1.55 }}>
+                <strong style={{ color: '#111827' }}>{removeWorkerTarget.full_name}</strong> already confirmed this job. Their shift will be
+                cancelled, the opening reopens for hire, and they will be notified with your reason.
+              </p>
+              <textarea
+                value={cancelReason}
+                onChange={e => setCancelReason(e.target.value)}
+                placeholder="Reason (required), e.g. the role's requirements changed."
+                rows={3}
+                style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
+                onFocus={e => { e.currentTarget.style.borderColor = '#F97316' }}
+                onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
+              />
+            </div>
+            {cancelSubmitError && <div style={modalErrorBoxStyle}>{cancelSubmitError}</div>}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', padding: '20px 24px' }}>
+              <button onClick={() => { setRemoveWorkerTarget(null); setCancelReason('') }} style={modalGhostButtonStyle}>
+                Keep Worker
+              </button>
+              <button onClick={submitRemoveWorker} disabled={actionLoading || !cancelReason.trim()} style={modalDestructiveButtonStyle(actionLoading || !cancelReason.trim())}>
+                {actionLoading ? <Spinner size={13} /> : <UserX size={13} />} Remove Worker
+              </button>
+            </div>
+          </ModalBox>
+        </ModalOverlay>,
+        document.body
+      )}
+
+      {/* ══ Cancel Job modal — the work itself no longer exists; job stays closed ══ */}
+      {cancelJobOpen && createPortal(
+        <ModalOverlay onClose={() => { setCancelJobOpen(false); setCancelReason('') }} maxWidth="420px">
+          <ModalBox>
+            <ModalHeader
+              title="Cancel Job"
+              icon={<XCircle size={15} color="#fff" strokeWidth={2.5} />}
+              iconBg="linear-gradient(135deg, #EF4444, #DC2626)"
+              onClose={() => { setCancelJobOpen(false); setCancelReason('') }}
+            />
+            <div style={{ padding: '20px 24px 0' }}>
+              <p style={{ margin: '0 0 14px', color: '#6B7280', fontSize: '0.9rem', lineHeight: 1.55 }}>
+                This cancels the job itself: every confirmed worker is notified, their future shifts
+                are voided, all open offers are withdrawn, and the job stays closed. Use
+                <strong style={{ color: '#111827' }}> Remove Worker</strong> instead if you only need to replace one person.
+              </p>
+              <textarea
+                value={cancelReason}
+                onChange={e => setCancelReason(e.target.value)}
+                placeholder="Reason (required), e.g. the event was called off."
+                rows={3}
+                style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
+                onFocus={e => { e.currentTarget.style.borderColor = '#F97316' }}
+                onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
+              />
+            </div>
+            {cancelSubmitError && <div style={modalErrorBoxStyle}>{cancelSubmitError}</div>}
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', padding: '20px 24px' }}>
+              <button onClick={() => { setCancelJobOpen(false); setCancelReason('') }} style={modalGhostButtonStyle}>
+                Keep Job
+              </button>
+              <button onClick={submitCancelJob} disabled={actionLoading || !cancelReason.trim()} style={modalDestructiveButtonStyle(actionLoading || !cancelReason.trim())}>
+                {actionLoading ? <Spinner size={13} /> : <XCircle size={13} />} Cancel Job
+              </button>
+            </div>
+          </ModalBox>
+        </ModalOverlay>,
+        document.body
+      )}
+
       {/* ══ New Template modal (create from scratch, UC36) ════════════════════ */}
       {newTemplateModalOpen && createPortal(
         <ModalOverlay onClose={() => { setNewTemplateModalOpen(false); resetNewTemplateForm() }} maxWidth="440px">
@@ -3142,134 +3622,196 @@ export default function OwnerRecruitmentPage() {
               onClose={() => { setNewTemplateModalOpen(false); resetNewTemplateForm() }}
             />
             <div style={{ padding: '20px 24px 0', display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                <div style={{ minWidth: 0 }}>
-                  <label style={modalLabelStyle}>Job Type</label>
-                  <RDrop
-                    autoFocus
-                    value={ntplFormType}
-                    placeholder="Select job type"
-                    options={[{ value: 'oneoff', label: 'One-off' }, { value: 'shift', label: 'Shift' }]}
-                    onChange={v => setNtplFormType(v === 'shift' ? 'shift' : 'oneoff')}
-                  />
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <label style={modalLabelStyle}>Job Title</label>
-                  <input
-                    value={ntplTitle}
-                    onChange={e => setNtplTitle(e.target.value)}
-                    placeholder="e.g. Barista"
-                    style={modalInputStyle}
-                    onFocus={e => { e.currentTarget.style.borderColor = '#F97316' }}
-                    onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
-                  />
-                </div>
-              </div>
-              <div>
-                <label style={modalLabelStyle}>Job Scope</label>
-                <textarea
-                  value={ntplDescription}
-                  onChange={e => setNtplDescription(e.target.value)}
-                  rows={3}
-                  placeholder="e.g. Serve customers, prep orders"
-                  style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
-                  onFocus={e => { e.currentTarget.style.borderColor = '#F97316' }}
-                  onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
-                />
-              </div>
-              <div>
-                <label style={modalLabelStyle}>Requirements</label>
-                <textarea
-                  value={ntplRequirements}
-                  onChange={e => setNtplRequirements(e.target.value)}
-                  rows={2}
-                  placeholder="e.g. Valid driver's license, basic Excel skills"
-                  style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
-                  onFocus={e => { e.currentTarget.style.borderColor = '#F97316' }}
-                  onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
-                />
-              </div>
-              <div style={ntplUniformRequired ? { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 } : undefined}>
-                <div style={{ minWidth: 0 }}>
-                  <label style={modalLabelStyle}>Attire Required</label>
-                  <RDrop
-                    value={ntplUniformRequired === null ? '' : (ntplUniformRequired ? 'yes' : 'no')}
-                    placeholder="Select requirements"
-                    options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]}
-                    onChange={v => setNtplUniformRequired(v === 'yes')}
-                  />
-                </div>
-                {ntplUniformRequired && (
-                  <div style={{ minWidth: 0 }}>
-                    <label style={modalLabelStyle}>Attire Details</label>
-                    <input value={ntplUniformDetails} onChange={e => setNtplUniformDetails(e.target.value)} placeholder="e.g. Black polo + apron" style={modalInputStyle} />
+
+              {/* Step progress — same pattern as the Post Job wizard: completed step becomes a clickable back-circle */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 22 }}>
+                {([1, 2] as const).map(s => (
+                  <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                    {ntplStep > s ? (
+                      <button type="button" onClick={() => setNtplStep(1)} title="Back" aria-label="Back to Job Information"
+                        style={{ width: 24, height: 24, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, border: 'none', background: '#FFF7ED', color: '#F97316', padding: 0, cursor: 'pointer' }}>
+                        <ChevronLeft size={14} strokeWidth={2.75} />
+                      </button>
+                    ) : (
+                      <div style={{ width: 20, height: 20, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, background: ntplStep === s ? '#F97316' : '#F3F4F6', color: ntplStep === s ? '#FFF' : '#9CA3AF', flexShrink: 0 }}>
+                        {s}
+                      </div>
+                    )}
+                    {ntplStep === s && (
+                      <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#111827' }}>
+                        {s === 1 ? 'Job Information' : 'Requirements & Payment'}
+                      </span>
+                    )}
+                    {s < 2 && <div style={{ width: 16, height: 1.5, background: '#E5E7EB', margin: '0 1px' }} />}
                   </div>
-                )}
+                ))}
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 8 }}>
-                <div style={{ minWidth: 0 }}>
-                  <label style={modalLabelStyle}>Experience Required</label>
-                  <RDrop
-                    value={ntplExperienceRequired}
-                    placeholder="Select preferences"
-                    options={EXPERIENCE_REQUIRED_OPTIONS}
-                    onChange={setNtplExperienceRequired}
-                  />
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <label style={modalLabelStyle}>Minimum Age</label>
-                  <RDrop
-                    value={ntplMinimumAge}
-                    placeholder="Select minimum age"
-                    options={MINIMUM_AGE_OPTIONS}
-                    onChange={setNtplMinimumAge}
-                  />
-                </div>
-              </div>
-              {ntplFormType === 'oneoff' && (
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                  <div style={{ minWidth: 0 }}>
-                    <label style={modalLabelStyle}>Est. Hours</label>
-                    <input type="number" min={0} step={0.5} value={ntplEstimatedHours} onChange={e => setNtplEstimatedHours(e.target.value)} placeholder="e.g. 5" style={modalInputStyle} />
+
+              {/* ── Step 1: Job Information ── */}
+              {ntplStep === 1 && (
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <label style={modalLabelStyle}>Job Type</label>
+                      <RDrop
+                        autoFocus
+                        value={ntplFormType}
+                        placeholder="Select job type"
+                        options={[{ value: 'oneoff', label: 'One-Off' }, { value: 'shift', label: 'Shift' }]}
+                        onChange={v => setNtplFormType(v === 'shift' ? 'shift' : 'oneoff')}
+                      />
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <label style={modalLabelStyle}>Job Title</label>
+                      <input
+                        value={ntplTitle}
+                        onChange={e => setNtplTitle(e.target.value)}
+                        placeholder="e.g. Barista"
+                        style={modalInputStyle}
+                        onFocus={e => { e.currentTarget.style.borderColor = '#F97316' }}
+                        onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
+                      />
+                    </div>
                   </div>
-                  <div style={{ minWidth: 0 }}>
-                    <label style={modalLabelStyle}>Urgency</label>
-                    <RDrop
-                      value={ntplUrgency}
-                      options={[{ value: 'normal', label: 'Normal' }, { value: 'high', label: 'High' }, { value: 'urgent', label: 'Urgent' }]}
-                      onChange={setNtplUrgency}
+                  <div>
+                    <label style={modalLabelStyle}>Responsibilities</label>
+                    <textarea
+                      value={ntplDescription}
+                      onChange={e => setNtplDescription(e.target.value)}
+                      rows={3}
+                      placeholder="e.g. Serve customers, prep orders"
+                      style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
+                      onFocus={e => { e.currentTarget.style.borderColor = '#F97316' }}
+                      onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
                     />
                   </div>
-                </div>
-              )}
-              <div style={{ borderTop: '1px dashed #E5E7EB' }} />
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                <div style={{ minWidth: 0 }}>
-                  <label style={modalLabelStyle}>Department</label>
-                  <RDrop
-                    value={ntplDepartmentId}
-                    placeholder="Select department"
-                    options={departments.map(d => ({ value: d.id, label: d.name }))}
-                    onChange={setNtplDepartmentId}
-                  />
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <label style={modalLabelStyle}>{ntplFormType === 'shift' ? 'Pay/Hr' : 'Flat Rate'}</label>
-                  <div style={{ position: 'relative' }}>
-                    <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#6B7280', fontSize: '0.9375rem', pointerEvents: 'none' }}>$</span>
-                    <input type="number" min={0} step={0.5} value={ntplSalaryAmt} onChange={e => setNtplSalaryAmt(e.target.value)} placeholder="0.00" style={{ ...modalInputStyle, paddingLeft: 26 }} />
+                  <div>
+                    <label style={modalLabelStyle}>Skills &amp; Qualifications</label>
+                    <textarea
+                      value={ntplRequirements}
+                      onChange={e => setNtplRequirements(e.target.value)}
+                      rows={2}
+                      placeholder="e.g. Valid driver's license, basic Excel skills"
+                      style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
+                      onFocus={e => { e.currentTarget.style.borderColor = '#F97316' }}
+                      onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
+                    />
                   </div>
-                </div>
-              </div>
+                  {ntplFormType === 'oneoff' && (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <div style={{ minWidth: 0 }}>
+                        <label style={modalLabelStyle}>Est. Hours</label>
+                        <HoursField value={ntplEstimatedHours} onChange={setNtplEstimatedHours} />
+                      </div>
+                      <div style={{ minWidth: 0 }}>
+                        <label style={modalLabelStyle}>Urgency</label>
+                        <RDrop
+                          value={ntplUrgency}
+                          options={[{ value: 'normal', label: 'Normal' }, { value: 'high', label: 'High' }, { value: 'urgent', label: 'Urgent' }]}
+                          onChange={setNtplUrgency}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* ── Step 2: Requirements & Payment ── */}
+              {ntplStep === 2 && (
+                <>
+                  <div style={{ minWidth: 0 }}>
+                    <label style={modalLabelStyle}>Uniform</label>
+                    <RDrop
+                      value={ntplUniformType}
+                      placeholder="Select uniform requirement"
+                      options={UNIFORM_TYPE_OPTIONS}
+                      onChange={v => setNtplUniformType(v as UniformType)}
+                    />
+                  </div>
+                  {(ntplUniformType === 'company' || ntplUniformType === 'dress_code') && (
+                    <div style={{ minWidth: 0 }}>
+                      <label style={modalLabelStyle}>{ntplUniformType === 'company' ? 'Uniform Details' : 'Dress Code'}</label>
+                      <textarea
+                        value={ntplUniformDetails}
+                        onChange={e => setNtplUniformDetails(e.target.value)}
+                        rows={2}
+                        placeholder={ntplUniformType === 'company' ? 'e.g. Black polo shirt, black apron' : 'e.g. Black shirt, black pants, black shoes'}
+                        style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
+                        onFocus={e => { e.currentTarget.style.borderColor = '#F97316' }}
+                        onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
+                      />
+                    </div>
+                  )}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 8 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <label style={modalLabelStyle}>Experience Required</label>
+                      <RDrop
+                        value={ntplExperienceRequired}
+                        placeholder="Select preferences"
+                        options={EXPERIENCE_REQUIRED_OPTIONS}
+                        onChange={setNtplExperienceRequired}
+                      />
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <label style={modalLabelStyle}>Minimum Age</label>
+                      <RDrop
+                        value={ntplMinimumAge}
+                        placeholder="Select minimum age"
+                        options={MINIMUM_AGE_OPTIONS}
+                        onChange={setNtplMinimumAge}
+                      />
+                    </div>
+                  </div>
+                  <div style={{ borderTop: '1px dashed #E5E7EB' }} />
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <label style={modalLabelStyle}>Department</label>
+                      <RDrop
+                        value={ntplDepartmentId}
+                        placeholder="Select department"
+                        options={departments.map(d => ({ value: d.id, label: d.name }))}
+                        onChange={setNtplDepartmentId}
+                      />
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <label style={modalLabelStyle}>{ntplFormType === 'shift' ? 'Pay/Hr' : 'Flat Rate'}</label>
+                      <div style={{ position: 'relative' }}>
+                        <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#6B7280', fontSize: '0.9375rem', pointerEvents: 'none' }}>$</span>
+                        <input type="number" min={0} step={0.5} onKeyDown={blockNonNumericKeys} value={ntplSalaryAmt} onChange={e => setNtplSalaryAmt(e.target.value)} placeholder="0.00" style={{ ...modalInputStyle, paddingLeft: 26 }} />
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
             {ntplError && <div style={modalErrorBoxStyle}>{ntplError}</div>}
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', padding: '20px 24px' }}>
-              <button onClick={() => { setNewTemplateModalOpen(false); resetNewTemplateForm() }} style={modalGhostButtonStyle}>
-                Cancel
-              </button>
-              <button onClick={createTemplateFromScratch} disabled={templateActionLoading || !ntplFormType || !ntplTitle.trim() || !ntplDescription.trim() || !ntplDepartmentId} style={modalPrimaryButtonStyle(templateActionLoading || !ntplFormType || !ntplTitle.trim() || !ntplDescription.trim() || !ntplDepartmentId)}>
-                {templateActionLoading ? <Spinner size={13} /> : <Plus size={13} />} Create Template
-              </button>
+              {ntplStep === 1 ? (
+                (() => {
+                  const step1Incomplete = !ntplFormType || !ntplTitle.trim() || !ntplDescription.trim() || !ntplRequirements.trim() || (ntplFormType === 'oneoff' && !ntplEstimatedHours)
+                  return (
+                    <button
+                      onClick={() => { setNtplError(''); setNtplStep(2) }}
+                      disabled={step1Incomplete}
+                      style={modalPrimaryButtonStyle(step1Incomplete)}
+                    >
+                      Next <ChevronRight size={13} />
+                    </button>
+                  )
+                })()
+              ) : (
+                (() => {
+                  const step2Incomplete = templateActionLoading || !ntplUniformType
+                    || ((ntplUniformType === 'company' || ntplUniformType === 'dress_code') && !ntplUniformDetails.trim())
+                    || !ntplExperienceRequired || !ntplMinimumAge
+                    || !ntplDepartmentId || !ntplSalaryAmt || Number(ntplSalaryAmt) <= 0
+                  return (
+                    <button onClick={createTemplateFromScratch} disabled={step2Incomplete} style={modalPrimaryButtonStyle(step2Incomplete)}>
+                      {templateActionLoading ? <Spinner size={13} /> : <Plus size={13} />} Create Template
+                    </button>
+                  )
+                })()
+              )}
             </div>
           </ModalBox>
         </ModalOverlay>,
@@ -3279,7 +3821,7 @@ export default function OwnerRecruitmentPage() {
       {/* ══ Post Job / Edit modal — 3-step wizard ═════════════════════════════ */}
       {formOpen && (() => {
         const WIZARD_STEPS = ['type', 'ai', 'form'] as const
-        const displayStep = wizardStep === 'form' ? 'ai' : wizardStep
+        const displayStep = wizardStep
         const stepIdx = WIZARD_STEPS.indexOf(displayStep)
         // Applying a template jumps straight to the details form and isn't an AI action —
         // it gets the same plain orange treatment as editing, with no step wizard at all.
@@ -3304,19 +3846,28 @@ export default function OwnerRecruitmentPage() {
 
         const handleAIGenerate = async () => {
           if (!aiPrompt.trim()) return
-          setAiLoading(true)
+          setAiLoading(true); setFormError('')
           try {
             const res = await fetch('/api/ai/job-description', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ title: aiPrompt, company_name: companyName }),
+              body: JSON.stringify({ title: aiPrompt, job_type: formJobType, company_name: companyName }),
             })
             const data = await res.json()
             if (data.success && data.draft) {
               const draft = data.draft
-              setAiPreview({ title: draft.title || aiPrompt, description: draft.description || '', requirements: [...(draft.requirements ?? []), ...(draft.responsibilities ?? []).map((i: string) => `Responsibility: ${i}`), ...(draft.screening_questions ?? []).map((i: string) => `Screening: ${i}`)].join('\n') })
+              // Responsibilities feed the Responsibilities field; Skills & Qualifications only take requirements
+              setAiPreview({
+                title: draft.title || aiPrompt,
+                description: [draft.description || '', ...(draft.responsibilities ?? []).map((i: string) => `• ${i}`)].filter(Boolean).join('\n'),
+                requirements: (draft.requirements ?? []).join('\n'),
+              })
+            } else {
+              setFormError(data.message || 'Failed to generate job description')
             }
-          } catch { /* silent */ }
+          } catch (err) {
+            setFormError(err instanceof Error ? err.message : 'Failed to generate job description')
+          }
           finally { setAiLoading(false) }
         }
 
@@ -3326,16 +3877,30 @@ export default function OwnerRecruitmentPage() {
           setFormDescription(aiPreview.description)
           setFormRequirements(aiPreview.requirements)
           setAiPreview(null)
+          setCreateStep(3)
           setWizardStep('form')
         }
 
         const iStyle: React.CSSProperties = modalInputStyle
         const lStyle: React.CSSProperties = modalLabelStyle
+
+        // Apply Template: Post stays disabled until every field is filled — mirrors saveForm's publish validation
+        const applyReady = !!(formTitle.trim() && formDescription.trim() && formRequirements.trim()
+          && formExperienceRequired && formMinimumAge
+          && (!(formUniformType === 'company' || formUniformType === 'dress_code') || formUniformDetails.trim())
+          && formDeptId && formSalaryAmt && Number(formSalaryAmt) > 0
+          && formShiftDate && formAssignedEmployeeId
+          && (formJobType !== 'shift' || (formShiftStart && formShiftEnd && formBreakStart && formBreakEnd))
+          && (formJobType !== 'oneoff' || (formEstHours && formJobStartTime))
+          && Number(formOpenings) >= 1
+          && formDeadlineChoice && (formDeadlineChoice !== 'date' || (formExpiresAt && formDeadlineTime)))
+        // Applies to both the Apply Template wizard and the AI Create Job wizard (editing is exempt)
+        const postDisabled = actionLoading || (!editingId && !applyReady)
         const sectionLabel: React.CSSProperties = { margin: '4px 0 0', color: '#374151', fontSize: '0.875rem', fontWeight: 600 }
         const divider: React.CSSProperties = { borderTop: '1px dashed #E5E7EB', margin: '0' }
 
         return createPortal(
-          <ModalOverlay onClose={() => { setFormOpen(false); resetForm() }} maxWidth="540px">
+          <ModalOverlay onClose={() => { setFormOpen(false); resetForm() }} maxWidth={isTemplateMode ? '440px' : '500px'}>
             <ModalBox>
 
               {/* Header */}
@@ -3349,7 +3914,10 @@ export default function OwnerRecruitmentPage() {
                     </div>
                   )}
                   <h2 style={{ fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
-                    {editingId || isTemplateMode ? modalTitle : 'Post a Job'}
+                    {editingId || isTemplateMode
+                      ? modalTitle
+                      : wizardStep === 'type' ? 'Create Job'
+                      : formJobType === 'shift' ? 'Create Shift Job' : 'Create One-Off Job'}
                   </h2>
                 </div>
                 <button onClick={() => { setFormOpen(false); resetForm() }} aria-label="Close" style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', cursor: 'pointer', color: '#6B7280', display: 'flex', padding: 6, borderRadius: 8, flexShrink: 0 }}
@@ -3363,61 +3931,72 @@ export default function OwnerRecruitmentPage() {
               <div style={{ padding: '20px 24px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 14 }}>
 
                 {/* Step progress — same pattern as the Auto Shift Scheduling modal: completed steps become clickable back-circles */}
-                {!editingId && !isTemplateMode && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 8 }}>
-                    {(['type', 'ai', 'form'] as const).map((s, i) => {
-                      const isDone = stepIdx > i
-                      return (
-                        <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                          {isDone ? (
-                            <button type="button" onClick={() => setWizardStep('type')} title="Back" aria-label="Back to Job Type"
+                {!editingId && !isTemplateMode && (() => {
+                  // 4-step create flow: Job Type → AI Content Generator → Requirements & Payment → Schedule & Post
+                  const CREATE_STEPS = [
+                    { key: 'type', label: 'Job Type' },
+                    { key: 'ai', label: 'AI Content Generator' },
+                    { key: 'req', label: 'Requirements & Payment' },
+                    { key: 'post', label: 'Schedule & Post' },
+                  ] as const
+                  const currentIdx = wizardStep === 'type' ? 0 : wizardStep === 'ai' ? 1 : createStep === 3 ? 2 : 3
+                  const goTo = (i: number) => {
+                    setFormError('')
+                    if (i === 0) { setAiPreview(null); setAiPrompt(''); setWizardStep('type') }
+                    else if (i === 1) { setWizardStep('ai') }
+                    else { setCreateStep(3); setWizardStep('form') }
+                  }
+                  return (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 22 }}>
+                      {CREATE_STEPS.map((s, i) => (
+                        <div key={s.key} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                          {currentIdx > i ? (
+                            <button type="button" onClick={() => goTo(i)} title="Back" aria-label={`Back to ${s.label}`}
                               style={{ width: 24, height: 24, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, border: 'none', background: accentTint, color: accent, padding: 0, cursor: 'pointer' }}>
                               <ChevronLeft size={14} strokeWidth={2.75} />
                             </button>
                           ) : (
-                            <div style={{ width: 20, height: 20, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, background: displayStep === s ? accent : '#F3F4F6', color: displayStep === s ? '#FFF' : '#9CA3AF', flexShrink: 0 }}>
+                            <div style={{ width: 20, height: 20, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, background: currentIdx === i ? accent : '#F3F4F6', color: currentIdx === i ? '#FFF' : '#9CA3AF', flexShrink: 0 }}>
                               {i + 1}
                             </div>
                           )}
-                          {displayStep === s && (
-                            <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#111827' }}>
-                              {s === 'type' ? 'Job Type' : s === 'ai' ? 'Job Description' : 'Job Posted'}
-                            </span>
+                          {currentIdx === i && (
+                            <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#111827' }}>{s.label}</span>
                           )}
-                          {i < 2 && <div style={{ width: 16, height: 1.5, background: '#E5E7EB', margin: '0 1px' }} />}
+                          {i < 3 && <div style={{ width: 16, height: 1.5, background: '#E5E7EB', margin: '0 1px' }} />}
                         </div>
-                      )
-                    })}
-                  </div>
-                )}
+                      ))}
+                    </div>
+                  )
+                })()}
 
                 {/* ── Step 1: Job Type ── */}
                 {wizardStep === 'type' && (
                   <>
                     <button onClick={() => { setFormJobType('shift'); setFormEmpType('part-time'); setFormSalaryType('per hour'); setWizardStep('ai') }}
                       style={{ padding: '14px 16px', border: '1.5px solid #E5E7EB', borderRadius: 12, background: '#FFFFFF', cursor: 'pointer', textAlign: 'left' }}
-                      onMouseEnter={e => { e.currentTarget.style.borderColor = accent; e.currentTarget.style.background = accentTint }}
-                      onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.background = '#FFFFFF' }}>
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = accent }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                         <div style={{ width: 36, height: 36, borderRadius: 9, background: accentTint, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                           <Repeat size={17} color={accent} />
                         </div>
                         <div>
-                          <p style={{ fontWeight: 700, fontSize: '0.9375rem', color: '#111827', margin: '0 0 2px' }}>Shift Job</p>
+                          <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#374151', margin: '0 0 2px' }}>Shift Job</p>
                           <p style={{ fontSize: '0.8125rem', color: '#6B7280', margin: 0 }}>Fixed schedule with a defined start and end time.</p>
                         </div>
                       </div>
                     </button>
                     <button onClick={() => { setFormJobType('oneoff'); setFormEmpType('casual'); setFormSalaryType('flat rate'); setWizardStep('ai') }}
                       style={{ padding: '14px 16px', border: '1.5px solid #E5E7EB', borderRadius: 12, background: '#FFFFFF', cursor: 'pointer', textAlign: 'left' }}
-                      onMouseEnter={e => { e.currentTarget.style.borderColor = accent; e.currentTarget.style.background = accentTint }}
-                      onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.background = '#FFFFFF' }}>
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = accent }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                         <div style={{ width: 36, height: 36, borderRadius: 9, background: accentTint, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                           <Zap size={17} color={accent} />
                         </div>
                         <div>
-                          <p style={{ fontWeight: 700, fontSize: '0.9375rem', color: '#111827', margin: '0 0 2px' }}>One-off Job</p>
+                          <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#374151', margin: '0 0 2px' }}>One-Off Job</p>
                           <p style={{ fontSize: '0.8125rem', color: '#6B7280', margin: 0 }}>Complete a specific task with a fixed start time.</p>
                         </div>
                       </div>
@@ -3430,38 +4009,48 @@ export default function OwnerRecruitmentPage() {
                   <>
                     {aiPreview ? (
                       <>
-                        <div style={{ background: accentTint, border: `1.5px solid ${accentTintBorder}`, borderRadius: 10, padding: '14px 16px' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                            <Sparkles size={14} color={accent} />
-                            <span style={{ fontWeight: 700, fontSize: '0.8125rem', color: accentTextDark }}>AI Draft Ready</span>
-                            <span style={{ fontSize: '0.78rem', color: '#9CA3AF', marginLeft: 'auto' }}>Review before posting</span>
-                          </div>
-                          <p style={{ fontWeight: 700, fontSize: '0.9375rem', color: '#111827', margin: '0 0 4px' }}>{aiPreview.title}</p>
-                          <p style={{ fontSize: '0.8125rem', color: '#374151', margin: 0, lineHeight: 1.6 }}>{aiPreview.description.slice(0, 200)}{aiPreview.description.length > 200 ? '…' : ''}</p>
+                        <div>
+                          <label style={lStyle}>Job Title</label>
+                          <input value={aiPreview.title} onChange={e => setAiPreview(p => p && ({ ...p, title: e.target.value }))} style={iStyle} />
                         </div>
-                        <div style={{ display: 'flex', gap: 10 }}>
-                          <button onClick={() => setAiPreview(null)} style={{ flex: 1, padding: 10, background: 'none', border: '1.5px solid #E5E7EB', borderRadius: 8, fontWeight: 600, fontSize: '0.9375rem', color: '#6B7280', cursor: 'pointer' }}>← Regenerate</button>
-                          <button onClick={handleUseAIDraft} style={{ flex: 1, padding: 10, background: accentGradient, color: '#FFFFFF', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: '0.9375rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7 }}>
-                            <FileText size={14} /> Use This Draft
+                        <div>
+                          <label style={lStyle}>Responsibilities</label>
+                          <textarea value={aiPreview.description} onChange={e => setAiPreview(p => p && ({ ...p, description: e.target.value }))}
+                            ref={el => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight + 3}px` } }}
+                            rows={3} style={{ ...iStyle, resize: 'none', overflow: 'hidden', lineHeight: 1.6, verticalAlign: 'top' }} />
+                        </div>
+                        <div>
+                          <label style={lStyle}>Skills &amp; Qualifications</label>
+                          <textarea value={aiPreview.requirements} onChange={e => setAiPreview(p => p && ({ ...p, requirements: e.target.value }))}
+                            ref={el => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight + 3}px` } }}
+                            rows={3} style={{ ...iStyle, resize: 'none', overflow: 'hidden', lineHeight: 1.6, verticalAlign: 'top' }} />
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+                          <button onClick={() => setAiPreview(null)} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: '1px solid #E5E7EB', borderRadius: 10, background: '#FFFFFF', color: '#6B7280', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                            Regenerate
+                          </button>
+                          <button onClick={handleUseAIDraft} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: accent, color: '#FFFFFF', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                            Continue
                           </button>
                         </div>
                       </>
                     ) : (
                       <>
-                        <div style={{ background: accentTint, border: `1.5px solid ${accentTintBorder}`, borderRadius: 12, padding: '16px 18px' }}>
-                          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: '0.875rem', color: '#374151', marginBottom: 10 }}>
-                            <Sparkles size={14} color={accent} /> AI Job Description Builder
-                          </label>
+                        <div>
+                          <label style={lStyle}>Describe Your Job</label>
                           <textarea value={aiPrompt} onChange={e => setAiPrompt(e.target.value)}
-                            rows={5} style={{ ...iStyle, background: '#FFFFFF', border: '1.5px solid #E5E7EB', resize: 'none' }} />
+                            rows={3} style={{ ...iStyle, resize: 'vertical', lineHeight: 1.55, verticalAlign: 'top' }} />
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-                          <button onClick={() => { setAiPreview(null); setWizardStep('form') }} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: '1px solid #E5E7EB', borderRadius: 10, background: '#FFFFFF', color: '#111827', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
-                            Fill Manually
-                          </button>
+                          {/* Hidden for now: manual fill becomes the Free-tier path once plan gating lands; keep the logic wired */}
+                          {false && (
+                            <button onClick={() => { setAiPreview(null); setWizardStep('form') }} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: '1px solid #E5E7EB', borderRadius: 10, background: '#FFFFFF', color: '#111827', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>
+                              Fill Manually
+                            </button>
+                          )}
                           <button onClick={handleAIGenerate} disabled={!aiPrompt.trim() || aiLoading}
                             style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: !aiPrompt.trim() || aiLoading ? accentDisabledBg : accent, color: !aiPrompt.trim() || aiLoading ? accentDisabledText : '#FFFFFF', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: !aiPrompt.trim() || aiLoading ? 'default' : 'pointer' }}>
-                            {aiLoading ? <><Spinner size={13} /> Generating…</> : <><Sparkles size={13} /> Generate</>}
+                            {aiLoading ? <><Spinner size={13} /> Generating…</> : 'Generate'}
                           </button>
                         </div>
                       </>
@@ -3469,118 +4058,274 @@ export default function OwnerRecruitmentPage() {
                   </>
                 )}
 
-                {/* ── Step 3: Details form — single flat flex column so gap is identical everywhere ── */}
-                {wizardStep === 'form' && (
+                {/* ── Apply Template: 3-step wizard (steps 1–2 mirror New Template, step 3 = posting details) ── */}
+                {wizardStep === 'form' && isTemplateMode && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                    {!editingId && !formTemplateId && templates.length > 0 && (
-                      <div style={{ border: '1.5px solid #E5E7EB', borderRadius: 12, overflow: 'hidden' }}>
-                        <button onClick={() => setShowTemplates(v => !v)}
-                          style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: '#F9FAFB', border: 'none', cursor: 'pointer', textAlign: 'left' }}
-                          onMouseEnter={e => { e.currentTarget.style.background = '#F3F4F6' }}
-                          onMouseLeave={e => { e.currentTarget.style.background = '#F9FAFB' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <ClipboardList size={15} color="#6B7280" />
-                            <span style={{ fontSize: '0.875rem', fontWeight: 700, color: '#374151' }}>My Templates</span>
-                            <span style={{ fontSize: '0.75rem', color: '#9CA3AF', fontWeight: 400 }}>Start from a saved template</span>
+
+                    {/* Step progress — completed steps become clickable back-circles */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 22 }}>
+                      {([1, 2, 3] as const).map(s => (
+                        <div key={s} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                          {applyStep > s ? (
+                            <button type="button" onClick={() => { setFormError(''); setApplyStep(s) }} title="Back" aria-label={`Back to step ${s}`}
+                              style={{ width: 24, height: 24, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, border: 'none', background: accentTint, color: accent, padding: 0, cursor: 'pointer' }}>
+                              <ChevronLeft size={14} strokeWidth={2.75} />
+                            </button>
+                          ) : (
+                            <div style={{ width: 20, height: 20, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, background: applyStep === s ? accent : '#F3F4F6', color: applyStep === s ? '#FFF' : '#9CA3AF', flexShrink: 0 }}>
+                              {s}
+                            </div>
+                          )}
+                          {applyStep === s && (
+                            <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#111827' }}>
+                              {s === 1 ? 'Job Information' : s === 2 ? 'Requirements & Payment' : 'Schedule & Post'}
+                            </span>
+                          )}
+                          {s < 3 && <div style={{ width: 16, height: 1.5, background: '#E5E7EB', margin: '0 1px' }} />}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* ── Step 1: Job Information ── */}
+                    {applyStep === 1 && (
+                      <>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                          <div style={{ minWidth: 0 }}>
+                            <label style={lStyle}>Job Type</label>
+                            <RDrop
+                              disabled
+                              value={formJobType}
+                              options={[{ value: 'oneoff', label: 'One-Off' }, { value: 'shift', label: 'Shift' }]}
+                              onChange={() => {}}
+                            />
                           </div>
-                          <ChevronRight size={14} color="#9CA3AF" style={{ transform: showTemplates ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }} />
-                        </button>
-                        {showTemplates && (
-                          <div style={{ display: 'flex', flexDirection: 'column', borderTop: '1px solid #E5E7EB' }}>
-                            {templates.map((t, i) => (
-                              <div key={t.id}
-                                style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', background: '#FFFFFF', borderTop: i === 0 ? 'none' : '1px solid #F3F4F6' }}>
-                                <button onClick={() => applyTemplate(t)}
-                                  style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left', flex: 1 }}>
-                                  <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#111827' }}>{t.title}</span>
-                                  <span style={{ fontSize: '0.75rem', color: '#9CA3AF', background: '#F3F4F6', borderRadius: 6, padding: '2px 7px' }}>{t.form_type === 'shift' ? 'Shift' : 'One-off'}</span>
-                                </button>
-                                <button onClick={() => void deleteTemplateById(t.id)} disabled={templateActionLoading}
-                                  style={{ background: 'none', border: 'none', cursor: templateActionLoading ? 'default' : 'pointer', padding: 4, display: 'flex', color: '#9CA3AF' }}
-                                  title="Delete template">
-                                  <Trash2 size={13} />
-                                </button>
-                              </div>
-                            ))}
+                          <div style={{ minWidth: 0 }}>
+                            <label style={lStyle}>Job Title</label>
+                            <input value={formTitle} onChange={e => setFormTitle(e.target.value)} placeholder="e.g. Barista" style={iStyle} />
+                          </div>
+                        </div>
+                        <div>
+                          <label style={lStyle}>Responsibilities</label>
+                          <textarea value={formDescription} onChange={e => setFormDescription(e.target.value)} rows={3} style={{ ...iStyle, resize: 'vertical', lineHeight: 1.55, verticalAlign: 'top' }} placeholder="e.g. Serve customers, prep orders" />
+                        </div>
+                        <div>
+                          <label style={lStyle}>Skills &amp; Qualifications</label>
+                          <textarea value={formRequirements} onChange={e => setFormRequirements(e.target.value)} rows={2} style={{ ...iStyle, resize: 'vertical', lineHeight: 1.55, verticalAlign: 'top' }} placeholder="e.g. Valid driver's license, basic Excel skills" />
+                        </div>
+                        {formJobType === 'oneoff' && (
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                            <div style={{ minWidth: 0 }}>
+                              <label style={lStyle}>Est. Hours</label>
+                              <HoursField value={formEstHours} onChange={setFormEstHours} />
+                            </div>
+                            <div style={{ minWidth: 0 }}>
+                              <label style={lStyle}>Urgency</label>
+                              <RDrop value={formUrgency}
+                                options={[{ value: 'normal', label: 'Normal' }, { value: 'high', label: 'High' }, { value: 'urgent', label: 'Urgent' }]}
+                                onChange={setFormUrgency} />
+                            </div>
                           </div>
                         )}
-                      </div>
+                      </>
                     )}
-                    <div>
-                      <label style={lStyle}>Job Title {!formTemplateId && <span style={{ color: accent }}>*</span>}</label>
-                      <input value={formTitle} onChange={e => setFormTitle(e.target.value)} placeholder={formJobType === 'shift' ? 'e.g. Weekend Cashier' : 'e.g. Event Setup Crew'} style={iStyle} />
-                    </div>
-                    <div>
-                      <label style={lStyle}>{formJobType === 'shift' ? 'Job Scope' : 'Description'} {!formTemplateId && <span style={{ color: accent }}>*</span>}</label>
-                      <textarea value={formDescription} onChange={e => setFormDescription(e.target.value)} rows={1} style={{ ...iStyle, resize: 'vertical', lineHeight: 1.55, verticalAlign: 'top' }} placeholder="Describe the role, responsibilities, and expectations…" />
-                    </div>
-                    <div>
-                      <label style={lStyle}>Requirements</label>
-                      <textarea value={formRequirements} onChange={e => setFormRequirements(e.target.value)} rows={1} style={{ ...iStyle, resize: 'vertical', lineHeight: 1.55, verticalAlign: 'top' }} placeholder="e.g. Must be available weekends, physically fit…" />
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-                      <div>
-                        <label style={lStyle}>Experience Required</label>
-                        <RDrop value={formExperienceRequired} placeholder="No experience required" options={EXPERIENCE_REQUIRED_OPTIONS} onChange={setFormExperienceRequired} />
-                      </div>
-                      <div>
-                        <label style={lStyle}>Minimum Age</label>
-                        <RDrop value={formMinimumAge} placeholder="Select minimum age" options={MINIMUM_AGE_OPTIONS} onChange={setFormMinimumAge} />
-                      </div>
-                    </div>
-                    <div style={formUniformRequired ? { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 } : undefined}>
-                      <div>
-                        <label style={lStyle}>Attire Required</label>
-                        <SegToggle
-                          value={formUniformRequired ? 'yes' : 'no'}
-                          options={[{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }]}
-                          onChange={v => setFormUniformRequired(v === 'yes')}
-                        />
-                      </div>
-                      {formUniformRequired && (
+
+                    {/* ── Step 2: Requirements & Payment ── */}
+                    {applyStep === 2 && (
+                      <>
                         <div>
-                          <label style={lStyle}>Attire Details</label>
-                          <input value={formUniformDetails} onChange={e => setFormUniformDetails(e.target.value)} placeholder="e.g. Black polo + apron" style={iStyle} />
+                          <label style={lStyle}>Uniform</label>
+                          <RDrop
+                            value={formUniformType}
+                            placeholder="Select uniform requirement"
+                            options={UNIFORM_TYPE_OPTIONS}
+                            onChange={v => setFormUniformType(v as UniformType)}
+                          />
                         </div>
-                      )}
+                        {(formUniformType === 'company' || formUniformType === 'dress_code') && (
+                          <div>
+                            <label style={lStyle}>{formUniformType === 'company' ? 'Uniform Details' : 'Dress Code'}</label>
+                            <textarea value={formUniformDetails} onChange={e => setFormUniformDetails(e.target.value)} rows={2} placeholder={formUniformType === 'company' ? 'e.g. Black polo shirt, black apron' : 'e.g. Black shirt, black pants, black shoes'} style={{ ...iStyle, resize: 'vertical', lineHeight: 1.55, verticalAlign: 'top' }} />
+                          </div>
+                        )}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                          <div style={{ minWidth: 0 }}>
+                            <label style={lStyle}>Experience Required</label>
+                            <RDrop value={formExperienceRequired} placeholder="Select preferences" options={EXPERIENCE_REQUIRED_OPTIONS} onChange={setFormExperienceRequired} />
+                          </div>
+                          <div style={{ minWidth: 0 }}>
+                            <label style={lStyle}>Minimum Age</label>
+                            <RDrop value={formMinimumAge} placeholder="Select minimum age" options={MINIMUM_AGE_OPTIONS} onChange={setFormMinimumAge} />
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    {/* ── Step 3: Schedule & Post ── */}
+                    {applyStep === 3 && (
+                      <>
+                        {/* Department & Pay live here (not step 2) so they can be changed while scheduling */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                          <div style={{ minWidth: 0 }}>
+                            <label style={lStyle}>Department</label>
+                            <RDrop value={formDeptId} placeholder="Select department"
+                              options={departments.map(d => ({ value: d.id, label: d.name }))}
+                              onChange={(deptId) => { setFormDeptId(deptId); void loadDeptShiftOptions(deptId) }} />
+                          </div>
+                          <div style={{ minWidth: 0 }}>
+                            <label style={lStyle}>{formJobType === 'shift' ? 'Pay/Hr' : 'Flat Rate'}</label>
+                            <div style={{ position: 'relative' }}>
+                              <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#6B7280', fontSize: '0.9375rem', pointerEvents: 'none' }}>$</span>
+                              <input type="number" min={0} step={0.5} onKeyDown={blockNonNumericKeys} value={formSalaryAmt} onChange={e => setFormSalaryAmt(e.target.value)} placeholder="0.00" style={{ ...iStyle, paddingLeft: 26 }} />
+                            </div>
+                          </div>
+                        </div>
+                        <div>
+                          <label style={lStyle}>Openings</label>
+                          <input type="number" min={1} step={1} onKeyDown={blockNonNumericKeys} value={formOpenings}
+                            onChange={e => setFormOpenings(Math.max(1, parseInt(e.target.value || '1', 10) || 1))} style={iStyle} />
+                        </div>
+                        <div style={divider} />
+                        <div>
+                          <label style={lStyle}>Application Deadline</label>
+                          <RDrop
+                            value={formDeadlineChoice}
+                            placeholder="Select deadline option"
+                            options={[
+                              { value: 'never', label: 'No Deadline' },
+                              { value: 'date', label: 'Set a Deadline' },
+                            ]}
+                            onChange={v => {
+                              setFormDeadlineChoice(v as '' | 'never' | 'date')
+                              if (v !== 'date') { setFormExpiresAt(''); setFormDeadlineTime('23:59') }
+                            }}
+                          />
+                          {formDeadlineChoice === 'date' && (
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 8 }}>
+                              <DatePickerField value={formExpiresAt} onChange={setFormExpiresAt} min={localDateKey(new Date())} clearable={false} />
+                              <RTimePicker value={formDeadlineTime} onChange={setFormDeadlineTime} />
+                            </div>
+                          )}
+                        </div>
+                        <div>
+                          <label style={lStyle}>Available Shift</label>
+                          {shiftOptionsLoading ? (
+                            <div style={{ ...iStyle, color: '#94A3B8', background: '#F8FAFC', display: 'flex', alignItems: 'center', gap: 8 }}><Spinner size={13} dark /> Loading shifts…</div>
+                          ) : shiftAvailableDates.length > 0 ? (
+                            <RDrop value={formShiftDate} placeholder="Select shift"
+                              options={shiftAvailableDates.map(({ date, start_time, end_time }) => {
+                                const fmt = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return `${h12}:${String(m).padStart(2,'0')} ${ap}` }
+                                const dateLabel = new Date(date).toLocaleDateString('en-SG', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+                                return { value: date, label: `${dateLabel} · ${fmt(start_time)} – ${fmt(end_time)}` }
+                              })}
+                              onChange={(date) => {
+                                setFormShiftDate(date); setFormAssignedEmployeeId('')
+                                setShiftDateEmployees(shiftDeptEmployees.filter(emp =>
+                                  (emp as unknown as { shifts?: { shift_date: string }[] }).shifts?.some((s: { shift_date: string }) => s.shift_date === date)
+                                ))
+                              }} />
+                          ) : (
+                            <div style={{ ...iStyle, color: '#94A3B8', background: '#F8FAFC' }}>No scheduled shifts found for this department</div>
+                          )}
+                        </div>
+                        {formShiftDate && (
+                          <div>
+                            <label style={lStyle}>Supervisor</label>
+                            {shiftDateEmployees.length > 0 ? (
+                              <RDrop value={formAssignedEmployeeId} placeholder="Select supervisor"
+                                options={shiftDateEmployees.map(emp => ({ value: emp.id, label: emp.full_name }))}
+                                onChange={(empId) => {
+                                  setFormAssignedEmployeeId(empId)
+                                  if (formJobType === 'shift') {
+                                    const emp = shiftDeptEmployees.find(em => em.id === empId) as unknown as { shifts?: { shift_date: string; start_time: string; end_time: string }[] } | undefined
+                                    const shift = emp?.shifts?.find((s: { shift_date: string }) => s.shift_date === formShiftDate)
+                                    if (shift) { setFormShiftStart(shift.start_time.slice(0, 5)); setFormShiftEnd(shift.end_time.slice(0, 5)) }
+                                  }
+                                }} />
+                            ) : (
+                              <div style={{ ...iStyle, color: '#94A3B8', background: '#F8FAFC' }}>No employees scheduled on this date</div>
+                            )}
+                          </div>
+                        )}
+                        {formJobType === 'shift' && formAssignedEmployeeId && (
+                          <>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                              <div style={{ minWidth: 0 }}>
+                                <label style={lStyle}>Start Time</label>
+                                <RTimePicker value={formShiftStart || '09:00'} onChange={setFormShiftStart} />
+                              </div>
+                              <div style={{ minWidth: 0 }}>
+                                <label style={lStyle}>End Time</label>
+                                <RTimePicker value={formShiftEnd || '17:00'} onChange={setFormShiftEnd} />
+                              </div>
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                              <div style={{ minWidth: 0 }}>
+                                <label style={lStyle}>Break Start</label>
+                                <RTimePicker value={formBreakStart || '12:00'} onChange={setFormBreakStart} />
+                              </div>
+                              <div style={{ minWidth: 0 }}>
+                                <label style={lStyle}>Break End</label>
+                                <RTimePicker value={formBreakEnd || '13:00'} onChange={setFormBreakEnd} />
+                              </div>
+                            </div>
+                          </>
+                        )}
+                        {formJobType === 'oneoff' && (
+                          <div>
+                            <label style={lStyle}>Start Time</label>
+                            <RTimePicker value={formJobStartTime || '09:00'} onChange={setFormJobStartTime} />
+                          </div>
+                        )}
+                        {/* Pay estimate — shift only, and only once a shift + supervisor are chosen (times are real, not defaults) */}
+                        {formJobType === 'shift' && formShiftDate && formAssignedEmployeeId && (() => {
+                          const toMins = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0) }
+                          const workMins = toMins(formShiftEnd) - toMins(formShiftStart)
+                          const breakMins = toMins(formBreakEnd) - toMins(formBreakStart)
+                          const netMins = workMins - (breakMins > 0 ? breakMins : 0)
+                          const rate = parseFloat(formSalaryAmt)
+                          if (netMins <= 0 || !formSalaryAmt || isNaN(rate) || rate <= 0) return null
+                          const total = (netMins / 60 * rate).toFixed(2)
+                          return (
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 10 }}>
+                              <span style={{ ...lStyle, marginBottom: 0 }}>Estimated Cost</span>
+                              <strong style={{ fontSize: 15, color: '#059669' }}>${total}</strong>
+                            </div>
+                          )
+                        })()}
+                      </>
+                    )}
+
+                  </div>
+                )}
+
+                {/* ── Step 3: Details form — single flat flex column so gap is identical everywhere ── */}
+                {wizardStep === 'form' && !isTemplateMode && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                    {/* ── Requirements & Payment (step 3) — editing shows everything at once ── */}
+                    {(!!editingId || createStep === 3) && (<>
+                    <div>
+                      <label style={lStyle}>Job Title</label>
+                      <input value={formTitle} onChange={e => setFormTitle(e.target.value)} placeholder="e.g. Barista" style={iStyle} />
                     </div>
                     <div>
-                      <label style={lStyle}>Application Deadline</label>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
-                        <input
-                          type="checkbox"
-                          checked={formDeadlineEnabled}
-                          onChange={e => {
-                            setFormDeadlineEnabled(e.target.checked)
-                            if (!e.target.checked) { setFormExpiresAt(''); setFormDeadlineTime('23:59') }
-                          }}
-                          style={{ width: 16, height: 16, accentColor: accent, cursor: 'pointer' }}
-                        />
-                        <span style={{ fontSize: '0.8125rem', fontWeight: 500, color: '#374151' }}>Set a deadline</span>
-                      </label>
-                      {formDeadlineEnabled && (
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 8 }}>
-                          <input type="date" value={formExpiresAt} min={localDateKey(new Date())}
-                            onChange={e => setFormExpiresAt(e.target.value)} style={iStyle} />
-                          <input type="time" value={formDeadlineTime}
-                            onChange={e => setFormDeadlineTime(e.target.value)} style={iStyle} />
-                        </div>
-                      )}
+                      <label style={lStyle}>Responsibilities</label>
+                      <textarea value={formDescription} onChange={e => setFormDescription(e.target.value)}
+                        ref={el => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight + 3}px` } }}
+                        rows={3} style={{ ...iStyle, resize: 'none', overflow: 'hidden', lineHeight: 1.55, verticalAlign: 'top' }} placeholder="e.g. Serve customers, prep orders" />
                     </div>
-                    {!formTemplateId && (
-                      <button onClick={() => void saveAsTemplate()} disabled={!formTitle.trim() || templateActionLoading}
-                        style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', padding: 0, color: formTitle.trim() ? accent : '#D1D5DB', fontSize: '0.8125rem', fontWeight: 700, cursor: formTitle.trim() ? 'pointer' : 'default' }}>
-                        {templateActionLoading ? <Spinner size={12} dark /> : <ClipboardList size={13} />} Save as Template
-                      </button>
-                    )}
+                    <div>
+                      <label style={lStyle}>Skills &amp; Qualifications</label>
+                      <textarea value={formRequirements} onChange={e => setFormRequirements(e.target.value)}
+                        ref={el => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight + 3}px` } }}
+                        rows={2} style={{ ...iStyle, resize: 'none', overflow: 'hidden', lineHeight: 1.55, verticalAlign: 'top' }} placeholder="e.g. Valid driver's license, basic Excel skills" />
+                    </div>
                     {formJobType === 'oneoff' && (
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-                        <div><label style={lStyle}>Est. Hours</label><input value={formEstHours} onChange={e => setFormEstHours(e.target.value)} placeholder="e.g. 4–6 hours" style={iStyle} /></div>
-                        <div>
-                          <label style={lStyle}>Start Time {!formTemplateId && <span style={{ color: accent }}>*</span>}</label>
-                          <input type="time" value={formJobStartTime} onChange={e => setFormJobStartTime(e.target.value)} style={iStyle} />
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        <div style={{ minWidth: 0 }}>
+                          <label style={lStyle}>Est. Hours</label>
+                          <HoursField value={formEstHours} onChange={setFormEstHours} />
                         </div>
-                        <div>
+                        <div style={{ minWidth: 0 }}>
                           <label style={lStyle}>Urgency</label>
                           <RDrop value={formUrgency}
                             options={[{ value: 'normal', label: 'Normal' }, { value: 'high', label: 'High' }, { value: 'urgent', label: 'Urgent' }]}
@@ -3588,169 +4333,153 @@ export default function OwnerRecruitmentPage() {
                         </div>
                       </div>
                     )}
-
-                    {/* Shift Schedule */}
-                    {formJobType === 'shift' && (
-                      <>
-                        <div style={divider} />
-                        <div>
-                          <label style={lStyle}>Department {!formTemplateId && <span style={{ color: accent }}>*</span>}</label>
-                          <RDrop value={formDeptId} placeholder="Select department"
-                            options={departments.map(d => ({ value: d.id, label: d.name }))}
-                            onChange={async (deptId) => {
-                              setFormDeptId(deptId)
-                              setFormShiftDate(''); setFormAssignedEmployeeId('')
-                              setShiftAvailableDates([]); setShiftDateEmployees([])
-                              if (!deptId) { setShiftDeptEmployees([]); return }
-                              const res = await fetch(`/api/shifts/department-employees?company_id=${companyId}&department_id=${deptId}`)
-                              const data = await res.json()
-                              if (data.success) {
-                                setShiftDeptEmployees(data.employees ?? [])
-                                const dateMap = new Map<string, { start_time: string; end_time: string }>()
-                                ;(data.employees ?? []).forEach((emp: { shifts?: { shift_date: string; start_time: string; end_time: string }[] }) => {
-                                  (emp.shifts ?? []).forEach((s) => { if (!dateMap.has(s.shift_date)) dateMap.set(s.shift_date, { start_time: s.start_time, end_time: s.end_time }) })
-                                })
-                                setShiftAvailableDates(Array.from(dateMap.entries()).sort(([a], [b]) => a.localeCompare(b)).filter(([date]) => date >= new Date().toISOString().slice(0, 10)).map(([date, t]) => ({ date, start_time: t.start_time, end_time: t.end_time })))
-                              }
-                            }} />
-                        </div>
-                        {(formDeptId || editingId) && (
-                          <div>
-                            <label style={lStyle}>Shift Date {!formTemplateId && <span style={{ color: accent }}>*</span>}</label>
-                            {shiftAvailableDates.length > 0 ? (
-                              <RDrop value={formShiftDate} placeholder="Select date"
-                                options={shiftAvailableDates.map(({ date, start_time, end_time }) => {
-                                  const fmt = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return `${h12}:${String(m).padStart(2,'0')} ${ap}` }
-                                  const dateLabel = new Date(date).toLocaleDateString('en-SG', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
-                                  return { value: date, label: `${dateLabel} · ${fmt(start_time)} – ${fmt(end_time)}` }
-                                })}
-                                onChange={(date) => {
-                                  setFormShiftDate(date); setFormAssignedEmployeeId('')
-                                  setShiftDateEmployees(shiftDeptEmployees.filter(emp =>
-                                    (emp as unknown as { shifts?: { shift_date: string }[] }).shifts?.some((s: { shift_date: string }) => s.shift_date === date)
-                                  ))
-                                }} />
-                            ) : (
-                              <div style={{ ...iStyle, color: '#94A3B8', background: '#F8FAFC' }}>No scheduled shifts found for this department</div>
-                            )}
-                          </div>
-                        )}
-                        {(formShiftDate || editingId) && (
-                          <div>
-                            <label style={lStyle}>Assigned Employee {!formTemplateId && <span style={{ color: accent }}>*</span>}</label>
-                            {shiftDateEmployees.length > 0 ? (
-                              <RDrop value={formAssignedEmployeeId} placeholder="Select employee"
-                                options={shiftDateEmployees.map(emp => ({ value: emp.id, label: emp.full_name }))}
-                                onChange={(empId) => {
-                                  setFormAssignedEmployeeId(empId)
-                                  const emp = shiftDeptEmployees.find(em => em.id === empId) as unknown as { shifts?: { shift_date: string; start_time: string; end_time: string }[] } | undefined
-                                  const shift = emp?.shifts?.find((s: { shift_date: string }) => s.shift_date === formShiftDate)
-                                  if (shift) { setFormShiftStart(shift.start_time.slice(0, 5)); setFormShiftEnd(shift.end_time.slice(0, 5)) }
-                                }} />
-                            ) : (
-                              <div style={{ ...iStyle, color: '#94A3B8', background: '#F8FAFC' }}>No employees scheduled on this date</div>
-                            )}
-                          </div>
-                        )}
-                        {(formAssignedEmployeeId || editingId) && (
-                          <>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-                              <div>
-                                <label style={lStyle}>Start Time {!formTemplateId && <span style={{ color: accent }}>*</span>}</label>
-                                <RTimePicker value={formShiftStart || '09:00'} onChange={setFormShiftStart} />
-                              </div>
-                              <div>
-                                <label style={lStyle}>End Time {!formTemplateId && <span style={{ color: accent }}>*</span>}</label>
-                                <RTimePicker value={formShiftEnd || '17:00'} onChange={setFormShiftEnd} />
-                              </div>
-                            </div>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-                              <div>
-                                <label style={lStyle}>Break Start</label>
-                                <RTimePicker value={formBreakStart || '12:00'} onChange={setFormBreakStart} />
-                              </div>
-                              <div>
-                                <label style={lStyle}>Break End</label>
-                                <RTimePicker value={formBreakEnd || '13:00'} onChange={setFormBreakEnd} />
-                              </div>
-                            </div>
-                          </>
-                        )}
-                      </>
-                    )}
-
-                    {/* One-off fields */}
-                    {formJobType === 'oneoff' && (
-                      <>
-                        <div style={divider} />
-                        <div>
-                          <label style={lStyle}>Department {!formTemplateId && <span style={{ color: accent }}>*</span>}</label>
-                          <RDrop value={formDeptId} placeholder="Select department"
-                            options={departments.map(d => ({ value: d.id, label: d.name }))}
-                            onChange={async (deptId) => {
-                              setFormDeptId(deptId)
-                              setFormShiftDate(''); setFormAssignedEmployeeId('')
-                              setShiftAvailableDates([]); setShiftDateEmployees([])
-                              if (!deptId) { setShiftDeptEmployees([]); return }
-                              const res = await fetch(`/api/shifts/department-employees?company_id=${companyId}&department_id=${deptId}`)
-                              const data = await res.json()
-                              if (data.success) {
-                                setShiftDeptEmployees(data.employees ?? [])
-                                const dateMap = new Map<string, { start_time: string; end_time: string }>()
-                                ;(data.employees ?? []).forEach((emp: { shifts?: { shift_date: string; start_time: string; end_time: string }[] }) => {
-                                  (emp.shifts ?? []).forEach((s) => { if (!dateMap.has(s.shift_date)) dateMap.set(s.shift_date, { start_time: s.start_time, end_time: s.end_time }) })
-                                })
-                                setShiftAvailableDates(Array.from(dateMap.entries()).sort(([a], [b]) => a.localeCompare(b)).filter(([date]) => date >= new Date().toISOString().slice(0, 10)).map(([date, t]) => ({ date, start_time: t.start_time, end_time: t.end_time })))
-                              }
-                            }} />
-                        </div>
-                        {formDeptId && (
-                          <div>
-                            <label style={lStyle}>Shift Date {!formTemplateId && <span style={{ color: accent }}>*</span>}</label>
-                            {shiftAvailableDates.length > 0 ? (
-                              <RDrop value={formShiftDate} placeholder="Select date"
-                                options={shiftAvailableDates.map(({ date, start_time, end_time }) => {
-                                  const fmt = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return `${h12}:${String(m).padStart(2,'0')} ${ap}` }
-                                  const dateLabel = new Date(date).toLocaleDateString('en-SG', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
-                                  return { value: date, label: `${dateLabel} · ${fmt(start_time)} – ${fmt(end_time)}` }
-                                })}
-                                onChange={(date) => {
-                                  setFormShiftDate(date); setFormAssignedEmployeeId('')
-                                  setShiftDateEmployees(shiftDeptEmployees.filter(emp =>
-                                    (emp as unknown as { shifts?: { shift_date: string }[] }).shifts?.some((s: { shift_date: string }) => s.shift_date === date)
-                                  ))
-                                }} />
-                            ) : (
-                              <div style={{ ...iStyle, color: '#94A3B8', background: '#F8FAFC' }}>No scheduled shifts found for this department</div>
-                            )}
-                          </div>
-                        )}
-                        {formShiftDate && (
-                          <div>
-                            <label style={lStyle}>Assigned Employee {!formTemplateId && <span style={{ color: accent }}>*</span>}</label>
-                            {shiftDateEmployees.length > 0 ? (
-                              <RDrop value={formAssignedEmployeeId} placeholder="Select employee"
-                                options={shiftDateEmployees.map(emp => ({ value: emp.id, label: emp.full_name }))}
-                                onChange={setFormAssignedEmployeeId} />
-                            ) : (
-                              <div style={{ ...iStyle, color: '#94A3B8', background: '#F8FAFC' }}>No employees scheduled on this date</div>
-                            )}
-                          </div>
-                        )}
-                      </>
-                    )}
-
-                    {/* Compensation */}
-                    <div style={divider} />
                     <div>
-                      <label style={lStyle}>Pay Amount <span style={{ color: '#9CA3AF', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>{formJobType === 'shift' ? '(per hour)' : '(flat rate)'}</span></label>
-                      <div style={{ position: 'relative' }}>
-                        <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#6B7280', fontSize: '0.9375rem', pointerEvents: 'none' }}>$</span>
-                        <input type="number" min={0} step={0.5} value={formSalaryAmt} onChange={e => setFormSalaryAmt(e.target.value)} placeholder="0.00" style={{ ...iStyle, paddingLeft: 26 }} />
+                      <label style={lStyle}>Uniform</label>
+                      <RDrop
+                        value={formUniformType}
+                        placeholder="Select uniform requirement"
+                        options={UNIFORM_TYPE_OPTIONS}
+                        onChange={v => setFormUniformType(v as UniformType)}
+                      />
+                    </div>
+                    {(formUniformType === 'company' || formUniformType === 'dress_code') && (
+                      <div>
+                        <label style={lStyle}>{formUniformType === 'company' ? 'Uniform Details' : 'Dress Code'}</label>
+                        <textarea value={formUniformDetails} onChange={e => setFormUniformDetails(e.target.value)} rows={2} placeholder={formUniformType === 'company' ? 'e.g. Black polo shirt, black apron' : 'e.g. Black shirt, black pants, black shoes'} style={{ ...iStyle, resize: 'vertical', lineHeight: 1.55, verticalAlign: 'top' }} />
+                      </div>
+                    )}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <div style={{ minWidth: 0 }}>
+                        <label style={lStyle}>Experience Required</label>
+                        <RDrop value={formExperienceRequired} placeholder="Select preferences" options={EXPERIENCE_REQUIRED_OPTIONS} onChange={setFormExperienceRequired} />
+                      </div>
+                      <div style={{ minWidth: 0 }}>
+                        <label style={lStyle}>Minimum Age</label>
+                        <RDrop value={formMinimumAge} placeholder="Select minimum age" options={MINIMUM_AGE_OPTIONS} onChange={setFormMinimumAge} />
                       </div>
                     </div>
-                    {/* Pay estimate — shift only */}
-                    {formJobType === 'shift' && (() => {
+                    </>)}
+
+                    {/* ── Schedule & Post (step 4) ── */}
+                    {(!!editingId || createStep === 4) && (<>
+                    {!!editingId && <div style={divider} />}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <div style={{ minWidth: 0 }}>
+                        <label style={lStyle}>Department</label>
+                        <RDrop value={formDeptId} placeholder="Select department"
+                          options={departments.map(d => ({ value: d.id, label: d.name }))}
+                          onChange={(deptId) => { setFormDeptId(deptId); void loadDeptShiftOptions(deptId) }} />
+                      </div>
+                      <div style={{ minWidth: 0 }}>
+                        <label style={lStyle}>{formJobType === 'shift' ? 'Pay/Hr' : 'Flat Rate'}</label>
+                        <div style={{ position: 'relative' }}>
+                          <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#6B7280', fontSize: '0.9375rem', pointerEvents: 'none' }}>$</span>
+                          <input type="number" min={0} step={0.5} onKeyDown={blockNonNumericKeys} value={formSalaryAmt} onChange={e => setFormSalaryAmt(e.target.value)} placeholder="0.00" style={{ ...iStyle, paddingLeft: 26 }} />
+                        </div>
+                      </div>
+                    </div>
+                    <div>
+                      <label style={lStyle}>Openings</label>
+                      <input type="number" min={1} step={1} onKeyDown={blockNonNumericKeys} value={formOpenings}
+                        onChange={e => setFormOpenings(Math.max(1, parseInt(e.target.value || '1', 10) || 1))} style={iStyle} />
+                    </div>
+                    <div style={divider} />
+                    <div>
+                      <label style={lStyle}>Application Deadline</label>
+                      <RDrop
+                        value={formDeadlineChoice}
+                        placeholder="Select deadline option"
+                        options={[
+                          { value: 'never', label: 'No Deadline' },
+                          { value: 'date', label: 'Set a Deadline' },
+                        ]}
+                        onChange={v => {
+                          setFormDeadlineChoice(v as '' | 'never' | 'date')
+                          if (v !== 'date') { setFormExpiresAt(''); setFormDeadlineTime('23:59') }
+                        }}
+                      />
+                      {formDeadlineChoice === 'date' && (
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 8 }}>
+                          <DatePickerField value={formExpiresAt} onChange={setFormExpiresAt} min={localDateKey(new Date())} clearable={false} />
+                          <RTimePicker value={formDeadlineTime} onChange={setFormDeadlineTime} />
+                        </div>
+                      )}
+                    </div>
+
+                    {(formDeptId || editingId) && (
+                      <div>
+                        <label style={lStyle}>Available Shift</label>
+                        {shiftOptionsLoading ? (
+                          <div style={{ ...iStyle, color: '#94A3B8', background: '#F8FAFC', display: 'flex', alignItems: 'center', gap: 8 }}><Spinner size={13} dark /> Loading shifts…</div>
+                        ) : shiftAvailableDates.length > 0 ? (
+                          <RDrop value={formShiftDate} placeholder="Select shift"
+                            options={shiftAvailableDates.map(({ date, start_time, end_time }) => {
+                              const fmt = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return `${h12}:${String(m).padStart(2,'0')} ${ap}` }
+                              const dateLabel = new Date(date).toLocaleDateString('en-SG', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+                              return { value: date, label: `${dateLabel} · ${fmt(start_time)} – ${fmt(end_time)}` }
+                            })}
+                            onChange={(date) => {
+                              setFormShiftDate(date); setFormAssignedEmployeeId('')
+                              setShiftDateEmployees(shiftDeptEmployees.filter(emp =>
+                                (emp as unknown as { shifts?: { shift_date: string }[] }).shifts?.some((s: { shift_date: string }) => s.shift_date === date)
+                              ))
+                            }} />
+                        ) : (
+                          <div style={{ ...iStyle, color: '#94A3B8', background: '#F8FAFC' }}>No scheduled shifts found for this department</div>
+                        )}
+                      </div>
+                    )}
+                    {(formShiftDate || editingId) && (
+                      <div>
+                        <label style={lStyle}>Supervisor</label>
+                        {shiftDateEmployees.length > 0 ? (
+                          <RDrop value={formAssignedEmployeeId} placeholder="Select supervisor"
+                            options={shiftDateEmployees.map(emp => ({ value: emp.id, label: emp.full_name }))}
+                            onChange={(empId) => {
+                              setFormAssignedEmployeeId(empId)
+                              if (formJobType === 'shift') {
+                                const emp = shiftDeptEmployees.find(em => em.id === empId) as unknown as { shifts?: { shift_date: string; start_time: string; end_time: string }[] } | undefined
+                                const shift = emp?.shifts?.find((s: { shift_date: string }) => s.shift_date === formShiftDate)
+                                if (shift) { setFormShiftStart(shift.start_time.slice(0, 5)); setFormShiftEnd(shift.end_time.slice(0, 5)) }
+                              }
+                            }} />
+                        ) : (
+                          <div style={{ ...iStyle, color: '#94A3B8', background: '#F8FAFC' }}>No employees scheduled on this date</div>
+                        )}
+                      </div>
+                    )}
+                    {formJobType === 'shift' && (formAssignedEmployeeId || editingId) && (
+                      <>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                          <div style={{ minWidth: 0 }}>
+                            <label style={lStyle}>Start Time</label>
+                            <RTimePicker value={formShiftStart || '09:00'} onChange={setFormShiftStart} />
+                          </div>
+                          <div style={{ minWidth: 0 }}>
+                            <label style={lStyle}>End Time</label>
+                            <RTimePicker value={formShiftEnd || '17:00'} onChange={setFormShiftEnd} />
+                          </div>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                          <div style={{ minWidth: 0 }}>
+                            <label style={lStyle}>Break Start</label>
+                            <RTimePicker value={formBreakStart || '12:00'} onChange={setFormBreakStart} />
+                          </div>
+                          <div style={{ minWidth: 0 }}>
+                            <label style={lStyle}>Break End</label>
+                            <RTimePicker value={formBreakEnd || '13:00'} onChange={setFormBreakEnd} />
+                          </div>
+                        </div>
+                      </>
+                    )}
+                    {formJobType === 'oneoff' && (
+                      <div>
+                        <label style={lStyle}>Start Time</label>
+                        <RTimePicker value={formJobStartTime || '09:00'} onChange={setFormJobStartTime} />
+                      </div>
+                    )}
+                    {/* Pay estimate — shift only, and only once a shift + supervisor are chosen (times are real, not defaults) */}
+                    {formJobType === 'shift' && (formShiftDate || editingId) && (formAssignedEmployeeId || editingId) && (() => {
                       const toMins = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0) }
                       const workMins = toMins(formShiftEnd) - toMins(formShiftStart)
                       const breakMins = toMins(formBreakEnd) - toMins(formBreakStart)
@@ -3760,11 +4489,12 @@ export default function OwnerRecruitmentPage() {
                       const total = (netMins / 60 * rate).toFixed(2)
                       return (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 10 }}>
-                          <span style={{ ...lStyle, marginBottom: 0 }}>Total Amount</span>
+                          <span style={{ ...lStyle, marginBottom: 0 }}>Estimated Cost</span>
                           <strong style={{ fontSize: 15, color: '#059669' }}>${total}</strong>
                         </div>
                       )
                     })()}
+                    </>)}
 
                   </div>
                 )}
@@ -3777,17 +4507,49 @@ export default function OwnerRecruitmentPage() {
               {wizardStep === 'form' && (
                 <div style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8, flexShrink: 0 }}>
                   {!editingId && !formTemplateId && (
-                    <button onClick={() => saveForm('draft')} disabled={actionLoading} style={modalGhostButtonStyle}>
+                    <button onClick={() => saveForm('draft')} disabled={actionLoading}
+                      style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: '1px solid #E5E7EB', borderRadius: 10, background: '#FFFFFF', color: '#6B7280', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
                       {actionLoading ? <Spinner size={13} dark /> : <FileText size={13} />} Save Draft
                     </button>
                   )}
-                  <button onClick={() => saveForm(editingDraft ? 'draft' : 'open')} disabled={actionLoading}
-                    style={{
-                      ...(editingId ? modalPrimaryButtonStyle(actionLoading) : { ...modalPrimaryButtonStyle(actionLoading), background: actionLoading ? accentDisabledBg : accentGradient }),
-                      ...(!editingId && formTemplateId ? { flex: 1, justifyContent: 'center' } : {}),
-                    }}>
-                    {actionLoading ? <Spinner size={13} /> : <Check size={13} />} {editingDraft ? 'Save Changes' : editingId ? 'Save Changes' : 'Post Job'}
-                  </button>
+                  {isTemplateMode && applyStep < 3 ? (
+                    (() => {
+                      const nextDisabled = applyStep === 1
+                        ? (!formTitle.trim() || !formDescription.trim() || !formRequirements.trim() || (formJobType === 'oneoff' && !formEstHours))
+                        : (!formUniformType || ((formUniformType === 'company' || formUniformType === 'dress_code') && !formUniformDetails.trim()) || !formExperienceRequired || !formMinimumAge)
+                      return (
+                        <button
+                          onClick={() => { setFormError(''); setApplyStep((applyStep + 1) as 2 | 3) }}
+                          disabled={nextDisabled}
+                          style={{ ...modalPrimaryButtonStyle(nextDisabled), flex: 1, justifyContent: 'center' }}>
+                          Next <ChevronRight size={13} />
+                        </button>
+                      )
+                    })()
+                  ) : !editingId && !isTemplateMode && createStep === 3 ? (
+                    (() => {
+                      const nextDisabled = !formTitle.trim() || !formDescription.trim() || !formRequirements.trim()
+                        || (formJobType === 'oneoff' && !formEstHours)
+                        || !formUniformType || ((formUniformType === 'company' || formUniformType === 'dress_code') && !formUniformDetails.trim())
+                        || !formExperienceRequired || !formMinimumAge
+                      return (
+                        <button
+                          onClick={() => { setFormError(''); setCreateStep(4) }}
+                          disabled={nextDisabled}
+                          style={{ ...modalPrimaryButtonStyle(nextDisabled), background: nextDisabled ? accentDisabledBg : accentGradient, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, height: 36, whiteSpace: 'nowrap' }}>
+                          Next <ChevronRight size={13} />
+                        </button>
+                      )
+                    })()
+                  ) : (
+                    <button onClick={() => saveForm(editingDraft ? 'draft' : 'open')} disabled={postDisabled}
+                      style={{
+                        ...(editingId ? modalPrimaryButtonStyle(postDisabled) : { ...modalPrimaryButtonStyle(postDisabled), background: postDisabled ? accentDisabledBg : accentGradient }),
+                        ...(!editingId && formTemplateId ? { flex: 1, justifyContent: 'center' } : {}),
+                      }}>
+                      {actionLoading ? <Spinner size={13} /> : <Check size={13} />} {editingDraft ? 'Save Changes' : editingId ? 'Save Changes' : 'Post Job'}
+                    </button>
+                  )}
                 </div>
               )}
 

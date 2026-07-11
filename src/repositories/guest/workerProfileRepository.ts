@@ -1,10 +1,19 @@
+// LAYER: Repository
+// RULE: Supabase queries only. No business logic.
+
 import { supabase } from '@/lib/supabase'
+import { WorkerCertificate } from '@/types/WorkerProfile'
+
+const BUCKET_NAME = 'worker-documents'
+
+const PROFILE_COLUMNS =
+  'id, full_name, email_address, phone_number, date_of_birth, profile_photo_url, role, supabase_auth_id, skills, resume_url'
 
 export const workerProfileRepository = {
   async getByAuthId(authId: string) {
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, email_address, phone_number, date_of_birth, profile_photo_url, role, supabase_auth_id')
+      .select(PROFILE_COLUMNS)
       .eq('supabase_auth_id', authId)
       .maybeSingle()
 
@@ -27,10 +36,84 @@ export const workerProfileRepository = {
         profile_photo_url: values.profile_photo_url,
       })
       .eq('supabase_auth_id', authId)
-      .select('id, full_name, email_address, phone_number, date_of_birth, profile_photo_url, role, supabase_auth_id')
+      .select(PROFILE_COLUMNS)
       .single()
 
     if (error) throw error
     return data
+  },
+
+  async updateSkillsByAuthId(authId: string, skills: string | null) {
+    const { data, error } = await supabase
+      .from('users')
+      .update({ skills })
+      .eq('supabase_auth_id', authId)
+      .select(PROFILE_COLUMNS)
+      .single()
+
+    if (error) throw error
+    return data
+  },
+
+  async updateResumeUrlByAuthId(authId: string, resume_url: string | null) {
+    const { data, error } = await supabase
+      .from('users')
+      .update({ resume_url })
+      .eq('supabase_auth_id', authId)
+      .select(PROFILE_COLUMNS)
+      .single()
+
+    if (error) throw error
+    return data
+  },
+
+  async getCertificatesByUserId(userId: string): Promise<WorkerCertificate[]> {
+    const { data, error } = await supabase
+      .from('user_certificates')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: true })
+
+    if (error) throw new Error(error.message)
+    return (data ?? []) as WorkerCertificate[]
+  },
+
+  async addCertificate(input: { user_id: string; name: string; file_url: string | null }): Promise<WorkerCertificate> {
+    const { data, error } = await supabase
+      .from('user_certificates')
+      .insert(input)
+      .select()
+      .single()
+
+    if (error) throw new Error(error.message)
+    return data as WorkerCertificate
+  },
+
+  // user_id is part of the filter so a worker can only ever delete their own certificate.
+  async deleteCertificate(certificateId: string, userId: string): Promise<void> {
+    const { error } = await supabase
+      .from('user_certificates')
+      .delete()
+      .eq('id', certificateId)
+      .eq('user_id', userId)
+
+    if (error) throw new Error(error.message)
+  },
+
+  async uploadProfileFile(file: File, path: string): Promise<string> {
+    const { data, error } = await supabase.storage
+      .from(BUCKET_NAME)
+      .upload(path, file, {
+        contentType: file.type,
+        upsert: true,
+      })
+
+    if (error) throw new Error(error.message)
+
+    const { data: urlData } = supabase.storage
+      .from(BUCKET_NAME)
+      .getPublicUrl(data.path)
+
+    return urlData.publicUrl
   },
 }

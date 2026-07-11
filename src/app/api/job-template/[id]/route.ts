@@ -40,9 +40,15 @@ export async function PATCH(
       salary_amount: body.salary_amount,
       salary_type: body.salary_type,
       uniform_required: body.uniform_required,
+      uniform_type: body.uniform_type,
       uniform_details: body.uniform_details,
       experience_required: body.experience_required,
-      minimum_age: body.minimum_age,
+      minimum_age:
+        typeof body.minimum_age === 'number' && Number.isInteger(body.minimum_age)
+          ? body.minimum_age
+          : typeof body.minimum_age === 'string' && body.minimum_age.trim() && !Number.isNaN(parseInt(body.minimum_age, 10))
+            ? parseInt(body.minimum_age, 10)
+            : body.minimum_age === null ? null : undefined,
       estimated_hours: body.estimated_hours,
       urgency: body.urgency,
     })

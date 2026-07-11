@@ -32,6 +32,7 @@ const baseTemplate = {
   salary_amount: null,
   salary_type: null,
   uniform_required: false,
+  uniform_type: null,
   uniform_details: null,
   experience_required: null,
   minimum_age: null,
@@ -147,6 +148,7 @@ describe('jobTemplateService — Job Template', () => {
         salary_amount: baseTemplate.salary_amount,
         salary_type: baseTemplate.salary_type,
         uniform_required: baseTemplate.uniform_required,
+        uniform_type: baseTemplate.uniform_type,
         uniform_details: baseTemplate.uniform_details,
         experience_required: baseTemplate.experience_required,
         minimum_age: baseTemplate.minimum_age,
@@ -156,18 +158,18 @@ describe('jobTemplateService — Job Template', () => {
       expect(result.name).toBe('Renamed')
     })
 
-    it('updates uniform_required, uniform_details, experience_required, and minimum_age', async () => {
+    it('updates uniform_required, uniform_type, uniform_details, experience_required, and minimum_age', async () => {
       vi.mocked(jobTemplateRepository.getTemplateById).mockResolvedValue(baseTemplate)
       vi.mocked(jobTemplateRepository.updateTemplate).mockResolvedValue({
-        ...baseTemplate, uniform_required: true, uniform_details: 'Black polo + apron', experience_required: '1+ Year', minimum_age: '18+',
+        ...baseTemplate, uniform_required: true, uniform_type: 'company', uniform_details: 'Black polo + apron', experience_required: '1+ Year', minimum_age: 18,
       })
 
       await jobTemplateService.updateTemplate('template-1', {
-        uniform_required: true, uniform_details: 'Black polo + apron', experience_required: '1+ Year', minimum_age: '18+',
+        uniform_required: true, uniform_type: 'company', uniform_details: 'Black polo + apron', experience_required: '1+ Year', minimum_age: 18,
       })
 
       expect(jobTemplateRepository.updateTemplate).toHaveBeenCalledWith('template-1', expect.objectContaining({
-        uniform_required: true, uniform_details: 'Black polo + apron', experience_required: '1+ Year', minimum_age: '18+',
+        uniform_required: true, uniform_type: 'company', uniform_details: 'Black polo + apron', experience_required: '1+ Year', minimum_age: 18,
       }))
     })
 
