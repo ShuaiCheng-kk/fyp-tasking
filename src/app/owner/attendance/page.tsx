@@ -2467,9 +2467,9 @@ export default function OwnerAttendancePage() {
                           <button
                             onClick={() => void analyzeFixedOffQueue()}
                             disabled={queueAiLoading || reqActionLoading}
-                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: '#FFFFFF', background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 0, borderRadius: 10, height: 30, padding: '0 13px', cursor: (queueAiLoading || reqActionLoading) ? 'default' : 'pointer', opacity: (queueAiLoading || reqActionLoading) ? 0.6 : 1, flexShrink: 0 }}
+                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, fontSize: 13, fontWeight: 700, color: '#FFFFFF', background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', border: 0, borderRadius: 10, height: 36, padding: '0 14px', cursor: (queueAiLoading || reqActionLoading) ? 'default' : 'pointer', opacity: (queueAiLoading || reqActionLoading) ? 0.6 : 1, flexShrink: 0 }}
                           >
-                            {queueAiLoading ? <><Spinner size={13} /> Analyzing…</> : <><Sparkles size={13} /> Process</>}
+                            {queueAiLoading ? <><Spinner size={13} /> Analyzing…</> : <><Sparkles size={15} strokeWidth={2.5} /> AI Process</>}
                           </button>
                         )
                       )}
@@ -3854,9 +3854,9 @@ export default function OwnerAttendancePage() {
 
       {/* ── Off Day Settings modal — opened from the gear button in the Off Day Request block header. ── */}
       {offDaySettingsOpen && (
-        <ModalOverlay onClose={() => setOffDaySettingsOpen(false)} maxWidth="480px">
+        <ModalOverlay onClose={() => { setOffDaySettingsOpen(false); void loadOffDaySettings(true) }} maxWidth="480px">
           <ModalBox>
-            <ModalHeader title="Off Day Settings" icon={<Settings size={15} color="#fff" strokeWidth={2.5} />} onClose={() => setOffDaySettingsOpen(false)} />
+            <ModalHeader title="Off Day Settings" icon={<Settings size={15} color="#fff" strokeWidth={2.5} />} onClose={() => { setOffDaySettingsOpen(false); void loadOffDaySettings(true) }} />
             <div style={{ padding: '20px 24px 24px', maxHeight: '70vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 24 }}>
                 {offDaySettingsError && (
                   <div style={{ padding: '10px 12px', borderRadius: 10, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', fontSize: 12, fontWeight: 700 }}>{offDaySettingsError}</div>
@@ -3865,7 +3865,7 @@ export default function OwnerAttendancePage() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                   <div>
                     <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: '0 0 6px' }}>Manager Off Days</label>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, border: '1.5px solid #E5E7EB', borderRadius: 8, minHeight: 40, padding: '10px 12px', background: '#FFFFFF', boxSizing: 'border-box' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, border: '1.5px solid #E5E7EB', borderRadius: 8, minHeight: 40, padding: '10px 12px', background: '#FFFFFF', boxSizing: 'border-box', cursor: 'text' }}>
                       <input
                         type="text"
                         inputMode="numeric"
@@ -3878,12 +3878,12 @@ export default function OwnerAttendancePage() {
                         style={{ width: `${String(managerDefaultQuota).length}ch`, minWidth: 10, border: 'none', outline: 'none', padding: 0, fontSize: '0.9375rem', color: '#111827', background: 'transparent' }}
                       />
                       <span style={{ fontSize: '0.9375rem', color: '#111827' }}>days per week</span>
-                    </div>
+                    </label>
                   </div>
 
                   <div>
                     <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: '0 0 6px' }}>Employee Off Days</label>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, border: '1.5px solid #E5E7EB', borderRadius: 8, minHeight: 40, padding: '10px 12px', background: '#FFFFFF', boxSizing: 'border-box' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, border: '1.5px solid #E5E7EB', borderRadius: 8, minHeight: 40, padding: '10px 12px', background: '#FFFFFF', boxSizing: 'border-box', cursor: 'text' }}>
                       <input
                         type="text"
                         inputMode="numeric"
@@ -3896,7 +3896,7 @@ export default function OwnerAttendancePage() {
                         style={{ width: `${String(employeeDefaultQuota).length}ch`, minWidth: 10, border: 'none', outline: 'none', padding: 0, fontSize: '0.9375rem', color: '#111827', background: 'transparent' }}
                       />
                       <span style={{ fontSize: '0.9375rem', color: '#111827' }}>days per week</span>
-                    </div>
+                    </label>
                   </div>
 
                   <div>
@@ -3932,9 +3932,9 @@ export default function OwnerAttendancePage() {
       )}
 
       {swapSettingsOpen && (
-        <ModalOverlay onClose={() => setSwapSettingsOpen(false)} maxWidth="480px">
+        <ModalOverlay onClose={() => { setSwapSettingsOpen(false); void loadSwapSettings(true) }} maxWidth="480px">
           <ModalBox>
-            <ModalHeader title="Shift Swap Settings" icon={<Settings size={15} color="#fff" strokeWidth={2.5} />} onClose={() => setSwapSettingsOpen(false)} />
+            <ModalHeader title="Shift Swap Settings" icon={<Settings size={15} color="#fff" strokeWidth={2.5} />} onClose={() => { setSwapSettingsOpen(false); void loadSwapSettings(true) }} />
             <div style={{ padding: '20px 24px 24px', maxHeight: '70vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 24 }}>
               {swapSettingsError && (
                 <div style={{ padding: '10px 12px', borderRadius: 10, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', fontSize: 12, fontWeight: 700 }}>{swapSettingsError}</div>
@@ -3943,7 +3943,7 @@ export default function OwnerAttendancePage() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                 <div>
                   <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: '0 0 6px' }}>Monthly Swap Limit / Person</label>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, border: '1.5px solid #E5E7EB', borderRadius: 8, minHeight: 40, padding: '10px 12px', background: '#FFFFFF', boxSizing: 'border-box' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, border: '1.5px solid #E5E7EB', borderRadius: 8, minHeight: 40, padding: '10px 12px', background: '#FFFFFF', boxSizing: 'border-box', cursor: 'text' }}>
                     <input
                       type="text"
                       inputMode="numeric"
@@ -3956,12 +3956,12 @@ export default function OwnerAttendancePage() {
                       style={{ width: `${String(swapMonthlyLimit ?? 'No limit').length}ch`, minWidth: 10, border: 'none', outline: 'none', padding: 0, fontSize: '0.9375rem', color: '#111827', background: 'transparent' }}
                     />
                     <span style={{ fontSize: '0.9375rem', color: '#111827' }}>swap</span>
-                  </div>
+                  </label>
                 </div>
 
                 <div>
                   <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: '0 0 6px' }}>Swap Deadline</label>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, border: '1.5px solid #E5E7EB', borderRadius: 8, minHeight: 40, padding: '10px 12px', background: '#FFFFFF', boxSizing: 'border-box' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, border: '1.5px solid #E5E7EB', borderRadius: 8, minHeight: 40, padding: '10px 12px', background: '#FFFFFF', boxSizing: 'border-box', cursor: 'text' }}>
                     <input
                       type="text"
                       inputMode="numeric"
@@ -3974,7 +3974,7 @@ export default function OwnerAttendancePage() {
                       style={{ width: `${String(swapDeadlineHours ?? 'No deadline').length}ch`, minWidth: 10, border: 'none', outline: 'none', padding: 0, fontSize: '0.9375rem', color: '#111827', background: 'transparent' }}
                     />
                     <span style={{ fontSize: '0.9375rem', color: '#111827' }}>hours before shift</span>
-                  </div>
+                  </label>
                 </div>
 
                 <div style={{ borderTop: '1px solid #E5E7EB', paddingTop: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>

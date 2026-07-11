@@ -37,8 +37,12 @@ export interface JobPosting {
   expires_at: string | null
   template_id: string | null
   experience_required: string | null
-  minimum_age: string | null
+  minimum_age: number | null
+  openings: number | null
+  form_type: string | null
+  shift_days: string[] | null
   uniform_required: boolean
+  uniform_type: string | null
   uniform_details: string | null
 }
 
@@ -72,8 +76,10 @@ export interface JobPostingInput {
   expires_at?: string | null
   template_id?: string | null
   experience_required?: string | null
-  minimum_age?: string | null
+  minimum_age?: number | null
+  openings?: number | null
   uniform_required?: boolean
+  uniform_type?: string | null
   uniform_details?: string | null
 }
 
@@ -85,6 +91,11 @@ export interface JobPostingSummary extends JobPosting {
   assigned_employee_name: string | null
 }
 
+export interface ApplicantCertificateSnapshot {
+  name: string
+  file_url: string | null
+}
+
 export interface JobApplicant {
   id: string
   job_id: string
@@ -93,8 +104,23 @@ export interface JobApplicant {
   email_address: string
   resume_url: string | null
   cover_letter: string | null
-  status: 'pending' | 'accepted' | 'rejected'
+  status: 'pending' | 'accepted' | 'rejected' | 'withdrawn' | 'cancelled_by_employer' | 'job_closed'
   applied_at: string
+  // Per-job answers + the profile snapshot taken at apply time (later profile edits never
+  // change what the employer sees on this application).
+  relevant_experience: 'none' | 'less_than_1' | '1_to_2' | 'more_than_2' | null
+  additional_note: string | null
+  skills_snapshot: string | null
+  certificates_snapshot: ApplicantCertificateSnapshot[] | null
+  age_at_apply: number | null
+  // Cached AI match analysis — computed once per application, not on every page open.
+  ai_score: number | null
+  ai_summary: string | null
+  ai_computed_at: string | null
+  // Latest invitation status, joined in for the employer's list ('accepted' = worker confirmed).
+  invitation_status?: string | null
+  // Times this worker has cancelled a confirmed shift before (history, not a rating).
+  worker_cancellation_count?: number
 }
 
 export interface JobInvitation {

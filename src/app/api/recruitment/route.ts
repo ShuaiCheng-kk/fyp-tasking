@@ -5,6 +5,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { recruitmentService } from '@/services/owner/recruitmentService'
 import { JobPostingInput } from '@/types/Recruitment'
 
+function parseNullableInt(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isInteger(value)) return value
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = parseInt(value, 10)
+    return Number.isNaN(parsed) ? null : parsed
+  }
+  return null
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const company_id = searchParams.get('company_id')
@@ -99,8 +108,10 @@ export async function POST(req: NextRequest) {
     expires_at: typeof data.expires_at === 'string' && data.expires_at ? data.expires_at : null,
     template_id: typeof data.template_id === 'string' && data.template_id ? data.template_id : null,
     experience_required: typeof data.experience_required === 'string' && data.experience_required ? data.experience_required : null,
-    minimum_age: typeof data.minimum_age === 'string' && data.minimum_age ? data.minimum_age : null,
+    minimum_age: parseNullableInt(data.minimum_age),
+    openings: parseNullableInt(data.openings),
     uniform_required: data.uniform_required === true,
+    uniform_type: typeof data.uniform_type === 'string' && data.uniform_type ? data.uniform_type : null,
     uniform_details: typeof data.uniform_details === 'string' && data.uniform_details ? data.uniform_details : null,
   }
 
@@ -126,31 +137,38 @@ export async function PATCH(req: NextRequest) {
 
   try {
     if (action === 'edit_posting') {
-      const posting = await recruitmentService.editJobPosting(String(data.job_id ?? ''), {
-        department_id: typeof data.department_id === 'string' && data.department_id ? data.department_id : null,
-        title: typeof data.title === 'string' ? data.title : undefined,
-        description: typeof data.description === 'string' ? data.description : undefined,
-        requirements: typeof data.requirements === 'string' ? data.requirements : null,
-        location: typeof data.location === 'string' ? data.location : null,
-        employment_type: typeof data.employment_type === 'string' ? data.employment_type : null,
-        salary_amount: typeof data.salary_amount === 'number' ? data.salary_amount : null,
-        salary_type: typeof data.salary_type === 'string' ? data.salary_type : null,
-        urgency: typeof data.urgency === 'string' ? data.urgency : null,
-        estimated_hours: typeof data.estimated_hours === 'string' ? data.estimated_hours : null,
-        is_recurring: typeof data.is_recurring === 'boolean' ? data.is_recurring : undefined,
-        shift_date: typeof data.shift_date === 'string' ? data.shift_date : null,
-        shift_start_time: typeof data.shift_start_time === 'string' ? data.shift_start_time : null,
-        shift_end_time: typeof data.shift_end_time === 'string' ? data.shift_end_time : null,
-        break_start_time: typeof data.break_start_time === 'string' ? data.break_start_time : null,
-        break_end_time: typeof data.break_end_time === 'string' ? data.break_end_time : null,
-        job_start_time: typeof data.job_start_time === 'string' ? data.job_start_time : null,
-        assigned_employee_id: typeof data.assigned_employee_id === 'string' ? data.assigned_employee_id : null,
-        expires_at: typeof data.expires_at === 'string' ? data.expires_at : null,
-        experience_required: typeof data.experience_required === 'string' ? data.experience_required : null,
-        minimum_age: typeof data.minimum_age === 'string' ? data.minimum_age : null,
-        uniform_required: typeof data.uniform_required === 'boolean' ? data.uniform_required : undefined,
-        uniform_details: typeof data.uniform_details === 'string' ? data.uniform_details : null,
-      })
+      // Absent key = leave the field untouched; only keys present in the payload are written.
+      // (Nulling omitted fields would both clear data on partial updates and falsely trip the
+      // locked-field check the service runs once a posting has applicants.)
+      const patch: Partial<JobPostingInput> = {}
+      const nullableString = (v: unknown) => (typeof v === 'string' && v ? v : null)
+      if ('department_id' in data) patch.department_id = nullableString(data.department_id)
+      if ('title' in data && typeof data.title === 'string') patch.title = data.title
+      if ('description' in data && typeof data.description === 'string') patch.description = data.description
+      if ('requirements' in data) patch.requirements = nullableString(data.requirements)
+      if ('location' in data) patch.location = nullableString(data.location)
+      if ('employment_type' in data) patch.employment_type = nullableString(data.employment_type)
+      if ('salary_amount' in data) patch.salary_amount = typeof data.salary_amount === 'number' ? data.salary_amount : null
+      if ('salary_type' in data) patch.salary_type = nullableString(data.salary_type)
+      if ('urgency' in data) patch.urgency = nullableString(data.urgency)
+      if ('estimated_hours' in data) patch.estimated_hours = nullableString(data.estimated_hours)
+      if ('is_recurring' in data && typeof data.is_recurring === 'boolean') patch.is_recurring = data.is_recurring
+      if ('shift_date' in data) patch.shift_date = nullableString(data.shift_date)
+      if ('shift_start_time' in data) patch.shift_start_time = nullableString(data.shift_start_time)
+      if ('shift_end_time' in data) patch.shift_end_time = nullableString(data.shift_end_time)
+      if ('break_start_time' in data) patch.break_start_time = nullableString(data.break_start_time)
+      if ('break_end_time' in data) patch.break_end_time = nullableString(data.break_end_time)
+      if ('job_start_time' in data) patch.job_start_time = nullableString(data.job_start_time)
+      if ('assigned_employee_id' in data) patch.assigned_employee_id = nullableString(data.assigned_employee_id)
+      if ('expires_at' in data) patch.expires_at = nullableString(data.expires_at)
+      if ('experience_required' in data) patch.experience_required = nullableString(data.experience_required)
+      if ('minimum_age' in data) patch.minimum_age = parseNullableInt(data.minimum_age)
+      if ('openings' in data) patch.openings = parseNullableInt(data.openings)
+      if ('uniform_required' in data && typeof data.uniform_required === 'boolean') patch.uniform_required = data.uniform_required
+      if ('uniform_type' in data) patch.uniform_type = nullableString(data.uniform_type)
+      if ('uniform_details' in data) patch.uniform_details = nullableString(data.uniform_details)
+
+      const posting = await recruitmentService.editJobPosting(String(data.job_id ?? ''), patch)
       return NextResponse.json({ success: true, posting })
     }
 
@@ -177,6 +195,25 @@ export async function PATCH(req: NextRequest) {
         message: typeof data.message === 'string' ? data.message : null,
       })
       return NextResponse.json({ success: true, applicant })
+    }
+
+    if (action === 'remove_worker') {
+      await recruitmentService.removeConfirmedWorker({
+        job_id: String(data.job_id ?? ''),
+        applicant_id: String(data.applicant_id ?? ''),
+        removed_by: String(data.removed_by ?? ''),
+        reason: typeof data.reason === 'string' ? data.reason : '',
+      })
+      return NextResponse.json({ success: true })
+    }
+
+    if (action === 'cancel_job') {
+      await recruitmentService.cancelJob({
+        job_id: String(data.job_id ?? ''),
+        cancelled_by: String(data.cancelled_by ?? ''),
+        reason: typeof data.reason === 'string' ? data.reason : '',
+      })
+      return NextResponse.json({ success: true })
     }
 
     if (action === 'publish_draft') {

@@ -8,6 +8,7 @@ type WorkerRole = 'Guest User' | 'Casual Worker'
 
 const guestAllowedRoutes = [
   '/guest/applications',
+  '/guest/profile',
 ]
 
 export default function WorkerLayout({

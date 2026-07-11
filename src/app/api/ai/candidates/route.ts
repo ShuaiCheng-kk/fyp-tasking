@@ -11,8 +11,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'job_id is required' }, { status: 400 })
   }
 
+  const refresh = searchParams.get('refresh') === 'true'
+
   try {
-    const recommendations = await candidateRecommendationService.recommendCandidates(job_id)
+    const recommendations = await candidateRecommendationService.recommendCandidates(job_id, refresh)
     return NextResponse.json({ success: true, recommendations })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to recommend candidates'

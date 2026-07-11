@@ -20,6 +20,7 @@ export async function POST(req: NextRequest) {
   try {
     const draft = await jobDescriptionService.generateDescription({
       title: b.title,
+      job_type: (b.job_type as string | null) ?? null,
       company_name: (b.company_name as string | null) ?? null,
       department_name: (b.department_name as string | null) ?? null,
       location: (b.location as string | null) ?? null,

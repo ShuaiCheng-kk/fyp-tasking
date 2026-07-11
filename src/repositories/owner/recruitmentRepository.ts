@@ -152,7 +152,9 @@ export const recruitmentRepository = {
         template_id: input.template_id ?? null,
         experience_required: input.experience_required ?? null,
         minimum_age: input.minimum_age ?? null,
+        openings: input.openings ?? 1,
         uniform_required: input.uniform_required ?? false,
+        uniform_type: input.uniform_type ?? null,
         uniform_details: input.uniform_details ?? null,
       })
       .select()
@@ -194,11 +196,152 @@ export const recruitmentRepository = {
     if (error) throw new Error(error.message)
   },
 
+  // Workers whose two-way confirmation is complete (invitation accepted) — the people an
+  // employer-side cancellation has to notify.
+  async getConfirmedWorkersByJob(job_id: string): Promise<{
+    invitation_id: string
+    applicant_id: string
+    user_id: string
+    full_name: string
+    email_address: string
+  }[]> {
+    const { data, error } = await supabase
+      .from('job_invitations')
+      .select('id, applicant_id, job_applicants!inner(user_id, users(full_name, email_address))')
+      .eq('job_id', job_id)
+      .eq('status', 'accepted')
+    if (error) throw new Error(error.message)
+    return (data ?? []).map(row => {
+      const r = row as unknown as { id: string; applicant_id: string; job_applicants: { user_id: string; users: { full_name: string; email_address: string } | null } }
+      return {
+        invitation_id: r.id,
+        applicant_id: r.applicant_id,
+        user_id: r.job_applicants.user_id,
+        full_name: r.job_applicants.users?.full_name ?? '',
+        email_address: r.job_applicants.users?.email_address ?? '',
+      }
+    })
+  },
+
+  async setApplicantStatus(id: string, status: string): Promise<void> {
+    const { error } = await supabase.from('job_applicants').update({ status }).eq('id', id)
+    if (error) throw new Error(error.message)
+  },
+
+  async cancelAcceptedInvitationByApplicant(applicant_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('job_invitations')
+      .update({ status: 'cancelled' })
+      .eq('applicant_id', applicant_id)
+      .eq('status', 'accepted')
+    if (error) throw new Error(error.message)
+  },
+
+  async cancelOpenInvitationsForJob(job_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('job_invitations')
+      .update({ status: 'cancelled' })
+      .eq('job_id', job_id)
+      .in('status', ['sent', 'accepted'])
+    if (error) throw new Error(error.message)
+  },
+
+  async markPendingApplicantsJobClosed(job_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('job_applicants')
+      .update({ status: 'job_closed' })
+      .eq('job_id', job_id)
+      .eq('status', 'pending')
+    if (error) throw new Error(error.message)
+  },
+
+  async getShiftsForJobWorker(job_id: string, user_id: string): Promise<{
+    id: string
+    shift_date: string
+    start_time: string
+    status: string
+  }[]> {
+    const { data, error } = await supabase
+      .from('shift_assignments')
+      .select('shifts!inner(id, shift_date, start_time, status, source_job_posting_id)')
+      .eq('user_id', user_id)
+      .eq('shifts.source_job_posting_id', job_id)
+    if (error) throw new Error(error.message)
+    return (data ?? []).map(row => (row as unknown as { shifts: never }).shifts)
+  },
+
+  async cancelShiftsByIds(ids: string[]): Promise<void> {
+    if (ids.length === 0) return
+    const { error } = await supabase.from('shifts').update({ status: 'cancelled' }).in('id', ids)
+    if (error) throw new Error(error.message)
+  },
+
+  async cancelFutureShiftsForJob(job_id: string, fromDateKey: string): Promise<void> {
+    const { error } = await supabase
+      .from('shifts')
+      .update({ status: 'cancelled' })
+      .eq('source_job_posting_id', job_id)
+      .gte('shift_date', fromDateKey)
+      .neq('status', 'cancelled')
+    if (error) throw new Error(error.message)
+  },
+
+  async insertRecruitmentCancellation(input: {
+    job_id: string
+    applicant_id: string | null
+    cancelled_by: string
+    cancelled_role: 'worker' | 'employer'
+    scope: 'worker' | 'job'
+    reason: string | null
+  }): Promise<void> {
+    const { error } = await supabase.from('recruitment_cancellations').insert(input)
+    if (error) throw new Error(error.message)
+  },
+
+  async reopenJobPosting(job_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('job_postings')
+      .update({ status: 'open', archived_at: null })
+      .eq('id', job_id)
+    if (error) throw new Error(error.message)
+  },
+
+  // How many times each of these users has cancelled a confirmed shift before — history the
+  // employer can weigh, deliberately NOT a rating system.
+  async getWorkerCancellationCounts(user_ids: string[]): Promise<Map<string, number>> {
+    const counts = new Map<string, number>()
+    if (user_ids.length === 0) return counts
+    const { data, error } = await supabase
+      .from('recruitment_cancellations')
+      .select('cancelled_by')
+      .eq('cancelled_role', 'worker')
+      .in('cancelled_by', user_ids)
+    if (error) throw new Error(error.message)
+    for (const row of data ?? []) {
+      const id = (row as { cancelled_by: string }).cancelled_by
+      counts.set(id, (counts.get(id) ?? 0) + 1)
+    }
+    return counts
+  },
+
+  // Caches one applicant's AI match result — ai_summary holds the structured recommendation as
+  // JSON text so a later page open can rebuild it without another OpenAI call.
+  async updateApplicantAI(id: string, ai_score: number | null, ai_summary: string): Promise<void> {
+    const { error } = await supabase
+      .from('job_applicants')
+      .update({ ai_score, ai_summary, ai_computed_at: new Date().toISOString() })
+      .eq('id', id)
+    if (error) throw new Error(error.message)
+  },
+
   async getApplicantsByJob(job_id: string): Promise<JobApplicant[]> {
     const { data, error } = await supabase
       .from('job_applicants')
-      .select('*, users(full_name, email_address)')
+      .select('*, users(full_name, email_address), job_invitations(status)')
       .eq('job_id', job_id)
+      // A withdrawn application means the worker walked away (withdrew, or declined the offer)
+      // — nothing left for the employer to act on, so it's dropped from their list.
+      .neq('status', 'withdrawn')
       .order('applied_at', { ascending: false })
     if (error) throw new Error(error.message)
     return (data ?? []).map(mapApplicantRow)
@@ -416,10 +559,12 @@ export const recruitmentRepository = {
 
 function mapApplicantRow(row: Record<string, unknown>): JobApplicant {
   const user = row.users as { full_name: string; email_address: string } | null
-  const { users: _users, ...rest } = row
+  const invitations = row.job_invitations as { status: string }[] | null | undefined
+  const { users: _users, job_invitations: _invitations, ...rest } = row
   return {
     ...(rest as Omit<JobApplicant, 'full_name' | 'email_address'>),
     full_name: user?.full_name ?? '',
     email_address: user?.email_address ?? '',
+    invitation_status: invitations && invitations.length > 0 ? invitations[invitations.length - 1].status : null,
   }
 }

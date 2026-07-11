@@ -33,7 +33,7 @@ export const openAIService = {
     const controller = new AbortController()
     const timeoutMs = Number(process.env.OPENAI_TIMEOUT_MS ?? DEFAULT_TIMEOUT_MS)
     const timeout = setTimeout(() => controller.abort(), timeoutMs)
-    const model = process.env.OPENAI_MODEL || 'gpt-4o-mini'
+    const model = process.env.OPENAI_MODEL || 'gpt-4.1-mini'
     const requestBody: Record<string, unknown> = {
       model,
       max_output_tokens: data.maxOutputTokens ?? Number(process.env.OPENAI_MAX_OUTPUT_TOKENS ?? DEFAULT_MAX_OUTPUT_TOKENS),

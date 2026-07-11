@@ -1,6 +1,8 @@
-import { supabase } from '@/lib/supabase'
+// LAYER: Repository
+// RULE: Supabase queries only. No business logic.
 
-const BUCKET_NAME = 'worker-documents'
+import { supabase } from '@/lib/supabase'
+import { ApplicantCertificateSnapshot } from '@/types/Recruitment'
 
 export const workerApplicationRepository = {
   async checkExistingApplication(jobId: string, userId: string) {
@@ -15,28 +17,85 @@ export const workerApplicationRepository = {
     return data
   },
 
-  async uploadApplicationFile(file: File, path: string) {
-    const { data, error } = await supabase.storage
-      .from(BUCKET_NAME)
-      .upload(path, file, {
-        contentType: file.type,
-        upsert: true,
-      })
+  // The profile fields that get snapshotted onto an application, keyed by internal user id.
+  async getApplicantProfile(userId: string): Promise<{
+    id: string
+    date_of_birth: string | null
+    skills: string | null
+    resume_url: string | null
+  } | null> {
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, date_of_birth, skills, resume_url')
+      .eq('id', userId)
+      .maybeSingle()
 
     if (error) throw new Error(error.message)
+    return data
+  },
 
-    const { data: urlData } = supabase.storage
-      .from(BUCKET_NAME)
-      .getPublicUrl(data.path)
+  async getApplicantCertificates(userId: string): Promise<{ name: string; file_url: string | null }[]> {
+    const { data, error } = await supabase
+      .from('user_certificates')
+      .select('name, file_url')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: true })
 
-    return urlData.publicUrl
+    if (error) throw new Error(error.message)
+    return data ?? []
+  },
+
+  // The worker's other still-active applications (pending, or accepted and awaiting the worker's
+  // confirmation) on open jobs — these occupy their timeline for the schedule-conflict gate.
+  async getActiveApplicationJobs(userId: string): Promise<{
+    form_type: string | null
+    is_recurring: boolean | null
+    shift_date: string | null
+    shift_days: string[] | null
+    shift_start_time: string | null
+    shift_end_time: string | null
+    job_start_time: string | null
+  }[]> {
+    const { data, error } = await supabase
+      .from('job_applicants')
+      .select('status, job_postings!inner(status, form_type, is_recurring, shift_date, shift_days, shift_start_time, shift_end_time, job_start_time)')
+      .eq('user_id', userId)
+      .in('status', ['pending', 'accepted'])
+      .eq('job_postings.status', 'open')
+
+    if (error) throw new Error(error.message)
+    return (data ?? []).map(row => (row as unknown as { job_postings: never }).job_postings)
+  },
+
+  // Confirmed future shifts across ALL companies — the other half of the conflict timeline.
+  async getFutureShiftWindows(userId: string): Promise<{
+    shift_date: string
+    start_time: string
+    end_time: string
+    is_open_ended: boolean
+  }[]> {
+    const today = new Date()
+    const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    const { data, error } = await supabase
+      .from('shift_assignments')
+      .select('shifts!inner(shift_date, start_time, end_time, is_open_ended, status)')
+      .eq('user_id', userId)
+      .gte('shifts.shift_date', todayKey)
+      .neq('shifts.status', 'cancelled')
+
+    if (error) throw new Error(error.message)
+    return (data ?? []).map(row => (row as unknown as { shifts: never }).shifts)
   },
 
   async createApplication(application: {
     job_id: string
     user_id: string
-    resume_url: string
-    cover_letter: string
+    resume_url: string | null
+    relevant_experience: string
+    additional_note: string | null
+    skills_snapshot: string | null
+    certificates_snapshot: ApplicantCertificateSnapshot[]
+    age_at_apply: number | null
   }) {
     const { data, error } = await supabase
       .from('job_applicants')
@@ -44,7 +103,11 @@ export const workerApplicationRepository = {
         job_id: application.job_id,
         user_id: application.user_id,
         resume_url: application.resume_url,
-        cover_letter: application.cover_letter,
+        relevant_experience: application.relevant_experience,
+        additional_note: application.additional_note,
+        skills_snapshot: application.skills_snapshot,
+        certificates_snapshot: application.certificates_snapshot,
+        age_at_apply: application.age_at_apply,
         status: 'pending',
       })
       .select()
@@ -63,6 +126,8 @@ export const workerApplicationRepository = {
         applied_at,
         resume_url,
         cover_letter,
+        relevant_experience,
+        additional_note,
         job_postings (
           title,
           company_name,
@@ -103,12 +168,84 @@ export const workerApplicationRepository = {
     return data
   },
 
-  async respondToInvitation(invitationId: string, response: 'accepted' | 'declined'): Promise<void> {
+  async updateInvitationStatus(invitationId: string, status: string): Promise<void> {
     const { error } = await supabase
       .from('job_invitations')
-      .update({ status: response })
+      .update({ status })
       .eq('id', invitationId)
     if (error) throw new Error(error.message)
+  },
+
+  async getInvitationBasic(invitationId: string): Promise<{ applicant_id: string; job_id: string; status: string } | null> {
+    const { data, error } = await supabase
+      .from('job_invitations')
+      .select('applicant_id, job_id, status')
+      .eq('id', invitationId)
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    return data
+  },
+
+  async updateApplicantStatusById(applicantId: string, status: string): Promise<void> {
+    const { error } = await supabase
+      .from('job_applicants')
+      .update({ status })
+      .eq('id', applicantId)
+    if (error) throw new Error(error.message)
+  },
+
+  // Atomic first-come-first-served claim — the DB function locks the posting row so two workers
+  // confirming simultaneously can never oversubscribe the openings.
+  async claimJobOpening(invitationId: string): Promise<string> {
+    const { data, error } = await supabase.rpc('accept_job_invitation', { p_invitation_id: invitationId })
+    if (error) throw new Error(error.message)
+    return data as string
+  },
+
+  async countAcceptedInvitations(jobId: string): Promise<number> {
+    const { count, error } = await supabase
+      .from('job_invitations')
+      .select('id', { count: 'exact', head: true })
+      .eq('job_id', jobId)
+      .eq('status', 'accepted')
+    if (error) throw new Error(error.message)
+    return count ?? 0
+  },
+
+  async closeJobPosting(jobId: string): Promise<void> {
+    const { error } = await supabase
+      .from('job_postings')
+      .update({ status: 'closed', archived_at: new Date().toISOString() })
+      .eq('id', jobId)
+    if (error) throw new Error(error.message)
+  },
+
+  async markSentInvitationsPositionFilled(jobId: string): Promise<void> {
+    const { error } = await supabase
+      .from('job_invitations')
+      .update({ status: 'position_filled' })
+      .eq('job_id', jobId)
+      .eq('status', 'sent')
+    if (error) throw new Error(error.message)
+  },
+
+  async markPendingApplicantsJobClosed(jobId: string): Promise<void> {
+    const { error } = await supabase
+      .from('job_applicants')
+      .update({ status: 'job_closed' })
+      .eq('job_id', jobId)
+      .eq('status', 'pending')
+    if (error) throw new Error(error.message)
+  },
+
+  async getUserContact(userId: string): Promise<{ full_name: string; email_address: string; phone_number: string | null } | null> {
+    const { data, error } = await supabase
+      .from('users')
+      .select('full_name, email_address, phone_number')
+      .eq('id', userId)
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    return data
   },
 
   async getUserIdFromInvitation(invitationId: string): Promise<string | null> {
@@ -132,22 +269,30 @@ export const workerApplicationRepository = {
   // the job's company/department/time fields and create that shift right after promotion.
   async getInvitationContext(invitationId: string): Promise<{
     user_id: string
+    applicant_id: string
+    sent_at: string
     job: {
       id: string
       company_id: string
       department_id: string | null
       title: string
+      company_name: string | null
+      location: string | null
       created_by: string
       form_type: string | null
+      is_recurring: boolean | null
       shift_date: string | null
+      shift_days: string[] | null
       shift_start_time: string | null
       shift_end_time: string | null
       job_start_time: string | null
+      openings: number | null
+      assigned_employee_id: string | null
     }
   } | null> {
     const { data: invitation, error } = await supabase
       .from('job_invitations')
-      .select('applicant_id')
+      .select('applicant_id, sent_at')
       .eq('id', invitationId)
       .single()
     if (error || !invitation) return null
@@ -161,12 +306,12 @@ export const workerApplicationRepository = {
 
     const { data: job, error: jobErr } = await supabase
       .from('job_postings')
-      .select('id, company_id, department_id, title, created_by, form_type, shift_date, shift_start_time, shift_end_time, job_start_time')
+      .select('id, company_id, department_id, title, company_name, location, created_by, form_type, is_recurring, shift_date, shift_days, shift_start_time, shift_end_time, job_start_time, openings, assigned_employee_id')
       .eq('id', applicant.job_id)
       .single()
     if (jobErr || !job) return null
 
-    return { user_id: applicant.user_id, job }
+    return { user_id: applicant.user_id, applicant_id: invitation.applicant_id, sent_at: invitation.sent_at as string, job }
   },
 
   async promoteGuestToWorker(userId: string): Promise<void> {

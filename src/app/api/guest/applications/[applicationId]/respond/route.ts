@@ -34,6 +34,6 @@ export async function PATCH(
     return NextResponse.json({ success: true })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to respond to invitation'
-    return NextResponse.json({ success: false, message }, { status: 500 })
+    return NextResponse.json({ success: false, message }, { status: 400 })
   }
 }

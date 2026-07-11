@@ -38,6 +38,7 @@ describe('jobDescriptionService.generateDescription (UC47)', () => {
   it('passes the job context through to the AI call', async () => {
     await jobDescriptionService.generateDescription({
       title: 'Weekend Cashier',
+      job_type: 'shift',
       company_name: 'Acme Retail',
       department_name: 'Operations',
       location: 'Downtown',
@@ -51,6 +52,7 @@ describe('jobDescriptionService.generateDescription (UC47)', () => {
         schemaName: 'job_description_draft',
         input: expect.objectContaining({
           title: 'Weekend Cashier',
+          job_type: 'shift',
           company_name: 'Acme Retail',
           department_name: 'Operations',
           location: 'Downtown',
@@ -59,6 +61,18 @@ describe('jobDescriptionService.generateDescription (UC47)', () => {
           notes: 'Must be reliable',
         }),
       }),
+    )
+  })
+
+  it('steers the prompt by job type', async () => {
+    await jobDescriptionService.generateDescription({ title: 'Set up stage for gala dinner', job_type: 'oneoff' })
+    expect(openAIService.generateStructuredJson).toHaveBeenLastCalledWith(
+      expect.objectContaining({ instructions: expect.stringContaining('ONE-OFF job') }),
+    )
+
+    await jobDescriptionService.generateDescription({ title: 'Barista for weekend mornings', job_type: 'shift' })
+    expect(openAIService.generateStructuredJson).toHaveBeenLastCalledWith(
+      expect.objectContaining({ instructions: expect.stringContaining('SHIFT job') }),
     )
   })
 })

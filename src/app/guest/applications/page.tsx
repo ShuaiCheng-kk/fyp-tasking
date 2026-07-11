@@ -17,7 +17,7 @@ const pageKeyframes = `
   @keyframes cardStagger   { from { opacity: 0; transform: translateY(14px) scale(0.96) } to { opacity: 1; transform: translateY(0) scale(1) } }
 `
 
-type ApplicationStatus = 'pending' | 'accepted' | 'rejected' | 'withdrawn'
+type ApplicationStatus = 'pending' | 'accepted' | 'rejected' | 'withdrawn' | 'cancelled_by_employer' | 'job_closed'
 
 type Profile = {
   id: string
@@ -29,7 +29,7 @@ type Profile = {
   role: string
 }
 
-type InvitationStatus = 'sent' | 'accepted' | 'declined'
+type InvitationStatus = 'sent' | 'accepted' | 'declined' | 'expired' | 'position_filled' | 'cancelled'
 
 type Application = {
   id: string
@@ -255,6 +255,11 @@ function ApplicationsContent() {
           </Link>
 
           <div style={rightHeaderStyle}>
+            <Link href="/guest/profile" style={{ color: '#D1D5DB', fontSize: '0.875rem', fontWeight: 600, textDecoration: 'none', transition: 'color 0.12s' }}
+              onMouseEnter={e => { e.currentTarget.style.color = '#FFFFFF' }}
+              onMouseLeave={e => { e.currentTarget.style.color = '#D1D5DB' }}>
+              Worker Profile
+            </Link>
             <GuestProfileMenu profile={profile} onLogout={handleLogout} />
           </div>
         </div>
@@ -323,6 +328,16 @@ function ApplicationsContent() {
                   {app.invitation_id && app.invitation_status === 'declined' && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, padding: '8px 12px', background: '#FEF2F2', borderRadius: 8, border: '1px solid #FECACA' }}>
                       <span style={{ fontSize: '0.8125rem', color: '#B91C1C', fontWeight: 600 }}>You declined this invitation</span>
+                    </div>
+                  )}
+                  {app.invitation_id && app.invitation_status === 'expired' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, padding: '8px 12px', background: '#F9FAFB', borderRadius: 8, border: '1px solid #E5E7EB' }}>
+                      <span style={{ fontSize: '0.8125rem', color: '#6B7280', fontWeight: 600 }}>This offer expired — the shift already started</span>
+                    </div>
+                  )}
+                  {app.invitation_id && app.invitation_status === 'position_filled' && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, padding: '8px 12px', background: '#FFFBEB', borderRadius: 8, border: '1px solid #FDE68A' }}>
+                      <span style={{ fontSize: '0.8125rem', color: '#92400E', fontWeight: 600 }}>Position filled — another worker confirmed first</span>
                     </div>
                   )}
                   <div style={cardActionsStyle}>
@@ -453,6 +468,8 @@ function formatDate(date: string) {
 }
 
 function formatStatus(status: ApplicationStatus) {
+  if (status === 'cancelled_by_employer') return 'Cancelled by Employer'
+  if (status === 'job_closed') return 'Job Closed'
   return status.charAt(0).toUpperCase() + status.slice(1)
 }
 

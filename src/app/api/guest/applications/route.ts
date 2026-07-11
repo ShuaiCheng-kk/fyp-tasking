@@ -1,32 +1,42 @@
+// LAYER: Controller
+// RULE: Only handles request/response. No business logic. No DB access.
+
 import { NextRequest, NextResponse } from 'next/server'
-import { workerApplicationService } from '@/services/guest/workerApplicationService'
+import { workerApplicationService, RelevantExperience } from '@/services/guest/workerApplicationService'
+
+const RELEVANT_EXPERIENCE_VALUES = ['none', 'less_than_1', '1_to_2', 'more_than_2']
 
 export async function POST(req: NextRequest) {
+  let body: Record<string, unknown>
   try {
-    const formData = await req.formData()
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
+  }
 
-    const jobId = formData.get('job_id')
-    const userId = formData.get('user_id')
-    const resumeFile = formData.get('resume_file')
-    const coverLetterFile = formData.get('cover_letter_file')
+  const jobId = body.job_id
+  const userId = body.user_id
+  const relevantExperience = body.relevant_experience
 
-    if (
-      typeof jobId !== 'string' ||
-      typeof userId !== 'string' ||
-      !(resumeFile instanceof File) ||
-      !(coverLetterFile instanceof File)
-    ) {
-      return NextResponse.json(
-        { success: false, message: 'Missing required application fields' },
-        { status: 400 }
-      )
-    }
+  if (typeof jobId !== 'string' || !jobId) {
+    return NextResponse.json({ success: false, message: 'job_id is required' }, { status: 400 })
+  }
+  if (typeof userId !== 'string' || !userId) {
+    return NextResponse.json({ success: false, message: 'user_id is required' }, { status: 400 })
+  }
+  if (typeof relevantExperience !== 'string' || !RELEVANT_EXPERIENCE_VALUES.includes(relevantExperience)) {
+    return NextResponse.json(
+      { success: false, message: 'relevant_experience must be one of: none, less_than_1, 1_to_2, more_than_2' },
+      { status: 400 },
+    )
+  }
 
+  try {
     const application = await workerApplicationService.submitApplication({
       job_id: jobId,
       user_id: userId,
-      resume_file: resumeFile,
-      cover_letter_file: coverLetterFile,
+      relevant_experience: relevantExperience as RelevantExperience,
+      additional_note: typeof body.additional_note === 'string' ? body.additional_note : null,
     })
 
     return NextResponse.json({
@@ -38,12 +48,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         success: false,
-        message:
-          err instanceof Error
-            ? err.message
-            : 'Failed to submit application',
+        message: err instanceof Error ? err.message : 'Failed to submit application',
       },
-      { status: 500 }
+      { status: 400 }
     )
   }
 }

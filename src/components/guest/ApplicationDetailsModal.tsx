@@ -15,7 +15,7 @@ import {
   Gift,
 } from 'lucide-react'
 
-type ApplicationStatus = 'pending' | 'accepted' | 'rejected' | 'withdrawn'
+type ApplicationStatus = 'pending' | 'accepted' | 'rejected' | 'withdrawn' | 'cancelled_by_employer' | 'job_closed'
 
 type Application = {
   id: string

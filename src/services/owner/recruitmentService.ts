@@ -2,6 +2,7 @@
 // RULE: Business logic only. No HTTP handling. No direct DB access.
 
 import { recruitmentRepository } from '@/repositories/owner/recruitmentRepository'
+import { emailService } from '@/services/email/emailService'
 import { CasualWorkerStatus, JobApplicant, JobPosting, JobPostingInput, JobPostingPendingApproval, JobPostingSummary } from '@/types/Recruitment'
 
 export const recruitmentService = {
@@ -88,7 +89,128 @@ export const recruitmentService = {
 
   async getApplicants(job_id: string): Promise<JobApplicant[]> {
     if (!job_id) throw new Error('job_id is required')
-    return recruitmentRepository.getApplicantsByJob(job_id)
+    const applicants = await recruitmentRepository.getApplicantsByJob(job_id)
+    const userIds = [...new Set(applicants.map(a => a.user_id).filter((id): id is string => Boolean(id)))]
+    const cancellationCounts = await recruitmentRepository.getWorkerCancellationCounts(userIds)
+    return applicants.map(applicant => ({
+      ...applicant,
+      worker_cancellation_count: applicant.user_id ? cancellationCounts.get(applicant.user_id) ?? 0 : 0,
+    }))
+  },
+
+  // Removes ONE confirmed worker while the job itself keeps hiring: the opening is freed, the
+  // job reopens if it had auto-closed on becoming full, and the worker is told why. Distinct
+  // from cancelJob, where the work itself no longer exists.
+  async removeConfirmedWorker(input: {
+    job_id: string
+    applicant_id: string
+    removed_by: string
+    reason: string
+  }): Promise<void> {
+    if (!input.job_id || !input.applicant_id || !input.removed_by) {
+      throw new Error('job_id, applicant_id, and removed_by are required')
+    }
+    // Employer-side cancellation hits a worker who already committed — the reason is mandatory
+    // and kept on record (worker-side cancellations only need a reason optionally).
+    const reason = input.reason?.trim()
+    if (!reason) throw new Error('A reason is required to remove a confirmed worker')
+
+    const job = await recruitmentRepository.getJobPostingById(input.job_id)
+    if (!job) throw new Error('Job posting not found')
+    const applicant = await recruitmentRepository.getApplicantById(input.applicant_id)
+    if (!applicant || applicant.job_id !== input.job_id) throw new Error('Applicant not found on this job')
+    if (!applicant.user_id) throw new Error('Applicant has no linked worker account')
+
+    // Once the shift has started, Recruitment is over — no-shows and early leaves are the
+    // Attendance module's business.
+    const shifts = (await recruitmentRepository.getShiftsForJobWorker(input.job_id, applicant.user_id))
+      .filter(shift => shift.status !== 'cancelled')
+    const started = shifts.some(shift => new Date(`${shift.shift_date}T${shift.start_time}`).getTime() <= Date.now())
+    if (started) throw new Error('This worker\'s shift has already started — handle it through Attendance instead')
+
+    await recruitmentRepository.cancelShiftsByIds(shifts.map(shift => shift.id))
+    await recruitmentRepository.cancelAcceptedInvitationByApplicant(input.applicant_id)
+    // NOT "rejected" — the worker WAS hired and then cancelled on; the record must say so.
+    await recruitmentRepository.setApplicantStatus(input.applicant_id, 'cancelled_by_employer')
+    await recruitmentRepository.insertRecruitmentCancellation({
+      job_id: input.job_id,
+      applicant_id: input.applicant_id,
+      cancelled_by: input.removed_by,
+      cancelled_role: 'employer',
+      scope: 'worker',
+      reason,
+    })
+
+    // The opening is vacant again — reopen an auto-closed job unless its deadline has passed
+    // (an expired posting must never silently reappear on the public board).
+    const expired = Boolean(job.expires_at && new Date(job.expires_at) < new Date())
+    if (job.status === 'closed' && !expired) {
+      await recruitmentRepository.reopenJobPosting(input.job_id)
+    }
+
+    try {
+      const contact = await recruitmentRepository.getUsersByIds([applicant.user_id])
+      if (applicant.email_address) {
+        await emailService.sendEngagementCancelledEmail({
+          to: applicant.email_address,
+          fullName: contact[0]?.full_name ?? applicant.full_name,
+          jobTitle: job.title,
+          companyName: job.company_name ?? 'the company',
+          reason,
+        })
+      }
+    } catch (err) {
+      console.error('[removeConfirmedWorker] worker notification failed:', err)
+    }
+  },
+
+  // Cancels the WORK itself (event called off, budget gone): every confirmed worker is notified,
+  // all future shifts and open offers are voided, and the job stays closed for good.
+  async cancelJob(input: { job_id: string; cancelled_by: string; reason: string }): Promise<void> {
+    if (!input.job_id || !input.cancelled_by) throw new Error('job_id and cancelled_by are required')
+    const reason = input.reason?.trim()
+    if (!reason) throw new Error('A reason is required to cancel a job')
+
+    const job = await recruitmentRepository.getJobPostingById(input.job_id)
+    if (!job) throw new Error('Job posting not found')
+
+    const confirmedWorkers = await recruitmentRepository.getConfirmedWorkersByJob(input.job_id)
+
+    const today = new Date()
+    const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+    await recruitmentRepository.cancelFutureShiftsForJob(input.job_id, todayKey)
+    await recruitmentRepository.cancelOpenInvitationsForJob(input.job_id)
+    for (const worker of confirmedWorkers) {
+      await recruitmentRepository.setApplicantStatus(worker.applicant_id, 'cancelled_by_employer')
+    }
+    await recruitmentRepository.markPendingApplicantsJobClosed(input.job_id)
+    await recruitmentRepository.insertRecruitmentCancellation({
+      job_id: input.job_id,
+      applicant_id: null,
+      cancelled_by: input.cancelled_by,
+      cancelled_role: 'employer',
+      scope: 'job',
+      reason,
+    })
+    await recruitmentRepository.updateJobPosting(input.job_id, {
+      status: 'closed',
+      archived_at: new Date().toISOString(),
+    })
+
+    // Every confirmed worker gets told individually; a failed email never blocks the rest.
+    for (const worker of confirmedWorkers) {
+      try {
+        await emailService.sendEngagementCancelledEmail({
+          to: worker.email_address,
+          fullName: worker.full_name,
+          jobTitle: job.title,
+          companyName: job.company_name ?? 'the company',
+          reason,
+        })
+      } catch (err) {
+        console.error('[cancelJob] worker notification failed:', err)
+      }
+    }
   },
 
   async createJobPosting(input: JobPostingInput): Promise<JobPosting> {
@@ -119,11 +241,13 @@ export const recruitmentService = {
 
   async publishDraft(id: string): Promise<JobPosting> {
     if (!id) throw new Error('job_id is required')
+    await assertPublishable(id)
     return recruitmentRepository.updateJobPosting(id, { status: 'open' })
   },
 
   async submitForReview(id: string): Promise<JobPosting> {
     if (!id) throw new Error('job_id is required')
+    await assertPublishable(id)
     return recruitmentRepository.updateJobPosting(id, { status: 'pending_approval' })
   },
 
@@ -136,6 +260,27 @@ export const recruitmentService = {
     if (!id) throw new Error('job_id is required')
     if (input.title !== undefined && !input.title.trim()) throw new Error('title is required')
     if (input.description !== undefined && !input.description.trim()) throw new Error('description is required')
+    if (input.minimum_age !== undefined) validateMinimumAge(input.minimum_age)
+    if (input.openings !== undefined) validateOpenings(input.openings)
+
+    const posting = await recruitmentRepository.getJobPostingById(id)
+    if (!posting) throw new Error('Job posting not found')
+
+    // Published jobs are immutable: applicants must never see different terms (pay, times,
+    // requirements) than what they applied to. Only drafts and rejected postings — neither of
+    // which was ever publicly visible — can be edited. To change a live job: archive it and
+    // post a new one (or duplicate).
+    const editable = posting.status === 'draft' || posting.status === 'rejected'
+    if (!editable) {
+      // Single exception: changing the application deadline (UC43) misleads no one
+      // — existing applications are unaffected — and re-opening an expired job depends on it.
+      const keys = Object.keys(input).filter(key => input[key as keyof JobPostingInput] !== undefined)
+      const onlyDeadline = keys.length > 0 && keys.every(key => key === 'expires_at')
+      if (!(posting.status === 'open' && onlyDeadline)) {
+        throw new Error('A published job cannot be edited — archive it and post a new one, or duplicate it')
+      }
+    }
+
     return recruitmentRepository.updateJobPosting(id, input)
   },
 
@@ -162,6 +307,8 @@ export const recruitmentService = {
     const original = await recruitmentRepository.getJobPostingById(id)
     if (!original) throw new Error('Job posting not found')
     return recruitmentRepository.createJobPosting({
+      // Duplicating a draft yields another draft; anything else republishes as a fresh open posting
+      status: original.status === 'draft' ? 'draft' : 'open',
       company_id: original.company_id,
       department_id: original.department_id,
       created_by,
@@ -187,7 +334,9 @@ export const recruitmentService = {
       assigned_employee_id: original.assigned_employee_id,
       experience_required: original.experience_required,
       minimum_age: original.minimum_age,
+      openings: original.openings,
       uniform_required: original.uniform_required,
+      uniform_type: original.uniform_type,
       uniform_details: original.uniform_details,
     })
   },
@@ -211,6 +360,22 @@ export const recruitmentService = {
         sent_by: input.decided_by,
         message: input.message ?? 'Your application has been accepted. Please wait for onboarding instructions.',
       })
+
+      // The worker isn't online 24/7 — an email closes the gap until they log in and confirm
+      // the offer. A failed send must never roll back the acceptance itself.
+      try {
+        const job = await recruitmentRepository.getJobPostingById(applicant.job_id)
+        if (applicant.email_address) {
+          await emailService.sendApplicationAcceptedEmail({
+            to: applicant.email_address,
+            fullName: applicant.full_name,
+            jobTitle: job?.title ?? 'a job',
+            companyName: job?.company_name ?? 'the company',
+          })
+        }
+      } catch (err) {
+        console.error('[decideApplicant] acceptance email failed:', err)
+      }
     }
     return updated
   },
@@ -270,4 +435,40 @@ function validateJobPostingInput(input: JobPostingInput): void {
   if (!isDraft && input.form_type === 'oneoff' && !input.job_start_time) {
     throw new Error('job_start_time is required to publish a one-off job')
   }
+  // Every published casual-worker posting must name a responsible employee: the on-site contact
+  // the worker reports to, and the supervising Employee the attendance approval chain starts at.
+  if (!isDraft && !input.assigned_employee_id) {
+    throw new Error('A responsible employee is required to publish a job')
+  }
+  validateMinimumAge(input.minimum_age)
+  validateOpenings(input.openings)
 }
+
+// Minimum age is a hard eligibility gate compared against the applicant's date of birth, so it
+// must be a plausible whole number — never free text like "21+".
+function validateMinimumAge(minimum_age: number | null | undefined): void {
+  if (minimum_age === undefined || minimum_age === null) return
+  if (!Number.isInteger(minimum_age) || minimum_age < 13 || minimum_age > 99) {
+    throw new Error('minimum_age must be a whole number between 13 and 99')
+  }
+}
+
+function validateOpenings(openings: number | null | undefined): void {
+  if (openings === undefined || openings === null) return
+  if (!Number.isInteger(openings) || openings < 1) {
+    throw new Error('openings must be a whole number of at least 1')
+  }
+}
+
+// Guards the draft -> open / draft -> pending_approval transitions with the same rules
+// createJobPosting applies to directly-published postings.
+async function assertPublishable(id: string): Promise<void> {
+  const posting = await recruitmentRepository.getJobPostingById(id)
+  if (!posting) throw new Error('Job posting not found')
+  if (!posting.description?.trim()) throw new Error('description is required to publish a job')
+  if (!posting.assigned_employee_id) throw new Error('A responsible employee is required to publish a job')
+  if (posting.form_type === 'oneoff' && !posting.job_start_time) {
+    throw new Error('job_start_time is required to publish a one-off job')
+  }
+}
+
