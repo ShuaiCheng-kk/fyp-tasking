@@ -18,15 +18,17 @@ export const workerApplicationRepository = {
   },
 
   // The profile fields that get snapshotted onto an application, keyed by internal user id.
+  // role comes along so the service can reject company staff trying to apply for casual jobs.
   async getApplicantProfile(userId: string): Promise<{
     id: string
+    role: string
     date_of_birth: string | null
     skills: string | null
     resume_url: string | null
   } | null> {
     const { data, error } = await supabase
       .from('users')
-      .select('id, date_of_birth, skills, resume_url')
+      .select('id, role, date_of_birth, skills, resume_url')
       .eq('id', userId)
       .maybeSingle()
 

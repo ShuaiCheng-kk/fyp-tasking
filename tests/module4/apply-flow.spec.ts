@@ -284,3 +284,19 @@ test('rejects an invalid relevant_experience value at the controller', async ({ 
   expect(res.status()).toBe(400)
   expect((await res.json()).message).toContain('relevant_experience')
 })
+
+test('rejects an application from a company-staff account (server-side backstop)', async ({ request }) => {
+  const job = await createJob(request, {
+    title: 'Staff Cannot Apply Role',
+    formType: 'shift',
+    shift_date: '2030-04-02',
+    shift_start_time: '09:00',
+    shift_end_time: '17:00',
+  })
+  // employeeId is a role='Employee' user seeded in beforeAll.
+  const res = await request.post('/api/guest/applications', {
+    data: { job_id: job.id, user_id: employeeId, relevant_experience: 'none' },
+  })
+  expect(res.status()).toBe(400)
+  expect((await res.json()).message).toContain('Company staff accounts cannot apply')
+})

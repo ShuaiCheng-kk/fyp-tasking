@@ -694,6 +694,70 @@ test('UC38 archives and unarchives a job posting', async ({ request }) => {
   expect(unarchiveBody.posting.archived_at).toBeNull()
 })
 
+test('UC38 refuses to archive a job whose applications are not all resolved', async ({ request }) => {
+  const jobRes = await request.post('/api/recruitment', {
+    data: {
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      created_by: seeded.ownerId,
+      assigned_employee_id: employeeId,
+      title: 'Still Deciding',
+      description: 'Has an undecided applicant.',
+      formType: 'oneoff',
+      shift_date: '2030-03-11',
+      job_start_time: '09:00',
+      status: 'open',
+    },
+  })
+  const jobId = (await jobRes.json()).posting.id as string
+  createdJobIds.push(jobId)
+
+  const guest = await seedGuest('oneoff')
+  const { data: applicant, error: applicantError } = await admin
+    .from('job_applicants')
+    .insert({ job_id: jobId, user_id: guest.userId, status: 'pending' })
+    .select()
+    .single()
+  if (applicantError || !applicant) throw new Error(`Failed to seed applicant: ${applicantError?.message}`)
+
+  // Pending application → archiving is refused
+  const blockedRes = await request.patch('/api/recruitment', {
+    data: { action: 'archive_posting', job_id: jobId },
+  })
+  expect(blockedRes.status()).toBe(400)
+  expect((await blockedRes.json()).message).toContain('still has applications to resolve')
+
+  // Accepted but not yet confirmed by the worker → still refused
+  const decideRes = await request.patch('/api/recruitment', {
+    data: { action: 'decide_applicant', applicant_id: applicant.id, decision: 'accepted', decided_by: seeded.ownerId },
+  })
+  expect(decideRes.status()).toBe(200)
+
+  const awaitingRes = await request.patch('/api/recruitment', {
+    data: { action: 'archive_posting', job_id: jobId },
+  })
+  expect(awaitingRes.status()).toBe(400)
+  expect((await awaitingRes.json()).message).toContain('still has applications to resolve')
+
+  // Worker declines → nothing is outstanding any more, so the job can be archived
+  const { data: invitation } = await admin
+    .from('job_invitations')
+    .select('id')
+    .eq('job_id', jobId)
+    .eq('applicant_id', applicant.id)
+    .single()
+  const declineRes = await request.patch(`/api/guest/applications/${applicant.id}/respond`, {
+    data: { invitation_id: invitation!.id, response: 'declined' },
+  })
+  expect(declineRes.status()).toBe(200)
+
+  const archiveRes = await request.patch('/api/recruitment', {
+    data: { action: 'archive_posting', job_id: jobId },
+  })
+  expect(archiveRes.status()).toBe(200)
+  expect((await archiveRes.json()).posting.status).toBe('archived')
+})
+
 test('UC39 duplicates a job posting as a new, independently-published copy', async ({ request }) => {
   const jobRes = await request.post('/api/recruitment', {
     data: {
@@ -837,7 +901,9 @@ test('UC35 stores minimum_age as a number and defaults openings to 1', async ({ 
   const posting = (await res.json()).posting
   createdJobIds.push(posting.id)
   expect(posting.minimum_age).toBe(21)
-  expect(posting.openings).toBe(1)
+  // Omitting openings stores null; the effective count defaults to one position (the same
+  // `openings ?? 1` fallback the UI applies).
+  expect(posting.openings ?? 1).toBe(1)
 
   const badRes = await request.post('/api/recruitment', {
     data: {
@@ -944,4 +1010,85 @@ test('a rejected posting can be edited and resubmitted for approval', async ({ r
   })
   expect(resubmitRes.status()).toBe(200)
   expect((await resubmitRes.json()).posting.status).toBe('pending_approval')
+})
+
+test("worker times must sit inside the supervisor's own shift on that date", async ({ request }) => {
+  // Supervisor works 11:00–20:00 on 2030-04-01; a casual worker may start later / finish
+  // earlier, but never be on site while the supervisor is not.
+  const { data: supShift, error: supShiftError } = await admin
+    .from('shifts')
+    .insert({
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      shift_date: '2030-04-01',
+      start_time: '11:00',
+      end_time: '20:00',
+      title: 'Supervisor window shift',
+      created_by: seeded.ownerId,
+      publication_status: 'published',
+    })
+    .select('id')
+    .single()
+  if (supShiftError || !supShift) throw new Error(`Failed to seed supervisor shift: ${supShiftError?.message}`)
+  const { error: supAssignError } = await admin
+    .from('shift_assignments')
+    .insert({ shift_id: supShift.id, user_id: employeeId, assigned_by: seeded.ownerId })
+  if (supAssignError) throw new Error(`Failed to assign supervisor shift: ${supAssignError.message}`)
+
+  const base = {
+    company_id: seeded.companyId,
+    department_id: departmentId,
+    created_by: seeded.ownerId,
+    assigned_employee_id: employeeId,
+    description: 'Worker must stay inside the supervisor shift window.',
+    shift_date: '2030-04-01',
+    status: 'open',
+  }
+
+  // Shift job starting before the supervisor arrives → rejected
+  const earlyStart = await request.post('/api/recruitment', {
+    data: { ...base, title: 'Too-Early Shift Worker', formType: 'shift', shift_start_time: '10:30', shift_end_time: '19:00' },
+  })
+  expect(earlyStart.status()).toBe(400)
+  expect((await earlyStart.json()).message).toContain("supervisor's shift start")
+
+  // Shift job ending after the supervisor leaves → rejected
+  const lateEnd = await request.post('/api/recruitment', {
+    data: { ...base, title: 'Too-Late Shift Worker', formType: 'shift', shift_start_time: '11:30', shift_end_time: '20:30' },
+  })
+  expect(lateEnd.status()).toBe(400)
+  expect((await lateEnd.json()).message).toContain("supervisor's shift end")
+
+  // Inside the window (later start, earlier end) → published
+  const okShift = await request.post('/api/recruitment', {
+    data: { ...base, title: 'Inside-Window Shift Worker', formType: 'shift', shift_start_time: '11:30', shift_end_time: '19:00' },
+  })
+  expect(okShift.status()).toBe(201)
+  createdJobIds.push((await okShift.json()).posting.id)
+
+  // One-off starting before the supervisor arrives → rejected; inside → published
+  const earlyOneoff = await request.post('/api/recruitment', {
+    data: { ...base, title: 'Too-Early One-Off', formType: 'oneoff', job_start_time: '10:30' },
+  })
+  expect(earlyOneoff.status()).toBe(400)
+  expect((await earlyOneoff.json()).message).toContain("within the supervisor's shift")
+
+  const okOneoff = await request.post('/api/recruitment', {
+    data: { ...base, title: 'Inside-Window One-Off', formType: 'oneoff', job_start_time: '12:00' },
+  })
+  expect(okOneoff.status()).toBe(201)
+  createdJobIds.push((await okOneoff.json()).posting.id)
+
+  // A draft with out-of-window times can be saved, but publishing it is blocked the same way.
+  const draftRes = await request.post('/api/recruitment', {
+    data: { ...base, title: 'Out-of-Window Draft', formType: 'shift', shift_start_time: '09:00', shift_end_time: '19:00', status: 'draft' },
+  })
+  expect(draftRes.status()).toBe(201)
+  const draftId = (await draftRes.json()).posting.id as string
+  createdJobIds.push(draftId)
+  const publishRes = await request.patch('/api/recruitment', {
+    data: { action: 'publish_draft', job_id: draftId },
+  })
+  expect(publishRes.status()).toBe(400)
+  expect((await publishRes.json()).message).toContain("supervisor's shift start")
 })

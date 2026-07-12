@@ -54,6 +54,8 @@ function SignInContent() {
   const isRemoved = searchParams.get('removed') === 'true';
   const isConfirmed = searchParams.get('confirmed') === 'true';
   const isJoined = searchParams.get('joined') === 'true';
+  // Present when the visitor came here from a job's Apply button.
+  const jobIdParam = searchParams.get('job_id');
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -98,6 +100,14 @@ function SignInContent() {
         localStorage.setItem('tasking_company_id_' + authUid, data.user.company_id);
       }
       localStorage.setItem('tasking_user_role', role);
+
+      // Came from the job board's Apply button: send workers straight back to that posting so the
+      // apply modal reopens in place, instead of dropping them on their dashboard.
+      const jobId = searchParams.get('job_id') || localStorage.getItem('apply_job_id');
+      if (jobId && (role === 'Guest User' || role === 'Casual Worker')) {
+        window.location.href = `/job-board?job_id=${jobId}`;
+        return;
+      }
 
       const route = role === 'Owner' ? getOwnerLandingHref() : (ROLE_ROUTES[role] || '/owner/dashboard');
       window.location.href = route;
@@ -230,7 +240,13 @@ function SignInContent() {
 
         <p style={{ marginTop: '24px', textAlign: 'center', fontFamily: fB, fontSize: '0.9375rem', color: '#78716C' }}>
           Don&apos;t have an account?{' '}
-          <Link href="/get-started" style={{ color: '#F97316', fontWeight: 600 }}>
+          {/* Arriving here from a job's Apply button means they're an applicant — send them
+              straight to the guest registration form, since the generic Get Started page only
+              offers Business Owner / Invitation Code. */}
+          <Link
+            href={jobIdParam ? `/get-started?role=guest&job_id=${jobIdParam}` : '/get-started'}
+            style={{ color: '#F97316', fontWeight: 600 }}
+          >
             Get Started →
           </Link>
         </p>

@@ -40,7 +40,7 @@ export const jobTemplateRepository = {
       .from('job_templates')
       .select('*')
       .eq('company_id', company_id)
-      .order('created_at', { ascending: true })
+      .order('updated_at', { ascending: false })
     if (error) throw new Error(error.message)
     return (data ?? []) as JobTemplate[]
   },

@@ -8,7 +8,9 @@ vi.mock('@/lib/supabase', () => ({
 vi.mock('@/services/email/emailService', () => ({
   emailService: {
     sendApplicationAcceptedEmail: vi.fn(),
+    sendApplicationRejectedEmail: vi.fn(),
     sendOfferConfirmedEmail: vi.fn(),
+    sendEngagementCancelledEmail: vi.fn(),
   },
 }))
 
@@ -45,6 +47,7 @@ vi.mock('@/repositories/owner/recruitmentRepository', () => ({
     cancelAcceptedInvitationByApplicant: vi.fn(),
     cancelOpenInvitationsForJob: vi.fn(),
     markPendingApplicantsJobClosed: vi.fn(),
+    getEmployeeShiftOnDate: vi.fn(),
     getShiftsForJobWorker: vi.fn(),
     cancelShiftsByIds: vi.fn(),
     cancelFutureShiftsForJob: vi.fn(),
@@ -55,6 +58,7 @@ vi.mock('@/repositories/owner/recruitmentRepository', () => ({
 
 import { recruitmentService } from './recruitmentService'
 import { recruitmentRepository } from '@/repositories/owner/recruitmentRepository'
+import { emailService } from '@/services/email/emailService'
 import { JobPosting, JobApplicant, JobPostingInput } from '@/types/Recruitment'
 
 const basePosting: JobPosting = {
@@ -227,6 +231,76 @@ describe('recruitmentService — Recruitment', () => {
     })
   })
 
+  describe('createJobPosting — worker times must sit inside the supervisor shift', () => {
+    const supervisorShift = { start_time: '11:00:00', end_time: '20:00:00' }
+    const shiftInput: JobPostingInput = {
+      ...baseInput,
+      form_type: 'shift',
+      shift_date: '2030-03-01',
+      shift_start_time: '11:00',
+      shift_end_time: '20:00',
+    }
+
+    it('rejects a shift job starting before the supervisor shift starts', async () => {
+      vi.mocked(recruitmentRepository.getEmployeeShiftOnDate).mockResolvedValue(supervisorShift)
+      await expect(recruitmentService.createJobPosting({ ...shiftInput, shift_start_time: '10:30' }))
+        .rejects.toThrow("Start time cannot be earlier than the supervisor's shift start (11:00 AM)")
+    })
+
+    it('rejects a shift job ending after the supervisor shift ends', async () => {
+      vi.mocked(recruitmentRepository.getEmployeeShiftOnDate).mockResolvedValue(supervisorShift)
+      await expect(recruitmentService.createJobPosting({ ...shiftInput, shift_end_time: '20:30' }))
+        .rejects.toThrow("End time cannot be later than the supervisor's shift end (8:00 PM)")
+    })
+
+    it('allows a shift job starting later and ending earlier than the supervisor', async () => {
+      vi.mocked(recruitmentRepository.getEmployeeShiftOnDate).mockResolvedValue(supervisorShift)
+      vi.mocked(recruitmentRepository.createJobPosting).mockResolvedValue(basePosting)
+      await recruitmentService.createJobPosting({ ...shiftInput, shift_start_time: '11:30', shift_end_time: '19:00' })
+      expect(recruitmentRepository.createJobPosting).toHaveBeenCalled()
+      expect(recruitmentRepository.getEmployeeShiftOnDate).toHaveBeenCalledWith('emp-1', 'company-1', '2030-03-01')
+    })
+
+    it('rejects a one-off job starting outside the supervisor shift', async () => {
+      vi.mocked(recruitmentRepository.getEmployeeShiftOnDate).mockResolvedValue(supervisorShift)
+      const oneoffInput: JobPostingInput = { ...baseInput, form_type: 'oneoff', shift_date: '2030-03-01', job_start_time: '10:30' }
+      await expect(recruitmentService.createJobPosting(oneoffInput))
+        .rejects.toThrow("Start time must be within the supervisor's shift (11:00 AM – 8:00 PM)")
+      await expect(recruitmentService.createJobPosting({ ...oneoffInput, job_start_time: '20:30' }))
+        .rejects.toThrow("Start time must be within the supervisor's shift (11:00 AM – 8:00 PM)")
+    })
+
+    it('allows a one-off job starting inside the supervisor shift', async () => {
+      vi.mocked(recruitmentRepository.getEmployeeShiftOnDate).mockResolvedValue(supervisorShift)
+      vi.mocked(recruitmentRepository.createJobPosting).mockResolvedValue(basePosting)
+      await recruitmentService.createJobPosting({ ...baseInput, form_type: 'oneoff', shift_date: '2030-03-01', job_start_time: '12:00' })
+      expect(recruitmentRepository.createJobPosting).toHaveBeenCalled()
+    })
+
+    it('skips the check when the supervisor has no shift on that date', async () => {
+      vi.mocked(recruitmentRepository.getEmployeeShiftOnDate).mockResolvedValue(null)
+      vi.mocked(recruitmentRepository.createJobPosting).mockResolvedValue(basePosting)
+      await recruitmentService.createJobPosting({ ...shiftInput, shift_start_time: '08:00' })
+      expect(recruitmentRepository.createJobPosting).toHaveBeenCalled()
+    })
+
+    it('skips the check for drafts', async () => {
+      vi.mocked(recruitmentRepository.createJobPosting).mockResolvedValue(basePosting)
+      await recruitmentService.createJobPosting({ ...shiftInput, status: 'draft', shift_start_time: '08:00' })
+      expect(recruitmentRepository.getEmployeeShiftOnDate).not.toHaveBeenCalled()
+    })
+
+    it('enforces the same window when publishing a draft', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({
+        ...basePosting, status: 'draft', form_type: 'shift',
+        shift_date: '2030-03-01', shift_start_time: '10:00', shift_end_time: '19:00',
+      })
+      vi.mocked(recruitmentRepository.getEmployeeShiftOnDate).mockResolvedValue(supervisorShift)
+      await expect(recruitmentService.publishDraft('job-1'))
+        .rejects.toThrow("Start time cannot be earlier than the supervisor's shift start (11:00 AM)")
+    })
+  })
+
   describe('editJobPosting — published jobs are immutable', () => {
     it('edits a draft posting', async () => {
       vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({ ...basePosting, status: 'draft' })
@@ -290,7 +364,41 @@ describe('recruitmentService — Recruitment', () => {
   })
 
   describe('archive / unarchive / delete (UC38)', () => {
-    it('archives a job posting and sets archived_at', async () => {
+    it('archives a job posting and sets archived_at once every application is resolved', async () => {
+      vi.mocked(recruitmentRepository.getApplicantCounts).mockResolvedValue([
+        { job_id: 'job-1', status: 'rejected', invitation_status: null },
+        { job_id: 'job-1', status: 'accepted', invitation_status: 'accepted' },
+      ])
+      vi.mocked(recruitmentRepository.updateJobPosting).mockResolvedValue({ ...basePosting, status: 'archived' })
+
+      await recruitmentService.archiveJobPosting('job-1')
+
+      expect(recruitmentRepository.updateJobPosting).toHaveBeenCalledWith('job-1', expect.objectContaining({ status: 'archived' }))
+    })
+
+    it('refuses to archive while an application is still pending the Owner decision', async () => {
+      vi.mocked(recruitmentRepository.getApplicantCounts).mockResolvedValue([
+        { job_id: 'job-1', status: 'rejected', invitation_status: null },
+        { job_id: 'job-1', status: 'pending', invitation_status: null },
+      ])
+
+      await expect(recruitmentService.archiveJobPosting('job-1'))
+        .rejects.toThrow('This job still has applications to resolve')
+      expect(recruitmentRepository.updateJobPosting).not.toHaveBeenCalled()
+    })
+
+    it('refuses to archive while an accepted worker has not confirmed their invitation yet', async () => {
+      vi.mocked(recruitmentRepository.getApplicantCounts).mockResolvedValue([
+        { job_id: 'job-1', status: 'accepted', invitation_status: 'sent' },
+      ])
+
+      await expect(recruitmentService.archiveJobPosting('job-1'))
+        .rejects.toThrow('This job still has applications to resolve')
+      expect(recruitmentRepository.updateJobPosting).not.toHaveBeenCalled()
+    })
+
+    it('archives a job nobody applied to', async () => {
+      vi.mocked(recruitmentRepository.getApplicantCounts).mockResolvedValue([])
       vi.mocked(recruitmentRepository.updateJobPosting).mockResolvedValue({ ...basePosting, status: 'archived' })
 
       await recruitmentService.archiveJobPosting('job-1')
@@ -304,11 +412,6 @@ describe('recruitmentService — Recruitment', () => {
       await recruitmentService.unarchiveJobPosting('job-1')
 
       expect(recruitmentRepository.updateJobPosting).toHaveBeenCalledWith('job-1', { status: 'open', archived_at: null })
-    })
-
-    it('deletes a job posting', async () => {
-      await recruitmentService.deleteJobPosting('job-1')
-      expect(recruitmentRepository.deleteJobPosting).toHaveBeenCalledWith('job-1')
     })
   })
 
@@ -410,6 +513,28 @@ describe('recruitmentService — Recruitment', () => {
     })
   })
 
+  describe('getJobPostings — pending / confirmed / awaiting-confirmation counts', () => {
+    it('splits applicants into pending, confirmed (both sides accepted), and awaiting worker confirmation', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingsByCompany).mockResolvedValue([{ ...basePosting, openings: 2 }])
+      vi.mocked(recruitmentRepository.getApplicantCounts).mockResolvedValue([
+        { job_id: 'job-1', status: 'pending', invitation_status: null },
+        { job_id: 'job-1', status: 'pending', invitation_status: null },
+        { job_id: 'job-1', status: 'accepted', invitation_status: 'accepted' },
+        { job_id: 'job-1', status: 'accepted', invitation_status: 'sent' },
+        { job_id: 'job-1', status: 'rejected', invitation_status: null },
+      ])
+      vi.mocked(recruitmentRepository.getDepartmentsByIds).mockResolvedValue([])
+      vi.mocked(recruitmentRepository.getUsersByIds).mockResolvedValue([])
+
+      const [result] = await recruitmentService.getJobPostings('company-1')
+
+      expect(result.applicant_count).toBe(5)
+      expect(result.pending_count).toBe(2)
+      expect(result.confirmed_count).toBe(1)
+      expect(result.awaiting_confirmation_count).toBe(1)
+    })
+  })
+
   describe('getApplicants (UC44)', () => {
     it('returns applicants with resolved full_name, email_address, and cancellation history count', async () => {
       vi.mocked(recruitmentRepository.getApplicantsByJob).mockResolvedValue([baseApplicant])
@@ -495,22 +620,27 @@ describe('recruitmentService — Recruitment', () => {
       expect(recruitmentRepository.cancelShiftsByIds).not.toHaveBeenCalled()
     })
 
-    it('cancelJob requires a reason', async () => {
-      await expect(recruitmentService.cancelJob({ job_id: 'job-1', cancelled_by: 'owner-1', reason: '' }))
-        .rejects.toThrow('A reason is required')
-    })
-
-    it('cancelJob voids shifts, offers, and applications, then closes the job for good', async () => {
-      await recruitmentService.cancelJob({ job_id: 'job-1', cancelled_by: 'owner-1', reason: 'Event called off' })
+    // Deleting a posting is the "the whole job is off" action. Confirmed workers keep a real
+    // shift after the posting row is gone (source_job_posting_id is ON DELETE SET NULL), so they
+    // must be cancelled and told before the row disappears — otherwise they'd turn up for work.
+    it('deleteJobPosting cancels confirmed workers\' shifts and emails them before deleting', async () => {
+      await recruitmentService.deleteJobPosting('job-1')
 
       expect(recruitmentRepository.cancelFutureShiftsForJob).toHaveBeenCalledWith('job-1', expect.any(String))
-      expect(recruitmentRepository.cancelOpenInvitationsForJob).toHaveBeenCalledWith('job-1')
-      expect(recruitmentRepository.setApplicantStatus).toHaveBeenCalledWith('applicant-1', 'cancelled_by_employer')
-      expect(recruitmentRepository.markPendingApplicantsJobClosed).toHaveBeenCalledWith('job-1')
-      expect(recruitmentRepository.insertRecruitmentCancellation).toHaveBeenCalledWith(
-        expect.objectContaining({ cancelled_role: 'employer', scope: 'job', applicant_id: null }),
+      expect(emailService.sendEngagementCancelledEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ to: 'jane@example.com', jobTitle: 'Weekend Cashier' }),
       )
-      expect(recruitmentRepository.updateJobPosting).toHaveBeenCalledWith('job-1', expect.objectContaining({ status: 'closed' }))
+      expect(recruitmentRepository.deleteJobPosting).toHaveBeenCalledWith('job-1')
+    })
+
+    it('deleteJobPosting skips the cancellation side effects when nobody was confirmed', async () => {
+      vi.mocked(recruitmentRepository.getConfirmedWorkersByJob).mockResolvedValue([])
+
+      await recruitmentService.deleteJobPosting('job-1')
+
+      expect(recruitmentRepository.cancelFutureShiftsForJob).not.toHaveBeenCalled()
+      expect(emailService.sendEngagementCancelledEmail).not.toHaveBeenCalled()
+      expect(recruitmentRepository.deleteJobPosting).toHaveBeenCalledWith('job-1')
     })
   })
 
@@ -527,13 +657,17 @@ describe('recruitmentService — Recruitment', () => {
       )
     })
 
-    it('rejects an applicant without sending an invitation', async () => {
+    it('rejects an applicant without sending an invitation, but emails them the outcome', async () => {
       vi.mocked(recruitmentRepository.getApplicantById).mockResolvedValue(baseApplicant)
       vi.mocked(recruitmentRepository.updateApplicantStatus).mockResolvedValue({ ...baseApplicant, status: 'rejected' })
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(basePosting)
 
       await recruitmentService.decideApplicant({ applicant_id: 'applicant-1', decision: 'rejected', decided_by: 'owner-1' })
 
       expect(recruitmentRepository.createJobInvitation).not.toHaveBeenCalled()
+      expect(emailService.sendApplicationRejectedEmail).toHaveBeenCalledWith(
+        expect.objectContaining({ to: 'jane@example.com', jobTitle: 'Weekend Cashier' }),
+      )
     })
 
     it('throws when the applicant is not found', async () => {

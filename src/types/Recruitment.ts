@@ -88,7 +88,14 @@ export interface JobPostingSummary extends JobPosting {
   applicant_count: number
   pending_count: number
   accepted_count: number
+  // Owner accepted, worker hasn't confirmed the invitation yet.
+  awaiting_confirmation_count: number
+  // Both sides accepted — a real, filled position. Compared against openings on the card.
+  confirmed_count: number
   assigned_employee_name: string | null
+  assigned_employee_photo_url: string | null
+  // Who published the posting (Owner / Partner / Manager) — shown as "Posted by" in the detail.
+  created_by_name: string | null
 }
 
 export interface ApplicantCertificateSnapshot {

@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: false, message: 'Invalid JSON body' }, { status: 400 })
   }
 
-  const { user_id, full_name, email_address, password, phone_number, date_of_birth, profile_photo_url } =
+  const { user_id, full_name, email_address, password, phone_number, date_of_birth, profile_photo_url, home_location } =
     body as Record<string, unknown>
 
   if (!user_id || typeof user_id !== 'string') {
@@ -34,6 +34,7 @@ export async function POST(req: NextRequest) {
       phone_number: typeof phone_number === 'string' ? phone_number : null,
       date_of_birth: typeof date_of_birth === 'string' ? date_of_birth : null,
       profile_photo_url: typeof profile_photo_url === 'string' ? profile_photo_url : null,
+      home_location: typeof home_location === 'string' ? home_location : null,
     })
 
     const signinResult = await authService.signIn(email_address, password)

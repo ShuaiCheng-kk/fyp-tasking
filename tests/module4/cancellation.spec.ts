@@ -243,9 +243,12 @@ test('owner Remove Worker: reason mandatory; cancels the engagement and reopens 
   expect(history![0]).toMatchObject({ cancelled_role: 'employer', scope: 'worker' })
 })
 
-test('owner Cancel Job: everything voided, pending applicants resolved, job stays closed', async ({ request }) => {
+// Deleting a posting is how an employer calls the whole job off. The posting row disappears, but
+// a confirmed worker's shift does NOT (source_job_posting_id is ON DELETE SET NULL) — so the
+// delete must cancel that shift first, or the worker would turn up for work that no longer exists.
+test('deleting a job cancels confirmed workers\' shifts so nobody is left scheduled', async ({ request }) => {
   const job = await createJob(request, {
-    title: 'Cancel Whole Job Role',
+    title: 'Deleted Whole Job Role',
     formType: 'shift',
     shift_date: '2030-06-04',
     shift_start_time: '09:00',
@@ -253,31 +256,30 @@ test('owner Cancel Job: everything voided, pending applicants resolved, job stay
     openings: 2,
   })
   const confirmed = await seedGuest('confirmed')
-  const { applicantId: confirmedApplicantId } = await confirmWorker(request, job.id, confirmed.userId)
-  // 1 of 2 openings confirmed -> job still open; plus one applicant still pending.
-  const pending = await seedGuest('still-pending')
-  const { data: pendingApp } = await admin
-    .from('job_applicants')
-    .insert({ job_id: job.id, user_id: pending.userId, status: 'pending' })
-    .select('id')
-    .single()
+  await confirmWorker(request, job.id, confirmed.userId)
+
+  // The confirmed worker has a real, live shift before the delete.
+  const { data: shiftBefore } = await admin
+    .from('shifts').select('id, status').eq('source_job_posting_id', job.id).single()
+  expect(shiftBefore!.status).not.toBe('cancelled')
 
   const res = await request.patch('/api/recruitment', {
-    data: { action: 'cancel_job', job_id: job.id, cancelled_by: seeded.ownerId, reason: 'Event called off' },
+    data: { action: 'delete_posting', job_id: job.id },
   })
   expect(res.status()).toBe(200)
 
-  const { data: cancelledJob } = await admin.from('job_postings').select('status').eq('id', job.id).single()
-  expect(cancelledJob?.status).toBe('closed')
-  const { data: confirmedApplicant } = await admin.from('job_applicants').select('status').eq('id', confirmedApplicantId).single()
-  expect(confirmedApplicant?.status).toBe('cancelled_by_employer')
-  const { data: resolvedPending } = await admin.from('job_applicants').select('status').eq('id', pendingApp!.id).single()
-  expect(resolvedPending?.status).toBe('job_closed')
-  const { data: shiftRow } = await admin.from('shifts').select('status').eq('source_job_posting_id', job.id).single()
-  expect(shiftRow?.status).toBe('cancelled')
-  const { data: history } = await admin
-    .from('recruitment_cancellations').select('scope, applicant_id').eq('job_id', job.id)
-  expect(history![0]).toMatchObject({ scope: 'job', applicant_id: null })
+  // Posting gone…
+  const { data: deletedJob } = await admin.from('job_postings').select('id').eq('id', job.id).maybeSingle()
+  expect(deletedJob).toBeNull()
+
+  // …and the worker's shift was cancelled, not left dangling.
+  const { data: shiftAfter } = await admin
+    .from('shifts').select('status').eq('id', shiftBefore!.id).single()
+  expect(shiftAfter?.status).toBe('cancelled')
+
+  // The shift is orphaned from the deleted posting, so clean it up explicitly.
+  await admin.from('shift_assignments').delete().eq('shift_id', shiftBefore!.id)
+  await admin.from('shifts').delete().eq('id', shiftBefore!.id)
 })
 
 test('an Employee supervising live jobs cannot be removed until reassigned', async ({ request }) => {

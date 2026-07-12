@@ -1632,7 +1632,8 @@ async function main() {
       dept: 0, status: 'open', is_recurring: true, title: 'Warehouse Assistant',
       description: 'Support day-to-day warehouse operations including stock handling and deliveries.',
       requirements: 'Able to lift up to 15kg. Prior warehouse experience a plus.',
-      employment_type: 'casual', salary_amount: 15.5, assignedEmployeeIdx: 0,
+      employment_type: 'casual', salary_amount: 15.5, assignedEmployeeIdx: 0, openings: 3,
+      expires_at: addDays(TODAY, 10).toISOString(),
       shift_start_time: '09:00', shift_end_time: '17:00', break_start_time: '12:00', break_end_time: '13:00',
       recurrence_interval: 1, recurrence_unit: 'week', createdBy: 'owner',
     },
@@ -1641,7 +1642,8 @@ async function main() {
       description: 'One-off crew needed to set up and tear down for a corporate event.',
       requirements: 'Comfortable with physical setup work. Punctual and reliable.',
       employment_type: 'casual', salary_amount: 130, urgency: 'high', estimated_hours: '5',
-      job_start_time: '08:00', createdBy: 'owner',
+      job_start_time: '08:00', createdBy: 'owner', assignedEmployeeIdx: 1, openings: 2,
+      expires_at: addDays(TODAY, 7).toISOString(),
     },
     {
       dept: 1, status: 'open', is_recurring: true, title: 'Social Media Assistant',
@@ -1656,7 +1658,7 @@ async function main() {
       description: 'Promo booth staff for a one-day retail activation.',
       requirements: 'Outgoing personality, comfortable engaging with the public.',
       employment_type: 'casual', salary_amount: 110, urgency: 'normal', estimated_hours: '6',
-      job_start_time: '10:00', createdBy: 'owner',
+      job_start_time: '10:00', createdBy: 'owner', assignedEmployeeIdx: 3,
     },
     {
       dept: 2, status: 'open', is_recurring: true, title: 'Junior Support Technician',
@@ -1671,7 +1673,8 @@ async function main() {
       description: 'Assist with a one-time office workstation refresh — unboxing and setup.',
       requirements: 'Comfortable with basic PC hardware.',
       employment_type: 'casual', salary_amount: 140, urgency: 'urgent', estimated_hours: '4',
-      job_start_time: '09:00', createdBy: 'owner',
+      job_start_time: '09:00', createdBy: 'owner', assignedEmployeeIdx: 5,
+      expires_at: addDays(TODAY, 5).toISOString(),
     },
     {
       dept: 3, status: 'open', is_recurring: true, title: 'Weekend Support Agent',
@@ -1686,7 +1689,7 @@ async function main() {
       description: 'Backup phone support during a planned product launch surge.',
       requirements: 'Prior call center experience preferred.',
       employment_type: 'casual', salary_amount: 120, urgency: 'high', estimated_hours: '8',
-      job_start_time: '08:30', createdBy: 'owner',
+      job_start_time: '08:30', createdBy: 'owner', assignedEmployeeIdx: 7,
     },
 
     // ── "Review" tab data: status pending_approval, submitted by a Manager ──
@@ -1695,7 +1698,7 @@ async function main() {
       description: 'Need one extra pair of hands for next week\'s stocktake.',
       requirements: 'Available for a full day, no experience required.',
       employment_type: 'casual', salary_amount: 100, urgency: 'normal', estimated_hours: '6',
-      job_start_time: '09:00', createdBy: 'manager1@test.com',
+      job_start_time: '09:00', createdBy: 'manager1@test.com', assignedEmployeeIdx: 1,
     },
     {
       dept: 1, status: 'pending_approval', is_recurring: true, title: 'Weekend Promo Crew',
@@ -1710,7 +1713,7 @@ async function main() {
       description: 'One-off testing session ahead of the next release.',
       requirements: 'Comfortable following a test script.',
       employment_type: 'casual', salary_amount: 90, urgency: 'urgent', estimated_hours: '3',
-      job_start_time: '14:00', createdBy: 'manager5@test.com',
+      job_start_time: '14:00', createdBy: 'manager5@test.com', assignedEmployeeIdx: 5,
     },
     {
       dept: 3, status: 'pending_approval', is_recurring: true, title: 'Overflow Support Agent',
@@ -1725,7 +1728,7 @@ async function main() {
       description: 'Support the monthly inventory count across two storage rooms.',
       requirements: 'Detail-oriented, comfortable with spreadsheets.',
       employment_type: 'casual', salary_amount: 105, urgency: 'normal', estimated_hours: '5',
-      job_start_time: '09:30', createdBy: 'manager2@test.com',
+      job_start_time: '09:30', createdBy: 'manager2@test.com', assignedEmployeeIdx: 0,
     },
 
     // ── "Drafts" data: status draft — postings saved half-way from the Post Job form ──
@@ -1809,7 +1812,9 @@ async function main() {
       break_end_time: def.is_recurring ? (def.break_end_time ?? null) : null,
       job_start_time: def.is_recurring ? null : (def.job_start_time ?? null),
       assigned_employee_id: assignedEmployeeId,
-      expiry_preset: 'none',
+      openings: def.openings ?? 1,
+      expires_at: def.expires_at ?? null,
+      expiry_preset: def.expires_at ? 'custom' : 'none',
       experience_required: def.experience_required ?? null,
       minimum_age: def.minimum_age ?? null,
       uniform_required: def.uniform_type === 'company' || def.uniform_type === 'dress_code',

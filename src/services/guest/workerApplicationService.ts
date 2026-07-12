@@ -16,6 +16,10 @@ type SubmitApplicationInput = {
 }
 
 const RELEVANT_EXPERIENCE_VALUES: RelevantExperience[] = ['none', 'less_than_1', '1_to_2', 'more_than_2']
+
+// Guest User is the applicant's starting role; a Casual Worker is the same person after their
+// first job was confirmed, and they keep applying to new jobs. No other role may apply.
+const APPLICANT_ROLES = ['Guest User', 'Casual Worker']
 const MAX_NOTE_LENGTH = 1000
 
 // Workers can stack jobs across different companies, but shifts must not collide — and since
@@ -67,6 +71,13 @@ export const workerApplicationService = {
 
     const profile = await workerApplicationRepository.getApplicantProfile(input.user_id)
     if (!profile) throw new Error('Worker profile not found')
+
+    // Only the two worker roles may apply. Company staff (Owner/Partner/Manager/Employee) and
+    // platform admins run the business — they never take casual jobs. The job board hides the
+    // Apply button from them, and this backs that up against a direct API call.
+    if (!APPLICANT_ROLES.includes(profile.role)) {
+      throw new Error('Company staff accounts cannot apply for jobs')
+    }
 
     // Hard age gate — deterministic code against date of birth, never left to the AI matcher.
     const age = profile.date_of_birth ? computeAge(profile.date_of_birth) : null
