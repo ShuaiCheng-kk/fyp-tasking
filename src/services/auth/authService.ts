@@ -191,11 +191,26 @@ export const authService = {
   async registerGuest(data: {
     email: string
     password: string
+    full_name?: string | null
+    phone?: string | null
+    date_of_birth?: string | null
+    home_location?: string | null
     job_id?: string | null
   }): Promise<{ user_id: string; email_confirmed: boolean }> {
     const { data: authData, error } = await supabase.auth.signUp({
       email: data.email,
       password: data.password,
+      // Persist the profile fields on the auth user immediately so they survive even if the
+      // worker clicks the email-verification link on a different device (where localStorage is
+      // empty). completeGuestRegistration reads these back as the source of truth.
+      options: {
+        data: {
+          full_name: data.full_name ?? null,
+          phone_number: data.phone ?? null,
+          date_of_birth: data.date_of_birth ?? null,
+          home_location: data.home_location ?? null,
+        },
+      },
     })
     if (error) throw new Error(error.message)
     if (!authData.user) throw new Error('Registration failed')
@@ -212,14 +227,28 @@ export const authService = {
     phone_number: string | null
     date_of_birth: string | null
     profile_photo_url: string | null
+    home_location: string | null
   }): Promise<User> {
+    // Fall back to the metadata captured at signUp when the client-side values are missing
+    // (e.g. the verification link was opened on a different device from registration).
+    let meta: Record<string, unknown> = {}
+    try {
+      const admin = getAdminClient()
+      const { data: authUser } = await admin.auth.admin.getUserById(data.user_id)
+      meta = (authUser?.user?.user_metadata as Record<string, unknown>) ?? {}
+    } catch { /* metadata is a best-effort backup — never block registration on it */ }
+
+    const pick = (value: string | null, key: string): string | null =>
+      value || (typeof meta[key] === 'string' ? (meta[key] as string) : null)
+
     const user = await authRepository.createUser({
       supabase_auth_id: data.user_id,
-      full_name: data.full_name,
+      full_name: data.full_name || (typeof meta.full_name === 'string' ? meta.full_name : data.full_name),
       email_address: data.email_address,
-      phone_number: data.phone_number,
-      date_of_birth: data.date_of_birth,
+      phone_number: pick(data.phone_number, 'phone_number'),
+      date_of_birth: pick(data.date_of_birth, 'date_of_birth'),
       profile_photo_url: data.profile_photo_url,
+      home_location: pick(data.home_location, 'home_location'),
       role: 'Guest User',
     })
     return user

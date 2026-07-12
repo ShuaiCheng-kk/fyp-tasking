@@ -41,6 +41,7 @@ export const authRepository = {
     phone_number: string | null
     date_of_birth?: string | null
     profile_photo_url?: string | null
+    home_location?: string | null
     role: User['role']
     company_id?: string | null
   }): Promise<User> {

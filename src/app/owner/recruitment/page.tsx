@@ -6,8 +6,8 @@ import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import {
   Archive, ArchiveRestore, ArrowRight, Award, Briefcase, Building2, Cake, CalendarDays, Check, CheckCircle, ChevronDown, ChevronLeft, ChevronRight,
-  ClipboardList, Clock, Coffee, Copy, Crown, DollarSign, Eye, FileText, LayoutGrid, MapPin,
-  MoreHorizontal, Paperclip, Pencil, Plus, Repeat, Send, Shirt, Sparkles, Timer, Trash2, UserCheck, UserX, Users,
+  ClipboardList, Clock, Coffee, Copy, Crown, DollarSign, Eye, FileText, LayoutGrid, Mail, MapPin,
+  Paperclip, Pencil, Phone, Plus, Repeat, Send, Shirt, Sparkles, Timer, Trash2, UserCheck, UserX, Users,
   Wrench, X, XCircle, Zap,
 } from 'lucide-react'
 import OwnerSidebar from '@/components/OwnerSidebar'
@@ -28,7 +28,7 @@ import DepartmentBadge from '@/components/DepartmentBadge'
 import RoleAvatar from '@/components/RoleAvatar'
 import DatePickerField from '@/components/DatePickerField'
 
-type Tab = 'jobs' | 'review' | 'post'
+type Tab = 'jobs' | 'closed' | 'review' | 'post'
 type Department = { id: string; name: string }
 
 // ─── shared tiny styles ──────────────────────────────────────────────────────
@@ -36,6 +36,55 @@ type Department = { id: string; name: string }
 // number inputs natively accept e/E (scientific notation) and +/- — block them
 const blockNonNumericKeys = (e: React.KeyboardEvent<HTMLInputElement>) => {
   if (['e', 'E', '+', '-'].includes(e.key)) e.preventDefault()
+}
+
+// List-aware typing for Responsibilities / Skills textareas: Enter continues a
+// "• " or "N. " list (empty item exits it); "- " or "* " at line start becomes "• ".
+// execCommand keeps the controlled value in sync (fires onChange) and preserves undo.
+const handleListKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  const el = e.currentTarget
+  const { selectionStart, selectionEnd, value } = el
+  if (selectionStart !== selectionEnd) return
+  const lineStart = value.lastIndexOf('\n', selectionStart - 1) + 1
+  const line = value.slice(lineStart, selectionStart)
+  if (e.key === 'Enter' && !e.shiftKey) {
+    const bullet = line.match(/^(\s*)•\s?(.*)$/)
+    const numbered = line.match(/^(\s*)(\d+)[.)]\s?(.*)$/)
+    if (bullet) {
+      e.preventDefault()
+      if (bullet[2].trim()) document.execCommand('insertText', false, `\n${bullet[1]}• `)
+      else { el.setSelectionRange(lineStart, selectionStart); document.execCommand('delete') }
+    } else if (numbered) {
+      e.preventDefault()
+      if (numbered[3].trim()) document.execCommand('insertText', false, `\n${numbered[1]}${parseInt(numbered[2], 10) + 1}. `)
+      else { el.setSelectionRange(lineStart, selectionStart); document.execCommand('delete') }
+    }
+  } else if (e.key === ' ' && /^(\s*)[-*]$/.test(line)) {
+    e.preventDefault()
+    el.setSelectionRange(selectionStart - 1, selectionStart)
+    document.execCommand('insertText', false, '• ')
+  }
+}
+
+// How long until a posting's application deadline auto-closes it — shown as a header pill
+// instead of buried in the Schedule list. null = no deadline set, nothing to show.
+const deadlineCountdown = (expiresAt: string | null): { label: string; expired: boolean } | null => {
+  if (!expiresAt) return null
+  const diffMs = new Date(expiresAt).getTime() - Date.now()
+  if (diffMs <= 0) return { label: 'Deadline passed', expired: true }
+  const totalMins = Math.floor(diffMs / 60000)
+  const days = Math.floor(totalMins / 1440)
+  const hours = Math.floor((totalMins % 1440) / 60)
+  const mins = totalMins % 60
+  if (days >= 1) return { label: `Closes in ${days}d ${hours}h`, expired: false }
+  if (hours >= 1) return { label: `Closes in ${hours}h ${mins}m`, expired: false }
+  return { label: `Closes in ${Math.max(1, mins)}m`, expired: false }
+}
+
+const fmt12Time = (t: string) => {
+  const [h, m] = t.slice(0, 5).split(':').map(Number)
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
+  return `${h12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`
 }
 
 const inputStyle: React.CSSProperties = {
@@ -62,6 +111,10 @@ const labelStyle: React.CSSProperties = {
 
 const PANEL_BORDER = '#E2E8F0'
 const cardShadow = '0 1px 3px rgba(15,23,42,0.06), 0 8px 24px rgba(15,23,42,0.04)'
+// Shared header-row height for every panel's title bar (Job Sources, Active Jobs, Review Jobs,
+// Detail, Applicants) — locks them to Job Sources' natural height (17px padding + its 36px
+// button) so every panel header's bottom divider lines up, whatever that panel's own content is.
+const LIST_HEADER_HEIGHT = 70
 
 const EXPERIENCE_REQUIRED_OPTIONS = [
   { value: 'Not Required', label: 'Not Required' },
@@ -150,6 +203,64 @@ function ApplicantSnapshotBody({ applicant }: { applicant: JobApplicant }) {
   )
 }
 
+// Job Information (title/department/schedule) + a clickable Supervisor card — sits directly
+// under the Applicants panel header. "Scheduled" reads shift_date/shift_start_time/shift_end_time
+// (or job_start_time for a one-off job), never created_at — the posting's own working schedule.
+function JobScheduleSupervisorCard({ posting, onSupervisorClick }: {
+  posting: JobPostingSummary
+  onSupervisorClick: () => void
+}) {
+  const isShiftJob = posting.is_recurring
+  const scheduleParts: string[] = []
+  if (posting.shift_date) {
+    scheduleParts.push(new Date(posting.shift_date).toLocaleDateString('en-SG', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }))
+  }
+  if (isShiftJob && (posting.shift_start_time || posting.shift_end_time)) {
+    scheduleParts.push(`${posting.shift_start_time ? fmt12Time(posting.shift_start_time) : '—'} – ${posting.shift_end_time ? fmt12Time(posting.shift_end_time) : '—'}`)
+  } else if (!isShiftJob && posting.job_start_time) {
+    scheduleParts.push(fmt12Time(posting.job_start_time))
+  }
+  const scheduleText = scheduleParts.length > 0 ? scheduleParts.join(' · ') : '—'
+
+  const infoRow = (label: string, value: string) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <span style={{ fontSize: 11, fontWeight: 600, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.02em' }}>{label}</span>
+      <span style={{ fontSize: 13, fontWeight: 700, color: '#111827' }}>{value}</span>
+    </div>
+  )
+
+  return (
+    <div style={{ margin: '14px 18px 0', borderRadius: 14, border: '1px solid #E5E7EB', background: '#FFFFFF', display: 'flex', overflow: 'hidden' }}>
+      <div style={{ flex: 1, padding: '10px 18px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <Briefcase size={14} style={{ color: '#F97316' }} />
+          <span style={{ fontSize: 13, fontWeight: 700, color: '#0F172A' }}>Job Information</span>
+        </div>
+        {infoRow('Department', posting.department_name ?? '—')}
+        {infoRow('Scheduled', scheduleText)}
+      </div>
+      <div style={{ width: 1, background: '#E5E7EB', flexShrink: 0 }} />
+      <button
+        type="button"
+        onClick={onSupervisorClick}
+        disabled={!posting.assigned_employee_id}
+        style={{ flex: 1, padding: '10px 18px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, border: 0, background: 'transparent', cursor: posting.assigned_employee_id ? 'pointer' : 'default' }}
+        onMouseEnter={e => { if (posting.assigned_employee_id) e.currentTarget.style.background = '#F9FAFB' }}
+        onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <Users size={14} style={{ color: '#F97316' }} />
+          <span style={{ fontSize: 13, fontWeight: 700, color: '#0F172A' }}>Supervisor</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+          <RoleAvatar role="Employee" size={28} photoUrl={posting.assigned_employee_photo_url} />
+          <span style={{ fontSize: 13, fontWeight: 700, color: '#111827' }}>{posting.assigned_employee_name ?? '—'}</span>
+        </div>
+      </button>
+    </div>
+  )
+}
+
 // Values are plain numbers (stored as integer in the DB) so the age gate can compare them
 // against an applicant's date of birth; the "+" is display-only.
 const MINIMUM_AGE_OPTIONS = [
@@ -165,10 +276,12 @@ const UNIFORM_TYPE_OPTIONS = [
   { value: 'dress_code', label: 'Specific Dress Code' },
 ]
 type UniformType = 'none' | 'company' | 'dress_code'
-// Legacy rows predate uniform_type: uniform_required=true was company-provided attire.
-function uniformTypeOf(row: { uniform_type?: string | null; uniform_required?: boolean | null }): UniformType {
+// Legacy rows predate uniform_type: uniform_required=true was company-provided attire. A row with
+// neither set (uniform_type null, uniform_required false) has genuinely never had uniform chosen —
+// that must stay '' (unset), not silently become 'none' ("Not Required" is an explicit choice).
+function uniformTypeOf(row: { uniform_type?: string | null; uniform_required?: boolean | null }): UniformType | '' {
   if (row.uniform_type === 'company' || row.uniform_type === 'dress_code' || row.uniform_type === 'none') return row.uniform_type
-  return row.uniform_required ? 'company' : 'none'
+  return row.uniform_required ? 'company' : ''
 }
 
 // Local calendar-date key (not UTC) — used to hydrate the deadline date input from a stored
@@ -365,7 +478,10 @@ function statusBadge(status: string) {
 // ─── page component ───────────────────────────────────────────────────────────
 
 // ─── Time picker matching Shift page style ───────────────────────────────────
-function RTimePicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+// min / max (both "HH:MM" 24h, inclusive) constrain the selectable slots — used to keep a casual
+// worker's times inside the supervising employee's own shift window.
+function RTimePicker({ value, onChange, min, max }: { value: string; onChange: (v: string) => void; min?: string; max?: string }) {
+  const inRange = (v: string) => (!min || v >= min) && (!max || v <= max)
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState({ top: 0, left: 0, width: 0 })
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -416,12 +532,27 @@ function RTimePicker({ value, onChange }: { value: string; onChange: (v: string)
       for (const m of [0, 30]) {
         const hh = String(h).padStart(2, '0')
         const mm = String(m).padStart(2, '0')
+        const v = `${hh}:${mm}`
+        if (!inRange(v)) continue
         const dh = h === 0 ? 12 : h > 12 ? h - 12 : h
-        res.push({ value: `${hh}:${mm}`, label: `${dh}:${mm}` })
+        res.push({ value: v, label: `${dh}:${mm}` })
       }
     }
     return res
-  }, [meridiem])
+  }, [meridiem, min, max])
+
+  // AM / PM buttons: disable a half-day that has no slot inside the range
+  const meridiemHasSlots = useMemo(() => {
+    const has = (mp: 'AM' | 'PM') => {
+      const s = mp === 'AM' ? 0 : 12
+      const e = mp === 'AM' ? 12 : 24
+      for (let h = s; h < e; h++) for (const m of [0, 30]) {
+        if (inRange(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`)) return true
+      }
+      return false
+    }
+    return { AM: has('AM'), PM: has('PM') }
+  }, [min, max])
 
   const dropdown = open ? (
     <div ref={dropRef} style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 9999, background: '#FFFFFF', border: '1px solid #E2E8F0', borderRadius: 12, boxShadow: '0 8px 28px rgba(15,23,42,0.14)', display: 'flex', overflow: 'hidden', minWidth: Math.max(pos.width, 148) }}>
@@ -438,18 +569,31 @@ function RTimePicker({ value, onChange }: { value: string; onChange: (v: string)
         })}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 6, padding: 8, borderLeft: '1px solid #E2E8F0' }}>
-        {(['AM', 'PM'] as const).map(mp => (
-          <button key={mp} type="button" onClick={() => {
+        {(['AM', 'PM'] as const).map(mp => {
+          const disabled = !meridiemHasSlots[mp]
+          return (
+          <button key={mp} type="button" disabled={disabled} onClick={() => {
             const [ch, cm] = value.split(':').map(Number)
             let newH = ch
             if (mp === 'AM' && ch >= 12) newH = ch - 12
             if (mp === 'PM' && ch < 12) newH = ch + 12
-            onChange(`${String(newH).padStart(2, '0')}:${String(cm).padStart(2, '0')}`)
+            let nv = `${String(newH).padStart(2, '0')}:${String(cm).padStart(2, '0')}`
+            // Naive hour-flip may land outside the range — snap to the first valid slot in that half-day
+            if (!inRange(nv)) {
+              const s = mp === 'AM' ? 0 : 12
+              const e = mp === 'AM' ? 12 : 24
+              for (let h = s; h < e && !inRange(nv); h++) for (const m of [0, 30]) {
+                const cand = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+                if (inRange(cand)) { nv = cand; break }
+              }
+            }
+            onChange(nv)
             setMeridiem(mp)
-          }} style={{ borderRadius: 7, border: 'none', background: meridiem === mp ? '#F97316' : '#F1F5F9', color: meridiem === mp ? '#FFFFFF' : '#0F172A', fontWeight: 700, fontSize: 12, padding: '7px 10px', cursor: 'pointer', lineHeight: 1, fontFamily: 'inherit' }}>
+          }} style={{ borderRadius: 7, border: 'none', background: meridiem === mp ? '#F97316' : '#F1F5F9', color: disabled ? '#CBD5E1' : meridiem === mp ? '#FFFFFF' : '#0F172A', fontWeight: 700, fontSize: 12, padding: '7px 10px', cursor: disabled ? 'not-allowed' : 'pointer', lineHeight: 1, fontFamily: 'inherit' }}>
             {mp}
           </button>
-        ))}
+          )
+        })}
       </div>
     </div>
   ) : null
@@ -494,10 +638,16 @@ export default function OwnerRecruitmentPage() {
   )
   const [applicants, setApplicants] = useState<JobApplicant[]>([])
   const [recommendations, setRecommendations] = useState<CandidateRecommendation[]>([])
+  // Supervisor profile popup — opened from the Job Info/Supervisor card under Applicants.
+  const [supervisorModal, setSupervisorModal] = useState<{
+    id: string; full_name: string; role?: string; email_address?: string
+    phone_number?: string | null; profile_photo_url?: string | null
+  } | null>(null)
+  const [supervisorModalLoading, setSupervisorModalLoading] = useState(false)
 
   // ui state
   const [activeTab, setActiveTab] = useState<Tab>('jobs')
-  const [postView, setPostView] = useState<'none' | 'archived' | 'drafts' | 'template'>('none')
+  const [postView, setPostView] = useState<'none' | 'archived' | 'template'>('none')
   // Job Sources accordion: which card's dropdown is expanded. Template opens by default;
   // opening one automatically closes the others — never more than one open at a time.
   const [openSource, setOpenSource] = useState<'none' | 'drafts' | 'archived' | 'templates'>('templates')
@@ -555,7 +705,7 @@ export default function OwnerRecruitmentPage() {
   const [formIndustry, setFormIndustry] = useState('')
   const [formCompanyName, setFormCompanyName] = useState('')
   const [formBenefits, setFormBenefits] = useState('')
-  const [formOpenings, setFormOpenings] = useState(1)
+  const [formOpenings, setFormOpenings] = useState('')
   // Deadline is a mandatory choice: '' = not chosen yet, 'never' = open until filled, 'date' = expires at a set date/time
   const [formDeadlineChoice, setFormDeadlineChoice] = useState<'' | 'never' | 'date'>('')
   const [formExpiresAt, setFormExpiresAt] = useState('')
@@ -592,11 +742,22 @@ export default function OwnerRecruitmentPage() {
   // & Payment) plus step 3 (Schedule & Post). Applying a template opens directly at step 3;
   // steps 1–2 hold the template-derived fields and stay reachable via the back circles.
   const [applyStep, setApplyStep] = useState<1 | 2 | 3>(3)
-  // Create Job wizard sub-step after the AI generator: 3 = Requirements & Payment, 4 = Schedule & Post
+  // Create Job wizard sub-step after the AI generator: 3 = Requirements, 4 = Schedule & Payment
   const [createStep, setCreateStep] = useState<3 | 4>(3)
+  // Draft saved in the background via Save Draft while the wizard stays open —
+  // later saves update this posting instead of creating duplicates. Reopening a saved draft
+  // from the Drafts list loads it back into this same wizard under this id.
+  const [draftId, setDraftId] = useState('')
+  // Whether the wizard's "Schedule & Payment" fields hold real, user-chosen values rather than
+  // resetForm()'s UI defaults — true once the user reaches step 4, or once a reopened draft is
+  // loaded with schedule data already saved on it. buildBody() only persists those fields when set.
+  const [scheduleSeen, setScheduleSeen] = useState(false)
   const [shiftOptionsLoading, setShiftOptionsLoading] = useState(false)
   const [showTemplates, setShowTemplates] = useState(false)
   const [templateActionLoading, setTemplateActionLoading] = useState(false)
+  // Snapshot of the last template saved from the wizard — while the form still matches it,
+  // Save as Template shows a saved state instead of creating a duplicate.
+  const [savedTplSnapshot, setSavedTplSnapshot] = useState('')
   const [newTemplateModalOpen, setNewTemplateModalOpen] = useState(false)
   const [tplFormType, setTplFormType] = useState<'shift' | 'oneoff' | ''>('')
   const [tplTitle, setTplTitle] = useState('')
@@ -636,8 +797,6 @@ export default function OwnerRecruitmentPage() {
   const [archivedSelected, setArchivedSelected] = useState<Set<string>>(new Set())
   const [selectedArchivedId, setSelectedArchivedId] = useState('')
   const [archivedApplicants, setArchivedApplicants] = useState<JobApplicant[]>([])
-  const [selectedDraftId, setSelectedDraftId] = useState('')
-  const [draftsSelected, setDraftsSelected] = useState<Set<string>>(new Set())
   const [selectedTemplateId, setSelectedTemplateId] = useState('')
   const [selectedPendingId, setSelectedPendingId] = useState('')
   const [jobsSelected, setJobsSelected] = useState<Set<string>>(new Set())
@@ -645,17 +804,19 @@ export default function OwnerRecruitmentPage() {
   const [rejectReason, setRejectReason] = useState('')
   const [pendingRejectId, setPendingRejectId] = useState('')
 
-  // draft action menu (... button)
-  const [draftMenuOpen, setDraftMenuOpen] = useState(false)
-  const [draftMenuPos, setDraftMenuPos] = useState({ top: 0, right: 0 })
-  const draftMenuBtnRef = useRef<HTMLButtonElement>(null)
-  const draftMenuDropRef = useRef<HTMLDivElement>(null)
-
   const selectedLive = useMemo(() => livePostings.find(p => p.id === selectedLiveId) ?? null, [livePostings, selectedLiveId])
   const selectedArchived = useMemo(() => livePostings.find(p => p.id === selectedArchivedId) ?? null, [livePostings, selectedArchivedId])
-  const selectedDraft = useMemo(() => drafts.find(p => p.id === selectedDraftId) ?? null, [drafts, selectedDraftId])
   const selectedPending = useMemo(() => pendingPostings.find(p => p.id === selectedPendingId) ?? null, [pendingPostings, selectedPendingId])
   const selectedTemplate = useMemo(() => templates.find(t => t.id === selectedTemplateId) ?? null, [templates, selectedTemplateId])
+
+  // A job can only be archived once every application on it is resolved — nothing still pending the
+  // Owner's decision, and nobody accepted who hasn't answered their invitation yet (the service
+  // enforces the same rule). The bulk Archive action only appears when every selected job qualifies.
+  const isArchivable = (p: JobPostingSummary) => p.pending_count === 0 && p.awaiting_confirmation_count === 0
+  const selectedJobsArchivable = useMemo(
+    () => [...jobsSelected].every(id => { const p = livePostings.find(job => job.id === id); return p ? isArchivable(p) : false }),
+    [jobsSelected, livePostings],
+  )
 
   // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -717,6 +878,25 @@ export default function OwnerRecruitmentPage() {
       const data = await res.json()
       if (data.success) setArchivedApplicants(data.applicants ?? [])
     } catch { setArchivedApplicants([]) }
+  }, [])
+
+  // Opens the Supervisor profile popup — shows the posting's cached name/photo immediately,
+  // then fills in role/email/phone once /api/user/me resolves.
+  const openSupervisorModal = useCallback(async (posting: JobPostingSummary) => {
+    if (!posting.assigned_employee_id) return
+    setSupervisorModal({
+      id: posting.assigned_employee_id,
+      full_name: posting.assigned_employee_name ?? '—',
+      profile_photo_url: posting.assigned_employee_photo_url,
+    })
+    setSupervisorModalLoading(true)
+    try {
+      const res = await fetch(`/api/user/me?user_id=${posting.assigned_employee_id}`)
+      const data = await res.json()
+      if (data.success) setSupervisorModal(data.user)
+    } catch { /* keep the fallback values already shown */ } finally {
+      setSupervisorModalLoading(false)
+    }
   }, [])
 
   // initial auth + load
@@ -792,16 +972,6 @@ export default function OwnerRecruitmentPage() {
     void fetchArchivedApplicants(selectedArchivedId)
   }, [selectedArchivedId, fetchArchivedApplicants])
 
-  useEffect(() => {
-    if (!draftMenuOpen) return
-    const handler = (e: MouseEvent) => {
-      if (draftMenuBtnRef.current?.contains(e.target as Node)) return
-      if (draftMenuDropRef.current?.contains(e.target as Node)) return
-      setDraftMenuOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [draftMenuOpen])
 
   // ── form helpers ─────────────────────────────────────────────────────────────
 
@@ -812,7 +982,7 @@ export default function OwnerRecruitmentPage() {
     setFormLocation(''); setFormSalaryAmt(''); setFormSalaryType('per hour')
     setFormDescription(''); setFormRequirements(''); setFormIndustry('')
     setFormExperienceRequired(''); setFormMinimumAge(''); setFormUniformType(''); setFormUniformDetails('')
-    setFormCompanyName(''); setFormBenefits(''); setFormOpenings(1)
+    setFormCompanyName(''); setFormBenefits(''); setFormOpenings('')
     setFormDeadlineChoice(''); setFormExpiresAt(''); setFormDeadlineTime('23:59')
     setFormShiftStart('09:00'); setFormShiftEnd('17:00'); setFormBreakStart('12:00'); setFormBreakEnd('13:00'); setFormShiftDays([])
     setFormIsRecurring(false); setFormRecurInterval(1); setFormRecurUnit('week')
@@ -820,12 +990,20 @@ export default function OwnerRecruitmentPage() {
     setShiftDeptEmployees([]); setShiftAvailableDates([]); setShiftDateEmployees([])
     setFormJobDate(''); setFormJobEndDate(''); setFormEstHours(''); setFormUrgency('normal'); setFormJobStartTime('09:00')
     setAiPrompt(''); setAiPreview(null); setFormError('')
-    setCreateStep(3)
+    setCreateStep(3); setDraftId(''); setScheduleSeen(false); setSavedTplSnapshot('')
   }
 
-  const openEditForm = async (p: JobPostingSummary, isDraft = false) => {
+  // Reopens a saved draft inside the AI Job Builder wizard it was created in: the draft's fields
+  // are loaded back into the wizard's form state and it becomes the wizard's background draft
+  // (draftId), so Save Draft keeps updating this same posting and Post Job publishes it.
+  const openDraftInWizard = async (p: JobPostingSummary) => {
     const raw = p as unknown as Record<string, unknown>
-    setEditingId(p.id); setEditingDraft(isDraft); setWizardStep('form')
+    resetForm()
+    setDraftId(p.id); setWizardStep('form'); setCreateStep(3)
+    // A draft saved from the wizard's first step has no schedule data yet — leaving scheduleSeen
+    // false keeps buildBody() from persisting the untouched 9–5 defaults on the next Save Draft.
+    setScheduleSeen(!!(p.department_id || p.salary_amount != null || p.openings != null
+      || raw.shift_date || raw.assigned_employee_id || raw.expires_at))
     setFormTemplateId(p.template_id ?? '')
     const isShift = p.is_recurring
     setFormJobType(isShift ? 'shift' : 'oneoff')
@@ -836,10 +1014,10 @@ export default function OwnerRecruitmentPage() {
     setFormExperienceRequired(p.experience_required ?? ''); setFormMinimumAge(p.minimum_age != null ? String(p.minimum_age) : '')
     setFormUniformType(uniformTypeOf(p)); setFormUniformDetails(p.uniform_details ?? '')
     setFormIndustry(''); setFormCompanyName(companyName); setFormBenefits('')
-    setFormOpenings(p.openings ?? 1)
+    setFormOpenings(p.openings != null ? String(p.openings) : '')
     const savedExpiresAt = typeof raw.expires_at === 'string' && raw.expires_at ? new Date(raw.expires_at) : null
-    // Published postings without expiry were deliberately posted as open-until-filled; drafts may simply not have chosen yet
-    setFormDeadlineChoice(savedExpiresAt ? 'date' : (isDraft ? '' : 'never'))
+    // A draft with no expiry simply hasn't chosen a deadline yet — don't imply "No Deadline"
+    setFormDeadlineChoice(savedExpiresAt ? 'date' : '')
     setFormExpiresAt(savedExpiresAt ? localDateKey(savedExpiresAt) : '')
     setFormDeadlineTime(savedExpiresAt ? `${String(savedExpiresAt.getHours()).padStart(2, '0')}:${String(savedExpiresAt.getMinutes()).padStart(2, '0')}` : '23:59')
     setFormIsRecurring(false); setFormRecurInterval(1); setFormRecurUnit('week')
@@ -902,41 +1080,54 @@ export default function OwnerRecruitmentPage() {
     setFormOpen(true)
   }
 
-  const buildBody = (status: 'open' | 'draft') => ({
-    company_id: companyId,
-    department_id: formDeptId || null,
-    created_by: internalUserId,
-    title: formTitle,
-    description: formDescription,
-    requirements: formRequirements || null,
-    experience_required: formExperienceRequired || null,
-    minimum_age: formMinimumAge ? Number(formMinimumAge) : null,
-    openings: formOpenings,
-    uniform_required: formUniformType === 'company' || formUniformType === 'dress_code',
-    uniform_type: formUniformType || 'none',
-    uniform_details: formUniformType === 'company' || formUniformType === 'dress_code' ? (formUniformDetails || null) : null,
-    location: formLocation || null,
-    employment_type: formEmpType || null,
-    company_name: formCompanyName || companyName || null,
-    salary_amount: formSalaryAmt ? Number(formSalaryAmt) : null,
-    salary_type: formJobType === 'shift' ? 'per hour' : 'flat rate',
-    urgency: formJobType === 'oneoff' ? (formUrgency || 'normal') : null,
-    estimated_hours: formJobType === 'oneoff' ? (formEstHours || null) : null,
-    is_recurring: formJobType === 'shift',
-    formType: formJobType,
-    shift_date: formShiftDate || null,
-    shift_start_time: formJobType === 'shift' ? (formShiftStart || null) : null,
-    shift_end_time: formJobType === 'shift' ? (formShiftEnd || null) : null,
-    break_start_time: formJobType === 'shift' ? (formBreakStart || null) : null,
-    break_end_time: formJobType === 'shift' ? (formBreakEnd || null) : null,
-    job_start_time: formJobType === 'oneoff' ? (formJobStartTime || null) : null,
-    assigned_employee_id: formAssignedEmployeeId || null,
-    expires_at: (formDeadlineChoice === 'date' && formExpiresAt && formDeadlineTime)
-      ? new Date(`${formExpiresAt}T${formDeadlineTime}:00`).toISOString()
-      : null,
-    template_id: formTemplateId || null,
-    status,
-  })
+  const buildBody = (status: 'open' | 'draft') => {
+    // Department, pay, schedule, and positions all live on the wizard's final "Schedule & Post"
+    // step. resetForm() seeds their local state with sensible UI defaults (e.g. a 9–5 shift) so the
+    // pickers aren't blank once the user reaches that step — but if "Save Draft" is hit earlier
+    // (createStep === 3), those defaults have never actually been seen, let alone chosen, so they
+    // must not be persisted as if they were. Editing an existing posting always shows every field
+    // at once, so it's always treated as reached; so is a reopened draft that already has schedule
+    // data saved on it (scheduleSeen), otherwise saving it again would wipe those fields back to null.
+    const scheduleReached = status === 'open' || !!editingId || createStep === 4 || scheduleSeen
+    return {
+      company_id: companyId,
+      department_id: scheduleReached ? (formDeptId || null) : null,
+      created_by: internalUserId,
+      title: formTitle,
+      description: formDescription,
+      requirements: formRequirements || null,
+      experience_required: formExperienceRequired || null,
+      minimum_age: formMinimumAge ? Number(formMinimumAge) : null,
+      openings: scheduleReached && formOpenings ? Math.max(1, parseInt(formOpenings, 10) || 1) : null,
+      uniform_required: formUniformType === 'company' || formUniformType === 'dress_code',
+      uniform_type: formUniformType || null,
+      uniform_details: formUniformType === 'company' || formUniformType === 'dress_code' ? (formUniformDetails || null) : null,
+      location: formLocation || null,
+      employment_type: formEmpType || null,
+      company_name: formCompanyName || companyName || null,
+      salary_amount: scheduleReached && formSalaryAmt ? Number(formSalaryAmt) : null,
+      salary_type: formJobType === 'shift' ? 'per hour' : 'flat rate',
+      urgency: formJobType === 'oneoff' ? (formUrgency || 'normal') : null,
+      estimated_hours: formJobType === 'oneoff' ? (formEstHours || null) : null,
+      is_recurring: formJobType === 'shift',
+      formType: formJobType,
+      shift_date: scheduleReached ? (formShiftDate || null) : null,
+      // Shift/break times follow the chosen supervisor's own shift — never send them until a
+      // supervisor is actually picked, or the wizard's UI-default times (e.g. 9–5) get persisted
+      // as if the user had chosen them.
+      shift_start_time: scheduleReached && formJobType === 'shift' && formAssignedEmployeeId ? (formShiftStart || null) : null,
+      shift_end_time: scheduleReached && formJobType === 'shift' && formAssignedEmployeeId ? (formShiftEnd || null) : null,
+      break_start_time: scheduleReached && formJobType === 'shift' && formAssignedEmployeeId ? (formBreakStart || null) : null,
+      break_end_time: scheduleReached && formJobType === 'shift' && formAssignedEmployeeId ? (formBreakEnd || null) : null,
+      job_start_time: scheduleReached && formJobType === 'oneoff' && formAssignedEmployeeId ? (formJobStartTime || null) : null,
+      assigned_employee_id: scheduleReached ? (formAssignedEmployeeId || null) : null,
+      expires_at: scheduleReached && formDeadlineChoice === 'date' && formExpiresAt && formDeadlineTime
+        ? new Date(`${formExpiresAt}T${formDeadlineTime}:00`).toISOString()
+        : null,
+      template_id: formTemplateId || null,
+      status,
+    }
+  }
 
   // ── job templates (UC36) ─────────────────────────────────────────────────────
 
@@ -993,6 +1184,22 @@ export default function OwnerRecruitmentPage() {
     }
   }
 
+  const buildTemplateBody = () => ({
+    company_id: companyId, created_by: internalUserId, name: formTitle.trim(),
+    title: formTitle, description: formDescription || null, requirements: formRequirements || null,
+    employment_type: formEmpType || null, form_type: formJobType,
+    department_id: formDeptId || null,
+    salary_amount: formSalaryAmt ? Number(formSalaryAmt) : null,
+    salary_type: formJobType === 'shift' ? 'per hour' : 'flat rate',
+    uniform_required: formUniformType === 'company' || formUniformType === 'dress_code',
+    uniform_type: formUniformType || 'none',
+    uniform_details: formUniformType === 'company' || formUniformType === 'dress_code' ? (formUniformDetails || null) : null,
+    experience_required: formExperienceRequired || null,
+    minimum_age: formMinimumAge || null,
+    estimated_hours: formJobType === 'oneoff' ? (formEstHours || null) : null,
+    urgency: formJobType === 'oneoff' ? (formUrgency || 'normal') : null,
+  })
+
   const saveAsTemplate = async () => {
     if (!companyId || !internalUserId) return
     if (!formTitle.trim()) { setFormError('Job title is required to save a template'); return }
@@ -1006,28 +1213,16 @@ export default function OwnerRecruitmentPage() {
     if (!formSalaryAmt || Number(formSalaryAmt) <= 0) { setFormError('Pay amount is required to save a template'); return }
     setTemplateActionLoading(true); setFormError('')
     try {
+      const body = buildTemplateBody()
       const res = await fetch('/api/job-template', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          company_id: companyId, created_by: internalUserId, name: formTitle.trim(),
-          title: formTitle, description: formDescription || null, requirements: formRequirements || null,
-          employment_type: formEmpType || null, form_type: formJobType,
-          department_id: formDeptId || null,
-          salary_amount: formSalaryAmt ? Number(formSalaryAmt) : null,
-          salary_type: formJobType === 'shift' ? 'per hour' : 'flat rate',
-          uniform_required: formUniformType === 'company' || formUniformType === 'dress_code',
-          uniform_type: formUniformType || 'none',
-          uniform_details: formUniformType === 'company' || formUniformType === 'dress_code' ? (formUniformDetails || null) : null,
-          experience_required: formExperienceRequired || null,
-          minimum_age: formMinimumAge || null,
-          estimated_hours: formJobType === 'oneoff' ? (formEstHours || null) : null,
-          urgency: formJobType === 'oneoff' ? (formUrgency || 'normal') : null,
-        }),
+        body: JSON.stringify(body),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to save template')
-      setTemplates(prev => [...prev, data.template])
+      setTemplates(prev => [data.template, ...prev])
+      setSavedTplSnapshot(JSON.stringify(body))
       showToast('Template saved')
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Failed to save template')
@@ -1080,7 +1275,7 @@ export default function OwnerRecruitmentPage() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to create template')
-      setTemplates(prev => [...prev, data.template])
+      setTemplates(prev => [data.template, ...prev])
       setNewTemplateModalOpen(false); resetNewTemplateForm()
       showToast('Template created')
     } catch (err) {
@@ -1153,7 +1348,7 @@ export default function OwnerRecruitmentPage() {
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to update template')
-      setTemplates(prev => prev.map(t => t.id === selectedTemplateId ? data.template : t))
+      setTemplates(prev => [data.template, ...prev.filter(t => t.id !== selectedTemplateId)])
       showToast('Template updated')
     } catch (err) {
       setTplError(err instanceof Error ? err.message : 'Failed to update template')
@@ -1196,25 +1391,45 @@ export default function OwnerRecruitmentPage() {
       if (formJobType === 'shift' && (!formShiftStart || !formShiftEnd)) { setFormError('Shift start and end times are required to publish'); return }
       if (formJobType === 'shift' && (!formBreakStart || !formBreakEnd)) { setFormError('Break start and end times are required to publish'); return }
       if (!formSalaryAmt || Number(formSalaryAmt) <= 0) { setFormError('Pay amount is required to publish'); return }
+      if (!formOpenings || Number(formOpenings) < 1) { setFormError('Number of positions is required to publish'); return }
       if (!formDeadlineChoice) { setFormError('Application deadline is required to publish — choose a date or "No Deadline"'); return }
     }
     if (formDeadlineChoice === 'date' && (!formExpiresAt || !formDeadlineTime)) { setFormError('Please set a full deadline date and time'); return }
+    // A casual worker must never be on site outside the supervising employee's own shift —
+    // start no earlier than the supervisor starts, end no later than the supervisor ends.
+    if (status === 'open' && formAssignedEmployeeId && formShiftDate) {
+      const supEmp = shiftDeptEmployees.find(em => em.id === formAssignedEmployeeId) as unknown as { shifts?: { shift_date: string; start_time: string; end_time: string }[] } | undefined
+      const supShift = supEmp?.shifts?.find(s => s.shift_date === formShiftDate)
+      if (supShift) {
+        const supStart = supShift.start_time.slice(0, 5)
+        const supEnd = supShift.end_time.slice(0, 5)
+        if (formJobType === 'shift') {
+          if (formShiftStart && formShiftStart.slice(0, 5) < supStart) { setFormError(`Start time cannot be earlier than the supervisor's shift start (${fmt12Time(supStart)})`); return }
+          if (formShiftEnd && formShiftEnd.slice(0, 5) > supEnd) { setFormError(`End time cannot be later than the supervisor's shift end (${fmt12Time(supEnd)})`); return }
+        } else if (formJobStartTime) {
+          const start = formJobStartTime.slice(0, 5)
+          if (start < supStart || start > supEnd) { setFormError(`Start time must be within the supervisor's shift (${fmt12Time(supStart)} – ${fmt12Time(supEnd)})`); return }
+        }
+      }
+    }
     setActionLoading(true); setFormError('')
     try {
       const body = buildBody(status)
       let res: Response
-      if (editingId) {
+      // draftId = a draft this wizard already saved in the background; update it instead of creating another
+      const targetId = editingId || draftId
+      if (targetId) {
         res = await fetch('/api/recruitment', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...body, action: 'edit_posting', job_id: editingId }),
+          body: JSON.stringify({ ...body, action: 'edit_posting', job_id: targetId }),
         })
         // if publishing a draft, also flip its status
-        if (status === 'open' && editingDraft) {
+        if (status === 'open' && (editingDraft || draftId)) {
           await fetch('/api/recruitment', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'publish_draft', job_id: editingId }),
+            body: JSON.stringify({ action: 'publish_draft', job_id: targetId }),
           })
         }
       } else {
@@ -1226,10 +1441,17 @@ export default function OwnerRecruitmentPage() {
       }
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to save job')
-      setFormOpen(false); resetForm()
-      await fetchAll(companyId, internalUserId)
-      if (status === 'open') { setActiveTab('jobs'); showToast(editingId ? 'Job updated' : 'Job posted') }
-      else { setActiveTab('post'); setPostView('drafts'); showToast(editingId ? 'Draft saved' : 'Saved as draft') }
+      if (status === 'draft' && !editingId) {
+        // Save Draft from the create wizard is a background save — keep the wizard open
+        if (!draftId && data.posting?.id) setDraftId(data.posting.id)
+        await fetchAll(companyId, internalUserId)
+        showToast('Saved as draft')
+      } else {
+        setFormOpen(false); resetForm()
+        await fetchAll(companyId, internalUserId)
+        if (status === 'open') { setActiveTab('jobs'); showToast(editingId ? 'Job updated' : 'Job posted') }
+        else { setActiveTab('post'); showToast('Draft saved') }
+      }
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Failed to save job')
     } finally { setActionLoading(false) }
@@ -1326,10 +1548,10 @@ export default function OwnerRecruitmentPage() {
     } finally { setActionLoading(false) }
   }
 
-  // Remove ONE confirmed worker (job keeps hiring) or cancel the WHOLE job — both need a
-  // written reason since a committed worker is being cancelled on.
+  // Remove ONE confirmed worker (the job keeps hiring) — needs a written reason since a committed
+  // worker is being cancelled on. Cancelling the WHOLE job is done via Archive → Delete, which
+  // cancels any confirmed workers' shifts and notifies them automatically.
   const [removeWorkerTarget, setRemoveWorkerTarget] = useState<JobApplicant | null>(null)
-  const [cancelJobOpen, setCancelJobOpen] = useState(false)
   const [cancelReason, setCancelReason] = useState('')
   const [cancelSubmitError, setCancelSubmitError] = useState('')
 
@@ -1352,27 +1574,6 @@ export default function OwnerRecruitmentPage() {
       showToast('Worker removed — they have been notified')
     } catch (err) {
       setCancelSubmitError(err instanceof Error ? err.message : 'Failed to remove worker')
-    } finally { setActionLoading(false) }
-  }
-
-  const submitCancelJob = async () => {
-    if (!selectedLiveId || !internalUserId) return
-    if (!cancelReason.trim()) { setCancelSubmitError('A reason is required.'); return }
-    setActionLoading(true); setCancelSubmitError('')
-    try {
-      const res = await fetch('/api/recruitment', {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'cancel_job', job_id: selectedLiveId, cancelled_by: internalUserId, reason: cancelReason.trim(),
-        }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to cancel job')
-      setCancelJobOpen(false); setCancelReason('')
-      await Promise.all([fetchApplicants(selectedLiveId), fetchAll(companyId, internalUserId)])
-      showToast('Job cancelled — all confirmed workers notified')
-    } catch (err) {
-      setCancelSubmitError(err instanceof Error ? err.message : 'Failed to cancel job')
     } finally { setActionLoading(false) }
   }
 
@@ -1422,51 +1623,6 @@ export default function OwnerRecruitmentPage() {
     } finally { setActionLoading(false) }
   }
 
-  const duplicateDraft = async (draft: typeof selectedDraft) => {
-    if (!draft || !companyId || !internalUserId) return
-    setActionLoading(true); setError('')
-    try {
-      const res = await fetch('/api/recruitment', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          company_id: companyId,
-          created_by: internalUserId,
-          title: `${draft.title} (copy)`,
-          description: draft.description ?? '',
-          requirements: draft.requirements ?? null,
-          experience_required: draft.experience_required ?? null,
-          minimum_age: draft.minimum_age ?? null,
-          uniform_required: draft.uniform_required ?? false,
-          uniform_type: draft.uniform_type ?? null,
-          uniform_details: draft.uniform_details ?? null,
-          location: draft.location ?? null,
-          employment_type: draft.employment_type ?? null,
-          department_id: draft.department_id ?? null,
-          salary_amount: draft.salary_amount ?? null,
-          salary_type: draft.salary_type ?? null,
-          urgency: draft.urgency ?? null,
-          estimated_hours: draft.estimated_hours ?? null,
-          is_recurring: draft.is_recurring ?? false,
-          recurrence_interval: draft.recurrence_interval ?? null,
-          recurrence_unit: draft.recurrence_unit ?? null,
-          shift_date: draft.shift_date ?? null,
-          shift_start_time: draft.shift_start_time ?? null,
-          shift_end_time: draft.shift_end_time ?? null,
-          break_start_time: draft.break_start_time ?? null,
-          break_end_time: draft.break_end_time ?? null,
-          assigned_employee_id: draft.assigned_employee_id ?? null,
-          status: 'draft',
-        }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to duplicate')
-      await fetchAll(companyId, internalUserId)
-      if (data.posting?.id) setSelectedDraftId(data.posting.id)
-      showToast('Draft duplicated')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to duplicate draft')
-    } finally { setActionLoading(false) }
-  }
 
   const deleteDraft = async (id: string, isDraft = true) => {
     setActionLoading(true); setError('')
@@ -1478,9 +1634,11 @@ export default function OwnerRecruitmentPage() {
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to delete')
       setDeleteConfirm(null)
-      setSelectedLiveId('')
-      setSelectedArchivedId('')
-      setSelectedDraftId('')
+      setSelectedLiveId(prev => (prev === id ? '' : prev))
+      setSelectedArchivedId(prev => (prev === id ? '' : prev))
+      // Deleting the draft the wizard is currently editing — close it rather than leave it
+      // writing back to a posting that no longer exists.
+      if (draftId === id) { setFormOpen(false); resetForm() }
       await fetchAll(companyId, internalUserId)
       showToast('Deleted')
     } catch (err) {
@@ -1529,12 +1687,17 @@ export default function OwnerRecruitmentPage() {
     if (jobsSelected.size === 0) return
     setActionLoading(true); setError('')
     try {
-      await Promise.all([...jobsSelected].map(id =>
-        fetch('/api/recruitment', {
+      const results = await Promise.all([...jobsSelected].map(async id => {
+        const res = await fetch('/api/recruitment', {
           method: 'PATCH', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'archive_posting', job_id: id }),
         })
-      ))
+        return res.json()
+      }))
+      // The service refuses to archive a job whose applications aren't all resolved — surface that
+      // rather than reporting a success the server never performed.
+      const failed = results.find(r => !r.success)
+      if (failed) throw new Error(failed.message || 'Failed to archive')
       setJobsSelected(new Set())
       setSelectedLiveId('')
       await fetchAll(companyId, internalUserId)
@@ -1563,60 +1726,6 @@ export default function OwnerRecruitmentPage() {
     } finally { setActionLoading(false) }
   }
 
-  const publishDraftsSelected = async () => {
-    if (draftsSelected.size === 0) return
-    setActionLoading(true); setError('')
-    try {
-      await Promise.all([...draftsSelected].map(id =>
-        fetch('/api/recruitment', {
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'publish_draft', job_id: id }),
-        })
-      ))
-      setDraftsSelected(new Set()); setSelectedDraftId('')
-      await fetchAll(companyId, internalUserId)
-      setActiveTab('jobs')
-      showToast('Drafts published')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to publish drafts')
-    } finally { setActionLoading(false) }
-  }
-
-  const deleteDraftsSelected = async () => {
-    if (draftsSelected.size === 0) return
-    setActionLoading(true); setError('')
-    try {
-      await Promise.all([...draftsSelected].map(id =>
-        fetch('/api/recruitment', {
-          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'delete_posting', job_id: id }),
-        })
-      ))
-      setDraftsSelected(new Set()); setSelectedDraftId('')
-      await fetchAll(companyId, internalUserId)
-      showToast('Drafts deleted')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete drafts')
-    } finally { setActionLoading(false) }
-  }
-
-  const publishDraft = async (id: string) => {
-    setActionLoading(true); setError('')
-    try {
-      const res = await fetch('/api/recruitment', {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'publish_draft', job_id: id }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to publish draft')
-      setSelectedDraftId('')
-      await fetchAll(companyId, internalUserId)
-      setActiveTab('jobs')
-      showToast('Draft published')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to publish draft')
-    } finally { setActionLoading(false) }
-  }
 
   const recommendCandidates = async () => {
     if (!selectedLiveId) return
@@ -1636,11 +1745,20 @@ export default function OwnerRecruitmentPage() {
   const openPostings    = useMemo(() => livePostings.filter(p => p.status === 'open'),     [livePostings])
   const closedPostings  = useMemo(() => livePostings.filter(p => p.status === 'closed'),   [livePostings])
   const expiredPostings = useMemo(() => livePostings.filter(p => p.status === 'expired'),  [livePostings])
-  const jobsPostings    = useMemo(() => livePostings.filter(p => ['open','closed'].includes(p.status)), [livePostings])
+  // "Active Jobs" = still hiring (open); "Closed" = filled and taken off the board. Both reuse
+  // the same list+detail layout, sourced from whichever tab is active.
+  const jobsPostings    = useMemo(() => activeTab === 'closed' ? closedPostings : openPostings, [activeTab, openPostings, closedPostings])
   const archivedPostings = useMemo(() => livePostings.filter(p => p.status === 'archived'), [livePostings])
 
   const jobsDepts = useMemo(() => ['all', ...Array.from(new Set(jobsPostings.map(p => p.department_name).filter(Boolean)))] as string[], [jobsPostings])
   const filteredJobsPostings = useMemo(() => jobsDeptFilter === 'all' ? jobsPostings : jobsPostings.filter(p => p.department_name === jobsDeptFilter), [jobsPostings, jobsDeptFilter])
+  // Needs-attention (unprocessed applications) cards float to the top; Array.sort is stable, so
+  // each group keeps the order the API already gave it (newest posted first) — clearing every
+  // pending application on a card drops it back into that normal order automatically.
+  const sortedJobsPostings = useMemo(
+    () => [...filteredJobsPostings].sort((a, b) => (b.pending_count > 0 ? 1 : 0) - (a.pending_count > 0 ? 1 : 0)),
+    [filteredJobsPostings],
+  )
 
   const reviewDepts = useMemo(() => ['all', ...Array.from(new Set(pendingPostings.map(p => p.department_name).filter(Boolean)))] as string[], [pendingPostings])
   const filteredPendingPostings = useMemo(() => reviewDeptFilter === 'all' ? pendingPostings : pendingPostings.filter(p => p.department_name === reviewDeptFilter), [pendingPostings, reviewDeptFilter])
@@ -1675,6 +1793,7 @@ export default function OwnerRecruitmentPage() {
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: 4, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 999, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
             {([
               { key: 'jobs' as Tab,   label: 'Active Jobs' },
+              { key: 'closed' as Tab, label: 'Closed' },
               { key: 'review' as Tab, label: 'Pending Approval' },
               { key: 'post' as Tab,   label: 'Post Job' },
             ]).map(tab => {
@@ -1682,7 +1801,7 @@ export default function OwnerRecruitmentPage() {
               return (
                 <button
                   key={tab.key}
-                  onClick={() => { setActiveTab(tab.key); setPostView('none'); setOpenSource('templates'); setSelectedArchivedId(''); setArchivedSelected(new Set()); setSelectedDraftId(''); setSelectedTemplateId(''); setSelectedPendingId(''); setJobsSelected(new Set()) }}
+                  onClick={() => { setActiveTab(tab.key); setPostView('none'); setOpenSource('templates'); setSelectedArchivedId(''); setArchivedSelected(new Set()); setSelectedTemplateId(''); setSelectedPendingId(''); setSelectedLiveId(''); setJobsDeptFilter('all'); setJobsSelected(new Set()) }}
                   style={{
                     height: 36, padding: '0 16px', borderRadius: '99px', cursor: 'pointer', fontWeight: 700, fontSize: '0.8125rem',
                     border: 'none',
@@ -1694,9 +1813,6 @@ export default function OwnerRecruitmentPage() {
                   }}
                 >
                   {tab.label}
-                  {tab.key === 'post' && (
-                    <Plus size={13} strokeWidth={2.5} style={{ flexShrink: 0 }} />
-                  )}
                   {tab.key === 'review' && pendingPostings.length > 0 && (
                     <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#EF4444', flexShrink: 0 }} />
                   )}
@@ -1715,19 +1831,20 @@ export default function OwnerRecruitmentPage() {
             <div style={{ marginBottom: 12, padding: '11px 14px', background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 10, fontSize: '0.84rem', fontWeight: 600 }}>{error}</div>
           )}
 
-          {/* ══ JOBS tab (Open / Closed / Expired) ════════════════════════════ */}
-          {activeTab === 'jobs' && (
+          {/* ══ JOBS / CLOSED tab — same list+detail layout, source list switches by tab ══ */}
+          {(activeTab === 'jobs' || activeTab === 'closed') && (
             <div className="recruitment-grid">
 
               {/* Left: job list */}
               <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 14, overflow: 'hidden' }}>
-                <div style={{ padding: '14px 18px', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ height: LIST_HEADER_HEIGHT, padding: '0 18px', boxSizing: 'border-box', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', gap: 8 }}>
                   <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <Briefcase size={15} style={{ color: '#F97316' }} />
                   </div>
-                  <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, flex: 1 }}>Active Jobs</span>
+                  <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, flex: 1 }}>{activeTab === 'closed' ? 'Closed Jobs' : 'Active Jobs'}</span>
                   {jobsSelected.size > 0 && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      {selectedJobsArchivable && (
                       <button
                         onClick={archiveJobsSelected}
                         disabled={actionLoading}
@@ -1738,6 +1855,7 @@ export default function OwnerRecruitmentPage() {
                       >
                         <Archive size={14} />
                       </button>
+                      )}
                       <button
                         onClick={deleteJobsSelected}
                         disabled={actionLoading}
@@ -1786,28 +1904,42 @@ export default function OwnerRecruitmentPage() {
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '24px 0', color: '#9CA3AF', fontSize: '0.875rem' }}>
                     <Spinner size={14} dark /> Loading...
                   </div>
-                ) : filteredJobsPostings.length === 0 ? (
+                ) : sortedJobsPostings.length === 0 ? (
                   <div style={{ padding: '28px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
                     <Briefcase size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
-                    <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>{jobsDeptFilter === 'all' ? 'No job postings yet.' : `No job postings for ${jobsDeptFilter}.`}</p>
+                    <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>{
+                      activeTab === 'closed'
+                        ? (jobsDeptFilter === 'all' ? 'No closed jobs yet.' : `No closed jobs for ${jobsDeptFilter}.`)
+                        : (jobsDeptFilter === 'all' ? 'No job postings yet.' : `No job postings for ${jobsDeptFilter}.`)
+                    }</p>
                   </div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                  {filteredJobsPostings.map((p, idx) => {
+                  {sortedJobsPostings.map((p, idx) => {
                   const isSelected = selectedLiveId === p.id
                   const active = isSelected
                   const dc = p.department_id ? deptColor(p.department_id) : '#94A3B8'
+                  const needsAttention = p.pending_count > 0
                   return (
+                    <div key={p.id} style={{ position: 'relative' }}>
+                    {/* Needs-attention alert dot — floats outside the card's left edge, vertically centered;
+                        the card's own marginLeft leaves the clearance */}
+                    {needsAttention && (
+                      <span
+                        title={`${p.pending_count} new application${p.pending_count > 1 ? 's' : ''} to review`}
+                        style={{ position: 'absolute', left: -6, top: '50%', marginTop: -5, width: 10, height: 10, borderRadius: '50%', background: '#EF4444', boxShadow: '0 0 0 2px #FFFFFF, 0 1px 3px rgba(0,0,0,0.15)', zIndex: 1 }}
+                      />
+                    )}
                     <article
-                      key={p.id}
                       onClick={() => setSelectedLiveId(p.id)}
                       style={{
                         display: 'flex', flexDirection: 'column', gap: 10,
+                        marginLeft: needsAttention ? 18 : 0,
                         border: `1px solid ${active ? dc : PANEL_BORDER}`,
                         borderRadius: 10, padding: '14px 16px',
                         background: active ? `${dc}0d` : '#F9FAFB',
                         cursor: 'pointer', overflow: 'hidden',
-                        transition: 'box-shadow 0.18s, transform 0.18s, border-color 0.18s, background 0.18s',
+                        transition: 'box-shadow 0.18s, transform 0.18s, border-color 0.18s, background 0.18s, margin-left 0.18s',
                         animation: `deptCardIn 0.28s ease both ${idx * 55}ms`,
                         boxShadow: active ? `0 4px 16px ${dc}22` : undefined,
                       }}
@@ -1825,6 +1957,10 @@ export default function OwnerRecruitmentPage() {
                         </div>
                         {/* Card actions — same placement as the Template cards */}
                         <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                          {/* Archive only once every application is resolved — none awaiting the Owner's
+                              decision (pending) and none accepted but still awaiting the worker's
+                              confirmation. Until then the button isn't offered at all. */}
+                          {p.pending_count === 0 && p.awaiting_confirmation_count === 0 && (
                           <button
                             type="button"
                             onClick={e => { e.stopPropagation(); void runPostingAction('archive_posting', p.id) }}
@@ -1834,6 +1970,7 @@ export default function OwnerRecruitmentPage() {
                             onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FFEDD5' }}
                             onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
                           ><Archive size={14} /></button>
+                          )}
                           <button
                             type="button"
                             onClick={e => { e.stopPropagation(); setDeleteConfirm({ id: p.id, title: p.title, isDraft: false }) }}
@@ -1845,35 +1982,41 @@ export default function OwnerRecruitmentPage() {
                           ><Trash2 size={14} /></button>
                         </div>
                       </div>
-                      {/* Title row */}
+                      {/* Title row — the new-applications alert dot lives outside the card's left edge instead, see wrapper */}
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
                         <h3 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{p.title}</h3>
-                        {p.pending_count > 0 && (
-                          <span
-                            title={`${p.pending_count} new application${p.pending_count > 1 ? 's' : ''}`}
-                            style={{ width: 7, height: 7, borderRadius: '50%', background: '#EF4444', flexShrink: 0 }}
-                          />
-                        )}
                       </div>
-                      {/* Applicant / confirmed counts (left) + posted date (right) on one line */}
+                      {/* Pending review / awaiting worker confirmation / confirmed-vs-openings (left) + posted date (right) */}
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 18, minWidth: 0 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }} title="Applicants">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
+                          {/* New applications not yet accepted or rejected — clears to 0 once each is decided */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }} title="Pending review">
                             <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 999, background: '#FFF7ED', color: '#EA580C', flexShrink: 0 }}>
                               <Users size={15} />
                             </span>
-                            <span style={{ color: '#111827', fontSize: 15, fontWeight: 700 }}>{p.applicant_count}</span>
+                            <span style={{ color: '#111827', fontSize: 15, fontWeight: 700 }}>{p.pending_count}</span>
                           </div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }} title="Confirmed">
+                          {/* Owner accepted, worker hasn't confirmed the invitation yet */}
+                          {p.awaiting_confirmation_count > 0 && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 7 }} title="Awaiting worker confirmation">
+                              <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 999, background: '#FFFBEB', color: '#B45309', flexShrink: 0 }}>
+                                <Clock size={15} />
+                              </span>
+                              <span style={{ color: '#111827', fontSize: 15, fontWeight: 700 }}>{p.awaiting_confirmation_count}</span>
+                            </div>
+                          )}
+                          {/* Confirmed hires (both sides accepted) vs the openings this posting needs */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 7 }} title="Confirmed / positions to fill">
                             <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 28, height: 28, borderRadius: 999, background: '#ECFDF5', color: '#059669', flexShrink: 0 }}>
                               <UserCheck size={15} />
                             </span>
-                            <span style={{ color: '#111827', fontSize: 15, fontWeight: 700 }}>{p.accepted_count}</span>
+                            <span style={{ color: '#111827', fontSize: 15, fontWeight: 700, whiteSpace: 'nowrap' }}>{p.confirmed_count} / {p.openings ?? 1}</span>
                           </div>
                         </div>
                         <span style={{ fontSize: '0.75rem', color: '#9CA3AF', flexShrink: 0 }}>Posted {formatCompactAt(p.created_at)}</span>
                       </div>
                     </article>
+                    </div>
                   )
                   })}
                   </div>
@@ -1890,20 +2033,28 @@ export default function OwnerRecruitmentPage() {
                   </div>
                 </div>
               ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.6fr) minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.1fr) minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
                 {/* Job detail — read-only preview */}
                 <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ padding: '17px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                  <div style={{ height: LIST_HEADER_HEIGHT, padding: '0 18px', boxSizing: 'border-box', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flexWrap: 'wrap' }}>
                     <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       <Briefcase size={15} style={{ color: '#F97316' }} />
                     </div>
-                    <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedLive.title} Detail</span>
-                    {/* Supervisor is owner-facing info — applicants never see it, so it lives up here, not in the preview */}
-                    {selectedLive.assigned_employee_name && (
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                        <Users size={11} />{selectedLive.assigned_employee_name}
-                      </span>
+                    <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }}>{selectedLive.title} Detail</span>
+                    {/* Who published this posting — Owner, Partner, or a Manager whose posting the Owner approved */}
+                    {selectedLive.created_by_name && (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F1F5F9', color: '#475569', border: '1px solid #E2E8F0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 1 }}>Posted by {selectedLive.created_by_name}</span>
                     )}
+                    {/* Application deadline countdown — lives next to the Posted-by badge, not buried in Schedule; sized to match it */}
+                    {(() => {
+                      const cd = deadlineCountdown(selectedLive.expires_at)
+                      if (!cd) return null
+                      return (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 700, background: cd.expired ? '#FEF2F2' : '#FFFBEB', color: cd.expired ? '#B91C1C' : '#B45309', border: `1px solid ${cd.expired ? '#FECACA' : '#FDE68A'}`, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                          <Clock size={11} />{cd.label}
+                        </span>
+                      )
+                    })()}
                   </div>
                   {/* Job details body — mirrors the Template Preview design, plus a Schedule section */}
                   {(() => {
@@ -2001,26 +2152,24 @@ export default function OwnerRecruitmentPage() {
                             </div>
                           </div>
 
-                          {/* Schedule — posting-only facts (a template never has these) */}
-                          {(p.shift_date || (isShiftJob && (p.shift_start_time || p.shift_end_time || p.break_start_time || p.break_end_time)) || (!isShiftJob && p.job_start_time)) && (
-                            <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
-                              <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Schedule</p>
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                {p.shift_date && (
-                                  <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Date:</span> {new Date(p.shift_date).toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
-                                )}
-                                {isShiftJob && (p.shift_start_time || p.shift_end_time) && (
-                                  <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Working Hours:</span> {p.shift_start_time ? fmt12(p.shift_start_time) : '—'} – {p.shift_end_time ? fmt12(p.shift_end_time) : '—'}</p>
-                                )}
-                                {isShiftJob && (p.break_start_time || p.break_end_time) && (
-                                  <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Break Time:</span> {p.break_start_time ? fmt12(p.break_start_time) : '—'} – {p.break_end_time ? fmt12(p.break_end_time) : '—'}</p>
-                                )}
-                                {!isShiftJob && p.job_start_time && (
-                                  <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Start Time:</span> {fmt12(p.job_start_time)}</p>
-                                )}
-                              </div>
+                          {/* Schedule & posting facts — the full set of values entered when posting */}
+                          <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
+                            <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Schedule</p>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                              {p.shift_date && (
+                                <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Date:</span> {new Date(p.shift_date).toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                              )}
+                              {isShiftJob && (p.shift_start_time || p.shift_end_time) && (
+                                <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Working Hours:</span> {p.shift_start_time ? fmt12(p.shift_start_time) : '—'} – {p.shift_end_time ? fmt12(p.shift_end_time) : '—'}</p>
+                              )}
+                              {isShiftJob && (p.break_start_time || p.break_end_time) && (
+                                <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Break Time:</span> {p.break_start_time ? fmt12(p.break_start_time) : '—'} – {p.break_end_time ? fmt12(p.break_end_time) : '—'}</p>
+                              )}
+                              {!isShiftJob && p.job_start_time && (
+                                <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Start Time:</span> {fmt12(p.job_start_time)}</p>
+                              )}
                             </div>
-                          )}
+                          </div>
 
                           <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
                             <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Responsibilities</p>
@@ -2044,30 +2193,22 @@ export default function OwnerRecruitmentPage() {
 
                 {/* Applicants */}
                 <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div style={{ height: LIST_HEADER_HEIGHT, padding: '0 18px', boxSizing: 'border-box', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
                     <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       <Users size={15} style={{ color: '#F97316' }} />
                     </div>
-                    <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, flex: 1 }}>Applicants</span>
-                    <button
-                      onClick={() => { setCancelJobOpen(true); setCancelReason(''); setCancelSubmitError('') }}
-                      disabled={actionLoading}
-                      style={{ height: 36, padding: '0 14px', background: '#FFFFFF', color: '#DC2626', border: '1px solid #FECACA', borderRadius: 9, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, flexShrink: 0 }}
-                      onMouseEnter={e => { e.currentTarget.style.background = '#FEF2F2' }}
-                      onMouseLeave={e => { e.currentTarget.style.background = '#FFFFFF' }}
-                    >
-                      <XCircle size={14} /> Cancel Job
-                    </button>
+                    <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Applicants</span>
+                    {/* AI action — purple gradient button, same treatment as the other AI features */}
                     <button
                       onClick={recommendCandidates}
                       disabled={aiLoading || applicants.length === 0}
-                      style={{ height: 36, padding: '0 16px', background: '#F97316', color: '#fff', border: 'none', borderRadius: 9, cursor: aiLoading || applicants.length === 0 ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 7, fontWeight: 700, fontSize: 13, flexShrink: 0 }}
-                      onMouseEnter={e => { if (!aiLoading && applicants.length > 0) e.currentTarget.style.background = '#EA580C' }}
-                      onMouseLeave={e => { e.currentTarget.style.background = '#F97316' }}
+                      style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: aiLoading || applicants.length === 0 ? 'default' : 'pointer', opacity: aiLoading || applicants.length === 0 ? 0.6 : 1, flexShrink: 0 }}
                     >
-                      {aiLoading ? <Spinner size={14} /> : <Sparkles size={14} />} AI Recommend
+                      {aiLoading ? <Spinner size={14} /> : <Sparkles size={15} strokeWidth={2.5} />} AI Assessment
                     </button>
                   </div>
+                  {/* Job Information + clickable Supervisor card — every posting has a supervisor */}
+                  <JobScheduleSupervisorCard posting={selectedLive} onSupervisorClick={() => openSupervisorModal(selectedLive)} />
                   <div style={{ padding: '18px 20px' }}>
                         {applicants.length === 0 ? (
                           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '48px 24px', background: '#FFFFFF', borderRadius: 12, border: '1.5px dashed #E5E7EB' }}>
@@ -2144,10 +2285,13 @@ export default function OwnerRecruitmentPage() {
 
           {/* ══ POST JOB hub tab ═══════════════════════════════════════════════ */}
           {activeTab === 'post' && (
-            <div className="recruitment-grid" style={postView === 'template' ? { gap: 40, height: '100%', minHeight: 0, gridTemplateRows: 'minmax(0, 1fr)' } : undefined}>
-            {/* Capped at viewport height — the template list below scrolls internally instead of the page */}
+            <div className="recruitment-grid" style={
+              postView === 'template' ? { gap: 40, height: '100%', minHeight: 0, gridTemplateRows: 'minmax(0, 1fr)' }
+              : undefined
+            }>
+            {/* Capped at viewport height — the template detail scrolls internally instead of the page */}
             <section className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: postView === 'template' ? '100%' : 'calc(100vh - 162px)' }}>
-              <div style={{ padding: '17px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+              <div style={{ height: LIST_HEADER_HEIGHT, padding: '0 18px', boxSizing: 'border-box', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                 <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   <Plus size={15} style={{ color: '#F97316' }} />
                 </div>
@@ -2163,18 +2307,20 @@ export default function OwnerRecruitmentPage() {
               </div>
               <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0, overflowY: 'auto' }}>
                 {([
-                  { key: 'drafts' as const,   icon: FileText, title: 'Drafts', onClick: () => { setOpenSource(o => o === 'drafts' ? 'none' : 'drafts'); setPostView('none'); setSelectedDraftId(''); setDraftsSelected(new Set()) } },
+                  { key: 'drafts' as const,   icon: FileText, title: 'Drafts', onClick: () => { setOpenSource(o => o === 'drafts' ? 'none' : 'drafts'); setPostView('none') } },
                   { key: 'archived' as const, icon: Archive,  title: 'Archived', onClick: () => { setOpenSource(o => o === 'archived' ? 'none' : 'archived'); setPostView('none'); setSelectedArchivedId(''); setArchivedSelected(new Set()) } },
                   { key: 'templates' as const, icon: ClipboardList, title: 'Template', onClick: () => { setPostView('none'); setOpenSource(o => o === 'templates' ? 'none' : 'templates') } },
                 ]).map((card, idx) => {
                   const Icon = card.icon
                   const isSelected = openSource === card.key
+                  // Template block shrinks with the panel so its list scrolls internally and the New Template button stays pinned
+                  const isTemplateOpen = isSelected && card.key === 'templates'
                   return (
-                    <div key={card.key} style={{ display: 'flex', flexDirection: 'column', gap: 10, flexShrink: 0 }}>
+                    <div key={card.key} style={{ display: 'flex', flexDirection: 'column', gap: 10, ...(isTemplateOpen ? { flex: '1 1 auto', minHeight: 0 } : { flexShrink: 0 }) }}>
                     <article
                       onClick={card.onClick}
                       style={{
-                        display: 'flex', alignItems: 'center', gap: 10,
+                        display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0,
                         border: `1px solid ${isSelected ? '#F97316' : PANEL_BORDER}`,
                         borderRadius: 10, padding: '14px 16px',
                         background: isSelected ? '#FFF7ED' : '#F9FAFB',
@@ -2210,7 +2356,7 @@ export default function OwnerRecruitmentPage() {
                             }}>
                               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                                  <DepartmentBadge departmentId={p.department_id} departmentName={p.department_name} />
+                                  {p.department_id && <DepartmentBadge departmentId={p.department_id} departmentName={p.department_name} />}
                                   {p.is_recurring
                                     ? <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', whiteSpace: 'nowrap', flexShrink: 0 }}>Shift Job</span>
                                     : <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE', whiteSpace: 'nowrap', flexShrink: 0 }}>One-Off Job</span>
@@ -2228,7 +2374,7 @@ export default function OwnerRecruitmentPage() {
                                   ><Copy size={14} /></button>
                                   <button
                                     type="button"
-                                    onClick={() => setDeleteConfirm({ id: p.id, title: p.title, isDraft: true })}
+                                    onClick={() => void deleteDraft(p.id, true)}
                                     disabled={actionLoading}
                                     title="Delete draft"
                                     style={{ border: 'none', background: 'transparent', color: '#DC2626', cursor: actionLoading ? 'default' : 'pointer', display: 'flex', padding: 6, borderRadius: 6, opacity: actionLoading ? 0.5 : 1 }}
@@ -2240,11 +2386,11 @@ export default function OwnerRecruitmentPage() {
                               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, minWidth: 0 }}>
                                 <button
                                   type="button"
-                                  onClick={() => { setPostView('drafts'); setSelectedDraftId(p.id) }}
-                                  title="View draft"
-                                  style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700, color: selectedDraftId === p.id && postView === 'drafts' ? '#F97316' : '#0F172A', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', border: 'none', background: 'transparent', padding: 0, textAlign: 'left', cursor: 'pointer' }}
+                                  onClick={() => void openDraftInWizard(p)}
+                                  title="Continue draft"
+                                  style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700, color: formOpen && draftId === p.id ? '#F97316' : '#0F172A', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', border: 'none', background: 'transparent', padding: 0, textAlign: 'left', cursor: 'pointer' }}
                                   onMouseEnter={e => { e.currentTarget.style.color = '#F97316' }}
-                                  onMouseLeave={e => { e.currentTarget.style.color = selectedDraftId === p.id && postView === 'drafts' ? '#F97316' : '#0F172A' }}
+                                  onMouseLeave={e => { e.currentTarget.style.color = formOpen && draftId === p.id ? '#F97316' : '#0F172A' }}
                                 >{p.title}</button>
                                 <span style={{ fontSize: '0.75rem', color: '#9CA3AF', flexShrink: 0 }}>Saved {formatCompactAt(p.created_at)}</span>
                               </div>
@@ -2317,8 +2463,9 @@ export default function OwnerRecruitmentPage() {
 
                     {/* ── Template dropdown ── */}
                     {isSelected && card.key === 'templates' && (
-                <div style={{ padding: '0 0 4px 14px', display: 'flex', flexDirection: 'column', gap: 10, animation: 'deptCardIn 0.2s ease both', minHeight: 0 }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ padding: '0 0 4px 14px', display: 'flex', flexDirection: 'column', gap: 10, animation: 'deptCardIn 0.2s ease both', minHeight: 0, flex: '1 1 auto' }}>
+                  {/* Only this list scrolls — the New Template button below stays visible at the bottom of the panel */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0, overflowY: 'auto' }}>
                   {templates.length === 0 ? (
                     <div style={{ padding: '20px 16px', textAlign: 'center', background: '#F8FAFC', borderRadius: 12 }}>
                       <ClipboardList size={20} style={{ color: '#CBD5E1', margin: '0 auto 6px', display: 'block' }} />
@@ -2400,21 +2547,29 @@ export default function OwnerRecruitmentPage() {
 
             {/* Archived detail — read-only view opened by clicking an archived job in the Job Sources dropdown */}
             {postView === 'archived' && selectedArchived != null && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.6fr) minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.1fr) minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
                 {/* Job detail — read-only */}
                 <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                   {/* 20px vertical padding (vs 17px elsewhere): keeps this divider level with the Job Sources header, whose 36px AI button makes it 6px taller */}
-                  <div style={{ padding: '20px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                  <div style={{ padding: '20px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flexWrap: 'wrap' }}>
                     <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       <Archive size={15} style={{ color: '#F97316' }} />
                     </div>
-                    <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedArchived.title} Detail</span>
-                    {/* Supervisor is owner-facing info — applicants never see it, so it lives up here, not in the preview */}
-                    {selectedArchived.assigned_employee_name && (
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                        <Users size={11} />{selectedArchived.assigned_employee_name}
-                      </span>
+                    <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }}>{selectedArchived.title} Detail</span>
+                    {/* Who published this posting — Owner, Partner, or a Manager whose posting the Owner approved */}
+                    {selectedArchived.created_by_name && (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F1F5F9', color: '#475569', border: '1px solid #E2E8F0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 1 }}>Posted by {selectedArchived.created_by_name}</span>
                     )}
+                    {/* Application deadline countdown — lives next to the Posted-by badge, not buried in Schedule; sized to match it */}
+                    {(() => {
+                      const cd = deadlineCountdown(selectedArchived.expires_at)
+                      if (!cd) return null
+                      return (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 700, background: cd.expired ? '#FEF2F2' : '#FFFBEB', color: cd.expired ? '#B91C1C' : '#B45309', border: `1px solid ${cd.expired ? '#FECACA' : '#FDE68A'}`, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                          <Clock size={11} />{cd.label}
+                        </span>
+                      )
+                    })()}
                   </div>
                       {/* Job details body — mirrors the Template Preview design, plus a Schedule section
                           for the posting-only facts a template never has (date, hours, break) */}
@@ -2513,26 +2668,24 @@ export default function OwnerRecruitmentPage() {
                                 </div>
                               </div>
 
-                              {/* Schedule — posting-only facts (a template never has these) */}
-                              {(p.shift_date || (isShiftJob && (p.shift_start_time || p.shift_end_time || p.break_start_time || p.break_end_time)) || (!isShiftJob && p.job_start_time)) && (
-                                <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
-                                  <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Schedule</p>
-                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                    {p.shift_date && (
-                                      <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Date:</span> {new Date(p.shift_date).toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
-                                    )}
-                                    {isShiftJob && (p.shift_start_time || p.shift_end_time) && (
-                                      <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Working Hours:</span> {p.shift_start_time ? fmt12(p.shift_start_time) : '—'} – {p.shift_end_time ? fmt12(p.shift_end_time) : '—'}</p>
-                                    )}
-                                    {isShiftJob && (p.break_start_time || p.break_end_time) && (
-                                      <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Break Time:</span> {p.break_start_time ? fmt12(p.break_start_time) : '—'} – {p.break_end_time ? fmt12(p.break_end_time) : '—'}</p>
-                                    )}
-                                    {!isShiftJob && p.job_start_time && (
-                                      <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Start Time:</span> {fmt12(p.job_start_time)}</p>
-                                    )}
-                                  </div>
+                              {/* Schedule & posting facts — the full set of values entered when posting */}
+                              <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
+                                <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Schedule</p>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                  {p.shift_date && (
+                                    <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Date:</span> {new Date(p.shift_date).toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                                  )}
+                                  {isShiftJob && (p.shift_start_time || p.shift_end_time) && (
+                                    <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Working Hours:</span> {p.shift_start_time ? fmt12(p.shift_start_time) : '—'} – {p.shift_end_time ? fmt12(p.shift_end_time) : '—'}</p>
+                                  )}
+                                  {isShiftJob && (p.break_start_time || p.break_end_time) && (
+                                    <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Break Time:</span> {p.break_start_time ? fmt12(p.break_start_time) : '—'} – {p.break_end_time ? fmt12(p.break_end_time) : '—'}</p>
+                                  )}
+                                  {!isShiftJob && p.job_start_time && (
+                                    <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Start Time:</span> {fmt12(p.job_start_time)}</p>
+                                  )}
                                 </div>
-                              )}
+                              </div>
 
                               <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
                                 <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Responsibilities</p>
@@ -2562,7 +2715,13 @@ export default function OwnerRecruitmentPage() {
                       <Users size={15} style={{ color: '#F97316' }} />
                     </div>
                     <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Applicants</span>
+                    {/* Confirmed (both employer accepted + worker confirmed the invitation) vs openings — sits right next to the title */}
+                    <span title="Confirmed workers / positions to fill" style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 700, background: '#ECFDF5', color: '#059669', border: '1px solid #A7F3D0', flexShrink: 0 }}>
+                      {archivedApplicants.filter(a => a.status === 'accepted' && a.invitation_status === 'accepted').length} / {selectedArchived.openings ?? 1}
+                    </span>
                   </div>
+                  {/* Job Information + clickable Supervisor card — every posting has a supervisor */}
+                  <JobScheduleSupervisorCard posting={selectedArchived} onSupervisorClick={() => openSupervisorModal(selectedArchived)} />
                   <div style={{ padding: '18px 20px' }}>
                         {archivedApplicants.length === 0 ? (
                           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '48px 24px', background: '#FFFFFF', borderRadius: 12, border: '1.5px dashed #E5E7EB' }}>
@@ -2590,265 +2749,6 @@ export default function OwnerRecruitmentPage() {
                         ))}
                   </div>
                 </div>
-              </div>
-            )}
-
-            {postView === 'drafts' && (
-              <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                {!selectedDraft ? (
-                  <>
-                <div style={{ padding: '14px 18px 12px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <FileText size={15} style={{ color: '#F97316' }} />
-                  </div>
-                  <span className="font-heading" style={{ fontSize: 15, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.3px', flex: 1 }}>Drafts</span>
-                  {draftsSelected.size > 0 && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <button
-                        onClick={publishDraftsSelected}
-                        disabled={actionLoading}
-                        title={`Post ${draftsSelected.size} selected`}
-                        style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid #BBF7D0', background: '#F0FDF4', color: '#059669', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}
-                        onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#DCFCE7' }}
-                        onMouseLeave={e => { e.currentTarget.style.background = '#F0FDF4' }}
-                      >
-                        {actionLoading ? <Spinner size={12} dark /> : <Send size={14} />}
-                      </button>
-                      <button
-                        onClick={deleteDraftsSelected}
-                        disabled={actionLoading}
-                        title={`Delete ${draftsSelected.size} selected`}
-                        style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid #FECACA', background: '#FEF2F2', color: '#DC2626', display: 'grid', placeItems: 'center', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.65 : 1 }}
-                        onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FEE2E2' }}
-                        onMouseLeave={e => { e.currentTarget.style.background = '#FEF2F2' }}
-                      >
-                        {actionLoading ? <Spinner size={12} dark /> : <Trash2 size={14} />}
-                      </button>
-                    </div>
-                  )}
-                </div>
-                    <div style={{ flex: 1, overflowY: 'auto' }}>
-                {loading ? (
-                  <div style={{ padding: '24px 18px', color: '#9CA3AF', fontSize: '0.875rem', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-                    <Spinner size={14} dark /> Loading...
-                  </div>
-                ) : drafts.length === 0 ? (
-                  <div style={{ margin: '12px 14px', padding: '28px 16px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
-                    <FileText size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
-                    <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No drafts saved.</p>
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '12px 14px' }}>
-                  {drafts.map((p, idx) => {
-                  const isSelected = selectedDraftId === p.id
-                  const checked = draftsSelected.has(p.id)
-                  return (
-                    <div
-                      key={p.id}
-                      className="dept-card"
-                      onClick={() => setSelectedDraftId(p.id)}
-                      style={{
-                        animationDelay: `${idx * 55}ms`,
-                        border: (isSelected || checked) ? '2px solid #F97316' : '2px solid #E5E7EB',
-                        borderRadius: 14,
-                        padding: '14px 14px 12px',
-                        background: '#FFFFFF',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        cursor: 'pointer',
-                        boxShadow: (isSelected || checked) ? '0 0 0 3px rgba(249,115,22,0.10)' : '0 1px 3px rgba(0,0,0,0.06)',
-                        transition: 'border-color 0.15s, box-shadow 0.15s, transform 0.15s',
-                      }}
-                      onMouseEnter={e => {
-                        if (isSelected || checked) return
-                        e.currentTarget.style.transform = 'translateY(-2px)'
-                        e.currentTarget.style.boxShadow = '0 6px 18px rgba(0,0,0,0.10)'
-                        e.currentTarget.style.borderColor = '#FDBA74'
-                      }}
-                      onMouseLeave={e => {
-                        if (isSelected || checked) return
-                        e.currentTarget.style.transform = 'none'
-                        e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.06)'
-                        e.currentTarget.style.borderColor = '#E5E7EB'
-                      }}
-                    >
-                      {/* Badge row: department badge + checkbox */}
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-                        {p.department_name ? (
-                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F0F9FF', color: '#0284C7', border: '1px solid #BAE6FD', whiteSpace: 'nowrap' }}>
-                            <LayoutGrid size={10} />{p.department_name}
-                          </span>
-                        ) : (
-                          <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 9px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F3F4F6', color: '#9CA3AF', border: '1px solid #E5E7EB' }}>No dept</span>
-                        )}
-                        <button
-                          type="button"
-                          onClick={e => { e.stopPropagation(); setDraftsSelected(prev => { const s = new Set(prev); checked ? s.delete(p.id) : s.add(p.id); return s }) }}
-                          style={{ flexShrink: 0, width: 18, height: 18, borderRadius: 5, border: checked ? '2px solid #F97316' : '2px solid #D1D5DB', background: checked ? '#F97316' : '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: 0 }}
-                        >
-                          {checked && <Check size={11} color="#FFFFFF" strokeWidth={3} />}
-                        </button>
-                      </div>
-                      {/* Title + date row */}
-                      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 10 }}>
-                        <strong style={{ fontSize: '0.9rem', color: '#1C1C1E', lineHeight: 1.4, flex: 1, minWidth: 0 }}>{p.title}</strong>
-                        <span style={{ fontSize: '0.75rem', color: '#C4C9D4', flexShrink: 0 }}>{formatCompactAt(p.created_at)}</span>
-                      </div>
-                    </div>
-                  )
-                  })}
-                  </div>
-                )}
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div style={{ borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 24px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flexWrap: 'nowrap' }}>
-                        <button onClick={() => setSelectedDraftId('')} title="Back to list" style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid #E5E7EB', background: '#FFFFFF', color: '#374151', display: 'grid', placeItems: 'center', cursor: 'pointer', flexShrink: 0 }}
-                          onMouseEnter={e => { e.currentTarget.style.background = '#F9FAFB' }}
-                          onMouseLeave={e => { e.currentTarget.style.background = '#FFFFFF' }}
-                        ><ChevronLeft size={16} /></button>
-                        <h2 style={{ margin: 0, fontSize: '1.1rem', color: '#111827', fontWeight: 700, lineHeight: 1, alignSelf: 'center' }}>{selectedDraft.title}</h2>
-                        {selectedDraft.is_recurring ? (
-                          <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', whiteSpace: 'nowrap', flexShrink: 0 }}>Shift Job</span>
-                        ) : (
-                          <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE', whiteSpace: 'nowrap', flexShrink: 0 }}>One-Off Job</span>
-                        )}
-                      </div>
-                      <button
-                        ref={draftMenuBtnRef}
-                        onClick={e => { e.stopPropagation(); if (!draftMenuOpen) { const r = e.currentTarget.getBoundingClientRect(); setDraftMenuPos({ top: r.bottom + 4, right: window.innerWidth - r.right }) } setDraftMenuOpen(o => !o) }}
-                        style={{ width: 32, height: 32, borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', color: '#374151', display: 'grid', placeItems: 'center', cursor: 'pointer', flexShrink: 0 }}
-                        onMouseEnter={e => (e.currentTarget.style.background = '#F9FAFB')}
-                        onMouseLeave={e => (e.currentTarget.style.background = '#FFFFFF')}
-                      ><MoreHorizontal size={16} /></button>
-                    </div>
-                    {/* Two-column body */}
-                    <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-                      {/* LEFT: job details */}
-                      {(() => {
-                        const toMins = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m }
-                        const isShiftJob = selectedDraft.is_recurring
-                        const shiftDate = selectedDraft.shift_date
-                        const shiftStart = selectedDraft.shift_start_time
-                        const shiftEnd = selectedDraft.shift_end_time
-                        const breakStart = selectedDraft.break_start_time
-                        const breakEnd = selectedDraft.break_end_time
-                        const estimatedHours = selectedDraft.estimated_hours
-                        const urgency = selectedDraft.urgency ?? 'normal'
-                        const urgencyLabel = urgency === 'urgent' ? 'Urgent' : urgency === 'high' ? 'High' : 'Normal'
-                        let totalAmt: number | null = null
-                        if (isShiftJob && selectedDraft.salary_amount != null && shiftStart && shiftEnd) {
-                          let worked = toMins(shiftEnd) - toMins(shiftStart)
-                          if (breakStart && breakEnd) worked -= (toMins(breakEnd) - toMins(breakStart))
-                          if (worked > 0) totalAmt = Math.round(selectedDraft.salary_amount * (worked / 60) * 100) / 100
-                        }
-                        const fmtShort = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return m === 0 ? `${h12}${ap}` : `${h12}:${String(m).padStart(2, '0')}${ap}` }
-                        const statCard: React.CSSProperties = { borderRadius: 12, padding: '10px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'center', minHeight: 72 }
-                        const statLabel: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }
-                        const statLabelText = (color: string): React.CSSProperties => ({ fontSize: '0.75rem', fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: '0.06em' })
-                        const statValue: React.CSSProperties = { margin: 0, fontSize: '0.8rem', fontWeight: 600, color: '#374151', lineHeight: 1.3 }
-                        return (
-                          <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px 24px' }}>
-                            {/* Stat cards */}
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 20 }}>
-                              {/* Pay */}
-                              {selectedDraft.salary_amount != null ? (
-                                <div style={{ ...statCard, background: '#FFF7ED', border: '1px solid #FED7AA' }}>
-                                  <div style={statLabel}><DollarSign size={11} style={{ color: '#F97316' }} /><span style={statLabelText('#F97316')}>{isShiftJob ? 'Pay' : 'Flat Rate'}</span></div>
-                                  <p style={statValue}>{isShiftJob ? `$${selectedDraft.salary_amount}/Hr${totalAmt != null ? ` ($${totalAmt % 1 === 0 ? totalAmt.toFixed(0) : totalAmt.toFixed(2)})` : ''}` : `$${selectedDraft.salary_amount}`}</p>
-                                </div>
-                              ) : (
-                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}><span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No pay set</span></div>
-                              )}
-                              {/* Date */}
-                              {shiftDate ? (
-                                <div style={{ ...statCard, background: '#F0F9FF', border: '1px solid #BAE6FD' }}>
-                                  <div style={statLabel}><CalendarDays size={11} style={{ color: '#0284C7' }} /><span style={statLabelText('#0284C7')}>Date</span></div>
-                                  <p style={statValue}>{new Date(shiftDate).toLocaleDateString('en-SG', { weekday: 'short', day: 'numeric', month: 'short' })}</p>
-                                </div>
-                              ) : (
-                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}><span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No date set</span></div>
-                              )}
-                              {/* Hours / Estimation */}
-                              {isShiftJob ? ((shiftStart || shiftEnd) ? (
-                                <div style={{ ...statCard, background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
-                                  <div style={statLabel}><Clock size={11} style={{ color: '#059669' }} /><span style={statLabelText('#059669')}>Hours</span></div>
-                                  <p style={statValue}>{shiftStart ? fmtShort(shiftStart) : '—'} – {shiftEnd ? fmtShort(shiftEnd) : '—'}</p>
-                                </div>
-                              ) : (
-                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}><span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No hours set</span></div>
-                              )) : (estimatedHours ? (
-                                <div style={{ ...statCard, background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
-                                  <div style={statLabel}><Clock size={11} style={{ color: '#059669' }} /><span style={statLabelText('#059669')}>Estimation</span></div>
-                                  <p style={statValue}>{estimatedHours} Hours</p>
-                                </div>
-                              ) : (
-                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}><span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No hours set</span></div>
-                              ))}
-                              {/* Break / Urgency */}
-                              {isShiftJob ? ((breakStart || breakEnd) ? (
-                                <div style={{ ...statCard, background: '#FDF4FF', border: '1px solid #E9D5FF' }}>
-                                  <div style={statLabel}><Coffee size={11} style={{ color: '#9333EA' }} /><span style={statLabelText('#9333EA')}>Break</span></div>
-                                  <p style={statValue}>{breakStart ? fmtShort(breakStart) : '—'} – {breakEnd ? fmtShort(breakEnd) : '—'}</p>
-                                </div>
-                              ) : (
-                                <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}><span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No break</span></div>
-                              )) : (
-                                <div style={{ ...statCard, background: '#FFF1F2', border: '1px solid #FECDD3' }}>
-                                  <div style={statLabel}><Zap size={11} style={{ color: '#E11D48' }} /><span style={statLabelText('#E11D48')}>Urgency</span></div>
-                                  <p style={statValue}>{urgencyLabel}</p>
-                                </div>
-                              )}
-                            </div>
-
-                            {/* Department + Employee row */}
-                            {(selectedDraft.department_name || selectedDraft.assigned_employee_name) && (
-                              <div style={{ display: 'flex', border: '1px solid #E5E7EB', borderRadius: 10, overflow: 'hidden', marginTop: 4 }}>
-                                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 0', borderRight: '1px solid #E5E7EB', background: '#FAFAFA' }}>
-                                  <LayoutGrid size={14} style={{ color: '#9CA3AF', flexShrink: 0 }} />
-                                  <span style={{ fontSize: '0.875rem', color: '#374151' }}>{selectedDraft.department_name ?? '—'}</span>
-                                </div>
-                                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 0', background: '#FAFAFA' }}>
-                                  <UserCheck size={14} style={{ color: '#9CA3AF', flexShrink: 0 }} />
-                                  <span style={{ fontSize: '0.875rem', color: '#374151' }}>{selectedDraft.assigned_employee_name ?? '—'}</span>
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Scope & Requirements */}
-                            <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
-                              <div style={{ background: '#FFFFFF', borderRadius: 10, padding: '14px 16px', border: '1px solid #E5E7EB' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                                  <FileText size={13} style={{ color: '#F97316' }} />
-                                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Scope</span>
-                                </div>
-                                {selectedDraft.description ? (
-                                  <p style={{ margin: 0, fontSize: '0.875rem', color: '#374151', lineHeight: 1.75 }}>{selectedDraft.description}</p>
-                                ) : (
-                                  <p style={{ margin: 0, fontSize: '0.875rem', color: '#9CA3AF', fontStyle: 'italic' }}>Not set</p>
-                                )}
-                              </div>
-                              <div style={{ background: '#FFFFFF', borderRadius: 10, padding: '14px 16px', border: '1px solid #E5E7EB' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                                  <ClipboardList size={13} style={{ color: '#F97316' }} />
-                                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Requirements</span>
-                                </div>
-                                {selectedDraft.requirements ? (
-                                  <p style={{ margin: 0, fontSize: '0.875rem', color: '#374151', lineHeight: 1.75, whiteSpace: 'pre-wrap' }}>{selectedDraft.requirements}</p>
-                                ) : (
-                                  <p style={{ margin: 0, fontSize: '0.875rem', color: '#9CA3AF', fontStyle: 'italic' }}>Not set</p>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        )
-                      })()}
-
-                    </div>
-                  </>
-                )}
               </div>
             )}
 
@@ -2889,7 +2789,7 @@ export default function OwnerRecruitmentPage() {
                           <RDrop
                             value={tplFormType}
                             placeholder="Select job type"
-                            options={[{ value: 'oneoff', label: 'One-Off' }, { value: 'shift', label: 'Shift' }]}
+                            options={[{ value: 'shift', label: 'Shift' }, { value: 'oneoff', label: 'One-Off' }]}
                             onChange={v => setTplFormType(v === 'shift' ? 'shift' : 'oneoff')}
                           />
                         </div>
@@ -2910,6 +2810,7 @@ export default function OwnerRecruitmentPage() {
                         <textarea
                           value={tplDescription}
                           onChange={e => setTplDescription(e.target.value)}
+                          onKeyDown={handleListKeyDown}
                           rows={3}
                           placeholder="e.g. Serve customers, prep orders"
                           style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
@@ -2922,6 +2823,7 @@ export default function OwnerRecruitmentPage() {
                         <textarea
                           value={tplRequirements}
                           onChange={e => setTplRequirements(e.target.value)}
+                          onKeyDown={handleListKeyDown}
                           rows={2}
                           placeholder="e.g. Valid driver's license, basic Excel skills"
                           style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
@@ -2991,7 +2893,7 @@ export default function OwnerRecruitmentPage() {
                           <RDrop value={tplDepartmentId} placeholder="Select department" options={departments.map(d => ({ value: d.id, label: d.name }))} onChange={setTplDepartmentId} />
                         </div>
                         <div style={{ minWidth: 0 }}>
-                          <label style={modalLabelStyle}>{tplFormType === 'shift' ? 'Pay/Hr' : 'Flat Rate'}</label>
+                          <label style={modalLabelStyle}>{tplFormType === 'shift' ? 'Hourly Rate' : 'Flat Rate'}</label>
                           <div style={{ position: 'relative' }}>
                             <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#6B7280', fontSize: '0.9375rem', pointerEvents: 'none' }}>$</span>
                             <input type="number" min={0} step={0.5} onKeyDown={blockNonNumericKeys} value={tplSalaryAmt} onChange={e => setTplSalaryAmt(e.target.value)} placeholder="0.00" style={{ ...modalInputStyle, paddingLeft: 26 }} />
@@ -3151,7 +3053,7 @@ export default function OwnerRecruitmentPage() {
                           <p style={{ margin: 0, fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{departments.find(d => d.id === tplDepartmentId)?.name ?? '—'}</p>
                         </div>
                         <div style={{ border: '1px solid #E5E7EB', borderRadius: 10, padding: '12px 14px', background: '#FFFFFF', minWidth: 0 }}>
-                          <p style={{ ...modalLabelStyle, margin: '0 0 6px' }}>{tplFormType === 'shift' ? 'Pay/Hr' : 'Flat Rate'}</p>
+                          <p style={{ ...modalLabelStyle, margin: '0 0 6px' }}>{tplFormType === 'shift' ? 'Hourly Rate' : 'Flat Rate'}</p>
                           <p style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600, color: '#059669' }}>${tplSalaryAmt || '0'}{tplFormType === 'shift' ? '/hr' : ''}</p>
                         </div>
                       </div>
@@ -3182,7 +3084,7 @@ export default function OwnerRecruitmentPage() {
                         // glance what posting will still ask for.
                         const toFill: { label: string; hint: string }[] = []
                         if (!tplDepartmentId) toFill.push({ label: 'Department', hint: 'Select department' })
-                        if (!tplSalaryAmt || Number(tplSalaryAmt) <= 0) toFill.push({ label: tplFormType === 'shift' ? 'Pay/Hr' : 'Flat Rate', hint: '$ 0.00' })
+                        if (!tplSalaryAmt || Number(tplSalaryAmt) <= 0) toFill.push({ label: tplFormType === 'shift' ? 'Hourly Rate' : 'Flat Rate', hint: '$ 0.00' })
                         if ((tplUniformType === 'company' || tplUniformType === 'dress_code') && !tplUniformDetails.trim()) toFill.push({ label: tplUniformType === 'company' ? 'Uniform Details' : 'Dress Code', hint: 'e.g. Black polo shirt, black apron' })
                         if (tplFormType === 'oneoff' && !tplEstimatedHours) toFill.push({ label: 'Est. Hours', hint: 'e.g. 5' })
                         if (tplFormType === 'shift') {
@@ -3191,13 +3093,15 @@ export default function OwnerRecruitmentPage() {
                             { label: 'Supervisor', hint: 'Select supervisor' },
                             { label: 'Start & End Time', hint: 'Set start & end time' },
                             { label: 'Break Time', hint: 'Set break time' },
+                            { label: 'Number of Positions', hint: 'e.g. 1' },
                             { label: 'Application Deadline', hint: 'Set deadline' },
                           )
                         } else {
                           toFill.push(
-                            { label: 'Start Time', hint: 'Set start time' },
                             { label: 'Available Shift', hint: 'Select shift' },
                             { label: 'Supervisor', hint: 'Select supervisor' },
+                            { label: 'Start Time', hint: 'Set start time' },
+                            { label: 'Number of Positions', hint: 'e.g. 1' },
                             { label: 'Application Deadline', hint: 'Set deadline' },
                           )
                         }
@@ -3237,7 +3141,7 @@ export default function OwnerRecruitmentPage() {
 
               {/* Left: pending list */}
               <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 14, overflow: 'hidden' }}>
-                <div style={{ padding: '14px 18px', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <div style={{ height: LIST_HEADER_HEIGHT, padding: '0 18px', boxSizing: 'border-box', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', gap: 8 }}>
                   <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <ClipboardList size={15} style={{ color: '#F97316' }} />
                   </div>
@@ -3493,6 +3397,43 @@ export default function OwnerRecruitmentPage() {
       {/* ── Success toast ── */}
       <Toast message={successToast ?? ''} />
 
+      {/* ══ Supervisor profile modal ═══════════════════════════════════════════ */}
+      {supervisorModal && createPortal(
+        <ModalOverlay onClose={() => setSupervisorModal(null)} maxWidth="380px">
+          <ModalBox>
+            <ModalHeader
+              title="Supervisor"
+              icon={<Users size={15} color="#fff" strokeWidth={2.5} />}
+              onClose={() => setSupervisorModal(null)}
+            />
+            <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+              <RoleAvatar role={supervisorModal.role ?? 'Employee'} size={64} photoUrl={supervisorModal.profile_photo_url} />
+              <p style={{ margin: '12px 0 0', fontSize: '1rem', fontWeight: 700, color: '#111827' }}>{supervisorModal.full_name}</p>
+              <p style={{ margin: '2px 0 0', fontSize: '0.8rem', fontWeight: 600, color: '#9A3412' }}>{supervisorModal.role ?? 'Employee'}</p>
+              <div style={{ width: '100%', marginTop: 18, paddingTop: 18, borderTop: '1px solid #F3F4F6', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {supervisorModalLoading ? (
+                  <div style={{ display: 'flex', justifyContent: 'center', padding: '4px 0' }}><Spinner size={16} /></div>
+                ) : (
+                  <>
+                    {supervisorModal.email_address && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8125rem', color: '#374151' }}>
+                        <Mail size={13} style={{ color: '#9CA3AF', flexShrink: 0 }} /> {supervisorModal.email_address}
+                      </div>
+                    )}
+                    {supervisorModal.phone_number && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8125rem', color: '#374151' }}>
+                        <Phone size={13} style={{ color: '#9CA3AF', flexShrink: 0 }} /> {supervisorModal.phone_number}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          </ModalBox>
+        </ModalOverlay>,
+        document.body
+      )}
+
       {/* ══ Reject reason modal ════════════════════════════════════════════════ */}
       {rejectModalOpen && createPortal(
         <ModalOverlay onClose={() => { setRejectModalOpen(false); setRejectReason(''); setPendingRejectId('') }} maxWidth="420px">
@@ -3571,46 +3512,6 @@ export default function OwnerRecruitmentPage() {
         document.body
       )}
 
-      {/* ══ Cancel Job modal — the work itself no longer exists; job stays closed ══ */}
-      {cancelJobOpen && createPortal(
-        <ModalOverlay onClose={() => { setCancelJobOpen(false); setCancelReason('') }} maxWidth="420px">
-          <ModalBox>
-            <ModalHeader
-              title="Cancel Job"
-              icon={<XCircle size={15} color="#fff" strokeWidth={2.5} />}
-              iconBg="linear-gradient(135deg, #EF4444, #DC2626)"
-              onClose={() => { setCancelJobOpen(false); setCancelReason('') }}
-            />
-            <div style={{ padding: '20px 24px 0' }}>
-              <p style={{ margin: '0 0 14px', color: '#6B7280', fontSize: '0.9rem', lineHeight: 1.55 }}>
-                This cancels the job itself: every confirmed worker is notified, their future shifts
-                are voided, all open offers are withdrawn, and the job stays closed. Use
-                <strong style={{ color: '#111827' }}> Remove Worker</strong> instead if you only need to replace one person.
-              </p>
-              <textarea
-                value={cancelReason}
-                onChange={e => setCancelReason(e.target.value)}
-                placeholder="Reason (required), e.g. the event was called off."
-                rows={3}
-                style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
-                onFocus={e => { e.currentTarget.style.borderColor = '#F97316' }}
-                onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB' }}
-              />
-            </div>
-            {cancelSubmitError && <div style={modalErrorBoxStyle}>{cancelSubmitError}</div>}
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', padding: '20px 24px' }}>
-              <button onClick={() => { setCancelJobOpen(false); setCancelReason('') }} style={modalGhostButtonStyle}>
-                Keep Job
-              </button>
-              <button onClick={submitCancelJob} disabled={actionLoading || !cancelReason.trim()} style={modalDestructiveButtonStyle(actionLoading || !cancelReason.trim())}>
-                {actionLoading ? <Spinner size={13} /> : <XCircle size={13} />} Cancel Job
-              </button>
-            </div>
-          </ModalBox>
-        </ModalOverlay>,
-        document.body
-      )}
-
       {/* ══ New Template modal (create from scratch, UC36) ════════════════════ */}
       {newTemplateModalOpen && createPortal(
         <ModalOverlay onClose={() => { setNewTemplateModalOpen(false); resetNewTemplateForm() }} maxWidth="440px">
@@ -3657,7 +3558,7 @@ export default function OwnerRecruitmentPage() {
                         autoFocus
                         value={ntplFormType}
                         placeholder="Select job type"
-                        options={[{ value: 'oneoff', label: 'One-Off' }, { value: 'shift', label: 'Shift' }]}
+                        options={[{ value: 'shift', label: 'Shift' }, { value: 'oneoff', label: 'One-Off' }]}
                         onChange={v => setNtplFormType(v === 'shift' ? 'shift' : 'oneoff')}
                       />
                     </div>
@@ -3678,6 +3579,7 @@ export default function OwnerRecruitmentPage() {
                     <textarea
                       value={ntplDescription}
                       onChange={e => setNtplDescription(e.target.value)}
+                      onKeyDown={handleListKeyDown}
                       rows={3}
                       placeholder="e.g. Serve customers, prep orders"
                       style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
@@ -3690,6 +3592,7 @@ export default function OwnerRecruitmentPage() {
                     <textarea
                       value={ntplRequirements}
                       onChange={e => setNtplRequirements(e.target.value)}
+                      onKeyDown={handleListKeyDown}
                       rows={2}
                       placeholder="e.g. Valid driver's license, basic Excel skills"
                       style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
@@ -3774,7 +3677,7 @@ export default function OwnerRecruitmentPage() {
                       />
                     </div>
                     <div style={{ minWidth: 0 }}>
-                      <label style={modalLabelStyle}>{ntplFormType === 'shift' ? 'Pay/Hr' : 'Flat Rate'}</label>
+                      <label style={modalLabelStyle}>{ntplFormType === 'shift' ? 'Hourly Rate' : 'Flat Rate'}</label>
                       <div style={{ position: 'relative' }}>
                         <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#6B7280', fontSize: '0.9375rem', pointerEvents: 'none' }}>$</span>
                         <input type="number" min={0} step={0.5} onKeyDown={blockNonNumericKeys} value={ntplSalaryAmt} onChange={e => setNtplSalaryAmt(e.target.value)} placeholder="0.00" style={{ ...modalInputStyle, paddingLeft: 26 }} />
@@ -3825,7 +3728,9 @@ export default function OwnerRecruitmentPage() {
         const stepIdx = WIZARD_STEPS.indexOf(displayStep)
         // Applying a template jumps straight to the details form and isn't an AI action —
         // it gets the same plain orange treatment as editing, with no step wizard at all.
-        const isTemplateMode = !editingId && !!formTemplateId
+        // A draft reopened from the Drafts list (draftId) stays in the full AI wizard even when it
+        // was originally created from a template — it's a half-finished job, not a template apply.
+        const isTemplateMode = !editingId && !draftId && !!formTemplateId
         const modalTitle = editingId
           ? (editingDraft ? 'Edit Draft' : 'Edit Job Posting')
           : isTemplateMode ? 'Apply Template'
@@ -3843,6 +3748,14 @@ export default function OwnerRecruitmentPage() {
         const accentTextDark = (editingId || isTemplateMode) ? '#C2410C' : '#6D28D9'
         const accentDisabledBg = (editingId || isTemplateMode) ? '#FDA060' : '#EDE9FE'
         const accentDisabledText = (editingId || isTemplateMode) ? '#FFFFFF' : '#A78BFA'
+
+        // The chosen supervisor's own shift on the selected date bounds the worker's times:
+        // start no earlier, end no later. Feeds the time pickers' min/max so out-of-window
+        // slots can't even be picked (the service enforces the same rule server-side).
+        const supEmp = shiftDeptEmployees.find(e => e.id === formAssignedEmployeeId) as unknown as { shifts?: { shift_date: string; start_time: string; end_time: string }[] } | undefined
+        const supShift = supEmp?.shifts?.find(s => s.shift_date === formShiftDate)
+        const supWindowStart = supShift ? supShift.start_time.slice(0, 5) : undefined
+        const supWindowEnd = supShift ? supShift.end_time.slice(0, 5) : undefined
 
         const handleAIGenerate = async () => {
           if (!aiPrompt.trim()) return
@@ -3896,6 +3809,14 @@ export default function OwnerRecruitmentPage() {
           && formDeadlineChoice && (formDeadlineChoice !== 'date' || (formExpiresAt && formDeadlineTime)))
         // Applies to both the Apply Template wizard and the AI Create Job wizard (editing is exempt)
         const postDisabled = actionLoading || (!editingId && !applyReady)
+        // Save as Template appears in the create wizard once every field a template stores is filled
+        // (department + pay live on the last step, so it only ever lights up there)
+        const templateReady = !!(formTitle.trim() && formDescription.trim() && formRequirements.trim()
+          && (!(formUniformType === 'company' || formUniformType === 'dress_code') || formUniformDetails.trim())
+          && formExperienceRequired && formMinimumAge && formDeptId
+          && formSalaryAmt && Number(formSalaryAmt) > 0
+          && (formJobType !== 'oneoff' || formEstHours))
+        const templateAlreadySaved = templateReady && !!savedTplSnapshot && savedTplSnapshot === JSON.stringify(buildTemplateBody())
         const sectionLabel: React.CSSProperties = { margin: '4px 0 0', color: '#374151', fontSize: '0.875rem', fontWeight: 600 }
         const divider: React.CSSProperties = { borderTop: '1px dashed #E5E7EB', margin: '0' }
 
@@ -3932,12 +3853,12 @@ export default function OwnerRecruitmentPage() {
 
                 {/* Step progress — same pattern as the Auto Shift Scheduling modal: completed steps become clickable back-circles */}
                 {!editingId && !isTemplateMode && (() => {
-                  // 4-step create flow: Job Type → AI Content Generator → Requirements & Payment → Schedule & Post
+                  // 4-step create flow: Job Type → AI Content Generator → Requirements → Schedule & Payment
                   const CREATE_STEPS = [
                     { key: 'type', label: 'Job Type' },
                     { key: 'ai', label: 'AI Content Generator' },
-                    { key: 'req', label: 'Requirements & Payment' },
-                    { key: 'post', label: 'Schedule & Post' },
+                    { key: 'req', label: 'Requirements' },
+                    { key: 'post', label: 'Schedule & Payment' },
                   ] as const
                   const currentIdx = wizardStep === 'type' ? 0 : wizardStep === 'ai' ? 1 : createStep === 3 ? 2 : 3
                   const goTo = (i: number) => {
@@ -4015,13 +3936,13 @@ export default function OwnerRecruitmentPage() {
                         </div>
                         <div>
                           <label style={lStyle}>Responsibilities</label>
-                          <textarea value={aiPreview.description} onChange={e => setAiPreview(p => p && ({ ...p, description: e.target.value }))}
+                          <textarea value={aiPreview.description} onChange={e => setAiPreview(p => p && ({ ...p, description: e.target.value }))} onKeyDown={handleListKeyDown}
                             ref={el => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight + 3}px` } }}
                             rows={3} style={{ ...iStyle, resize: 'none', overflow: 'hidden', lineHeight: 1.6, verticalAlign: 'top' }} />
                         </div>
                         <div>
                           <label style={lStyle}>Skills &amp; Qualifications</label>
-                          <textarea value={aiPreview.requirements} onChange={e => setAiPreview(p => p && ({ ...p, requirements: e.target.value }))}
+                          <textarea value={aiPreview.requirements} onChange={e => setAiPreview(p => p && ({ ...p, requirements: e.target.value }))} onKeyDown={handleListKeyDown}
                             ref={el => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight + 3}px` } }}
                             rows={3} style={{ ...iStyle, resize: 'none', overflow: 'hidden', lineHeight: 1.6, verticalAlign: 'top' }} />
                         </div>
@@ -4078,7 +3999,7 @@ export default function OwnerRecruitmentPage() {
                           )}
                           {applyStep === s && (
                             <span style={{ fontSize: '0.8125rem', fontWeight: 700, color: '#111827' }}>
-                              {s === 1 ? 'Job Information' : s === 2 ? 'Requirements & Payment' : 'Schedule & Post'}
+                              {s === 1 ? 'Job Information' : s === 2 ? 'Requirements' : 'Schedule & Payment'}
                             </span>
                           )}
                           {s < 3 && <div style={{ width: 16, height: 1.5, background: '#E5E7EB', margin: '0 1px' }} />}
@@ -4095,7 +4016,7 @@ export default function OwnerRecruitmentPage() {
                             <RDrop
                               disabled
                               value={formJobType}
-                              options={[{ value: 'oneoff', label: 'One-Off' }, { value: 'shift', label: 'Shift' }]}
+                              options={[{ value: 'shift', label: 'Shift' }, { value: 'oneoff', label: 'One-Off' }]}
                               onChange={() => {}}
                             />
                           </div>
@@ -4106,11 +4027,11 @@ export default function OwnerRecruitmentPage() {
                         </div>
                         <div>
                           <label style={lStyle}>Responsibilities</label>
-                          <textarea value={formDescription} onChange={e => setFormDescription(e.target.value)} rows={3} style={{ ...iStyle, resize: 'vertical', lineHeight: 1.55, verticalAlign: 'top' }} placeholder="e.g. Serve customers, prep orders" />
+                          <textarea value={formDescription} onChange={e => setFormDescription(e.target.value)} onKeyDown={handleListKeyDown} rows={3} style={{ ...iStyle, resize: 'vertical', lineHeight: 1.55, verticalAlign: 'top' }} placeholder="e.g. Serve customers, prep orders" />
                         </div>
                         <div>
                           <label style={lStyle}>Skills &amp; Qualifications</label>
-                          <textarea value={formRequirements} onChange={e => setFormRequirements(e.target.value)} rows={2} style={{ ...iStyle, resize: 'vertical', lineHeight: 1.55, verticalAlign: 'top' }} placeholder="e.g. Valid driver's license, basic Excel skills" />
+                          <textarea value={formRequirements} onChange={e => setFormRequirements(e.target.value)} onKeyDown={handleListKeyDown} rows={2} style={{ ...iStyle, resize: 'vertical', lineHeight: 1.55, verticalAlign: 'top' }} placeholder="e.g. Valid driver's license, basic Excel skills" />
                         </div>
                         {formJobType === 'oneoff' && (
                           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
@@ -4160,7 +4081,7 @@ export default function OwnerRecruitmentPage() {
                       </>
                     )}
 
-                    {/* ── Step 3: Schedule & Post ── */}
+                    {/* ── Step 3: Schedule & Payment ── */}
                     {applyStep === 3 && (
                       <>
                         {/* Department & Pay live here (not step 2) so they can be changed while scheduling */}
@@ -4172,18 +4093,102 @@ export default function OwnerRecruitmentPage() {
                               onChange={(deptId) => { setFormDeptId(deptId); void loadDeptShiftOptions(deptId) }} />
                           </div>
                           <div style={{ minWidth: 0 }}>
-                            <label style={lStyle}>{formJobType === 'shift' ? 'Pay/Hr' : 'Flat Rate'}</label>
+                            <label style={lStyle}>{formJobType === 'shift' ? 'Hourly Rate' : 'Flat Rate'}</label>
                             <div style={{ position: 'relative' }}>
                               <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#6B7280', fontSize: '0.9375rem', pointerEvents: 'none' }}>$</span>
                               <input type="number" min={0} step={0.5} onKeyDown={blockNonNumericKeys} value={formSalaryAmt} onChange={e => setFormSalaryAmt(e.target.value)} placeholder="0.00" style={{ ...iStyle, paddingLeft: 26 }} />
                             </div>
                           </div>
                         </div>
-                        <div>
-                          <label style={lStyle}>Openings</label>
-                          <input type="number" min={1} step={1} onKeyDown={blockNonNumericKeys} value={formOpenings}
-                            onChange={e => setFormOpenings(Math.max(1, parseInt(e.target.value || '1', 10) || 1))} style={iStyle} />
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                          <div style={{ minWidth: 0 }}>
+                            <label style={lStyle}>Available Shift</label>
+                            {shiftOptionsLoading ? (
+                              <div style={{ ...iStyle, color: '#94A3B8', background: '#F8FAFC', display: 'flex', alignItems: 'center', gap: 8 }}><Spinner size={13} dark /> Loading shifts…</div>
+                            ) : shiftAvailableDates.length > 0 ? (
+                              <RDrop value={formShiftDate} placeholder="Select shift"
+                                options={shiftAvailableDates.map(({ date }) => ({
+                                  // date only — shift times vary per employee, so they come from the chosen supervisor
+                                  value: date,
+                                  label: new Date(date).toLocaleDateString('en-SG', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }),
+                                }))}
+                                onChange={(date) => {
+                                  setFormShiftDate(date); setFormAssignedEmployeeId('')
+                                  setShiftDateEmployees(shiftDeptEmployees.filter(emp =>
+                                    (emp as unknown as { shifts?: { shift_date: string }[] }).shifts?.some((s: { shift_date: string }) => s.shift_date === date)
+                                  ))
+                                }} />
+                            ) : (
+                              <div style={{ ...iStyle, color: '#94A3B8', background: '#F8FAFC' }}>No scheduled shifts found for this department</div>
+                            )}
+                          </div>
+                          <div style={{ minWidth: 0 }}>
+                            <label style={lStyle}>Supervisor</label>
+                            {!formShiftDate ? (
+                              <RDrop value="" placeholder="Select supervisor" options={[]} onChange={() => {}} disabled />
+                            ) : shiftDateEmployees.length > 0 ? (
+                              <RDrop value={formAssignedEmployeeId} placeholder="Select supervisor"
+                                options={shiftDateEmployees.map(emp => ({ value: emp.id, label: emp.full_name }))}
+                                onChange={(empId) => {
+                                  setFormAssignedEmployeeId(empId)
+                                  const emp = shiftDeptEmployees.find(em => em.id === empId) as unknown as { shifts?: { shift_date: string; start_time: string; end_time: string }[] } | undefined
+                                  const shift = emp?.shifts?.find((s: { shift_date: string }) => s.shift_date === formShiftDate)
+                                  if (shift) {
+                                    // Worker times follow the chosen supervisor's own shift that day
+                                    if (formJobType === 'shift') { setFormShiftStart(shift.start_time.slice(0, 5)); setFormShiftEnd(shift.end_time.slice(0, 5)) }
+                                    else setFormJobStartTime(shift.start_time.slice(0, 5))
+                                  }
+                                }} />
+                            ) : (
+                              <div style={{ ...iStyle, color: '#94A3B8', background: '#F8FAFC' }}>No employees scheduled on this date</div>
+                            )}
+                          </div>
                         </div>
+                        {formJobType === 'shift' && formAssignedEmployeeId && (
+                          <>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                              <div style={{ minWidth: 0 }}>
+                                <label style={lStyle}>Start Time</label>
+                                <RTimePicker value={formShiftStart || '09:00'} onChange={setFormShiftStart} min={supWindowStart} max={supWindowEnd} />
+                              </div>
+                              <div style={{ minWidth: 0 }}>
+                                <label style={lStyle}>End Time</label>
+                                <RTimePicker value={formShiftEnd || '17:00'} onChange={setFormShiftEnd} min={supWindowStart} max={supWindowEnd} />
+                              </div>
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                              <div style={{ minWidth: 0 }}>
+                                <label style={lStyle}>Break Start</label>
+                                <RTimePicker value={formBreakStart || '12:00'} onChange={setFormBreakStart} min={formShiftStart || supWindowStart} max={formShiftEnd || supWindowEnd} />
+                              </div>
+                              <div style={{ minWidth: 0 }}>
+                                <label style={lStyle}>Break End</label>
+                                <RTimePicker value={formBreakEnd || '13:00'} onChange={setFormBreakEnd} min={formShiftStart || supWindowStart} max={formShiftEnd || supWindowEnd} />
+                              </div>
+                            </div>
+                          </>
+                        )}
+                        {formJobType === 'oneoff' ? (
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                            <div style={{ minWidth: 0 }}>
+                              <label style={lStyle}>Start Time</label>
+                              <RTimePicker value={formJobStartTime || '09:00'} onChange={setFormJobStartTime} min={supWindowStart} max={supWindowEnd} />
+                            </div>
+                            <div style={{ minWidth: 0 }}>
+                              <label style={lStyle}>Number of Positions</label>
+                              <input inputMode="numeric" value={formOpenings}
+                                onChange={e => setFormOpenings(e.target.value.replace(/\D/g, ''))}
+                                placeholder="Set number of openings" style={iStyle} />
+                            </div>
+                          </div>
+                        ) : (
+                          <div>
+                            <label style={lStyle}>Number of Positions</label>
+                            <input inputMode="numeric" value={formOpenings}
+                              onChange={e => setFormOpenings(e.target.value.replace(/\D/g, ''))}
+                              placeholder="Set number of openings" style={iStyle} />
+                          </div>
+                        )}
                         <div style={divider} />
                         <div>
                           <label style={lStyle}>Application Deadline</label>
@@ -4206,76 +4211,6 @@ export default function OwnerRecruitmentPage() {
                             </div>
                           )}
                         </div>
-                        <div>
-                          <label style={lStyle}>Available Shift</label>
-                          {shiftOptionsLoading ? (
-                            <div style={{ ...iStyle, color: '#94A3B8', background: '#F8FAFC', display: 'flex', alignItems: 'center', gap: 8 }}><Spinner size={13} dark /> Loading shifts…</div>
-                          ) : shiftAvailableDates.length > 0 ? (
-                            <RDrop value={formShiftDate} placeholder="Select shift"
-                              options={shiftAvailableDates.map(({ date, start_time, end_time }) => {
-                                const fmt = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return `${h12}:${String(m).padStart(2,'0')} ${ap}` }
-                                const dateLabel = new Date(date).toLocaleDateString('en-SG', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
-                                return { value: date, label: `${dateLabel} · ${fmt(start_time)} – ${fmt(end_time)}` }
-                              })}
-                              onChange={(date) => {
-                                setFormShiftDate(date); setFormAssignedEmployeeId('')
-                                setShiftDateEmployees(shiftDeptEmployees.filter(emp =>
-                                  (emp as unknown as { shifts?: { shift_date: string }[] }).shifts?.some((s: { shift_date: string }) => s.shift_date === date)
-                                ))
-                              }} />
-                          ) : (
-                            <div style={{ ...iStyle, color: '#94A3B8', background: '#F8FAFC' }}>No scheduled shifts found for this department</div>
-                          )}
-                        </div>
-                        {formShiftDate && (
-                          <div>
-                            <label style={lStyle}>Supervisor</label>
-                            {shiftDateEmployees.length > 0 ? (
-                              <RDrop value={formAssignedEmployeeId} placeholder="Select supervisor"
-                                options={shiftDateEmployees.map(emp => ({ value: emp.id, label: emp.full_name }))}
-                                onChange={(empId) => {
-                                  setFormAssignedEmployeeId(empId)
-                                  if (formJobType === 'shift') {
-                                    const emp = shiftDeptEmployees.find(em => em.id === empId) as unknown as { shifts?: { shift_date: string; start_time: string; end_time: string }[] } | undefined
-                                    const shift = emp?.shifts?.find((s: { shift_date: string }) => s.shift_date === formShiftDate)
-                                    if (shift) { setFormShiftStart(shift.start_time.slice(0, 5)); setFormShiftEnd(shift.end_time.slice(0, 5)) }
-                                  }
-                                }} />
-                            ) : (
-                              <div style={{ ...iStyle, color: '#94A3B8', background: '#F8FAFC' }}>No employees scheduled on this date</div>
-                            )}
-                          </div>
-                        )}
-                        {formJobType === 'shift' && formAssignedEmployeeId && (
-                          <>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                              <div style={{ minWidth: 0 }}>
-                                <label style={lStyle}>Start Time</label>
-                                <RTimePicker value={formShiftStart || '09:00'} onChange={setFormShiftStart} />
-                              </div>
-                              <div style={{ minWidth: 0 }}>
-                                <label style={lStyle}>End Time</label>
-                                <RTimePicker value={formShiftEnd || '17:00'} onChange={setFormShiftEnd} />
-                              </div>
-                            </div>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                              <div style={{ minWidth: 0 }}>
-                                <label style={lStyle}>Break Start</label>
-                                <RTimePicker value={formBreakStart || '12:00'} onChange={setFormBreakStart} />
-                              </div>
-                              <div style={{ minWidth: 0 }}>
-                                <label style={lStyle}>Break End</label>
-                                <RTimePicker value={formBreakEnd || '13:00'} onChange={setFormBreakEnd} />
-                              </div>
-                            </div>
-                          </>
-                        )}
-                        {formJobType === 'oneoff' && (
-                          <div>
-                            <label style={lStyle}>Start Time</label>
-                            <RTimePicker value={formJobStartTime || '09:00'} onChange={setFormJobStartTime} />
-                          </div>
-                        )}
                         {/* Pay estimate — shift only, and only once a shift + supervisor are chosen (times are real, not defaults) */}
                         {formJobType === 'shift' && formShiftDate && formAssignedEmployeeId && (() => {
                           const toMins = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0) }
@@ -4289,6 +4224,17 @@ export default function OwnerRecruitmentPage() {
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 10 }}>
                               <span style={{ ...lStyle, marginBottom: 0 }}>Estimated Cost</span>
                               <strong style={{ fontSize: 15, color: '#059669' }}>${total}</strong>
+                            </div>
+                          )
+                        })()}
+                        {/* One-off pay estimate — the flat rate is the total */}
+                        {formJobType === 'oneoff' && (() => {
+                          const rate = parseFloat(formSalaryAmt)
+                          if (!formSalaryAmt || isNaN(rate) || rate <= 0) return null
+                          return (
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 10 }}>
+                              <span style={{ ...lStyle, marginBottom: 0 }}>Estimated Cost</span>
+                              <strong style={{ fontSize: 15, color: '#059669' }}>${rate.toFixed(2)}</strong>
                             </div>
                           )
                         })()}
@@ -4309,15 +4255,14 @@ export default function OwnerRecruitmentPage() {
                     </div>
                     <div>
                       <label style={lStyle}>Responsibilities</label>
-                      <textarea value={formDescription} onChange={e => setFormDescription(e.target.value)}
-                        ref={el => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight + 3}px` } }}
-                        rows={3} style={{ ...iStyle, resize: 'none', overflow: 'hidden', lineHeight: 1.55, verticalAlign: 'top' }} placeholder="e.g. Serve customers, prep orders" />
+                      {/* Content was already reviewed in the AI step — keep these compact and scrollable */}
+                      <textarea value={formDescription} onChange={e => setFormDescription(e.target.value)} onKeyDown={handleListKeyDown}
+                        rows={4} style={{ ...iStyle, resize: 'vertical', overflowY: 'auto', lineHeight: 1.55, verticalAlign: 'top' }} placeholder="e.g. Serve customers, prep orders" />
                     </div>
                     <div>
                       <label style={lStyle}>Skills &amp; Qualifications</label>
-                      <textarea value={formRequirements} onChange={e => setFormRequirements(e.target.value)}
-                        ref={el => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight + 3}px` } }}
-                        rows={2} style={{ ...iStyle, resize: 'none', overflow: 'hidden', lineHeight: 1.55, verticalAlign: 'top' }} placeholder="e.g. Valid driver's license, basic Excel skills" />
+                      <textarea value={formRequirements} onChange={e => setFormRequirements(e.target.value)} onKeyDown={handleListKeyDown}
+                        rows={3} style={{ ...iStyle, resize: 'vertical', overflowY: 'auto', lineHeight: 1.55, verticalAlign: 'top' }} placeholder="e.g. Valid driver's license, basic Excel skills" />
                     </div>
                     {formJobType === 'oneoff' && (
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
@@ -4371,81 +4316,58 @@ export default function OwnerRecruitmentPage() {
                           onChange={(deptId) => { setFormDeptId(deptId); void loadDeptShiftOptions(deptId) }} />
                       </div>
                       <div style={{ minWidth: 0 }}>
-                        <label style={lStyle}>{formJobType === 'shift' ? 'Pay/Hr' : 'Flat Rate'}</label>
+                        <label style={lStyle}>{formJobType === 'shift' ? 'Hourly Rate' : 'Flat Rate'}</label>
                         <div style={{ position: 'relative' }}>
                           <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#6B7280', fontSize: '0.9375rem', pointerEvents: 'none' }}>$</span>
                           <input type="number" min={0} step={0.5} onKeyDown={blockNonNumericKeys} value={formSalaryAmt} onChange={e => setFormSalaryAmt(e.target.value)} placeholder="0.00" style={{ ...iStyle, paddingLeft: 26 }} />
                         </div>
                       </div>
                     </div>
-                    <div>
-                      <label style={lStyle}>Openings</label>
-                      <input type="number" min={1} step={1} onKeyDown={blockNonNumericKeys} value={formOpenings}
-                        onChange={e => setFormOpenings(Math.max(1, parseInt(e.target.value || '1', 10) || 1))} style={iStyle} />
-                    </div>
-                    <div style={divider} />
-                    <div>
-                      <label style={lStyle}>Application Deadline</label>
-                      <RDrop
-                        value={formDeadlineChoice}
-                        placeholder="Select deadline option"
-                        options={[
-                          { value: 'never', label: 'No Deadline' },
-                          { value: 'date', label: 'Set a Deadline' },
-                        ]}
-                        onChange={v => {
-                          setFormDeadlineChoice(v as '' | 'never' | 'date')
-                          if (v !== 'date') { setFormExpiresAt(''); setFormDeadlineTime('23:59') }
-                        }}
-                      />
-                      {formDeadlineChoice === 'date' && (
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 8 }}>
-                          <DatePickerField value={formExpiresAt} onChange={setFormExpiresAt} min={localDateKey(new Date())} clearable={false} />
-                          <RTimePicker value={formDeadlineTime} onChange={setFormDeadlineTime} />
-                        </div>
-                      )}
-                    </div>
 
                     {(formDeptId || editingId) && (
-                      <div>
-                        <label style={lStyle}>Available Shift</label>
-                        {shiftOptionsLoading ? (
-                          <div style={{ ...iStyle, color: '#94A3B8', background: '#F8FAFC', display: 'flex', alignItems: 'center', gap: 8 }}><Spinner size={13} dark /> Loading shifts…</div>
-                        ) : shiftAvailableDates.length > 0 ? (
-                          <RDrop value={formShiftDate} placeholder="Select shift"
-                            options={shiftAvailableDates.map(({ date, start_time, end_time }) => {
-                              const fmt = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return `${h12}:${String(m).padStart(2,'0')} ${ap}` }
-                              const dateLabel = new Date(date).toLocaleDateString('en-SG', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
-                              return { value: date, label: `${dateLabel} · ${fmt(start_time)} – ${fmt(end_time)}` }
-                            })}
-                            onChange={(date) => {
-                              setFormShiftDate(date); setFormAssignedEmployeeId('')
-                              setShiftDateEmployees(shiftDeptEmployees.filter(emp =>
-                                (emp as unknown as { shifts?: { shift_date: string }[] }).shifts?.some((s: { shift_date: string }) => s.shift_date === date)
-                              ))
-                            }} />
-                        ) : (
-                          <div style={{ ...iStyle, color: '#94A3B8', background: '#F8FAFC' }}>No scheduled shifts found for this department</div>
-                        )}
-                      </div>
-                    )}
-                    {(formShiftDate || editingId) && (
-                      <div>
-                        <label style={lStyle}>Supervisor</label>
-                        {shiftDateEmployees.length > 0 ? (
-                          <RDrop value={formAssignedEmployeeId} placeholder="Select supervisor"
-                            options={shiftDateEmployees.map(emp => ({ value: emp.id, label: emp.full_name }))}
-                            onChange={(empId) => {
-                              setFormAssignedEmployeeId(empId)
-                              if (formJobType === 'shift') {
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        <div style={{ minWidth: 0 }}>
+                          <label style={lStyle}>Available Shift</label>
+                          {shiftOptionsLoading ? (
+                            <div style={{ ...iStyle, color: '#94A3B8', background: '#F8FAFC', display: 'flex', alignItems: 'center', gap: 8 }}><Spinner size={13} dark /> Loading shifts…</div>
+                          ) : shiftAvailableDates.length > 0 ? (
+                            <RDrop value={formShiftDate} placeholder="Select shift"
+                              options={shiftAvailableDates.map(({ date }) => ({
+                                // date only — shift times vary per employee, so they come from the chosen supervisor
+                                value: date,
+                                label: new Date(date).toLocaleDateString('en-SG', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }),
+                              }))}
+                              onChange={(date) => {
+                                setFormShiftDate(date); setFormAssignedEmployeeId('')
+                                setShiftDateEmployees(shiftDeptEmployees.filter(emp =>
+                                  (emp as unknown as { shifts?: { shift_date: string }[] }).shifts?.some((s: { shift_date: string }) => s.shift_date === date)
+                                ))
+                              }} />
+                          ) : (
+                            <div style={{ ...iStyle, color: '#94A3B8', background: '#F8FAFC' }}>No scheduled shifts found for this department</div>
+                          )}
+                        </div>
+                        <div style={{ minWidth: 0 }}>
+                          <label style={lStyle}>Supervisor</label>
+                          {!(formShiftDate || editingId) ? (
+                            <RDrop value="" placeholder="Select supervisor" options={[]} onChange={() => {}} disabled />
+                          ) : shiftDateEmployees.length > 0 ? (
+                            <RDrop value={formAssignedEmployeeId} placeholder="Select supervisor"
+                              options={shiftDateEmployees.map(emp => ({ value: emp.id, label: emp.full_name }))}
+                              onChange={(empId) => {
+                                setFormAssignedEmployeeId(empId)
                                 const emp = shiftDeptEmployees.find(em => em.id === empId) as unknown as { shifts?: { shift_date: string; start_time: string; end_time: string }[] } | undefined
                                 const shift = emp?.shifts?.find((s: { shift_date: string }) => s.shift_date === formShiftDate)
-                                if (shift) { setFormShiftStart(shift.start_time.slice(0, 5)); setFormShiftEnd(shift.end_time.slice(0, 5)) }
-                              }
-                            }} />
-                        ) : (
-                          <div style={{ ...iStyle, color: '#94A3B8', background: '#F8FAFC' }}>No employees scheduled on this date</div>
-                        )}
+                                if (shift) {
+                                  // Worker times follow the chosen supervisor's own shift that day
+                                  if (formJobType === 'shift') { setFormShiftStart(shift.start_time.slice(0, 5)); setFormShiftEnd(shift.end_time.slice(0, 5)) }
+                                  else setFormJobStartTime(shift.start_time.slice(0, 5))
+                                }
+                              }} />
+                          ) : (
+                            <div style={{ ...iStyle, color: '#94A3B8', background: '#F8FAFC' }}>No employees scheduled on this date</div>
+                          )}
+                        </div>
                       </div>
                     )}
                     {formJobType === 'shift' && (formAssignedEmployeeId || editingId) && (
@@ -4472,12 +4394,49 @@ export default function OwnerRecruitmentPage() {
                         </div>
                       </>
                     )}
-                    {formJobType === 'oneoff' && (
+                    {formJobType === 'oneoff' ? (
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        <div style={{ minWidth: 0 }}>
+                          <label style={lStyle}>Start Time</label>
+                          <RTimePicker value={formJobStartTime || '09:00'} onChange={setFormJobStartTime} />
+                        </div>
+                        <div style={{ minWidth: 0 }}>
+                          <label style={lStyle}>Number of Positions</label>
+                          <input inputMode="numeric" value={formOpenings}
+                            onChange={e => setFormOpenings(e.target.value.replace(/\D/g, ''))}
+                            placeholder="Set number of openings" style={iStyle} />
+                        </div>
+                      </div>
+                    ) : (
                       <div>
-                        <label style={lStyle}>Start Time</label>
-                        <RTimePicker value={formJobStartTime || '09:00'} onChange={setFormJobStartTime} />
+                        <label style={lStyle}>Number of Positions</label>
+                        <input inputMode="numeric" value={formOpenings}
+                          onChange={e => setFormOpenings(e.target.value.replace(/\D/g, ''))}
+                          placeholder="Set number of openings" style={iStyle} />
                       </div>
                     )}
+                    <div style={divider} />
+                    <div>
+                      <label style={lStyle}>Application Deadline</label>
+                      <RDrop
+                        value={formDeadlineChoice}
+                        placeholder="Select deadline option"
+                        options={[
+                          { value: 'never', label: 'No Deadline' },
+                          { value: 'date', label: 'Set a Deadline' },
+                        ]}
+                        onChange={v => {
+                          setFormDeadlineChoice(v as '' | 'never' | 'date')
+                          if (v !== 'date') { setFormExpiresAt(''); setFormDeadlineTime('23:59') }
+                        }}
+                      />
+                      {formDeadlineChoice === 'date' && (
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 8 }}>
+                          <DatePickerField value={formExpiresAt} onChange={setFormExpiresAt} min={localDateKey(new Date())} clearable={false} />
+                          <RTimePicker value={formDeadlineTime} onChange={setFormDeadlineTime} />
+                        </div>
+                      )}
+                    </div>
                     {/* Pay estimate — shift only, and only once a shift + supervisor are chosen (times are real, not defaults) */}
                     {formJobType === 'shift' && (formShiftDate || editingId) && (formAssignedEmployeeId || editingId) && (() => {
                       const toMins = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0) }
@@ -4494,6 +4453,17 @@ export default function OwnerRecruitmentPage() {
                         </div>
                       )
                     })()}
+                    {/* One-off pay estimate — the flat rate is the total */}
+                    {formJobType === 'oneoff' && (() => {
+                      const rate = parseFloat(formSalaryAmt)
+                      if (!formSalaryAmt || isNaN(rate) || rate <= 0) return null
+                      return (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 10 }}>
+                          <span style={{ ...lStyle, marginBottom: 0 }}>Estimated Cost</span>
+                          <strong style={{ fontSize: 15, color: '#059669' }}>${rate.toFixed(2)}</strong>
+                        </div>
+                      )
+                    })()}
                     </>)}
 
                   </div>
@@ -4506,7 +4476,13 @@ export default function OwnerRecruitmentPage() {
               {/* Footer */}
               {wizardStep === 'form' && (
                 <div style={{ padding: '0 24px 20px', display: 'flex', justifyContent: 'flex-end', gap: 8, flexShrink: 0 }}>
-                  {!editingId && !formTemplateId && (
+                  {!editingId && !formTemplateId && templateReady && (
+                    <button onClick={() => void saveAsTemplate()} disabled={templateActionLoading || templateAlreadySaved}
+                      style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: templateAlreadySaved ? '1px solid #BBF7D0' : '1px solid #E5E7EB', borderRadius: 10, background: templateAlreadySaved ? '#F0FDF4' : '#FFFFFF', color: templateAlreadySaved ? '#059669' : '#6B7280', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: templateActionLoading || templateAlreadySaved ? 'default' : 'pointer', whiteSpace: 'nowrap' }}>
+                      {templateActionLoading ? <Spinner size={13} dark /> : templateAlreadySaved ? <Check size={13} /> : <ClipboardList size={13} />} {templateAlreadySaved ? 'Template Saved' : 'Save as Template'}
+                    </button>
+                  )}
+                  {!editingId && !isTemplateMode && (
                     <button onClick={() => saveForm('draft')} disabled={actionLoading}
                       style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: '1px solid #E5E7EB', borderRadius: 10, background: '#FFFFFF', color: '#6B7280', height: 36, padding: '0 12px', fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap' }}>
                       {actionLoading ? <Spinner size={13} dark /> : <FileText size={13} />} Save Draft
@@ -4534,7 +4510,7 @@ export default function OwnerRecruitmentPage() {
                         || !formExperienceRequired || !formMinimumAge
                       return (
                         <button
-                          onClick={() => { setFormError(''); setCreateStep(4) }}
+                          onClick={() => { setFormError(''); setCreateStep(4); setScheduleSeen(true) }}
                           disabled={nextDisabled}
                           style={{ ...modalPrimaryButtonStyle(nextDisabled), background: nextDisabled ? accentDisabledBg : accentGradient, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, height: 36, whiteSpace: 'nowrap' }}>
                           Next <ChevronRight size={13} />
@@ -4545,7 +4521,7 @@ export default function OwnerRecruitmentPage() {
                     <button onClick={() => saveForm(editingDraft ? 'draft' : 'open')} disabled={postDisabled}
                       style={{
                         ...(editingId ? modalPrimaryButtonStyle(postDisabled) : { ...modalPrimaryButtonStyle(postDisabled), background: postDisabled ? accentDisabledBg : accentGradient }),
-                        ...(!editingId && formTemplateId ? { flex: 1, justifyContent: 'center' } : {}),
+                        ...(isTemplateMode ? { flex: 1, justifyContent: 'center' } : {}),
                       }}>
                       {actionLoading ? <Spinner size={13} /> : <Check size={13} />} {editingDraft ? 'Save Changes' : editingId ? 'Save Changes' : 'Post Job'}
                     </button>
@@ -4560,50 +4536,6 @@ export default function OwnerRecruitmentPage() {
       })()}
 
 
-
-      {/* ══ Draft action dropdown menu ════════════════════════════════════════ */}
-      {draftMenuOpen && selectedDraft && typeof document !== 'undefined' && createPortal(
-        <div
-          ref={draftMenuDropRef}
-          onClick={e => e.stopPropagation()}
-          style={{ position: 'fixed', top: draftMenuPos.top, right: draftMenuPos.right, zIndex: 9999, width: 170, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, boxShadow: '0 4px 24px rgba(0,0,0,0.10)', padding: '8px 6px' }}
-        >
-          <p style={{ margin: '0 6px 4px', fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#9CA3AF' }}>Draft</p>
-          <button
-            type="button"
-            onClick={() => { setDraftMenuOpen(false); duplicateDraft(selectedDraft) }}
-            disabled={actionLoading}
-            style={jobMenuItemStyle}
-            onMouseEnter={e => (e.currentTarget.style.background = '#F9FAFB')}
-            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-          ><Copy size={13} style={{ color: '#F97316' }} /> Duplicate</button>
-          <button
-            type="button"
-            onClick={() => { setDraftMenuOpen(false); openEditForm(selectedDraft, true) }}
-            style={jobMenuItemStyle}
-            onMouseEnter={e => (e.currentTarget.style.background = '#F9FAFB')}
-            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-          ><Pencil size={13} style={{ color: '#F97316' }} /> Edit</button>
-          <button
-            type="button"
-            onClick={() => { setDraftMenuOpen(false); publishDraft(selectedDraft.id) }}
-            disabled={actionLoading || !selectedDraft.description?.trim()}
-            title={!selectedDraft.description?.trim() ? 'Add a description before publishing' : undefined}
-            style={{ ...jobMenuItemStyle, opacity: !selectedDraft.description?.trim() ? 0.45 : 1 }}
-            onMouseEnter={e => { if (selectedDraft.description?.trim()) e.currentTarget.style.background = '#F9FAFB' }}
-            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-          ><Send size={13} style={{ color: '#F97316' }} /> Publish</button>
-          <div style={{ height: 1, background: '#F1F5F9', margin: '4px 6px' }} />
-          <button
-            type="button"
-            onClick={() => { setDraftMenuOpen(false); setDeleteConfirm({ id: selectedDraft.id, title: selectedDraft.title, isDraft: true }) }}
-            style={{ ...jobMenuItemStyle, color: '#DC2626' }}
-            onMouseEnter={e => (e.currentTarget.style.background = '#FEF2F2')}
-            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-          ><Trash2 size={13} /> Delete</button>
-        </div>,
-        document.body
-      )}
 
       {/* ══ Delete confirm modal (draft + live) ══════════════════════════════ */}
       {deleteConfirm && (
@@ -4633,18 +4565,3 @@ export default function OwnerRecruitmentPage() {
   )
 }
 
-const jobMenuItemStyle: React.CSSProperties = {
-  width: '100%',
-  border: 0,
-  background: 'transparent',
-  color: '#111827',
-  display: 'flex',
-  alignItems: 'center',
-  gap: 8,
-  borderRadius: 10,
-  padding: '5px 10px',
-  fontSize: 12,
-  fontWeight: 500,
-  cursor: 'pointer',
-  textAlign: 'left',
-}

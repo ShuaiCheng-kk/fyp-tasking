@@ -69,6 +69,41 @@ export const emailService = {
     })
   },
 
+  // Sent when an employer rejects an application outright — closes the loop so the worker isn't
+  // left waiting indefinitely on a "pending" status.
+  async sendApplicationRejectedEmail(data: {
+    to: string
+    fullName: string
+    jobTitle: string
+    companyName: string
+  }): Promise<void> {
+    await resend.emails.send({
+      from: 'Tasking <noreply@gettasking.com>',
+      to: data.to,
+      subject: `Update on your application for ${data.jobTitle}`,
+      html: `
+        <div style="font-family: Inter, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px 24px; background: #ffffff;">
+          <span style="font-size: 20px; font-weight: 700; color: #F97316;">Tasking</span>
+          <h2 style="font-size: 22px; font-weight: 700; color: #1C1C1E; margin: 24px 0 8px 0;">
+            Application update
+          </h2>
+          <p style="font-size: 15px; color: #6B7280; margin: 0 0 16px 0;">
+            Hi ${data.fullName}, thank you for applying for <strong>${data.jobTitle}</strong> at ${data.companyName}.
+            After review, they've decided not to move forward with your application this time.
+          </p>
+          <p style="font-size: 15px; color: #6B7280; margin: 0 0 16px 0;">
+            Don't be discouraged — there are plenty of other openings waiting for you.
+          </p>
+          <a href="${process.env.NEXT_PUBLIC_APP_URL}/job-board" style="display: inline-block; background: #F97316; color: #ffffff; font-weight: 600; font-size: 15px; padding: 12px 28px; border-radius: 8px; text-decoration: none; margin: 8px 0 24px;">
+            Browse Other Jobs
+          </a>
+          <hr style="border: none; border-top: 1px solid #F3F4F6; margin: 24px 0;">
+          <p style="font-size: 12px; color: #9CA3AF; margin: 0;">© 2025 Tasking. All rights reserved.</p>
+        </div>
+      `,
+    })
+  },
+
   // Sent after BOTH sides have agreed — includes everything the worker needs to show up:
   // when, where, and who to report to (name + phone of the responsible employee).
   async sendOfferConfirmedEmail(data: {

@@ -16,6 +16,7 @@ import {
   invitedStep3,
   legalText,
 } from './content';
+import GuestOnboardingProfile from '@/components/guest/GuestOnboardingProfile';
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 
@@ -1452,6 +1453,8 @@ export default function GetStartedPage() {
 
   // Guest user form state
   const [guestAccount, setGuestAccount] = useState({ fullName: '', email: '', password: '', confirmPassword: '', phone: '', dateOfBirth: '' });
+  const [guestHomeLocation, setGuestHomeLocation] = useState('');
+  const [guestAuthId, setGuestAuthId] = useState('');
 
   // ── Read URL code on mount ────────────────────────────────────────────────
 
@@ -1861,6 +1864,7 @@ export default function GetStartedPage() {
     setGuestPhoneError('Phone number must be exactly 8 digits.'); return;
   }
   if (!guestAccount.dateOfBirth) { setError('Date of birth is required.'); return; }
+  if (!guestHomeLocation.trim()) { setError('Home location is required.'); return; }
 
   setIsLoading(true);
 
@@ -1873,6 +1877,8 @@ export default function GetStartedPage() {
         email: guestAccount.email.trim(),
         password: guestAccount.password,
         phone: guestAccount.phone,
+        date_of_birth: guestAccount.dateOfBirth || null,
+        home_location: guestHomeLocation.trim() || null,
         job_id: localStorage.getItem('apply_job_id') || null,
       }),
     });
@@ -1886,6 +1892,7 @@ export default function GetStartedPage() {
     localStorage.setItem('guest_full_name', guestAccount.fullName.trim());
     localStorage.setItem('guest_phone', guestAccount.phone);
     localStorage.setItem('guest_dob', guestAccount.dateOfBirth || '');
+    localStorage.setItem('guest_home_location', guestHomeLocation.trim() || '');
     if (profilePhotoUrl) localStorage.setItem('guest_photo', profilePhotoUrl);
 
     if (registerData.email_confirmed) {
@@ -1912,28 +1919,35 @@ export default function GetStartedPage() {
     const phone_number = localStorage.getItem('guest_phone') || '';
     const date_of_birth = localStorage.getItem('guest_dob') || null;
     const profile_photo_url = localStorage.getItem('guest_photo') || null;
+    const home_location = localStorage.getItem('guest_home_location') || null;
 
     const res = await fetch('/api/auth/complete-guest-registration', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id, full_name, email_address, password, phone_number, date_of_birth, profile_photo_url }),
+      body: JSON.stringify({ user_id, full_name, email_address, password, phone_number, date_of_birth, profile_photo_url, home_location }),
     });
     const data = await readJsonSafe(res);
     if (!data.success) throw new Error(data.message);
 
+    // The account row now exists and the worker is signed in — but registration isn't "done"
+    // until they've built their Worker Profile (skills required). Store the session and advance
+    // to the profile step instead of redirecting; the job-board round-trip happens after that.
     localStorage.setItem('tasking_user_id', data.user.auth_id);
     localStorage.setItem('tasking_user_role', data.user.role);
     localStorage.removeItem('tasking_company_id');
 
-    ['guest_user_id', 'guest_email', 'guest_password', 'guest_full_name', 'guest_phone', 'guest_dob', 'guest_photo']
+    ['guest_user_id', 'guest_email', 'guest_password', 'guest_full_name', 'guest_phone', 'guest_dob', 'guest_photo', 'guest_home_location']
       .forEach(k => localStorage.removeItem(k));
 
+    setGuestAuthId(data.user.auth_id);
+    setStep(3);
+  };
+
+  // Called after the post-verify Worker Profile step — registration is complete, so send the
+  // worker to the job board (reopening the apply modal for the posting they started from).
+  const finishGuestOnboarding = () => {
     const storedJobId = localStorage.getItem('apply_job_id');
-    if (storedJobId) {
-      window.location.href = `/guest/applications?apply=true&job_id=${storedJobId}`;
-    } else {
-      window.location.href = '/guest/applications';
-    }
+    window.location.href = storedJobId ? `/job-board?job_id=${storedJobId}` : '/job-board';
   };
 
   const handleRedeemCode = async () => {
@@ -2550,6 +2564,19 @@ export default function GetStartedPage() {
               profilePhotoUrl={profilePhotoUrl}
               onProfilePhotoChange={handleProfilePhotoChange}
             />
+            {/* Coarse home location (region or postal code) — used later for distance-based job
+                matching; never a full street address. */}
+            <div style={{ marginTop: '18px' }}>
+              <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', marginBottom: '7px' }}>
+                Home Location
+              </label>
+              <input
+                value={guestHomeLocation}
+                onChange={e => setGuestHomeLocation(e.target.value)}
+                placeholder="e.g. Tampines, or postal code 520123"
+                style={{ width: '100%', padding: '11px 14px', border: '1.5px solid #E5E7EB', borderRadius: '10px', fontSize: '0.9375rem', color: '#111827', outline: 'none', boxSizing: 'border-box', background: '#FFFFFF' }}
+              />
+            </div>
             <div style={{ marginTop: '28px' }}>
               <InlineError message={error} />
               <TermsCheckbox checked={termsAccepted} onChange={setTermsAccepted} />
@@ -2560,7 +2587,8 @@ export default function GetStartedPage() {
                   guestAccount.password.length >= 6 &&
                   !!guestAccount.confirmPassword &&
                   guestAccount.phone.length === 8 &&
-                  !!guestAccount.dateOfBirth;
+                  !!guestAccount.dateOfBirth &&
+                  !!guestHomeLocation.trim();
                 return (
                   <div style={{ opacity: ok ? 1 : 0.45, pointerEvents: ok ? 'auto' : 'none', transition: 'opacity 0.15s' }}>
                     <PrimaryButton loading={isLoading} onClick={handleGuestRegister}>
@@ -2570,6 +2598,18 @@ export default function GetStartedPage() {
                 );
               })()}
             </div>
+          </Card>
+        )}
+
+        {/* Step 3 — Worker Profile (post-verification): skills required, resume/certs optional.
+            Registration is only complete once this is done. */}
+        {path === 'guest' && step === 3 && guestAuthId && (
+          <Card>
+            <StepHeading
+              headline="Set up your Worker Profile"
+              subheadline="Add your skills so employers can find you. You can add certificates and a resume now or later."
+            />
+            <GuestOnboardingProfile authId={guestAuthId} onDone={finishGuestOnboarding} />
           </Card>
         )}
 

@@ -207,15 +207,6 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ success: true })
     }
 
-    if (action === 'cancel_job') {
-      await recruitmentService.cancelJob({
-        job_id: String(data.job_id ?? ''),
-        cancelled_by: String(data.cancelled_by ?? ''),
-        reason: typeof data.reason === 'string' ? data.reason : '',
-      })
-      return NextResponse.json({ success: true })
-    }
-
     if (action === 'publish_draft') {
       const posting = await recruitmentService.publishDraft(String(data.job_id ?? ''))
       return NextResponse.json({ success: true, posting })

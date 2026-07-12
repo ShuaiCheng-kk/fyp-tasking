@@ -2,9 +2,14 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
-import { Zap, Shield, Star, X, Search, MapPin, Briefcase, Clock, Banknote, Timer, ChevronDown, LayoutGrid, Users, FileText } from 'lucide-react';
+import { Zap, Shield, Star, X, Search, MapPin, Briefcase, Clock, Banknote, Timer, ChevronDown, LayoutGrid, LogIn, UserPlus, Users, FileText } from 'lucide-react';
 import { hero, search, whyTasking, listings } from './content';
 import { JobPosting as BaseJobPosting } from '@/types/Recruitment';
+import ApplyJobModal from '@/components/guest/ApplyJobModal';
+import {
+  ModalOverlay, ModalBox, ModalHeader,
+  modalGhostButtonStyle, modalPrimaryButtonStyle,
+} from '@/components/modal';
 
 // The public jobs API joins the department name onto each posting (see
 // src/app/api/jobs/public/route.ts) — not part of the base JobPosting shape.
@@ -173,9 +178,15 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 function JobDetailPanel({
   job,
   onClose,
+  onApply,
+  canApply,
 }: {
   job: JobPosting;
   onClose: () => void;
+  onApply: (job: JobPosting) => void;
+  // False for signed-in company staff / platform admins — they can't take casual jobs, so the
+  // Apply action is hidden entirely rather than shown and then rejected.
+  canApply: boolean;
 }) {
   const { rating, count } = seedRating(job.company_id);
   const recur = recurrenceLabel(job);
@@ -339,16 +350,18 @@ function JobDetailPanel({
       </div>
 
       {/* Actions */}
-      <div style={{ display: 'flex', gap: '10px' }}>
-        <Link href={`/get-started?role=guest&job_id=${job.id}`} className="btn-press cta-shimmer" style={{
-          flex: 1, display: 'block', textAlign: 'center',
-          background: '#F97316', color: '#FFFFFF', padding: '13px',
-          borderRadius: '10px', fontFamily: fB, fontWeight: 700,
-          fontSize: '0.9375rem', textDecoration: 'none',
-        }}>
-          Apply Now
-        </Link>
-      </div>
+      {canApply && (
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button onClick={() => onApply(job)} className="btn-press cta-shimmer" style={{
+            flex: 1, display: 'block', textAlign: 'center',
+            background: '#F97316', color: '#FFFFFF', padding: '13px',
+            borderRadius: '10px', fontFamily: fB, fontWeight: 700,
+            fontSize: '0.9375rem', border: 'none', cursor: 'pointer',
+          }}>
+            Apply Now
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -531,6 +544,55 @@ export default function JobBoardPage() {
   const [industryOptions, setIndustryOptions] = useState<string[]>(['All Industries']);
   const [locationOptions, setLocationOptions] = useState<string[]>(['All Locations']);
 
+  // Apply-in-place for signed-in workers; everyone else first gets a "do you have an account?"
+  // fork, because the generic Get Started page only offers Business Owner / Invitation Code —
+  // an applicant has no way in from there.
+  const [applyJobId, setApplyJobId] = useState<string | null>(null);
+  const [authChoiceJob, setAuthChoiceJob] = useState<JobPosting | null>(null);
+  const [toast, setToast] = useState('');
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Only the two worker roles can apply. Company staff (Owner/Partner/Manager/Employee) and
+  // platform admins are signed in to run the business, not to take casual jobs — they don't get
+  // an Apply button at all. Signed-out visitors still see it (they get the sign-in/register fork).
+  const [viewerRole, setViewerRole] = useState<string | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
+
+  useEffect(() => {
+    const authId = localStorage.getItem('tasking_user_id');
+    setViewerRole(authId ? localStorage.getItem('tasking_user_role') : null);
+    setAuthChecked(true);
+  }, []);
+
+  const canApply = !viewerRole || viewerRole === 'Guest User' || viewerRole === 'Casual Worker';
+
+  const showToast = (msg: string) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast(msg);
+    toastTimer.current = setTimeout(() => setToast(''), 3500);
+  };
+
+  const handleApply = (job: JobPosting) => {
+    // Both worker roles (Guest User and Casual Worker) share the same application flow — a
+    // signed-in worker applies straight away, with no account questions.
+    const authId = typeof window !== 'undefined' ? localStorage.getItem('tasking_user_id') : null;
+    const role = typeof window !== 'undefined' ? localStorage.getItem('tasking_user_role') : null;
+    if (authId && (role === 'Guest User' || role === 'Casual Worker')) {
+      setApplyJobId(job.id);
+    } else {
+      setAuthChoiceJob(job);
+    }
+  };
+
+  // Remember the posting across the sign-in / registration round-trip so the apply modal
+  // reopens on this exact job when the worker comes back.
+  const goToAuth = (job: JobPosting, destination: 'signin' | 'register') => {
+    localStorage.setItem('apply_job_id', job.id);
+    window.location.href = destination === 'signin'
+      ? `/signin?job_id=${job.id}`
+      : `/get-started?role=guest&job_id=${job.id}`;
+  };
+
   // ── Fetch open jobs ──────────────────────────────────────────────────────
   useEffect(() => {
     fetch('/api/jobs/public')
@@ -538,6 +600,21 @@ export default function JobBoardPage() {
       .then(d => { if (d.success) setJobs(d.jobs); })
       .catch(() => {})
       .finally(() => setLoading(false));
+  }, []);
+
+  // ── Reopen the apply modal after a sign-in / registration round-trip ───────
+  // The worker clicked Apply while logged out (or had no account); once they're back and
+  // authenticated, ?job_id= brings them straight to that posting's apply form.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const jobId = params.get('job_id') || localStorage.getItem('apply_job_id');
+    const authId = localStorage.getItem('tasking_user_id');
+    const role = localStorage.getItem('tasking_user_role');
+    if (jobId && authId && (role === 'Guest User' || role === 'Casual Worker')) {
+      setApplyJobId(jobId);
+      localStorage.removeItem('apply_job_id');
+      window.history.replaceState(null, '', '/job-board');
+    }
   }, []);
 
   // ── Fetch filter options from companies ──────────────────────────────────
@@ -747,12 +824,74 @@ export default function JobBoardPage() {
                 <JobDetailPanel
                   job={selectedJob}
                   onClose={() => setSelectedJob(null)}
+                  onApply={handleApply}
+                  canApply={authChecked && canApply}
                 />
               )}
             </div>
           )}
         </div>
       </section>
+
+      {/* Account fork — shown when a signed-out visitor clicks Apply. Existing accounts (Guest
+          User or Casual Worker) go to the shared sign-in; new applicants go straight to the
+          guest registration form, bypassing the owner/invitation role picker. */}
+      {authChoiceJob && (
+        <ModalOverlay onClose={() => setAuthChoiceJob(null)} maxWidth="480px">
+          <ModalBox>
+            {/* Fixed header title with the job as a subtitle below — a long posting name
+                ("Senior Food & Beverage Service Operations Assistant") would otherwise wrap the
+                header onto two lines. */}
+            <ModalHeader
+              title="Apply for Position"
+              icon={<Briefcase size={15} color="#fff" strokeWidth={2.5} />}
+              onClose={() => setAuthChoiceJob(null)}
+            />
+            <div style={{ padding: '20px 24px 0' }}>
+              <p style={{ margin: '0 0 6px', color: '#111827', fontSize: '1rem', fontWeight: 700, lineHeight: 1.4 }}>
+                {authChoiceJob.title}
+              </p>
+              <p style={{ margin: 0, color: '#6B7280', fontSize: '0.9rem', lineHeight: 1.6 }}>
+                Sign in or create an account to apply for this position.
+              </p>
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'center', padding: '20px 24px' }}>
+              <button
+                onClick={() => goToAuth(authChoiceJob, 'register')}
+                style={{ ...modalGhostButtonStyle, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, minWidth: 160, height: 42 }}
+              >
+                <UserPlus size={13} /> Create Account
+              </button>
+              <button
+                onClick={() => goToAuth(authChoiceJob, 'signin')}
+                style={{ ...modalPrimaryButtonStyle(), justifyContent: 'center', minWidth: 160, height: 42 }}
+              >
+                <LogIn size={13} /> Sign In
+              </button>
+            </div>
+          </ModalBox>
+        </ModalOverlay>
+      )}
+
+      {/* Apply modal — logged-in workers apply without leaving the board */}
+      {applyJobId && (
+        <ApplyJobModal
+          jobId={applyJobId}
+          onClose={() => setApplyJobId(null)}
+          onApplied={(jobTitle) => showToast(`Application submitted for ${jobTitle}. Track it from your dashboard.`)}
+        />
+      )}
+
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
+          background: '#0F172A', color: '#FFFFFF', borderRadius: 999, padding: '12px 22px',
+          fontFamily: fB, fontSize: '0.875rem', fontWeight: 600, whiteSpace: 'nowrap', zIndex: 9999,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.25)',
+        }}>
+          {toast}
+        </div>
+      )}
     </>
   );
 }

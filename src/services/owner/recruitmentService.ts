@@ -5,6 +5,16 @@ import { recruitmentRepository } from '@/repositories/owner/recruitmentRepositor
 import { emailService } from '@/services/email/emailService'
 import { CasualWorkerStatus, JobApplicant, JobPosting, JobPostingInput, JobPostingPendingApproval, JobPostingSummary } from '@/types/Recruitment'
 
+// A "confirmed" hire needs both sides: the Owner accepted the application AND the worker
+// confirmed the invitation. Accepted-but-not-yet-confirmed sits in a separate "awaiting" bucket
+// so the Owner can tell a filled position from one still waiting on the worker to respond.
+function confirmedCount(rows: { status: string; invitation_status: string | null }[]): number {
+  return rows.filter(r => r.status === 'accepted' && r.invitation_status === 'accepted').length
+}
+function awaitingConfirmationCount(rows: { status: string; invitation_status: string | null }[]): number {
+  return rows.filter(r => r.status === 'accepted' && r.invitation_status !== 'accepted').length
+}
+
 export const recruitmentService = {
   async getPublicJobPostings(): Promise<JobPosting[]> {
     return recruitmentRepository.getPublicJobPostings()
@@ -25,17 +35,24 @@ export const recruitmentService = {
     const deptIds = [...new Set(postings.map(posting => posting.department_id).filter((id): id is string => Boolean(id)))]
     const departments = await recruitmentRepository.getDepartmentsByIds(deptIds)
     const deptMap = new Map(departments.map(department => [department.id, department.name]))
-    const empIds = [...new Set(postings.map(posting => posting.assigned_employee_id).filter((id): id is string => Boolean(id)))]
+    const empIds = [...new Set(postings.flatMap(posting => [posting.assigned_employee_id, posting.created_by]).filter((id): id is string => Boolean(id)))]
     const employees = await recruitmentRepository.getUsersByIds(empIds)
-    const empMap = new Map(employees.map(e => [e.id, e.full_name]))
-    return postings.map(posting => ({
-      ...posting,
-      department_name: posting.department_id ? deptMap.get(posting.department_id) ?? null : null,
-      applicant_count: applicantRows.filter(row => row.job_id === posting.id).length,
-      pending_count: applicantRows.filter(row => row.job_id === posting.id && row.status === 'pending').length,
-      accepted_count: applicantRows.filter(row => row.job_id === posting.id && row.status === 'accepted').length,
-      assigned_employee_name: posting.assigned_employee_id ? empMap.get(posting.assigned_employee_id) ?? null : null,
-    }))
+    const empMap = new Map(employees.map(e => [e.id, e]))
+    return postings.map(posting => {
+      const rows = applicantRows.filter(row => row.job_id === posting.id)
+      return {
+        ...posting,
+        department_name: posting.department_id ? deptMap.get(posting.department_id) ?? null : null,
+        applicant_count: rows.length,
+        pending_count: rows.filter(row => row.status === 'pending').length,
+        accepted_count: rows.filter(row => row.status === 'accepted').length,
+        confirmed_count: confirmedCount(rows),
+        awaiting_confirmation_count: awaitingConfirmationCount(rows),
+        assigned_employee_name: posting.assigned_employee_id ? empMap.get(posting.assigned_employee_id)?.full_name ?? null : null,
+        assigned_employee_photo_url: posting.assigned_employee_id ? empMap.get(posting.assigned_employee_id)?.profile_photo_url ?? null : null,
+        created_by_name: empMap.get(posting.created_by)?.full_name ?? null,
+      }
+    })
   },
 
   async getJobPostingsForManager(company_id: string, manager_id: string): Promise<JobPostingSummary[]> {
@@ -45,21 +62,28 @@ export const recruitmentService = {
     const postings = await recruitmentRepository.getJobPostingsByManagerDepts(company_id, deptIds)
     const applicantRows = await recruitmentRepository.getApplicantCounts(postings.map(p => p.id))
     const uniqueDeptIds = [...new Set(postings.map(p => p.department_id).filter((id): id is string => Boolean(id)))]
-    const empIds = [...new Set(postings.map(p => p.assigned_employee_id).filter((id): id is string => Boolean(id)))]
+    const empIds = [...new Set(postings.flatMap(p => [p.assigned_employee_id, p.created_by]).filter((id): id is string => Boolean(id)))]
     const [departments, employees] = await Promise.all([
       recruitmentRepository.getDepartmentsByIds(uniqueDeptIds),
       recruitmentRepository.getUsersByIds(empIds),
     ])
     const deptMap = new Map(departments.map(d => [d.id, d.name]))
-    const empMap = new Map(employees.map(e => [e.id, e.full_name]))
-    return postings.map(posting => ({
-      ...posting,
-      department_name: posting.department_id ? deptMap.get(posting.department_id) ?? null : null,
-      applicant_count: applicantRows.filter(r => r.job_id === posting.id).length,
-      pending_count: applicantRows.filter(r => r.job_id === posting.id && r.status === 'pending').length,
-      accepted_count: applicantRows.filter(r => r.job_id === posting.id && r.status === 'accepted').length,
-      assigned_employee_name: posting.assigned_employee_id ? empMap.get(posting.assigned_employee_id) ?? null : null,
-    }))
+    const empMap = new Map(employees.map(e => [e.id, e]))
+    return postings.map(posting => {
+      const rows = applicantRows.filter(r => r.job_id === posting.id)
+      return {
+        ...posting,
+        department_name: posting.department_id ? deptMap.get(posting.department_id) ?? null : null,
+        applicant_count: rows.length,
+        pending_count: rows.filter(row => row.status === 'pending').length,
+        accepted_count: rows.filter(row => row.status === 'accepted').length,
+        confirmed_count: confirmedCount(rows),
+        awaiting_confirmation_count: awaitingConfirmationCount(rows),
+        assigned_employee_name: posting.assigned_employee_id ? empMap.get(posting.assigned_employee_id)?.full_name ?? null : null,
+        assigned_employee_photo_url: posting.assigned_employee_id ? empMap.get(posting.assigned_employee_id)?.profile_photo_url ?? null : null,
+        created_by_name: empMap.get(posting.created_by)?.full_name ?? null,
+      }
+    })
   },
 
   async getJobPostings(company_id: string): Promise<JobPostingSummary[]> {
@@ -70,9 +94,9 @@ export const recruitmentService = {
     const deptIds = [...new Set(postings.map(posting => posting.department_id).filter((id): id is string => Boolean(id)))]
     const departments = await recruitmentRepository.getDepartmentsByIds(deptIds)
     const deptMap = new Map(departments.map(department => [department.id, department.name]))
-    const empIds = [...new Set(postings.map(posting => posting.assigned_employee_id).filter((id): id is string => Boolean(id)))]
+    const empIds = [...new Set(postings.flatMap(posting => [posting.assigned_employee_id, posting.created_by]).filter((id): id is string => Boolean(id)))]
     const employees = await recruitmentRepository.getUsersByIds(empIds)
-    const empMap = new Map(employees.map(e => [e.id, e.full_name]))
+    const empMap = new Map(employees.map(e => [e.id, e]))
 
     return postings.map(posting => {
       const rows = applicantRows.filter(row => row.job_id === posting.id)
@@ -82,7 +106,11 @@ export const recruitmentService = {
         applicant_count: rows.length,
         pending_count: rows.filter(row => row.status === 'pending').length,
         accepted_count: rows.filter(row => row.status === 'accepted').length,
-        assigned_employee_name: posting.assigned_employee_id ? empMap.get(posting.assigned_employee_id) ?? null : null,
+        confirmed_count: confirmedCount(rows),
+        awaiting_confirmation_count: awaitingConfirmationCount(rows),
+        assigned_employee_name: posting.assigned_employee_id ? empMap.get(posting.assigned_employee_id)?.full_name ?? null : null,
+        assigned_employee_photo_url: posting.assigned_employee_id ? empMap.get(posting.assigned_employee_id)?.profile_photo_url ?? null : null,
+        created_by_name: empMap.get(posting.created_by)?.full_name ?? null,
       }
     })
   },
@@ -164,57 +192,9 @@ export const recruitmentService = {
     }
   },
 
-  // Cancels the WORK itself (event called off, budget gone): every confirmed worker is notified,
-  // all future shifts and open offers are voided, and the job stays closed for good.
-  async cancelJob(input: { job_id: string; cancelled_by: string; reason: string }): Promise<void> {
-    if (!input.job_id || !input.cancelled_by) throw new Error('job_id and cancelled_by are required')
-    const reason = input.reason?.trim()
-    if (!reason) throw new Error('A reason is required to cancel a job')
-
-    const job = await recruitmentRepository.getJobPostingById(input.job_id)
-    if (!job) throw new Error('Job posting not found')
-
-    const confirmedWorkers = await recruitmentRepository.getConfirmedWorkersByJob(input.job_id)
-
-    const today = new Date()
-    const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-    await recruitmentRepository.cancelFutureShiftsForJob(input.job_id, todayKey)
-    await recruitmentRepository.cancelOpenInvitationsForJob(input.job_id)
-    for (const worker of confirmedWorkers) {
-      await recruitmentRepository.setApplicantStatus(worker.applicant_id, 'cancelled_by_employer')
-    }
-    await recruitmentRepository.markPendingApplicantsJobClosed(input.job_id)
-    await recruitmentRepository.insertRecruitmentCancellation({
-      job_id: input.job_id,
-      applicant_id: null,
-      cancelled_by: input.cancelled_by,
-      cancelled_role: 'employer',
-      scope: 'job',
-      reason,
-    })
-    await recruitmentRepository.updateJobPosting(input.job_id, {
-      status: 'closed',
-      archived_at: new Date().toISOString(),
-    })
-
-    // Every confirmed worker gets told individually; a failed email never blocks the rest.
-    for (const worker of confirmedWorkers) {
-      try {
-        await emailService.sendEngagementCancelledEmail({
-          to: worker.email_address,
-          fullName: worker.full_name,
-          jobTitle: job.title,
-          companyName: job.company_name ?? 'the company',
-          reason,
-        })
-      } catch (err) {
-        console.error('[cancelJob] worker notification failed:', err)
-      }
-    }
-  },
-
   async createJobPosting(input: JobPostingInput): Promise<JobPosting> {
     validateJobPostingInput(input)
+    if (input.status !== 'draft') await assertWithinSupervisorShift(input)
     return recruitmentRepository.createJobPosting(input)
   },
 
@@ -222,20 +202,24 @@ export const recruitmentService = {
     if (!company_id || !user_id) throw new Error('company_id and user_id are required')
     const postings = await recruitmentRepository.getDraftPostings(company_id, user_id)
     const deptIds = [...new Set(postings.map(p => p.department_id).filter((id): id is string => Boolean(id)))]
-    const empIds = [...new Set(postings.map(p => p.assigned_employee_id).filter((id): id is string => Boolean(id)))]
+    const empIds = [...new Set(postings.flatMap(p => [p.assigned_employee_id, p.created_by]).filter((id): id is string => Boolean(id)))]
     const [departments, employees] = await Promise.all([
       recruitmentRepository.getDepartmentsByIds(deptIds),
       recruitmentRepository.getUsersByIds(empIds),
     ])
     const deptMap = new Map(departments.map(d => [d.id, d.name]))
-    const empMap = new Map(employees.map(e => [e.id, e.full_name]))
+    const empMap = new Map(employees.map(e => [e.id, e]))
     return postings.map(p => ({
       ...p,
       department_name: p.department_id ? deptMap.get(p.department_id) ?? null : null,
       applicant_count: 0,
       pending_count: 0,
       accepted_count: 0,
-      assigned_employee_name: p.assigned_employee_id ? empMap.get(p.assigned_employee_id) ?? null : null,
+      confirmed_count: 0,
+      awaiting_confirmation_count: 0,
+      assigned_employee_name: p.assigned_employee_id ? empMap.get(p.assigned_employee_id)?.full_name ?? null : null,
+      assigned_employee_photo_url: p.assigned_employee_id ? empMap.get(p.assigned_employee_id)?.profile_photo_url ?? null : null,
+      created_by_name: empMap.get(p.created_by)?.full_name ?? null,
     }))
   },
 
@@ -284,8 +268,17 @@ export const recruitmentService = {
     return recruitmentRepository.updateJobPosting(id, input)
   },
 
+  // Archiving closes the posting to applicants, so every application on it must already be
+  // resolved: nothing left pending the Owner's decision, and nobody accepted who hasn't answered
+  // their invitation yet. Archiving mid-decision would strand those applicants with no outcome.
   async archiveJobPosting(id: string): Promise<JobPosting> {
     if (!id) throw new Error('job_id is required')
+    const rows = await recruitmentRepository.getApplicantCounts([id])
+    const pending = rows.filter(row => row.status === 'pending').length
+    const awaiting = awaitingConfirmationCount(rows)
+    if (pending > 0 || awaiting > 0) {
+      throw new Error('This job still has applications to resolve — decide the pending ones and wait for accepted workers to confirm before archiving')
+    }
     return recruitmentRepository.updateJobPosting(id, {
       status: 'archived',
       archived_at: new Date().toISOString(),
@@ -297,8 +290,38 @@ export const recruitmentService = {
     return recruitmentRepository.updateJobPosting(id, { status: 'open', archived_at: null })
   },
 
+  // Permanently removes a posting. If workers were already confirmed on it, their scheduled
+  // shifts are cancelled and they're emailed first — otherwise deleting the posting would strand
+  // them with a live shift for work that no longer exists (the posting row is gone but the shift
+  // survives via source_job_posting_id ON DELETE SET NULL).
   async deleteJobPosting(id: string): Promise<void> {
     if (!id) throw new Error('job_id is required')
+
+    const job = await recruitmentRepository.getJobPostingById(id)
+    const confirmedWorkers = job ? await recruitmentRepository.getConfirmedWorkersByJob(id) : []
+    if (job && confirmedWorkers.length > 0) {
+      const today = new Date()
+      const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+      await recruitmentRepository.cancelFutureShiftsForJob(id, todayKey)
+
+      // Notify each confirmed worker; a failed email must never block the deletion.
+      for (const worker of confirmedWorkers) {
+        try {
+          if (worker.email_address) {
+            await emailService.sendEngagementCancelledEmail({
+              to: worker.email_address,
+              fullName: worker.full_name,
+              jobTitle: job.title,
+              companyName: job.company_name ?? 'the company',
+              reason: 'The job posting has been cancelled by the employer.',
+            })
+          }
+        } catch (err) {
+          console.error('[deleteJobPosting] worker notification failed:', err)
+        }
+      }
+    }
+
     await recruitmentRepository.deleteJobPosting(id)
   },
 
@@ -375,6 +398,22 @@ export const recruitmentService = {
         }
       } catch (err) {
         console.error('[decideApplicant] acceptance email failed:', err)
+      }
+    } else if (input.decision === 'rejected') {
+      // Close the loop so the worker isn't left waiting on "pending" forever. Never let an email
+      // failure roll back the rejection.
+      try {
+        const job = await recruitmentRepository.getJobPostingById(applicant.job_id)
+        if (applicant.email_address) {
+          await emailService.sendApplicationRejectedEmail({
+            to: applicant.email_address,
+            fullName: applicant.full_name,
+            jobTitle: job?.title ?? 'a job',
+            companyName: job?.company_name ?? 'the company',
+          })
+        }
+      } catch (err) {
+        console.error('[decideApplicant] rejection email failed:', err)
       }
     }
     return updated
@@ -469,6 +508,51 @@ async function assertPublishable(id: string): Promise<void> {
   if (!posting.assigned_employee_id) throw new Error('A responsible employee is required to publish a job')
   if (posting.form_type === 'oneoff' && !posting.job_start_time) {
     throw new Error('job_start_time is required to publish a one-off job')
+  }
+  await assertWithinSupervisorShift(posting)
+}
+
+// A casual worker must never be on site while their supervising employee is not: the worker's
+// times must sit inside the supervisor's own shift that day (they may start later / finish
+// earlier, never outside it). One-off jobs have no end time, so only their start is bounded.
+// If the supervisor has no shift on the date the check is skipped — the posting UI only offers
+// supervisors already scheduled that day, so this only happens for data created outside the UI.
+async function assertWithinSupervisorShift(posting: {
+  company_id: string
+  form_type?: string | null
+  assigned_employee_id?: string | null
+  shift_date?: string | null
+  shift_start_time?: string | null
+  shift_end_time?: string | null
+  job_start_time?: string | null
+}): Promise<void> {
+  if (!posting.assigned_employee_id || !posting.shift_date) return
+  const supervisorShift = await recruitmentRepository.getEmployeeShiftOnDate(
+    posting.assigned_employee_id, posting.company_id, posting.shift_date,
+  )
+  if (!supervisorShift) return
+  const hm = (t: string) => t.slice(0, 5)
+  const fmt12 = (t: string) => {
+    const [h, m] = hm(t).split(':').map(Number)
+    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
+    return `${h12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`
+  }
+  const supStart = hm(supervisorShift.start_time)
+  const supEnd = hm(supervisorShift.end_time)
+  if (posting.form_type === 'oneoff') {
+    if (posting.job_start_time) {
+      const start = hm(posting.job_start_time)
+      if (start < supStart || start > supEnd) {
+        throw new Error(`Start time must be within the supervisor's shift (${fmt12(supStart)} – ${fmt12(supEnd)})`)
+      }
+    }
+  } else {
+    if (posting.shift_start_time && hm(posting.shift_start_time) < supStart) {
+      throw new Error(`Start time cannot be earlier than the supervisor's shift start (${fmt12(supStart)})`)
+    }
+    if (posting.shift_end_time && hm(posting.shift_end_time) > supEnd) {
+      throw new Error(`End time cannot be later than the supervisor's shift end (${fmt12(supEnd)})`)
+    }
   }
 }
 

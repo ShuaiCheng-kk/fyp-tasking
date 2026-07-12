@@ -152,7 +152,7 @@ export const recruitmentRepository = {
         template_id: input.template_id ?? null,
         experience_required: input.experience_required ?? null,
         minimum_age: input.minimum_age ?? null,
-        openings: input.openings ?? 1,
+        openings: input.openings ?? null,
         uniform_required: input.uniform_required ?? false,
         uniform_type: input.uniform_type ?? null,
         uniform_details: input.uniform_details ?? null,
@@ -255,6 +255,23 @@ export const recruitmentRepository = {
     if (error) throw new Error(error.message)
   },
 
+  async getEmployeeShiftOnDate(user_id: string, company_id: string, shift_date: string): Promise<{
+    start_time: string
+    end_time: string
+  } | null> {
+    const { data, error } = await supabase
+      .from('shift_assignments')
+      .select('shifts!inner(start_time, end_time, shift_date, company_id, status)')
+      .eq('user_id', user_id)
+      .eq('shifts.company_id', company_id)
+      .eq('shifts.shift_date', shift_date)
+      .neq('shifts.status', 'cancelled')
+      .limit(1)
+    if (error) throw new Error(error.message)
+    const row = data?.[0] as unknown as { shifts: { start_time: string; end_time: string } } | undefined
+    return row?.shifts ?? null
+  },
+
   async getShiftsForJobWorker(job_id: string, user_id: string): Promise<{
     id: string
     shift_date: string
@@ -347,14 +364,21 @@ export const recruitmentRepository = {
     return (data ?? []).map(mapApplicantRow)
   },
 
-  async getApplicantCounts(job_ids: string[]): Promise<{ job_id: string; status: string }[]> {
+  async getApplicantCounts(job_ids: string[]): Promise<{ job_id: string; status: string; invitation_status: string | null }[]> {
     if (job_ids.length === 0) return []
     const { data, error } = await supabase
       .from('job_applicants')
-      .select('job_id, status')
+      .select('job_id, status, job_invitations(status)')
       .in('job_id', job_ids)
     if (error) throw new Error(error.message)
-    return (data ?? []) as { job_id: string; status: string }[]
+    return (data ?? []).map((row) => {
+      const invitations = row.job_invitations as unknown as { status: string }[] | null | undefined
+      return {
+        job_id: row.job_id as string,
+        status: row.status as string,
+        invitation_status: invitations && invitations.length > 0 ? invitations[invitations.length - 1].status : null,
+      }
+    })
   },
 
   async getApplicantById(id: string): Promise<JobApplicant | null> {
@@ -408,14 +432,14 @@ export const recruitmentRepository = {
     return (data ?? []) as { id: string; name: string }[]
   },
 
-  async getUsersByIds(ids: string[]): Promise<{ id: string; full_name: string }[]> {
+  async getUsersByIds(ids: string[]): Promise<{ id: string; full_name: string; profile_photo_url: string | null }[]> {
     if (ids.length === 0) return []
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name')
+      .select('id, full_name, profile_photo_url')
       .in('id', ids)
     if (error) throw new Error(error.message)
-    return (data ?? []) as { id: string; full_name: string }[]
+    return (data ?? []) as { id: string; full_name: string; profile_photo_url: string | null }[]
   },
 
   async getManagerDepartmentIds(manager_id: string, company_id: string): Promise<string[]> {

@@ -13,6 +13,9 @@ import { Award, Cake, FileText, Paperclip, Shirt, Wrench } from 'lucide-react'
 type Props = {
   jobId: string
   onClose: () => void
+  // When provided (e.g. from the public job board), stay in place after a successful apply and
+  // let the host show a toast + refresh, instead of redirecting to My Applications.
+  onApplied?: (jobTitle: string) => void
 }
 
 type Profile = {
@@ -55,7 +58,7 @@ function computeAge(dateOfBirth: string): number {
   return age
 }
 
-export default function ApplyJobModal({ jobId, onClose }: Props) {
+export default function ApplyJobModal({ jobId, onClose, onApplied }: Props) {
   const router = useRouter()
 
   const [profile, setProfile] = useState<Profile | null>(null)
@@ -121,8 +124,14 @@ export default function ApplyJobModal({ jobId, onClose }: Props) {
       if (!data.success) throw new Error(data.message)
 
       localStorage.removeItem('apply_job_id')
-      onClose()
-      router.replace('/guest/applications')
+      if (onApplied) {
+        // Job board: stay put so the worker can keep browsing/applying.
+        onApplied(job?.title ?? 'this job')
+        onClose()
+      } else {
+        onClose()
+        router.replace('/guest/applications')
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to submit application')
     } finally {

@@ -76,6 +76,7 @@ function makeJob(overrides: Partial<JobPosting> = {}): JobPosting {
 
 const baseProfile = {
   id: 'user-1',
+  role: 'Guest User',
   date_of_birth: '2000-01-15',
   skills: 'Customer service, Barista',
   resume_url: 'https://cdn/resume.pdf',
@@ -139,6 +140,27 @@ describe('workerApplicationService.submitApplication — apply gates + snapshot'
     vi.mocked(workerApplicationRepository.checkExistingApplication).mockResolvedValue({ id: 'existing' })
     await expect(workerApplicationService.submitApplication(baseInput))
       .rejects.toThrow('already applied')
+  })
+
+  // The job board hides Apply from company staff; this is the server-side backstop against a
+  // direct API call.
+  it.each(['Owner', 'Partner', 'Manager', 'Employee', 'Marketing Admin'])(
+    'rejects an application from a %s account',
+    async (role) => {
+      vi.mocked(workerApplicationRepository.getApplicantProfile).mockResolvedValue({ ...baseProfile, role })
+
+      await expect(workerApplicationService.submitApplication(baseInput))
+        .rejects.toThrow('Company staff accounts cannot apply for jobs')
+      expect(workerApplicationRepository.createApplication).not.toHaveBeenCalled()
+    },
+  )
+
+  it('allows a Casual Worker to keep applying to new jobs', async () => {
+    vi.mocked(workerApplicationRepository.getApplicantProfile).mockResolvedValue({ ...baseProfile, role: 'Casual Worker' })
+
+    await workerApplicationService.submitApplication(baseInput)
+
+    expect(workerApplicationRepository.createApplication).toHaveBeenCalled()
   })
 
   describe('age gate (deterministic, not AI)', () => {
