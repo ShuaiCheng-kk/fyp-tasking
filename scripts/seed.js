@@ -7,7 +7,8 @@
  *   3. 在 Supabase Auth 创建真实账号（密码统一 111111）
  *   4. 插入 public.users、companies、departments 及部门分配
  *   5. 插入 Casual Workers（含 date_of_birth, phone_number, worker_status 等）
- *   6. 生成 Shifts（过去7天 + 未来7天，每个 Employee/Manager 每天一个班）
+ *   6. 生成 Shifts（过去28天 + 未来7天，每个 Employee/Manager 每天一个班 —— 过去拉长到
+ *      28 天是为了 Owner Report 的 "vs Previous Period" 上期对比有真实数据）
  *   7. 生成 Attendance Records（仅对过去的 shift，混合准时/迟到/缺勤/各审批状态）
  *   8. 生成 Communication 数据（Announcements + Manager-Employee 对话）
  *
@@ -208,7 +209,9 @@ const legacyTestEmailsToDelete = [
 
 // ─── 业务数据生成参数 ──────────────────────────────────────────────────────────
 
-const SHIFT_DAYS_PAST = 7
+// 过去 28 天：Owner Report 的 "vs Previous Period" 需要当期 + 上一段等长区间都有数据
+//（默认视图是 7 天，用户也常选 13~14 天，上期最远到 26~28 天前）。
+const SHIFT_DAYS_PAST = 28
 const SHIFT_DAYS_FUTURE = 7
 
 const ANNOUNCEMENT_TEMPLATES = [
@@ -623,6 +626,27 @@ async function main() {
   // assignmentInfo: shiftAssignmentId -> { date, start_time, end_time, userEmail, isPast }
   const assignmentInfo = []
 
+  // 28 天 × 16 人 ≈ 576 个班 —— 逐行 insert 太慢，改为整批收集后分块批量插入
+  //（PostgREST 的 INSERT ... RETURNING 按输入顺序返回，meta 数组与返回 id 一一对应）。
+  const CHUNK = 200
+  async function chunkInsert(table, rows, withIds) {
+    const ids = []
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      const chunk = rows.slice(i, i + CHUNK)
+      const query = supabase.from(table).insert(chunk)
+      const { data, error } = withIds ? await query.select('id') : await query
+      if (error) {
+        console.warn(`  ⚠ 批量插入 ${table} 失败（第 ${i / CHUNK + 1} 块，${chunk.length} 行）: ${error.message}`)
+        if (withIds) ids.push(...chunk.map(() => null))
+      } else if (withIds) {
+        ids.push(...data.map(r => r.id))
+      }
+    }
+    return ids
+  }
+
+  const shiftRows = []
+  const shiftMeta = []
   for (let dayOffset = -SHIFT_DAYS_PAST; dayOffset <= SHIFT_DAYS_FUTURE; dayOffset++) {
     const shiftDate = addDays(TODAY, dayOffset)
     const shiftDateStr = dateKey(shiftDate)
@@ -635,49 +659,45 @@ async function main() {
         const isManager = managerEmails.includes(email)
         const startTime = isManager ? '09:00' : '11:00'
         const endTime = isManager ? '17:00' : '18:00'
-        const userId = userIdMap[email].internalId
-
-        const { data: shift, error: shiftErr } = await supabase
-          .from('shifts')
-          .insert({
-            company_id: company.id,
-            department_id: dept.id,
-            title: `${dept.name} ${isManager ? 'Shift' : 'Afternoon Shift'}`,
-            shift_date: shiftDateStr,
-            start_time: startTime,
-            end_time: endTime,
-            status: 'active',
-            publication_status: 'published',
-            created_by: ownerUser.id,
-          })
-          .select('id')
-          .single()
-        if (shiftErr) { console.warn(`  ⚠ 创建 shift 失败 (${email}, ${shiftDateStr}): ${shiftErr.message}`); continue }
-
-        const { data: assignment, error: assignErr } = await supabase
-          .from('shift_assignments')
-          .insert({
-            shift_id: shift.id,
-            user_id: userId,
-            assigned_by: ownerUser.id,
-          })
-          .select('id')
-          .single()
-        if (assignErr) { console.warn(`  ⚠ 创建 assignment 失败 (${email}, ${shiftDateStr}): ${assignErr.message}`); continue }
-
-        assignmentInfo.push({
-          assignmentId: assignment.id,
-          shiftId: shift.id,
-          shiftDate: shiftDateStr,
-          startTime,
-          endTime,
-          email,
-          userId,
-          deptIdx,
-          isPast,
+        shiftRows.push({
+          company_id: company.id,
+          department_id: dept.id,
+          title: `${dept.name} ${isManager ? 'Shift' : 'Afternoon Shift'}`,
+          shift_date: shiftDateStr,
+          start_time: startTime,
+          end_time: endTime,
+          status: 'active',
+          publication_status: 'published',
+          created_by: ownerUser.id,
         })
+        shiftMeta.push({ shiftDateStr, startTime, endTime, email, userId: userIdMap[email].internalId, deptIdx, isPast })
       }
     }
+  }
+  const shiftIds = await chunkInsert('shifts', shiftRows, true)
+
+  const assignmentRows = []
+  const assignmentMeta = []
+  for (let i = 0; i < shiftMeta.length; i++) {
+    if (!shiftIds[i]) continue
+    assignmentRows.push({ shift_id: shiftIds[i], user_id: shiftMeta[i].userId, assigned_by: ownerUser.id })
+    assignmentMeta.push({ ...shiftMeta[i], shiftId: shiftIds[i] })
+  }
+  const assignmentIds = await chunkInsert('shift_assignments', assignmentRows, true)
+  for (let i = 0; i < assignmentMeta.length; i++) {
+    if (!assignmentIds[i]) continue
+    const m = assignmentMeta[i]
+    assignmentInfo.push({
+      assignmentId: assignmentIds[i],
+      shiftId: m.shiftId,
+      shiftDate: m.shiftDateStr,
+      startTime: m.startTime,
+      endTime: m.endTime,
+      email: m.email,
+      userId: m.userId,
+      deptIdx: m.deptIdx,
+      isPast: m.isPast,
+    })
   }
   console.log(`  ✓ 生成 ${assignmentInfo.length} 个 shift + assignment（过去 ${SHIFT_DAYS_PAST} 天 + 未来 ${SHIFT_DAYS_FUTURE} 天，含周末）`)
 
@@ -689,14 +709,12 @@ async function main() {
   // Owner/Manager 页面永远看不到"已经被 Manager 看过、等 Owner 终审"这个真实状态。
   console.log('\nStep 11: 生成 Attendance Records（过去的 shift）...')
   const pastAssignments = assignmentInfo.filter(a => a.isPast)
-  let attendanceCount = 0
+  const attendanceRows = []
   for (let i = 0; i < pastAssignments.length; i++) {
     const a = pastAssignments[i]
     const bucket = i % 20 // deterministic distribution, no randomness needed for repeatable seeds
     if (bucket < 1) continue // ~5% absent — no attendance_records row at all
 
-    const [startH, startM] = a.startTime.split(':').map(Number)
-    const [endH, endM] = a.endTime.split(':').map(Number)
     const clockInBase = new Date(`${a.shiftDate}T${a.startTime}:00Z`)
     const clockOutBase = new Date(`${a.shiftDate}T${a.endTime}:00Z`)
 
@@ -723,7 +741,7 @@ async function main() {
     }
     const managerNotes = status === 'manager_reviewed' ? 'Times match the schedule — looks good for final approval.' : null
 
-    const { error: attErr } = await supabase.from('attendance_records').insert({
+    attendanceRows.push({
       shift_assignment_id: a.assignmentId,
       casual_worker_id: a.userId,
       confirmed_by_employee_id: a.userId,
@@ -736,9 +754,9 @@ async function main() {
       owner_reviewed_by: ownerStatus === 'pending' ? null : ownerUser.id,
       owner_reviewed_at: ownerStatus === 'pending' ? null : new Date().toISOString(),
     })
-    if (attErr) console.warn(`  ⚠ 创建 attendance_record 失败 (${a.email}, ${a.shiftDate}): ${attErr.message}`)
-    else attendanceCount++
   }
+  await chunkInsert('attendance_records', attendanceRows, false)
+  const attendanceCount = attendanceRows.length
   console.log(`  ✓ 生成 ${attendanceCount} 条 attendance_records（混合 approved/pending/manager_reviewed/rejected/late，~5% 缺勤无记录）`)
 
   // ── Step 11b: Casual Worker Shifts + Attendance Records ─────────────────
@@ -755,6 +773,8 @@ async function main() {
   ]
   const cwAssignmentInfo = []
   let cwShiftCount = 0
+  const cwShiftRows = []
+  const cwShiftMeta = []
 
   for (let deptIdx = 0; deptIdx < deptByIndex.length; deptIdx++) {
     const dept = deptByIndex[deptIdx]
@@ -787,58 +807,60 @@ async function main() {
         const startTime = cwIdx % 2 === 0 ? '09:00' : '13:00'
         const endTime   = cwIdx % 2 === 0 ? '17:00' : '21:00'
 
-        const { data: cwShift, error: cwShiftErr } = await supabase
-          .from('shifts')
-          .insert({
-            company_id: company.id,
-            department_id: dept.id,
-            title: `${dept.name} CW ${isOneOff ? 'One-Off' : 'Regular'} Shift`,
-            shift_date: shiftDateStr,
-            start_time: startTime,
-            end_time: endTime,
-            status: 'active',
-            publication_status: 'published',
-            is_open_ended: isOneOff,
-            flat_rate: isOneOff ? 120.00 : null,
-            created_by: ownerUser.id,
-          })
-          .select('id')
-          .single()
-        if (cwShiftErr) { console.warn(`  ⚠ CW shift 失败 (${cwEmail}, ${shiftDateStr}): ${cwShiftErr.message}`); continue }
-
-        const { data: cwAssignment, error: cwAssignErr } = await supabase
-          .from('shift_assignments')
-          .insert({
-            shift_id: cwShift.id,
-            user_id: cwId,
-            assigned_by: ownerUser.id,
-            supervisor_employee_id: supervisorId,
-          })
-          .select('id')
-          .single()
-        if (cwAssignErr) { console.warn(`  ⚠ CW assignment 失败 (${cwEmail}, ${shiftDateStr}): ${cwAssignErr.message}`); continue }
-
-        cwShiftCount++
-        cwAssignmentInfo.push({
-          assignmentId: cwAssignment.id,
-          shiftId: cwShift.id,
-          shiftDate: shiftDateStr,
-          startTime,
-          endTime,
-          email: cwEmail,
-          userId: cwId,
-          supervisorId,
-          deptIdx,
-          isPast,
+        cwShiftRows.push({
+          company_id: company.id,
+          department_id: dept.id,
+          title: `${dept.name} CW ${isOneOff ? 'One-Off' : 'Regular'} Shift`,
+          shift_date: shiftDateStr,
+          start_time: startTime,
+          end_time: endTime,
+          status: 'active',
+          publication_status: 'published',
+          is_open_ended: isOneOff,
+          flat_rate: isOneOff ? 120.00 : null,
+          created_by: ownerUser.id,
         })
+        cwShiftMeta.push({ shiftDateStr, startTime, endTime, email: cwEmail, userId: cwId, supervisorId, deptIdx, isPast })
       }
     }
+  }
+  const cwShiftIds = await chunkInsert('shifts', cwShiftRows, true)
+  const cwAssignmentRows = []
+  const cwAssignmentMeta = []
+  for (let i = 0; i < cwShiftMeta.length; i++) {
+    if (!cwShiftIds[i]) continue
+    cwAssignmentRows.push({
+      shift_id: cwShiftIds[i],
+      user_id: cwShiftMeta[i].userId,
+      assigned_by: ownerUser.id,
+      supervisor_employee_id: cwShiftMeta[i].supervisorId,
+    })
+    cwAssignmentMeta.push({ ...cwShiftMeta[i], shiftId: cwShiftIds[i] })
+  }
+  const cwAssignmentIds = await chunkInsert('shift_assignments', cwAssignmentRows, true)
+  for (let i = 0; i < cwAssignmentMeta.length; i++) {
+    if (!cwAssignmentIds[i]) continue
+    const m = cwAssignmentMeta[i]
+    cwShiftCount++
+    cwAssignmentInfo.push({
+      assignmentId: cwAssignmentIds[i],
+      shiftId: m.shiftId,
+      shiftDate: m.shiftDateStr,
+      startTime: m.startTime,
+      endTime: m.endTime,
+      email: m.email,
+      userId: m.userId,
+      supervisorId: m.supervisorId,
+      deptIdx: m.deptIdx,
+      isPast: m.isPast,
+    })
   }
   console.log(`  ✓ 生成 ${cwShiftCount} 个 CW shift + assignment`)
 
   // Attendance records for CW past shifts
-  let cwAttCount = 0
   const cwPastAssignments = cwAssignmentInfo.filter(a => a.isPast)
+  const cwAttendanceRows = []
+  const cwWorkedDeptPairs = new Map() // casual_worker_id -> Set<department_id>（有完整打卡的组合）
   for (let i = 0; i < cwPastAssignments.length; i++) {
     const a = cwPastAssignments[i]
     const bucket = i % 10
@@ -863,7 +885,7 @@ async function main() {
     // clockIn/clockOut both self-attest (there is no separate "supervising Employee confirms"
     // action in the app today); supervisor_employee_id on the shift_assignment above already
     // captures the real "Employee supervises this CW" relationship for display purposes.
-    const { error: cwAttErr } = await supabase.from('attendance_records').insert({
+    cwAttendanceRows.push({
       shift_assignment_id: a.assignmentId,
       casual_worker_id: a.userId,
       confirmed_by_employee_id: a.userId,
@@ -876,22 +898,26 @@ async function main() {
       owner_reviewed_by: ownerStatus === 'pending' ? null : ownerUser.id,
       owner_reviewed_at: ownerStatus === 'pending' ? null : new Date().toISOString(),
     })
-    if (cwAttErr) {
-      console.warn(`  ⚠ CW attendance 失败 (${a.email}, ${a.shiftDate}): ${cwAttErr.message}`)
-    } else {
-      cwAttCount++
-      // Mirrors casualAttendanceService.clockOut's side effect: a completed clock-in + clock-out
-      // is what promotes a CW into the company's verified worker pool (see casualworker_departments
-      // migration 20260713234000). Raw-inserting attendance_records above bypasses that service, so
-      // replicate it here — otherwise every seeded CW would sit outside the pool despite having
-      // "worked" in the seed data.
+    const deptSet = cwWorkedDeptPairs.get(a.userId) ?? new Set()
+    deptSet.add(deptByIndex[a.deptIdx].id)
+    cwWorkedDeptPairs.set(a.userId, deptSet)
+  }
+  await chunkInsert('attendance_records', cwAttendanceRows, false)
+  const cwAttCount = cwAttendanceRows.length
+  // Mirrors casualAttendanceService.clockOut's side effect: a completed clock-in + clock-out
+  // is what promotes a CW into the company's verified worker pool (see casualworker_departments
+  // migration 20260713234000). Raw-inserting attendance_records above bypasses that service, so
+  // replicate it here — otherwise every seeded CW would sit outside the pool despite having
+  // "worked" in the seed data.
+  for (const [cwId, deptSet] of cwWorkedDeptPairs) {
+    for (const deptId of deptSet) {
       const { error: verifyErr } = await supabase
         .from('casualworker_departments')
         .update({ verified_at: new Date().toISOString() })
-        .eq('casual_worker_id', a.userId)
-        .eq('department_id', deptByIndex[a.deptIdx].id)
+        .eq('casual_worker_id', cwId)
+        .eq('department_id', deptId)
         .is('verified_at', null)
-      if (verifyErr) console.warn(`  ⚠ casualworker_departments verified_at 更新失败 (${a.email}): ${verifyErr.message}`)
+      if (verifyErr) console.warn(`  ⚠ casualworker_departments verified_at 更新失败 (${cwId}): ${verifyErr.message}`)
     }
   }
   console.log(`  ✓ 生成 ${cwAttCount} 条 CW attendance_records（混合 approved/pending/manager_reviewed/rejected/late，10% 缺勤）`)
@@ -1193,6 +1219,24 @@ async function main() {
     { dept: 3, assignee: 'manager8@test.com', title: 'Retrain team on new macros', description: 'Walk the support team through the updated canned-reply macros.', priority: 'Medium', daysAgo: 11, dueOffsetH: 6, outcome: 'late' },
     { dept: 3, assignee: 'manager7@test.com', title: 'Audit call recording retention', description: 'Confirm call recordings older than 90 days are purged per policy.', priority: 'Low', daysAgo: 18, dueOffsetH: 24, outcome: 'overdue' },
     { dept: 3, assignee: 'manager8@test.com', title: 'Update support SLA doc', description: 'Revise the SLA response-time targets in the support handbook.', priority: 'Medium', daysAgo: 5, dueOffsetH: 10, outcome: 'on_time' },
+
+    // ── 上期窗口（8~14 天前，默认 7 天视图的 Previous Period）—— 补几条准时完成的，
+    // 否则这个窗口只剩 late/rework，上期 on-time 率恒为 0%，对比失真。
+    { dept: 1, assignee: 'employee4@test.com', title: 'Schedule July social calendar', description: 'Queue the July posts across all social channels.', priority: 'Medium', daysAgo: 9, dueOffsetH: 10, outcome: 'on_time' },
+    { dept: 3, assignee: 'employee8@test.com', title: 'Refresh help center screenshots', description: 'Re-capture outdated screenshots across the top help articles.', priority: 'Low', daysAgo: 11, dueOffsetH: 8, outcome: 'on_time' },
+    { dept: 2, assignee: 'employee6@test.com', title: 'Verify UPS battery health', description: 'Run the quarterly UPS battery self-test and log results.', priority: 'Medium', daysAgo: 13, dueOffsetH: 6, outcome: 'on_time' },
+
+    // ── 上上期窗口（14~26 天前）—— 更宽日期范围（如 13~14 天）的 Previous Period 基线：
+    // on_time/late 混合的已完成任务，而不是空到只剩 0%。Manager/Employee 混排
+    //（On-time Task Completion Rate 的口径就是这两个角色）。
+    { dept: 0, assignee: 'manager1@test.com', title: 'Reconcile June supplier invoices', description: 'Match June supplier invoices against goods received notes.', priority: 'High', daysAgo: 16, dueOffsetH: 10, outcome: 'on_time' },
+    { dept: 0, assignee: 'employee1@test.com', title: 'Relabel storage room shelving', description: 'Replace worn shelf labels across both storage rooms.', priority: 'Low', daysAgo: 22, dueOffsetH: 8, outcome: 'late' },
+    { dept: 1, assignee: 'manager3@test.com', title: 'Wrap up spring campaign report', description: 'Compile the spring campaign performance report for leadership.', priority: 'Medium', daysAgo: 15, dueOffsetH: 12, outcome: 'on_time' },
+    { dept: 1, assignee: 'employee3@test.com', title: 'Archive expired promo assets', description: 'Move expired promo banners and copy decks into the archive drive.', priority: 'Low', daysAgo: 21, dueOffsetH: 6, outcome: 'on_time' },
+    { dept: 2, assignee: 'manager5@test.com', title: 'Rotate service account credentials', description: 'Rotate and re-store the shared service account credentials.', priority: 'Urgent', daysAgo: 17, dueOffsetH: 6, outcome: 'late' },
+    { dept: 2, assignee: 'employee5@test.com', title: 'Image spare front-desk laptops', description: 'Re-image the two spare laptops with the standard build.', priority: 'Medium', daysAgo: 23, dueOffsetH: 10, outcome: 'on_time' },
+    { dept: 3, assignee: 'manager7@test.com', title: 'Close May escalation review', description: 'Document outcomes for the May escalations and close the review.', priority: 'Medium', daysAgo: 16, dueOffsetH: 8, outcome: 'on_time' },
+    { dept: 3, assignee: 'employee7@test.com', title: 'Purge stale saved replies', description: 'Delete outdated saved replies flagged in the QA sweep.', priority: 'Low', daysAgo: 24, dueOffsetH: 6, outcome: 'late' },
   ]
 
   let historicalTaskCount = 0
@@ -1239,7 +1283,7 @@ async function main() {
     })
     if (id) historicalTaskCount++
   }
-  console.log(`  ✓ 生成 ${historicalTaskCount} 条历史 tasks（供 Report 部门表现：on-time/late/overdue/rework 各 4 条，跨 4 个部门，task_date 在过去 3~20 天）`)
+  console.log(`  ✓ 生成 ${historicalTaskCount} 条历史 tasks（供 Report：on-time/late/overdue/rework 混合，跨 4 个部门 + Manager/Employee 混排，task_date 在过去 3~26 天，覆盖当期与上期窗口）`)
 
   console.log(`  ✓ 生成 ${taskCount} 条 tasks（含 sub-tasks、${archivedCount} 条 archived、多 assignee、rejection 返工、3 条 Delay Alert 触发项、Operations 超载触发 Workload Suggestion）`)
   console.log(`  ✓ 生成 ${taskTemplateCount} 条 task_templates`)
@@ -1924,6 +1968,58 @@ async function main() {
       experience_required: '2+ Years', minimum_age: 21, uniform_type: 'dress_code', uniform_details: 'All-black smart casual',
     },
 
+    // ── Report 趋势数据：Closed + 已招满/部分招满，created_at 一批落在最近 7 天、一批落在
+    // 15~20 天前 —— Company Overview 的 Hiring Success Rate / Average Time to Fill 才能在默认
+    // 7 天视图和更宽的日期范围里都有"当期 + 上期"可对比的数据 ──
+    {
+      dept: 0, status: 'closed', form: 'oneoff', title: 'Weekend Inventory Blitz',
+      description: 'One-day full stock count across the main warehouse ahead of the annual audit.',
+      requirements: 'Comfortable with barcode scanners and step ladders.',
+      employment_type: 'casual', salary_amount: 105, urgency: 'normal', estimated_hours: '7',
+      job_start_time: '09:00', createdBy: 'owner', createdDaysAgo: 6, assignedEmployeeIdx: 0, openings: 2, deadlineDays: -2,
+      experience_required: 'Not Required', minimum_age: 18, uniform_type: 'company', uniform_details: 'Hi-vis vest provided',
+    },
+    {
+      dept: 2, status: 'closed', form: 'oneoff', title: 'Office Wi-Fi Upgrade Helper',
+      description: 'Assist the infra team to swap access points across two floors in one evening.',
+      requirements: 'Comfortable on a ladder; cable management experience a plus.',
+      employment_type: 'casual', salary_amount: 125, urgency: 'high', estimated_hours: '5',
+      job_start_time: '18:00', createdBy: 'owner', createdDaysAgo: 4, assignedEmployeeIdx: 5, openings: 2, deadlineDays: -1,
+      experience_required: '6+ Months', minimum_age: 18, uniform_type: 'none',
+    },
+    {
+      dept: 1, status: 'closed', form: 'oneoff', title: 'Weekday Sampling Crew',
+      description: 'Hand out product samples at the CBD lunch crowd pop-up across three weekdays.',
+      requirements: 'Energetic, presentable, comfortable engaging office crowds.',
+      employment_type: 'casual', salary_amount: 90, urgency: 'normal', estimated_hours: '4',
+      job_start_time: '11:00', createdBy: 'owner', createdDaysAgo: 5, assignedEmployeeIdx: 2, openings: 3, deadlineDays: -1,
+      experience_required: 'Not Required', minimum_age: 16, uniform_type: 'dress_code', uniform_details: 'Brand tee provided, own dark bottoms',
+    },
+    {
+      dept: 0, status: 'closed', form: 'oneoff', title: 'Quarterly Stocktake Support',
+      description: 'Support the quarterly stocktake weekend — counting, tagging and variance reporting.',
+      requirements: 'Detail-oriented; prior stocktake exposure preferred.',
+      employment_type: 'casual', salary_amount: 100, urgency: 'normal', estimated_hours: '8',
+      job_start_time: '09:00', createdBy: 'owner', createdDaysAgo: 20, assignedEmployeeIdx: 1, openings: 2, deadlineDays: -15,
+      experience_required: 'Preferred', minimum_age: 18, uniform_type: 'company', uniform_details: 'Gloves and vest provided',
+    },
+    {
+      dept: 1, status: 'closed', form: 'oneoff', title: 'Mall Roadshow Crew',
+      description: 'Man the weekend mall roadshow booth — demos, giveaways and lead capture.',
+      requirements: 'Outgoing, reliable, weekend availability.',
+      employment_type: 'casual', salary_amount: 95, urgency: 'normal', estimated_hours: '6',
+      job_start_time: '11:00', createdBy: 'owner', createdDaysAgo: 17, assignedEmployeeIdx: 3, openings: 2, deadlineDays: -12,
+      experience_required: 'Not Required', minimum_age: 16, uniform_type: 'dress_code', uniform_details: 'Campaign tee issued on-site',
+    },
+    {
+      dept: 3, status: 'closed', form: 'oneoff', title: 'Launch Week Hotline Support',
+      description: 'Extra hotline coverage during launch week to keep wait times down.',
+      requirements: 'Clear phone manner; prior support experience preferred.',
+      employment_type: 'casual', salary_amount: 115, urgency: 'high', estimated_hours: '8',
+      job_start_time: '10:00', createdBy: 'owner', createdDaysAgo: 16, assignedEmployeeIdx: 7, openings: 3, deadlineDays: -11,
+      experience_required: '1+ Year', minimum_age: 18, uniform_type: 'none',
+    },
+
     // ── Archived（status: archived）— Job Sources 的 Archived 面板。archived_from_status
     // 记录归档前状态（open/closed），留一条 null 模拟"deadline 过期被系统自动归档"的旧数据 ──
     {
@@ -2217,6 +2313,33 @@ async function main() {
     { title: 'On-Site AV Technician', guest: 'guest5@test.com', status: 'job_closed', exp: 'less_than_1', daysAgo: 5, note: null },
     { title: 'On-Site AV Technician', guest: 'guest3@test.com', status: 'rejected', exp: '1_to_2', daysAgo: 6,
       note: 'Mostly stage sound experience, projector setup is new to me.' },
+
+    // ── Report 趋势数据的 Closed 职位申请（当期窗口：招满 2 条、部分招满 1 条）──
+    // Weekend Inventory Blitz（2/2 招满）
+    { title: 'Weekend Inventory Blitz', guest: 'guest2@test.com', status: 'accepted', inv: 'accepted', exp: '1_to_2', daysAgo: 5, note: null },
+    { title: 'Weekend Inventory Blitz', guest: 'guest6@test.com', status: 'accepted', inv: 'accepted', exp: 'more_than_2', daysAgo: 5,
+      note: 'Ran the last two annual stocktakes at my previous warehouse job.' },
+    { title: 'Weekend Inventory Blitz', guest: 'guest8@test.com', status: 'job_closed', exp: 'none', daysAgo: 4, note: null },
+    // Office Wi-Fi Upgrade Helper（2/2 招满）
+    { title: 'Office Wi-Fi Upgrade Helper', guest: 'guest9@test.com', status: 'accepted', inv: 'accepted', exp: 'more_than_2', daysAgo: 3, note: null },
+    { title: 'Office Wi-Fi Upgrade Helper', guest: 'guest5@test.com', status: 'accepted', inv: 'accepted', exp: '1_to_2', daysAgo: 2,
+      note: 'Patched two office floors during a relocation last year.' },
+    // Weekday Sampling Crew（3 个名额只招到 2 个 → 部分招满）
+    { title: 'Weekday Sampling Crew', guest: 'guest4@test.com', status: 'accepted', inv: 'accepted', exp: 'less_than_1', daysAgo: 4, note: null },
+    { title: 'Weekday Sampling Crew', guest: 'guest10@test.com', status: 'accepted', inv: 'accepted', exp: '1_to_2', daysAgo: 3, note: null },
+
+    // ── Report 趋势数据的 Closed 职位申请（上期窗口 15~20 天前：招满 2 条、部分招满 1 条）──
+    // Quarterly Stocktake Support（2/2 招满）
+    { title: 'Quarterly Stocktake Support', guest: 'guest1@test.com', status: 'accepted', inv: 'accepted', exp: 'more_than_2', daysAgo: 19, note: null },
+    { title: 'Quarterly Stocktake Support', guest: 'guest3@test.com', status: 'accepted', inv: 'accepted', exp: '1_to_2', daysAgo: 18, note: null },
+    { title: 'Quarterly Stocktake Support', guest: 'guest7@test.com', status: 'job_closed', exp: 'none', daysAgo: 18, note: null },
+    // Mall Roadshow Crew（2/2 招满）
+    { title: 'Mall Roadshow Crew', guest: 'guest7@test.com', status: 'accepted', inv: 'accepted', exp: '1_to_2', daysAgo: 15, note: null },
+    { title: 'Mall Roadshow Crew', guest: 'guest2@test.com', status: 'accepted', inv: 'accepted', exp: 'less_than_1', daysAgo: 14, note: null },
+    // Launch Week Hotline Support（3 个名额只招到 2 个 → 部分招满）
+    { title: 'Launch Week Hotline Support', guest: 'guest6@test.com', status: 'accepted', inv: 'accepted', exp: 'more_than_2', daysAgo: 15, note: null },
+    { title: 'Launch Week Hotline Support', guest: 'guest10@test.com', status: 'accepted', inv: 'accepted', exp: '1_to_2', daysAgo: 13, note: null },
+    { title: 'Launch Week Hotline Support', guest: 'guest8@test.com', status: 'rejected', exp: 'none', daysAgo: 14, note: null },
 
     // Archived（原 closed）— Orientation Day Assistant
     { title: 'Orientation Day Assistant', guest: 'guest6@test.com', status: 'accepted', inv: 'accepted', exp: '1_to_2', daysAgo: 12, note: null },

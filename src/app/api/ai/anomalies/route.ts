@@ -10,6 +10,7 @@ export async function GET(req: NextRequest) {
   const date_from = searchParams.get('date_from')
   const date_to = searchParams.get('date_to')
   const department_id = searchParams.get('department_id')
+  const scope = searchParams.get('scope') === 'internal' ? 'internal' : 'all'
 
   if (!company_id || !date_from || !date_to) {
     return NextResponse.json({ success: false, message: 'company_id, date_from and date_to are required' }, { status: 400 })
@@ -21,7 +22,7 @@ export async function GET(req: NextRequest) {
       date_from,
       date_to,
       department_id: department_id || null,
-    })
+    }, scope)
     return NextResponse.json({ success: true, anomalies })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to detect anomalies'

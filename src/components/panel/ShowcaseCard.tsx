@@ -5,6 +5,7 @@ import { Search } from 'lucide-react'
 
 export default function ShowcaseCard({
   icon,
+  iconBg = '#FFF7ED',
   title,
   rightContent,
   actions,
@@ -16,6 +17,7 @@ export default function ShowcaseCard({
   children,
 }: {
   icon: React.ReactNode
+  iconBg?: string
   title: string
   rightContent?: React.ReactNode
   actions?: React.ReactNode
@@ -30,7 +32,7 @@ export default function ShowcaseCard({
     <div className={className} style={{ flex: fillHeight ? 1 : undefined, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
       <div style={{ minHeight: 78, padding: '20px 24px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 18, minWidth: 0, flex: 1 }}>
-          <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <div style={{ width: 30, height: 30, borderRadius: 9, background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             {icon}
           </div>
           <div style={{ minWidth: 0, flexShrink: 0 }}>

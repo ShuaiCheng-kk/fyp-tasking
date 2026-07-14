@@ -13,6 +13,7 @@ export interface ReportUserRow {
   full_name: string
   role: string
   hourly_rate: number | null
+  skills: string | null
 }
 
 export interface ReportDepartmentManagerRow {
@@ -108,6 +109,28 @@ export const reportRepository = {
     return (data ?? []) as Task[]
   },
 
+  // On-time Task Completion Rate KPI (internal staff): fetched by a due_at window padded ±1 day
+  // so the service can filter precisely by the task's LOCAL calendar deadline date (formatDateKey),
+  // not by a UTC slice or by when the task was created.
+  async getTasksByDeadlineRange(filters: ReportFilters): Promise<Task[]> {
+    const pad = (dateStr: string, days: number) => {
+      const d = new Date(`${dateStr}T00:00:00Z`)
+      d.setUTCDate(d.getUTCDate() + days)
+      return d.toISOString().slice(0, 10)
+    }
+    let query = supabase
+      .from('tasks')
+      .select('*')
+      .eq('company_id', filters.company_id)
+      .not('due_at', 'is', null)
+      .gte('due_at', `${pad(filters.date_from, -1)}T00:00:00`)
+      .lte('due_at', `${pad(filters.date_to, 1)}T23:59:59`)
+    if (filters.department_id) query = query.eq('department_id', filters.department_id)
+    const { data, error } = await query
+    if (error) throw new Error(error.message)
+    return (data ?? []) as Task[]
+  },
+
   async getAttendanceByAssignmentIds(assignmentIds: string[]): Promise<AttendanceRecord[]> {
     if (assignmentIds.length === 0) return []
     const { data, error } = await supabase
@@ -118,14 +141,50 @@ export const reportRepository = {
     return (data ?? []) as AttendanceRecord[]
   },
 
+  // Rehire Rate KPI: of the given casual workers, which ones actually attended (clocked in on)
+  // at least one non-rejected shift of this company dated BEFORE the period started.
+  async getPriorAttendedCasualUserIds(company_id: string, user_ids: string[], before_date: string): Promise<string[]> {
+    if (user_ids.length === 0) return []
+    const { data, error } = await supabase
+      .from('shift_assignments')
+      .select('user_id, shifts!inner(id), attendance_records!inner(id)')
+      .in('user_id', user_ids)
+      .neq('assignment_status', 'rejected')
+      .eq('shifts.company_id', company_id)
+      .lt('shifts.shift_date', before_date)
+      .not('attendance_records.clock_in_time', 'is', null)
+    if (error) throw new Error(error.message)
+    return [...new Set((data ?? []).map(row => row.user_id as string))]
+  },
+
   async getUsersByIds(ids: string[]): Promise<ReportUserRow[]> {
     if (ids.length === 0) return []
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, role, hourly_rate')
+      .select('id, full_name, role, hourly_rate, skills')
       .in('id', ids)
     if (error) throw new Error(error.message)
     return (data ?? []) as ReportUserRow[]
+  },
+
+  // "Rehire Count by Worker" chart: lifetime (all-time, not period-scoped) shifts a casual
+  // worker has actually attended (clocked in AND out) for this company — same attendance-based
+  // definition recruitmentRepository.getVerifiedPoolWorkers uses, but for an arbitrary id list
+  // rather than only verified pool members.
+  async getLifetimeCompletedShiftsByUserIds(company_id: string, user_ids: string[]): Promise<Array<{ user_id: string; completed_shifts: number }>> {
+    if (user_ids.length === 0) return []
+    const { data, error } = await supabase
+      .from('attendance_records')
+      .select('casual_worker_id, shift_assignments!inner(shifts!inner(company_id))')
+      .in('casual_worker_id', user_ids)
+      .not('clock_out_time', 'is', null)
+      .eq('shift_assignments.shifts.company_id', company_id)
+    if (error) throw new Error(error.message)
+    const counts = new Map<string, number>()
+    for (const row of (data ?? []) as Array<{ casual_worker_id: string }>) {
+      counts.set(row.casual_worker_id, (counts.get(row.casual_worker_id) ?? 0) + 1)
+    }
+    return [...counts.entries()].map(([user_id, completed_shifts]) => ({ user_id, completed_shifts }))
   },
 
   // Postings that went live (drafts / pending-approval / rejected never reached applicants)

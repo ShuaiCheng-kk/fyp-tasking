@@ -29,6 +29,43 @@ export interface ReportOverview {
   total_assignments: number
   total_tasks: number
   total_hires: number
+  // ── Internal (Manager + Employee) attendance — Casual Workers excluded. Counted per
+  // attendance record (a person working 5 days contributes 5 records), on ended, non-rejected
+  // shift assignments only. on_time = Present / (Present+Late+Absent); late/absent are the same
+  // denominator so the three percentages sum to 100.
+  on_time_attendance_rate: number | null
+  on_time_attendance_late_rate: number | null
+  on_time_attendance_absent_rate: number | null
+  // % of internal-staff (Manager+Employee) tasks completed on/before their deadline, among tasks
+  // whose DEADLINE (not created date) falls inside the selected period. Casual Worker tasks
+  // excluded. Distinct from on_time_completion_rate above, which is scoped by task_date/created
+  // date and includes every role — that one still drives the per-department table/chart.
+  on_time_task_completion_rate: number | null
+  // % of requested positions filled, for job postings created in the period that have Status =
+  // Closed only (still-open postings excluded — the hiring outcome isn't final yet). Summed by
+  // position count, not job count. Distinct from recruitment_fill_rate, which includes open postings.
+  hiring_success_rate: number | null
+  // Average days from a posting's created_at to the date its LAST required position was filled,
+  // across postings created in the period that are fully filled (partially-filled/open excluded).
+  average_time_to_fill_days: number | null
+  // Casual Worker share of labor_cost (fully-attended shifts only) — duplicated from
+  // casual.labor_cost so previous_overview carries it for the KPI card's trend line.
+  total_casual_worker_cost: number
+  // ── Casual Worker Pool Analytics — every KPI below counts each WORKER once, never per
+  // shift/task/record. "Worked" = the worker had at least one countable (ended, non-rejected)
+  // shift assignment in the period, whether they showed up or not.
+  // % of worked casual workers who had already attended at least one shift of this company
+  // before the period started (i.e. not first-time workers).
+  casual_rehire_rate: number | null
+  // % of worked casual workers with no late, no absence, AND every deadline-in-period task
+  // completed on time (a worker with no tasks passes the task condition vacuously).
+  casual_reliable_worker_rate: number | null
+  // % of worked casual workers whose every attendance in the period was Present — one Late or
+  // Absent record disqualifies the worker.
+  casual_on_time_attendance_rate: number | null
+  // % of casual workers (among those assigned ≥1 task whose deadline falls in the period) who
+  // completed ALL of those tasks on or before their deadlines.
+  casual_on_time_task_completion_rate: number | null
 }
 
 // ── 左·部门 / Manager ────────────────────────────────────────────────────────
@@ -46,6 +83,13 @@ export interface DepartmentPerformanceRow {
   late_count: number
   absent_count: number
   labor_cost: number
+  // ── Internal Analytics (Company Overview drill-down blocks) — Manager+Employee, department-scoped ──
+  // Same definitions as the matching ReportOverview fields, bucketed per department.
+  internal_attendance_rate: number | null
+  internal_task_on_time_rate: number | null
+  hiring_success_rate: number | null
+  average_time_to_fill_days: number | null
+  casual_labor_cost: number
 }
 
 // ── 右·临时工 ────────────────────────────────────────────────────────────────
@@ -76,6 +120,23 @@ export interface CasualReliabilityRow {
   rejected_shifts: number
   late: number
   absent: number
+  // ── Pool Analytics (charted "by Worker", never by department) ──────────────
+  // Lifetime shifts actually attended (clocked in AND out) for this company, all-time — not
+  // scoped to the selected period. Powers "Rehire Count by Worker".
+  rehire_count: number
+  // % of this worker's period attendance records with no lateness: (worked − late) over all
+  // countable records (worked + absent). Null only when the worker has no countable record
+  // (never happens for a row that made it into `workers`, since that requires worked+absent > 0).
+  on_time_attendance_rate: number | null
+  // % of this worker's deadline-in-period tasks completed on/before their deadline. Null when
+  // the worker was assigned no such task this period.
+  on_time_task_completion_rate: number | null
+  skills: string | null
+}
+
+export interface WorkerSkillCount {
+  skill: string
+  count: number
 }
 
 export interface PoolWorkerRow {
@@ -93,6 +154,9 @@ export interface CasualReport {
   workers: CasualReliabilityRow[]
   pool: PoolWorkerRow[]
   labor_cost: number
+  // Skill frequency across workers who worked this period — each worker counted once per skill,
+  // regardless of shift count. Top skills first, remainder folded into a trailing "Other" bucket.
+  skill_distribution: WorkerSkillCount[]
 }
 
 // ── 整份报告 ─────────────────────────────────────────────────────────────────
