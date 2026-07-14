@@ -13,6 +13,9 @@ export interface JobPosting {
   recurrence_interval: number | null
   recurrence_unit: string | null
   archived_at: string | null
+  // Status the posting had right before it was archived ('open' or 'closed') — lets Unarchive
+  // restore it to where it came from instead of always reopening it.
+  archived_from_status: string | null
   created_at: string
   updated_at: string
   company_name: string | null
@@ -109,6 +112,8 @@ export interface JobApplicant {
   user_id: string | null
   full_name: string
   email_address: string
+  phone_number: string | null
+  profile_photo_url: string | null
   resume_url: string | null
   cover_letter: string | null
   status: 'pending' | 'accepted' | 'rejected' | 'withdrawn' | 'cancelled_by_employer' | 'job_closed'
@@ -126,6 +131,8 @@ export interface JobApplicant {
   ai_computed_at: string | null
   // Latest invitation status, joined in for the employer's list ('accepted' = worker confirmed).
   invitation_status?: string | null
+  // When the accepted invitation was issued — used as the "Confirmed" timestamp on confirmed hires.
+  confirmed_at?: string | null
   // Times this worker has cancelled a confirmed shift before (history, not a rating).
   worker_cancellation_count?: number
 }
@@ -154,4 +161,33 @@ export interface CasualWorkerStatus {
   department_id: string | null
   department_name: string | null
   worker_status: 'active' | 'inactive' | 'blocked'
+}
+
+// A Casual Worker in the company's verified pool — they already clocked in AND out for this
+// company at least once, and have not been banned. These are the people an Owner can hand a new
+// job straight to, instead of posting it publicly and waiting for strangers to apply.
+export interface PoolWorker {
+  id: string
+  full_name: string
+  email_address: string
+  phone_number: string | null
+  profile_photo_url: string | null
+  skills: string | null
+  department_id: string | null
+  department_name: string | null
+  // When they first completed work here — what put them in the pool.
+  verified_at: string
+  // How many shifts they have actually completed for this company ("done it N times before").
+  completed_shifts: number
+  last_worked_date: string | null
+}
+
+// Outcome of hand-inviting one pool worker to a posting. Invites are attempted per worker so one
+// ineligible pick (clash, ban, age) never blocks the rest of the batch.
+export interface PoolInviteResult {
+  user_id: string
+  full_name: string
+  invited: boolean
+  // Why this worker was skipped — the same hard-gate messages the public apply flow produces.
+  reason: string | null
 }

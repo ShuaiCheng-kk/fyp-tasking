@@ -89,6 +89,20 @@ export const workerProfileRepository = {
     return data as WorkerCertificate
   },
 
+  // user_id is part of the filter so a worker can only ever update their own certificate.
+  async updateCertificateFileUrl(certificateId: string, userId: string, fileUrl: string): Promise<WorkerCertificate> {
+    const { data, error } = await supabase
+      .from('user_certificates')
+      .update({ file_url: fileUrl })
+      .eq('id', certificateId)
+      .eq('user_id', userId)
+      .select()
+      .single()
+
+    if (error) throw new Error(error.message)
+    return data as WorkerCertificate
+  },
+
   // user_id is part of the filter so a worker can only ever delete their own certificate.
   async deleteCertificate(certificateId: string, userId: string): Promise<void> {
     const { error } = await supabase

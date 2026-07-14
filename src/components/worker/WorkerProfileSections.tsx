@@ -1,46 +1,35 @@
 'use client'
 
-// Shared Worker Profile sections (Skills / Certificates / Resume) used by both the Guest User
-// profile page and the Casual Worker profile page — one component, two hosts, per the shared-UI
-// principle. This is the long-lived profile whose contents get snapshotted into each job
-// application at apply time.
+// Shared Worker Profile cards (Skills / Certificates / Resume) used by both the Guest User
+// profile page and the Casual Worker profile page — one set of components, two hosts, per the
+// shared-UI principle. Each card is self-contained (owns its own fetch/save) so pages are free to
+// lay them out independently (e.g. Casual's two-column grid). This is the long-lived profile
+// whose contents get snapshotted into each job application at apply time.
 
 import { useEffect, useRef, useState } from 'react'
-import { Award, Check, FileText, Paperclip, Plus, Trash2, Upload, Wrench, X } from 'lucide-react'
+import { Award, Check, FileText, Paperclip, Pencil, Plus, RefreshCw, Trash2, Upload, Wrench } from 'lucide-react'
 import { PRESET_CERTIFICATES, WorkerCertificate } from '@/types/WorkerProfile'
+import DropdownField from '@/components/DropdownField'
 
 const DOCUMENT_ACCEPT = '.pdf,.doc,.docx'
 const CERTIFICATE_ACCEPT = '.pdf,.doc,.docx,.jpg,.jpeg,.png'
 const CUSTOM_OPTION = '__custom__'
+// Matches the certificate row height used on the registration onboarding form so the two flows
+// read as one consistent design.
+const CERT_ROW_HEIGHT = 48
 
 type Props = {
   authId: string
   onToast?: (msg: string) => void
 }
 
-export default function WorkerProfileSections({ authId, onToast }: Props) {
+export function SkillsCard({ authId, onToast }: Props) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-
-  // skills
   const [skills, setSkills] = useState('')
   const [savedSkills, setSavedSkills] = useState('')
   const [skillsSaving, setSkillsSaving] = useState(false)
-
-  // certificates
-  const [certificates, setCertificates] = useState<WorkerCertificate[]>([])
-  const [certChoice, setCertChoice] = useState('')
-  const [certCustomName, setCertCustomName] = useState('')
-  const [certFile, setCertFile] = useState<File | null>(null)
-  const [certSaving, setCertSaving] = useState(false)
-  const [certError, setCertError] = useState('')
-  const certFileInputRef = useRef<HTMLInputElement>(null)
-
-  // resume
-  const [resumeUrl, setResumeUrl] = useState<string | null>(null)
-  const [resumeBusy, setResumeBusy] = useState(false)
-  const [resumeError, setResumeError] = useState('')
-  const resumeInputRef = useRef<HTMLInputElement>(null)
+  const [skillsEditing, setSkillsEditing] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -52,8 +41,6 @@ export default function WorkerProfileSections({ authId, onToast }: Props) {
         if (!data.success) throw new Error(data.message || 'Failed to load profile')
         setSkills(data.profile.skills ?? '')
         setSavedSkills(data.profile.skills ?? '')
-        setCertificates(data.profile.certificates ?? [])
-        setResumeUrl(data.profile.resume_url ?? null)
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load profile')
       } finally {
@@ -76,6 +63,7 @@ export default function WorkerProfileSections({ authId, onToast }: Props) {
       if (!data.success) throw new Error(data.message || 'Failed to save skills')
       setSavedSkills(data.profile.skills ?? '')
       setSkills(data.profile.skills ?? '')
+      setSkillsEditing(false)
       onToast?.('Skills saved')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save skills')
@@ -84,15 +72,108 @@ export default function WorkerProfileSections({ authId, onToast }: Props) {
     }
   }
 
+  if (loading) {
+    return <div style={{ ...cardStyle, color: '#6B7280', fontSize: '0.9rem' }}>Loading skills…</div>
+  }
+
+  const skillsDirty = skills.trim() !== savedSkills.trim()
+
+  return (
+    <div style={cardStyle}>
+      {error && (
+        <div style={{ padding: '10px 14px', marginBottom: 14, background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 10, color: '#B91C1C', fontSize: '0.8125rem', fontWeight: 600 }}>
+          {error}
+        </div>
+      )}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 32, height: 32, borderRadius: 8, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <Wrench size={16} color="#EA580C" />
+          </div>
+          <p style={{ margin: 0, fontWeight: 700, fontSize: '0.9375rem', color: '#111827' }}>Skills</p>
+        </div>
+        {!skillsEditing && (
+          <button type="button" onClick={() => { setSkills(savedSkills); setError(''); setSkillsEditing(true) }} style={editButtonStyle}>
+            <Pencil size={13} /> Edit Skills
+          </button>
+        )}
+      </div>
+
+      {skillsEditing ? (
+        <>
+          <textarea
+            value={skills}
+            onChange={e => setSkills(e.target.value)}
+            rows={3}
+            maxLength={2000}
+            autoFocus
+            placeholder="e.g. Customer service, Barista, Cash handling, Food preparation"
+            style={{ width: '100%', padding: '10px 12px', border: '1.5px solid #E5E7EB', borderRadius: 8, fontSize: '0.9rem', color: '#111827', outline: 'none', boxSizing: 'border-box', background: '#FFFFFF', resize: 'vertical', lineHeight: 1.55, fontFamily: 'inherit' }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+            <button type="button" onClick={() => { setSkills(savedSkills); setError(''); setSkillsEditing(false) }}
+              style={{ padding: '7px 16px', border: '1px solid #E5E7EB', borderRadius: 8, background: '#FFFFFF', fontWeight: 600, fontSize: '0.8125rem', color: '#374151', cursor: 'pointer' }}>
+              Cancel
+            </button>
+            <button onClick={saveSkills} disabled={skillsSaving || !skillsDirty}
+              style={{ padding: '7px 18px', border: 'none', borderRadius: 8, background: (skillsSaving || !skillsDirty) ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: (skillsSaving || !skillsDirty) ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: (skillsSaving || !skillsDirty) ? 0.7 : 1 }}>
+              {skillsSaving ? 'Saving…' : <><Check size={14} /> Save Skills</>}
+            </button>
+          </div>
+        </>
+      ) : (
+        <p style={{ margin: 0, fontSize: '0.9375rem', lineHeight: 1.6, color: savedSkills ? '#111827' : '#9CA3AF', whiteSpace: 'pre-wrap' }}>
+          {savedSkills || 'No skills added yet.'}
+        </p>
+      )}
+    </div>
+  )
+}
+
+export function CertificatesCard({ authId, onToast }: Props) {
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [certificates, setCertificates] = useState<WorkerCertificate[]>([])
+  const [certChoice, setCertChoice] = useState('')
+  const [certCustomName, setCertCustomName] = useState('')
+  const [certFile, setCertFile] = useState<File | null>(null)
+  const [certSaving, setCertSaving] = useState(false)
+  const [certError, setCertError] = useState('')
+  const certFileInputRef = useRef<HTMLInputElement>(null)
+  // Which existing certificate the replace-file picker is currently targeting.
+  const replaceFileInputRef = useRef<HTMLInputElement>(null)
+  const replaceTargetRef = useRef<string | null>(null)
+  const [replacingCertId, setReplacingCertId] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      try {
+        const res = await fetch(`/api/guest/profile?user_id=${authId}`)
+        const data = await res.json()
+        if (cancelled) return
+        if (!data.success) throw new Error(data.message || 'Failed to load profile')
+        setCertificates(data.profile.certificates ?? [])
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load profile')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    void load()
+    return () => { cancelled = true }
+  }, [authId])
+
   const addCertificate = async () => {
     const name = certChoice === CUSTOM_OPTION ? certCustomName.trim() : certChoice
     if (!name) { setCertError('Choose a certificate or enter a name.'); return }
+    if (!certFile) { setCertError('Please upload a file to prove you hold this certificate.'); return }
     setCertSaving(true); setCertError('')
     try {
       const form = new FormData()
       form.append('user_id', authId)
       form.append('name', name)
-      if (certFile) form.append('file', certFile)
+      form.append('file', certFile)
       const res = await fetch('/api/guest/profile/certificates', { method: 'POST', body: form })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to add certificate')
@@ -104,6 +185,27 @@ export default function WorkerProfileSections({ authId, onToast }: Props) {
       setCertError(err instanceof Error ? err.message : 'Failed to add certificate')
     } finally {
       setCertSaving(false)
+    }
+  }
+
+  const replaceCertificateFile = async (certificateId: string, file: File) => {
+    setReplacingCertId(certificateId); setCertError('')
+    try {
+      const form = new FormData()
+      form.append('user_id', authId)
+      form.append('certificate_id', certificateId)
+      form.append('file', file)
+      const res = await fetch('/api/guest/profile/certificates', { method: 'PATCH', body: form })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to replace file')
+      setCertificates(prev => prev.map(c => (c.id === certificateId ? data.certificate : c)))
+      onToast?.('Certificate file replaced')
+    } catch (err) {
+      setCertError(err instanceof Error ? err.message : 'Failed to replace file')
+    } finally {
+      setReplacingCertId(null)
+      replaceTargetRef.current = null
+      if (replaceFileInputRef.current) replaceFileInputRef.current.value = ''
     }
   }
 
@@ -120,6 +222,151 @@ export default function WorkerProfileSections({ authId, onToast }: Props) {
       setCertError(err instanceof Error ? err.message : 'Failed to remove certificate')
     }
   }
+
+  if (loading) {
+    return <div style={{ ...cardStyle, color: '#6B7280', fontSize: '0.9rem' }}>Loading certificates…</div>
+  }
+
+  return (
+    <div style={cardStyle}>
+      {error && (
+        <div style={{ padding: '10px 14px', marginBottom: 14, background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 10, color: '#B91C1C', fontSize: '0.8125rem', fontWeight: 600 }}>
+          {error}
+        </div>
+      )}
+      <CardHeader icon={<Award size={16} color="#EA580C" />} title="Certificates" subtitle="" />
+
+      {/* Hidden picker for swapping the proof file on an already-added certificate. */}
+      <input ref={replaceFileInputRef} type="file" accept={CERTIFICATE_ACCEPT} style={{ display: 'none' }}
+        onChange={e => {
+          const f = e.target.files?.[0]
+          const id = replaceTargetRef.current
+          if (f && id) void replaceCertificateFile(id, f)
+        }} />
+
+      {certificates.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 7, marginBottom: 14 }}>
+          {certificates.map(cert => (
+            <div key={cert.id} style={{ display: 'flex', alignItems: 'center', gap: 10, minHeight: 54, boxSizing: 'border-box', padding: '0 14px', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 10 }}>
+              <span style={{ flex: 1, fontFamily: 'var(--font-body)', fontSize: '1rem', fontWeight: 400, color: '#111827', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {cert.name}
+              </span>
+              {/* Opens the uploaded proof file so the worker can double-check they attached the
+                  right document to the right certificate. */}
+              {cert.file_url && (
+                <a href={cert.file_url} target="_blank" rel="noreferrer" title="View uploaded file"
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, color: '#15803D', borderRadius: 6, flexShrink: 0 }}
+                  onMouseEnter={e => { e.currentTarget.style.background = '#DCFCE7' }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}>
+                  <Paperclip size={16} />
+                </a>
+              )}
+              {/* Wrong scan attached? Replace the file without re-adding the certificate. */}
+              <button type="button" disabled={replacingCertId === cert.id} title="Replace uploaded file"
+                onClick={() => { replaceTargetRef.current = cert.id; replaceFileInputRef.current?.click() }}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, border: 'none', outline: 'none', background: 'transparent', color: '#6B7280', cursor: replacingCertId === cert.id ? 'default' : 'pointer', borderRadius: 6, flexShrink: 0 }}
+                onMouseEnter={e => { e.currentTarget.style.color = '#374151' }}
+                onMouseLeave={e => { e.currentTarget.style.color = '#6B7280' }}>
+                <RefreshCw size={15} className={replacingCertId === cert.id ? 'animate-spin' : undefined} />
+              </button>
+              <button onClick={() => removeCertificate(cert.id)} title="Remove certificate"
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, border: 'none', background: 'transparent', color: '#DC2626', cursor: 'pointer', borderRadius: 6, flexShrink: 0 }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#FEF2F2' }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}>
+                <Trash2 size={16} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Hidden file input shared by both branches below. */}
+      <input ref={certFileInputRef} type="file" accept={CERTIFICATE_ACCEPT} style={{ display: 'none' }}
+        onChange={e => setCertFile(e.target.files?.[0] ?? null)} />
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {/* Picking a preset name opens the file picker immediately — a claimed certificate must
+            come with proof, so there's no standalone "Attach file" step to skip. */}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <DropdownField
+              value={certChoice}
+              onChange={v => {
+                setCertChoice(v); setCertError(''); setCertFile(null)
+                if (v && v !== CUSTOM_OPTION) certFileInputRef.current?.click()
+              }}
+              placeholder="Select a certificate…"
+              height={CERT_ROW_HEIGHT}
+              options={[
+                ...PRESET_CERTIFICATES.map(name => ({ value: name, label: name })),
+                { value: CUSTOM_OPTION, label: '+ Add custom certificate' },
+              ]}
+            />
+          </div>
+          {certChoice && certChoice !== CUSTOM_OPTION && (
+            <>
+              <button type="button" onClick={() => certFileInputRef.current?.click()}
+                title={certFile ? certFile.name : 'A file is required to add this certificate'}
+                style={{ ...certFileBtnStyle(!!certFile), height: CERT_ROW_HEIGHT, flexShrink: 0 }}>
+                <Paperclip size={13} /> {certFile ? certFile.name : 'Upload file'}
+              </button>
+              <button type="button" onClick={addCertificate} disabled={certSaving || !certFile} title="Add certificate"
+                style={{ ...squareAddBtnStyle(certSaving || !certFile), width: CERT_ROW_HEIGHT, height: CERT_ROW_HEIGHT, flexShrink: 0 }}>
+                <Plus size={16} />
+              </button>
+            </>
+          )}
+        </div>
+
+        {certChoice === CUSTOM_OPTION && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input value={certCustomName} onChange={e => setCertCustomName(e.target.value)} maxLength={100}
+              placeholder="Certificate name"
+              style={{ flex: 1, minWidth: 0, height: CERT_ROW_HEIGHT, padding: '0 14px', border: '1.5px solid #E5E7EB', borderRadius: 10, fontSize: '0.9rem', color: '#111827', outline: 'none', boxSizing: 'border-box', background: '#FFFFFF' }} />
+            <button type="button" onClick={() => certFileInputRef.current?.click()}
+              title={certFile ? certFile.name : 'A file is required to add this certificate'}
+              style={{ ...certFileBtnStyle(!!certFile), height: CERT_ROW_HEIGHT, flexShrink: 0 }}>
+              <Paperclip size={13} /> {certFile ? certFile.name : 'Upload file'}
+            </button>
+            <button type="button" onClick={addCertificate} disabled={certSaving || !certFile} title="Add certificate"
+              style={{ ...squareAddBtnStyle(certSaving || !certFile), width: CERT_ROW_HEIGHT, height: CERT_ROW_HEIGHT, flexShrink: 0 }}>
+              <Plus size={16} />
+            </button>
+          </div>
+        )}
+
+        {certError && <p style={{ margin: 0, fontSize: '0.8125rem', color: '#DC2626' }}>{certError}</p>}
+      </div>
+    </div>
+  )
+}
+
+export function ResumeCard({ authId, onToast }: Props) {
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [resumeUrl, setResumeUrl] = useState<string | null>(null)
+  const [resumeBusy, setResumeBusy] = useState(false)
+  const [resumeError, setResumeError] = useState('')
+  const resumeInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      try {
+        const res = await fetch(`/api/guest/profile?user_id=${authId}`)
+        const data = await res.json()
+        if (cancelled) return
+        if (!data.success) throw new Error(data.message || 'Failed to load profile')
+        setResumeUrl(data.profile.resume_url ?? null)
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load profile')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    void load()
+    return () => { cancelled = true }
+  }, [authId])
 
   const uploadResume = async (file: File) => {
     setResumeBusy(true); setResumeError('')
@@ -156,147 +403,55 @@ export default function WorkerProfileSections({ authId, onToast }: Props) {
   }
 
   if (loading) {
-    return <div style={{ ...cardStyle, color: '#6B7280', fontSize: '0.9rem' }}>Loading worker profile…</div>
+    return <div style={{ ...cardStyle, color: '#6B7280', fontSize: '0.9rem' }}>Loading resume…</div>
   }
 
-  const skillsDirty = skills.trim() !== savedSkills.trim()
-
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={cardStyle}>
       {error && (
-        <div style={{ padding: '10px 14px', background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 10, color: '#B91C1C', fontSize: '0.8125rem', fontWeight: 600 }}>
+        <div style={{ padding: '10px 14px', marginBottom: 14, background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 10, color: '#B91C1C', fontSize: '0.8125rem', fontWeight: 600 }}>
           {error}
         </div>
       )}
+      <CardHeader icon={<FileText size={16} color="#EA580C" />} title="Resume" subtitle="" />
+      <input ref={resumeInputRef} type="file" accept={DOCUMENT_ACCEPT} style={{ display: 'none' }}
+        onChange={e => { const f = e.target.files?.[0]; if (f) void uploadResume(f) }} />
 
-      {/* Skills */}
-      <div style={cardStyle}>
-        <CardHeader icon={<Wrench size={16} color="#EA580C" />} title="Skills" subtitle="" />
-        <textarea
-          value={skills}
-          onChange={e => setSkills(e.target.value)}
-          rows={3}
-          maxLength={2000}
-          placeholder="e.g. Customer service, Barista, Cash handling, Food preparation"
-          style={{ width: '100%', padding: '10px 12px', border: '1.5px solid #E5E7EB', borderRadius: 8, fontSize: '0.9rem', color: '#111827', outline: 'none', boxSizing: 'border-box', background: '#FFFFFF', resize: 'vertical', lineHeight: 1.55, fontFamily: 'inherit' }}
-        />
-        <button onClick={saveSkills} disabled={skillsSaving || !skillsDirty} style={primaryButtonStyle(skillsSaving || !skillsDirty)}>
-          {skillsSaving ? 'Saving…' : <><Check size={15} /> Save Skills</>}
-        </button>
-      </div>
-
-      {/* Certificates */}
-      <div style={cardStyle}>
-        <CardHeader icon={<Award size={16} color="#EA580C" />} title="Certificates" subtitle="" />
-
-        {certificates.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
-            {certificates.map(cert => (
-              <div key={cert.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', background: '#FAFAFA', border: '1px solid #E5E7EB', borderRadius: 8 }}>
-                <Award size={14} color="#EA580C" style={{ flexShrink: 0 }} />
-                <span style={{ flex: 1, fontSize: '0.875rem', fontWeight: 600, color: '#111827', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {cert.name}
-                </span>
-                {cert.file_url ? (
-                  <a href={cert.file_url} target="_blank" rel="noreferrer"
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', fontWeight: 700, color: '#15803D', background: '#DCFCE7', border: '1px solid #BBF7D0', borderRadius: 999, padding: '3px 9px', textDecoration: 'none', flexShrink: 0 }}>
-                    <Paperclip size={11} /> Attached
-                  </a>
-                ) : (
-                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#6B7280', background: '#F3F4F6', border: '1px solid #E5E7EB', borderRadius: 999, padding: '3px 9px', flexShrink: 0 }}>
-                    No file
-                  </span>
-                )}
-                <button onClick={() => removeCertificate(cert.id)} title="Remove certificate"
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, border: 'none', background: 'transparent', color: '#9CA3AF', cursor: 'pointer', borderRadius: 6, flexShrink: 0 }}
-                  onMouseEnter={e => { e.currentTarget.style.color = '#DC2626'; e.currentTarget.style.background = '#FEF2F2' }}
-                  onMouseLeave={e => { e.currentTarget.style.color = '#9CA3AF'; e.currentTarget.style.background = 'transparent' }}>
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <select
-            value={certChoice}
-            onChange={e => { setCertChoice(e.target.value); setCertError('') }}
-            style={{ width: '100%', padding: '10px 12px', border: '1.5px solid #E5E7EB', borderRadius: 8, fontSize: '0.9rem', color: certChoice ? '#111827' : '#9CA3AF', outline: 'none', background: '#FFFFFF', cursor: 'pointer' }}
-          >
-            <option value="">Select a certificate…</option>
-            {PRESET_CERTIFICATES.map(name => (
-              <option key={name} value={name}>{name}</option>
-            ))}
-            <option value={CUSTOM_OPTION}>+ Add custom certificate</option>
-          </select>
-
-          {certChoice === CUSTOM_OPTION && (
-            <input
-              value={certCustomName}
-              onChange={e => setCertCustomName(e.target.value)}
-              maxLength={100}
-              placeholder="Certificate name"
-              style={{ width: '100%', padding: '10px 12px', border: '1.5px solid #E5E7EB', borderRadius: 8, fontSize: '0.9rem', color: '#111827', outline: 'none', boxSizing: 'border-box', background: '#FFFFFF' }}
-            />
-          )}
-
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input ref={certFileInputRef} type="file" accept={CERTIFICATE_ACCEPT} style={{ display: 'none' }}
-              onChange={e => setCertFile(e.target.files?.[0] ?? null)} />
-            <button onClick={() => certFileInputRef.current?.click()} style={ghostButtonStyle}>
-              <Paperclip size={13} /> {certFile ? certFile.name : 'Attach file (optional)'}
-            </button>
-            {certFile && (
-              <button onClick={() => { setCertFile(null); if (certFileInputRef.current) certFileInputRef.current.value = '' }}
-                title="Clear selected file"
-                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 34, border: '1.5px solid #E5E7EB', background: '#FFFFFF', color: '#6B7280', cursor: 'pointer', borderRadius: 8, flexShrink: 0 }}>
-                <X size={13} />
-              </button>
-            )}
-            <button onClick={addCertificate} disabled={certSaving} style={{ ...primaryButtonStyle(certSaving), marginTop: 0, width: 'auto', padding: '0 16px', height: 34, flexShrink: 0 }}>
-              {certSaving ? 'Adding…' : <><Plus size={14} /> Add</>}
-            </button>
-          </div>
-
-          {certError && <p style={{ margin: 0, fontSize: '0.8125rem', color: '#DC2626' }}>{certError}</p>}
-        </div>
-      </div>
-
-      {/* Resume */}
-      <div style={cardStyle}>
-        <CardHeader icon={<FileText size={16} color="#EA580C" />} title="Resume" subtitle="" />
-        <input ref={resumeInputRef} type="file" accept={DOCUMENT_ACCEPT} style={{ display: 'none' }}
-          onChange={e => { const f = e.target.files?.[0]; if (f) void uploadResume(f) }} />
-
-        {resumeUrl ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', background: '#FAFAFA', border: '1px solid #E5E7EB', borderRadius: 8 }}>
-            <FileText size={14} color="#EA580C" style={{ flexShrink: 0 }} />
-            <a href={resumeUrl} target="_blank" rel="noreferrer"
-              style={{ flex: 1, fontSize: '0.875rem', fontWeight: 600, color: '#111827', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: 'none' }}>
-              {decodeURIComponent(resumeUrl.split('/').pop() ?? 'Resume').replace(/^\d+-resume-/, '')}
-            </a>
-            <button onClick={() => resumeInputRef.current?.click()} disabled={resumeBusy} style={{ ...ghostButtonStyle, flexShrink: 0 }}>
-              <Upload size={13} /> Replace
-            </button>
-            <button onClick={removeResume} disabled={resumeBusy} title="Remove resume"
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, border: 'none', background: 'transparent', color: '#9CA3AF', cursor: 'pointer', borderRadius: 6, flexShrink: 0 }}
-              onMouseEnter={e => { e.currentTarget.style.color = '#DC2626'; e.currentTarget.style.background = '#FEF2F2' }}
-              onMouseLeave={e => { e.currentTarget.style.color = '#9CA3AF'; e.currentTarget.style.background = 'transparent' }}>
-              <Trash2 size={14} />
-            </button>
-          </div>
-        ) : (
-          <button onClick={() => resumeInputRef.current?.click()} disabled={resumeBusy}
-            style={{ width: '100%', padding: '18px 0', border: '1.5px dashed #D1D5DB', borderRadius: 10, background: '#FAFAFA', color: '#6B7280', fontWeight: 700, fontSize: '0.875rem', cursor: resumeBusy ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, transition: 'border-color 0.12s, color 0.12s' }}
-            onMouseEnter={e => { if (!resumeBusy) { e.currentTarget.style.borderColor = '#EA580C'; e.currentTarget.style.color = '#EA580C' } }}
-            onMouseLeave={e => { e.currentTarget.style.borderColor = '#D1D5DB'; e.currentTarget.style.color = '#6B7280' }}>
-            <Upload size={16} /> {resumeBusy ? 'Uploading…' : 'Upload Resume (PDF, DOC, DOCX)'}
+      {resumeUrl ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minHeight: 54, boxSizing: 'border-box', padding: '0 14px', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 10 }}>
+          <span style={{ flex: 1, fontFamily: 'var(--font-body)', fontSize: '1rem', fontWeight: 400, color: '#111827', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {decodeURIComponent(resumeUrl.split('/').pop() ?? 'Resume').replace(/^\d+-resume-/, '')}
+          </span>
+          {/* Opens the uploaded resume — matches the certificate rows' paperclip preview. */}
+          <a href={resumeUrl} target="_blank" rel="noreferrer" title="View uploaded file"
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, color: '#15803D', borderRadius: 6, flexShrink: 0 }}
+            onMouseEnter={e => { e.currentTarget.style.background = '#DCFCE7' }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}>
+            <Paperclip size={16} />
+          </a>
+          <button onClick={() => resumeInputRef.current?.click()} disabled={resumeBusy} title="Replace uploaded file"
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, border: 'none', outline: 'none', background: 'transparent', color: '#6B7280', cursor: resumeBusy ? 'default' : 'pointer', borderRadius: 6, flexShrink: 0 }}
+            onMouseEnter={e => { e.currentTarget.style.color = '#374151' }}
+            onMouseLeave={e => { e.currentTarget.style.color = '#6B7280' }}>
+            <RefreshCw size={15} className={resumeBusy ? 'animate-spin' : undefined} />
           </button>
-        )}
+          <button onClick={removeResume} disabled={resumeBusy} title="Remove resume"
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, border: 'none', background: 'transparent', color: '#DC2626', cursor: 'pointer', borderRadius: 6, flexShrink: 0 }}
+            onMouseEnter={e => { e.currentTarget.style.background = '#FEF2F2' }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}>
+            <Trash2 size={16} />
+          </button>
+        </div>
+      ) : (
+        <button onClick={() => resumeInputRef.current?.click()} disabled={resumeBusy}
+          style={{ width: '100%', padding: '18px 0', border: '1.5px dashed #D1D5DB', borderRadius: 10, background: '#FAFAFA', color: '#6B7280', fontWeight: 700, fontSize: '0.875rem', cursor: resumeBusy ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, transition: 'border-color 0.12s, color 0.12s' }}
+          onMouseEnter={e => { if (!resumeBusy) { e.currentTarget.style.borderColor = '#EA580C'; e.currentTarget.style.color = '#EA580C' } }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = '#D1D5DB'; e.currentTarget.style.color = '#6B7280' }}>
+          <Upload size={16} /> {resumeBusy ? 'Uploading…' : 'Upload Resume (PDF, DOC, DOCX)'}
+        </button>
+      )}
 
-        {resumeError && <p style={{ margin: '8px 0 0', fontSize: '0.8125rem', color: '#DC2626' }}>{resumeError}</p>}
-      </div>
+      {resumeError && <p style={{ margin: '8px 0 0', fontSize: '0.8125rem', color: '#DC2626' }}>{resumeError}</p>}
     </div>
   )
 }
@@ -321,38 +476,26 @@ const cardStyle: React.CSSProperties = {
   boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
 }
 
-const primaryButtonStyle = (disabled: boolean): React.CSSProperties => ({
-  marginTop: 12,
-  width: '100%',
-  padding: '10px 0',
-  background: disabled ? '#9CA3AF' : '#EA580C',
-  color: '#FFFFFF',
-  border: 'none',
-  borderRadius: 8,
-  fontWeight: 700,
-  fontSize: '0.9375rem',
-  cursor: disabled ? 'default' : 'pointer',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  gap: 6,
+// Matches the "Edit Profile" button on the Personal Information card.
+const editButtonStyle: React.CSSProperties = {
+  padding: '7px 14px', border: 'none', borderRadius: 8, background: 'linear-gradient(135deg, #F97316, #EA580C)',
+  fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: 'pointer',
+  display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0,
+}
+
+// Doubles as the "did I attach proof?" indicator: red/empty until a file is chosen (a claimed
+// certificate isn't valid without one), green with the filename once it is. Mirrors the register
+// onboarding form.
+const certFileBtnStyle = (hasFile: boolean): React.CSSProperties => ({
+  display: 'inline-flex', alignItems: 'center', gap: 6, padding: '0 12px',
+  border: `1.5px solid ${hasFile ? '#BBF7D0' : '#FECACA'}`, borderRadius: 8,
+  background: hasFile ? '#F0FDF4' : '#FEF2F2', color: hasFile ? '#15803D' : '#DC2626',
+  fontWeight: 700, fontSize: '0.8125rem', cursor: 'pointer', maxWidth: 240,
+  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
 })
 
-const ghostButtonStyle: React.CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 6,
-  height: 34,
-  padding: '0 12px',
-  border: '1.5px solid #E5E7EB',
-  borderRadius: 8,
-  background: '#FFFFFF',
-  color: '#6B7280',
-  fontWeight: 700,
-  fontSize: '0.8125rem',
-  cursor: 'pointer',
-  maxWidth: 260,
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-}
+const squareAddBtnStyle = (disabled: boolean): React.CSSProperties => ({
+  display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0,
+  border: 'none', borderRadius: 10, background: disabled ? '#FCA97A' : '#F97316', color: '#FFFFFF',
+  cursor: disabled ? 'default' : 'pointer',
+})

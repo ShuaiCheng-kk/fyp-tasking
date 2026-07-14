@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import CasualSidebar from '@/components/CasualSidebar'
+import GuestSidebar from '@/components/GuestSidebar'
 
 type WorkerRole = 'Guest User' | 'Casual Worker'
 
@@ -33,12 +34,19 @@ export default function WorkerLayout({
         }
 
         const res = await fetch(`/api/guest/profile?user_id=${authId}`)
-        const data = await res.json()
 
-        if (!data.success) {
+        // Only a definitive "this account does not exist" may end the session. Transient
+        // failures (dev-server recompile, network blip, a 500) must NOT bounce an
+        // authenticated worker to /signin — that's handled in catch below.
+        if (res.status === 404) {
+          localStorage.removeItem('tasking_user_id')
+          localStorage.removeItem('tasking_user_role')
           router.replace('/signin')
           return
         }
+
+        const data = await res.json()
+        if (!data.success) throw new Error(data.message || 'Failed to load profile')
 
         const userRole = data.profile.role as WorkerRole
         setRole(userRole)
@@ -54,7 +62,14 @@ export default function WorkerLayout({
           }
         }
       } catch {
-        router.replace('/signin')
+        // Fall back to the locally stored role so a momentary API failure doesn't log the
+        // worker out of the UI; only workers with no usable session end up at /signin.
+        const storedRole = localStorage.getItem('tasking_user_role')
+        if (storedRole === 'Guest User' || storedRole === 'Casual Worker') {
+          setRole(storedRole as WorkerRole)
+        } else {
+          router.replace('/signin')
+        }
       } finally {
         setLoading(false)
       }
@@ -70,7 +85,11 @@ export default function WorkerLayout({
   if (role === 'Guest User') {
     return (
       <div style={{ minHeight: '100vh', background: '#F9FAFB' }}>
-        {children}
+        <GuestSidebar />
+
+        <main style={{ marginLeft: 64, minHeight: '100vh' }}>
+          {children}
+        </main>
       </div>
     )
   }

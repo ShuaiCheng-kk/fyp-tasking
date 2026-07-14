@@ -16,6 +16,7 @@ import Spinner from '@/components/Spinner'
 import AnimatedNumber from '@/components/AnimatedNumber'
 import RoleAvatar from '@/components/RoleAvatar'
 import DropdownField from '@/components/DropdownField'
+import { WorkerCertificate } from '@/types/WorkerProfile'
 
 // ─── Department color picker ────────────────────────────────────────────────
 
@@ -1038,6 +1039,8 @@ type CWPreviewCard = {
   dateOfBirth?: string | null
   phoneNumber?: string | null
   photoUrl?: string | null
+  skills?: string | null
+  resumeUrl?: string | null
 }
 type TeamMember = {
   id: string
@@ -1051,6 +1054,16 @@ type TeamMember = {
   worker_status?: string | null
   inactivate_reason?: string | null
   created_at: string
+  // Non-null once this Casual Worker has completed a clock-in + clock-out for this company —
+  // that's what promotes them into the visible Casual Worker pool below (see casualWorkers).
+  casual_worker_verified_at?: string | null
+  // Non-null once this company has banned (set "inactive") the worker — per company, so it drives
+  // the Active/Inactive badge here instead of the global users.worker_status.
+  casual_worker_blocked_at?: string | null
+  casual_worker_blocked_reason?: string | null
+  // Profile fields carried through from the recruitment application — shown on the CW detail card.
+  skills?: string | null
+  resume_url?: string | null
 }
 type ChangeDeptModal = { member: TeamMember } | null
 type ManageDeptModal = { member: TeamMember } | null
@@ -1480,9 +1493,9 @@ export default function TeamPage() {
   const [cwInactiveReasonModal, setCWInactiveReasonModal] = useState<CWPreviewCard | null>(null)
   const [cwInactiveReason, setCWInactiveReason] = useState('')
 
-  // CW application data (resume + cover letter)
-  const [cwApplication, setCWApplication] = useState<{ resume_url: string | null; cover_letter: string | null } | null>(null)
-  const [cwApplicationLoading, setCWApplicationLoading] = useState(false)
+  // CW profile certificates — resume/skills already come through on the member row itself.
+  const [cwCertificates, setCWCertificates] = useState<WorkerCertificate[]>([])
+  const [cwCertificatesLoading, setCWCertificatesLoading] = useState(false)
 
   // Edit Manager modal (combined home dept + dept access)
   const [editManagerModal, setEditManagerModal] = useState<EditManagerModal>(null)
@@ -2246,17 +2259,20 @@ export default function TeamPage() {
   const partnerCount      = teamMembers.filter(m => m.role === 'Partner').length
   const managerCount      = teamMembers.filter(m => m.role === 'Manager').length
   const employeeCount     = teamMembers.filter(m => m.role === 'Employee').length
-  const casualWorkerCount = teamMembers.filter(m => m.role === 'Casual Worker').length
+  // Only Casual Workers who've actually completed a shift (clock in + clock out) count as part of
+  // the company's verified worker pool — recruitment confirmation alone isn't proof they showed up.
+  const casualWorkerCount = teamMembers.filter(m => m.role === 'Casual Worker' && m.casual_worker_verified_at).length
   const totalInternal     = managerCount + employeeCount
   const sharedIconColor = '#F97316'
   const casualWorkers = teamMembers
-    .filter(m => m.role === 'Casual Worker')
+    .filter(m => m.role === 'Casual Worker' && m.casual_worker_verified_at)
     .sort((a, b) => {
-      const aActive = (a.worker_status ?? 'active') === 'active' ? 0 : 1
-      const bActive = (b.worker_status ?? 'active') === 'active' ? 0 : 1
+      // Inactive = banned by THIS company (per-company blocked_at), not the global worker_status.
+      const aActive = a.casual_worker_blocked_at ? 1 : 0
+      const bActive = b.casual_worker_blocked_at ? 1 : 0
       return aActive - bActive
     })
-  const cwActiveCount = casualWorkers.filter(w => (w.worker_status ?? 'active') === 'active').length
+  const cwActiveCount = casualWorkers.filter(w => !w.casual_worker_blocked_at).length
   const cwInactiveCount = casualWorkers.length - cwActiveCount
   const partnerMembers = teamMembers.filter(m => m.role === 'Partner')
   const managerMembers = teamMembers.filter(m => m.role === 'Manager')
@@ -2287,26 +2303,27 @@ export default function TeamPage() {
     const member = teamMembers.find(m => m.id === log.target_id)
     if (!member) return
     if (member.role === 'Casual Worker') {
-      const rawStatus = (member.worker_status ?? 'active').toLowerCase()
       setSelectedCWPreview({
         id: member.id,
         name: member.full_name,
         lastShift: '—',
         totalVisits: 0,
-        status: rawStatus === 'active' ? 'Active' : 'Inactive',
-        inactiveReason: member.inactivate_reason || null,
+        status: member.casual_worker_blocked_at ? 'Inactive' : 'Active',
+        inactiveReason: member.casual_worker_blocked_reason || null,
         email: member.email_address || null,
         dateOfBirth: member.date_of_birth || null,
         phoneNumber: member.phone_number || null,
         photoUrl: member.profile_photo_url || null,
+        skills: member.skills || null,
+        resumeUrl: member.resume_url || null,
       })
-      setCWApplication(null)
-      setCWApplicationLoading(true)
-      fetch(`/api/team/cw-application?user_id=${member.id}`)
+      setCWCertificates([])
+      setCWCertificatesLoading(true)
+      fetch(`/api/team/casual-worker-certificates?user_id=${member.id}`)
         .then(r => r.json())
-        .then(d => { if (d.success) setCWApplication(d.application) })
+        .then(d => { if (d.success) setCWCertificates(d.certificates ?? []) })
         .catch(() => {})
-        .finally(() => setCWApplicationLoading(false))
+        .finally(() => setCWCertificatesLoading(false))
     } else {
       setProfileMember(member)
     }
@@ -2608,7 +2625,7 @@ export default function TeamPage() {
                   style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 16, paddingTop: 6, marginTop: -6, paddingRight: 4, scrollBehavior: 'auto' }}
                 >
                   {casualWorkers.map(worker => {
-                    const rawStatus = (worker.worker_status ?? 'active').toLowerCase()
+                    const rawStatus = worker.casual_worker_blocked_at ? 'inactive' : 'active'
                     const displayStatus = rawStatus === 'active' ? 'Active' : 'Inactive'
                     const matchesSearch = normalizedCwSearch.length === 0 || worker.full_name.toLowerCase().includes(normalizedCwSearch)
                     return (
@@ -2628,19 +2645,21 @@ export default function TeamPage() {
                             lastShift: '—',
                             totalVisits: 0,
                             status: displayStatus,
-                            inactiveReason: worker.inactivate_reason || null,
+                            inactiveReason: worker.casual_worker_blocked_reason || null,
                             email: worker.email_address || null,
                             dateOfBirth: worker.date_of_birth || null,
                             phoneNumber: worker.phone_number || null,
                             photoUrl: worker.profile_photo_url || null,
+                            skills: worker.skills || null,
+                            resumeUrl: worker.resume_url || null,
                           })
-                          setCWApplication(null)
-                          setCWApplicationLoading(true)
-                          fetch(`/api/team/cw-application?user_id=${worker.id}`)
+                          setCWCertificates([])
+                          setCWCertificatesLoading(true)
+                          fetch(`/api/team/casual-worker-certificates?user_id=${worker.id}`)
                             .then(r => r.json())
-                            .then(d => { if (d.success) setCWApplication(d.application) })
+                            .then(d => { if (d.success) setCWCertificates(d.certificates ?? []) })
                             .catch(() => {})
-                            .finally(() => setCWApplicationLoading(false))
+                            .finally(() => setCWCertificatesLoading(false))
                         }}
                       />
                     )
@@ -2985,7 +3004,7 @@ export default function TeamPage() {
         <div style={{ padding: '20px 28px 0', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
           <div>
             <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
-              Team
+              Company
             </h1>
           </div>
           <div data-owner-header-badges style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
@@ -3087,10 +3106,10 @@ export default function TeamPage() {
               </div>
             )
             const casualWorkers = teamMembers
-              .filter(m => m.role === 'Casual Worker')
+              .filter(m => m.role === 'Casual Worker' && m.casual_worker_verified_at)
               .sort((a, b) => {
-                const aActive = (a.worker_status ?? 'active') === 'active' ? 0 : 1
-                const bActive = (b.worker_status ?? 'active') === 'active' ? 0 : 1
+                const aActive = a.casual_worker_blocked_at ? 1 : 0
+                const bActive = b.casual_worker_blocked_at ? 1 : 0
                 return aActive - bActive
               })
             const partnerMembers = teamMembers.filter(m => m.role === 'Partner')
@@ -3117,7 +3136,7 @@ export default function TeamPage() {
                 emptyText: 'No employees have joined yet',
               },
             ] as const
-            const cwActiveCount = casualWorkers.filter(w => (w.worker_status ?? 'active') === 'active').length
+            const cwActiveCount = casualWorkers.filter(w => !w.casual_worker_blocked_at).length
             const cwInactiveCount = casualWorkers.length - cwActiveCount
 
             return (
@@ -3343,7 +3362,7 @@ export default function TeamPage() {
                             style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 16, paddingTop: 6, marginTop: -6, paddingRight: 4, scrollBehavior: 'auto' }}
                           >
                             {casualWorkers.map(worker => {
-                              const rawStatus = (worker.worker_status ?? 'active').toLowerCase()
+                              const rawStatus = worker.casual_worker_blocked_at ? 'inactive' : 'active'
                               const displayStatus = rawStatus === 'active' ? 'Active' : 'Inactive'
                               const matchesSearch = normalizedCwSearch.length === 0 || worker.full_name.toLowerCase().includes(normalizedCwSearch)
                               return (
@@ -3363,19 +3382,21 @@ export default function TeamPage() {
                                       lastShift: '—',
                                       totalVisits: 0,
                                       status: displayStatus,
-                                      inactiveReason: worker.inactivate_reason || null,
+                                      inactiveReason: worker.casual_worker_blocked_reason || null,
                                       email: worker.email_address || null,
                                       dateOfBirth: worker.date_of_birth || null,
                                       phoneNumber: worker.phone_number || null,
                                       photoUrl: worker.profile_photo_url || null,
+                                      skills: worker.skills || null,
+                                      resumeUrl: worker.resume_url || null,
                                     })
-                                    setCWApplication(null)
-                                    setCWApplicationLoading(true)
-                                    fetch(`/api/team/cw-application?user_id=${worker.id}`)
+                                    setCWCertificates([])
+                                    setCWCertificatesLoading(true)
+                                    fetch(`/api/team/casual-worker-certificates?user_id=${worker.id}`)
                                       .then(r => r.json())
-                                      .then(d => { if (d.success) setCWApplication(d.application) })
+                                      .then(d => { if (d.success) setCWCertificates(d.certificates ?? []) })
                                       .catch(() => {})
-                                      .finally(() => setCWApplicationLoading(false))
+                                      .finally(() => setCWCertificatesLoading(false))
                                   }}
                                 />
                               )
@@ -4081,8 +4102,7 @@ export default function TeamPage() {
                 { label: 'Email Address', value: selectedCWPreview.email || '—' },
                 { label: 'Date of Birth', value: formatDateDisplay(selectedCWPreview.dateOfBirth) },
                 { label: 'Phone Number', value: selectedCWPreview.phoneNumber || '—' },
-                { label: 'Resume File', value: cwApplicationLoading ? 'Loading…' : (cwApplication?.resume_url || '—') },
-                { label: 'Cover Letter File', value: cwApplicationLoading ? 'Loading…' : (cwApplication?.cover_letter || '—') },
+                { label: 'Skills', value: selectedCWPreview.skills || '—' },
                 ...(selectedCWPreview.status === 'Inactive' && selectedCWPreview.inactiveReason ? [
                   { label: 'Reason', value: selectedCWPreview.inactiveReason },
                 ] : []),
@@ -4092,6 +4112,24 @@ export default function TeamPage() {
                   <p style={{ fontSize: '0.9375rem', color: '#111827', margin: 0, fontFamily: "'Inter', system-ui, sans-serif" }}>{field.value}</p>
                 </div>
               ))}
+              {selectedCWPreview.resumeUrl && (
+                <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
+                  <label style={{ ...modalLabelStyle, marginBottom: 4 }}>Resume</label>
+                  <a href={selectedCWPreview.resumeUrl} target="_blank" rel="noreferrer" style={{ fontSize: '0.9375rem', color: '#EA580C', textDecoration: 'underline' }}>View Resume</a>
+                </div>
+              )}
+              {!cwCertificatesLoading && cwCertificates.length > 0 && (
+                <div style={{ padding: '14px 0', borderBottom: '1px solid #F3F4F6' }}>
+                  <label style={{ ...modalLabelStyle, marginBottom: 4 }}>Certificates</label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {cwCertificates.map(cert => (
+                      cert.file_url
+                        ? <a key={cert.id} href={cert.file_url} target="_blank" rel="noreferrer" style={{ fontSize: '0.9375rem', color: '#EA580C', textDecoration: 'underline' }}>{cert.name}</a>
+                        : <p key={cert.id} style={{ fontSize: '0.9375rem', color: '#111827', margin: 0 }}>{cert.name}</p>
+                    ))}
+                  </div>
+                </div>
+              )}
               {cwStatusError && (
                 <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '8px', padding: '10px 14px', fontSize: '0.8125rem', color: '#DC2626', marginTop: '12px' }}>
                   {cwStatusError}
@@ -4117,13 +4155,14 @@ export default function TeamPage() {
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                           user_id: current.id,
+                          company_id: companyId,
                           worker_status: 'active',
                           inactivate_reason: null,
                         }),
                       })
                       const data = await res.json()
                       if (data.success) {
-                        setTeamMembers(prev => prev.map(m => m.id === current.id ? { ...m, worker_status: 'active', inactivate_reason: null } : m))
+                        setTeamMembers(prev => prev.map(m => m.id === current.id ? { ...m, worker_status: 'active', inactivate_reason: null, casual_worker_blocked_at: null, casual_worker_blocked_reason: null } : m))
                         setSelectedCWPreview(null)
                         setCWStatusError('')
                         showCWDetailSuccess(`${current.name} has been set to Active.`)
@@ -4213,6 +4252,7 @@ export default function TeamPage() {
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({
                         user_id: cwInactiveReasonModal.id,
+                        company_id: companyId,
                         worker_status: 'inactive',
                         inactivate_reason: cwInactiveReason || null,
                       }),
@@ -4220,7 +4260,7 @@ export default function TeamPage() {
                     const data = await res.json()
                     if (data.success) {
                       const name = cwInactiveReasonModal.name
-                      setTeamMembers(prev => prev.map(m => m.id === cwInactiveReasonModal.id ? { ...m, worker_status: 'inactive', inactivate_reason: cwInactiveReason || null } : m))
+                      setTeamMembers(prev => prev.map(m => m.id === cwInactiveReasonModal.id ? { ...m, worker_status: 'inactive', inactivate_reason: cwInactiveReason || null, casual_worker_blocked_at: new Date().toISOString(), casual_worker_blocked_reason: cwInactiveReason || null } : m))
                       setCWInactiveReasonModal(null)
                       setCWInactiveReason('')
                       setSelectedCWPreview(null)

@@ -164,4 +164,59 @@ export const employeeAttendanceRepository = {
     if (error) throw new Error(error.message)
     return (data ?? []) as AssignmentWithShift[]
   },
+
+  // Casual Workers this Employee supervises who are clocked in to a one-off (open-ended) job and
+  // waiting for their clock-out to be released — see casualAttendanceService.clockOut.
+  async getPendingClockOutReleases(employeeId: string): Promise<{
+    id: string
+    casual_worker_id: string
+    clock_in_time: string | null
+    shift_title: string | null
+    shift_date: string
+    start_time: string
+  }[]> {
+    const { data, error } = await supabase
+      .from('attendance_records')
+      .select('id, casual_worker_id, clock_in_time, shift_assignments!inner(supervisor_employee_id, shifts!inner(title, shift_date, start_time, is_open_ended))')
+      .eq('shift_assignments.supervisor_employee_id', employeeId)
+      .eq('shift_assignments.shifts.is_open_ended', true)
+      .not('clock_in_time', 'is', null)
+      .is('clock_out_time', null)
+      .is('clock_out_released_at', null)
+    if (error) throw new Error(error.message)
+    return (data ?? []).map((row: any) => ({
+      id: row.id,
+      casual_worker_id: row.casual_worker_id,
+      clock_in_time: row.clock_in_time,
+      shift_title: row.shift_assignments?.shifts?.title ?? null,
+      shift_date: row.shift_assignments?.shifts?.shift_date ?? '',
+      start_time: row.shift_assignments?.shifts?.start_time ?? '',
+    }))
+  },
+
+  async getAttendanceRecordWithSupervisor(id: string): Promise<(AttendanceRecord & {
+    shift_assignments: { supervisor_employee_id: string | null; shifts: { is_open_ended: boolean } | null } | null
+  }) | null> {
+    const { data, error } = await supabase
+      .from('attendance_records')
+      .select('*, shift_assignments!inner(supervisor_employee_id, shifts!inner(is_open_ended))')
+      .eq('id', id)
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    return data as unknown as (AttendanceRecord & { shift_assignments: { supervisor_employee_id: string | null; shifts: { is_open_ended: boolean } | null } | null }) | null
+  },
+
+  async releaseClockOut(id: string, employeeId: string): Promise<AttendanceRecord> {
+    return this.updateAttendanceRecord(id, {
+      clock_out_released_by: employeeId,
+      clock_out_released_at: new Date().toISOString(),
+    })
+  },
+
+  async getUsersByIds(ids: string[]): Promise<{ id: string; full_name: string }[]> {
+    if (ids.length === 0) return []
+    const { data, error } = await supabase.from('users').select('id, full_name').in('id', ids)
+    if (error) throw new Error(error.message)
+    return data ?? []
+  },
 }

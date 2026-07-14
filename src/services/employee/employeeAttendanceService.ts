@@ -148,6 +148,42 @@ export const employeeAttendanceService = {
     })
   },
 
+  // Casual Workers on a one-off (open-ended) job have no scheduled end time, so this Employee
+  // must review the work and explicitly release each one before they're allowed to clock out —
+  // see casualAttendanceService.clockOut.
+  async getClockOutReleaseQueue(authId: string) {
+    const user = await employeeAttendanceRepository.getUserByAuthId(authId)
+    if (!user) throw new Error('User not found')
+
+    const pending = await employeeAttendanceRepository.getPendingClockOutReleases(user.id)
+    const workers = await employeeAttendanceRepository.getUsersByIds(pending.map(p => p.casual_worker_id))
+    const workersById = new Map(workers.map(w => [w.id, w]))
+
+    return pending.map(p => ({
+      ...p,
+      worker_name: workersById.get(p.casual_worker_id)?.full_name ?? 'Casual Worker',
+    }))
+  },
+
+  async releaseClockOut(authId: string, attendance_record_id: string) {
+    const user = await employeeAttendanceRepository.getUserByAuthId(authId)
+    if (!user) throw new Error('User not found')
+
+    const record = await employeeAttendanceRepository.getAttendanceRecordWithSupervisor(attendance_record_id)
+    if (!record) throw new Error('Attendance record not found')
+    if (record.shift_assignments?.supervisor_employee_id !== user.id) {
+      throw new Error('You are not the supervisor for this worker')
+    }
+    if (!record.shift_assignments?.shifts?.is_open_ended) {
+      throw new Error('Clock-out release only applies to one-off jobs')
+    }
+    if (!record.clock_in_time) throw new Error('This worker has not clocked in yet')
+    if (record.clock_out_time) throw new Error('This worker has already clocked out')
+    if (record.clock_out_released_at) throw new Error('Already released')
+
+    return employeeAttendanceRepository.releaseClockOut(attendance_record_id, user.id)
+  },
+
   async recordAbsence(input: { authId: string; shift_assignment_id: string; absence_reason: string; attachment_url?: string | null }) {
     const user = await employeeAttendanceRepository.getUserByAuthId(input.authId)
     if (!user) throw new Error('User not found')

@@ -200,12 +200,16 @@ test('the confirmed worker sees the shift with the supervisor contact on their d
   const res = await request.get(`/api/casual/dashboard?user_id=${winnerRow!.supabase_auth_id}`)
   expect(res.status()).toBe(200)
   const { dashboard } = await res.json()
-  expect(dashboard.upcoming_shifts.length).toBeGreaterThan(0)
-  const shift = dashboard.upcoming_shifts[0]
-  expect(shift.title).toBe('One Opening Role')
-  expect(shift.shift_date).toBe('2030-05-04')
-  expect(shift.supervisor.full_name).toBe('Confirm Supervisor')
-  expect(shift.supervisor.phone_number).toBe('+65 9000 0001')
+  expect(dashboard.current_job).toBeTruthy()
+  const job = dashboard.current_job
+  expect(job.title).toBe('One Opening Role')
+  expect(job.shift_date).toBe('2030-05-04')
+  // Confirms the shift assignment's supervisor_employee_id was backfilled from the job
+  // posting's assigned_employee_id at confirm time (workerApplicationService.respondToInvitation)
+  // — without it, Task assignment and the Dashboard's message/task-board widgets have no
+  // supervisor to scope the worker to.
+  expect(job.supervisor.full_name).toBe('Confirm Supervisor')
+  expect(job.supervisor.phone_number).toBe('+65 9000 0001')
 })
 
 test('an offer expires once its shift has started; the invitation is voided', async ({ request }) => {

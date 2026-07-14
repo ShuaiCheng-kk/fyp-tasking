@@ -71,7 +71,7 @@ export const casualShiftCancellationRepository = {
   async cancelAcceptedInvitation(applicantId: string): Promise<void> {
     const { error } = await supabase
       .from('job_invitations')
-      .update({ status: 'cancelled' })
+      .update({ status: 'cancelled', responded_at: new Date().toISOString() })
       .eq('applicant_id', applicantId)
       .eq('status', 'accepted')
     if (error) throw new Error(error.message)
@@ -80,7 +80,7 @@ export const casualShiftCancellationRepository = {
   async setApplicantStatus(applicantId: string, status: string): Promise<void> {
     const { error } = await supabase
       .from('job_applicants')
-      .update({ status })
+      .update({ status, decided_at: new Date().toISOString() })
       .eq('id', applicantId)
     if (error) throw new Error(error.message)
   },

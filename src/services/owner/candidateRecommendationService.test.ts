@@ -47,6 +47,8 @@ function makeApplicant(overrides: Partial<JobApplicant>): JobApplicant {
     user_id: 'user-1',
     full_name: 'Alice',
     email_address: 'alice@test.com',
+    phone_number: null,
+    profile_photo_url: null,
     resume_url: null,
     cover_letter: null,
     status: 'pending',

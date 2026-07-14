@@ -7,7 +7,7 @@ import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronDown } from 'lucide-react'
 
-export default function DropdownField({ value, options, onChange, placeholder, disabled = false, compact = false, fontSize }: {
+export default function DropdownField({ value, options, onChange, placeholder, disabled = false, compact = false, fontSize, height }: {
   value: string
   options: { value: string; label: string }[]
   onChange: (v: string) => void
@@ -19,6 +19,9 @@ export default function DropdownField({ value, options, onChange, placeholder, d
   // Overrides the trigger's font size independent of compact (e.g. a long label list that needs
   // to stay unabbreviated at the default height). Defaults to the compact/non-compact standard.
   fontSize?: string
+  // Overrides the trigger's height independent of compact (e.g. matching a taller sibling button
+  // in the same row). Defaults to the compact/non-compact standard (32/40).
+  height?: number
 }) {
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState({ top: 0, left: 0, width: 0 })
@@ -54,7 +57,7 @@ export default function DropdownField({ value, options, onChange, placeholder, d
           padding: compact ? '6px 10px' : '10px 12px', border: `1.5px solid ${open ? '#F97316' : '#E5E7EB'}`, borderRadius: 8,
           background: '#FFFFFF', cursor: 'pointer', fontSize: fontSize ?? (compact ? '0.8125rem' : '0.9375rem'),
           color: selected ? '#111827' : '#9CA3AF', fontWeight: selected ? 500 : 400,
-          outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s', height: compact ? 32 : 40,
+          outline: 'none', boxSizing: 'border-box', transition: 'border-color 0.15s', height: height ?? (compact ? 32 : 40),
         }}>
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {selected?.label ?? placeholder ?? 'Select...'}

@@ -45,6 +45,16 @@ type AttendanceRecord = {
   department_name: string | null
 }
 
+type ClockOutReleaseItem = {
+  id: string
+  casual_worker_id: string
+  worker_name: string
+  clock_in_time: string | null
+  shift_title: string | null
+  shift_date: string
+  start_time: string
+}
+
 type MyShiftRecord = { id: string; clock_in_time: string | null; clock_out_time: string | null; break_in_time: string | null; break_out_time: string | null; status: string }
 type MyShift = {
   assignment: { id: string; user_id: string }
@@ -127,6 +137,11 @@ export default function EmployeeAttendancePage() {
   const [clockBusyId,    setClockBusyId]    = useState('')
   const [clockMessage,   setClockMessage]   = useState('')
 
+  // Casual Workers on a one-off job need this Employee to review their work and release them
+  // before they can clock out — see casualAttendanceService.clockOut.
+  const [releaseQueue,   setReleaseQueue]   = useState<ClockOutReleaseItem[]>([])
+  const [releaseBusyId,  setReleaseBusyId]  = useState('')
+
   const [lateFormId,         setLateFormId]         = useState<string | null>(null)
   const [lateReason,         setLateReason]         = useState('')
   const [absenceFormId,      setAbsenceFormId]      = useState<string | null>(null)
@@ -186,6 +201,32 @@ export default function EmployeeAttendancePage() {
       if (data.success) setMyShifts(data.myShift?.shifts ?? [])
     } catch {}
   }, [])
+
+  const fetchReleaseQueue = useCallback(async (uid: string) => {
+    try {
+      const res = await fetch(`/api/employee/attendance?user_id=${uid}&resource=clockout_release_queue`)
+      const data = await res.json()
+      if (data.success) setReleaseQueue(data.queue ?? [])
+    } catch {}
+  }, [])
+
+  const releaseClockOut = async (uid: string, item: ClockOutReleaseItem) => {
+    setReleaseBusyId(item.id)
+    try {
+      const res = await fetch('/api/employee/attendance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'release_clockout', user_id: uid, attendance_record_id: item.id }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to release clock-out')
+      setReleaseQueue(prev => prev.filter(q => q.id !== item.id))
+    } catch (err) {
+      setClockMessage(err instanceof Error ? err.message : 'Failed to release clock-out')
+    } finally {
+      setReleaseBusyId('')
+    }
+  }
 
   const fetchMyRequests = useCallback(async (uid: string) => {
     if (!uid) return
@@ -391,11 +432,12 @@ export default function EmployeeAttendancePage() {
         void fetchRecords(uid)
         void fetchMyShift(internalId)
         void fetchMyRequests(internalId)
+        void fetchReleaseQueue(uid)
       }
     }
     void run()
     return () => { cancelled = true }
-  }, [router, fetchRecords, fetchMyShift, fetchMyRequests, fetchSwapCandidates, fetchFixedOffQuota])
+  }, [router, fetchRecords, fetchMyShift, fetchMyRequests, fetchSwapCandidates, fetchFixedOffQuota, fetchReleaseQueue])
 
   const todayLabel = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })
   const myPendingCount = mySwaps.filter(r => r.status === 'pending').length + myTimeOff.filter(r => r.status === 'pending').length + myFixedOff.filter(r => r.status === 'pending').length
@@ -582,6 +624,31 @@ export default function EmployeeAttendancePage() {
                   </div>
                 )
               })}
+            </div>
+          )}
+
+          {/* ── Casual Worker Clock-Out Requests — one-off jobs have no scheduled end time, so
+              each Casual Worker needs this Employee to review their work and release them before
+              they can clock out (always visible, like My Shift, regardless of the active tab). ── */}
+          {releaseQueue.length > 0 && (
+            <div style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, padding: '14px 18px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <p style={{ margin: 0, fontWeight: 700, fontSize: 14, color: '#111827' }}>Casual Worker Clock-Out Requests</p>
+              {releaseQueue.map(item => (
+                <div key={item.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 14px', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: 10 }}>
+                  <div>
+                    <p style={{ margin: 0, fontWeight: 700, fontSize: 13, color: '#111827' }}>{item.worker_name} — {item.shift_title || 'One-off job'}</p>
+                    <p style={{ margin: '2px 0 0', fontSize: 12, color: '#92400E' }}>
+                      Clocked in {formatTime(item.clock_in_time)} on {formatDate(item.shift_date)} — waiting for you to review and release
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => releaseClockOut(userId, item)}
+                    disabled={!!releaseBusyId}
+                    style={{ height: 32, padding: '0 14px', borderRadius: 8, border: 'none', background: GREEN, color: '#fff', fontWeight: 700, fontSize: 12.5, cursor: releaseBusyId ? 'default' : 'pointer', flexShrink: 0 }}>
+                    {releaseBusyId === item.id ? 'Releasing…' : 'Release Clock-Out'}
+                  </button>
+                </div>
+              ))}
             </div>
           )}
 

@@ -1560,7 +1560,7 @@ export default function OwnerAttendancePage() {
       const res = await fetch('/api/team/casual-worker-status', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: reviewRecord.assignment.user_id, worker_status: newStatus }),
+        body: JSON.stringify({ user_id: reviewRecord.assignment.user_id, company_id: companyId, worker_status: newStatus }),
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.message || 'Failed to update status')

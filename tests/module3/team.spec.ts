@@ -81,6 +81,11 @@ test.afterAll(async () => {
   const { data: shiftRows } = await admin.from('shifts').select('id').eq('company_id', seeded.companyId)
   const shiftIds = (shiftRows ?? []).map((shift) => shift.id as string)
   if (shiftIds.length > 0) {
+    const { data: assignmentRows } = await admin.from('shift_assignments').select('id').in('shift_id', shiftIds)
+    const assignmentIds = (assignmentRows ?? []).map((assignment) => assignment.id as string)
+    if (assignmentIds.length > 0) {
+      await admin.from('attendance_records').delete().in('shift_assignment_id', assignmentIds)
+    }
     await admin.from('shift_assignments').delete().in('shift_id', shiftIds)
     await admin.from('shifts').delete().in('id', shiftIds)
   }
@@ -331,25 +336,179 @@ test('UC36 toggles a casual worker between active and inactive', async ({ reques
   if (workerError || !worker) throw new Error(`Failed to create casual worker row: ${workerError?.message}`)
   members.push({ authUserId: authData.user.id, userId: worker.id as string, email })
 
+  // The ban is per-company, so the status toggle now requires company_id.
   const deactivate = await request.patch('/api/team/casual-worker-status', {
-    data: { user_id: worker.id, worker_status: 'inactive', inactivate_reason: 'No longer available' },
+    data: { user_id: worker.id, company_id: seeded.companyId, worker_status: 'inactive', inactivate_reason: 'No longer available' },
   })
   expect(deactivate.status()).toBe(200)
   const deactivateBody = await deactivate.json()
   expect(deactivateBody).toMatchObject({ success: true, user: { worker_status: 'inactive', inactivate_reason: 'No longer available' } })
 
   const reactivate = await request.patch('/api/team/casual-worker-status', {
-    data: { user_id: worker.id, worker_status: 'active' },
+    data: { user_id: worker.id, company_id: seeded.companyId, worker_status: 'active' },
   })
   expect(reactivate.status()).toBe(200)
   const reactivateBody = await reactivate.json()
   expect(reactivateBody).toMatchObject({ success: true, user: { worker_status: 'active', inactivate_reason: null } })
 
   const invalid = await request.patch('/api/team/casual-worker-status', {
-    data: { user_id: worker.id, worker_status: 'on-leave' },
+    data: { user_id: worker.id, company_id: seeded.companyId, worker_status: 'on-leave' },
   })
   expect(invalid.status()).toBe(400)
   expect((await invalid.json()).success).toBe(false)
+
+  const missingCompany = await request.patch('/api/team/casual-worker-status', {
+    data: { user_id: worker.id, worker_status: 'inactive' },
+  })
+  expect(missingCompany.status()).toBe(400)
+  expect((await missingCompany.json()).message).toContain('company_id')
+})
+
+test('casual worker certificates endpoint returns the worker profile certificates for the CW detail card', async ({ request }) => {
+  const email = `test-module3-certs-${Date.now()}@tasking-tests.local`
+  const { data: authData, error: authError } = await admin.auth.admin.createUser({
+    email,
+    password: 'Test-Password-123!',
+    email_confirm: true,
+  })
+  if (authError || !authData.user) throw new Error(`Failed to create auth user: ${authError?.message}`)
+
+  const { data: worker, error: workerError } = await admin
+    .from('users')
+    .insert({
+      supabase_auth_id: authData.user.id,
+      full_name: 'Module 3 Certificate Worker',
+      email_address: email,
+      phone_number: null,
+      role: 'Casual Worker',
+      company_id: seeded.companyId,
+      worker_status: 'active',
+      skills: 'Barista, Cash register',
+      resume_url: 'https://example.com/demo-resumes/cert-worker.pdf',
+    })
+    .select()
+    .single()
+  if (workerError || !worker) throw new Error(`Failed to create casual worker row: ${workerError?.message}`)
+  members.push({ authUserId: authData.user.id, userId: worker.id as string, email })
+
+  // Profile-level certificates (user_certificates), the same data the Guest fills in during
+  // recruitment — one with a proof file, one without — cascade-deleted with the user in afterAll.
+  const { error: certError } = await admin.from('user_certificates').insert([
+    { user_id: worker.id, name: 'Food Hygiene Certificate', file_url: 'https://example.com/demo-certs/food-hygiene.pdf' },
+    { user_id: worker.id, name: 'First Aid Certificate (CPR + AED)', file_url: null },
+  ])
+  expect(certError).toBeNull()
+
+  const res = await request.get(`/api/team/casual-worker-certificates?user_id=${worker.id}`)
+  expect(res.status()).toBe(200)
+  const body = await res.json()
+  expect(body.success).toBe(true)
+  expect(body.certificates).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ name: 'Food Hygiene Certificate', file_url: 'https://example.com/demo-certs/food-hygiene.pdf' }),
+      expect.objectContaining({ name: 'First Aid Certificate (CPR + AED)', file_url: null }),
+    ]),
+  )
+
+  const missing = await request.get('/api/team/casual-worker-certificates')
+  expect(missing.status()).toBe(400)
+  expect((await missing.json()).success).toBe(false)
+})
+
+test('recruited casual worker is only marked verified into the company Casual Worker pool after a completed clock-in + clock-out', async ({ request }) => {
+  // Mirrors what respondToInvitation actually writes at two-way-confirm time: role flipped to
+  // Casual Worker + a casualworker_departments row, but users.company_id is deliberately left
+  // unset (that's the pre-existing bug this feature also fixes).
+  const email = `test-module3-verify-${Date.now()}@tasking-tests.local`
+  const { data: authData, error: authError } = await admin.auth.admin.createUser({
+    email,
+    password: 'Test-Password-123!',
+    email_confirm: true,
+  })
+  if (authError || !authData.user) throw new Error(`Failed to create auth user: ${authError?.message}`)
+
+  const { data: worker, error: workerError } = await admin
+    .from('users')
+    .insert({
+      supabase_auth_id: authData.user.id,
+      full_name: 'Module 3 Recruited Casual Worker',
+      email_address: email,
+      phone_number: null,
+      role: 'Casual Worker',
+      worker_status: 'active',
+    })
+    .select()
+    .single()
+  if (workerError || !worker) throw new Error(`Failed to create casual worker row: ${workerError?.message}`)
+  members.push({ authUserId: authData.user.id, userId: worker.id as string, email })
+
+  const { error: cwdError } = await admin
+    .from('casualworker_departments')
+    .insert({ casual_worker_id: worker.id, department_id: departments.primary, company_id: seeded.companyId })
+  expect(cwdError).toBeNull()
+
+  // Confirmed but never clocked in — still visible to pickers (e.g. shift-swap replacement,
+  // task assignment) that reuse this same endpoint, but not yet part of the verified pool.
+  const notYetVerified = await request.get(`/api/team/members?company_id=${seeded.companyId}`)
+  const notYetVerifiedBody = await notYetVerified.json()
+  expect(notYetVerifiedBody.members).toEqual(
+    expect.arrayContaining([expect.objectContaining({ id: worker.id, casual_worker_verified_at: null })]),
+  )
+
+  const { data: shift, error: shiftError } = await admin
+    .from('shifts')
+    .insert({
+      company_id: seeded.companyId,
+      department_id: departments.primary,
+      shift_date: '2030-03-01',
+      start_time: '09:00',
+      end_time: '17:00',
+      title: 'Verification regression shift',
+      created_by: seeded.ownerId,
+      publication_status: 'published',
+    })
+    .select('id')
+    .single()
+  expect(shiftError).toBeNull()
+
+  const { data: assignment, error: assignmentError } = await admin
+    .from('shift_assignments')
+    .insert({ shift_id: shift!.id, user_id: worker.id, assigned_by: seeded.ownerId })
+    .select('id')
+    .single()
+  expect(assignmentError).toBeNull()
+
+  const clockIn = await request.post('/api/casual/attendance', {
+    data: {
+      action: 'clock_in',
+      user_id: authData.user.id,
+      shift_assignment_id: assignment!.id,
+      clock_time: '2030-03-01T09:00:00.000Z',
+    },
+  })
+  expect(clockIn.status()).toBe(201)
+
+  const clockOut = await request.post('/api/casual/attendance', {
+    data: {
+      action: 'clock_out',
+      user_id: authData.user.id,
+      shift_assignment_id: assignment!.id,
+      clock_time: '2030-03-01T17:00:00.000Z',
+    },
+  })
+  expect(clockOut.status()).toBe(200)
+
+  const verified = await request.get(`/api/team/members?company_id=${seeded.companyId}`)
+  const verifiedBody = await verified.json()
+  const verifiedMember = verifiedBody.members.find((m: { id: string }) => m.id === worker.id)
+  expect(verifiedMember).toMatchObject({ role: 'Casual Worker' })
+  expect(verifiedMember.casual_worker_verified_at).toBeTruthy()
+
+  const verifiedByDepartment = await request.get(`/api/team/members?company_id=${seeded.companyId}&department_id=${departments.primary}`)
+  const verifiedByDepartmentBody = await verifiedByDepartment.json()
+  const verifiedByDepartmentMember = verifiedByDepartmentBody.members.find((m: { id: string }) => m.id === worker.id)
+  expect(verifiedByDepartmentMember).toMatchObject({ role: 'Casual Worker' })
+  expect(verifiedByDepartmentMember.casual_worker_verified_at).toBeTruthy()
 })
 
 test('UC39 invites members by CSV row and reports per-row failures', async ({ request }) => {

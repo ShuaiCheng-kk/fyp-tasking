@@ -12,6 +12,7 @@ vi.mock('@/repositories/guest/workerApplicationRepository', () => ({
     getApplicantCertificates: vi.fn(),
     getActiveApplicationJobs: vi.fn(),
     getFutureShiftWindows: vi.fn(),
+    getBlockingCompanyIds: vi.fn(),
     createApplication: vi.fn(),
     getApplicationsByUser: vi.fn(),
     getInvitationContext: vi.fn(),
@@ -60,6 +61,7 @@ const FUTURE_DATE = '2030-03-04'
 function makeJob(overrides: Partial<JobPosting> = {}): JobPosting {
   return {
     id: 'job-1',
+    company_id: 'company-1',
     status: 'open',
     expires_at: null,
     form_type: 'shift',
@@ -85,7 +87,6 @@ const baseProfile = {
 const baseInput = {
   job_id: 'job-1',
   user_id: 'user-1',
-  relevant_experience: '1_to_2' as const,
 }
 
 describe('workerApplicationService.submitApplication — apply gates + snapshot', () => {
@@ -99,6 +100,7 @@ describe('workerApplicationService.submitApplication — apply gates + snapshot'
     ])
     vi.mocked(workerApplicationRepository.getActiveApplicationJobs).mockResolvedValue([])
     vi.mocked(workerApplicationRepository.getFutureShiftWindows).mockResolvedValue([])
+    vi.mocked(workerApplicationRepository.getBlockingCompanyIds).mockResolvedValue([])
     vi.mocked(workerApplicationRepository.createApplication).mockResolvedValue({ id: 'app-1' })
   })
 
@@ -109,7 +111,7 @@ describe('workerApplicationService.submitApplication — apply gates + snapshot'
       job_id: 'job-1',
       user_id: 'user-1',
       resume_url: 'https://cdn/resume.pdf',
-      relevant_experience: '1_to_2',
+      relevant_experience: null,
       additional_note: 'Worked at Starbucks for a year.',
       skills_snapshot: 'Customer service, Barista',
       certificates_snapshot: [{ name: 'Food Hygiene Certificate', file_url: 'https://cdn/cert.pdf' }],
@@ -117,11 +119,42 @@ describe('workerApplicationService.submitApplication — apply gates + snapshot'
     })
   })
 
-  it('rejects an invalid relevant_experience value', async () => {
-    await expect(workerApplicationService.submitApplication({
-      ...baseInput,
-      relevant_experience: 'expert' as never,
-    })).rejects.toThrow('relevant experience')
+  describe('experience gate (worker confirms the posting minimum, not a picker)', () => {
+    it.each(['6+ Months', '1+ Year', '2+ Years'])(
+      'rejects when the job requires %s and the worker has not confirmed meeting it',
+      async (experienceRequired) => {
+        vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(
+          makeJob({ experience_required: experienceRequired })
+        )
+
+        await expect(workerApplicationService.submitApplication(baseInput))
+          .rejects.toThrow('relevant experience')
+        expect(workerApplicationRepository.createApplication).not.toHaveBeenCalled()
+      },
+    )
+
+    it('allows the application once the worker confirms the requirement', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(
+        makeJob({ experience_required: '1+ Year' })
+      )
+
+      await workerApplicationService.submitApplication({ ...baseInput, meets_experience_requirement: true })
+
+      expect(workerApplicationRepository.createApplication).toHaveBeenCalled()
+    })
+
+    it.each(['Not Required', 'Preferred', null])(
+      'does not gate when experience_required is %s',
+      async (experienceRequired) => {
+        vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(
+          makeJob({ experience_required: experienceRequired })
+        )
+
+        await workerApplicationService.submitApplication(baseInput)
+
+        expect(workerApplicationRepository.createApplication).toHaveBeenCalled()
+      },
+    )
   })
 
   it('rejects when the job is closed or expired', async () => {
@@ -140,6 +173,23 @@ describe('workerApplicationService.submitApplication — apply gates + snapshot'
     vi.mocked(workerApplicationRepository.checkExistingApplication).mockResolvedValue({ id: 'existing' })
     await expect(workerApplicationService.submitApplication(baseInput))
       .rejects.toThrow('already applied')
+  })
+
+  // The board hides a banned company's jobs; this is the server-side backstop for a stale link.
+  it('rejects an application to a company that has banned the worker', async () => {
+    vi.mocked(workerApplicationRepository.getBlockingCompanyIds).mockResolvedValue(['company-1'])
+
+    await expect(workerApplicationService.submitApplication(baseInput))
+      .rejects.toThrow('no longer accepting applications')
+    expect(workerApplicationRepository.createApplication).not.toHaveBeenCalled()
+  })
+
+  it('allows the application when the worker is banned by a different company', async () => {
+    vi.mocked(workerApplicationRepository.getBlockingCompanyIds).mockResolvedValue(['some-other-company'])
+
+    await workerApplicationService.submitApplication(baseInput)
+
+    expect(workerApplicationRepository.createApplication).toHaveBeenCalled()
   })
 
   // The job board hides Apply from company staff; this is the server-side backstop against a
@@ -317,7 +367,12 @@ describe('workerApplicationService.respondToInvitation — two-way confirm chain
     // the new Casual Worker's department_id resolves to null everywhere (getTeamByCompany etc.),
     // hiding them from every department-scoped member picker (e.g. an Employee assigning tasks).
     expect(workerApplicationRepository.addCasualWorkerToDepartment).toHaveBeenCalledWith('user-1', 'dept-1', 'company-1')
-    expect(shiftService.createShift).toHaveBeenCalled()
+    // The job posting's responsible employee must carry through onto the new shift assignment as
+    // its supervisor — without this, Task assignment (taskRepository.getSupervisedCasualWorkerIds)
+    // and the Dashboard's message/task-board widgets have no one to scope the worker to.
+    expect(shiftService.createShift).toHaveBeenCalledWith(
+      expect.objectContaining({ supervisor_employee_id: 'emp-1' })
+    )
   })
 
   it('skips the department membership insert when the job has no department', async () => {

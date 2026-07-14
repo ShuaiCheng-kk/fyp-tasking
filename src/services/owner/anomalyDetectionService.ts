@@ -2,26 +2,34 @@
 // RULE: Business logic only. No HTTP handling. No direct DB access.
 
 import { openAIService } from '@/services/ai/openAIService'
-import { attendanceService } from '@/services/owner/attendanceService'
 import { reportService } from '@/services/owner/reportService'
 import { AIAnomaly } from '@/types/AI'
 import { ReportFilters } from '@/types/Report'
 
 export const anomalyDetectionService = {
+  // UC63 — feeds the AI nothing but facts computed from recorded data (the same
+  // CompanyReport the page shows). The code states what happened; the AI decides
+  // what is unusual and what to do about it — no hardcoded thresholds here.
   async detectAnomalies(filters: ReportFilters): Promise<AIAnomaly[]> {
-    const [report, attendance] = await Promise.all([
-      reportService.getWorkforceAnalytics(filters),
-      attendanceService.getAttendanceDashboard(filters.company_id),
-    ])
+    const report = await reportService.getCompanyReport(filters)
 
-    const manualSignals = [
+    const manualSignals: string[] = [
       ...report.departments
-        .filter(row => row.assignments === 0 && row.shifts > 0)
-        .map(row => `${row.department_name}: ${row.shifts} shift(s) but no assignments`),
-      ...attendance.records
-        .filter(row => row.exceptions.length > 0)
+        .filter(row => row.shifts > 0 && row.assignments === 0)
+        .map(row => `${row.department_name}: ${row.shifts} shift(s) scheduled but nobody assigned`),
+      ...report.departments
+        .filter(row => row.overdue_open > 0)
+        .map(row => `${row.department_name}: ${row.overdue_open} task(s) past their deadline and still not complete`),
+      ...report.departments
+        .filter(row => row.rework_count > 0)
+        .map(row => `${row.department_name}: ${row.rework_count} task(s) were rejected back for rework`),
+      ...report.casual.workers
+        .filter(row => row.absent + row.late + row.rejected_shifts > 0)
         .slice(0, 20)
-        .map(row => `${row.assignee_name}: ${row.exceptions.join(', ')} on ${row.shift.shift_date}`),
+        .map(row => `${row.full_name}: ${row.absent} absent, ${row.late} late, ${row.rejected_shifts} rejected shift(s) this period`),
+      ...report.casual.postings
+        .filter(row => row.openings !== null && row.openings > 0 && row.confirmed < row.openings)
+        .map(row => `Posting "${row.title}": ${row.confirmed}/${row.openings} openings filled (${row.applicants} applicant(s))`),
     ]
 
     const result = await openAIService.generateStructuredJson<{ anomalies: AIAnomaly[] }>({
@@ -29,23 +37,20 @@ export const anomalyDetectionService = {
       maxOutputTokens: 900,
       instructions: [
         'You are an operations analyst for a Smart Task Allocation app.',
-        'Find meaningful workforce allocation anomalies, not generic comments.',
-        'Use the provided report, attendance exceptions, and manual signals.',
-        'Prioritize anomalies that affect coverage, task completion, attendance reliability, or owner action.',
-        'Return concise evidence and practical recommended actions.',
+        'Find meaningful workforce anomalies in the period under review, not generic comments.',
+        'Compare the current period against the previous period where useful.',
+        'Prioritize anomalies that affect shift coverage, task delivery, attendance reliability, hiring, or labor cost.',
+        'Return concise evidence and practical recommended actions for the company owner.',
       ].join(' '),
       input: {
-        filters,
-        report_summary: report.summary,
-        department_rollups: report.departments,
-        attendance_summary: attendance.summary,
-        attendance_exceptions: attendance.records.filter(row => row.exceptions.length > 0).slice(0, 30).map(row => ({
-          assignee_name: row.assignee_name,
-          department_name: row.department_name,
-          shift_date: row.shift.shift_date,
-          shift_time: `${row.shift.start_time}-${row.shift.end_time}`,
-          exceptions: row.exceptions,
-        })),
+        period: report.period,
+        previous_period: report.previous_period,
+        overview: report.overview,
+        previous_overview: report.previous_overview,
+        department_rows: report.departments,
+        casual_worker_rows: report.casual.workers,
+        recruitment_funnel: report.casual.funnel,
+        recruitment_postings: report.casual.postings,
         manual_signals: manualSignals,
       },
       schema: {

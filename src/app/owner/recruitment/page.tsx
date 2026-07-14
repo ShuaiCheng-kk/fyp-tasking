@@ -5,10 +5,10 @@ import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import {
-  Archive, ArchiveRestore, ArrowRight, Award, Briefcase, Building2, Cake, CalendarDays, Check, CheckCircle, ChevronDown, ChevronLeft, ChevronRight,
-  ClipboardList, Clock, Coffee, Copy, Crown, DollarSign, Eye, FileText, LayoutGrid, Mail, MapPin,
-  Paperclip, Pencil, Phone, Plus, Repeat, Send, Shirt, Sparkles, Timer, Trash2, UserCheck, UserX, Users,
-  Wrench, X, XCircle, Zap,
+  Archive, ArchiveRestore, ArrowRight, Briefcase, Building2, Cake, Check, CheckCircle, ChevronDown, ChevronLeft, ChevronRight,
+  ClipboardList, Clock, Copy, Crown, DollarSign, Eye, FileText, LayoutGrid, MapPin,
+  Pencil, Plus, Repeat, Send, Shirt, Sparkles, Timer, Trash2, UserCheck, UserX, Users,
+  X, XCircle, Zap,
 } from 'lucide-react'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
@@ -21,14 +21,14 @@ import {
 import Spinner from '@/components/Spinner'
 import Toast from '@/components/Toast'
 import { CandidateRecommendation } from '@/types/AI'
-import { JobApplicant, JobPostingPendingApproval, JobPostingSummary } from '@/types/Recruitment'
+import { JobApplicant, JobPostingPendingApproval, JobPostingSummary, PoolInviteResult, PoolWorker } from '@/types/Recruitment'
 import { JobTemplate, JobTemplateUsageStats } from '@/types/JobTemplate'
 import { deptColor, setDeptColorOverrides } from '@/lib/deptColor'
 import DepartmentBadge from '@/components/DepartmentBadge'
 import RoleAvatar from '@/components/RoleAvatar'
 import DatePickerField from '@/components/DatePickerField'
 
-type Tab = 'jobs' | 'closed' | 'review' | 'post'
+type Tab = 'jobs' | 'closed' | 'post'
 type Department = { id: string; name: string }
 
 // ─── shared tiny styles ──────────────────────────────────────────────────────
@@ -71,7 +71,7 @@ const handleListKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
 const deadlineCountdown = (expiresAt: string | null): { label: string; expired: boolean } | null => {
   if (!expiresAt) return null
   const diffMs = new Date(expiresAt).getTime() - Date.now()
-  if (diffMs <= 0) return { label: 'Deadline passed', expired: true }
+  if (diffMs <= 0) return { label: 'Application Closed', expired: true }
   const totalMins = Math.floor(diffMs / 60000)
   const days = Math.floor(totalMins / 1440)
   const hours = Math.floor((totalMins % 1440) / 60)
@@ -85,6 +85,41 @@ const fmt12Time = (t: string) => {
   const [h, m] = t.slice(0, 5).split(':').map(Number)
   const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
   return `${h12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`
+}
+
+// Shared by every job-detail panel. salary_amount is always the PER-PERSON rate. withTotal
+// controls whether the label also computes per-person earnings × openings: Pending Approval
+// shows the total (the Owner is deciding budget), while Active/Closed/Archived pass false —
+// their detail body is a preview of the public Job Board post, which only shows the plain rate.
+function buildPayLabel(p: {
+  is_recurring: boolean
+  salary_amount: number | null
+  shift_start_time: string | null
+  shift_end_time: string | null
+  break_start_time: string | null
+  break_end_time: string | null
+  openings: number | null
+}, withTotal: boolean = true): string | null {
+  if (p.salary_amount == null) return null
+  if (!withTotal) return p.is_recurring ? `$${p.salary_amount}/hr` : `$${p.salary_amount} flat rate`
+  const positions = Math.max(1, p.openings ?? 1)
+  const fmtAmt = (n: number) => (n % 1 === 0 ? n.toFixed(0) : n.toFixed(2))
+  if (p.is_recurring) {
+    if (!p.shift_start_time || !p.shift_end_time) return `$${p.salary_amount}/hr`
+    const toMins = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m }
+    let worked = toMins(p.shift_end_time) - toMins(p.shift_start_time)
+    if (p.break_start_time && p.break_end_time) worked -= (toMins(p.break_end_time) - toMins(p.break_start_time))
+    if (worked <= 0) return `$${p.salary_amount}/hr`
+    const perPerson = Math.round(p.salary_amount * (worked / 60) * 100) / 100
+    const total = Math.round(perPerson * positions * 100) / 100
+    return positions > 1
+      ? `$${p.salary_amount}/hr ($${fmtAmt(perPerson)} × ${positions} = $${fmtAmt(total)})`
+      : `$${p.salary_amount}/hr ($${fmtAmt(perPerson)})`
+  }
+  const total = Math.round(p.salary_amount * positions * 100) / 100
+  return positions > 1
+    ? `$${p.salary_amount}/person flat rate × ${positions} = $${fmtAmt(total)} total`
+    : `$${p.salary_amount} flat rate`
 }
 
 const inputStyle: React.CSSProperties = {
@@ -123,142 +158,197 @@ const EXPERIENCE_REQUIRED_OPTIONS = [
   { value: '1+ Year', label: '1+ Year' },
   { value: '2+ Years', label: '2+ Years' },
 ]
-const APPLICANT_EXPERIENCE_LABELS: Record<string, string> = {
-  none: 'No experience',
-  less_than_1: 'Less than 1 year',
-  '1_to_2': '1–2 years',
-  more_than_2: 'More than 2 years',
-}
 
-// The profile snapshot frozen onto an application at apply time — what the applicant looked
-// like when they applied, immune to later profile edits. Shared by the live and archived
-// applicant lists.
-function ApplicantSnapshotBody({ applicant }: { applicant: JobApplicant }) {
-  const rowStyle: React.CSSProperties = { display: 'flex', alignItems: 'flex-start', gap: 7, fontSize: '0.8rem', color: '#374151', lineHeight: 1.5 }
-  const hasSnapshot = applicant.age_at_apply != null || applicant.relevant_experience || applicant.skills_snapshot
-    || (applicant.certificates_snapshot && applicant.certificates_snapshot.length > 0) || applicant.additional_note || applicant.resume_url
-
-  if (!hasSnapshot && !applicant.cover_letter) return null
-
+// Applicant avatar — profile photo if set, else a dark circle with the initial.
+function ApplicantAvatar({ applicant, size = 46 }: { applicant: JobApplicant; size?: number }) {
+  if (applicant.profile_photo_url) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={applicant.profile_photo_url} alt={applicant.full_name}
+      style={{ width: size, height: size, borderRadius: '50%', objectFit: 'cover', background: '#F3F4F6', display: 'block' }} />
+  }
   return (
-    <div style={{ margin: '10px 0 0', paddingLeft: 41, display: 'flex', flexDirection: 'column', gap: 6 }}>
-      {(applicant.age_at_apply != null || applicant.relevant_experience) && (
-        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-          {applicant.age_at_apply != null && (
-            <span style={{ ...rowStyle, alignItems: 'center' }}>
-              <Cake size={13} color="#F97316" style={{ flexShrink: 0 }} />
-              Age {applicant.age_at_apply}
-            </span>
-          )}
-          {applicant.relevant_experience && (
-            <span style={{ ...rowStyle, alignItems: 'center' }}>
-              <Briefcase size={13} color="#F97316" style={{ flexShrink: 0 }} />
-              {APPLICANT_EXPERIENCE_LABELS[applicant.relevant_experience] ?? applicant.relevant_experience} in this role
-            </span>
-          )}
-        </div>
-      )}
-      {applicant.skills_snapshot && (
-        <div style={rowStyle}>
-          <Wrench size={13} color="#F97316" style={{ flexShrink: 0, marginTop: 2 }} />
-          <span>{applicant.skills_snapshot}</span>
-        </div>
-      )}
-      {applicant.certificates_snapshot && applicant.certificates_snapshot.length > 0 && (
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {applicant.certificates_snapshot.map((cert, idx) => cert.file_url ? (
-            <a key={idx} href={cert.file_url} target="_blank" rel="noreferrer"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 700, color: '#15803D', background: '#DCFCE7', border: '1px solid #BBF7D0', borderRadius: 999, padding: '2px 9px', textDecoration: 'none' }}>
-              <Award size={11} /> {cert.name} <Paperclip size={10} />
-            </a>
-          ) : (
-            <span key={idx}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.72rem', fontWeight: 700, color: '#4B5563', background: '#F3F4F6', border: '1px solid #E5E7EB', borderRadius: 999, padding: '2px 9px' }}>
-              <Award size={11} /> {cert.name}
-            </span>
-          ))}
-        </div>
-      )}
-      {applicant.additional_note && (
-        <p style={{ margin: 0, color: '#4B5563', fontSize: '0.8rem', lineHeight: 1.55, fontStyle: 'italic' }}>
-          “{applicant.additional_note}”
-        </p>
-      )}
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-        {applicant.resume_url && (
-          <a href={applicant.resume_url} target="_blank" rel="noreferrer"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.78rem', fontWeight: 700, color: '#EA580C', textDecoration: 'none' }}>
-            <FileText size={13} /> View Resume
-          </a>
-        )}
-        {/* Legacy pre-rework applications stored the cover letter as an uploaded file URL */}
-        {applicant.cover_letter && applicant.cover_letter.startsWith('http') && (
-          <a href={applicant.cover_letter} target="_blank" rel="noreferrer"
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.78rem', fontWeight: 700, color: '#6B7280', textDecoration: 'none' }}>
-            <FileText size={13} /> Cover Letter
-          </a>
-        )}
-      </div>
+    <div style={{ width: size, height: size, borderRadius: '50%', background: '#1C1C1E', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FFFFFF', fontWeight: 700, fontSize: size * 0.34 }}>
+      {applicant.full_name?.charAt(0)?.toUpperCase() ?? '?'}
     </div>
   )
 }
 
-// Job Information (title/department/schedule) + a clickable Supervisor card — sits directly
-// under the Applicants panel header. "Scheduled" reads shift_date/shift_start_time/shift_end_time
-// (or job_start_time for a one-off job), never created_at — the posting's own working schedule.
-function JobScheduleSupervisorCard({ posting, onSupervisorClick }: {
-  posting: JobPostingSummary
-  onSupervisorClick: () => void
+// AI fit gauge — a single glance beats "Score: 60/100 — review": the filled (green) portion is
+// the match strength, the pink remainder reads as the gap. No caption text underneath — the two
+// segments carry their explanation as a hover tooltip (why it's justified / what argues against
+// it), so the row stays just a clean bar. A custom tooltip rather than the native `title`
+// attribute, which is unreliably slow/silent across browsers.
+function AiFitGauge({ score, reason, risk }: { score: number; reason?: string; risk?: string }) {
+  const pct = Math.max(0, Math.min(100, Math.round(score)))
+  const [hovered, setHovered] = useState<'reason' | 'risk' | null>(null)
+  const activeText = hovered === 'reason' ? reason : hovered === 'risk' ? risk : null
+  return (
+    <div style={{ position: 'relative' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ flex: 1, height: 16, borderRadius: 999, overflow: 'hidden', display: 'flex' }}>
+          <div
+            onMouseEnter={() => { if (reason) setHovered('reason') }}
+            onMouseLeave={() => setHovered(h => h === 'reason' ? null : h)}
+            style={{ width: `${pct}%`, height: '100%', background: '#10B981', cursor: reason ? 'help' : 'default' }}
+          />
+          <div
+            onMouseEnter={() => { if (risk) setHovered('risk') }}
+            onMouseLeave={() => setHovered(h => h === 'risk' ? null : h)}
+            style={{ width: `${100 - pct}%`, height: '100%', background: '#FECDD3', cursor: risk ? 'help' : 'default' }}
+          />
+        </div>
+        <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#6B7280', flexShrink: 0, minWidth: 30, textAlign: 'right' }}>{pct}%</span>
+      </div>
+      {activeText && (
+        <div style={{
+          position: 'absolute', bottom: 'calc(100% + 8px)', left: 0, maxWidth: 320,
+          background: '#111827', color: '#FFFFFF', fontSize: '0.75rem', fontWeight: 500, lineHeight: 1.5,
+          padding: '8px 10px', borderRadius: 8, boxShadow: '0 6px 18px rgba(0,0,0,0.2)', zIndex: 30,
+          pointerEvents: 'none',
+        }}>
+          {activeText}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Outlined status/action pill — same treatment as the Off Day request card's Approve/Modify and
+// status pills (rounded, 1.5px border, 6×16 padding).
+function ApplicantPill({ tone, label, icon }: {
+  tone: { bg: string; border: string; text: string }
+  label: string
+  icon?: React.ReactNode
 }) {
-  const isShiftJob = posting.is_recurring
-  const scheduleParts: string[] = []
-  if (posting.shift_date) {
-    scheduleParts.push(new Date(posting.shift_date).toLocaleDateString('en-SG', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }))
-  }
-  if (isShiftJob && (posting.shift_start_time || posting.shift_end_time)) {
-    scheduleParts.push(`${posting.shift_start_time ? fmt12Time(posting.shift_start_time) : '—'} – ${posting.shift_end_time ? fmt12Time(posting.shift_end_time) : '—'}`)
-  } else if (!isShiftJob && posting.job_start_time) {
-    scheduleParts.push(fmt12Time(posting.job_start_time))
-  }
-  const scheduleText = scheduleParts.length > 0 ? scheduleParts.join(' · ') : '—'
-
-  const infoRow = (label: string, value: string) => (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-      <span style={{ fontSize: 11, fontWeight: 600, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.02em' }}>{label}</span>
-      <span style={{ fontSize: 13, fontWeight: 700, color: '#111827' }}>{value}</span>
-    </div>
-  )
-
   return (
-    <div style={{ margin: '14px 18px 0', borderRadius: 14, border: '1px solid #E5E7EB', background: '#FFFFFF', display: 'flex', overflow: 'hidden' }}>
-      <div style={{ flex: 1, padding: '10px 18px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-          <Briefcase size={14} style={{ color: '#F97316' }} />
-          <span style={{ fontSize: 13, fontWeight: 700, color: '#0F172A' }}>Job Information</span>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: tone.text, background: tone.bg, border: `1.5px solid ${tone.border}`, borderRadius: 999, padding: '6px 16px', whiteSpace: 'nowrap' }}>
+      {icon}{label}
+    </span>
+  )
+}
+
+// Compact applicant card: avatar (with the name beneath it) opens a detail modal on click, the
+// Applied timestamp sits next to it, and the per-context actions are on the right. Skills /
+// certificates / resume / phone all live in the modal, so the card stays narrow. `children` is an
+// optional full-width footer (the AI verdict).
+function ApplicantCard({ applicant, actions, onOpenDetail, children, dateLabel = 'Applied', dateValue }: {
+  applicant: JobApplicant
+  actions?: React.ReactNode
+  onOpenDetail: () => void
+  children?: React.ReactNode
+  // The middle timestamp — defaults to the applied-at time, but the Confirmed panel overrides it
+  // with the confirmation time.
+  dateLabel?: string
+  dateValue?: string | null
+}) {
+  const sectionLabel: React.CSSProperties = { display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: 0 }
+  const divider = <div style={{ width: 1, alignSelf: 'stretch', background: '#E5E7EB', flexShrink: 0 }} />
+  return (
+    <div style={{ background: '#FFFFFF', border: '1.5px solid #E5E7EB', borderRadius: 16, padding: '14px 16px', marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'stretch', gap: 14 }}>
+        {/* Avatar + name — fixed-width column so the divider lines up across every card no matter
+            how long the name is. Clicking opens the full detail modal. */}
+        <button type="button" onClick={onOpenDetail} title="View applicant details"
+          style={{ width: 132, flexShrink: 0, border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+          <ApplicantAvatar applicant={applicant} size={54} />
+          <strong style={{ color: '#111827', fontSize: '0.82rem', lineHeight: 1.25, textAlign: 'center', wordBreak: 'break-word' }}>{applicant.full_name}</strong>
+        </button>
+
+        {divider}
+
+        {/* Applied timestamp — vertically centred, but the label + time are LEFT-aligned so they
+            start at the same x (right after the divider) on every card, independent of the name
+            length on the left or the action width on the right. */}
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'center', gap: 6 }}>
+          <label style={sectionLabel}>{dateLabel}</label>
+          <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#374151', whiteSpace: 'nowrap' }}>{formatCompactAt(dateValue ?? applicant.applied_at)}</span>
         </div>
-        {infoRow('Department', posting.department_name ?? '—')}
-        {infoRow('Scheduled', scheduleText)}
+
+        {actions && <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center' }}>{actions}</div>}
       </div>
-      <div style={{ width: 1, background: '#E5E7EB', flexShrink: 0 }} />
-      <button
-        type="button"
-        onClick={onSupervisorClick}
-        disabled={!posting.assigned_employee_id}
-        style={{ flex: 1, padding: '10px 18px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, border: 0, background: 'transparent', cursor: posting.assigned_employee_id ? 'pointer' : 'default' }}
-        onMouseEnter={e => { if (posting.assigned_employee_id) e.currentTarget.style.background = '#F9FAFB' }}
-        onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-          <Users size={14} style={{ color: '#F97316' }} />
-          <span style={{ fontSize: 13, fontWeight: 700, color: '#0F172A' }}>Supervisor</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-          <RoleAvatar role="Employee" size={28} photoUrl={posting.assigned_employee_photo_url} />
-          <span style={{ fontSize: 13, fontWeight: 700, color: '#111827' }}>{posting.assigned_employee_name ?? '—'}</span>
-        </div>
-      </button>
+      {children}
     </div>
   )
+}
+
+// Full applicant profile in a modal — opened from the compact card's avatar. Certificate and
+// resume names are links the Owner clicks to open the uploaded file.
+function ApplicantDetailModal({ applicant, onClose }: { applicant: JobApplicant; onClose: () => void }) {
+  const certs = applicant.certificates_snapshot ?? []
+  const rowLabel: React.CSSProperties = { ...modalLabelStyle, margin: '0 0 4px' }
+  const rowValue: React.CSSProperties = { margin: 0, fontSize: '0.9rem', color: '#111827', lineHeight: 1.5 }
+  // Same size/weight as the plain text rows — just orange + underlined to signal "clickable".
+  const linkStyle: React.CSSProperties = { ...rowValue, color: '#EA580C', textDecoration: 'underline' }
+  return (
+    <ModalOverlay onClose={onClose} maxWidth="440px">
+      <ModalBox>
+        <ModalHeader title="Applicant" icon={<Users size={15} color="#fff" strokeWidth={2.5} />} onClose={onClose} />
+        <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <ApplicantAvatar applicant={applicant} size={56} />
+            <div style={{ minWidth: 0 }}>
+              <p style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#111827' }}>{applicant.full_name}</p>
+              <p style={{ margin: 0, fontSize: '0.82rem', color: '#6B7280' }}>Applied {formatCompactAt(applicant.applied_at)}</p>
+            </div>
+          </div>
+          <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 14 }}>
+            <p style={rowLabel}>Email</p>
+            <p style={rowValue}>{applicant.email_address || '—'}</p>
+          </div>
+          <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 14 }}>
+            <p style={rowLabel}>Phone</p>
+            <p style={rowValue}>{applicant.phone_number ?? '—'}</p>
+          </div>
+          <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 14 }}>
+            <p style={rowLabel}>Skills</p>
+            <p style={rowValue}>{applicant.skills_snapshot || '—'}</p>
+          </div>
+          {certs.length > 0 && (
+            <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 14 }}>
+              <p style={rowLabel}>Certificates</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {certs.map((c, i) => (
+                  c.file_url
+                    ? <a key={i} href={c.file_url} target="_blank" rel="noreferrer" style={linkStyle}>{c.name}</a>
+                    : <p key={i} style={rowValue}>{c.name}</p>
+                ))}
+              </div>
+            </div>
+          )}
+          {applicant.resume_url && (
+            <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 14 }}>
+              <p style={rowLabel}>Resume</p>
+              <a href={applicant.resume_url} target="_blank" rel="noreferrer" style={linkStyle}>View Resume</a>
+            </div>
+          )}
+          {applicant.additional_note && (
+            <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 14 }}>
+              <p style={rowLabel}>Additional note</p>
+              <p style={{ ...rowValue, whiteSpace: 'pre-line' }}>{applicant.additional_note}</p>
+            </div>
+          )}
+        </div>
+      </ModalBox>
+    </ModalOverlay>
+  )
+}
+
+// Right-side status pill for a non-actionable applicant state (the Accept/Reject buttons cover
+// 'pending'; the Confirmed + Remove Worker row covers a fully-confirmed hire). Returns null when
+// the state is handled by dedicated controls instead.
+function applicantStatusPill(applicant: JobApplicant): React.ReactNode {
+  if (applicant.status === 'pending') return null
+  if (applicant.status === 'accepted') {
+    if (applicant.invitation_status === 'accepted') return null
+    return <ApplicantPill tone={{ bg: '#FFFBEB', border: '#FDE68A', text: '#B45309' }} icon={<Clock size={13} />} label="Pending" />
+  }
+  const tone = ({
+    rejected: { bg: '#FEF2F2', border: '#FECACA', text: '#B91C1C', label: 'Rejected' },
+    job_closed: { bg: '#F3F4F6', border: '#E5E7EB', text: '#4B5563', label: 'Job Closed' },
+    cancelled_by_employer: { bg: '#FEF2F2', border: '#FECACA', text: '#B91C1C', label: 'Removed' },
+  } as Record<string, { bg: string; border: string; text: string; label: string }>)[applicant.status]
+    ?? { bg: '#F3F4F6', border: '#E5E7EB', text: '#6B7280', label: applicant.status }
+  return <ApplicantPill tone={tone} label={tone.label} />
 }
 
 // Values are plain numbers (stored as integer in the DB) so the age gate can compare them
@@ -309,6 +399,16 @@ const pageKeyframes = `
   .recruitment-grid { display: grid; grid-template-columns: 440px minmax(0, 1fr); gap: 16px; align-items: start; }
   @media (max-width: 1100px) {
     .recruitment-grid { grid-template-columns: minmax(0, 1fr); }
+  }
+  /* Active/Closed detail + applicants: left detail, an orange flow arrow, then applicants —
+     mirroring the template Edit → Preview layout. Detail is the narrower column so it doesn't
+     leave a wide band of whitespace beside its left-aligned content. */
+  /* Detail | arrow | Applicants | arrow | Confirmed. Applicants and Confirmed share the same
+     column width; Detail is a touch narrower so both arrows fit. */
+  .jobs-detail-grid { display: grid; grid-template-columns: minmax(0, 0.9fr) 64px minmax(0, 0.85fr) 64px minmax(0, 0.85fr); align-items: start; row-gap: 16px; }
+  @media (max-width: 1400px) {
+    .jobs-detail-grid { grid-template-columns: minmax(0, 1fr); }
+    .jobs-flow-arrow { display: none; }
   }
   .template-edit-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.95fr); gap: 64px; align-items: start; max-width: 1800px; margin: 0 auto; width: 100%; }
   /* Edit → Preview arrow sits on the gap between column 1 and 2 (fr ratio 1 : 1 : 0.95 → total 2.95) */
@@ -638,19 +738,27 @@ export default function OwnerRecruitmentPage() {
   )
   const [applicants, setApplicants] = useState<JobApplicant[]>([])
   const [recommendations, setRecommendations] = useState<CandidateRecommendation[]>([])
-  // Supervisor profile popup — opened from the Job Info/Supervisor card under Applicants.
-  const [supervisorModal, setSupervisorModal] = useState<{
-    id: string; full_name: string; role?: string; email_address?: string
-    phone_number?: string | null; profile_photo_url?: string | null
-  } | null>(null)
-  const [supervisorModalLoading, setSupervisorModalLoading] = useState(false)
-
+  // Confirmed = both sides accepted (employer accepted + worker confirmed the invitation); they get
+  // their own panel. Applicants only shows people still in play: those awaiting the Owner's decision
+  // (pending → Accept/Reject) and those the Owner accepted who haven't confirmed yet (awaiting the
+  // worker). Terminal states — rejected, confirmed, removed (cancelled_by_employer), job_closed,
+  // withdrawn — are dropped from Applicants (Confirmed hires live in their own panel).
+  const isConfirmedApplicant = (a: JobApplicant) => a.status === 'accepted' && a.invitation_status === 'accepted'
+  const confirmedApplicants = useMemo(() => applicants.filter(isConfirmedApplicant), [applicants])
+  const pendingApplicants = useMemo(
+    () => applicants
+      .filter(a => a.status === 'pending' || (a.status === 'accepted' && a.invitation_status !== 'accepted'))
+      // Already-accepted (awaiting the worker's reply) float to the top — we've committed to them and
+      // are just waiting on their side, so they should be seen first.
+      .sort((a, b) => (a.status === 'accepted' ? 0 : 1) - (b.status === 'accepted' ? 0 : 1)),
+    [applicants],
+  )
   // ui state
   const [activeTab, setActiveTab] = useState<Tab>('jobs')
-  const [postView, setPostView] = useState<'none' | 'archived' | 'template'>('none')
+  const [postView, setPostView] = useState<'none' | 'archived' | 'template' | 'pending'>('none')
   // Job Sources accordion: which card's dropdown is expanded. Template opens by default;
   // opening one automatically closes the others — never more than one open at a time.
-  const [openSource, setOpenSource] = useState<'none' | 'drafts' | 'archived' | 'templates'>('templates')
+  const [openSource, setOpenSource] = useState<'none' | 'pending' | 'drafts' | 'archived' | 'templates'>('none')
   const [loading, setLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
   const [aiLoading, setAiLoading] = useState(false)
@@ -659,26 +767,44 @@ export default function OwnerRecruitmentPage() {
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null)
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // department filter dropdowns — Jobs tab + Review tab (each panel filters independently)
+  // department filter dropdown — Jobs tab (Pending Approval now lives in the Job Sources
+  // accordion as a plain card list, matching Drafts/Archived/Template, so it has no filter of its own)
   const [jobsDeptFilter, setJobsDeptFilter] = useState<string>('all')
   const [jobsDeptDropdownOpen, setJobsDeptDropdownOpen] = useState(false)
   const jobsDeptDropdownRef = useRef<HTMLDivElement>(null)
+
+  // Panel height for the Jobs/Closed layout — viewport minus the grid's real offset from the
+  // top of the page, so the three panels (list / detail / applicants) all end inside one screen
+  // and scroll internally. A hardcoded 100vh figure ignores the tab bar above and leaves the
+  // page itself with a residual scrollbar. Measured through a callback ref: a mount-time effect
+  // is too early (the grid only renders after the auth/loading gate) and would never re-fire.
+  const jobsGridNode = useRef<HTMLDivElement | null>(null)
+  const [panelMaxHeight, setPanelMaxHeight] = useState<number | null>(null)
+  const measurePanelHeight = useCallback(() => {
+    const el = jobsGridNode.current
+    if (!el) return
+    // The page scrolls inside <main> (100vh, overflowY auto), not the window — take the grid's
+    // offset within that container. The card wrapper below the grid adds 28px bottom padding,
+    // so the panels must stop 28px short of the viewport or <main> itself grows a scrollbar.
+    const mainEl = el.closest('main')
+    const scrollTop = mainEl ? mainEl.scrollTop : window.scrollY
+    const topInContainer = el.getBoundingClientRect().top + scrollTop
+    setPanelMaxHeight(Math.max(320, window.innerHeight - topInContainer - 28))
+  }, [])
+  const jobsGridRef = useCallback((el: HTMLDivElement | null) => {
+    jobsGridNode.current = el
+    if (el) measurePanelHeight()
+  }, [measurePanelHeight])
+  useEffect(() => {
+    window.addEventListener('resize', measurePanelHeight)
+    return () => window.removeEventListener('resize', measurePanelHeight)
+  }, [measurePanelHeight])
   useEffect(() => {
     if (!jobsDeptDropdownOpen) return
     const handler = (e: MouseEvent) => { if (!jobsDeptDropdownRef.current?.contains(e.target as Node)) setJobsDeptDropdownOpen(false) }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [jobsDeptDropdownOpen])
-
-  const [reviewDeptFilter, setReviewDeptFilter] = useState<string>('all')
-  const [reviewDeptDropdownOpen, setReviewDeptDropdownOpen] = useState(false)
-  const reviewDeptDropdownRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!reviewDeptDropdownOpen) return
-    const handler = (e: MouseEvent) => { if (!reviewDeptDropdownRef.current?.contains(e.target as Node)) setReviewDeptDropdownOpen(false) }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [reviewDeptDropdownOpen])
 
   // form modal
   const [formOpen, setFormOpen] = useState(false)
@@ -804,6 +930,16 @@ export default function OwnerRecruitmentPage() {
   const [rejectReason, setRejectReason] = useState('')
   const [pendingRejectId, setPendingRejectId] = useState('')
 
+  // Worker pool — Casual Workers who already completed a shift for this company. The Owner can hand
+  // a posting straight to them instead of waiting for strangers on the public board.
+  const [poolModalOpen, setPoolModalOpen] = useState(false)
+  const [poolWorkers, setPoolWorkers] = useState<PoolWorker[]>([])
+  const [poolLoading, setPoolLoading] = useState(false)
+  const [poolSelected, setPoolSelected] = useState<Set<string>>(new Set())
+  const [poolInviting, setPoolInviting] = useState(false)
+  const [poolResults, setPoolResults] = useState<PoolInviteResult[]>([])
+  const [poolError, setPoolError] = useState('')
+
   const selectedLive = useMemo(() => livePostings.find(p => p.id === selectedLiveId) ?? null, [livePostings, selectedLiveId])
   const selectedArchived = useMemo(() => livePostings.find(p => p.id === selectedArchivedId) ?? null, [livePostings, selectedArchivedId])
   const selectedPending = useMemo(() => pendingPostings.find(p => p.id === selectedPendingId) ?? null, [pendingPostings, selectedPendingId])
@@ -880,25 +1016,6 @@ export default function OwnerRecruitmentPage() {
     } catch { setArchivedApplicants([]) }
   }, [])
 
-  // Opens the Supervisor profile popup — shows the posting's cached name/photo immediately,
-  // then fills in role/email/phone once /api/user/me resolves.
-  const openSupervisorModal = useCallback(async (posting: JobPostingSummary) => {
-    if (!posting.assigned_employee_id) return
-    setSupervisorModal({
-      id: posting.assigned_employee_id,
-      full_name: posting.assigned_employee_name ?? '—',
-      profile_photo_url: posting.assigned_employee_photo_url,
-    })
-    setSupervisorModalLoading(true)
-    try {
-      const res = await fetch(`/api/user/me?user_id=${posting.assigned_employee_id}`)
-      const data = await res.json()
-      if (data.success) setSupervisorModal(data.user)
-    } catch { /* keep the fallback values already shown */ } finally {
-      setSupervisorModalLoading(false)
-    }
-  }, [])
-
   // initial auth + load
   useEffect(() => {
     let cancelled = false
@@ -919,7 +1036,13 @@ export default function OwnerRecruitmentPage() {
       setInternalUserId(uid)
       if (meData.user?.full_name) setOwnerName(meData.user.full_name)
 
-      let storedCid = localStorage.getItem(`tasking_company_id_${authId}`) || meData.user.company_id || ''
+      // Must check the generic 'tasking_company_id' key FIRST — it's what Settings' "switch active
+      // company" writes (see CompanySettingsView.handleSwitchActiveCompany) and what every other
+      // owner page (sidebar, Communication, Team…) already reads first. Reading only the per-user
+      // key here let this page silently show a different (stale) company than the rest of the app
+      // after a company switch — e.g. the sidebar's Recruitment dot reflecting the active company
+      // while this page's own Active Jobs / Pending Approval showed a leftover company's data.
+      let storedCid = localStorage.getItem('tasking_company_id') || localStorage.getItem(`tasking_company_id_${authId}`) || meData.user.company_id || ''
       if (!storedCid) {
         const byOwnerRes = await fetch(`/api/company/by-owner?owner_id=${authId}`)
         const byOwnerData = await byOwnerRes.json()
@@ -1525,7 +1648,8 @@ export default function OwnerRecruitmentPage() {
       setPostView('none')
       await fetchAll(companyId, internalUserId)
       showToast(action === 'unarchive_posting' ? 'Job unarchived' : 'Job deleted')
-      if (action === 'unarchive_posting') setActiveTab('jobs')
+      // Restores to wherever it was archived from — Closed goes back to Closed, not Active.
+      if (action === 'unarchive_posting') setActiveTab(data.posting?.status === 'closed' ? 'closed' : 'jobs')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update archived job')
     } finally { setActionLoading(false) }
@@ -1548,12 +1672,56 @@ export default function OwnerRecruitmentPage() {
     } finally { setActionLoading(false) }
   }
 
+  const openPoolModal = async () => {
+    if (!companyId) return
+    setPoolModalOpen(true); setPoolSelected(new Set()); setPoolResults([]); setPoolError('')
+    setPoolLoading(true)
+    try {
+      const res = await fetch(`/api/recruitment?resource=pool_workers&company_id=${companyId}`)
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to load worker pool')
+      setPoolWorkers(data.poolWorkers ?? [])
+    } catch (err) {
+      setPoolError(err instanceof Error ? err.message : 'Failed to load worker pool')
+    } finally { setPoolLoading(false) }
+  }
+
+  // Offers land as invitations the workers still have to confirm — and each one is re-checked
+  // against the same hard gates as a public application, so a worker already booked that day (or
+  // banned) is refused and reported back rather than silently double-booked.
+  const invitePoolWorkers = async () => {
+    if (!selectedLiveId || !internalUserId || poolSelected.size === 0) return
+    setPoolInviting(true); setPoolError('')
+    try {
+      const res = await fetch('/api/recruitment', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'invite_pool_workers',
+          job_id: selectedLiveId,
+          user_ids: [...poolSelected],
+          sent_by: internalUserId,
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to send offers')
+      setPoolResults(data.results ?? [])
+      setPoolSelected(new Set())
+      await Promise.all([fetchApplicants(selectedLiveId), fetchAll(companyId, internalUserId)])
+      const sent = (data.results ?? []).filter((r: PoolInviteResult) => r.invited).length
+      if (sent > 0) showToast(sent === 1 ? 'Offer sent' : `${sent} offers sent`)
+    } catch (err) {
+      setPoolError(err instanceof Error ? err.message : 'Failed to send offers')
+    } finally { setPoolInviting(false) }
+  }
+
   // Remove ONE confirmed worker (the job keeps hiring) — needs a written reason since a committed
   // worker is being cancelled on. Cancelling the WHOLE job is done via Archive → Delete, which
   // cancels any confirmed workers' shifts and notifies them automatically.
   const [removeWorkerTarget, setRemoveWorkerTarget] = useState<JobApplicant | null>(null)
   const [cancelReason, setCancelReason] = useState('')
   const [cancelSubmitError, setCancelSubmitError] = useState('')
+  // Applicant whose full profile modal is open — opened by clicking the compact card's avatar.
+  const [applicantDetail, setApplicantDetail] = useState<JobApplicant | null>(null)
 
   const submitRemoveWorker = async () => {
     if (!removeWorkerTarget || !internalUserId) return
@@ -1609,6 +1777,7 @@ export default function OwnerRecruitmentPage() {
       }
 
       setSelectedPendingId('')
+      setPostView('none')
       setRejectModalOpen(false); setRejectReason(''); setPendingRejectId('')
       await fetchAll(companyId, internalUserId)
       if (decision === 'approve_posting') {
@@ -1760,9 +1929,6 @@ export default function OwnerRecruitmentPage() {
     [filteredJobsPostings],
   )
 
-  const reviewDepts = useMemo(() => ['all', ...Array.from(new Set(pendingPostings.map(p => p.department_name).filter(Boolean)))] as string[], [pendingPostings])
-  const filteredPendingPostings = useMemo(() => reviewDeptFilter === 'all' ? pendingPostings : pendingPostings.filter(p => p.department_name === reviewDeptFilter), [pendingPostings, reviewDeptFilter])
-
   // ── render ───────────────────────────────────────────────────────────────────
 
   return (
@@ -1793,15 +1959,14 @@ export default function OwnerRecruitmentPage() {
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: 4, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 999, boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
             {([
               { key: 'jobs' as Tab,   label: 'Active Jobs' },
-              { key: 'closed' as Tab, label: 'Closed' },
-              { key: 'review' as Tab, label: 'Pending Approval' },
-              { key: 'post' as Tab,   label: 'Post Job' },
+              { key: 'post' as Tab,   label: 'Create Job' },
+              { key: 'closed' as Tab, label: 'Closed Jobs' },
             ]).map(tab => {
               const active = activeTab === tab.key
               return (
                 <button
                   key={tab.key}
-                  onClick={() => { setActiveTab(tab.key); setPostView('none'); setOpenSource('templates'); setSelectedArchivedId(''); setArchivedSelected(new Set()); setSelectedTemplateId(''); setSelectedPendingId(''); setSelectedLiveId(''); setJobsDeptFilter('all'); setJobsSelected(new Set()) }}
+                  onClick={() => { setActiveTab(tab.key); setPostView('none'); setOpenSource('none'); setSelectedArchivedId(''); setArchivedSelected(new Set()); setSelectedTemplateId(''); setSelectedPendingId(''); setSelectedLiveId(''); setJobsDeptFilter('all'); setJobsSelected(new Set()) }}
                   style={{
                     height: 36, padding: '0 16px', borderRadius: '99px', cursor: 'pointer', fontWeight: 700, fontSize: '0.8125rem',
                     border: 'none',
@@ -1813,10 +1978,13 @@ export default function OwnerRecruitmentPage() {
                   }}
                 >
                   {tab.label}
-                  {tab.key === 'review' && pendingPostings.length > 0 && (
+                  {/* Pending Approval now lives inside Post Job's Job Sources accordion — the dot moves with it */}
+                  {tab.key === 'post' && pendingPostings.length > 0 && (
                     <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#EF4444', flexShrink: 0 }} />
                   )}
-                  {tab.key === 'jobs' && livePostings.some(p => p.pending_count > 0) && (
+                  {/* Scoped to open postings only — a closed/archived job's stale pending_count
+                      shouldn't light up a dot on a tab that no longer shows that posting. */}
+                  {tab.key === 'jobs' && openPostings.some(p => p.pending_count > 0) && (
                     <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#EF4444', flexShrink: 0 }} />
                   )}
                 </button>
@@ -1833,11 +2001,12 @@ export default function OwnerRecruitmentPage() {
 
           {/* ══ JOBS / CLOSED tab — same list+detail layout, source list switches by tab ══ */}
           {(activeTab === 'jobs' || activeTab === 'closed') && (
-            <div className="recruitment-grid">
+            <div className="recruitment-grid" ref={jobsGridRef}>
 
-              {/* Left: job list */}
-              <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 14, overflow: 'hidden' }}>
-                <div style={{ height: LIST_HEADER_HEIGHT, padding: '0 18px', boxSizing: 'border-box', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', gap: 8 }}>
+              {/* Left: job list — pinned to the viewport with its own scrollbar: the header stays
+                  put and only the card list scrolls, instead of the whole page growing with jobs. */}
+              <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 14, overflow: 'hidden', maxHeight: panelMaxHeight ?? undefined, display: 'flex', flexDirection: 'column' }}>
+                <div style={{ height: LIST_HEADER_HEIGHT, padding: '0 18px', boxSizing: 'border-box', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                   <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                     <Briefcase size={15} style={{ color: '#F97316' }} />
                   </div>
@@ -1873,7 +2042,7 @@ export default function OwnerRecruitmentPage() {
                       <button
                         type="button"
                         onClick={() => setJobsDeptDropdownOpen(o => !o)}
-                        style={{ display: 'flex', alignItems: 'center', gap: 5, height: 36, padding: '0 10px', border: `1.5px solid ${jobsDeptDropdownOpen ? '#F97316' : '#E5E7EB'}`, borderRadius: 8, background: '#FFFFFF', color: '#374151', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', boxShadow: jobsDeptDropdownOpen ? '0 0 0 3px rgba(249,115,22,0.10)' : 'none', transition: 'border-color 0.15s' }}
+                        style={{ display: 'flex', alignItems: 'center', gap: 7, height: 36, padding: '0 14px', border: `1.5px solid ${jobsDeptDropdownOpen ? '#F97316' : '#E5E7EB'}`, borderRadius: 10, background: '#FFFFFF', color: '#374151', fontSize: 13, fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap', boxShadow: jobsDeptDropdownOpen ? '0 0 0 3px rgba(249,115,22,0.10)' : 'none', transition: 'border-color 0.15s' }}
                       >
 
                         {jobsDeptFilter === 'all' ? 'All Departments' : jobsDeptFilter}
@@ -1899,7 +2068,7 @@ export default function OwnerRecruitmentPage() {
                     </div>
                   )}
                 </div>
-                <div style={{ padding: '12px 14px' }}>
+                <div style={{ padding: '12px 14px', overflowY: 'auto', overscrollBehavior: 'contain', flex: 1, minHeight: 0 }}>
                 {loading ? (
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '24px 0', color: '#9CA3AF', fontSize: '0.875rem' }}>
                     <Spinner size={14} dark /> Loading...
@@ -1971,6 +2140,9 @@ export default function OwnerRecruitmentPage() {
                             onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
                           ><Archive size={14} /></button>
                           )}
+                          {/* Closed jobs must be archived first, not deleted directly — deleting is only
+                              offered from the Archived list, once the posting is safely out of the live board. */}
+                          {activeTab !== 'closed' && (
                           <button
                             type="button"
                             onClick={e => { e.stopPropagation(); setDeleteConfirm({ id: p.id, title: p.title, isDraft: false }) }}
@@ -1980,6 +2152,7 @@ export default function OwnerRecruitmentPage() {
                             onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FEE2E2' }}
                             onMouseLeave={e => { e.currentTarget.style.background = 'transparent' }}
                           ><Trash2 size={14} /></button>
+                          )}
                         </div>
                       </div>
                       {/* Title row — the new-applications alert dot lives outside the card's left edge instead, see wrapper */}
@@ -2033,50 +2206,43 @@ export default function OwnerRecruitmentPage() {
                   </div>
                 </div>
               ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.1fr) minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
-                {/* Job detail — read-only preview */}
-                <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ height: LIST_HEADER_HEIGHT, padding: '0 18px', boxSizing: 'border-box', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flexWrap: 'wrap' }}>
+              <div className="jobs-detail-grid">
+                {/* Job detail — read-only preview. Pinned to the viewport with its own scrollbar,
+                    so a long description never stretches the page — the body scrolls internally. */}
+                <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: panelMaxHeight ?? undefined }}>
+                  <div style={{ height: LIST_HEADER_HEIGHT, padding: '0 18px', boxSizing: 'border-box', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flexShrink: 0 }}>
                     <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       <Briefcase size={15} style={{ color: '#F97316' }} />
                     </div>
-                    <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }}>{selectedLive.title} Detail</span>
-                    {/* Who published this posting — Owner, Partner, or a Manager whose posting the Owner approved */}
-                    {selectedLive.created_by_name && (
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F1F5F9', color: '#475569', border: '1px solid #E2E8F0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 1 }}>Posted by {selectedLive.created_by_name}</span>
-                    )}
-                    {/* Application deadline countdown — lives next to the Posted-by badge, not buried in Schedule; sized to match it */}
-                    {(() => {
-                      const cd = deadlineCountdown(selectedLive.expires_at)
-                      if (!cd) return null
-                      return (
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 700, background: cd.expired ? '#FEF2F2' : '#FFFBEB', color: cd.expired ? '#B91C1C' : '#B45309', border: `1px solid ${cd.expired ? '#FECACA' : '#FDE68A'}`, whiteSpace: 'nowrap', flexShrink: 0 }}>
-                          <Clock size={11} />{cd.label}
-                        </span>
-                      )
-                    })()}
+                    <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{selectedLive.title} Detail</span>
                   </div>
                   {/* Job details body — mirrors the Template Preview design, plus a Schedule section */}
                   {(() => {
                     const p = selectedLive
-                    const toMins = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m }
                     const isShiftJob = p.is_recurring
                     const fmt12 = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return `${h12}:${String(m).padStart(2, '0')} ${ap}` }
-                    let totalAmt: number | null = null
-                    if (isShiftJob && p.salary_amount != null && p.shift_start_time && p.shift_end_time) {
-                      let worked = toMins(p.shift_end_time) - toMins(p.shift_start_time)
-                      if (p.break_start_time && p.break_end_time) worked -= (toMins(p.break_end_time) - toMins(p.break_start_time))
-                      if (worked > 0) totalAmt = Math.round(p.salary_amount * (worked / 60) * 100) / 100
-                    }
-                    const payLabel = p.salary_amount != null
-                      ? (isShiftJob ? `$${p.salary_amount}/hr${totalAmt != null ? ` ($${totalAmt % 1 === 0 ? totalAmt.toFixed(0) : totalAmt.toFixed(2)})` : ''}` : `$${p.salary_amount} flat rate`)
-                      : null
+                    const payLabel = buildPayLabel(p, false)
                     const uniformLabel = p.uniform_type === 'dress_code' ? 'Specific Dress Code' : (p.uniform_type === 'company' || p.uniform_required) ? 'Company Uniform Provided' : null
                     const metaRow: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10 }
                     const metaText: React.CSSProperties = { fontSize: '0.875rem', color: '#374151' }
                     const metaIcon: React.CSSProperties = { flexShrink: 0 }
+                    const cd = deadlineCountdown(p.expires_at)
                     return (
-                      <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+                      <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 16, overflowY: 'auto', overscrollBehavior: 'contain', flex: 1, minHeight: 0 }}>
+                        {/* Who posted it + application deadline — moved below the header title so the
+                            panel header only needs to fit the title, letting the column stay narrow */}
+                        {(p.created_by_name || cd) && (
+                          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                            {p.created_by_name && (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F1F5F9', color: '#475569', border: '1px solid #E2E8F0', whiteSpace: 'nowrap' }}>Posted by {p.created_by_name}</span>
+                            )}
+                            {cd && (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 700, background: cd.expired ? '#FEF2F2' : '#FFFBEB', color: cd.expired ? '#B91C1C' : '#B45309', border: `1px solid ${cd.expired ? '#FECACA' : '#FDE68A'}`, whiteSpace: 'nowrap' }}>
+                                <Clock size={11} />{cd.label}
+                              </span>
+                            )}
+                          </div>
+                        )}
                         {/* Job Board card look-alike */}
                         <div style={{ background: '#FFFFFF', border: '1.5px solid #EDE9E3', borderRadius: 16, padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
                           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -2168,6 +2334,9 @@ export default function OwnerRecruitmentPage() {
                               {!isShiftJob && p.job_start_time && (
                                 <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Start Time:</span> {fmt12(p.job_start_time)}</p>
                               )}
+                              {p.assigned_employee_name && (
+                                <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Supervisor:</span> {p.assigned_employee_name}</p>
+                              )}
                             </div>
                           </div>
 
@@ -2191,91 +2360,152 @@ export default function OwnerRecruitmentPage() {
                   })()}
                 </div>
 
-                {/* Applicants */}
-                <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ height: LIST_HEADER_HEIGHT, padding: '0 18px', boxSizing: 'border-box', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+                {/* Flow arrow between Detail and Applicants — same orange chip as the template layout */}
+                <div className="jobs-flow-arrow" style={{ display: 'flex', justifyContent: 'center', alignItems: 'flex-start', paddingTop: 150 }}>
+                  <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 6px rgba(249,115,22,0.35)' }}>
+                    <ArrowRight size={15} strokeWidth={2.5} />
+                  </div>
+                </div>
+
+                {/* Applicants — same treatment: pinned, with the list scrolling inside the panel */}
+                <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: panelMaxHeight ?? undefined }}>
+                  <div style={{ height: LIST_HEADER_HEIGHT, padding: '0 18px', boxSizing: 'border-box', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                     <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       <Users size={15} style={{ color: '#F97316' }} />
                     </div>
                     <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Applicants</span>
-                    {/* AI action — purple gradient button, same treatment as the other AI features */}
-                    <button
-                      onClick={recommendCandidates}
-                      disabled={aiLoading || applicants.length === 0}
-                      style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: aiLoading || applicants.length === 0 ? 'default' : 'pointer', opacity: aiLoading || applicants.length === 0 ? 0.6 : 1, flexShrink: 0 }}
-                    >
-                      {aiLoading ? <Spinner size={14} /> : <Sparkles size={15} strokeWidth={2.5} />} AI Assessment
-                    </button>
+                    {/* Hand the job straight to workers who already worked here, alongside the AI
+                        assessment of whoever applied on the public board. */}
+                    {activeTab !== 'closed' && (
+                      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                        <button
+                          onClick={openPoolModal}
+                          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: 'linear-gradient(135deg, #059669, #047857)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                        >
+                          <UserCheck size={15} strokeWidth={2.5} /> Invite from Pool
+                        </button>
+                        <button
+                          onClick={recommendCandidates}
+                          disabled={aiLoading || applicants.length === 0}
+                          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: aiLoading || applicants.length === 0 ? 'default' : 'pointer', opacity: aiLoading || applicants.length === 0 ? 0.6 : 1 }}
+                        >
+                          {aiLoading ? <Spinner size={14} /> : <Sparkles size={15} strokeWidth={2.5} />} AI Assessment
+                        </button>
+                      </div>
+                    )}
                   </div>
-                  {/* Job Information + clickable Supervisor card — every posting has a supervisor */}
-                  <JobScheduleSupervisorCard posting={selectedLive} onSupervisorClick={() => openSupervisorModal(selectedLive)} />
-                  <div style={{ padding: '18px 20px' }}>
-                        {applicants.length === 0 ? (
+                  <div style={{ padding: '18px 20px', overflowY: 'auto', overscrollBehavior: 'contain', flex: 1, minHeight: 0 }}>
+                        {pendingApplicants.length === 0 ? (
                           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '48px 24px', background: '#FFFFFF', borderRadius: 12, border: '1.5px dashed #E5E7EB' }}>
                             <div style={{ width: 48, height: 48, borderRadius: 14, background: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
                               <UserX size={22} style={{ color: '#D1D5DB' }} />
                             </div>
                             <p style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600, color: '#6B7280' }}>No applicants yet</p>
                           </div>
-                        ) : applicants.map(applicant => {
+                        ) : pendingApplicants.map(applicant => {
                           const rec = recommendations.find(r => r.applicant_id === applicant.id)
                           return (
-                            <div key={applicant.id} style={{ padding: '13px 14px', border: '1.5px solid #E5E7EB', borderRadius: 10, marginBottom: 10, background: '#FFFFFF' }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-                                  <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#1C1C1E', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FFFFFF', fontWeight: 700, fontSize: '0.75rem', flexShrink: 0 }}>
-                                    {applicant.full_name?.charAt(0)?.toUpperCase() ?? '?'}
+                            <ApplicantCard
+                              key={applicant.id}
+                              applicant={applicant}
+                              onOpenDetail={() => setApplicantDetail(applicant)}
+                              actions={
+                                applicant.status === 'pending' ? (
+                                  // Outlined pill buttons stacked, matching the Off Day Approve/Modify column
+                                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                    <button onClick={() => decideApplicant(applicant.id, 'accepted')} disabled={actionLoading}
+                                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#15803D', background: '#F0FDF4', border: '1.5px solid #BBF7D0', borderRadius: 999, padding: '6px 16px', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.6 : 1, transition: 'background 0.15s' }}
+                                      onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#DCFCE7' }}
+                                      onMouseLeave={e => { e.currentTarget.style.background = '#F0FDF4' }}
+                                    ><UserCheck size={13} /> Accept</button>
+                                    <button onClick={() => decideApplicant(applicant.id, 'rejected')} disabled={actionLoading}
+                                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#B91C1C', background: '#FEF2F2', border: '1.5px solid #FECACA', borderRadius: 999, padding: '6px 16px', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.6 : 1, transition: 'background 0.15s' }}
+                                      onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FEE2E2' }}
+                                      onMouseLeave={e => { e.currentTarget.style.background = '#FEF2F2' }}
+                                    ><UserX size={13} /> Reject</button>
                                   </div>
-                                  <div>
-                                    <strong style={{ color: '#111827', fontSize: '0.875rem', display: 'block', lineHeight: 1.3 }}>{applicant.full_name}</strong>
-                                    <span style={{ color: '#9CA3AF', fontSize: '0.75rem' }}>{applicant.email_address}</span>
+                                ) : applicant.status === 'accepted' ? (
+                                  // Accepted but the worker hasn't confirmed yet — the Owner can still change
+                                  // their mind: the Pending pill plus a Reject button, same style/behavior as
+                                  // the pending-decision Reject above (rescinds the outstanding invitation).
+                                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+                                    {applicantStatusPill(applicant)}
+                                    <button onClick={() => decideApplicant(applicant.id, 'rejected')} disabled={actionLoading}
+                                      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#B91C1C', background: '#FEF2F2', border: '1.5px solid #FECACA', borderRadius: 999, padding: '6px 16px', cursor: actionLoading ? 'default' : 'pointer', opacity: actionLoading ? 0.6 : 1, transition: 'background 0.15s' }}
+                                      onMouseEnter={e => { if (!actionLoading) e.currentTarget.style.background = '#FEE2E2' }}
+                                      onMouseLeave={e => { e.currentTarget.style.background = '#FEF2F2' }}
+                                    ><UserX size={13} /> Reject</button>
                                   </div>
-                                </div>
-                                {statusBadge(applicant.status)}
-                              </div>
-                              <ApplicantSnapshotBody applicant={applicant} />
+                                ) : applicantStatusPill(applicant)
+                              }
+                            >
                               {rec && (rec.insufficient ? (
-                                <div style={{ marginTop: 10, padding: '10px 12px', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 8, fontSize: '0.775rem', lineHeight: 1.5 }}>
+                                <div style={{ padding: '10px 12px', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 8, fontSize: '0.775rem', lineHeight: 1.5 }}>
                                   <strong style={{ color: '#6B7280' }}>AI: Insufficient information</strong>
                                   <p style={{ margin: '4px 0 0', color: '#6B7280' }}>{rec.reasons[0]}</p>
                                 </div>
                               ) : (
-                                <div style={{ marginTop: 10, padding: '10px 12px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, fontSize: '0.775rem', lineHeight: 1.5 }}>
-                                  <strong style={{ color: '#059669' }}>AI Score: {rec.score}/100 — {rec.recommendation}</strong>
-                                  <p style={{ margin: '4px 0 0', color: '#374151' }}>{rec.reasons[0] ?? rec.suggested_next_step}</p>
-                                  {rec.risks[0] && <p style={{ margin: '3px 0 0', color: '#B45309' }}>{rec.risks[0]}</p>}
-                                </div>
+                                // Hover the green segment for why it scored this way, the pink segment for
+                                // what's holding it back — no caption text, just the bar.
+                                <AiFitGauge score={rec.score} reason={rec.reasons[0] ?? rec.suggested_next_step} risk={rec.risks[0]} />
                               ))}
-                              {applicant.status === 'pending' && (
-                                <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
-                                  <button onClick={() => decideApplicant(applicant.id, 'accepted')} disabled={actionLoading}
-                                    style={{ flex: 1, border: 'none', borderRadius: 7, background: '#059669', color: '#FFFFFF', padding: '6px 10px', display: 'flex', gap: 5, alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: '0.775rem', fontWeight: 600 }}
-                                  ><UserCheck size={13} /> Accept</button>
-                                  <button onClick={() => decideApplicant(applicant.id, 'rejected')} disabled={actionLoading}
-                                    style={{ flex: 1, border: 'none', borderRadius: 7, background: '#DC2626', color: '#FFFFFF', padding: '6px 10px', display: 'flex', gap: 5, alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: '0.775rem', fontWeight: 600 }}
-                                  ><UserX size={13} /> Reject</button>
-                                </div>
-                              )}
-                              {applicant.status === 'accepted' && applicant.invitation_status === 'accepted' && (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
-                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.75rem', fontWeight: 700, color: '#15803D', background: '#DCFCE7', border: '1px solid #BBF7D0', borderRadius: 999, padding: '3px 11px' }}>
-                                    <UserCheck size={12} /> Confirmed
-                                  </span>
-                                  {(applicant.worker_cancellation_count ?? 0) > 0 && (
-                                    <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#B45309' }}>
-                                      Cancelled {applicant.worker_cancellation_count} confirmed shift{applicant.worker_cancellation_count === 1 ? '' : 's'} before
-                                    </span>
-                                  )}
-                                  <button onClick={() => { setRemoveWorkerTarget(applicant); setCancelReason(''); setCancelSubmitError('') }} disabled={actionLoading}
-                                    style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 5, border: '1px solid #FECACA', borderRadius: 7, background: '#FEF2F2', color: '#DC2626', padding: '5px 11px', cursor: 'pointer', fontSize: '0.775rem', fontWeight: 700 }}
-                                    onMouseEnter={e => { e.currentTarget.style.background = '#FEE2E2' }}
-                                    onMouseLeave={e => { e.currentTarget.style.background = '#FEF2F2' }}
-                                  ><UserX size={13} /> Remove Worker</button>
-                                </div>
-                              )}
-                            </div>
+                            </ApplicantCard>
                           )
                         })}
+                  </div>
+                </div>
+
+                {/* Flow arrow between Applicants and Confirmed */}
+                <div className="jobs-flow-arrow" style={{ display: 'flex', justifyContent: 'center', alignItems: 'flex-start', paddingTop: 150 }}>
+                  <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 6px rgba(249,115,22,0.35)' }}>
+                    <ArrowRight size={15} strokeWidth={2.5} />
+                  </div>
+                </div>
+
+                {/* Confirmed — both sides accepted. Its own panel to the right of Applicants. */}
+                <div className="recruitment-panel jobs-confirmed-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: panelMaxHeight ?? undefined }}>
+                  <div style={{ height: LIST_HEADER_HEIGHT, padding: '0 18px', boxSizing: 'border-box', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 9, background: '#ECFDF5', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <UserCheck size={15} style={{ color: '#059669' }} />
+                    </div>
+                    <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Confirmed</span>
+                    <span title="Confirmed hires / positions to fill" style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 700, background: '#ECFDF5', color: '#059669', border: '1px solid #A7F3D0', flexShrink: 0 }}>
+                      {confirmedApplicants.length} / {selectedLive.openings ?? 1}
+                    </span>
+                  </div>
+                  <div style={{ padding: '18px 20px', overflowY: 'auto', overscrollBehavior: 'contain', flex: 1, minHeight: 0 }}>
+                    {confirmedApplicants.length === 0 ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '48px 24px', background: '#FFFFFF', borderRadius: 12, border: '1.5px dashed #E5E7EB' }}>
+                        <div style={{ width: 48, height: 48, borderRadius: 14, background: '#F3F4F6', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
+                          <UserCheck size={22} style={{ color: '#D1D5DB' }} />
+                        </div>
+                        <p style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600, color: '#6B7280' }}>No confirmed workers yet</p>
+                      </div>
+                    ) : confirmedApplicants.map(applicant => (
+                      <ApplicantCard
+                        key={applicant.id}
+                        applicant={applicant}
+                        onOpenDetail={() => setApplicantDetail(applicant)}
+                        dateLabel="Confirmed"
+                        dateValue={applicant.confirmed_at}
+                        actions={
+                          // They're in the Confirmed panel, so no need to also label them "Confirmed";
+                          // the only action left is to remove them.
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+                            {(applicant.worker_cancellation_count ?? 0) > 0 && (
+                              <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#B45309', textAlign: 'right' }}>
+                                Cancelled {applicant.worker_cancellation_count} confirmed shift{applicant.worker_cancellation_count === 1 ? '' : 's'} before
+                              </span>
+                            )}
+                            <button onClick={() => { setRemoveWorkerTarget(applicant); setCancelReason(''); setCancelSubmitError('') }} disabled={actionLoading}
+                              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', fontWeight: 700, color: '#B91C1C', background: '#FEF2F2', border: '1.5px solid #FECACA', borderRadius: 999, padding: '6px 16px', cursor: 'pointer', transition: 'background 0.15s' }}
+                              onMouseEnter={e => { e.currentTarget.style.background = '#FEE2E2' }}
+                              onMouseLeave={e => { e.currentTarget.style.background = '#FEF2F2' }}
+                            ><UserX size={13} /> Remove</button>
+                          </div>
+                        }
+                      />
+                    ))}
                   </div>
                 </div>
               </div>
@@ -2295,7 +2525,7 @@ export default function OwnerRecruitmentPage() {
                 <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                   <Plus size={15} style={{ color: '#F97316' }} />
                 </div>
-                <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Job Sources</span>
+                <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Job Postings</span>
                 {/* AI action — purple gradient button, same treatment as the other AI features */}
                 <button
                   type="button"
@@ -2307,9 +2537,10 @@ export default function OwnerRecruitmentPage() {
               </div>
               <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0, overflowY: 'auto' }}>
                 {([
+                  { key: 'pending' as const, icon: ClipboardList, title: 'Pending Approval', onClick: () => { setOpenSource(o => o === 'pending' ? 'none' : 'pending'); setPostView('none'); setSelectedPendingId('') } },
                   { key: 'drafts' as const,   icon: FileText, title: 'Drafts', onClick: () => { setOpenSource(o => o === 'drafts' ? 'none' : 'drafts'); setPostView('none') } },
                   { key: 'archived' as const, icon: Archive,  title: 'Archived', onClick: () => { setOpenSource(o => o === 'archived' ? 'none' : 'archived'); setPostView('none'); setSelectedArchivedId(''); setArchivedSelected(new Set()) } },
-                  { key: 'templates' as const, icon: ClipboardList, title: 'Template', onClick: () => { setPostView('none'); setOpenSource(o => o === 'templates' ? 'none' : 'templates') } },
+                  { key: 'templates' as const, icon: ClipboardList, title: 'Templates', onClick: () => { setPostView('none'); setOpenSource(o => o === 'templates' ? 'none' : 'templates') } },
                 ]).map((card, idx) => {
                   const Icon = card.icon
                   const isSelected = openSource === card.key
@@ -2336,8 +2567,55 @@ export default function OwnerRecruitmentPage() {
                         <Icon size={14} style={{ color: '#F97316' }} />
                       </div>
                       <h3 style={{ margin: 0, flex: 1, fontSize: '0.9375rem', fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{card.title}</h3>
+                      {card.key === 'pending' && pendingPostings.length > 0 && (
+                        <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#EF4444', flexShrink: 0 }} />
+                      )}
                       <ChevronDown size={15} style={{ color: isSelected ? '#F97316' : '#9CA3AF', flexShrink: 0, transition: 'transform 0.18s', transform: isSelected ? 'rotate(180deg)' : 'rotate(0deg)' }} />
                     </article>
+
+                    {/* ── Pending Approval dropdown — postings submitted by Managers, awaiting Owner review ── */}
+                    {isSelected && card.key === 'pending' && (
+                      <div style={{ padding: '0 0 4px 14px', display: 'flex', flexDirection: 'column', gap: 10, animation: 'deptCardIn 0.2s ease both' }}>
+                        {pendingPostings.length === 0 ? (
+                          <div style={{ padding: '20px 16px', textAlign: 'center', background: '#F8FAFC', borderRadius: 12 }}>
+                            <ClipboardList size={20} style={{ color: '#CBD5E1', margin: '0 auto 6px', display: 'block' }} />
+                            <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No postings awaiting approval.</p>
+                          </div>
+                        ) : (
+                          pendingPostings.map((p, i) => (
+                            <div key={p.id} style={{
+                              display: 'flex', flexDirection: 'column', gap: 16,
+                              border: '1px solid #E5E7EB', borderRadius: 10, padding: '16px 16px 18px', background: '#F9FAFB',
+                              animation: `deptCardIn 0.28s ease both ${i * 55}ms`,
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                                <DepartmentBadge departmentId={p.department_id} departmentName={p.department_name} />
+                                {p.is_recurring
+                                  ? <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', whiteSpace: 'nowrap', flexShrink: 0 }}>Shift Job</span>
+                                  : <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE', whiteSpace: 'nowrap', flexShrink: 0 }}>One-Off Job</span>
+                                }
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => { setPostView('pending'); setSelectedPendingId(p.id) }}
+                                title="Review posting"
+                                style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700, color: selectedPendingId === p.id && postView === 'pending' ? '#F97316' : '#0F172A', minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', border: 'none', background: 'transparent', padding: 0, textAlign: 'left', cursor: 'pointer' }}
+                                onMouseEnter={e => { e.currentTarget.style.color = '#F97316' }}
+                                onMouseLeave={e => { e.currentTarget.style.color = selectedPendingId === p.id && postView === 'pending' ? '#F97316' : '#0F172A' }}
+                              >{p.title}</button>
+                              {/* Who submitted it — every posting here came from a Manager awaiting Owner approval */}
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, minWidth: 0 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                                  <RoleAvatar role="Manager" size={22} photoUrl={p.submitter_photo_url} />
+                                  <span style={{ color: '#111827', fontSize: 13, fontWeight: 400 }}>{p.submitter_name ?? 'Manager'}</span>
+                                </div>
+                                <span style={{ fontSize: '0.75rem', color: '#9CA3AF', flexShrink: 0 }}>Submitted {formatCompactAt(p.created_at)}</span>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
 
                     {/* ── Drafts dropdown ── */}
                     {isSelected && card.key === 'drafts' && (
@@ -2545,9 +2823,179 @@ export default function OwnerRecruitmentPage() {
               </div>
             )}
 
+            {/* Pending detail — Approve/Reject a Manager's submitted posting, opened from the Job Sources dropdown */}
+            {postView === 'pending' && selectedPending != null && (
+              // There's no Applicants panel here (nothing can have applied to an unapproved posting),
+              // so the detail panel takes the full row width.
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
+              <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                {/* Header — same composition as the Active/Closed/Archived detail header (icon, "{title} Detail",
+                    deadline countdown), plus the Approve/Reject actions this view needs. Who submitted it is
+                    already shown on the card in the Job Sources list — this header instead surfaces the one
+                    thing the card can't fit: how many positions the Manager is asking to fill. */}
+                <div style={{ padding: '18px 24px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flexWrap: 'wrap' }}>
+                    <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <Briefcase size={15} style={{ color: '#F97316' }} />
+                    </div>
+                    <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }}>{selectedPending.title} Detail</span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F1F5F9', color: '#475569', border: '1px solid #E2E8F0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 1 }}>
+                      <Users size={11} style={{ marginRight: 5, verticalAlign: -1 }} />{selectedPending.openings ?? 1} Position{(selectedPending.openings ?? 1) === 1 ? '' : 's'}
+                    </span>
+                    {(() => {
+                      const cd = deadlineCountdown(selectedPending.expires_at)
+                      if (!cd) return null
+                      return (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 700, background: cd.expired ? '#FEF2F2' : '#FFFBEB', color: cd.expired ? '#B91C1C' : '#B45309', border: `1px solid ${cd.expired ? '#FECACA' : '#FDE68A'}`, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                          <Clock size={11} />{cd.label}
+                        </span>
+                      )
+                    })()}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                    <button onClick={() => decidePosting(selectedPending.id, 'approve_posting')} disabled={actionLoading}
+                      style={{ height: 34, padding: '0 14px', border: 'none', borderRadius: 9, background: '#059669', color: '#FFFFFF', cursor: actionLoading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, opacity: actionLoading ? 0.6 : 1 }}
+                    ><CheckCircle size={13} /> Approve</button>
+                    <button onClick={() => { setPendingRejectId(selectedPending.id); setRejectReason(''); setRejectModalOpen(true) }} disabled={actionLoading}
+                      style={{ height: 34, padding: '0 14px', border: 'none', borderRadius: 9, background: '#DC2626', color: '#FFFFFF', cursor: actionLoading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, opacity: actionLoading ? 0.6 : 1 }}
+                    ><XCircle size={13} /> Reject</button>
+                  </div>
+                </div>
+
+                {/* Body — identical to the Active/Closed/Archived job detail (every role fills out the same
+                    posting fields, so a Manager's submission should read exactly like the Owner's own). */}
+                {(() => {
+                  const p = selectedPending
+                  const isShiftJob = p.is_recurring
+                  const fmt12 = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return `${h12}:${String(m).padStart(2, '0')} ${ap}` }
+                  const payLabel = buildPayLabel(p)
+                  const uniformLabel = p.uniform_type === 'dress_code' ? 'Specific Dress Code' : (p.uniform_type === 'company' || p.uniform_required) ? 'Company Uniform Provided' : null
+                  const metaRow: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10 }
+                  const metaText: React.CSSProperties = { fontSize: '0.875rem', color: '#374151' }
+                  const metaIcon: React.CSSProperties = { flexShrink: 0 }
+                  return (
+                    <div style={{ padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 16, overflowY: 'auto' }}>
+                      {/* Job Board card look-alike */}
+                      <div style={{ background: '#FFFFFF', border: '1.5px solid #EDE9E3', borderRadius: 16, padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          {!isShiftJob && (p.urgency === 'high' || p.urgency === 'urgent') && (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#FFF1F2', color: '#E11D48', fontSize: '0.75rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999 }}>
+                              <Zap size={12} />{p.urgency === 'urgent' ? 'Urgent' : 'High'}
+                            </span>
+                          )}
+                          {p.minimum_age && (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#EEF2FF', color: '#4F46E5', fontSize: '0.75rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999 }}>
+                              <Cake size={12} />{p.minimum_age}+
+                            </span>
+                          )}
+                          {p.experience_required && p.experience_required !== 'Not Required' && (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#ECFEFF', color: '#0891B2', fontSize: '0.75rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999 }}>
+                              <UserCheck size={12} />{p.experience_required}
+                            </span>
+                          )}
+                          {uniformLabel && (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, background: '#FFFBEB', color: '#B45309', fontSize: '0.75rem', fontWeight: 800, padding: '4px 10px', borderRadius: 999 }}>
+                              <Shirt size={12} />{p.uniform_type === 'dress_code' ? 'Dress Code' : 'Uniform Provided'}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          <p style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827', lineHeight: 1.35, margin: 0 }}>{p.title}</p>
+                          <p style={{ fontSize: '0.875rem', fontWeight: 500, color: '#6B7280', margin: 0 }}>{p.company_name ?? companyName ?? '—'}</p>
+                        </div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                          {(companyLocation || p.company_location) && (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', fontWeight: 800, color: '#4B5563', background: '#F3F4F6', borderRadius: 999, padding: '4px 10px' }}>
+                              <MapPin size={12} strokeWidth={2.5} />{companyLocation || p.company_location}
+                            </span>
+                          )}
+                          {p.salary_amount != null && (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', fontWeight: 800, color: '#065F46', background: '#ECFDF5', borderRadius: 999, padding: '4px 10px' }}>
+                              ${p.salary_amount}{isShiftJob ? '/hr' : ''}
+                            </span>
+                          )}
+                          {!isShiftJob && p.estimated_hours && (
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', fontWeight: 800, color: '#1D4ED8', background: '#EFF6FF', borderRadius: 999, padding: '4px 10px' }}>
+                              <Clock size={12} />{p.estimated_hours}h
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Job detail look-alike */}
+                      <div style={{ border: '1.5px solid #EDE9E3', borderRadius: 16, padding: '24px 22px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+                        <div>
+                          <h2 style={{ fontWeight: 700, fontSize: '1.0625rem', color: '#111827', lineHeight: 1.35, margin: '0 0 4px' }}>{p.title}</h2>
+                          <p style={{ fontSize: '0.875rem', fontWeight: 500, color: '#6B7280', margin: '0 0 14px' }}>{p.company_name ?? companyName ?? '—'}</p>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {p.department_name && (
+                              <div style={metaRow}><LayoutGrid size={14} color="#F97316" strokeWidth={2} style={metaIcon} /><span style={metaText}>{p.department_name}</span></div>
+                            )}
+                            {p.minimum_age && (
+                              <div style={metaRow}><Cake size={14} color="#F97316" strokeWidth={2} style={metaIcon} /><span style={metaText}>{p.minimum_age}+</span></div>
+                            )}
+                            {p.experience_required && p.experience_required !== 'Not Required' && (
+                              <div style={metaRow}><UserCheck size={14} color="#F97316" strokeWidth={2} style={metaIcon} /><span style={metaText}>Experience {p.experience_required}</span></div>
+                            )}
+                            {uniformLabel && (
+                              <div style={metaRow}><Shirt size={14} color="#F97316" strokeWidth={2} style={metaIcon} /><span style={metaText}>{uniformLabel}</span></div>
+                            )}
+                            {!isShiftJob && p.estimated_hours && (
+                              <div style={metaRow}><Clock size={14} color="#F97316" strokeWidth={2} style={metaIcon} /><span style={metaText}>Est. {p.estimated_hours} hours</span></div>
+                            )}
+                            {payLabel && (
+                              <div style={metaRow}><DollarSign size={14} color="#F97316" strokeWidth={2} style={metaIcon} /><span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#059669' }}>{payLabel}</span></div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Schedule & posting facts — the full set of values entered when posting */}
+                        <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
+                          <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Schedule</p>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            {p.shift_date && (
+                              <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Date:</span> {new Date(p.shift_date).toLocaleDateString('en-SG', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                            )}
+                            {isShiftJob && (p.shift_start_time || p.shift_end_time) && (
+                              <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Working Hours:</span> {p.shift_start_time ? fmt12(p.shift_start_time) : '—'} – {p.shift_end_time ? fmt12(p.shift_end_time) : '—'}</p>
+                            )}
+                            {isShiftJob && (p.break_start_time || p.break_end_time) && (
+                              <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Break Time:</span> {p.break_start_time ? fmt12(p.break_start_time) : '—'} – {p.break_end_time ? fmt12(p.break_end_time) : '—'}</p>
+                            )}
+                            {!isShiftJob && p.job_start_time && (
+                              <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Start Time:</span> {fmt12(p.job_start_time)}</p>
+                            )}
+                            {p.assigned_employee_name && (
+                              <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Supervisor:</span> {p.assigned_employee_name}</p>
+                            )}
+                          </div>
+                        </div>
+
+                        <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
+                          <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Responsibilities</p>
+                          <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{p.description || '—'}</p>
+                        </div>
+                        <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
+                          <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Skills &amp; Qualifications</p>
+                          <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{p.requirements || '—'}</p>
+                        </div>
+                        {uniformLabel && p.uniform_details && (
+                          <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: 20 }}>
+                            <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>{p.uniform_type === 'dress_code' ? 'Dress Code' : 'Uniform Details'}</p>
+                            <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0, whiteSpace: 'pre-line' }}>{p.uniform_details}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })()}
+              </div>
+              </div>
+            )}
+
             {/* Archived detail — read-only view opened by clicking an archived job in the Job Sources dropdown */}
             {postView === 'archived' && selectedArchived != null && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.1fr) minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.7fr) minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
                 {/* Job detail — read-only */}
                 <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                   {/* 20px vertical padding (vs 17px elsewhere): keeps this divider level with the Job Sources header, whose 36px AI button makes it 6px taller */}
@@ -2575,18 +3023,9 @@ export default function OwnerRecruitmentPage() {
                           for the posting-only facts a template never has (date, hours, break) */}
                       {(() => {
                         const p = selectedArchived
-                        const toMins = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m }
                         const isShiftJob = p.is_recurring
                         const fmt12 = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return `${h12}:${String(m).padStart(2, '0')} ${ap}` }
-                        let totalAmt: number | null = null
-                        if (isShiftJob && p.salary_amount != null && p.shift_start_time && p.shift_end_time) {
-                          let worked = toMins(p.shift_end_time) - toMins(p.shift_start_time)
-                          if (p.break_start_time && p.break_end_time) worked -= (toMins(p.break_end_time) - toMins(p.break_start_time))
-                          if (worked > 0) totalAmt = Math.round(p.salary_amount * (worked / 60) * 100) / 100
-                        }
-                        const payLabel = p.salary_amount != null
-                          ? (isShiftJob ? `$${p.salary_amount}/hr${totalAmt != null ? ` ($${totalAmt % 1 === 0 ? totalAmt.toFixed(0) : totalAmt.toFixed(2)})` : ''}` : `$${p.salary_amount} flat rate`)
-                          : null
+                        const payLabel = buildPayLabel(p, false)
                         const uniformLabel = p.uniform_type === 'dress_code' ? 'Specific Dress Code' : (p.uniform_type === 'company' || p.uniform_required) ? 'Company Uniform Provided' : null
                         const metaRow: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 10 }
                         const metaText: React.CSSProperties = { fontSize: '0.875rem', color: '#374151' }
@@ -2684,6 +3123,9 @@ export default function OwnerRecruitmentPage() {
                                   {!isShiftJob && p.job_start_time && (
                                     <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Start Time:</span> {fmt12(p.job_start_time)}</p>
                                   )}
+                                  {p.assigned_employee_name && (
+                                    <p style={{ fontSize: '0.875rem', color: '#374151', lineHeight: 1.8, margin: 0 }}><span style={{ fontWeight: 600, color: '#EA580C' }}>Supervisor:</span> {p.assigned_employee_name}</p>
+                                  )}
                                 </div>
                               </div>
 
@@ -2720,8 +3162,6 @@ export default function OwnerRecruitmentPage() {
                       {archivedApplicants.filter(a => a.status === 'accepted' && a.invitation_status === 'accepted').length} / {selectedArchived.openings ?? 1}
                     </span>
                   </div>
-                  {/* Job Information + clickable Supervisor card — every posting has a supervisor */}
-                  <JobScheduleSupervisorCard posting={selectedArchived} onSupervisorClick={() => openSupervisorModal(selectedArchived)} />
                   <div style={{ padding: '18px 20px' }}>
                         {archivedApplicants.length === 0 ? (
                           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '48px 24px', background: '#FFFFFF', borderRadius: 12, border: '1.5px dashed #E5E7EB' }}>
@@ -2731,21 +3171,16 @@ export default function OwnerRecruitmentPage() {
                             <p style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600, color: '#6B7280' }}>No applicants yet</p>
                           </div>
                         ) : archivedApplicants.map(applicant => (
-                          <div key={applicant.id} style={{ padding: '13px 14px', border: '1.5px solid #E5E7EB', borderRadius: 10, marginBottom: 10, background: '#FFFFFF' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-                                <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#1C1C1E', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FFFFFF', fontWeight: 700, fontSize: '0.75rem', flexShrink: 0 }}>
-                                  {applicant.full_name?.charAt(0)?.toUpperCase() ?? '?'}
-                                </div>
-                                <div>
-                                  <strong style={{ color: '#111827', fontSize: '0.875rem', display: 'block', lineHeight: 1.3 }}>{applicant.full_name}</strong>
-                                  <span style={{ color: '#9CA3AF', fontSize: '0.75rem' }}>{applicant.email_address}</span>
-                                </div>
-                              </div>
-                              {statusBadge(applicant.status)}
-                            </div>
-                            <ApplicantSnapshotBody applicant={applicant} />
-                          </div>
+                          <ApplicantCard
+                            key={applicant.id}
+                            applicant={applicant}
+                            onOpenDetail={() => setApplicantDetail(applicant)}
+                            actions={
+                              applicant.status === 'accepted' && applicant.invitation_status === 'accepted'
+                                ? <ApplicantPill tone={{ bg: '#F0FDF4', border: '#BBF7D0', text: '#15803D' }} icon={<UserCheck size={13} />} label="Confirmed" />
+                                : (applicantStatusPill(applicant) ?? <ApplicantPill tone={{ bg: '#F3F4F6', border: '#E5E7EB', text: '#6B7280' }} label="Pending" />)
+                            }
+                          />
                         ))}
                   </div>
                 </div>
@@ -3135,303 +3570,101 @@ export default function OwnerRecruitmentPage() {
             </div>
           )}
 
-          {/* ══ REVIEW tab ════════════════════════════════════════════════════ */}
-          {activeTab === 'review' && (
-            <div className="recruitment-grid">
-
-              {/* Left: pending list */}
-              <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 14, overflow: 'hidden' }}>
-                <div style={{ height: LIST_HEADER_HEIGHT, padding: '0 18px', boxSizing: 'border-box', borderBottom: '1px solid #E2E8F0', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                    <ClipboardList size={15} style={{ color: '#F97316' }} />
-                  </div>
-                  <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, flex: 1 }}>Review Jobs</span>
-                  <div ref={reviewDeptDropdownRef} style={{ position: 'relative' }}>
-                    <button
-                      type="button"
-                      onClick={() => setReviewDeptDropdownOpen(o => !o)}
-                      style={{ display: 'flex', alignItems: 'center', gap: 5, height: 36, padding: '0 10px', border: `1.5px solid ${reviewDeptDropdownOpen ? '#F97316' : '#E5E7EB'}`, borderRadius: 8, background: '#FFFFFF', color: '#374151', fontSize: 12, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap', boxShadow: reviewDeptDropdownOpen ? '0 0 0 3px rgba(249,115,22,0.10)' : 'none', transition: 'border-color 0.15s' }}
-                    >
-                      {reviewDeptFilter === 'all' ? 'All Departments' : reviewDeptFilter}
-                      <ChevronDown size={11} style={{ color: '#9CA3AF', flexShrink: 0, transform: reviewDeptDropdownOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s' }} />
-                    </button>
-                    {reviewDeptDropdownOpen && (
-                      <div style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, minWidth: 160, background: '#FFFFFF', border: '1.5px solid #E5E7EB', borderRadius: 10, boxShadow: '0 8px 24px rgba(15,23,42,0.12)', zIndex: 50, padding: '4px 0', overflow: 'hidden' }}>
-                        {reviewDepts.map(dept => {
-                          const active = reviewDeptFilter === dept
-                          return (
-                            <button key={dept} type="button"
-                              onClick={() => { setReviewDeptFilter(dept); setReviewDeptDropdownOpen(false) }}
-                              style={{ display: 'block', width: '100%', padding: '8px 14px', textAlign: 'left', border: 'none', background: active ? '#FFF7ED' : 'transparent', color: active ? '#EA580C' : '#374151', fontWeight: active ? 700 : 400, fontSize: 13, cursor: 'pointer' }}
-                              onMouseEnter={e => { if (!active) e.currentTarget.style.background = '#F9FAFB' }}
-                              onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent' }}
-                            >
-                              {dept === 'all' ? 'All Departments' : dept}
-                            </button>
-                          )
-                        })}
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div style={{ padding: '12px 14px' }}>
-                {loading ? (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '24px 0', color: '#9CA3AF', fontSize: '0.875rem' }}>
-                    <Spinner size={14} dark /> Loading...
-                  </div>
-                ) : filteredPendingPostings.length === 0 ? (
-                  <div style={{ padding: '28px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
-                    <CheckCircle size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
-                    <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>{reviewDeptFilter === 'all' ? 'All caught up.' : `No pending reviews for ${reviewDeptFilter}.`}</p>
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {filteredPendingPostings.map((p, idx) => {
-                  const isSelected = selectedPendingId === p.id
-                  const dc = p.department_id ? deptColor(p.department_id) : '#94A3B8'
-                  return (
-                    <article
-                      key={p.id}
-                      onClick={() => setSelectedPendingId(p.id)}
-                      style={{
-                        display: 'flex', flexDirection: 'column', gap: 12,
-                        border: `1px solid ${isSelected ? dc : PANEL_BORDER}`,
-                        borderRadius: 10, padding: '16px 18px',
-                        background: isSelected ? `${dc}0d` : '#F9FAFB',
-                        cursor: 'pointer', overflow: 'hidden',
-                        transition: 'box-shadow 0.18s, transform 0.18s, border-color 0.18s, background 0.18s',
-                        animation: `deptCardIn 0.28s ease both ${idx * 55}ms`,
-                        boxShadow: isSelected ? `0 4px 16px ${dc}22` : undefined,
-                      }}
-                      onMouseEnter={e => { if (!isSelected) { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.boxShadow = '0 10px 28px rgba(15,23,42,0.11)'; e.currentTarget.style.borderColor = dc } }}
-                      onMouseLeave={e => { if (!isSelected) { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.borderColor = PANEL_BORDER } }}
-                    >
-                      {/* Department + job type badge row */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                        <DepartmentBadge departmentId={p.department_id} departmentName={p.department_name} />
-                        {p.is_recurring
-                          ? <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#FFF7ED', color: '#C2410C', border: '1px solid #FED7AA', whiteSpace: 'nowrap', flexShrink: 0 }}>Shift Job</span>
-                          : <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F5F3FF', color: '#7C3AED', border: '1px solid #DDD6FE', whiteSpace: 'nowrap', flexShrink: 0 }}>One-Off Job</span>
-                        }
-                      </div>
-                      {/* Title row */}
-                      <h3 style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.title}</h3>
-                      {/* Submitter + posted date row */}
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                          <RoleAvatar role="Manager" size={22} photoUrl={p.submitter_photo_url} />
-                          <span style={{ color: '#111827', fontSize: 13, fontWeight: 400 }}>{p.submitter_name ?? 'Manager'}</span>
-                        </div>
-                        <span style={{ fontSize: '0.75rem', color: '#9CA3AF', flexShrink: 0 }}>Submitted {formatCompactAt(p.created_at)}</span>
-                      </div>
-                    </article>
-                  )
-                  })}
-                  </div>
-                )}
-                </div>
-              </div>
-
-              {/* Right: pending detail */}
-              <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, minHeight: 520, overflow: 'hidden' }}>
-                {!selectedPending ? (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, padding: '32px 24px' }}>
-                    <div style={{ padding: '40px 48px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14, width: '100%' }}>
-                      <ClipboardList size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
-                      <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>Select a posting to review</p>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    {/* Header */}
-                    <div style={{ padding: '18px 24px', borderBottom: '1px solid #F0F4F8', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flexWrap: 'nowrap' }}>
-                        <h2 style={{ margin: 0, fontSize: '1.1rem', color: '#111827', fontWeight: 700, lineHeight: 1, alignSelf: 'center' }}>{selectedPending.title}</h2>
-                        <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 600, background: '#F1F5F9', color: '#475569', border: '1px solid #E2E8F0', whiteSpace: 'nowrap', flexShrink: 0 }}>
-                          {selectedPending.submitter_name ?? 'Manager'}
-                        </span>
-                      </div>
-                      <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-                        <button onClick={() => decidePosting(selectedPending.id, 'approve_posting')} disabled={actionLoading}
-                          style={{ height: 34, padding: '0 14px', border: 'none', borderRadius: 9, background: '#059669', color: '#FFFFFF', cursor: actionLoading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, opacity: actionLoading ? 0.6 : 1 }}
-                        ><CheckCircle size={13} /> Approve</button>
-                        <button onClick={() => { setPendingRejectId(selectedPending.id); setRejectReason(''); setRejectModalOpen(true) }} disabled={actionLoading}
-                          style={{ height: 34, padding: '0 14px', border: 'none', borderRadius: 9, background: '#DC2626', color: '#FFFFFF', cursor: actionLoading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: 13, opacity: actionLoading ? 0.6 : 1 }}
-                        ><XCircle size={13} /> Reject</button>
-                      </div>
-                    </div>
-
-                    {/* Body — same layout as All Jobs detail */}
-                    {(() => {
-                      const fmt = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return `${h12}:${String(m).padStart(2, '0')} ${ap}` }
-                      const toMins = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + m }
-                      const fmtShort = (t: string) => { const [h, m] = t.split(':').map(Number); const ap = h < 12 ? 'AM' : 'PM'; const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h; return m === 0 ? `${h12}${ap}` : `${h12}:${String(m).padStart(2, '0')}${ap}` }
-                      const isShiftJob = selectedPending.is_recurring
-                      const shiftDate = selectedPending.shift_date
-                      const shiftStart = selectedPending.shift_start_time
-                      const shiftEnd = selectedPending.shift_end_time
-                      const breakStart = selectedPending.break_start_time
-                      const breakEnd = selectedPending.break_end_time
-                      const estimatedHours = selectedPending.estimated_hours
-                      const urgency = selectedPending.urgency ?? 'normal'
-                      const urgencyLabel = urgency === 'urgent' ? 'Urgent' : urgency === 'high' ? 'High' : 'Normal'
-                      let totalAmt: number | null = null
-                      if (isShiftJob && selectedPending.salary_amount != null && shiftStart && shiftEnd) {
-                        let worked = toMins(shiftEnd) - toMins(shiftStart)
-                        if (breakStart && breakEnd) worked -= (toMins(breakEnd) - toMins(breakStart))
-                        if (worked > 0) totalAmt = Math.round(selectedPending.salary_amount * (worked / 60) * 100) / 100
-                      }
-                      const statCard: React.CSSProperties = { borderRadius: 12, padding: '10px 14px', display: 'flex', flexDirection: 'column', justifyContent: 'center', minHeight: 72 }
-                      const statLabel: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6 }
-                      const statLabelText = (color: string): React.CSSProperties => ({ fontSize: '0.75rem', fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: '0.06em' })
-                      const statValue: React.CSSProperties = { margin: 0, fontSize: '0.8rem', fontWeight: 600, color: '#374151', lineHeight: 1.3 }
-                      return (
-                        <div style={{ padding: '20px 24px 24px', overflowY: 'auto' }}>
-                          {/* Stat cards */}
-                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 20 }}>
-                            {selectedPending.salary_amount != null ? (
-                              <div style={{ ...statCard, background: '#FFF7ED', border: '1px solid #FED7AA' }}>
-                                <div style={statLabel}><DollarSign size={11} style={{ color: '#F97316' }} /><span style={statLabelText('#F97316')}>{isShiftJob ? 'Pay' : 'Flat Rate'}</span></div>
-                                <p style={statValue}>{isShiftJob ? `$${selectedPending.salary_amount}/Hr${totalAmt != null ? ` ($${totalAmt % 1 === 0 ? totalAmt.toFixed(0) : totalAmt.toFixed(2)})` : ''}` : `$${selectedPending.salary_amount}`}</p>
-                              </div>
-                            ) : (
-                              <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}>
-                                <span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No pay set</span>
-                              </div>
-                            )}
-                            {shiftDate ? (
-                              <div style={{ ...statCard, background: '#F0F9FF', border: '1px solid #BAE6FD' }}>
-                                <div style={statLabel}><CalendarDays size={11} style={{ color: '#0284C7' }} /><span style={statLabelText('#0284C7')}>Date</span></div>
-                                <p style={statValue}>{new Date(shiftDate).toLocaleDateString('en-SG', { weekday: 'short', day: 'numeric', month: 'short' })}</p>
-                              </div>
-                            ) : (
-                              <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}>
-                                <span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No date set</span>
-                              </div>
-                            )}
-                            {isShiftJob ? ((shiftStart || shiftEnd) ? (
-                              <div style={{ ...statCard, background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
-                                <div style={statLabel}><Clock size={11} style={{ color: '#059669' }} /><span style={statLabelText('#059669')}>Hours</span></div>
-                                <p style={statValue}>{shiftStart ? fmtShort(shiftStart) : '—'} – {shiftEnd ? fmtShort(shiftEnd) : '—'}</p>
-                              </div>
-                            ) : (
-                              <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}>
-                                <span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No hours set</span>
-                              </div>
-                            )) : (estimatedHours ? (
-                              <div style={{ ...statCard, background: '#F0FDF4', border: '1px solid #BBF7D0' }}>
-                                <div style={statLabel}><Clock size={11} style={{ color: '#059669' }} /><span style={statLabelText('#059669')}>Estimation</span></div>
-                                <p style={statValue}>{estimatedHours} Hours</p>
-                              </div>
-                            ) : (
-                              <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}>
-                                <span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No hours set</span>
-                              </div>
-                            ))}
-                            {isShiftJob ? ((breakStart || breakEnd) ? (
-                              <div style={{ ...statCard, background: '#FDF4FF', border: '1px solid #E9D5FF' }}>
-                                <div style={statLabel}><Coffee size={11} style={{ color: '#9333EA' }} /><span style={statLabelText('#9333EA')}>Break</span></div>
-                                <p style={statValue}>{breakStart ? fmtShort(breakStart) : '—'} – {breakEnd ? fmtShort(breakEnd) : '—'}</p>
-                              </div>
-                            ) : (
-                              <div style={{ ...statCard, background: '#F9FAFB', border: '1px solid #E5E7EB', alignItems: 'center', justifyContent: 'center' }}>
-                                <span style={{ fontSize: '0.78rem', color: '#9CA3AF' }}>No break</span>
-                              </div>
-                            )) : (
-                              <div style={{ ...statCard, background: '#FFF1F2', border: '1px solid #FECDD3' }}>
-                                <div style={statLabel}><Zap size={11} style={{ color: '#E11D48' }} /><span style={statLabelText('#E11D48')}>Urgency</span></div>
-                                <p style={statValue}>{urgencyLabel}</p>
-                              </div>
-                            )}
-                          </div>
-                          {/* Department row */}
-                          {(selectedPending.department_name || selectedPending.assigned_employee_name) && (
-                            <div style={{ display: 'flex', border: '1px solid #E5E7EB', borderRadius: 10, overflow: 'hidden', marginBottom: 20 }}>
-                              <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 0', borderRight: selectedPending.assigned_employee_name ? '1px solid #E5E7EB' : undefined, background: '#FAFAFA' }}>
-                                <LayoutGrid size={14} style={{ color: '#9CA3AF', flexShrink: 0 }} />
-                                <span style={{ fontSize: '0.875rem', color: '#374151' }}>{selectedPending.department_name ?? '—'}</span>
-                              </div>
-                              {selectedPending.assigned_employee_name && (
-                                <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 0', background: '#FAFAFA' }}>
-                                  <UserCheck size={14} style={{ color: '#9CA3AF', flexShrink: 0 }} />
-                                  <span style={{ fontSize: '0.875rem', color: '#374151' }}>{selectedPending.assigned_employee_name}</span>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                          {/* Scope & Requirements */}
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                            {selectedPending.description && (
-                              <div style={{ background: '#FFFFFF', borderRadius: 10, padding: '14px 16px', border: '1px solid #E5E7EB' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                                  <FileText size={13} style={{ color: '#F97316' }} />
-                                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Scope</span>
-                                </div>
-                                <p style={{ margin: 0, fontSize: '0.875rem', color: '#374151', lineHeight: 1.75 }}>{selectedPending.description}</p>
-                              </div>
-                            )}
-                            {selectedPending.requirements && (
-                              <div style={{ background: '#FFFFFF', borderRadius: 10, padding: '14px 16px', border: '1px solid #E5E7EB' }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
-                                  <ClipboardList size={13} style={{ color: '#F97316' }} />
-                                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#111827', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Requirements</span>
-                                </div>
-                                <p style={{ margin: 0, fontSize: '0.875rem', color: '#374151', lineHeight: 1.75, whiteSpace: 'pre-wrap' }}>{selectedPending.requirements}</p>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )
-                    })()}
-                  </>
-                )}
-              </div>
-            </div>
-          )}
 
         </div>
         </div>
         </div>
       </main>
 
+      {/* ══ Worker Pool modal — hand this job to people who already worked here ══ */}
+      {poolModalOpen && (
+        <ModalOverlay onClose={() => setPoolModalOpen(false)} maxWidth="560px">
+          <ModalBox>
+            <ModalHeader title="Invite from Worker Pool" icon={<UserCheck size={15} color="#fff" strokeWidth={2.5} />} onClose={() => setPoolModalOpen(false)} />
+
+            <div style={{ padding: '18px 24px', display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 420, overflowY: 'auto' }}>
+              {poolLoading ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '32px 0', color: '#9CA3AF' }}>
+                  <Spinner size={16} dark /> Loading pool…
+                </div>
+              ) : poolWorkers.length === 0 ? (
+                <div style={{ padding: '32px 24px', textAlign: 'center', background: '#F8FAFC', borderRadius: 12, border: '1.5px dashed #E5E7EB' }}>
+                  <Users size={22} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
+                  <p style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600, color: '#6B7280' }}>No workers in the pool yet</p>
+                  <p style={{ margin: '4px 0 0', fontSize: '0.8125rem', color: '#9CA3AF' }}>Workers join the pool once they complete their first shift here.</p>
+                </div>
+              ) : poolWorkers.map(worker => {
+                const picked = poolSelected.has(worker.id)
+                const result = poolResults.find(r => r.user_id === worker.id)
+                return (
+                  <div
+                    key={worker.id}
+                    onClick={() => setPoolSelected(prev => {
+                      const next = new Set(prev)
+                      if (next.has(worker.id)) next.delete(worker.id); else next.add(worker.id)
+                      return next
+                    })}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', borderRadius: 12, cursor: 'pointer',
+                      border: `1.5px solid ${picked ? '#059669' : '#E5E7EB'}`,
+                      background: picked ? '#ECFDF5' : '#FFFFFF',
+                      transition: 'border-color 0.15s, background 0.15s, box-shadow 0.15s',
+                    }}
+                    onMouseEnter={e => { if (!picked) { e.currentTarget.style.borderColor = '#A7F3D0'; e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.06)' } }}
+                    onMouseLeave={e => { if (!picked) { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.boxShadow = 'none' } }}
+                  >
+                    <div style={{ width: 18, height: 18, borderRadius: 5, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', border: `1.5px solid ${picked ? '#059669' : '#D1D5DB'}`, background: picked ? '#059669' : '#FFFFFF' }}>
+                      {picked && <Check size={12} color="#fff" strokeWidth={3} />}
+                    </div>
+                    <RoleAvatar role="Casual Worker" size={36} photoUrl={worker.profile_photo_url} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 700, color: '#0F172A' }}>{worker.full_name}</p>
+                      <p style={{ margin: '2px 0 0', fontSize: '0.8125rem', color: '#6B7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {worker.skills || 'No skills listed'}
+                      </p>
+                    </div>
+                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', padding: '3px 10px', borderRadius: 99, fontSize: '0.72rem', fontWeight: 700, background: '#ECFDF5', color: '#059669', border: '1px solid #A7F3D0' }}>
+                        {worker.completed_shifts}× worked
+                      </span>
+                      {result && (
+                        <p style={{ margin: '4px 0 0', fontSize: '0.72rem', fontWeight: 600, color: result.invited ? '#059669' : '#B91C1C', maxWidth: 190, whiteSpace: 'normal' }}>
+                          {result.invited ? 'Offer sent' : result.reason}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+              {poolError && (
+                <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.8125rem', color: '#DC2626' }}>
+                  {poolError}
+                </div>
+              )}
+            </div>
+
+            <div style={{ borderTop: '1px solid #F3F4F6', padding: '16px 24px', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button onClick={() => setPoolModalOpen(false)} style={modalGhostButtonStyle}>Close</button>
+              <button
+                onClick={invitePoolWorkers}
+                disabled={poolInviting || poolSelected.size === 0}
+                style={{ ...modalPrimaryButtonStyle(poolInviting || poolSelected.size === 0), background: 'linear-gradient(135deg, #059669, #047857)' }}
+              >
+                {poolInviting ? <Spinner size={13} /> : <Send size={13} strokeWidth={2.5} />}
+                {poolSelected.size > 0 ? ` Send ${poolSelected.size} Offer${poolSelected.size > 1 ? 's' : ''}` : ' Send Offers'}
+              </button>
+            </div>
+          </ModalBox>
+        </ModalOverlay>
+      )}
+
       {/* ── Success toast ── */}
       <Toast message={successToast ?? ''} />
 
-      {/* ══ Supervisor profile modal ═══════════════════════════════════════════ */}
-      {supervisorModal && createPortal(
-        <ModalOverlay onClose={() => setSupervisorModal(null)} maxWidth="380px">
-          <ModalBox>
-            <ModalHeader
-              title="Supervisor"
-              icon={<Users size={15} color="#fff" strokeWidth={2.5} />}
-              onClose={() => setSupervisorModal(null)}
-            />
-            <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-              <RoleAvatar role={supervisorModal.role ?? 'Employee'} size={64} photoUrl={supervisorModal.profile_photo_url} />
-              <p style={{ margin: '12px 0 0', fontSize: '1rem', fontWeight: 700, color: '#111827' }}>{supervisorModal.full_name}</p>
-              <p style={{ margin: '2px 0 0', fontSize: '0.8rem', fontWeight: 600, color: '#9A3412' }}>{supervisorModal.role ?? 'Employee'}</p>
-              <div style={{ width: '100%', marginTop: 18, paddingTop: 18, borderTop: '1px solid #F3F4F6', display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {supervisorModalLoading ? (
-                  <div style={{ display: 'flex', justifyContent: 'center', padding: '4px 0' }}><Spinner size={16} /></div>
-                ) : (
-                  <>
-                    {supervisorModal.email_address && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8125rem', color: '#374151' }}>
-                        <Mail size={13} style={{ color: '#9CA3AF', flexShrink: 0 }} /> {supervisorModal.email_address}
-                      </div>
-                    )}
-                    {supervisorModal.phone_number && (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.8125rem', color: '#374151' }}>
-                        <Phone size={13} style={{ color: '#9CA3AF', flexShrink: 0 }} /> {supervisorModal.phone_number}
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
-          </ModalBox>
-        </ModalOverlay>,
-        document.body
+      {/* ══ Applicant profile modal (opened from a card's avatar) ══════════════ */}
+      {applicantDetail && createPortal(
+        <ApplicantDetailModal applicant={applicantDetail} onClose={() => setApplicantDetail(null)} />,
+        document.body,
       )}
 
       {/* ══ Reject reason modal ════════════════════════════════════════════════ */}
@@ -3446,12 +3679,12 @@ export default function OwnerRecruitmentPage() {
             />
             <div style={{ padding: '20px 24px 0' }}>
               <p style={{ margin: '0 0 14px', color: '#6B7280', fontSize: '0.9rem', lineHeight: 1.55 }}>
-                Provide a reason so the manager can understand what needs to be fixed.
+                Please provide feedback for the manager.
               </p>
               <textarea
                 value={rejectReason}
                 onChange={e => setRejectReason(e.target.value)}
-                placeholder="e.g. Salary range is missing, please add before resubmitting."
+                placeholder="Please enter your reason."
                 rows={4}
                 style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
                 onFocus={e => { e.currentTarget.style.borderColor = '#F97316' }}
@@ -3484,14 +3717,11 @@ export default function OwnerRecruitmentPage() {
               onClose={() => { setRemoveWorkerTarget(null); setCancelReason('') }}
             />
             <div style={{ padding: '20px 24px 0' }}>
-              <p style={{ margin: '0 0 14px', color: '#6B7280', fontSize: '0.9rem', lineHeight: 1.55 }}>
-                <strong style={{ color: '#111827' }}>{removeWorkerTarget.full_name}</strong> already confirmed this job. Their shift will be
-                cancelled, the opening reopens for hire, and they will be notified with your reason.
-              </p>
+              <p style={{ ...modalLabelStyle, margin: '0 0 8px' }}>Removal reason</p>
               <textarea
                 value={cancelReason}
                 onChange={e => setCancelReason(e.target.value)}
-                placeholder="Reason (required), e.g. the role's requirements changed."
+                placeholder="Explain why you're removing this worker."
                 rows={3}
                 style={{ ...modalInputStyle, resize: 'vertical', lineHeight: 1.55 }}
                 onFocus={e => { e.currentTarget.style.borderColor = '#F97316' }}
@@ -3501,10 +3731,10 @@ export default function OwnerRecruitmentPage() {
             {cancelSubmitError && <div style={modalErrorBoxStyle}>{cancelSubmitError}</div>}
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', padding: '20px 24px' }}>
               <button onClick={() => { setRemoveWorkerTarget(null); setCancelReason('') }} style={modalGhostButtonStyle}>
-                Keep Worker
+                Cancel
               </button>
               <button onClick={submitRemoveWorker} disabled={actionLoading || !cancelReason.trim()} style={modalDestructiveButtonStyle(actionLoading || !cancelReason.trim())}>
-                {actionLoading ? <Spinner size={13} /> : <UserX size={13} />} Remove Worker
+                {actionLoading ? <Spinner size={13} /> : <UserX size={13} />} Remove
               </button>
             </div>
           </ModalBox>
@@ -4211,7 +4441,9 @@ export default function OwnerRecruitmentPage() {
                             </div>
                           )}
                         </div>
-                        {/* Pay estimate — shift only, and only once a shift + supervisor are chosen (times are real, not defaults) */}
+                        {/* Pay estimate — shift only, and only once a shift + supervisor are chosen (times are real, not defaults).
+                            The rate is per person, so the total scales with Number of Positions — hiring 3 people at
+                            $200 each costs $600, not $200. */}
                         {formJobType === 'shift' && formShiftDate && formAssignedEmployeeId && (() => {
                           const toMins = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0) }
                           const workMins = toMins(formShiftEnd) - toMins(formShiftStart)
@@ -4219,22 +4451,26 @@ export default function OwnerRecruitmentPage() {
                           const netMins = workMins - (breakMins > 0 ? breakMins : 0)
                           const rate = parseFloat(formSalaryAmt)
                           if (netMins <= 0 || !formSalaryAmt || isNaN(rate) || rate <= 0) return null
-                          const total = (netMins / 60 * rate).toFixed(2)
+                          const positions = Math.max(1, parseInt(formOpenings, 10) || 1)
+                          const perPerson = netMins / 60 * rate
+                          const total = (perPerson * positions).toFixed(2)
                           return (
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 10 }}>
-                              <span style={{ ...lStyle, marginBottom: 0 }}>Estimated Cost</span>
+                              <span style={{ ...lStyle, marginBottom: 0 }}>Estimated Cost{positions > 1 && <span style={{ fontWeight: 400, color: '#6B7280' }}> (${perPerson.toFixed(2)}/person × {positions})</span>}</span>
                               <strong style={{ fontSize: 15, color: '#059669' }}>${total}</strong>
                             </div>
                           )
                         })()}
-                        {/* One-off pay estimate — the flat rate is the total */}
+                        {/* One-off pay estimate — the flat rate is per person, so the total scales with Number of Positions */}
                         {formJobType === 'oneoff' && (() => {
                           const rate = parseFloat(formSalaryAmt)
                           if (!formSalaryAmt || isNaN(rate) || rate <= 0) return null
+                          const positions = Math.max(1, parseInt(formOpenings, 10) || 1)
+                          const total = (rate * positions).toFixed(2)
                           return (
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 10 }}>
-                              <span style={{ ...lStyle, marginBottom: 0 }}>Estimated Cost</span>
-                              <strong style={{ fontSize: 15, color: '#059669' }}>${rate.toFixed(2)}</strong>
+                              <span style={{ ...lStyle, marginBottom: 0 }}>Estimated Cost{positions > 1 && <span style={{ fontWeight: 400, color: '#6B7280' }}> (${rate.toFixed(2)}/person × {positions})</span>}</span>
+                              <strong style={{ fontSize: 15, color: '#059669' }}>${total}</strong>
                             </div>
                           )
                         })()}
@@ -4437,7 +4673,9 @@ export default function OwnerRecruitmentPage() {
                         </div>
                       )}
                     </div>
-                    {/* Pay estimate — shift only, and only once a shift + supervisor are chosen (times are real, not defaults) */}
+                    {/* Pay estimate — shift only, and only once a shift + supervisor are chosen (times are real, not defaults).
+                        The rate is per person, so the total scales with Number of Positions — hiring 3 people at
+                        $200 each costs $600, not $200. */}
                     {formJobType === 'shift' && (formShiftDate || editingId) && (formAssignedEmployeeId || editingId) && (() => {
                       const toMins = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0) }
                       const workMins = toMins(formShiftEnd) - toMins(formShiftStart)
@@ -4445,22 +4683,26 @@ export default function OwnerRecruitmentPage() {
                       const netMins = workMins - (breakMins > 0 ? breakMins : 0)
                       const rate = parseFloat(formSalaryAmt)
                       if (netMins <= 0 || !formSalaryAmt || isNaN(rate) || rate <= 0) return null
-                      const total = (netMins / 60 * rate).toFixed(2)
+                      const positions = Math.max(1, parseInt(formOpenings, 10) || 1)
+                      const perPerson = netMins / 60 * rate
+                      const total = (perPerson * positions).toFixed(2)
                       return (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 10 }}>
-                          <span style={{ ...lStyle, marginBottom: 0 }}>Estimated Cost</span>
+                          <span style={{ ...lStyle, marginBottom: 0 }}>Estimated Cost{positions > 1 && <span style={{ fontWeight: 400, color: '#6B7280' }}> (${perPerson.toFixed(2)}/person × {positions})</span>}</span>
                           <strong style={{ fontSize: 15, color: '#059669' }}>${total}</strong>
                         </div>
                       )
                     })()}
-                    {/* One-off pay estimate — the flat rate is the total */}
+                    {/* One-off pay estimate — the flat rate is per person, so the total scales with Number of Positions */}
                     {formJobType === 'oneoff' && (() => {
                       const rate = parseFloat(formSalaryAmt)
                       if (!formSalaryAmt || isNaN(rate) || rate <= 0) return null
+                      const positions = Math.max(1, parseInt(formOpenings, 10) || 1)
+                      const total = (rate * positions).toFixed(2)
                       return (
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 10 }}>
-                          <span style={{ ...lStyle, marginBottom: 0 }}>Estimated Cost</span>
-                          <strong style={{ fontSize: 15, color: '#059669' }}>${rate.toFixed(2)}</strong>
+                          <span style={{ ...lStyle, marginBottom: 0 }}>Estimated Cost{positions > 1 && <span style={{ fontWeight: 400, color: '#6B7280' }}> (${rate.toFixed(2)}/person × {positions})</span>}</span>
+                          <strong style={{ fontSize: 15, color: '#059669' }}>${total}</strong>
                         </div>
                       )
                     })()}

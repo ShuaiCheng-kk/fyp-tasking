@@ -40,6 +40,11 @@ export async function GET(req: NextRequest) {
         : await recruitmentService.getCasualWorkers(company_id)
       return NextResponse.json({ success: true, workers })
     }
+    if (resource === 'pool_workers') {
+      if (!company_id) return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
+      const poolWorkers = await recruitmentService.getPoolWorkers(company_id)
+      return NextResponse.json({ success: true, poolWorkers })
+    }
     if (resource === 'pending_approval') {
       if (!company_id) return NextResponse.json({ success: false, message: 'company_id is required' }, { status: 400 })
       const pendingPostings = await recruitmentService.getPendingApprovalPostings(company_id)
@@ -253,6 +258,17 @@ export async function PATCH(req: NextRequest) {
         worker_status,
       })
       return NextResponse.json({ success: true })
+    }
+
+    if (action === 'invite_pool_workers') {
+      const user_ids = Array.isArray(data.user_ids) ? data.user_ids.map(String) : []
+      const results = await recruitmentService.invitePoolWorkers({
+        job_id: String(data.job_id ?? ''),
+        user_ids,
+        sent_by: String(data.sent_by ?? ''),
+        message: typeof data.message === 'string' ? data.message : null,
+      })
+      return NextResponse.json({ success: true, results })
     }
 
     return NextResponse.json({ success: false, message: 'Unknown action' }, { status: 400 })

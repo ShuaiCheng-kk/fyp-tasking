@@ -3,7 +3,7 @@
  *
  * 功能：
  *   1. 清空账户/公司/部门及所有业务数据表
- *   2. 删除 auth.users 里的旧测试账号
+ *   2. 删除 auth.users 里的旧测试账号（含 Playwright 遗留的 @tasking-tests.local 垃圾账号）
  *   3. 在 Supabase Auth 创建真实账号（密码统一 111111）
  *   4. 插入 public.users、companies、departments 及部门分配
  *   5. 插入 Casual Workers（含 date_of_birth, phone_number, worker_status 等）
@@ -97,49 +97,98 @@ const accounts = [
     phone_number: '+65 9345 6789',
     date_of_birth: '1985-11-08',
   },
-  // Managers (8, 2 per department)
-  { email: 'manager1@test.com', full_name: 'David Lim',      role: 'Manager', phone_number: '+65 9456 7890', date_of_birth: '1988-04-12' },
-  { email: 'manager2@test.com', full_name: 'Rachel Koh',     role: 'Manager', phone_number: '+65 9567 8901', date_of_birth: '1990-09-28' },
-  { email: 'manager3@test.com', full_name: 'Aaron Wong',     role: 'Manager', phone_number: '+65 9678 9012', date_of_birth: '1987-01-17' },
-  { email: 'manager4@test.com', full_name: 'Fiona Chen',     role: 'Manager', phone_number: '+65 9789 0123', date_of_birth: '1991-06-03' },
-  { email: 'manager5@test.com', full_name: 'Ethan Goh',      role: 'Manager', phone_number: '+65 9890 1234', date_of_birth: '1986-12-25' },
-  { email: 'manager6@test.com', full_name: 'Jasmine Lee',    role: 'Manager', phone_number: '+65 9901 2345', date_of_birth: '1992-03-09' },
-  { email: 'manager7@test.com', full_name: 'Marcus Ong',     role: 'Manager', phone_number: '+65 9012 3456', date_of_birth: '1989-08-14' },
-  { email: 'manager8@test.com', full_name: 'Vivian Ho',      role: 'Manager', phone_number: '+65 9123 4560', date_of_birth: '1993-05-21' },
+  // Managers (8, 2 per department) — hourly_rate feeds the Owner Report's labor-cost figure for
+  // internal staff (scheduled hours × rate, since Managers/Employees don't clock in/out).
+  { email: 'manager1@test.com', full_name: 'David Lim',      role: 'Manager', phone_number: '+65 9456 7890', date_of_birth: '1988-04-12', hourly_rate: 28.00 },
+  { email: 'manager2@test.com', full_name: 'Rachel Koh',     role: 'Manager', phone_number: '+65 9567 8901', date_of_birth: '1990-09-28', hourly_rate: 27.50 },
+  { email: 'manager3@test.com', full_name: 'Aaron Wong',     role: 'Manager', phone_number: '+65 9678 9012', date_of_birth: '1987-01-17', hourly_rate: 26.00 },
+  { email: 'manager4@test.com', full_name: 'Fiona Chen',     role: 'Manager', phone_number: '+65 9789 0123', date_of_birth: '1991-06-03', hourly_rate: 29.00 },
+  { email: 'manager5@test.com', full_name: 'Ethan Goh',      role: 'Manager', phone_number: '+65 9890 1234', date_of_birth: '1986-12-25', hourly_rate: 30.00 },
+  { email: 'manager6@test.com', full_name: 'Jasmine Lee',    role: 'Manager', phone_number: '+65 9901 2345', date_of_birth: '1992-03-09', hourly_rate: 27.00 },
+  { email: 'manager7@test.com', full_name: 'Marcus Ong',     role: 'Manager', phone_number: '+65 9012 3456', date_of_birth: '1989-08-14', hourly_rate: 26.50 },
+  { email: 'manager8@test.com', full_name: 'Vivian Ho',      role: 'Manager', phone_number: '+65 9123 4560', date_of_birth: '1993-05-21', hourly_rate: 28.50 },
   // Employees (8, 2 per department)
-  { email: 'employee1@test.com', full_name: 'Ben Seah',       role: 'Employee', phone_number: '+65 8123 4567', date_of_birth: '1995-02-18' },
-  { email: 'employee2@test.com', full_name: 'Chloe Yeo',      role: 'Employee', phone_number: '+65 8234 5678', date_of_birth: '1997-10-05' },
-  { email: 'employee3@test.com', full_name: 'Daniel Tay',     role: 'Employee', phone_number: '+65 8345 6789', date_of_birth: '1994-07-30' },
-  { email: 'employee4@test.com', full_name: 'Elaine Chua',    role: 'Employee', phone_number: '+65 8456 7890', date_of_birth: '1996-04-11' },
-  { email: 'employee5@test.com', full_name: 'Felix Ng',       role: 'Employee', phone_number: '+65 8567 8901', date_of_birth: '1998-01-24' },
-  { email: 'employee6@test.com', full_name: 'Grace Lau',      role: 'Employee', phone_number: '+65 8678 9012', date_of_birth: '1995-09-16' },
-  { email: 'employee7@test.com', full_name: 'Henry Sim',      role: 'Employee', phone_number: '+65 8789 0123', date_of_birth: '1997-06-07' },
-  { email: 'employee8@test.com', full_name: 'Irene Tan',      role: 'Employee', phone_number: '+65 8890 1234', date_of_birth: '1999-03-29' },
+  { email: 'employee1@test.com', full_name: 'Ben Seah',       role: 'Employee', phone_number: '+65 8123 4567', date_of_birth: '1995-02-18', hourly_rate: 19.00 },
+  { email: 'employee2@test.com', full_name: 'Chloe Yeo',      role: 'Employee', phone_number: '+65 8234 5678', date_of_birth: '1997-10-05', hourly_rate: 18.50 },
+  { email: 'employee3@test.com', full_name: 'Daniel Tay',     role: 'Employee', phone_number: '+65 8345 6789', date_of_birth: '1994-07-30', hourly_rate: 20.00 },
+  { email: 'employee4@test.com', full_name: 'Elaine Chua',    role: 'Employee', phone_number: '+65 8456 7890', date_of_birth: '1996-04-11', hourly_rate: 19.50 },
+  { email: 'employee5@test.com', full_name: 'Felix Ng',       role: 'Employee', phone_number: '+65 8567 8901', date_of_birth: '1998-01-24', hourly_rate: 21.00 },
+  { email: 'employee6@test.com', full_name: 'Grace Lau',      role: 'Employee', phone_number: '+65 8678 9012', date_of_birth: '1995-09-16', hourly_rate: 18.00 },
+  // employee7 deliberately left without an hourly_rate — keeps the Report's "no pay rate on
+  // file" data-quality flag genuinely demonstrable instead of it always reading zero.
+  { email: 'employee7@test.com', full_name: 'Henry Sim',      role: 'Employee', phone_number: '+65 8789 0123', date_of_birth: '1997-06-07', hourly_rate: null },
+  { email: 'employee8@test.com', full_name: 'Irene Tan',      role: 'Employee', phone_number: '+65 8890 1234', date_of_birth: '1999-03-29', hourly_rate: 20.50 },
 ]
 
-// Casual Workers — these get worker_status, date_of_birth, resume/cover letter URLs
+// Casual Workers — these get worker_status, date_of_birth, resume/skills/certificates on the live
+// profile (users.skills/resume_url + user_certificates), same profile-level fields the Casual
+// Worker Detail card on the Team page reads (not the per-application job_applicants snapshot).
 const casualWorkers = [
-  { email: 'cw1@test.com',  full_name: 'Alicia Tan',     phone_number: '+65 8100 1001', date_of_birth: '1998-05-12', worker_status: 'active',   inactivate_reason: null, hourly_rate: 15.50 },
-  { email: 'cw2@test.com',  full_name: 'Nadia Wong',     phone_number: '+65 8100 1002', date_of_birth: '2000-08-22', worker_status: 'active',   inactivate_reason: null, hourly_rate: 14.00 },
-  { email: 'cw3@test.com',  full_name: 'Hui Min Lee',    phone_number: '+65 8100 1003', date_of_birth: '1999-03-17', worker_status: 'active',   inactivate_reason: null, hourly_rate: 16.00 },
-  { email: 'cw4@test.com',  full_name: 'Farah Hassan',   phone_number: '+65 8100 1004', date_of_birth: '2001-11-05', worker_status: 'active',   inactivate_reason: null, hourly_rate: 13.50 },
-  { email: 'cw5@test.com',  full_name: 'Ethan Ong',      phone_number: '+65 8100 1005', date_of_birth: '1997-07-30', worker_status: 'active',   inactivate_reason: null, hourly_rate: 17.00 },
-  { email: 'cw6@test.com',  full_name: 'Daniel Goh',     phone_number: '+65 8100 1006', date_of_birth: '2002-02-14', worker_status: 'active',   inactivate_reason: null, hourly_rate: 14.50 },
-  { email: 'cw7@test.com',  full_name: 'Siti Nur',       phone_number: '+65 8100 1007', date_of_birth: '1996-09-09', worker_status: 'active',   inactivate_reason: null, hourly_rate: 15.00 },
-  { email: 'cw8@test.com',  full_name: 'Marcus Lim',     phone_number: '+65 8100 1008', date_of_birth: '2000-04-25', worker_status: 'inactive', inactivate_reason: 'Repeated no-shows without prior notice.', hourly_rate: null },
-  { email: 'cw9@test.com',  full_name: 'Jasper Koh',     phone_number: '+65 8100 1009', date_of_birth: '1999-12-01', worker_status: 'inactive', inactivate_reason: 'Violated workplace conduct policy.',     hourly_rate: null },
-  { email: 'cw10@test.com', full_name: 'Mei Xin Teo',    phone_number: '+65 8100 1010', date_of_birth: '1998-06-18', worker_status: 'inactive', inactivate_reason: 'Unable to meet shift requirements.',     hourly_rate: null },
+  { email: 'cw1@test.com',  full_name: 'Alicia Tan',     phone_number: '+65 8100 1001', date_of_birth: '1998-05-12', worker_status: 'active',   inactivate_reason: null, hourly_rate: 15.50,
+    skills: 'Barista, Latte art, Cash register', resume_url: 'https://example.com/demo-resumes/cw1-resume.pdf',
+    certs: [{ name: 'Food Hygiene Certificate', file_url: 'https://example.com/demo-certs/food-hygiene.pdf' }] },
+  { email: 'cw2@test.com',  full_name: 'Nadia Wong',     phone_number: '+65 8100 1002', date_of_birth: '2000-08-22', worker_status: 'active',   inactivate_reason: null, hourly_rate: 14.00,
+    skills: 'Retail cashiering, Stocktaking, Customer service', resume_url: 'https://example.com/demo-resumes/cw2-resume.pdf',
+    certs: [{ name: 'WSQ Food Safety Course Level 1', file_url: 'https://example.com/demo-certs/wsq-food-safety.pdf' }] },
+  { email: 'cw3@test.com',  full_name: 'Hui Min Lee',    phone_number: '+65 8100 1003', date_of_birth: '1999-03-17', worker_status: 'active',   inactivate_reason: null, hourly_rate: 16.00,
+    skills: 'Event setup, Sound equipment, Stage rigging', resume_url: 'https://example.com/demo-resumes/cw3-resume.pdf',
+    certs: [{ name: 'First Aid Certificate (CPR + AED)', file_url: 'https://example.com/demo-certs/first-aid.pdf' }] },
+  { email: 'cw4@test.com',  full_name: 'Farah Hassan',   phone_number: '+65 8100 1004', date_of_birth: '2001-11-05', worker_status: 'active',   inactivate_reason: null, hourly_rate: 13.50,
+    skills: 'Photography, Canva, Retail merchandising', resume_url: 'https://example.com/demo-resumes/cw4-resume.pdf',
+    certs: [{ name: 'Security Officer Licence', file_url: 'https://example.com/demo-certs/security-officer.pdf' }] },
+  { email: 'cw5@test.com',  full_name: 'Ethan Ong',      phone_number: '+65 8100 1005', date_of_birth: '1997-07-30', worker_status: 'active',   inactivate_reason: null, hourly_rate: 17.00,
+    skills: 'Forklift operation, Inventory management, Heavy lifting', resume_url: 'https://example.com/demo-resumes/cw5-resume.pdf',
+    certs: [{ name: 'Forklift Licence', file_url: 'https://example.com/demo-certs/forklift-licence.pdf' }] },
+  { email: 'cw6@test.com',  full_name: 'Daniel Goh',     phone_number: '+65 8100 1006', date_of_birth: '2002-02-14', worker_status: 'active',   inactivate_reason: null, hourly_rate: 14.50,
+    skills: 'Live chat support, Zendesk, Clear written English', resume_url: 'https://example.com/demo-resumes/cw6-resume.pdf',
+    certs: [{ name: 'Food Hygiene Certificate', file_url: 'https://example.com/demo-certs/food-hygiene.pdf' }] },
+  { email: 'cw7@test.com',  full_name: 'Siti Nur',       phone_number: '+65 8100 1007', date_of_birth: '1996-09-09', worker_status: 'active',   inactivate_reason: null, hourly_rate: 15.00,
+    skills: 'Flyer distribution, Crowd engagement, Bilingual (EN/MY)', resume_url: 'https://example.com/demo-resumes/cw7-resume.pdf',
+    certs: [{ name: 'First Aid Certificate (CPR + AED)', file_url: 'https://example.com/demo-certs/first-aid.pdf' }] },
+  { email: 'cw8@test.com',  full_name: 'Marcus Lim',     phone_number: '+65 8100 1008', date_of_birth: '2000-04-25', worker_status: 'inactive', inactivate_reason: 'Repeated no-shows without prior notice.', hourly_rate: null,
+    skills: 'PC hardware, Networking basics, Troubleshooting', resume_url: null, certs: [] },
+  { email: 'cw9@test.com',  full_name: 'Jasper Koh',     phone_number: '+65 8100 1009', date_of_birth: '1999-12-01', worker_status: 'inactive', inactivate_reason: 'Violated workplace conduct policy.',     hourly_rate: null,
+    skills: 'Structured cabling, Server racking, Network patching', resume_url: null, certs: [] },
+  { email: 'cw10@test.com', full_name: 'Mei Xin Teo',    phone_number: '+65 8100 1010', date_of_birth: '1998-06-18', worker_status: 'inactive', inactivate_reason: 'Unable to meet shift requirements.',     hourly_rate: null,
+    skills: 'PC hardware, Networking basics, Troubleshooting', resume_url: null, certs: [] },
 ]
 
 // Guest Users — public job-board applicants (role 'Guest User', not scoped to any company yet).
 // These are who job_applicants.user_id points at before an applicant is ever hired.
+// skills / certs feed both the live worker profile (users.skills + user_certificates) and the
+// per-application snapshot fields (skills_snapshot / certificates_snapshot) so the employer-side
+// applicant panel has real, varied content to render.
 const guestApplicants = [
-  { email: 'guest1@test.com', full_name: 'Wei Jie Lim',   phone_number: '+65 8200 2001', date_of_birth: '2000-01-15' },
-  { email: 'guest2@test.com', full_name: 'Priyanka Das',  phone_number: '+65 8200 2002', date_of_birth: '1999-05-22' },
-  { email: 'guest3@test.com', full_name: 'Kai Xuan Ong',  phone_number: '+65 8200 2003', date_of_birth: '2001-09-10' },
-  { email: 'guest4@test.com', full_name: 'Amirah Yusof',  phone_number: '+65 8200 2004', date_of_birth: '1998-12-03' },
-  { email: 'guest5@test.com', full_name: 'Ryan Teo',      phone_number: '+65 8200 2005', date_of_birth: '2002-03-28' },
-  { email: 'guest6@test.com', full_name: 'Sofia Chen',    phone_number: '+65 8200 2006', date_of_birth: '2000-07-19' },
+  { email: 'guest1@test.com',  full_name: 'Wei Jie Lim',   phone_number: '+65 8200 2001', date_of_birth: '2000-01-15',
+    skills: 'Forklift operation, Inventory management, Heavy lifting',
+    certs: [{ name: 'Forklift Licence', file_url: 'https://example.com/demo-certs/forklift-licence.pdf' }] },
+  { email: 'guest2@test.com',  full_name: 'Priyanka Das',  phone_number: '+65 8200 2002', date_of_birth: '1999-05-22',
+    skills: 'Customer service, Social media content, Copywriting',
+    certs: [{ name: 'Digital Marketing Certificate', file_url: 'https://example.com/demo-certs/digital-marketing.pdf' }] },
+  { email: 'guest3@test.com',  full_name: 'Kai Xuan Ong',  phone_number: '+65 8200 2003', date_of_birth: '2001-09-10',
+    skills: 'Event setup, Sound equipment, Stage rigging',
+    certs: [] },
+  { email: 'guest4@test.com',  full_name: 'Amirah Yusof',  phone_number: '+65 8200 2004', date_of_birth: '1998-12-03',
+    skills: 'Photography, Canva, Retail merchandising',
+    certs: [{ name: 'First Aid Certificate', file_url: null }] },
+  { email: 'guest5@test.com',  full_name: 'Ryan Teo',      phone_number: '+65 8200 2005', date_of_birth: '2002-03-28',
+    skills: 'PC hardware, Networking basics, Troubleshooting',
+    certs: [{ name: 'CompTIA A+', file_url: 'https://example.com/demo-certs/comptia-a-plus.pdf' }] },
+  { email: 'guest6@test.com',  full_name: 'Sofia Chen',    phone_number: '+65 8200 2006', date_of_birth: '2000-07-19',
+    skills: 'Live chat support, Zendesk, Clear written English',
+    certs: [] },
+  { email: 'guest7@test.com',  full_name: 'Harith Rahman', phone_number: '+65 8200 2007', date_of_birth: '2003-02-11',
+    skills: 'Barista, Latte art, Cash register',
+    certs: [{ name: 'Food Hygiene Certificate', file_url: 'https://example.com/demo-certs/food-hygiene.pdf' }] },
+  { email: 'guest8@test.com',  full_name: 'Chen Jia Yi',   phone_number: '+65 8200 2008', date_of_birth: '2005-06-30',
+    skills: 'Retail cashiering, Stocktaking',
+    certs: [] },
+  { email: 'guest9@test.com',  full_name: 'Dinesh Kumar',  phone_number: '+65 8200 2009', date_of_birth: '1996-10-08',
+    skills: 'Structured cabling, Server racking, Network patching',
+    certs: [{ name: 'CCNA', file_url: 'https://example.com/demo-certs/ccna.pdf' }, { name: 'Working at Heights', file_url: null }] },
+  { email: 'guest10@test.com', full_name: 'Nurul Aisyah',  phone_number: '+65 8200 2010', date_of_birth: '2004-04-17',
+    skills: 'Flyer distribution, Crowd engagement, Bilingual (EN/MY)',
+    certs: [] },
 ]
 
 // Platform-level admin accounts (Module 9/10) — NOT scoped to any company, separate from the
@@ -216,6 +265,7 @@ async function main() {
     'employee_off_day_requests',
     'off_day_quota_settings',
     'employee_fixed_off_days',
+    'user_certificates',
     'manager_departments',
     'employee_departments',
     'casualworker_departments',
@@ -263,12 +313,20 @@ async function main() {
   }
   console.log(`  · auth 用户总数: ${allAuthUsers.length}`)
   const testEmails = new Set(legacyTestEmailsToDelete)
+  // Playwright 集成测试的一次性账号统一用 test-<label>-<ts>@tasking-tests.local
+  //（见 tests/helpers/seed.ts）——测试中途失败时 afterAll 清理不到，会在 auth 里越积
+  // 越多。每次重建种子数据时顺手全部清掉，保证 Auth 面板里只剩真实演示账号。
+  let garbageCount = 0
   for (const u of allAuthUsers) {
-    if (testEmails.has(u.email)) {
+    const isSeedAccount = testEmails.has(u.email)
+    const isTestGarbage = (u.email || '').endsWith('@tasking-tests.local')
+    if (isSeedAccount || isTestGarbage) {
       await supabase.auth.admin.deleteUser(u.id)
-      console.log(`  ✓ 删除 auth: ${u.email}`)
+      if (isTestGarbage) garbageCount++
+      else console.log(`  ✓ 删除 auth: ${u.email}`)
     }
   }
+  if (garbageCount > 0) console.log(`  ✓ 清理 Playwright 遗留测试账号 ${garbageCount} 个（@tasking-tests.local）`)
 
   // ── Step 2b: 确保平台级 Admin 账号存在（Marketing Admin / User Admin）──────
   // 这两个账号不在 legacyTestEmailsToDelete 里，也被 Step 1 的清空排除 —— 每次
@@ -415,6 +473,7 @@ async function main() {
         profile_photo_url: DEMO_PHOTO_URL,
         role: account.role,
         company_id: company.id,
+        hourly_rate: account.hourly_rate ?? null,
       })
       .select()
       .single()
@@ -441,11 +500,21 @@ async function main() {
         worker_status: cw.worker_status,
         inactivate_reason: cw.inactivate_reason,
         hourly_rate: cw.hourly_rate ?? null,
+        skills: cw.skills ?? null,
+        resume_url: cw.resume_url ?? null,
       })
       .select()
       .single()
     if (uErr) { console.error(`  ✗ 插入 CW users 失败 ${cw.email}:`, uErr.message); process.exit(1) }
     userIdMap[cw.email].internalId = u.id
+    for (const cert of cw.certs ?? []) {
+      const { error: certErr } = await supabase.from('user_certificates').insert({
+        user_id: u.id,
+        name: cert.name,
+        file_url: cert.file_url,
+      })
+      if (certErr) console.warn(`  ⚠ 插入 user_certificates 失败 (${cw.email} / ${cert.name}): ${certErr.message}`)
+    }
     console.log(`  ✓ CW: ${cw.full_name} (${cw.worker_status}) → ${u.id}`)
   }
 
@@ -464,12 +533,21 @@ async function main() {
         profile_photo_url: DEMO_PHOTO_URL,
         role: 'Guest User',
         company_id: null,
+        skills: guest.skills ?? null,
       })
       .select()
       .single()
     if (uErr) { console.error(`  ✗ 插入 Guest users 失败 ${guest.email}:`, uErr.message); process.exit(1) }
     userIdMap[guest.email].internalId = u.id
-    console.log(`  ✓ Guest: ${guest.full_name} → ${u.id}`)
+    for (const cert of guest.certs ?? []) {
+      const { error: certErr } = await supabase.from('user_certificates').insert({
+        user_id: u.id,
+        name: cert.name,
+        file_url: cert.file_url,
+      })
+      if (certErr) console.warn(`  ⚠ 插入 user_certificates 失败 (${guest.email} / ${cert.name}): ${certErr.message}`)
+    }
+    console.log(`  ✓ Guest: ${guest.full_name} → ${u.id}（${(guest.certs ?? []).length} 张证书）`)
   }
 
   // ── Step 8: manager_departments ────────────────────────────────────────
@@ -534,7 +612,12 @@ async function main() {
 
   // ── Step 10: Shifts + Shift Assignments ─────────────────────────────────
   // 过去 SHIFT_DAYS_PAST 天 + 未来 SHIFT_DAYS_FUTURE 天，每个 Employee/Manager
-  // 每个工作日一个班（周末跳过），全部 published。日期锚点是脚本运行时的"今天"。
+  // 每天一个班，全部 published。日期锚点是脚本运行时的"今天"。
+  // 注意：不跳过周末——真实业务规则（schedulingRuleService.ts）里"某天是否休息"看的是
+  // 每个人自己的 employee_off_day_requests / 已批准请假，跟星期几无关；周末只是
+  // fair_weekend_rotation 这条 soft rule 的参考对象（公平轮换谁上周末班），不是"周末不排班"。
+  // 之前这里写死跳过周六周日只是图省事，会导致周末完全没人排班（进而导致依赖"某天有没有
+  // 员工"的功能，例如 Post Job 向导的 Available Shift 选择器，在周末永远显示"没有员工"）。
   console.log('\nStep 10: 生成 Shifts + Shift Assignments...')
   const allStaffEmails = [...managerEmails, ...employeeEmails]
   // assignmentInfo: shiftAssignmentId -> { date, start_time, end_time, userEmail, isPast }
@@ -542,7 +625,6 @@ async function main() {
 
   for (let dayOffset = -SHIFT_DAYS_PAST; dayOffset <= SHIFT_DAYS_FUTURE; dayOffset++) {
     const shiftDate = addDays(TODAY, dayOffset)
-    if (isWeekend(shiftDate)) continue
     const shiftDateStr = dateKey(shiftDate)
     const isPast = dayOffset < 0
 
@@ -597,7 +679,7 @@ async function main() {
       }
     }
   }
-  console.log(`  ✓ 生成 ${assignmentInfo.length} 个 shift + assignment（过去 ${SHIFT_DAYS_PAST} 天 + 未来 ${SHIFT_DAYS_FUTURE} 天，跳过周末）`)
+  console.log(`  ✓ 生成 ${assignmentInfo.length} 个 shift + assignment（过去 ${SHIFT_DAYS_PAST} 天 + 未来 ${SHIFT_DAYS_FUTURE} 天，含周末）`)
 
   // ── Step 11: Attendance Records（仅对过去的 shift）──────────────────────
   // 混合比例：65% 准时打卡完成已审批，10% 迟到（未审批), 10% 已经 Manager Review
@@ -698,7 +780,6 @@ async function main() {
 
       for (let dayOffset = -SHIFT_DAYS_PAST; dayOffset <= 0; dayOffset++) {
         const shiftDate = addDays(TODAY, dayOffset)
-        if (isWeekend(shiftDate)) continue
         const shiftDateStr = dateKey(shiftDate)
         const isPast = dayOffset < 0
 
@@ -795,8 +876,23 @@ async function main() {
       owner_reviewed_by: ownerStatus === 'pending' ? null : ownerUser.id,
       owner_reviewed_at: ownerStatus === 'pending' ? null : new Date().toISOString(),
     })
-    if (cwAttErr) console.warn(`  ⚠ CW attendance 失败 (${a.email}, ${a.shiftDate}): ${cwAttErr.message}`)
-    else cwAttCount++
+    if (cwAttErr) {
+      console.warn(`  ⚠ CW attendance 失败 (${a.email}, ${a.shiftDate}): ${cwAttErr.message}`)
+    } else {
+      cwAttCount++
+      // Mirrors casualAttendanceService.clockOut's side effect: a completed clock-in + clock-out
+      // is what promotes a CW into the company's verified worker pool (see casualworker_departments
+      // migration 20260713234000). Raw-inserting attendance_records above bypasses that service, so
+      // replicate it here — otherwise every seeded CW would sit outside the pool despite having
+      // "worked" in the seed data.
+      const { error: verifyErr } = await supabase
+        .from('casualworker_departments')
+        .update({ verified_at: new Date().toISOString() })
+        .eq('casual_worker_id', a.userId)
+        .eq('department_id', deptByIndex[a.deptIdx].id)
+        .is('verified_at', null)
+      if (verifyErr) console.warn(`  ⚠ casualworker_departments verified_at 更新失败 (${a.email}): ${verifyErr.message}`)
+    }
   }
   console.log(`  ✓ 生成 ${cwAttCount} 条 CW attendance_records（混合 approved/pending/manager_reviewed/rejected/late，10% 缺勤）`)
 
@@ -1066,6 +1162,85 @@ async function main() {
     else taskTemplateCount++
   }
 
+  // ── Step 13c: 历史 Tasks（供 Owner Report 的 Department On-Time / Rework / Overdue 使用）──
+  // 上面 Step 13b 的任务全部锚定在"今天"（Task Kanban / Delay Alert / Workload Suggestion 要
+  // 用），Report 只看"过去"，两组数据故意分开、互不影响。每个部门 4 条：on_time / late /
+  // overdue（仍未完成）/ rework（带 rejection_reason），task_date 撒在过去 3~20 天，避开周末。
+  function pastWeekdayKey(daysAgo) {
+    let d = addDays(TODAY, -daysAgo)
+    while (isWeekend(d)) d = addDays(d, -1)
+    return dateKey(d)
+  }
+
+  const historicalTaskDefs = [
+    // Operations
+    { dept: 0, assignee: 'manager1@test.com', title: 'Close July payroll batch', description: 'Reconcile hours and submit the July payroll batch for processing.', priority: 'High', daysAgo: 4, dueOffsetH: 10, outcome: 'on_time' },
+    { dept: 0, assignee: 'manager2@test.com', title: 'Replace walk-in chiller thermostat', description: 'Coordinate with the technician to replace the faulty chiller thermostat.', priority: 'Urgent', daysAgo: 9, dueOffsetH: 6, outcome: 'late' },
+    { dept: 0, assignee: 'manager1@test.com', title: 'Finalize August roster draft', description: 'Draft and circulate the August roster for department sign-off.', priority: 'Medium', daysAgo: 6, dueOffsetH: 8, outcome: 'overdue' },
+    { dept: 0, assignee: 'manager2@test.com', title: 'Audit petty cash float', description: 'Count and reconcile the petty cash float against the log.', priority: 'Low', daysAgo: 12, dueOffsetH: 4, outcome: 'rework' },
+    // Marketing
+    { dept: 1, assignee: 'manager3@test.com', title: 'Publish June newsletter recap', description: 'Compile and send the June newsletter performance recap.', priority: 'Medium', daysAgo: 5, dueOffsetH: 12, outcome: 'on_time' },
+    { dept: 1, assignee: 'manager4@test.com', title: 'Finalize influencer shortlist', description: 'Narrow the influencer outreach list down to five confirmed partners.', priority: 'High', daysAgo: 8, dueOffsetH: 6, outcome: 'late' },
+    { dept: 1, assignee: 'manager3@test.com', title: 'Renew signage permit', description: 'Submit the renewal paperwork for the storefront signage permit.', priority: 'Low', daysAgo: 15, dueOffsetH: 24, outcome: 'overdue' },
+    { dept: 1, assignee: 'manager4@test.com', title: 'Book photographer for July shoot', description: 'Confirm the photographer and location for the July product shoot.', priority: 'Medium', daysAgo: 3, dueOffsetH: 10, outcome: 'on_time' },
+    // Engineering
+    { dept: 2, assignee: 'manager5@test.com', title: 'Patch POS terminal firmware', description: 'Roll out the latest firmware patch to all POS terminals.', priority: 'Urgent', daysAgo: 7, dueOffsetH: 5, outcome: 'on_time' },
+    { dept: 2, assignee: 'manager6@test.com', title: 'Migrate backup storage to new NAS', description: 'Move nightly backups over to the newly provisioned NAS.', priority: 'High', daysAgo: 10, dueOffsetH: 8, outcome: 'late' },
+    { dept: 2, assignee: 'manager5@test.com', title: 'Retire legacy printer driver', description: 'Uninstall the legacy printer driver from all front-desk machines.', priority: 'Low', daysAgo: 20, dueOffsetH: 24, outcome: 'overdue' },
+    { dept: 2, assignee: 'manager6@test.com', title: 'Re-test kiosk after OS update', description: 'Verify the clock-in kiosk works correctly after the OS patch.', priority: 'Medium', daysAgo: 6, dueOffsetH: 6, outcome: 'rework' },
+    // Customer Support
+    { dept: 3, assignee: 'manager7@test.com', title: 'Clear refund ticket backlog', description: 'Work through and close the outstanding refund ticket backlog.', priority: 'High', daysAgo: 4, dueOffsetH: 8, outcome: 'on_time' },
+    { dept: 3, assignee: 'manager8@test.com', title: 'Retrain team on new macros', description: 'Walk the support team through the updated canned-reply macros.', priority: 'Medium', daysAgo: 11, dueOffsetH: 6, outcome: 'late' },
+    { dept: 3, assignee: 'manager7@test.com', title: 'Audit call recording retention', description: 'Confirm call recordings older than 90 days are purged per policy.', priority: 'Low', daysAgo: 18, dueOffsetH: 24, outcome: 'overdue' },
+    { dept: 3, assignee: 'manager8@test.com', title: 'Update support SLA doc', description: 'Revise the SLA response-time targets in the support handbook.', priority: 'Medium', daysAgo: 5, dueOffsetH: 10, outcome: 'on_time' },
+  ]
+
+  let historicalTaskCount = 0
+  for (const def of historicalTaskDefs) {
+    const taskDateStr = pastWeekdayKey(def.daysAgo)
+    const dueAtMs = new Date(`${taskDateStr}T00:00:00Z`).getTime() + def.dueOffsetH * 3600000
+    let status, pct, isCompleted, completedAt, rejection, rejectedAt
+    if (def.outcome === 'on_time') {
+      status = 'Complete'; pct = 100; isCompleted = true
+      completedAt = new Date(dueAtMs - 2 * 3600000).toISOString() // finished 2h before deadline
+      rejection = null; rejectedAt = null
+    } else if (def.outcome === 'late') {
+      status = 'Complete'; pct = 100; isCompleted = true
+      completedAt = new Date(dueAtMs + 5 * 3600000).toISOString() // finished 5h after deadline
+      rejection = null; rejectedAt = null
+    } else if (def.outcome === 'overdue') {
+      status = 'In Progress'; pct = 60; isCompleted = false
+      completedAt = null; rejection = null; rejectedAt = null
+    } else {
+      // rework — completed late, carrying a rejection_reason from an earlier review cycle
+      status = 'Complete'; pct = 100; isCompleted = true
+      completedAt = new Date(dueAtMs + 8 * 3600000).toISOString()
+      rejection = 'Sent back once before this was approved — details were incomplete on the first pass.'
+      rejectedAt = new Date(dueAtMs + 1 * 3600000).toISOString()
+    }
+
+    const id = await insertTask({
+      company_id: company.id,
+      department_id: deptByIndex[def.dept].id,
+      title: def.title,
+      description: def.description,
+      assigned_user_id: mgrId(def.assignee),
+      assigned_by: ownerUser.id,
+      status,
+      percentage_complete: pct,
+      is_completed: isCompleted,
+      completed_at: completedAt,
+      priority: def.priority,
+      due_at: new Date(dueAtMs).toISOString(),
+      task_date: taskDateStr,
+      created_at: new Date(dueAtMs - 48 * 3600000).toISOString(),
+      rejection_reason: rejection,
+      rejected_at: rejectedAt,
+    })
+    if (id) historicalTaskCount++
+  }
+  console.log(`  ✓ 生成 ${historicalTaskCount} 条历史 tasks（供 Report 部门表现：on-time/late/overdue/rework 各 4 条，跨 4 个部门，task_date 在过去 3~20 天）`)
+
   console.log(`  ✓ 生成 ${taskCount} 条 tasks（含 sub-tasks、${archivedCount} 条 archived、多 assignee、rejection 返工、3 条 Delay Alert 触发项、Operations 超载触发 Workload Suggestion）`)
   console.log(`  ✓ 生成 ${taskTemplateCount} 条 task_templates`)
 
@@ -1079,7 +1254,8 @@ async function main() {
   console.log('  Manager:  manager1~8@test.com')
   console.log('  Employee: employee1~8@test.com')
   console.log('  CW:       cw1~10@test.com')
-  console.log('  Guest:    guest1~6@test.com（求职申请人，尚未受雇）')
+  console.log('  Guest:    guest1~10@test.com（求职申请人，尚未受雇，带技能/证书档案）')
+  console.log('            guest1@test.com = Applications 页演示账号：Ongoing 三个 block + History 全部终态各有一条')
   console.log('\n平台级 Admin 账号（不属于任何 company，密码同为 111111）')
   console.log('  Marketing Admin: madmin@tasking.com')
   console.log('  User Admin:      uadmin@tasking.com')
@@ -1093,9 +1269,9 @@ async function main() {
   console.log('  Active (7):   cw1~7@test.com')
   console.log('  Inactive (3): cw8~10@test.com（含 inactivate_reason）')
   console.log(`\n业务数据（基于运行当天 ${dateKey(TODAY)} 动态生成）：`)
-  console.log(`  Shifts:      ${assignmentInfo.length} 个（Internal Staff，过去 ${SHIFT_DAYS_PAST} 天 + 未来 ${SHIFT_DAYS_FUTURE} 天，跳过周末）`)
+  console.log(`  Shifts:      ${assignmentInfo.length} 个（Internal Staff，过去 ${SHIFT_DAYS_PAST} 天 + 未来 ${SHIFT_DAYS_FUTURE} 天，含周末）`)
   console.log(`  Attendance:  ${attendanceCount} 条（Internal Staff，混合 approved/pending/manager_reviewed/rejected/late，~5% 缺勤）`)
-  console.log(`  CW Shifts:   ${cwShiftCount} 个（Casual Worker，过去 ${SHIFT_DAYS_PAST} 天，跳过周末，含 Shift Job + One-Off）`)
+  console.log(`  CW Shifts:   ${cwShiftCount} 个（Casual Worker，过去 ${SHIFT_DAYS_PAST} 天，含周末，含 Shift Job + One-Off）`)
   console.log(`  CW Attend.:  ${cwAttCount} 条（Casual Worker，混合 approved/pending/manager_reviewed/rejected/late，10% 缺勤）`)
   console.log(`  Announcements: ${announcementCount} 条`)
   console.log(`  Messages:    ${messageCount} 条`)
@@ -1620,158 +1796,271 @@ async function main() {
   }
   console.log(`  ok seeded ${fixedOffCount} employee_off_day_requests (${pendingFixedOffSeeders.length} pending for week ${activeWeekStartKey} + ${historicalFixedOffSeeders.length} historical across 4 past weeks)`)
 
-  // ── Step 15: Job Postings（Recruitment 页面的 Jobs 标签页 + Review 标签页数据）──
-  // Jobs 标签页只显示 status in ('open','closed') 的职位（见 owner/recruitment/page.tsx
-  // 的 jobsPostings 过滤逻辑）；Review 标签页显示 status = 'pending_approval' 的职位，
-  // 由 Manager 提交、Owner 审批（submitter_name 取自 created_by）。
-  console.log('\nStep 15: 生成 Job Postings（Jobs + Review）...')
-  const jobStartDate = addDays(TODAY, 5)
+  // ── Step 15: Job Postings（Recruitment 页面全部状态的数据）──────────────
+  // 状态 → 页面位置：open = Active Jobs 标签，closed = Closed Jobs 标签，archived =
+  // Job Sources 的 Archived 面板（archived_from_status 记录归档前是 open 还是 closed，
+  // Unarchive 按它还原），pending_approval = Review（Manager 提交、Owner 审批），
+  // draft = Drafts。每条职位都刻意做出差异：4 个部门轮开、Shift Job / One-Off 混排、
+  // openings 全部 ≥ 2、requirements（minimum_age / experience / uniform）各不相同、
+  // 每条都带 application deadline（expires_at，deadlineDays 相对今天，可为过去）。
+  console.log('\nStep 15: 生成 Job Postings（open / closed / archived / pending / draft）...')
+  // Must land on a weekday — Employee/Manager shifts are only generated on weekdays (Step 10
+  // skips weekends), so a raw addDays(TODAY, 5) can land on a Saturday/Sunday and leave every
+  // posting's shift_date pointing at a day with zero scheduled employees (breaks "Available
+  // Shift" / "Supervisor" pickers when reopening these as drafts or templates in the wizard).
+  const jobStartDateKey = weekdayKey(5)
   const jobPostingDefs = [
-    // ── "All Jobs" tab data: status open/closed, mix of Shift Job / One-Off ──
+    // ── Active Jobs（status: open）— 4 个部门全覆盖，Shift 周期班 / Shift 单日班 /
+    // One-Off 三种形态混排，requirements 每条都不同，deadline 全部在未来 ──
     {
-      dept: 0, status: 'open', is_recurring: true, title: 'Warehouse Assistant',
-      description: 'Support day-to-day warehouse operations including stock handling and deliveries.',
+      dept: 0, status: 'open', form: 'shift', is_recurring: true, title: 'Warehouse Assistant',
+      description: 'Support day-to-day warehouse operations including stock handling, deliveries and put-away.',
       requirements: 'Able to lift up to 15kg. Prior warehouse experience a plus.',
-      employment_type: 'casual', salary_amount: 15.5, assignedEmployeeIdx: 0, openings: 3,
-      expires_at: addDays(TODAY, 10).toISOString(),
+      employment_type: 'casual', salary_amount: 15.5, assignedEmployeeIdx: 0, openings: 3, deadlineDays: 10,
+      shift_days: ['Mon', 'Wed', 'Fri'],
       shift_start_time: '09:00', shift_end_time: '17:00', break_start_time: '12:00', break_end_time: '13:00',
-      recurrence_interval: 1, recurrence_unit: 'week', createdBy: 'owner',
+      recurrence_interval: 1, recurrence_unit: 'week', createdBy: 'owner', createdDaysAgo: 6,
+      experience_required: 'Not Required', minimum_age: 18, uniform_type: 'company', uniform_details: 'Hi-vis vest and safety boots (provided)',
     },
     {
-      dept: 0, status: 'open', is_recurring: false, title: 'Event Setup Crew',
-      description: 'One-off crew needed to set up and tear down for a corporate event.',
+      dept: 0, status: 'open', form: 'oneoff', title: 'Event Setup Crew',
+      description: 'One-off crew needed to set up and tear down staging for a corporate gala dinner.',
       requirements: 'Comfortable with physical setup work. Punctual and reliable.',
       employment_type: 'casual', salary_amount: 130, urgency: 'high', estimated_hours: '5',
-      job_start_time: '08:00', createdBy: 'owner', assignedEmployeeIdx: 1, openings: 2,
-      expires_at: addDays(TODAY, 7).toISOString(),
+      job_start_time: '12:00', createdBy: 'owner', createdDaysAgo: 8, assignedEmployeeIdx: 1, openings: 4, deadlineDays: 4,
+      experience_required: 'Preferred', minimum_age: 21, uniform_type: 'dress_code', uniform_details: 'Black tee, long pants, covered shoes',
     },
     {
-      dept: 1, status: 'open', is_recurring: true, title: 'Social Media Assistant',
+      dept: 0, status: 'open', form: 'shift', is_recurring: false, title: 'Pop-Up Cafe Barista',
+      description: 'Single-day barista cover for our pop-up cafe booth at the Marina Bay food fair.',
+      requirements: 'Able to run an espresso machine solo during peak hour.',
+      employment_type: 'casual', salary_amount: 14, assignedEmployeeIdx: 1, openings: 2, deadlineDays: 3,
+      shift_start_time: '11:00', shift_end_time: '18:00', break_start_time: '14:30', break_end_time: '15:00',
+      createdBy: 'owner', createdDaysAgo: 4,
+      experience_required: 'Preferred', minimum_age: 16, uniform_type: 'company', uniform_details: 'Barista apron provided, wear your own black top',
+    },
+    {
+      dept: 1, status: 'open', form: 'shift', is_recurring: true, title: 'Social Media Assistant',
       description: 'Help manage the weekly social media content calendar and community replies.',
       requirements: 'Familiar with Instagram and TikTok. Good written English.',
-      employment_type: 'part-time', salary_amount: 16, assignedEmployeeIdx: 2,
+      employment_type: 'part-time', salary_amount: 16, assignedEmployeeIdx: 2, openings: 2, deadlineDays: 14,
+      shift_days: ['Tue', 'Thu'],
       shift_start_time: '10:00', shift_end_time: '15:00', break_start_time: '12:30', break_end_time: '13:00',
-      recurrence_interval: 1, recurrence_unit: 'week', createdBy: 'owner',
+      recurrence_interval: 1, recurrence_unit: 'week', createdBy: 'owner', createdDaysAgo: 7,
+      experience_required: '1+ Year', minimum_age: null, uniform_type: 'none',
     },
     {
-      dept: 1, status: 'closed', is_recurring: false, title: 'Promo Day Staff',
+      dept: 1, status: 'open', form: 'oneoff', title: 'Roadshow Brand Ambassador',
+      description: 'Engage shoppers, hand out samples and drive footfall at our weekend roadshow booth.',
+      requirements: 'Energetic and comfortable approaching the public. Bilingual a plus.',
+      employment_type: 'casual', salary_amount: 95, urgency: 'normal', estimated_hours: '6',
+      job_start_time: '11:00', createdBy: 'owner', createdDaysAgo: 8, assignedEmployeeIdx: 3, openings: 5, deadlineDays: 6,
+      experience_required: 'Not Required', minimum_age: 16, uniform_type: 'dress_code', uniform_details: 'Plain white top, dark jeans, sneakers',
+    },
+    {
+      dept: 2, status: 'open', form: 'shift', is_recurring: true, title: 'Junior Support Technician',
+      description: 'Provide first-line technical support and help maintain internal tooling.',
+      requirements: 'Basic troubleshooting skills. Currently studying IT/CS is a plus.',
+      employment_type: 'part-time', salary_amount: 18, assignedEmployeeIdx: 4, openings: 2, deadlineDays: 12,
+      shift_days: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'],
+      shift_start_time: '13:00', shift_end_time: '21:00', break_start_time: '17:00', break_end_time: '17:30',
+      recurrence_interval: 2, recurrence_unit: 'week', createdBy: 'owner', createdDaysAgo: 4,
+      experience_required: '6+ Months', minimum_age: 18, uniform_type: 'none',
+    },
+    {
+      dept: 2, status: 'open', form: 'oneoff', title: 'Server Room Cabling Helper',
+      description: 'Assist the infra team to re-run structured cabling during a one-night server room refresh.',
+      requirements: 'Comfortable on a ladder and working in tight spaces.',
+      employment_type: 'casual', salary_amount: 140, urgency: 'urgent', estimated_hours: '4',
+      job_start_time: '13:00', createdBy: 'owner', createdDaysAgo: 5, assignedEmployeeIdx: 5, openings: 2, deadlineDays: 2,
+      experience_required: '2+ Years', minimum_age: 21, uniform_type: 'company', uniform_details: 'Anti-static lab coat (provided)',
+    },
+    {
+      dept: 3, status: 'open', form: 'shift', is_recurring: true, title: 'Weekend Support Agent',
+      description: 'Cover weekend customer support tickets and live chat.',
+      requirements: 'Clear written communication. Weekend availability required.',
+      employment_type: 'part-time', salary_amount: 15, assignedEmployeeIdx: 6, openings: 3, deadlineDays: 9,
+      shift_days: ['Sat', 'Sun'],
+      shift_start_time: '09:00', shift_end_time: '17:00', break_start_time: '12:00', break_end_time: '13:00',
+      recurrence_interval: 1, recurrence_unit: 'week', createdBy: 'owner', createdDaysAgo: 7,
+      experience_required: 'Preferred', minimum_age: 16, uniform_type: 'none',
+    },
+
+    // ── Closed Jobs（status: closed）— 同样多元：不同部门 / 形态 / requirements，
+    // deadline 一半已过（到期后手动关闭）、一半未到（招满提前关闭）──
+    {
+      dept: 1, status: 'closed', form: 'oneoff', title: 'Promo Day Staff',
       description: 'Promo booth staff for a one-day retail activation.',
       requirements: 'Outgoing personality, comfortable engaging with the public.',
       employment_type: 'casual', salary_amount: 110, urgency: 'normal', estimated_hours: '6',
-      job_start_time: '10:00', createdBy: 'owner', assignedEmployeeIdx: 3,
+      job_start_time: '11:00', createdBy: 'owner', createdDaysAgo: 11, assignedEmployeeIdx: 3, openings: 2, deadlineDays: -1,
+      experience_required: 'Not Required', minimum_age: 16, uniform_type: 'dress_code', uniform_details: 'Brand tee provided on-site, own dark bottoms',
     },
     {
-      dept: 2, status: 'open', is_recurring: true, title: 'Junior Support Technician',
-      description: 'Provide first-line technical support and help maintain internal tooling.',
-      requirements: 'Basic troubleshooting skills. Currently studying IT/CS is a plus.',
-      employment_type: 'part-time', salary_amount: 18, assignedEmployeeIdx: 4,
-      shift_start_time: '13:00', shift_end_time: '21:00', break_start_time: '17:00', break_end_time: '17:30',
-      recurrence_interval: 2, recurrence_unit: 'week', createdBy: 'owner',
-    },
-    {
-      dept: 2, status: 'open', is_recurring: false, title: 'IT Setup Helper',
-      description: 'Assist with a one-time office workstation refresh — unboxing and setup.',
-      requirements: 'Comfortable with basic PC hardware.',
-      employment_type: 'casual', salary_amount: 140, urgency: 'urgent', estimated_hours: '4',
-      job_start_time: '09:00', createdBy: 'owner', assignedEmployeeIdx: 5,
-      expires_at: addDays(TODAY, 5).toISOString(),
-    },
-    {
-      dept: 3, status: 'open', is_recurring: true, title: 'Weekend Support Agent',
-      description: 'Cover weekend customer support tickets and live chat.',
-      requirements: 'Clear written communication. Weekend availability required.',
-      employment_type: 'part-time', salary_amount: 15, assignedEmployeeIdx: 6,
-      shift_start_time: '09:00', shift_end_time: '17:00', break_start_time: '12:00', break_end_time: '13:00',
-      recurrence_interval: 1, recurrence_unit: 'week', createdBy: 'owner',
-    },
-    {
-      dept: 3, status: 'closed', is_recurring: false, title: 'Call Center Backup',
+      dept: 3, status: 'closed', form: 'oneoff', title: 'Call Center Backup',
       description: 'Backup phone support during a planned product launch surge.',
       requirements: 'Prior call center experience preferred.',
       employment_type: 'casual', salary_amount: 120, urgency: 'high', estimated_hours: '8',
-      job_start_time: '08:30', createdBy: 'owner', assignedEmployeeIdx: 7,
+      job_start_time: '12:30', createdBy: 'owner', createdDaysAgo: 9, assignedEmployeeIdx: 7, openings: 3, deadlineDays: 2,
+      experience_required: '1+ Year', minimum_age: 18, uniform_type: 'none',
+    },
+    {
+      dept: 0, status: 'closed', form: 'shift', is_recurring: true, title: 'Stocktake Crew',
+      description: 'Weekly Saturday stocktake across both storage rooms — counting, tagging, reporting variances.',
+      requirements: 'Detail-oriented, comfortable with barcode scanners.',
+      employment_type: 'casual', salary_amount: 15, assignedEmployeeIdx: 0, openings: 2, deadlineDays: -2,
+      shift_days: ['Sat'],
+      shift_start_time: '09:00', shift_end_time: '17:00', break_start_time: '12:00', break_end_time: '12:45',
+      recurrence_interval: 1, recurrence_unit: 'week', createdBy: 'owner', createdDaysAgo: 12,
+      experience_required: 'Not Required', minimum_age: 18, uniform_type: 'company', uniform_details: 'Gloves and vest provided',
+    },
+    {
+      dept: 2, status: 'closed', form: 'shift', is_recurring: false, title: 'On-Site AV Technician',
+      description: 'Run the AV desk for a single-day client town hall — mics, projector, live stream.',
+      requirements: 'Hands-on with mixers and projectors. Calm under pressure.',
+      employment_type: 'casual', salary_amount: 19, assignedEmployeeIdx: 4, openings: 2, deadlineDays: 5,
+      shift_start_time: '12:00', shift_end_time: '18:00', break_start_time: null, break_end_time: null,
+      createdBy: 'owner', createdDaysAgo: 8,
+      experience_required: '2+ Years', minimum_age: 21, uniform_type: 'dress_code', uniform_details: 'All-black smart casual',
     },
 
-    // ── "Review" tab data: status pending_approval, submitted by a Manager ──
+    // ── Archived（status: archived）— Job Sources 的 Archived 面板。archived_from_status
+    // 记录归档前状态（open/closed），留一条 null 模拟"deadline 过期被系统自动归档"的旧数据 ──
     {
-      dept: 0, status: 'pending_approval', is_recurring: false, title: 'Extra Warehouse Hand',
-      description: 'Need one extra pair of hands for next week\'s stocktake.',
-      requirements: 'Available for a full day, no experience required.',
-      employment_type: 'casual', salary_amount: 100, urgency: 'normal', estimated_hours: '6',
-      job_start_time: '09:00', createdBy: 'manager1@test.com', assignedEmployeeIdx: 1,
+      dept: 3, status: 'archived', form: 'oneoff', title: 'Orientation Day Assistant',
+      description: 'Guide new-joiner groups between orientation stations and manage the registration desk.',
+      requirements: 'Friendly, organised, good with directions.',
+      employment_type: 'casual', salary_amount: 85, urgency: 'normal', estimated_hours: '4',
+      job_start_time: '13:00', createdBy: 'owner', createdDaysAgo: 14, assignedEmployeeIdx: 6, openings: 2, deadlineDays: -10,
+      experience_required: 'Not Required', minimum_age: 16, uniform_type: 'none',
+      archivedFrom: 'closed', archivedDaysAgo: 5,
     },
     {
-      dept: 1, status: 'pending_approval', is_recurring: true, title: 'Weekend Promo Crew',
+      dept: 1, status: 'archived', form: 'shift', is_recurring: true, title: 'Festival Booth Crew',
+      description: 'Man the festival merchandise booth on weekend evenings during the month-long fair.',
+      requirements: 'Cash handling experience, comfortable with crowds.',
+      employment_type: 'casual', salary_amount: 14.5, assignedEmployeeIdx: 2, openings: 4, deadlineDays: -3,
+      shift_days: ['Fri', 'Sat'],
+      shift_start_time: '16:00', shift_end_time: '22:00', break_start_time: '18:30', break_end_time: '19:00',
+      recurrence_interval: 1, recurrence_unit: 'week', createdBy: 'owner', createdDaysAgo: 8,
+      experience_required: 'Preferred', minimum_age: 18, uniform_type: 'company', uniform_details: 'Festival crew tee (provided)',
+      archivedFrom: 'open', archivedDaysAgo: 2,
+    },
+    {
+      dept: 0, status: 'archived', form: 'shift', is_recurring: false, title: 'Night Auditor Cover',
+      description: 'Overnight front-desk audit cover for a single night — end-of-day reports and reconciliation.',
+      requirements: 'Prior front office or audit exposure required.',
+      employment_type: 'casual', salary_amount: 20, assignedEmployeeIdx: 1, openings: 2, deadlineDays: -1,
+      shift_start_time: '22:00', shift_end_time: '06:00', break_start_time: '02:00', break_end_time: '02:30',
+      createdBy: 'owner', createdDaysAgo: 5,
+      experience_required: '1+ Year', minimum_age: 21, uniform_type: 'dress_code', uniform_details: 'Business casual, closed shoes',
+      archivedFrom: null, archivedDaysAgo: 1, // deadline 过期后被系统自动归档的形态（archived_from_status 为空）
+    },
+    {
+      dept: 2, status: 'archived', form: 'oneoff', title: 'Legacy System Data Entry',
+      description: 'Migrate paper records into the new system during a one-off weekend data entry sprint.',
+      requirements: 'Fast, accurate typing. Spreadsheet basics.',
+      employment_type: 'casual', salary_amount: 100, urgency: 'normal', estimated_hours: '7',
+      job_start_time: '11:00', createdBy: 'owner', createdDaysAgo: 18, assignedEmployeeIdx: 5, openings: 3, deadlineDays: -14,
+      experience_required: 'Not Required', minimum_age: 18, uniform_type: 'none',
+      archivedFrom: 'closed', archivedDaysAgo: 7,
+    },
+
+    // ── Review 数据（status: pending_approval，由 Manager 提交、Owner 审批）——
+    // 同样保持多元：部门 / 形态 / requirements / deadline / openings 全部不同 ──
+    {
+      dept: 0, status: 'pending_approval', form: 'oneoff', title: 'Extra Warehouse Hand',
+      description: 'Need extra pairs of hands for next week\'s stocktake.',
+      requirements: 'Available for a full day, no experience required.',
+      employment_type: 'casual', salary_amount: 100, urgency: 'normal', estimated_hours: '6',
+      job_start_time: '11:00', createdBy: 'manager1@test.com', assignedEmployeeIdx: 1,
+      openings: 2, deadlineDays: 5,
+      experience_required: 'Not Required', minimum_age: 18, uniform_type: 'company', uniform_details: 'Gloves provided',
+    },
+    {
+      dept: 1, status: 'pending_approval', form: 'shift', is_recurring: true, title: 'Weekend Promo Crew',
       description: 'Recurring weekend booth crew for the new campaign launch.',
       requirements: 'Friendly, presentable, weekend availability.',
       employment_type: 'casual', salary_amount: 17, assignedEmployeeIdx: 3,
+      shift_days: ['Sat', 'Sun'],
       shift_start_time: '11:00', shift_end_time: '19:00', break_start_time: '15:00', break_end_time: '15:30',
       recurrence_interval: 1, recurrence_unit: 'week', createdBy: 'manager3@test.com',
+      openings: 3, deadlineDays: 6,
+      experience_required: 'Preferred', minimum_age: 16, uniform_type: 'dress_code', uniform_details: 'Campaign tee (issued), own jeans',
     },
     {
-      dept: 2, status: 'pending_approval', is_recurring: false, title: 'Bug Bash Volunteer',
+      dept: 2, status: 'pending_approval', form: 'oneoff', title: 'Bug Bash Volunteer',
       description: 'One-off testing session ahead of the next release.',
       requirements: 'Comfortable following a test script.',
       employment_type: 'casual', salary_amount: 90, urgency: 'urgent', estimated_hours: '3',
       job_start_time: '14:00', createdBy: 'manager5@test.com', assignedEmployeeIdx: 5,
+      openings: 4, deadlineDays: 2,
+      experience_required: '6+ Months', minimum_age: null, uniform_type: 'none',
     },
     {
-      dept: 3, status: 'pending_approval', is_recurring: true, title: 'Overflow Support Agent',
-      description: 'Additional recurring shift to cover overflow support tickets.',
+      dept: 3, status: 'pending_approval', form: 'shift', is_recurring: true, title: 'Overflow Support Agent',
+      description: 'Additional recurring evening shift to cover overflow support tickets.',
       requirements: 'Prior customer service experience preferred.',
       employment_type: 'part-time', salary_amount: 15.5, assignedEmployeeIdx: 7,
+      shift_days: ['Mon', 'Wed'],
       shift_start_time: '17:00', shift_end_time: '21:00', break_start_time: null, break_end_time: null,
       recurrence_interval: 1, recurrence_unit: 'week', createdBy: 'manager7@test.com',
+      openings: 2, deadlineDays: 8,
+      experience_required: '1+ Year', minimum_age: 18, uniform_type: 'none',
     },
     {
-      dept: 0, status: 'pending_approval', is_recurring: false, title: 'Inventory Count Helper',
+      dept: 0, status: 'pending_approval', form: 'oneoff', title: 'Inventory Count Helper',
       description: 'Support the monthly inventory count across two storage rooms.',
       requirements: 'Detail-oriented, comfortable with spreadsheets.',
       employment_type: 'casual', salary_amount: 105, urgency: 'normal', estimated_hours: '5',
-      job_start_time: '09:30', createdBy: 'manager2@test.com', assignedEmployeeIdx: 0,
+      job_start_time: '12:00', createdBy: 'manager2@test.com', assignedEmployeeIdx: 0,
+      openings: 2, deadlineDays: 4,
+      experience_required: 'Not Required', minimum_age: 21, uniform_type: 'dress_code', uniform_details: 'Covered shoes mandatory (warehouse floor)',
     },
 
-    // ── "Drafts" data: status draft — postings saved half-way from the Post Job form ──
+    // ── Drafts（status: draft）— Post Job 表单存了一半的草稿，同样保持形态多元 ──
     {
-      dept: 0, status: 'draft', is_recurring: true, title: 'Night Shift Stocker',
+      dept: 0, status: 'draft', form: 'shift', is_recurring: true, title: 'Night Shift Stocker',
       description: 'Restock shelves and prepare deliveries during the overnight window.',
       requirements: 'Able to work overnight hours. Physically fit.',
-      employment_type: 'part-time', salary_amount: 17,
+      employment_type: 'part-time', salary_amount: 17, openings: 2, deadlineDays: 11,
+      shift_days: ['Tue', 'Thu', 'Sat'],
       shift_start_time: '22:00', shift_end_time: '06:00', break_start_time: '02:00', break_end_time: '02:30',
       recurrence_interval: 1, recurrence_unit: 'week', createdBy: 'owner',
       experience_required: 'Not Required', minimum_age: 18, uniform_type: 'company', uniform_details: 'Hi-vis vest (provided)',
     },
     {
-      dept: 1, status: 'draft', is_recurring: false, title: 'Product Photoshoot Assistant',
+      dept: 1, status: 'draft', form: 'oneoff', title: 'Product Photoshoot Assistant',
       description: 'Assist the photographer during a one-day product shoot — props, steaming, staging.',
       requirements: 'Detail-oriented, comfortable on set.',
       employment_type: 'casual', salary_amount: 95, urgency: 'normal', estimated_hours: '6',
-      job_start_time: '10:00', createdBy: 'owner',
+      job_start_time: '12:00', createdBy: 'owner', openings: 2, deadlineDays: 7,
       experience_required: 'Preferred', minimum_age: 16, uniform_type: 'none',
     },
     {
-      dept: 2, status: 'draft', is_recurring: true, title: 'Weekend NOC Monitor',
+      dept: 2, status: 'draft', form: 'shift', is_recurring: true, title: 'Weekend NOC Monitor',
       description: 'Monitor system dashboards over the weekend and escalate incidents.',
       requirements: 'Basic understanding of uptime monitoring tools.',
-      employment_type: 'part-time', salary_amount: 19,
+      employment_type: 'part-time', salary_amount: 19, openings: 3, deadlineDays: 13,
+      shift_days: ['Sat', 'Sun'],
       shift_start_time: '08:00', shift_end_time: '16:00', break_start_time: '12:00', break_end_time: '12:30',
       recurrence_interval: 1, recurrence_unit: 'week', createdBy: 'owner',
       experience_required: '6+ Months', minimum_age: 18, uniform_type: 'none',
     },
     {
       // 故意残缺的草稿：只有标题和一半描述，模拟写到一半就点了 Save Draft
-      dept: 3, status: 'draft', is_recurring: false, title: 'Holiday Hotline Backup',
+      dept: 3, status: 'draft', form: 'oneoff', title: 'Holiday Hotline Backup',
       description: 'Cover the customer hotline during the public holiday period.',
       requirements: null,
       employment_type: 'casual', salary_amount: null, urgency: 'normal', estimated_hours: null,
-      job_start_time: null, createdBy: 'owner',
+      job_start_time: null, createdBy: 'owner', openings: 2, deadlineDays: 9,
     },
     {
-      dept: 1, status: 'draft', is_recurring: false, title: 'Roadshow Flyer Distributor',
+      dept: 1, status: 'draft', form: 'oneoff', title: 'Roadshow Flyer Distributor',
       description: 'Hand out flyers and direct footfall to the roadshow booth.',
       requirements: 'Energetic and comfortable approaching the public.',
       employment_type: 'casual', salary_amount: 80, urgency: 'high', estimated_hours: '4',
-      job_start_time: '11:00', createdBy: 'owner',
+      job_start_time: '11:00', createdBy: 'owner', openings: 4, deadlineDays: 3,
       experience_required: 'Not Required', minimum_age: 16, uniform_type: 'dress_code', uniform_details: 'Plain white top, dark bottoms',
     },
   ]
@@ -1785,6 +2074,9 @@ async function main() {
     const assignedEmployeeId = def.assignedEmployeeIdx != null
       ? userIdMap[allEmployeeEmailsFlat[def.assignedEmployeeIdx]].internalId
       : null
+    const isShift = def.form === 'shift'
+    const expiresAt = def.deadlineDays != null ? addDays(TODAY, def.deadlineDays).toISOString() : null
+    const isArchived = def.status === 'archived'
 
     const { data: jp, error: jpErr } = await supabase.from('job_postings').insert({
       company_id: company.id,
@@ -1798,83 +2090,244 @@ async function main() {
       company_name: company.name,
       industry: company.industry,
       status: def.status,
-      is_recurring: def.is_recurring,
-      recurrence_interval: def.recurrence_interval ?? null,
-      recurrence_unit: def.recurrence_unit ?? null,
+      form_type: def.form,
+      is_recurring: isShift ? (def.is_recurring ?? false) : false,
+      recurrence_interval: isShift ? (def.recurrence_interval ?? null) : null,
+      recurrence_unit: isShift ? (def.recurrence_unit ?? null) : null,
+      shift_days: isShift ? (def.shift_days ?? null) : null,
       salary_amount: def.salary_amount ?? null,
-      salary_type: def.is_recurring ? 'per hour' : 'flat rate',
-      urgency: def.is_recurring ? null : (def.urgency ?? 'normal'),
-      estimated_hours: def.is_recurring ? null : (def.estimated_hours ?? null),
-      shift_date: dateKey(jobStartDate),
-      shift_start_time: def.is_recurring ? (def.shift_start_time ?? null) : null,
-      shift_end_time: def.is_recurring ? (def.shift_end_time ?? null) : null,
-      break_start_time: def.is_recurring ? (def.break_start_time ?? null) : null,
-      break_end_time: def.is_recurring ? (def.break_end_time ?? null) : null,
-      job_start_time: def.is_recurring ? null : (def.job_start_time ?? null),
+      salary_type: def.salary_amount == null ? null : (isShift ? 'per hour' : 'flat rate'),
+      urgency: isShift ? null : (def.urgency ?? 'normal'),
+      estimated_hours: isShift ? null : (def.estimated_hours ?? null),
+      shift_date: jobStartDateKey,
+      shift_start_time: isShift ? (def.shift_start_time ?? null) : null,
+      shift_end_time: isShift ? (def.shift_end_time ?? null) : null,
+      break_start_time: isShift ? (def.break_start_time ?? null) : null,
+      break_end_time: isShift ? (def.break_end_time ?? null) : null,
+      job_start_time: isShift ? null : (def.job_start_time ?? null),
       assigned_employee_id: assignedEmployeeId,
-      openings: def.openings ?? 1,
-      expires_at: def.expires_at ?? null,
-      expiry_preset: def.expires_at ? 'custom' : 'none',
+      openings: def.openings ?? 2,
+      expires_at: expiresAt,
+      expiry_preset: expiresAt ? 'custom' : 'none',
       experience_required: def.experience_required ?? null,
       minimum_age: def.minimum_age ?? null,
       uniform_required: def.uniform_type === 'company' || def.uniform_type === 'dress_code',
       uniform_type: def.uniform_type ?? 'none',
       uniform_details: def.uniform_details ?? null,
+      archived_at: isArchived ? addDays(TODAY, -(def.archivedDaysAgo ?? 1)).toISOString() : null,
+      archived_from_status: isArchived ? (def.archivedFrom ?? null) : null,
+      // open/closed/archived postings are backdated so Owner Report (which only looks at
+      // the past) has real recruitment data to show; draft/pending_approval are excluded
+      // from the report anyway, so they keep the default now() and need no backdating.
+      created_at: def.createdDaysAgo != null ? addDays(TODAY, -def.createdDaysAgo).toISOString() : undefined,
     }).select('id').single()
     if (jpErr) console.warn(`  ⚠ 创建 job_posting 失败 (${def.title}): ${jpErr.message}`)
     else { jobPostingCount++; postingIdByTitle.set(def.title, jp.id); console.log(`  ✓ Job Posting: ${def.title} [${def.status}] (${dept.name})`) }
   }
-  const openClosedCount = jobPostingDefs.filter(d => d.status === 'open' || d.status === 'closed').length
-  const pendingCount = jobPostingDefs.filter(d => d.status === 'pending_approval').length
-  const draftCount = jobPostingDefs.filter(d => d.status === 'draft').length
-  console.log(`  ✓ 生成 ${jobPostingCount} 条 job_postings（Jobs 标签页 ${openClosedCount} 条 open/closed，Review 标签页 ${pendingCount} 条 pending_approval，Drafts ${draftCount} 条 draft）`)
+  const countBy = s => jobPostingDefs.filter(d => d.status === s).length
+  console.log(`  ✓ 生成 ${jobPostingCount} 条 job_postings（open ${countBy('open')} / closed ${countBy('closed')} / archived ${countBy('archived')} / pending_approval ${countBy('pending_approval')} / draft ${countBy('draft')}）`)
 
-  // ── Step 15b: Job Applicants（只对 status='open' 的职位投递，跟真实使用场景一致——
-  // 已关闭/待审批的职位不该有公开申请）。混合 pending/accepted/rejected，让 Owner
-  // 的 "All Jobs" 卡片能看到红点（有 pending 申请）和真实的申请人详情。──────────
+  // ── Step 15b: Job Applicants ─────────────────────────────────────────────
+  // open / closed / archived 三种职位都有申请人（Recruitment 页面每种状态的右侧
+  // Applicants 面板都要有内容）。状态覆盖完整的真实流转：
+  //   pending                → 等 Owner 决定
+  //   accepted + inv 'sent'      → Owner 已接受、等 worker 确认（awaiting confirmation）
+  //   accepted + inv 'accepted'  → 双向确认，占用一个 opening（confirmed / openings）
+  //   rejected / withdrawn / cancelled_by_employer / job_closed → 各种终态
+  // 每条申请都带 apply 时刻的完整快照（age / relevant_experience / skills / certificates /
+  // note），跟真实 applyJob 写入的字段一致，AI 分析字段留空让缓存流程自己算。
   console.log('\nStep 15b: 生成 Job Applicants...')
+  // exp: 'none' | 'less_than_1' | '1_to_2' | 'more_than_2'（申请表单的四档相关经验）
+  // inv: null | 'sent' | 'accepted'（accepted 状态的申请人对应的邀请及其确认进度）
   const applicantDefs = [
-    { title: 'Warehouse Assistant',        guest: 'guest1@test.com', status: 'pending' },
-    { title: 'Warehouse Assistant',        guest: 'guest2@test.com', status: 'accepted' },
-    { title: 'Event Setup Crew',           guest: 'guest3@test.com', status: 'pending' },
-    { title: 'Social Media Assistant',     guest: 'guest2@test.com', status: 'pending' },
-    { title: 'Social Media Assistant',     guest: 'guest4@test.com', status: 'pending' },
-    { title: 'Social Media Assistant',     guest: 'guest5@test.com', status: 'rejected' },
-    { title: 'Junior Support Technician',  guest: 'guest1@test.com', status: 'pending' },
-    { title: 'Weekend Support Agent',      guest: 'guest6@test.com', status: 'pending' },
-    { title: 'Weekend Support Agent',      guest: 'guest3@test.com', status: 'rejected' },
+    // Active — Warehouse Assistant（3 个名额：1 confirmed + 1 awaiting + 2 pending + 1 rejected）
+    { title: 'Warehouse Assistant', guest: 'guest1@test.com', status: 'accepted', inv: 'accepted', exp: 'more_than_2', daysAgo: 3,
+      note: 'Held a forklift licence for four years and ran inbound receiving at my last warehouse job.' },
+    { title: 'Warehouse Assistant', guest: 'guest3@test.com', status: 'accepted', inv: 'sent', exp: '1_to_2', daysAgo: 2,
+      note: 'Used to load event trucks, so pallet work is familiar.' },
+    { title: 'Warehouse Assistant', guest: 'guest7@test.com', status: 'pending', exp: 'less_than_1', daysAgo: 2, note: null },
+    { title: 'Warehouse Assistant', guest: 'guest8@test.com', status: 'pending', exp: 'none', daysAgo: 1, noResume: true,
+      note: 'No warehouse background yet but I stocktake weekly at my retail job.' },
+    { title: 'Warehouse Assistant', guest: 'guest5@test.com', status: 'rejected', exp: 'none', daysAgo: 4, note: null },
+
+    // Active — Event Setup Crew
+    { title: 'Event Setup Crew', guest: 'guest3@test.com', status: 'accepted', inv: 'accepted', exp: 'more_than_2', daysAgo: 5,
+      note: 'Rigged staging and sound for concerts — happy to lead the teardown too.' },
+    { title: 'Event Setup Crew', guest: 'guest10@test.com', status: 'pending', exp: 'less_than_1', daysAgo: 1, note: null },
+    { title: 'Event Setup Crew', guest: 'guest9@test.com', status: 'pending', exp: '1_to_2', daysAgo: 1,
+      note: 'Comfortable with heavy lifting and working at height.' },
+    { title: 'Event Setup Crew', guest: 'guest1@test.com', status: 'withdrawn', exp: 'none', daysAgo: 6, note: null },
+
+    // Active — Pop-Up Cafe Barista
+    { title: 'Pop-Up Cafe Barista', guest: 'guest7@test.com', status: 'accepted', inv: 'accepted', exp: '1_to_2', daysAgo: 2,
+      note: 'Worked the espresso bar at a specialty cafe — can pour basic latte art.' },
+    { title: 'Pop-Up Cafe Barista', guest: 'guest8@test.com', status: 'pending', exp: 'none', daysAgo: 1, note: null },
+    { title: 'Pop-Up Cafe Barista', guest: 'guest4@test.com', status: 'pending', exp: 'less_than_1', daysAgo: 1, noResume: true, note: null },
+
+    // Active — Social Media Assistant
+    { title: 'Social Media Assistant', guest: 'guest2@test.com', status: 'accepted', inv: 'sent', exp: 'more_than_2', daysAgo: 4,
+      note: 'Grew a food page to 20k followers; strong on Reels and community replies.' },
+    { title: 'Social Media Assistant', guest: 'guest4@test.com', status: 'pending', exp: '1_to_2', daysAgo: 2,
+      note: 'I shoot and edit my own product photos — portfolio in resume.' },
+    { title: 'Social Media Assistant', guest: 'guest10@test.com', status: 'rejected', exp: 'none', daysAgo: 5, note: null },
+
+    // Active — Roadshow Brand Ambassador（含一条被雇主移除的 cancelled_by_employer）
+    { title: 'Roadshow Brand Ambassador', guest: 'guest10@test.com', status: 'accepted', inv: 'accepted', exp: '1_to_2', daysAgo: 3,
+      note: 'Did flyer distribution for two mall roadshows, comfortable approaching strangers.' },
+    { title: 'Roadshow Brand Ambassador', guest: 'guest8@test.com', status: 'pending', exp: 'less_than_1', daysAgo: 2, note: null },
+    { title: 'Roadshow Brand Ambassador', guest: 'guest2@test.com', status: 'pending', exp: 'more_than_2', daysAgo: 1, note: null },
+    { title: 'Roadshow Brand Ambassador', guest: 'guest6@test.com', status: 'cancelled_by_employer', exp: '1_to_2', daysAgo: 6, note: null },
+
+    // Active — Junior Support Technician
+    { title: 'Junior Support Technician', guest: 'guest5@test.com', status: 'pending', exp: '1_to_2', daysAgo: 1,
+      note: 'Final-year IT student, built and troubleshoot my own PCs since secondary school.' },
+    { title: 'Junior Support Technician', guest: 'guest9@test.com', status: 'pending', exp: 'more_than_2', daysAgo: 2, noResume: true, note: null },
+
+    // Active — Server Room Cabling Helper
+    { title: 'Server Room Cabling Helper', guest: 'guest9@test.com', status: 'accepted', inv: 'accepted', exp: 'more_than_2', daysAgo: 2,
+      note: 'CCNA holder — patched and labelled full racks during two office relocations.' },
+    { title: 'Server Room Cabling Helper', guest: 'guest5@test.com', status: 'rejected', exp: 'less_than_1', daysAgo: 3, note: null },
+
+    // Active — Weekend Support Agent
+    { title: 'Weekend Support Agent', guest: 'guest6@test.com', status: 'accepted', inv: 'sent', exp: 'more_than_2', daysAgo: 3,
+      note: 'Handled Zendesk queues solo on weekends at my previous job.' },
+    { title: 'Weekend Support Agent', guest: 'guest2@test.com', status: 'pending', exp: '1_to_2', daysAgo: 1, note: null },
+    { title: 'Weekend Support Agent', guest: 'guest8@test.com', status: 'withdrawn', exp: 'none', daysAgo: 4, note: null },
+
+    // Closed — Promo Day Staff（2/2 招满后关闭：pending 的被置为 job_closed）
+    { title: 'Promo Day Staff', guest: 'guest10@test.com', status: 'accepted', inv: 'accepted', exp: '1_to_2', daysAgo: 8, note: null },
+    { title: 'Promo Day Staff', guest: 'guest4@test.com', status: 'accepted', inv: 'accepted', exp: 'less_than_1', daysAgo: 9,
+      note: 'Merchandising background — good at keeping a booth presentable all day.' },
+    { title: 'Promo Day Staff', guest: 'guest8@test.com', status: 'job_closed', exp: 'none', daysAgo: 8, note: null },
+    { title: 'Promo Day Staff', guest: 'guest2@test.com', status: 'rejected', exp: 'more_than_2', daysAgo: 9, note: null },
+
+    // Closed — Call Center Backup
+    { title: 'Call Center Backup', guest: 'guest6@test.com', status: 'accepted', inv: 'accepted', exp: 'more_than_2', daysAgo: 7, note: null },
+    { title: 'Call Center Backup', guest: 'guest2@test.com', status: 'accepted', inv: 'accepted', exp: '1_to_2', daysAgo: 7, note: null },
+    { title: 'Call Center Backup', guest: 'guest3@test.com', status: 'job_closed', exp: 'none', daysAgo: 6, note: null },
+    { title: 'Call Center Backup', guest: 'guest10@test.com', status: 'job_closed', exp: 'less_than_1', daysAgo: 6, noResume: true, note: null },
+
+    // Closed — Stocktake Crew
+    { title: 'Stocktake Crew', guest: 'guest1@test.com', status: 'accepted', inv: 'accepted', exp: 'more_than_2', daysAgo: 10,
+      note: 'Ran cycle counts with a scanner gun every weekend at my last warehouse.' },
+    { title: 'Stocktake Crew', guest: 'guest3@test.com', status: 'job_closed', exp: 'none', daysAgo: 9, note: null },
+
+    // Closed — On-Site AV Technician
+    { title: 'On-Site AV Technician', guest: 'guest9@test.com', status: 'accepted', inv: 'accepted', exp: 'more_than_2', daysAgo: 6, note: null },
+    { title: 'On-Site AV Technician', guest: 'guest5@test.com', status: 'job_closed', exp: 'less_than_1', daysAgo: 5, note: null },
+    { title: 'On-Site AV Technician', guest: 'guest3@test.com', status: 'rejected', exp: '1_to_2', daysAgo: 6,
+      note: 'Mostly stage sound experience, projector setup is new to me.' },
+
+    // Archived（原 closed）— Orientation Day Assistant
+    { title: 'Orientation Day Assistant', guest: 'guest6@test.com', status: 'accepted', inv: 'accepted', exp: '1_to_2', daysAgo: 12, note: null },
+    { title: 'Orientation Day Assistant', guest: 'guest8@test.com', status: 'job_closed', exp: 'none', daysAgo: 11, note: null },
+
+    // Archived（原 open，归档时申请保持原状态）— Festival Booth Crew
+    { title: 'Festival Booth Crew', guest: 'guest10@test.com', status: 'pending', exp: 'less_than_1', daysAgo: 4, note: null },
+    { title: 'Festival Booth Crew', guest: 'guest4@test.com', status: 'accepted', inv: 'sent', exp: '1_to_2', daysAgo: 5, note: null },
+    { title: 'Festival Booth Crew', guest: 'guest2@test.com', status: 'rejected', exp: 'none', daysAgo: 6, noResume: true, note: null },
+
+    // Archived（deadline 过期自动归档）— Night Auditor Cover
+    { title: 'Night Auditor Cover', guest: 'guest1@test.com', status: 'pending', exp: '1_to_2', daysAgo: 3, note: null },
+    { title: 'Night Auditor Cover', guest: 'guest7@test.com', status: 'pending', exp: 'less_than_1', daysAgo: 2,
+      note: 'Cafe closing-shift lead — used to cashing up and end-of-day reports.' },
+
+    // Archived（原 closed）— Legacy System Data Entry
+    { title: 'Legacy System Data Entry', guest: 'guest5@test.com', status: 'accepted', inv: 'accepted', exp: '1_to_2', daysAgo: 16, note: null },
+    { title: 'Legacy System Data Entry', guest: 'guest9@test.com', status: 'job_closed', exp: 'more_than_2', daysAgo: 15, note: null },
+    { title: 'Legacy System Data Entry', guest: 'guest8@test.com', status: 'job_closed', exp: 'none', daysAgo: 15, note: null },
+
+    // ── guest1 = Guest 端演示账号：登录 guest1@test.com 能看到 Applications 页的全部状态 ──
+    // Ongoing 三个 block（上面已有 Warehouse Assistant accepted+inv accepted → Confirmed）：
+    { title: 'Pop-Up Cafe Barista', guest: 'guest1@test.com', status: 'pending', exp: '1_to_2', daysAgo: 1,
+      note: 'Poured for a year at a neighbourhood cafe — happy to cover peak hours.' },        // → Pending Review
+    { title: 'Junior Support Technician', guest: 'guest1@test.com', status: 'accepted', inv: 'sent', exp: '1_to_2', daysAgo: 2,
+      note: 'Comfortable reimaging laptops and walking users through fixes over chat.' },      // → Accept / Reject Job Offer
+    // History 只剩一种对外徽章：Not Selected（rejected / position_filled / job_closed 合并而来）——
+    // 其余终态要么是用户自己的决定，要么系统已经发过邮件通知，一律不再显示。
+    { title: 'Server Room Cabling Helper', guest: 'guest1@test.com', status: 'rejected', exp: 'less_than_1', daysAgo: 3, note: null },                       // → Not Selected（被拒）
+    { title: 'Promo Day Staff', guest: 'guest1@test.com', status: 'accepted', inv: 'position_filled', exp: 'less_than_1', daysAgo: 8, note: null },          // → Not Selected（FCFS 输了）
+    { title: 'Call Center Backup', guest: 'guest1@test.com', status: 'job_closed', exp: 'none', daysAgo: 6, note: null },                                    // → Not Selected（岗位先招满）
+    // 隐藏用例（按设计 Guest 端一律不显示，用来验证过滤生效）：
+    //   · Social Media Assistant    withdrawn + inv declined → 自己拒 offer
+    //   · Weekend Support Agent     withdrawn + inv cancelled → 确认后自己取消班次
+    //   · Event Setup Crew          withdrawn 无邀请 → pending 时自己撤回（上面已存在）
+    //   · Night Auditor Cover       pending 但岗位 deadline 已过期归档（上面已存在）
+    //   · On-Site AV Technician     inv expired → 收到 offer 但没在开工前确认（已发过邮件提醒）
+    //   · Roadshow Brand Ambassador cancelled_by_employer → 确认后被雇主移除（已发过取消邮件）
+    { title: 'Social Media Assistant', guest: 'guest1@test.com', status: 'withdrawn', inv: 'declined', exp: 'none', daysAgo: 4, note: null },
+    { title: 'Weekend Support Agent', guest: 'guest1@test.com', status: 'withdrawn', inv: 'cancelled', exp: '1_to_2', daysAgo: 5, note: null },
+    { title: 'On-Site AV Technician', guest: 'guest1@test.com', status: 'accepted', inv: 'expired', exp: '1_to_2', daysAgo: 6, note: null },
+    { title: 'Roadshow Brand Ambassador', guest: 'guest1@test.com', status: 'cancelled_by_employer', inv: 'cancelled', exp: '1_to_2', daysAgo: 5, note: null },
   ]
+
+  const INVITATION_MESSAGES = [
+    'We would love to have you on this job — please confirm to lock in your spot.',
+    'Your application stood out. Confirm the invitation and we will see you on site.',
+    'You have been selected for this role. Please accept the invitation to finalise your slot.',
+  ]
+  // age at the moment the application was made, from the guest's date_of_birth
+  function ageAt(dobStr, atDate) {
+    const dob = new Date(dobStr)
+    let age = atDate.getFullYear() - dob.getFullYear()
+    const m = atDate.getMonth() - dob.getMonth()
+    if (m < 0 || (m === 0 && atDate.getDate() < dob.getDate())) age--
+    return age
+  }
   let jobApplicantCount = 0
+  let jobInvitationCount = 0
   for (let i = 0; i < applicantDefs.length; i++) {
     const def = applicantDefs[i]
     const jobId = postingIdByTitle.get(def.title)
+    const guest = guestApplicants.find(g => g.email === def.guest)
     const guestId = userIdMap[def.guest]?.internalId
-    if (!jobId || !guestId) { console.warn(`  ⚠ 跳过 applicant（找不到 job 或 guest）: ${def.title} / ${def.guest}`); continue }
+    if (!jobId || !guest || !guestId) { console.warn(`  ⚠ 跳过 applicant（找不到 job 或 guest）: ${def.title} / ${def.guest}`); continue }
+
+    const appliedAt = new Date(Date.now() - def.daysAgo * 86400000 - (i % 7) * 3600000)
+    // The applicant tracker renders a timeline (Applied → Offer received → Confirmed / Not
+    // selected), so the demo data has to carry the same timestamps the real flow stamps.
+    const sentAt = new Date(appliedAt.getTime() + 6 * 3600000)          // employer accepted → offer out
+    const respondedAt = new Date(sentAt.getTime() + 5 * 3600000)        // worker answered the offer
+    const decidedAt = new Date(appliedAt.getTime() + 8 * 3600000)       // employer/system closed the application
+    // Only terminal application statuses get decided_at; 'pending'/'accepted' are still in flight.
+    const APPLICATION_RESOLVED = ['rejected', 'withdrawn', 'cancelled_by_employer', 'job_closed']
+    // Only a resolved offer gets responded_at; 'sent' is still awaiting the worker.
+    const OFFER_RESOLVED = ['accepted', 'declined', 'expired', 'position_filled', 'cancelled']
 
     const { data: ja, error: jaErr } = await supabase.from('job_applicants').insert({
       job_id: jobId,
       user_id: guestId,
-      resume_url: `https://example.com/demo-resumes/${def.guest.split('@')[0]}-resume.pdf`,
-      cover_letter: `https://example.com/demo-cover-letters/${def.guest.split('@')[0]}-cover-letter.pdf`,
+      resume_url: def.noResume ? null : `https://example.com/demo-resumes/${def.guest.split('@')[0]}-resume.pdf`,
       status: def.status,
-      applied_at: new Date(Date.now() - (i + 1) * 3600000).toISOString(),
+      applied_at: appliedAt.toISOString(),
+      decided_at: APPLICATION_RESOLVED.includes(def.status) ? decidedAt.toISOString() : null,
+      relevant_experience: def.exp,
+      additional_note: def.note ?? null,
+      skills_snapshot: guest.skills ?? null,
+      certificates_snapshot: (guest.certs ?? []).map(c => ({ name: c.name, file_url: c.file_url })),
+      age_at_apply: ageAt(guest.date_of_birth, appliedAt),
     }).select('id').single()
     if (jaErr) { console.warn(`  ⚠ 创建 job_applicant 失败 (${def.title} / ${def.guest}): ${jaErr.message}`); continue }
     jobApplicantCount++
 
-    // Mirrors recruitmentService.decideApplicant: accepting an applicant also sends them a job
-    // invitation — without this row, an 'accepted' applicant would be stuck with no next step.
-    if (def.status === 'accepted') {
+    // Mirrors recruitmentService.decideApplicant: accepting an applicant also sends a job
+    // invitation. inv 'sent' = worker 还没确认（awaiting confirmation），inv 'accepted' =
+    // 双向确认完成（占用一个 opening，卡片上的 confirmed/openings 计数就数这些）。
+    if (def.inv) {
       const { error: jiErr } = await supabase.from('job_invitations').insert({
         job_id: jobId,
         applicant_id: ja.id,
         sent_by: ownerUser.id,
-        message: 'Your application has been accepted. Please wait for onboarding instructions.',
+        message: INVITATION_MESSAGES[i % INVITATION_MESSAGES.length],
+        status: def.inv,
+        sent_at: sentAt.toISOString(),
+        responded_at: OFFER_RESOLVED.includes(def.inv) ? respondedAt.toISOString() : null,
       })
       if (jiErr) console.warn(`  ⚠ 创建 job_invitation 失败 (${def.title} / ${def.guest}): ${jiErr.message}`)
+      else jobInvitationCount++
     }
   }
-  console.log(`  ✓ 生成 ${jobApplicantCount} 条 job_applicants（混合 pending/accepted/rejected，只投给 open 状态的职位）`)
+  console.log(`  ✓ 生成 ${jobApplicantCount} 条 job_applicants + ${jobInvitationCount} 条 job_invitations（覆盖 open/closed/archived，含 pending/awaiting/confirmed/rejected/withdrawn/cancelled/job_closed 全部状态）`)
 
   // ── Step 15c: 给部分 CW 的 shift 补上 source_job_posting_id ──────────────
   // 演示 Attendance Record 弹窗里点击 "Job Title" 能看到当初发布的 job posting 详情——

@@ -1,13 +1,15 @@
 'use client'
 
-import { Suspense, useEffect, useRef, useState } from 'react'
-import Link from 'next/link'
+import { Fragment, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Check } from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
-import ApplicationDetailsModal from '@/components/guest/ApplicationDetailsModal'
+import { ArrowRight, Check, CheckCircle2, Clock, Mail } from 'lucide-react'
 import ApplyJobModal from '@/components/guest/ApplyJobModal'
-import GuestProfileMenu from '@/components/guest/GuestProfileMenu'
+import { JobCard, JobDetailPanel, JobView } from '@/components/jobs/JobPresentation'
+import { FLOW_STEPS, FlowTone, getApplicationFlowState } from '@/components/guest/ApplicationFlow'
+
+// One icon per step, matching FLOW_STEPS' order (Pending Review / Accept-Reject Job Offer / Confirmed).
+const STEP_ICONS = [Clock, Mail, CheckCircle2]
 
 const pageKeyframes = `
   @keyframes overlayFadeIn { from { opacity: 0 } to { opacity: 1 } }
@@ -37,7 +39,11 @@ type Application = {
   company_name: string
   industry?: string
   status: ApplicationStatus
+  // Raw ISO timestamps driving the card's timeline.
   applied_at: string
+  decided_at?: string
+  invitation_sent_at?: string
+  invitation_responded_at?: string
   resume_url?: string
   cover_letter?: string
   location?: string
@@ -61,19 +67,78 @@ type Application = {
   is_recurring?: boolean
   recurrence_interval?: number
   recurrence_unit?: string
+  // Extra posting fields (now that the applications API joins the full posting + company/department)
+  // so an applied job renders with the exact same JobCard / JobDetailPanel as the public board.
+  created_at?: string
+  expires_at?: string
+  minimum_age?: number
+  experience_required?: string
+  uniform_type?: string
+  uniform_required?: boolean
+  uniform_details?: string
+  form_type?: string
+  job_start_time?: string
+  department_name?: string
+  company_location?: string
+  company_address?: string
+  company_size?: string
+  company_industry?: string
+  company_description?: string
   invitation_id?: string
   invitation_status?: InvitationStatus
   invitation_message?: string
+}
+
+// Adapt an application row to the shared JobView the board's JobCard / JobDetailPanel render from.
+function toJobView(app: Application): JobView {
+  return {
+    id: app.id,
+    title: app.job_title,
+    company_name: app.company_name,
+    company_location: app.company_location,
+    company_address: app.company_address,
+    company_size: app.company_size,
+    company_industry: app.company_industry,
+    company_description: app.company_description,
+    department_name: app.department_name,
+    salary_amount: app.salary_amount,
+    estimated_hours: app.estimated_hours,
+    expires_at: app.expires_at,
+    created_at: app.created_at,
+    urgency: app.urgency,
+    minimum_age: app.minimum_age,
+    experience_required: app.experience_required,
+    uniform_type: app.uniform_type,
+    uniform_required: app.uniform_required,
+    uniform_details: app.uniform_details,
+    form_type: app.form_type,
+    is_recurring: app.is_recurring,
+    shift_date: app.shift_date,
+    shift_start_time: app.shift_start_time,
+    shift_end_time: app.shift_end_time,
+    break_start_time: app.break_start_time,
+    break_end_time: app.break_end_time,
+    job_start_time: app.job_start_time,
+    description: app.description,
+    requirements: app.requirements,
+  }
 }
 
 type RawApplication = {
   id: string
   status: ApplicationStatus
   applied_at: string
+  decided_at?: string | null
   resume_url?: string
   cover_letter?: string
   job_postings?: (Partial<Application> & { title?: string }) | null
-  job_invitations?: { id: string; status: InvitationStatus; message: string | null }[] | null
+  job_invitations?: {
+    id: string
+    status: InvitationStatus
+    message: string | null
+    sent_at?: string | null
+    responded_at?: string | null
+  }[] | null
 }
 
 function ApplicationsContent() {
@@ -85,11 +150,45 @@ function ApplicationsContent() {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [respondingId, setRespondingId] = useState<string | null>(null)
   const [withdrawTargetId, setWithdrawTargetId] = useState<string | null>(null)
   const [withdrawing, setWithdrawing] = useState(false)
-  const [respondingId, setRespondingId] = useState<string | null>(null)
   const [toast, setToast] = useState('')
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Pill tab: applications still moving through the happy path vs. ones that ended off it.
+  const [viewTab, setViewTab] = useState<'ongoing' | 'closed'>('ongoing')
+  // After confirming an offer the account becomes a Casual Worker, so the Guest pages stop being
+  // theirs. Rather than silently swap the UI out from under them on their next click, we hold a
+  // short countdown → sign out, and tell them to log back in as a Casual Worker.
+  const [confirmedJobTitle, setConfirmedJobTitle] = useState<string | null>(null)
+  const [signOutCountdown, setSignOutCountdown] = useState(30)
+
+  const signOutToReauth = () => {
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    )
+    void supabase.auth.signOut().finally(() => {
+      localStorage.removeItem('tasking_user_id')
+      localStorage.removeItem('tasking_user_role')
+      localStorage.removeItem('tasking_company_id')
+      localStorage.removeItem('tasking_active_session')
+      localStorage.removeItem('apply_job_id')
+      sessionStorage.removeItem('tasking_session_active')
+      window.location.href = '/signout'
+    })
+  }
+
+  // Tick the post-confirmation countdown down to 0, then sign out automatically.
+  useEffect(() => {
+    if (confirmedJobTitle === null) return
+    if (signOutCountdown <= 0) {
+      signOutToReauth()
+      return
+    }
+    const t = setTimeout(() => setSignOutCountdown(n => n - 1), 1000)
+    return () => clearTimeout(t)
+  }, [confirmedJobTitle, signOutCountdown])
 
   const showToast = (msg: string) => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
@@ -108,7 +207,10 @@ function ApplicationsContent() {
     setApplications(
       data.applications.map((app: RawApplication) => {
         const invite = Array.isArray(app.job_invitations) ? app.job_invitations[0] : null
+        // Spread the posting FIRST — it now carries the full job_postings row, whose own
+        // id/status ('open') must never overwrite the application's id/status.
         return {
+          ...app.job_postings,
           id: app.id,
           job_title:
             app.job_postings?.job_title ||
@@ -116,13 +218,17 @@ function ApplicationsContent() {
             'Job Opening',
           company_name: app.job_postings?.company_name || 'Company',
           status: app.status,
-          applied_at: formatDate(app.applied_at),
+          // Raw ISO — the timeline formats these at render time (date AND time; the old
+          // formatDate dropped the clock, which is exactly what the tracker needs to show).
+          applied_at: app.applied_at,
+          decided_at: app.decided_at ?? undefined,
           resume_url: app.resume_url,
           cover_letter: app.cover_letter,
-          ...app.job_postings,
           invitation_id: invite?.id,
           invitation_status: invite?.status,
           invitation_message: invite?.message ?? undefined,
+          invitation_sent_at: invite?.sent_at ?? undefined,
+          invitation_responded_at: invite?.responded_at ?? undefined,
         }
       })
     )
@@ -164,42 +270,38 @@ function ApplicationsContent() {
     if (selectedJobId) {
       setJobId(selectedJobId)
       setShowApplyModal(true)
+      // Consume the stashed intent the moment it's acted on. ApplyJobModal only clears it on a
+      // successful submit, so without this, dismissing the modal would leave it behind and it'd
+      // pop open again on every later visit.
+      localStorage.removeItem('apply_job_id')
     }
   }, [searchParams])
 
   const confirmWithdrawApplication = async () => {
     if (!withdrawTargetId) return
-
     try {
       setWithdrawing(true)
-
-      const res = await fetch(`/api/guest/applications/${withdrawTargetId}/withdraw`, {
-        method: 'PATCH',
-      })
-
+      const res = await fetch(`/api/guest/applications/${withdrawTargetId}/withdraw`, { method: 'PATCH' })
       const data = await res.json()
-
       if (!data.success) {
-        alert(data.message || 'Failed to withdraw application.')
+        showToast(data.message || 'Failed to withdraw application.')
         return
       }
-
       if (profile?.id) await loadApplications(profile.id)
-
-      setSelectedApplication(null)
       setWithdrawTargetId(null)
+      showToast('Application withdrawn.')
     } finally {
       setWithdrawing(false)
     }
   }
 
-  const respondToInvitation = async (appId: string, invitationId: string, response: 'accepted' | 'declined') => {
-    setRespondingId(appId)
+  const respondToInvitation = async (app: Application, response: 'accepted' | 'declined') => {
+    setRespondingId(app.id)
     try {
-      const res = await fetch(`/api/guest/applications/${appId}/respond`, {
+      const res = await fetch(`/api/guest/applications/${app.id}/respond`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ invitation_id: invitationId, response }),
+        body: JSON.stringify({ invitation_id: app.invitation_id, response }),
       })
       const data = await res.json()
       if (!data.success) {
@@ -207,188 +309,193 @@ function ApplicationsContent() {
         return
       }
       if (profile?.id) await loadApplications(profile.id)
-      showToast(response === 'accepted' ? 'Invitation accepted! You are now a Casual Worker.' : 'Invitation declined.')
+
+      if (response === 'accepted') {
+        // Confirming promoted the account to Casual Worker — hand off with an explicit countdown
+        // instead of letting the next click silently change the whole page.
+        setSignOutCountdown(30)
+        setConfirmedJobTitle(app.job_title)
+      } else {
+        showToast('Invitation declined.')
+      }
     } finally {
       setRespondingId(null)
     }
   }
 
-  const handleLogout = async () => {
-    const supabase = createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    )
-
-    await supabase.auth.signOut()
-
-    localStorage.removeItem('tasking_user_id')
-    localStorage.removeItem('tasking_user_role')
-    localStorage.removeItem('tasking_company_id')
-    localStorage.removeItem('tasking_active_session')
-    sessionStorage.removeItem('tasking_session_active')
-
-    window.location.href = '/signout'
+  // The action buttons a card carries in its footer — Accept/Decline for an offer awaiting the
+  // worker, Withdraw for a pending application. Rendered ON the card (like the Job Board's own
+  // actions), not tucked inside the detail modal. stopPropagation so a button press doesn't also
+  // open the card's detail view.
+  const renderCardActions = (app: Application): React.ReactNode => {
+    if (app.invitation_id && app.invitation_status === 'sent') {
+      return (
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button style={{ ...detailActionButtonStyle, background: '#059669' }} disabled={respondingId === app.id}
+            onClick={(e) => { e.stopPropagation(); respondToInvitation(app, 'accepted') }}>
+            {respondingId === app.id ? 'Responding…' : 'Accept Offer'}
+          </button>
+          <button style={detailDangerButtonStyle} disabled={respondingId === app.id}
+            onClick={(e) => { e.stopPropagation(); respondToInvitation(app, 'declined') }}>
+            Decline
+          </button>
+        </div>
+      )
+    }
+    if (app.status === 'pending' && !app.invitation_id) {
+      return (
+        <button style={withdrawButtonStyle} onClick={(e) => { e.stopPropagation(); setWithdrawTargetId(app.id) }}>
+          Withdraw Application
+        </button>
+      )
+    }
+    return null
   }
+
+  // Split into the two pill tabs: applications still moving through the 3-step happy path
+  // ("Ongoing") vs. every terminal outcome ("History") — whether the worker walked away
+  // (withdrew, declined an offer) or the employer/system ended it (rejected, removed after
+  // confirming, position filled, job closed, offer expired).
+  //
+  // Ongoing ones are further grouped by step (1 = Pending Review, 2 = Accept/Reject Job Offer,
+  // 3 = Confirmed) so each step renders as its own column — the column IS the step indicator,
+  // there's no separate stepper widget above them.
+  const ongoingByStep = useMemo(() => {
+    const groups: Record<number, Application[]> = { 1: [], 2: [], 3: [] }
+    for (const app of applications) {
+      const state = getApplicationFlowState(app)
+      if (state.kind === 'stepper') groups[state.step]?.push(app)
+    }
+    return groups
+  }, [applications])
+  const closedApplications = useMemo(
+    () => applications.filter(app => getApplicationFlowState(app).kind === 'terminal'),
+    [applications]
+  )
 
   return (
     <>
       <style>{pageKeyframes}</style>
-      <header style={topBarStyle}>
-        <div style={topBarInnerStyle}>
-          <Link href="/" style={brandWrapStyle}>
-            <svg width="28" height="28" viewBox="0 0 32 32" fill="none" style={{ flexShrink: 0 }}>
-              <rect width="32" height="32" rx="8" fill="#F97316" />
-              <rect x="8" y="9" width="9" height="2.5" rx="1.25" fill="white" />
-              <rect x="8" y="14.75" width="16" height="2.5" rx="1.25" fill="white" />
-              <rect x="8" y="20.5" width="12" height="2.5" rx="1.25" fill="white" />
-              <circle cx="22" cy="10.25" r="3.5" fill="#10B981" />
-              <path
-                d="M20.3 10.25L21.5 11.5L23.8 9"
-                stroke="white"
-                strokeWidth="1.4"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-
-            <h1 style={headerTitleStyle}>Tasking</h1>
-          </Link>
-
-          <div style={rightHeaderStyle}>
-            <Link href="/guest/profile" style={{ color: '#D1D5DB', fontSize: '0.875rem', fontWeight: 600, textDecoration: 'none', transition: 'color 0.12s' }}
-              onMouseEnter={e => { e.currentTarget.style.color = '#FFFFFF' }}
-              onMouseLeave={e => { e.currentTarget.style.color = '#D1D5DB' }}>
-              Worker Profile
-            </Link>
-            <GuestProfileMenu profile={profile} onLogout={handleLogout} />
-          </div>
-        </div>
-      </header>
 
       <main style={pageStyle}>
-        <section style={{ ...sectionStyle, animation: 'blockSlideUp 0.38s ease both 0.06s' }}>
-          <div style={sectionHeaderStyle}>
-            <p style={sectionLabelStyle}>MY APPLICATIONS</p>
-          </div>
+        {/* Page header — title left, matching the Owner pages */}
+        <div style={{ marginBottom: 20 }}>
+          <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
+            Applications
+          </h1>
+        </div>
 
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', marginBottom: 20 }}>
+          <div style={pillTabBarStyle}>
+            {(['ongoing', 'closed'] as const).map(tab => {
+              const active = viewTab === tab
+              return (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setViewTab(tab)}
+                  style={{ ...pillTabButtonStyle, ...(active ? pillTabButtonActiveStyle : null) }}
+                >
+                  {tab === 'ongoing' ? 'Ongoing' : 'History'}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        <section key={viewTab} style={{ ...sectionStyle, animation: 'blockSlideUp 0.24s ease-out both' }}>
           {loading ? (
             <div style={emptyCardStyle}>Loading applications...</div>
           ) : error ? (
             <div style={errorCardStyle}>{error}</div>
-          ) : applications.length === 0 ? (
-            <div style={emptyCardStyle}>
-              <h3 style={emptyTitleStyle}>No applications yet</h3>
-              <p style={emptyTextStyle}>
-                Your submitted applications will appear here after you apply for a job.
-              </p>
+          ) : viewTab === 'ongoing' ? (
+            // Each step IS a block — no separate stepper widget above them. A job's card lives
+            // in whichever block matches its current step, so moving through the flow means
+            // literally seeing the card move one block to the right.
+            <div style={stepsRowStyle}>
+              {FLOW_STEPS.map((label, idx) => {
+                const step = idx + 1
+                const StepIcon = STEP_ICONS[idx]
+                const cards = ongoingByStep[step] ?? []
+                return (
+                  <Fragment key={label}>
+                    <div style={stepPanelStyle}>
+                      <div style={stepPanelHeaderStyle}>
+                        <div style={stepIconBadgeStyle}>
+                          <StepIcon size={15} style={{ color: '#F97316' }} />
+                        </div>
+                        <span style={stepPanelTitleStyle}>{label}</span>
+                      </div>
+                      <div style={stepPanelBodyStyle}>
+                        {cards.map(app => (
+                          <JobCard
+                            key={app.id}
+                            job={toJobView(app)}
+                            onClick={() => setSelectedApplication(app)}
+                            // Details open by clicking the card itself; the footer carries the
+                            // step's action inline (Accept/Decline an offer, or Withdraw a pending
+                            // application) instead of hiding it behind the detail modal.
+                            footer={
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                <CardTimeline app={app} />
+                                {renderCardActions(app)}
+                              </div>
+                            }
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    {step < FLOW_STEPS.length && (
+                      <div style={stepArrowSlotStyle}>
+                        <div style={stepArrowCircleStyle}>
+                          <ArrowRight size={15} strokeWidth={2.5} />
+                        </div>
+                      </div>
+                    )}
+                  </Fragment>
+                )
+              })}
             </div>
-          ) : (
+          ) : closedApplications.length === 0 ? null : (
             <div style={applicationsGridStyle}>
-              {applications.map((app) => (
-                <article key={app.id} style={applicationCardStyle}>
-                  <div style={cardTopRowStyle}>
-                    <div style={{ minWidth: 0 }}>
-                      <h3 style={cardTitleStyle}>{app.job_title}</h3>
-                      {app.company_name && (
-                        <p style={companyLabelStyle}>{app.company_name}</p>
-                      )}
-                    </div>
-
-                    <span style={{ ...statusBadgeBaseStyle, ...statusStyle(app.status), flexShrink: 0 }}>
-                      {formatStatus(app.status)}
-                    </span>
-                  </div>
-
-                  <div style={cardInfoStyle}>
-                    <div>
-                      <p style={infoLabelStyle}>Applied on</p>
-                      <p style={infoValueStyle}>{app.applied_at}</p>
-                    </div>
-
-                    <div>
-                      <p style={infoLabelStyle}>Description</p>
-                      <p style={infoValueStyle}>
-                        {app.description || 'No description provided'}
-                      </p>
-                    </div>
-                  </div>
-
-                  {app.invitation_id && app.invitation_status === 'sent' && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, padding: '8px 12px', background: '#EFF6FF', borderRadius: 8, border: '1px solid #BFDBFE' }}>
-                      <span style={{ fontSize: '0.8125rem', color: '#1D4ED8', fontWeight: 600, flex: 1 }}>
-                        You&apos;ve been invited — accept or decline this offer
-                      </span>
-                    </div>
-                  )}
-                  {app.invitation_id && app.invitation_status === 'accepted' && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, padding: '8px 12px', background: '#F0FDF4', borderRadius: 8, border: '1px solid #BBF7D0' }}>
-                      <span style={{ fontSize: '0.8125rem', color: '#15803D', fontWeight: 600 }}>You accepted this invitation</span>
-                    </div>
-                  )}
-                  {app.invitation_id && app.invitation_status === 'declined' && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, padding: '8px 12px', background: '#FEF2F2', borderRadius: 8, border: '1px solid #FECACA' }}>
-                      <span style={{ fontSize: '0.8125rem', color: '#B91C1C', fontWeight: 600 }}>You declined this invitation</span>
-                    </div>
-                  )}
-                  {app.invitation_id && app.invitation_status === 'expired' && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, padding: '8px 12px', background: '#F9FAFB', borderRadius: 8, border: '1px solid #E5E7EB' }}>
-                      <span style={{ fontSize: '0.8125rem', color: '#6B7280', fontWeight: 600 }}>This offer expired — the shift already started</span>
-                    </div>
-                  )}
-                  {app.invitation_id && app.invitation_status === 'position_filled' && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, padding: '8px 12px', background: '#FFFBEB', borderRadius: 8, border: '1px solid #FDE68A' }}>
-                      <span style={{ fontSize: '0.8125rem', color: '#92400E', fontWeight: 600 }}>Position filled — another worker confirmed first</span>
-                    </div>
-                  )}
-                  <div style={cardActionsStyle}>
-                    <button
-                      style={primaryActionButtonStyle}
-                      onClick={() => setSelectedApplication(app)}
-                    >
-                      View Details
-                    </button>
-
-                    {app.invitation_id && app.invitation_status === 'sent' && (
-                      <>
-                        <button
-                          style={{ ...primaryActionButtonStyle, background: '#059669' }}
-                          disabled={respondingId === app.id}
-                          onClick={() => respondToInvitation(app.id, app.invitation_id!, 'accepted')}
-                        >
-                          {respondingId === app.id ? 'Responding...' : 'Accept Offer'}
-                        </button>
-                        <button
-                          style={dangerActionButtonStyle}
-                          disabled={respondingId === app.id}
-                          onClick={() => respondToInvitation(app.id, app.invitation_id!, 'declined')}
-                        >
-                          Decline
-                        </button>
-                      </>
-                    )}
-
-                    {app.status === 'pending' && !app.invitation_id && (
-                      <button
-                        style={dangerActionButtonStyle}
-                        onClick={() => setWithdrawTargetId(app.id)}
-                      >
-                        Withdraw Application
-                      </button>
-                    )}
-                  </div>
-                </article>
-              ))}
+              {closedApplications.map((app) => {
+                const state = getApplicationFlowState(app)
+                return (
+                  <JobCard
+                    key={app.id}
+                    job={toJobView(app)}
+                    onClick={() => setSelectedApplication(app)}
+                    // The deadline is irrelevant on a finished application — hide it so every
+                    // History card leads with its requirement badges, then the title.
+                    hideDeadline
+                    // Why this application ended — "Withdrawn" (self), "Application Unsuccessful"
+                    // (employer rejected), "Cancelled by Employer", etc.
+                    statusBadge={
+                      state.kind === 'terminal' ? (
+                        <span style={{ ...historyBadgeBaseStyle, ...historyBadgeToneStyles[state.tone] }}>
+                          {state.title}
+                        </span>
+                      ) : undefined
+                    }
+                    footer={<CardTimeline app={app} />}
+                  />
+                )
+              })}
             </div>
           )}
         </section>
       </main>
 
       {selectedApplication && (
-        <ApplicationDetailsModal
-          application={selectedApplication}
-          onClose={() => setSelectedApplication(null)}
-          onWithdraw={() => setWithdrawTargetId(selectedApplication.id)}
-        />
+        <div style={detailOverlayStyle} onClick={() => setSelectedApplication(null)}>
+          <div style={{ width: 'min(680px, calc(100% - 32px))' }} onClick={e => e.stopPropagation()}>
+            <JobDetailPanel
+              job={toJobView(selectedApplication)}
+              onClose={() => setSelectedApplication(null)}
+              variant="modal"
+            />
+          </div>
+        </div>
       )}
 
       {showApplyModal && jobId && (
@@ -415,34 +522,68 @@ function ApplicationsContent() {
         </div>
       )}
 
+      {/* Withdraw confirmation — destructive, so it never fires straight off the card button. */}
       {withdrawTargetId && (
         <div style={confirmOverlayStyle}>
           <div style={confirmModalStyle}>
             <div style={{ padding: '20px 24px 18px', borderBottom: '1px solid #F3F4F6' }}>
-              <h2 style={confirmTitleStyle}>Withdraw Application</h2>
+              <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#111827' }}>Withdraw Application</h2>
             </div>
             <div style={{ padding: '18px 24px 20px' }}>
-              <p style={confirmTextStyle}>
-                Are you sure you want to withdraw this application? This action cannot be undone.
+              <p style={{ margin: '0 0 20px', color: '#6B7280', fontSize: '0.9375rem', lineHeight: 1.6 }}>
+                Are you sure you want to withdraw this application?
               </p>
-
-              <div style={confirmActionsStyle}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
                 <button
                   onClick={() => setWithdrawTargetId(null)}
                   disabled={withdrawing}
-                  style={confirmCancelButtonStyle}
+                  style={{ padding: '7px 18px', borderRadius: 8, border: '1.5px solid #E5E7EB', background: '#FFFFFF', color: '#6B7280', fontWeight: 600, fontSize: '0.8125rem', cursor: 'pointer' }}
                 >
                   Cancel
                 </button>
-
                 <button
                   onClick={confirmWithdrawApplication}
                   disabled={withdrawing}
-                  style={confirmWithdrawButtonStyle}
+                  style={{ padding: '7px 18px', borderRadius: 8, border: '1.5px solid #FECACA', background: '#FEF2F2', color: '#DC2626', fontWeight: 600, fontSize: '0.8125rem', cursor: 'pointer' }}
                 >
-                  {withdrawing ? 'Withdrawing...' : 'Withdraw'}
+                  {withdrawing ? 'Withdrawing…' : 'Withdraw'}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Post-confirmation hand-off — the account just became a Casual Worker, so this explains
+          the sign-out and lets the countdown (or the button) carry them there deliberately. */}
+      {confirmedJobTitle !== null && (
+        <div style={confirmOverlayStyle}>
+          <div style={{ ...confirmModalStyle, maxWidth: 440 }}>
+            <div style={{ padding: '32px 28px 28px', textAlign: 'center' }}>
+              <div style={{ width: 52, height: 52, borderRadius: 999, background: '#DCFCE7', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+                <CheckCircle2 size={28} style={{ color: '#15803D' }} />
+              </div>
+              <h2 style={{ margin: '0 0 10px', fontSize: '1.125rem', fontWeight: 800, color: '#111827' }}>
+                You&apos;re all set!
+              </h2>
+              <p style={{ margin: '0 0 4px', fontSize: '0.9375rem', color: '#374151', lineHeight: 1.6 }}>
+                You&apos;ve accepted the offer for <strong>{confirmedJobTitle}</strong>.
+              </p>
+              <p style={{ margin: '0 0 16px', fontSize: '0.9375rem', color: '#374151', lineHeight: 1.6 }}>
+                Your Casual Worker account is now ready.
+              </p>
+              <p style={{ margin: '0 0 6px', fontSize: '0.875rem', color: '#6B7280', lineHeight: 1.6 }}>
+                You&apos;ll be signed out automatically in <strong style={{ color: '#EA580C' }}>{signOutCountdown} seconds</strong>.
+              </p>
+              <p style={{ margin: '0 0 22px', fontSize: '0.875rem', color: '#6B7280', lineHeight: 1.6 }}>
+                Sign in again to access your Casual Worker workspace.
+              </p>
+              <button
+                onClick={signOutToReauth}
+                style={{ width: '100%', padding: '12px', border: 'none', borderRadius: 10, background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', fontWeight: 700, fontSize: '0.9375rem', cursor: 'pointer' }}
+              >
+                Sign out now
+              </button>
             </div>
           </div>
         </div>
@@ -459,232 +600,234 @@ export default function WorkerApplicationsPage() {
   )
 }
 
-function formatDate(date: string) {
-  return new Date(date).toLocaleDateString('en-SG', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
+// "14 Jul 2026, 2:49 PM" — the tracker is about WHEN each step happened, so the clock matters,
+// not just the date.
+function formatTimestamp(iso?: string | null): string | null {
+  if (!iso) return null
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return null
+  return d.toLocaleString('en-SG', {
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true,
   })
 }
 
-function formatStatus(status: ApplicationStatus) {
-  if (status === 'cancelled_by_employer') return 'Cancelled by Employer'
-  if (status === 'job_closed') return 'Job Closed'
-  return status.charAt(0).toUpperCase() + status.slice(1)
-}
+// The steps this application actually went through, in order. Only moments that really happened
+// are listed — a pending application shows one line, a confirmed one shows three.
+function timelineFor(app: Application): { label: string; at: string }[] {
+  const steps: { label: string; at?: string | null }[] = [
+    { label: 'Applied', at: app.applied_at },
+    // The offer going out IS the employer's acceptance — same moment, so one line covers both.
+    { label: 'Offer received', at: app.invitation_sent_at },
+  ]
 
-function statusStyle(status: ApplicationStatus): React.CSSProperties {
-  if (status === 'pending') {
-    return { background: '#FEF3C7', color: '#92400E', border: '1px solid #FDE68A' }
+  if (app.invitation_status === 'accepted') {
+    steps.push({ label: 'Confirmed', at: app.invitation_responded_at })
+  } else if (app.invitation_status === 'position_filled') {
+    // Lost the first-come-first-served race — the moment the last opening went to someone else.
+    steps.push({ label: 'Not selected', at: app.invitation_responded_at })
+  } else if (app.status === 'rejected' || app.status === 'job_closed') {
+    steps.push({ label: 'Not selected', at: app.decided_at })
   }
 
-  if (status === 'accepted') {
-    return { background: '#DCFCE7', color: '#15803D', border: '1px solid #BBF7D0' }
-  }
-
-  if (status === 'rejected') {
-    return { background: '#FEE2E2', color: '#B91C1C', border: '1px solid #FECACA' }
-  }
-
-  return { background: '#F3F4F6', color: '#4B5563', border: '1px solid #D1D5DB' }
+  return steps.filter((s): s is { label: string; at: string } => !!s.at)
 }
 
-const topBarStyle: React.CSSProperties = {
-  height: 72,
-  background: '#1C1C1E',
-  color: '#FFFFFF',
-  display: 'flex',
-  alignItems: 'center',
+function CardTimeline({ app }: { app: Application }) {
+  const steps = timelineFor(app)
+  if (steps.length === 0) return null
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3, paddingTop: 2 }}>
+      {steps.map(step => (
+        <div key={step.label} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: '0.72rem', lineHeight: 1.5 }}>
+          <span style={{ color: '#6B7280', fontWeight: 600, flexShrink: 0 }}>{step.label}</span>
+          <span style={{ color: '#374151', textAlign: 'right' }}>{formatTimestamp(step.at)}</span>
+        </div>
+      ))}
+    </div>
+  )
 }
 
-const topBarInnerStyle: React.CSSProperties = {
-  width: '100%',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  padding: '0 32px',
-}
-
-const brandWrapStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 10,
-  textDecoration: 'none',
-  cursor: 'pointer',
-}
-
-const headerTitleStyle: React.CSSProperties = {
-  margin: 0,
-  fontFamily: 'var(--font-heading)',
-  fontSize: '1.0625rem',
-  fontWeight: 700,
-  letterSpacing: '-0.01em',
-  color: '#FFFFFF',
-}
-
-const rightHeaderStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: 14,
-}
-
+// No fontFamily override here — Owner pages don't set one either, so this page inherits the
+// same ambient system font as the rest of the app instead of forcing Inter over it (that's what
+// was making this page's pill tabs render in a visibly different typeface than Owner's).
 const pageStyle: React.CSSProperties = {
-  minHeight: 'calc(100vh - 72px)',
-  background: '#F3F4F6',
-  padding: '42px 46px',
-  fontFamily: 'var(--font-body)',
+  minHeight: '100vh',
+  padding: '20px 28px 28px',
 }
 
 const sectionStyle: React.CSSProperties = {
   width: '100%',
 }
 
-const sectionHeaderStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  marginBottom: 22,
-}
-
-const sectionLabelStyle: React.CSSProperties = {
-  margin: 0,
-  fontFamily: 'var(--font-heading)',
-  fontSize: '1rem',
-  fontWeight: 700,
-  letterSpacing: '0.08em',
-  color: '#4B5563',
-}
-
+// Exactly 4 columns, always — a hardcoded px width only holds "4 per row" on one specific screen
+// width, so this fixes the COLUMN COUNT instead (guaranteed 4-across on any monitor) and lets
+// each column's width follow from that. maxWidth caps how wide the 4 cards get on an ultra-wide
+// screen; below that they shrink together, same as the fixed-width look the user asked for.
 const applicationsGridStyle: React.CSSProperties = {
   display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))',
-  gap: 24,
+  gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+  gap: 16,
+  maxWidth: 1800,
 }
 
-const applicationCardStyle: React.CSSProperties = {
-  background: '#FFFFFF',
-  border: '1px solid #D1D5DB',
-  borderRadius: 18,
-  padding: 26,
-  boxShadow: '0 8px 22px rgba(15,23,42,0.05)',
+// The Ongoing tab's 3-block pipeline — one panel per step (Pending Review / Accept-Reject Job
+// Offer / Confirmed) with a circular arrow between them. Like the Owner Task page's Kanban, the
+// three panels stretch edge-to-edge across the page (equal flex columns), each wide enough to
+// fit two job cards per row.
+// stretch: the row is only as tall as the fullest block (content-hugging), and the other two
+// blocks stretch to match it, so the three columns always share one height.
+const stepsRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'stretch',
+  width: '100%',
+  paddingBottom: 8,
+}
+
+// Each panel hugs its content (a one-card column keeps the row one card tall), but is capped at
+// roughly the viewport height — past that the card list scrolls inside the panel instead of
+// growing it.
+const stepPanelStyle: React.CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  maxHeight: 'calc(100vh - 240px)',
   display: 'flex',
   flexDirection: 'column',
-  gap: 18,
-  minHeight: 280,
+  background: '#FFFFFF',
+  border: '1.5px solid #E5E7EB',
+  borderRadius: 14,
+  overflow: 'hidden',
 }
 
-const cardTopRowStyle: React.CSSProperties = {
+const stepPanelHeaderStyle: React.CSSProperties = {
+  height: 56,
+  padding: '0 18px',
+  boxSizing: 'border-box',
+  borderBottom: '1px solid #E5E7EB',
   display: 'flex',
-  alignItems: 'flex-start',
-  justifyContent: 'space-between',
+  alignItems: 'center',
+  gap: 8,
+}
+
+const stepIconBadgeStyle: React.CSSProperties = {
+  width: 30,
+  height: 30,
+  borderRadius: 9,
+  background: '#FFF7ED',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  flexShrink: 0,
+}
+
+const stepPanelTitleStyle: React.CSSProperties = {
+  fontSize: 15,
+  fontWeight: 700,
+  color: '#0F172A',
+  letterSpacing: '-0.1px',
+  lineHeight: 1.2,
+}
+
+// Two cards per row inside each step block. minHeight keeps an empty block from collapsing to
+// just its header; overflowY scrolls the list once it hits the panel's viewport-height cap
+// (minHeight: 0 lets the flex child actually shrink so that scroll can kick in).
+const stepPanelBodyStyle: React.CSSProperties = {
+  flex: '1 1 auto',
+  minHeight: 96,
+  overflowY: 'auto',
+  padding: 16,
+  display: 'grid',
+  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+  alignContent: 'start',
   gap: 12,
 }
 
-const companyLabelStyle: React.CSSProperties = {
-  margin: '4px 0 0',
-  fontSize: '0.78rem',
-  fontWeight: 700,
-  letterSpacing: '0.08em',
-  textTransform: 'uppercase',
-  color: '#F97316',
+const stepArrowSlotStyle: React.CSSProperties = {
+  width: 48,
+  flexShrink: 0,
+  display: 'flex',
+  justifyContent: 'center',
+  paddingTop: 28,
 }
 
-const cardTitleStyle: React.CSSProperties = {
-  margin: 0,
-  fontFamily: 'var(--font-heading)',
-  fontSize: '1.25rem',
-  fontWeight: 700,
-  color: '#111827',
-  lineHeight: 1.3,
+const stepArrowCircleStyle: React.CSSProperties = {
+  width: 28,
+  height: 28,
+  borderRadius: '50%',
+  background: 'linear-gradient(135deg, #F97316, #EA580C)',
+  color: '#FFFFFF',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  boxShadow: '0 2px 6px rgba(249,115,22,0.35)',
 }
 
-const cardInfoStyle: React.CSSProperties = {
-  display: 'grid',
-  gap: 14,
-}
-
-const infoLabelStyle: React.CSSProperties = {
-  margin: '0 0 4px',
-  color: '#6B7280',
-  fontSize: '0.85rem',
-  fontWeight: 600,
-}
-
-const infoValueStyle: React.CSSProperties = {
-  margin: 0,
-  color: '#111827',
-  fontSize: '0.9rem',
-  fontWeight: 700,
-  lineHeight: 1.5,
-}
-
-const statusBadgeBaseStyle: React.CSSProperties = {
-  padding: '5px 11px',
+// Pill tab bar switching between Ongoing and History applications — same rounded
+// "pill container + dark active segment" language as the Owner Team page's tab switcher.
+const pillTabBarStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 8,
+  padding: 4,
+  background: '#FFFFFF',
+  border: '1px solid #E5E7EB',
   borderRadius: 999,
-  fontSize: '0.75rem',
+  boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
+}
+
+const pillTabButtonStyle: React.CSSProperties = {
+  height: 36,
+  padding: '0 18px',
+  borderRadius: 999,
+  border: 'none',
+  background: 'transparent',
+  color: '#64748B',
+  fontSize: 13,
+  fontWeight: 700,
+  cursor: 'pointer',
+  whiteSpace: 'nowrap',
+  transition: 'background 0.18s ease, color 0.18s ease',
+}
+
+const pillTabButtonActiveStyle: React.CSSProperties = {
+  background: 'linear-gradient(180deg, #0F172A 0%, #111827 100%)',
+  color: '#FFFFFF',
+  boxShadow: '0 6px 18px rgba(15,23,42,0.18)',
+}
+
+// Full-width "Withdraw Application" action on the JobCard footer (details open by clicking the
+// card itself).
+const withdrawButtonStyle: React.CSSProperties = {
+  width: '100%',
+  border: '1px solid #FECACA',
+  background: '#FEF2F2',
+  color: '#DC2626',
+  padding: '11px 14px',
+  borderRadius: 10,
+  fontSize: '0.85rem',
+  fontWeight: 700,
+  cursor: 'pointer',
+  marginTop: 4,
+}
+
+// Outcome badge on History cards — colored by how the application ended.
+const historyBadgeBaseStyle: React.CSSProperties = {
+  padding: '4px 10px',
+  borderRadius: 999,
+  fontSize: '0.72rem',
   fontWeight: 700,
   whiteSpace: 'nowrap',
 }
 
-const cardActionsStyle: React.CSSProperties = {
-  display: 'grid',
-  gridTemplateColumns: '1fr 1fr',
-  gap: 12,
-  marginTop: 'auto',
+const historyBadgeToneStyles: Record<FlowTone, React.CSSProperties> = {
+  success: { background: '#F0FDF4', border: '1px solid #BBF7D0', color: '#15803D' },
+  danger: { background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C' },
+  warning: { background: '#FFFBEB', border: '1px solid #FDE68A', color: '#92400E' },
+  neutral: { background: '#F9FAFB', border: '1px solid #E5E7EB', color: '#6B7280' },
 }
 
-const primaryActionButtonStyle: React.CSSProperties = {
-  border: 'none',
-  background: '#F97316',
-  color: '#FFFFFF',
-  padding: '13px 14px',
-  borderRadius: 10,
-  fontSize: '0.85rem',
-  fontWeight: 700,
-  cursor: 'pointer',
-}
-
-const dangerActionButtonStyle: React.CSSProperties = {
-  border: '1px solid #FECACA',
-  background: '#FEF2F2',
-  color: '#DC2626',
-  padding: '13px 14px',
-  borderRadius: 10,
-  fontSize: '0.85rem',
-  fontWeight: 700,
-  cursor: 'pointer',
-}
-
-const emptyCardStyle: React.CSSProperties = {
-  padding: '42px 28px',
-  textAlign: 'center',
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  justifyContent: 'center',
-}
-
-const errorCardStyle: React.CSSProperties = {
-  ...emptyCardStyle,
-  color: '#B91C1C',
-  background: '#FEF2F2',
-}
-
-const emptyTitleStyle: React.CSSProperties = {
-  margin: 0,
-  fontFamily: 'var(--font-heading)',
-  fontSize: '1rem',
-  fontWeight: 700,
-  color: '#111827',
-}
-
-const emptyTextStyle: React.CSSProperties = {
-  margin: '8px auto 0',
-  fontSize: '0.875rem',
-  color: '#6B7280',
-  lineHeight: 1.6,
-}
-
+// Withdraw confirmation dialog chrome.
 const confirmOverlayStyle: React.CSSProperties = {
   position: 'fixed',
   inset: 0,
@@ -708,44 +851,57 @@ const confirmModalStyle: React.CSSProperties = {
   animation: 'modalSlideIn 0.22s cubic-bezier(0.16,1,0.3,1)',
 }
 
-const confirmTitleStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: '1rem',
+// Detail-panel action buttons (Accept / Decline / Withdraw), sitting where "Apply Now" would be.
+const detailActionButtonStyle: React.CSSProperties = {
+  flex: 1,
+  border: 'none',
+  background: '#F97316',
+  color: '#FFFFFF',
+  padding: '10px 16px',
+  borderRadius: 10,
+  fontSize: '0.85rem',
   fontWeight: 700,
-  color: '#111827',
-}
-
-const confirmTextStyle: React.CSSProperties = {
-  margin: '0 0 20px',
-  color: '#6B7280',
-  fontSize: '0.9375rem',
-  lineHeight: 1.6,
-}
-
-const confirmActionsStyle: React.CSSProperties = {
-  display: 'flex',
-  justifyContent: 'flex-end',
-  gap: 10,
-}
-
-const confirmCancelButtonStyle: React.CSSProperties = {
-  padding: '7px 18px',
-  borderRadius: 8,
-  border: '1.5px solid #E5E7EB',
-  background: '#FFFFFF',
-  color: '#6B7280',
-  fontWeight: 600,
-  fontSize: '0.8125rem',
   cursor: 'pointer',
 }
 
-const confirmWithdrawButtonStyle: React.CSSProperties = {
-  border: '1.5px solid #FECACA',
+const detailDangerButtonStyle: React.CSSProperties = {
+  flex: 1,
+  border: '1px solid #FECACA',
   background: '#FEF2F2',
   color: '#DC2626',
-  padding: '7px 18px',
-  borderRadius: 8,
-  fontWeight: 600,
-  fontSize: '0.8125rem',
+  padding: '10px 16px',
+  borderRadius: 10,
+  fontSize: '0.85rem',
+  fontWeight: 700,
   cursor: 'pointer',
 }
+
+// Overlay wrapping the shared JobDetailPanel when opened from the Applications page.
+const detailOverlayStyle: React.CSSProperties = {
+  position: 'fixed',
+  inset: 0,
+  background: 'rgba(15,23,42,0.45)',
+  backdropFilter: 'blur(4px)',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  zIndex: 9999,
+  padding: 24,
+  animation: 'overlayFadeIn 0.18s ease-out',
+}
+
+const emptyCardStyle: React.CSSProperties = {
+  padding: '42px 28px',
+  textAlign: 'center',
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'center',
+  justifyContent: 'center',
+}
+
+const errorCardStyle: React.CSSProperties = {
+  ...emptyCardStyle,
+  color: '#B91C1C',
+  background: '#FEF2F2',
+}
+

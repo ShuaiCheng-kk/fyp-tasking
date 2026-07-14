@@ -5,12 +5,18 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url)
     const user_id = searchParams.get('user_id')
+    const resource = searchParams.get('resource')
 
     if (!user_id) {
       return NextResponse.json(
         { success: false, message: 'Missing user_id' },
         { status: 400 }
       )
+    }
+
+    if (resource === 'history') {
+      const history = await casualAttendanceService.getHistory(user_id)
+      return NextResponse.json({ success: true, history })
     }
 
     const attendance = await casualAttendanceService.getAttendance(user_id)
