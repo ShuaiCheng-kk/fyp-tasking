@@ -99,7 +99,44 @@ test.beforeAll(async () => {
     owner_status: 'approved',
   })
 
-  // A task in the same department, completed on time.
+  // A shift attended BEFORE the period — makes the casual worker count as "rehired" in-range.
+  const { data: priorShift, error: priorShiftError } = await admin
+    .from('shifts')
+    .insert({
+      company_id: seeded.companyId,
+      department_id: departmentId,
+      shift_date: '2026-06-20',
+      start_time: '09:00',
+      end_time: '17:00',
+      title: 'Module 7 Prior Shift',
+      created_by: seeded.ownerId,
+      publication_status: 'published',
+      flat_rate: 120,
+    })
+    .select('id')
+    .single()
+  if (priorShiftError || !priorShift) throw new Error(`Failed to create prior shift: ${priorShiftError?.message}`)
+  shiftIds.push(priorShift.id as string)
+
+  const { data: priorAssignment, error: priorAssignmentError } = await admin
+    .from('shift_assignments')
+    .insert({ shift_id: priorShift.id, user_id: casual.userId, assigned_by: seeded.ownerId, assignment_status: 'accepted' })
+    .select('id')
+    .single()
+  if (priorAssignmentError || !priorAssignment) throw new Error(`Failed to create prior assignment: ${priorAssignmentError?.message}`)
+
+  await admin.from('attendance_records').insert({
+    shift_assignment_id: priorAssignment.id,
+    casual_worker_id: casual.userId,
+    clock_in_time: '2026-06-20T09:00:00Z',
+    clock_out_time: '2026-06-20T17:00:00Z',
+    confirmed_by_employee_id: seeded.ownerId,
+    submitted_by_employee_id: seeded.ownerId,
+    status: 'owner_approved',
+    owner_status: 'approved',
+  })
+
+  // A task in the same department, assigned to the casual worker, completed on time.
   await admin.from('tasks').insert({
     company_id: seeded.companyId,
     department_id: departmentId,
@@ -110,6 +147,7 @@ test.beforeAll(async () => {
     completed_at: '2026-07-08T17:00:00Z',
     task_date: '2026-07-08',
     assigned_by: seeded.ownerId,
+    assigned_user_id: casual.userId,
   })
 
   // A job posting created inside the period, with one accepted+confirmed applicant.
@@ -213,6 +251,16 @@ test('UC62/UC64 GET /api/report/company returns real, computed workforce analyti
   const posting = report.casual.postings.find((p: { posting_id: string }) => p.posting_id === jobPostingId)
   expect(posting).toMatchObject({ applicants: 1, accepted: 1, confirmed: 1, openings: 1 })
   expect(posting.days_to_fill).not.toBeNull()
+
+  // Casual Worker Pool Analytics — per-worker KPIs. The one worked casual worker attended a
+  // shift before the period (rehired), was never late/absent, and completed his one
+  // deadline-in-period task on time → all four rates are 100.
+  expect(report.overview.casual_rehire_rate).toBe(100)
+  expect(report.overview.casual_on_time_attendance_rate).toBe(100)
+  expect(report.overview.casual_reliable_worker_rate).toBe(100)
+  expect(report.overview.casual_on_time_task_completion_rate).toBe(100)
+  // Nobody worked in the previous period → null, never a fake 0%.
+  expect(report.previous_overview.casual_rehire_rate).toBeNull()
 })
 
 test('UC62 department filter scopes the report to a single department', async ({ request }) => {
