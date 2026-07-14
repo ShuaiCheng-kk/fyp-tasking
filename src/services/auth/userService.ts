@@ -4,6 +4,38 @@ import { User } from '@/types/auth.types'
 
 const ROLE_ORDER: Record<string, number> = { Owner: 0, Partner: 1, Manager: 2, Employee: 3, 'Casual Worker': 4, 'Guest User': 5 }
 
+// A team member row carries the CW-specific per-company flags (worked-a-shift + banned) so the
+// Team page can gate the pool and flag bans without extra round-trips.
+type TeamMemberRow = User & {
+  department_id: string | null
+  casual_worker_verified_at: string | null
+  casual_worker_blocked_at: string | null
+  casual_worker_blocked_reason: string | null
+}
+
+type CwMeta = { verified_at: string | null; blocked_at: string | null; blocked_reason: string | null }
+
+function buildCwMeta(rows: any[] | null): Map<string, CwMeta> {
+  return new Map((rows ?? []).map((r: any) => [
+    r.casual_worker_id as string,
+    { verified_at: r.verified_at ?? null, blocked_at: r.blocked_at ?? null, blocked_reason: r.blocked_reason ?? null },
+  ]))
+}
+
+function mapTeamMemberRow(row: any, cwMeta: Map<string, CwMeta>): TeamMemberRow {
+  const meta = cwMeta.get(row.id)
+  return {
+    ...row,
+    department_id: row.manager_departments?.[0]?.department_id ?? row.employee_departments?.[0]?.department_id ?? row.casualworker_departments?.[0]?.department_id ?? null,
+    casual_worker_verified_at: meta?.verified_at ?? null,
+    casual_worker_blocked_at: meta?.blocked_at ?? null,
+    casual_worker_blocked_reason: meta?.blocked_reason ?? null,
+    manager_departments: undefined,
+    employee_departments: undefined,
+    casualworker_departments: undefined,
+  } as TeamMemberRow
+}
+
 export const userService = {
 
   async getUserById(id: string): Promise<User & { department_id: string | null }> {
@@ -23,24 +55,46 @@ export const userService = {
     } as User & { department_id: string | null }
   },
 
-  async getTeamByCompany(company_id: string): Promise<(User & { department_id: string | null })[]> {
+  async getTeamByCompany(company_id: string): Promise<TeamMemberRow[]> {
     const { supabase } = await import('@/lib/supabase')
+    // Owner/Partner/Manager/Employee are linked via users.company_id. Recruited Casual Workers
+    // never get that column set (they join via recruitment two-way-confirm, not invite-code) — the
+    // authoritative link for them is casualworker_departments, so that's unioned in below on top of
+    // the company_id query (which still covers any CW row that does have company_id set). Every
+    // confirmed CW is returned either way — this is a shared "who belongs to this company" lookup
+    // used by pickers (e.g. shift-swap replacement) that need to see everyone regardless of pool
+    // status. casual_worker_verified_at (worked a shift) and casual_worker_blocked_at (banned by
+    // this company) are exposed so the Team page can filter/flag without re-querying.
     const { data, error } = await supabase
       .from('users')
       .select('*, manager_departments!manager_departments_manager_id_fkey(department_id), employee_departments(department_id), casualworker_departments(department_id)')
       .eq('company_id', company_id)
     if (error) throw new Error(error.message)
-    const members = (data || []).map((row: any) => ({
-      ...row,
-      department_id: row.manager_departments?.[0]?.department_id ?? row.employee_departments?.[0]?.department_id ?? row.casualworker_departments?.[0]?.department_id ?? null,
-      manager_departments: undefined,
-      employee_departments: undefined,
-      casualworker_departments: undefined,
-    })) as (User & { department_id: string | null })[]
+
+    const { data: cwdRows, error: cwdErr } = await supabase
+      .from('casualworker_departments')
+      .select('casual_worker_id, verified_at, blocked_at, blocked_reason')
+      .eq('company_id', company_id)
+    if (cwdErr) throw new Error(cwdErr.message)
+    const cwMeta = buildCwMeta(cwdRows)
+    const knownIds = new Set((data ?? []).map((row: any) => row.id as string))
+    const missingCwIds = [...cwMeta.keys()].filter(id => !knownIds.has(id))
+
+    let cwUsers: any[] = []
+    if (missingCwIds.length > 0) {
+      const { data: cwData, error: cwErr } = await supabase
+        .from('users')
+        .select('*, casualworker_departments(department_id)')
+        .in('id', missingCwIds)
+      if (cwErr) throw new Error(cwErr.message)
+      cwUsers = cwData ?? []
+    }
+
+    const members = [...(data || []), ...cwUsers].map((row: any) => mapTeamMemberRow(row, cwMeta))
     return members.sort((a, b) => (ROLE_ORDER[a.role] ?? 99) - (ROLE_ORDER[b.role] ?? 99))
   },
 
-  async getTeamByDepartment(company_id: string, department_id: string): Promise<(User & { department_id: string | null })[]> {
+  async getTeamByDepartment(company_id: string, department_id: string): Promise<TeamMemberRow[]> {
     const { supabase } = await import('@/lib/supabase')
     // Get employee IDs in this department via employee_departments (column is employee_id)
     const { data: edRows, error: edErr } = await supabase
@@ -59,13 +113,16 @@ export const userService = {
     if (mdErr) throw new Error(mdErr.message)
     const mgrIds = (mdRows ?? []).map((r: any) => r.manager_id as string)
 
-    // Get CW IDs in this department via casualworker_departments (mirrors employee_departments)
+    // Get CW IDs in this department via casualworker_departments (mirrors employee_departments).
+    // Every confirmed CW is included — pickers that reuse this lookup need everyone, not just the
+    // verified pool. verified_at/blocked_at are carried through for callers that filter/flag on them.
     const { data: cwdRows, error: cwdErr } = await supabase
       .from('casualworker_departments')
-      .select('casual_worker_id')
+      .select('casual_worker_id, verified_at, blocked_at, blocked_reason')
       .eq('department_id', department_id)
     if (cwdErr) throw new Error(cwdErr.message)
-    const cwIds = (cwdRows ?? []).map((r: any) => r.casual_worker_id as string)
+    const cwMeta = buildCwMeta(cwdRows)
+    const cwIds = [...cwMeta.keys()]
 
     const allIds = [...new Set([...empIds, ...mgrIds, ...cwIds])]
     if (allIds.length === 0) return []
@@ -75,13 +132,7 @@ export const userService = {
       .select('*, employee_departments(department_id), manager_departments!manager_departments_manager_id_fkey(department_id), casualworker_departments(department_id)')
       .in('id', allIds)
     if (error) throw new Error(error.message)
-    const members = (data || []).map((row: any) => ({
-      ...row,
-      department_id: row.manager_departments?.[0]?.department_id ?? row.employee_departments?.[0]?.department_id ?? row.casualworker_departments?.[0]?.department_id ?? null,
-      manager_departments: undefined,
-      employee_departments: undefined,
-      casualworker_departments: undefined,
-    })) as (User & { department_id: string | null })[]
+    const members = (data || []).map((row: any) => mapTeamMemberRow(row, cwMeta))
     return members.sort((a, b) => (ROLE_ORDER[a.role] ?? 99) - (ROLE_ORDER[b.role] ?? 99))
   },
 

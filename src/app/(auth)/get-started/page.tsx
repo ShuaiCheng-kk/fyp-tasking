@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase';
+import { createBrowserClient } from '@supabase/ssr';
 import { Building2, UserPlus, Eye, EyeOff, ChevronLeft, ChevronDown, Check, X } from 'lucide-react';
 import {
   step1,
@@ -1643,6 +1644,7 @@ export default function GetStartedPage() {
       setOwnerPhoneError('Phone number must be exactly 8 digits.'); return;
     }
     if (!ownerAccount.dateOfBirth) { setError('Date of birth is required.'); return; }
+    if (!profilePhotoUrl) { setError('Please upload a profile photo.'); return; }
     setIsLoading(true);
     try {
       const res = await fetch('/api/auth/register-owner', {
@@ -1840,6 +1842,7 @@ export default function GetStartedPage() {
       setInvitedPhoneError('Phone number must be exactly 8 digits.'); return;
     }
     if (!invitedAccount.dateOfBirth) { setError('Date of birth is required.'); return; }
+    if (!profilePhotoUrl) { setError('Please upload a profile photo.'); return; }
     goNext();
   };
 
@@ -1865,6 +1868,7 @@ export default function GetStartedPage() {
   }
   if (!guestAccount.dateOfBirth) { setError('Date of birth is required.'); return; }
   if (!guestHomeLocation.trim()) { setError('Home location is required.'); return; }
+  if (!profilePhotoUrl) { setError('Please upload a profile photo.'); return; }
 
   setIsLoading(true);
 
@@ -1928,6 +1932,20 @@ export default function GetStartedPage() {
     });
     const data = await readJsonSafe(res);
     if (!data.success) throw new Error(data.message);
+
+    // Establish the browser Supabase session too — the marketing navbar (and anything else that
+    // checks supabase.auth.getSession()) must treat the freshly registered worker as signed in,
+    // not keep showing Sign In / Get Started. Must be createBrowserClient (cookie storage, what
+    // the navbar and signin page read) — NOT the '@/lib/supabase' client, whose session lives
+    // under a separate localStorage key the navbar never sees. Best-effort: a failure here must
+    // not strand the worker after their account row was already created.
+    try {
+      const browserSupabase = createBrowserClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      );
+      await browserSupabase.auth.signInWithPassword({ email: email_address, password });
+    } catch { /* worker can still sign in manually */ }
 
     // The account row now exists and the worker is signed in — but registration isn't "done"
     // until they've built their Worker Profile (skills required). Store the session and advance
@@ -2128,7 +2146,8 @@ export default function GetStartedPage() {
                   ownerAccount.password.length >= 6 &&
                   !!ownerAccount.confirmPassword &&
                   ownerAccount.phone.length === 8 &&
-                  !!ownerAccount.dateOfBirth;
+                  !!ownerAccount.dateOfBirth &&
+                  !!profilePhotoUrl;
                 return (
                   <div style={{ opacity: ok ? 1 : 0.45, pointerEvents: ok ? 'auto' : 'none', transition: 'opacity 0.15s' }}>
                     <PrimaryButton loading={isLoading} onClick={handleOwnerRegister}>
@@ -2539,6 +2558,7 @@ export default function GetStartedPage() {
               setStep(1);
               setConfirmationEmail(null);
             }} />
+            <ProgressBar current={2} steps={['Account', 'Verify', 'Profile']} />
             <VerifyEmailStep
               email={confirmationEmail}
               verified={verifiedFromUrl}
@@ -2552,10 +2572,11 @@ export default function GetStartedPage() {
         {path === 'guest' && step === 1 && (
           <Card>
             <StepHeading
-              headline="Create your applicant account"
-              subheadline="Register as a Guest User to apply for this job."
+              headline="Create your account"
+              subheadline=""
               onBack={() => router.push('/job-board')}
             />
+            <ProgressBar current={1} steps={['Account', 'Verify', 'Profile']} />
             <AccountFields
               form={guestAccount}
               setForm={setGuestAccount}
@@ -2565,16 +2586,15 @@ export default function GetStartedPage() {
               onProfilePhotoChange={handleProfilePhotoChange}
             />
             {/* Coarse home location (region or postal code) — used later for distance-based job
-                matching; never a full street address. */}
+                matching; never a full street address. Reuses the shared field styles so it
+                matches the rest of the form exactly. */}
             <div style={{ marginTop: '18px' }}>
-              <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', marginBottom: '7px' }}>
-                Home Location
-              </label>
+              <label style={labelStyle}>Home Location</label>
               <input
                 value={guestHomeLocation}
-                onChange={e => setGuestHomeLocation(e.target.value)}
-                placeholder="e.g. Tampines, or postal code 520123"
-                style={{ width: '100%', padding: '11px 14px', border: '1.5px solid #E5E7EB', borderRadius: '10px', fontSize: '0.9375rem', color: '#111827', outline: 'none', boxSizing: 'border-box', background: '#FFFFFF' }}
+                onChange={e => setGuestHomeLocation(e.target.value.replace(/[0-9]/g, ''))}
+                placeholder="e.g. Woodlands, Tampines"
+                style={inputStyle}
               />
             </div>
             <div style={{ marginTop: '28px' }}>
@@ -2588,7 +2608,8 @@ export default function GetStartedPage() {
                   !!guestAccount.confirmPassword &&
                   guestAccount.phone.length === 8 &&
                   !!guestAccount.dateOfBirth &&
-                  !!guestHomeLocation.trim();
+                  !!guestHomeLocation.trim() &&
+                  !!profilePhotoUrl;
                 return (
                   <div style={{ opacity: ok ? 1 : 0.45, pointerEvents: ok ? 'auto' : 'none', transition: 'opacity 0.15s' }}>
                     <PrimaryButton loading={isLoading} onClick={handleGuestRegister}>
@@ -2606,9 +2627,10 @@ export default function GetStartedPage() {
         {path === 'guest' && step === 3 && guestAuthId && (
           <Card>
             <StepHeading
-              headline="Set up your Worker Profile"
-              subheadline="Add your skills so employers can find you. You can add certificates and a resume now or later."
+              headline="Complete Your Profile"
+              subheadline="Complete your profile to help employers find and evaluate you."
             />
+            <ProgressBar current={3} steps={['Account', 'Verify', 'Profile']} />
             <GuestOnboardingProfile authId={guestAuthId} onDone={finishGuestOnboarding} />
           </Card>
         )}
@@ -2631,7 +2653,8 @@ export default function GetStartedPage() {
                   invitedAccount.password.length >= 6 &&
                   !!invitedAccount.confirmPassword &&
                   invitedAccount.phone.length === 8 &&
-                  !!invitedAccount.dateOfBirth;
+                  !!invitedAccount.dateOfBirth &&
+                  !!profilePhotoUrl;
                 return (
                   <div style={{ opacity: ok ? 1 : 0.45, pointerEvents: ok ? 'auto' : 'none', transition: 'opacity 0.15s' }}>
                     <PrimaryButton loading={isLoading} onClick={handleInvitedRegister}>

@@ -21,15 +21,13 @@ export interface WorkerProfile {
 }
 
 // Preset names keep spelling consistent so the AI matcher and the employer see the same label
-// ("Food Hygiene" vs "Food Hygine" vs "食品卫生" would never match). Workers can still add a
-// custom name for anything not listed.
+// ("Food Hygiene" vs "Food Hygine" vs "食品卫生" would never match). Kept to the certificates
+// most casual workers actually hold — everything else (Barista, Lifeguard, Class 3 Driving
+// Licence, etc.) goes through "Add custom certificate" instead of bloating this dropdown.
 export const PRESET_CERTIFICATES = [
   'Food Hygiene Certificate',
   'First Aid Certificate (CPR + AED)',
   'WSQ Food Safety Course Level 1',
   'Forklift Licence',
   'Security Officer Licence',
-  'Class 3 Driving Licence',
-  'Barista Certification',
-  'Lifeguard Certification',
 ] as const

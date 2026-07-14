@@ -45,6 +45,7 @@ vi.mock('@/repositories/owner/recruitmentRepository', () => ({
     getConfirmedWorkersByJob: vi.fn(),
     setApplicantStatus: vi.fn(),
     cancelAcceptedInvitationByApplicant: vi.fn(),
+    cancelSentInvitationByApplicant: vi.fn(),
     cancelOpenInvitationsForJob: vi.fn(),
     markPendingApplicantsJobClosed: vi.fn(),
     getEmployeeShiftOnDate: vi.fn(),
@@ -53,11 +54,27 @@ vi.mock('@/repositories/owner/recruitmentRepository', () => ({
     cancelFutureShiftsForJob: vi.fn(),
     insertRecruitmentCancellation: vi.fn(),
     reopenJobPosting: vi.fn(),
+    getVerifiedPoolWorkers: vi.fn(),
+    getApplicantByJobAndUser: vi.fn(),
+    createDirectApplicant: vi.fn(),
   },
+}))
+
+vi.mock('@/repositories/guest/workerApplicationRepository', () => ({
+  workerApplicationRepository: {
+    getUserContact: vi.fn(),
+    getApplicantCertificates: vi.fn(),
+  },
+}))
+
+vi.mock('@/services/shared/workerEligibility', () => ({
+  assertWorkerEligibleForJob: vi.fn(),
 }))
 
 import { recruitmentService } from './recruitmentService'
 import { recruitmentRepository } from '@/repositories/owner/recruitmentRepository'
+import { workerApplicationRepository } from '@/repositories/guest/workerApplicationRepository'
+import { assertWorkerEligibleForJob } from '@/services/shared/workerEligibility'
 import { emailService } from '@/services/email/emailService'
 import { JobPosting, JobApplicant, JobPostingInput } from '@/types/Recruitment'
 
@@ -76,6 +93,7 @@ const basePosting: JobPosting = {
   recurrence_interval: null,
   recurrence_unit: null,
   archived_at: null,
+  archived_from_status: null,
   created_at: '2026-06-01T00:00:00.000Z',
   updated_at: '2026-06-01T00:00:00.000Z',
   company_name: null,
@@ -115,6 +133,8 @@ const baseApplicant: JobApplicant = {
   user_id: 'user-1',
   full_name: 'Jane Applicant',
   email_address: 'jane@example.com',
+  phone_number: null,
+  profile_photo_url: null,
   resume_url: null,
   cover_letter: null,
   status: 'pending',
@@ -369,11 +389,12 @@ describe('recruitmentService — Recruitment', () => {
         { job_id: 'job-1', status: 'rejected', invitation_status: null },
         { job_id: 'job-1', status: 'accepted', invitation_status: 'accepted' },
       ])
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({ ...basePosting, status: 'open' })
       vi.mocked(recruitmentRepository.updateJobPosting).mockResolvedValue({ ...basePosting, status: 'archived' })
 
       await recruitmentService.archiveJobPosting('job-1')
 
-      expect(recruitmentRepository.updateJobPosting).toHaveBeenCalledWith('job-1', expect.objectContaining({ status: 'archived' }))
+      expect(recruitmentRepository.updateJobPosting).toHaveBeenCalledWith('job-1', expect.objectContaining({ status: 'archived', archived_from_status: 'open' }))
     })
 
     it('refuses to archive while an application is still pending the Owner decision', async () => {
@@ -399,19 +420,40 @@ describe('recruitmentService — Recruitment', () => {
 
     it('archives a job nobody applied to', async () => {
       vi.mocked(recruitmentRepository.getApplicantCounts).mockResolvedValue([])
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({ ...basePosting, status: 'open' })
       vi.mocked(recruitmentRepository.updateJobPosting).mockResolvedValue({ ...basePosting, status: 'archived' })
 
       await recruitmentService.archiveJobPosting('job-1')
 
-      expect(recruitmentRepository.updateJobPosting).toHaveBeenCalledWith('job-1', expect.objectContaining({ status: 'archived' }))
+      expect(recruitmentRepository.updateJobPosting).toHaveBeenCalledWith('job-1', expect.objectContaining({ status: 'archived', archived_from_status: 'open' }))
     })
 
-    it('unarchives a job posting back to open', async () => {
+    it('archives a closed job, recording archived_from_status so it can be restored to Closed later', async () => {
+      vi.mocked(recruitmentRepository.getApplicantCounts).mockResolvedValue([])
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({ ...basePosting, status: 'closed' })
+      vi.mocked(recruitmentRepository.updateJobPosting).mockResolvedValue({ ...basePosting, status: 'archived', archived_from_status: 'closed' })
+
+      await recruitmentService.archiveJobPosting('job-1')
+
+      expect(recruitmentRepository.updateJobPosting).toHaveBeenCalledWith('job-1', expect.objectContaining({ status: 'archived', archived_from_status: 'closed' }))
+    })
+
+    it('unarchives a job posting back to open when it was open before archiving', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({ ...basePosting, status: 'archived', archived_from_status: 'open' })
       vi.mocked(recruitmentRepository.updateJobPosting).mockResolvedValue({ ...basePosting, status: 'open' })
 
       await recruitmentService.unarchiveJobPosting('job-1')
 
-      expect(recruitmentRepository.updateJobPosting).toHaveBeenCalledWith('job-1', { status: 'open', archived_at: null })
+      expect(recruitmentRepository.updateJobPosting).toHaveBeenCalledWith('job-1', { status: 'open', archived_at: null, archived_from_status: null })
+    })
+
+    it('unarchives a job posting back to closed when it was closed before archiving (regression: used to always reopen it)', async () => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({ ...basePosting, status: 'archived', archived_from_status: 'closed' })
+      vi.mocked(recruitmentRepository.updateJobPosting).mockResolvedValue({ ...basePosting, status: 'closed' })
+
+      await recruitmentService.unarchiveJobPosting('job-1')
+
+      expect(recruitmentRepository.updateJobPosting).toHaveBeenCalledWith('job-1', { status: 'closed', archived_at: null, archived_from_status: null })
     })
   })
 
@@ -670,6 +712,27 @@ describe('recruitmentService — Recruitment', () => {
       )
     })
 
+    it('rescinds a still-open invitation when rejecting an applicant the owner had already accepted', async () => {
+      // Accepted, but the worker hasn't confirmed yet — invitation_status is 'sent', not 'accepted'.
+      const awaitingWorker = { ...baseApplicant, status: 'accepted' as const, invitation_status: 'sent' }
+      vi.mocked(recruitmentRepository.getApplicantById).mockResolvedValue(awaitingWorker)
+      vi.mocked(recruitmentRepository.updateApplicantStatus).mockResolvedValue({ ...awaitingWorker, status: 'rejected' })
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(basePosting)
+
+      await recruitmentService.decideApplicant({ applicant_id: 'applicant-1', decision: 'rejected', decided_by: 'owner-1' })
+
+      expect(recruitmentRepository.cancelSentInvitationByApplicant).toHaveBeenCalledWith('applicant-1')
+    })
+
+    it('refuses to reject an applicant who already confirmed the offer — must use Remove Worker', async () => {
+      const confirmed = { ...baseApplicant, status: 'accepted' as const, invitation_status: 'accepted' }
+      vi.mocked(recruitmentRepository.getApplicantById).mockResolvedValue(confirmed)
+
+      await expect(recruitmentService.decideApplicant({ applicant_id: 'applicant-1', decision: 'rejected', decided_by: 'owner-1' }))
+        .rejects.toThrow('use Remove Worker instead')
+      expect(recruitmentRepository.updateApplicantStatus).not.toHaveBeenCalled()
+    })
+
     it('throws when the applicant is not found', async () => {
       vi.mocked(recruitmentRepository.getApplicantById).mockResolvedValue(null)
 
@@ -689,4 +752,93 @@ describe('recruitmentService — Recruitment', () => {
       expect(recruitmentRepository.updateCasualWorkerStatus).toHaveBeenCalledWith('user-1', 'blocked')
     })
   })
+
+  describe('invitePoolWorkers — hand-offering a job to workers who already worked here', () => {
+    const poolJob = { id: 'job-1', status: 'open', title: 'Weekend Barista', company_name: 'Acme' }
+
+    beforeEach(() => {
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue(poolJob as never)
+      vi.mocked(recruitmentRepository.getApplicantByJobAndUser).mockResolvedValue(null)
+      vi.mocked(recruitmentRepository.createDirectApplicant).mockResolvedValue({ id: 'applicant-new' } as never)
+      vi.mocked(workerApplicationRepository.getApplicantCertificates).mockResolvedValue([])
+      vi.mocked(workerApplicationRepository.getUserContact).mockImplementation(
+        async (userId: string) => ({ full_name: `Worker ${userId}`, email_address: `${userId}@x.com`, phone_number: null }),
+      )
+      vi.mocked(assertWorkerEligibleForJob).mockResolvedValue({
+        profile: { id: 'cw-1', role: 'Casual Worker', date_of_birth: '2000-01-01', skills: 'Barista', resume_url: null },
+        age: 26,
+      } as never)
+    })
+
+    it('records the application on the worker\'s behalf and sends them an invitation', async () => {
+      const results = await recruitmentService.invitePoolWorkers({
+        job_id: 'job-1', user_ids: ['cw-1'], sent_by: 'owner-1',
+      })
+
+      expect(recruitmentRepository.createDirectApplicant).toHaveBeenCalledWith(expect.objectContaining({
+        job_id: 'job-1', user_id: 'cw-1', skills_snapshot: 'Barista', age_at_apply: 26,
+      }))
+      expect(recruitmentRepository.createJobInvitation).toHaveBeenCalledWith(expect.objectContaining({
+        job_id: 'job-1', applicant_id: 'applicant-new', sent_by: 'owner-1',
+      }))
+      expect(emailService.sendApplicationAcceptedEmail).toHaveBeenCalled()
+      expect(results).toEqual([{ user_id: 'cw-1', full_name: 'Worker cw-1', invited: true, reason: null }])
+    })
+
+    // The Owner must not be able to offer a shift to someone already booked elsewhere that day —
+    // the pool invite runs the exact same hard gates as the public apply flow.
+    it('skips a worker who fails a hard gate, reports why, and still invites the rest of the batch', async () => {
+      vi.mocked(assertWorkerEligibleForJob).mockImplementation(async ({ user_id }) => {
+        if (user_id === 'cw-clash') throw new Error('This job clashes with a shift or application you already have on 2030-05-20.')
+        return { profile: { id: user_id, role: 'Casual Worker', date_of_birth: null, skills: null, resume_url: null }, age: null }
+      })
+
+      const results = await recruitmentService.invitePoolWorkers({
+        job_id: 'job-1', user_ids: ['cw-clash', 'cw-ok'], sent_by: 'owner-1',
+      })
+
+      expect(results[0]).toMatchObject({ user_id: 'cw-clash', invited: false })
+      expect(results[0].reason).toContain('clashes')
+      expect(results[1]).toMatchObject({ user_id: 'cw-ok', invited: true, reason: null })
+      // The clashing worker never got an application or an invitation.
+      expect(recruitmentRepository.createDirectApplicant).toHaveBeenCalledTimes(1)
+      expect(recruitmentRepository.createJobInvitation).toHaveBeenCalledTimes(1)
+    })
+
+    it('reuses an application the worker already submitted instead of recording a second one', async () => {
+      vi.mocked(recruitmentRepository.getApplicantByJobAndUser).mockResolvedValue({ id: 'applicant-existing', status: 'pending' } as never)
+
+      const results = await recruitmentService.invitePoolWorkers({
+        job_id: 'job-1', user_ids: ['cw-1'], sent_by: 'owner-1',
+      })
+
+      expect(recruitmentRepository.createDirectApplicant).not.toHaveBeenCalled()
+      expect(recruitmentRepository.updateApplicantStatus).toHaveBeenCalledWith('applicant-existing', 'accepted')
+      expect(recruitmentRepository.createJobInvitation).toHaveBeenCalledWith(expect.objectContaining({
+        applicant_id: 'applicant-existing',
+      }))
+      expect(results[0].invited).toBe(true)
+    })
+
+    it('does not re-offer a job the worker has already been offered', async () => {
+      vi.mocked(recruitmentRepository.getApplicantByJobAndUser).mockResolvedValue({ id: 'applicant-1', status: 'accepted' } as never)
+
+      const results = await recruitmentService.invitePoolWorkers({
+        job_id: 'job-1', user_ids: ['cw-1'], sent_by: 'owner-1',
+      })
+
+      expect(results[0]).toMatchObject({ invited: false, reason: 'Already offered this job' })
+      expect(recruitmentRepository.createJobInvitation).not.toHaveBeenCalled()
+    })
+
+    it('rejects an empty selection and a job that is not open', async () => {
+      await expect(recruitmentService.invitePoolWorkers({ job_id: 'job-1', user_ids: [], sent_by: 'owner-1' }))
+        .rejects.toThrow('At least one worker must be selected')
+
+      vi.mocked(recruitmentRepository.getJobPostingById).mockResolvedValue({ ...poolJob, status: 'closed' } as never)
+      await expect(recruitmentService.invitePoolWorkers({ job_id: 'job-1', user_ids: ['cw-1'], sent_by: 'owner-1' }))
+        .rejects.toThrow('not open for offers')
+    })
+  })
+
 })

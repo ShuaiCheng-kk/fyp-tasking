@@ -7,11 +7,18 @@ import { casualWorkerStatusService } from '@/services/team/casualWorkerStatusSer
 export async function PATCH(req: NextRequest) {
   try {
     const body = await req.json()
-    const { user_id, worker_status, inactivate_reason } = body as Record<string, unknown>
+    const { user_id, company_id, worker_status, inactivate_reason } = body as Record<string, unknown>
 
     if (!user_id || typeof user_id !== 'string') {
       return NextResponse.json(
         { success: false, message: 'user_id is required' },
+        { status: 400 }
+      )
+    }
+
+    if (!company_id || typeof company_id !== 'string') {
+      return NextResponse.json(
+        { success: false, message: 'company_id is required' },
         { status: 400 }
       )
     }
@@ -32,6 +39,7 @@ export async function PATCH(req: NextRequest) {
 
     const result = await casualWorkerStatusService.updateStatus({
       user_id,
+      company_id,
       worker_status: worker_status.toLowerCase(),
       inactivate_reason: typeof inactivate_reason === 'string' ? inactivate_reason : null,
     })

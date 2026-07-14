@@ -6,11 +6,15 @@ import { ApplicantCertificateSnapshot } from '@/types/Recruitment'
 
 export const workerApplicationRepository = {
   async checkExistingApplication(jobId: string, userId: string) {
+    // 'withdrawn' means the WORKER walked away on their own (declined an offer, withdrew a
+    // pending application, or cancelled a confirmed shift) — that's their call to unmake, so it
+    // must never lock them out of applying to the same job again.
     const { data, error } = await supabase
       .from('job_applicants')
       .select('id')
       .eq('job_id', jobId)
       .eq('user_id', userId)
+      .neq('status', 'withdrawn')
       .maybeSingle()
 
     if (error) throw new Error(error.message)
@@ -93,7 +97,7 @@ export const workerApplicationRepository = {
     job_id: string
     user_id: string
     resume_url: string | null
-    relevant_experience: string
+    relevant_experience: string | null
     additional_note: string | null
     skills_snapshot: string | null
     certificates_snapshot: ApplicantCertificateSnapshot[]
@@ -126,40 +130,22 @@ export const workerApplicationRepository = {
         id,
         status,
         applied_at,
+        decided_at,
         resume_url,
         cover_letter,
         relevant_experience,
         additional_note,
         job_postings (
-          title,
-          company_name,
-          industry,
-          location,
-          employment_type,
-          salary_amount,
-          salary_type,
-          description,
-          requirements,
-          benefits,
-          urgency,
-          openings,
-          job_date,
-          job_end_date,
-          shift_date,
-          shift_days,
-          shift_start_time,
-          shift_end_time,
-          break_start_time,
-          break_end_time,
-          estimated_hours,
-          is_recurring,
-          recurrence_interval,
-          recurrence_unit
+          *,
+          departments ( name ),
+          companies ( location, description, size, address, industry )
         ),
         job_invitations (
           id,
           status,
-          message
+          message,
+          sent_at,
+          responded_at
         )
       `)
       .eq('user_id', userId)
@@ -170,10 +156,34 @@ export const workerApplicationRepository = {
     return data
   },
 
+  // Company ids that have banned this worker (Owner set them "inactive" on the Team page). Used to
+  // hide those companies' jobs from the board and to hard-block applying to them. Accepts either an
+  // internal users.id (what the apply flow passes) or a supabase_auth_id (what the board passes),
+  // resolving to the internal id that casualworker_departments.casual_worker_id references.
+  async getBlockingCompanyIds(userId: string): Promise<string[]> {
+    const { data: user, error: userErr } = await supabase
+      .from('users')
+      .select('id')
+      .or(`id.eq.${userId},supabase_auth_id.eq.${userId}`)
+      .maybeSingle()
+    if (userErr) throw new Error(userErr.message)
+    if (!user) return []
+
+    const { data, error } = await supabase
+      .from('casualworker_departments')
+      .select('company_id')
+      .eq('casual_worker_id', user.id)
+      .not('blocked_at', 'is', null)
+    if (error) throw new Error(error.message)
+    return [...new Set((data ?? []).map((row: { company_id: string | null }) => row.company_id).filter((id): id is string => !!id))]
+  },
+
+  // Every status this is ever called with ('declined', 'expired') is a terminal one, so the offer
+  // is resolved here — stamp when, for the applicant's timeline.
   async updateInvitationStatus(invitationId: string, status: string): Promise<void> {
     const { error } = await supabase
       .from('job_invitations')
-      .update({ status })
+      .update({ status, responded_at: new Date().toISOString() })
       .eq('id', invitationId)
     if (error) throw new Error(error.message)
   },
@@ -191,9 +201,24 @@ export const workerApplicationRepository = {
   async updateApplicantStatusById(applicantId: string, status: string): Promise<void> {
     const { error } = await supabase
       .from('job_applicants')
-      .update({ status })
+      .update({ status, decided_at: new Date().toISOString() })
       .eq('id', applicantId)
     if (error) throw new Error(error.message)
+  },
+
+  // The .eq('status', 'pending') guard is what makes this safe to call blind: an application the
+  // employer has already decided on (or one already withdrawn) matches nothing and comes back
+  // null, which the service turns into "not found or already processed".
+  async withdrawPendingApplication(applicantId: string) {
+    const { data, error } = await supabase
+      .from('job_applicants')
+      .update({ status: 'withdrawn', decided_at: new Date().toISOString() })
+      .eq('id', applicantId)
+      .eq('status', 'pending')
+      .select()
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    return data
   },
 
   // Atomic first-come-first-served claim — the DB function locks the posting row so two workers
@@ -225,7 +250,7 @@ export const workerApplicationRepository = {
   async markSentInvitationsPositionFilled(jobId: string): Promise<void> {
     const { error } = await supabase
       .from('job_invitations')
-      .update({ status: 'position_filled' })
+      .update({ status: 'position_filled', responded_at: new Date().toISOString() })
       .eq('job_id', jobId)
       .eq('status', 'sent')
     if (error) throw new Error(error.message)
@@ -234,7 +259,7 @@ export const workerApplicationRepository = {
   async markPendingApplicantsJobClosed(jobId: string): Promise<void> {
     const { error } = await supabase
       .from('job_applicants')
-      .update({ status: 'job_closed' })
+      .update({ status: 'job_closed', decided_at: new Date().toISOString() })
       .eq('job_id', jobId)
       .eq('status', 'pending')
     if (error) throw new Error(error.message)

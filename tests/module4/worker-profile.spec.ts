@@ -149,6 +149,44 @@ test('certificates: add text-only, add with proof image, then delete', async ({ 
   expect(after.certificates[0].name).toBe('Forklift Licence')
 })
 
+test('certificates: PATCH replaces the proof file on an existing certificate', async ({ request }) => {
+  // The Forklift Licence row (with its original jpg) survives from the previous test.
+  const profileRes = await request.get(`/api/guest/profile?user_id=${authId}`)
+  const { profile } = await profileRes.json()
+  const cert = profile.certificates.find((c: { name: string }) => c.name === 'Forklift Licence')
+  expect(cert).toBeTruthy()
+  const originalUrl = cert.file_url
+
+  const replaceRes = await request.patch('/api/guest/profile/certificates', {
+    multipart: {
+      user_id: authId,
+      certificate_id: cert.id,
+      file: { name: 'licence-v2.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 corrected scan') },
+    },
+  })
+  expect(replaceRes.status()).toBe(200)
+  const replaced = (await replaceRes.json()).certificate
+  expect(replaced.id).toBe(cert.id)
+  expect(replaced.file_url).toContain('worker-documents')
+  expect(replaced.file_url).not.toBe(originalUrl)
+
+  // Missing file → 400.
+  const noFileRes = await request.patch('/api/guest/profile/certificates', {
+    multipart: { user_id: authId, certificate_id: cert.id },
+  })
+  expect(noFileRes.status()).toBe(400)
+
+  // Unsupported type → 400.
+  const badTypeRes = await request.patch('/api/guest/profile/certificates', {
+    multipart: {
+      user_id: authId,
+      certificate_id: cert.id,
+      file: { name: 'licence.gif', mimeType: 'image/gif', buffer: Buffer.from('gif-bytes') },
+    },
+  })
+  expect(badTypeRes.status()).toBe(400)
+})
+
 test('certificates: rejects a missing name and an unsupported file type', async ({ request }) => {
   const noNameRes = await request.post('/api/guest/profile/certificates', {
     multipart: { user_id: authId, name: '   ' },

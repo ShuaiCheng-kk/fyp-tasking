@@ -1,15 +1,24 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { recruitmentRepository } from '@/repositories/owner/recruitmentRepository'
+import { workerApplicationRepository } from '@/repositories/guest/workerApplicationRepository'
 
-// GET /api/jobs/public
+// GET /api/jobs/public?user_id=...
 // Public endpoint — no auth required. Returns all open, non-archived, non-expired job postings.
-export async function GET() {
+// When a signed-in worker's user_id is passed, postings from any company that has banned that
+// worker (marked them "inactive" on its Team page) are hidden.
+export async function GET(req: NextRequest) {
   try {
+    const user_id = req.nextUrl.searchParams.get('user_id')
+
     // No cron in this app — lazily flip any posting whose deadline just passed to 'archived'
     // before listing (see recruitmentRepository.sweepExpiredJobPostings). The .gt('expires_at', ...)
     // filter below is defense-in-depth so a posting never appears even in the gap before this runs.
     await recruitmentRepository.sweepExpiredJobPostings()
+
+    const blockingCompanyIds = user_id
+      ? await workerApplicationRepository.getBlockingCompanyIds(user_id)
+      : []
 
     const { data, error } = await supabase
       .from('job_postings')
@@ -21,7 +30,11 @@ export async function GET() {
 
     if (error) throw new Error(error.message)
 
-    const jobs = (data ?? []).map((row: any) => {
+    const visible = blockingCompanyIds.length > 0
+      ? (data ?? []).filter((row: any) => !blockingCompanyIds.includes(row.company_id))
+      : (data ?? [])
+
+    const jobs = visible.map((row: any) => {
       const { departments, companies, ...rest } = row
       return {
         ...rest,

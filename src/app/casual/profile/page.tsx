@@ -1,10 +1,17 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
-import { useRouter } from 'next/navigation'
-import { Check, CreditCard, User } from 'lucide-react'
-import CasualSidebar from '@/components/CasualSidebar'
-import WorkerProfileSections from '@/components/worker/WorkerProfileSections'
+// Casual Worker's Profile page — same two-column layout and card language as Guest's Profile
+// page (Personal Info + Skills on the left, Certificates + Resume on the right), plus one Payment
+// Information card a Guest User doesn't have, placed at the bottom of the left column. A Casual
+// Worker is just a confirmed Guest User, so everything else is the exact same shared component.
+//
+// First login (no payment info on file yet): the other four cards are dimmed and locked so the
+// worker's eye goes straight to Payment Information — the one thing blocking the rest of the app.
+
+import { useEffect, useRef, useState } from 'react'
+import { AlertTriangle, Check, CreditCard } from 'lucide-react'
+import GuestPersonalInfoCard from '@/components/guest/GuestPersonalInfoCard'
+import { SkillsCard, CertificatesCard, ResumeCard } from '@/components/worker/WorkerProfileSections'
 
 const pageKeyframes = `
   @keyframes blockSlideUp { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
@@ -13,18 +20,128 @@ const pageKeyframes = `
 
 type PaymentMethod = 'paynow' | 'bank_transfer'
 
-export default function CasualProfilePage() {
-  const router = useRouter()
-  const [internalUserId, setInternalUserId] = useState('')
-  const [authUserId, setAuthUserId] = useState('')
-  const [userName, setUserName] = useState('')
-  const [loading, setLoading] = useState(true)
+const cardStyle: React.CSSProperties = {
+  background: '#FFFFFF',
+  borderRadius: 14,
+  border: '1.5px solid #E5E7EB',
+  padding: '20px 24px',
+  boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+}
 
-  // payment state
+// Locks out interaction and visually recedes a card the worker shouldn't be touching yet, without
+// unmounting it (their data is still there once the gate lifts).
+const lockedWrapperStyle: React.CSSProperties = {
+  opacity: 0.4,
+  filter: 'grayscale(60%)',
+  pointerEvents: 'none',
+  userSelect: 'none',
+  transition: 'opacity 0.25s ease',
+}
+
+function Spinner({ size = 13 }: { size?: number }) {
+  return (
+    <svg className="animate-spin" width={size} height={size} viewBox="0 0 18 18" style={{ display: 'inline-block', flexShrink: 0 }}>
+      <circle cx="9" cy="9" r="7" stroke="rgba(255,255,255,0.35)" strokeWidth="2.5" fill="none" />
+      <path d="M9 2a7 7 0 0 1 7 7" stroke="white" strokeWidth="2.5" strokeLinecap="round" fill="none" />
+    </svg>
+  )
+}
+
+function PaymentInformationCard({
+  internalUserId, initialMethod, initialAccount, highlighted, onToast, onSaved,
+}: {
+  internalUserId: string
+  initialMethod: PaymentMethod
+  initialAccount: string
+  highlighted: boolean
+  onToast: (msg: string) => void
+  onSaved: (savedAccount: string) => void
+}) {
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(initialMethod)
+  const [paymentAccount, setPaymentAccount] = useState(initialAccount)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  const handleSave = async () => {
+    if (!paymentAccount.trim()) { setError('Please enter your account number.'); return }
+    setSaving(true); setError('')
+    try {
+      const res = await fetch('/api/casual/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        // casualProfileRepository.updatePaymentInfo matches on users.id (not supabase_auth_id),
+        // so the PATCH must use the internal user id or it silently updates zero rows.
+        body: JSON.stringify({ user_id: internalUserId, payment_method: paymentMethod, payment_account: paymentAccount.trim() }),
+      })
+      const data = await res.json()
+      if (!data.success) throw new Error(data.message || 'Failed to save')
+      onToast('Payment info saved successfully.')
+      onSaved(paymentAccount.trim())
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save payment info')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div style={{
+      ...cardStyle,
+      ...(highlighted ? { border: '2px solid #F97316', boxShadow: '0 0 0 4px rgba(249,115,22,0.12)' } : null),
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
+        <div style={{ width: 32, height: 32, borderRadius: 8, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <CreditCard size={16} color="#EA580C" />
+        </div>
+        <p style={{ margin: 0, fontWeight: 700, fontSize: '0.9375rem', color: '#111827' }}>Payment Information</p>
+        {highlighted && (
+          <span style={{ marginLeft: 'auto', fontSize: '0.72rem', fontWeight: 800, color: '#EA580C', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 999, padding: '3px 10px' }}>
+            Complete this first
+          </span>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+        {(['paynow', 'bank_transfer'] as const).map(m => (
+          <button key={m} type="button" onClick={() => setPaymentMethod(m)}
+            style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: `1.5px solid ${paymentMethod === m ? '#EA580C' : '#E5E7EB'}`, background: paymentMethod === m ? '#FFF7ED' : '#FAFAFA', color: paymentMethod === m ? '#EA580C' : '#6B7280', fontWeight: 700, fontSize: '0.8125rem', cursor: 'pointer' }}>
+            {m === 'paynow' ? 'PayNow' : 'Bank Transfer'}
+          </button>
+        ))}
+      </div>
+
+      <label style={{ display: 'block', fontWeight: 600, fontSize: '0.875rem', color: '#374151', marginBottom: 4 }}>
+        {paymentMethod === 'paynow' ? 'PayNow Number (mobile / NRIC)' : 'Bank Account Number'}
+      </label>
+      <input
+        value={paymentAccount}
+        onChange={e => setPaymentAccount(e.target.value)}
+        placeholder={paymentMethod === 'paynow' ? 'e.g. +65 9123 4567 or S1234567A' : 'e.g. 123-456-789-0'}
+        style={{ width: '100%', padding: '10px 12px', border: '1.5px solid #E5E7EB', borderRadius: 8, fontSize: '0.9375rem', color: '#111827', outline: 'none', boxSizing: 'border-box', background: '#FFFFFF' }}
+      />
+
+      {error && (
+        <div style={{ padding: '12px 0 4px' }}>
+          <div style={{ background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 8, padding: '10px 14px', fontSize: '0.875rem', color: '#DC2626' }}>{error}</div>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+        <button type="button" onClick={handleSave} disabled={saving}
+          style={{ padding: '7px 18px', border: 'none', borderRadius: 8, background: saving ? '#FDA060' : 'linear-gradient(135deg, #F97316, #EA580C)', fontWeight: 600, fontSize: '0.8125rem', color: '#FFFFFF', cursor: saving ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6, opacity: saving ? 0.65 : 1 }}>
+          {saving ? <Spinner /> : <Check size={13} />} {saving ? 'Saving…' : 'Save Payment Info'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+export default function CasualProfilePage() {
+  const [authId, setAuthId] = useState('')
+  const [internalUserId, setInternalUserId] = useState('')
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('paynow')
   const [paymentAccount, setPaymentAccount] = useState('')
-  const [paymentSaving, setPaymentSaving] = useState(false)
-  const [paymentError, setPaymentError] = useState('')
+  const [paymentLoaded, setPaymentLoaded] = useState(false)
   const [toast, setToast] = useState('')
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -35,129 +152,87 @@ export default function CasualProfilePage() {
   }
 
   useEffect(() => {
-    let cancelled = false
-
-    const run = async () => {
-      const userId = localStorage.getItem('tasking_user_id')
-
-      if (!userId) {
-        router.replace('/signin')
+    const load = async () => {
+      const storedAuthId = localStorage.getItem('tasking_user_id')
+      if (!storedAuthId) {
+        window.location.href = '/signin'
         return
       }
+      setAuthId(storedAuthId)
 
-      const profileRes = await fetch(`/api/casual/profile?user_id=${userId}`)
-      const profileData = await profileRes.json()
+      const [meRes, casualRes] = await Promise.all([
+        fetch(`/api/user/me?user_id=${storedAuthId}`),
+        fetch(`/api/casual/profile?user_id=${storedAuthId}`),
+      ])
+      const meData = await meRes.json()
+      if (meData.success) setInternalUserId(meData.user.id)
 
-      if (cancelled) return
-
-      if (!profileData.success) {
-        router.replace('/signin')
-        return
+      const casualData = await casualRes.json()
+      if (casualData.success) {
+        const u = casualData.profile.user
+        if (u.payment_method) setPaymentMethod(u.payment_method as PaymentMethod)
+        setPaymentAccount(u.payment_account ?? '')
       }
-
-      const u = profileData.profile.user
-      setInternalUserId(u.id)
-      setAuthUserId(userId)
-      setUserName(u.full_name ?? 'Casual Worker')
-      if (u.payment_method) setPaymentMethod(u.payment_method as PaymentMethod)
-      if (u.payment_account) setPaymentAccount(u.payment_account)
-      setLoading(false)
+      setPaymentLoaded(true)
     }
+    void load()
+  }, [])
 
-    void run()
+  const paymentMissing = paymentLoaded && !paymentAccount
 
-    return () => {
-      cancelled = true
-    }
-  }, [router])
-
-  const handleSavePayment = async () => {
-    if (!paymentAccount.trim()) { setPaymentError('Please enter your account number.'); return }
-    setPaymentSaving(true); setPaymentError('')
-    try {
-      const res = await fetch('/api/casual/profile', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: internalUserId, payment_method: paymentMethod, payment_account: paymentAccount.trim() }),
-      })
-      const data = await res.json()
-      if (!data.success) throw new Error(data.message || 'Failed to save')
-      showToast('Payment info saved successfully.')
-    } catch (err) {
-      setPaymentError(err instanceof Error ? err.message : 'Failed to save payment info')
-    } finally {
-      setPaymentSaving(false)
-    }
+  const handlePaymentSaved = (savedAccount: string) => {
+    setPaymentAccount(savedAccount)
+    // Saving happens without a navigation, so the layout's payment-gate check (keyed on
+    // pathname) never re-runs on its own — tell it to re-check now so the sidebar unlocks.
+    window.dispatchEvent(new Event('casual:payment-updated'))
   }
 
   return (
-    <div style={pageStyle}>
+    <>
       <style>{pageKeyframes}</style>
-      <CasualSidebar />
 
-      <main style={mainStyle}>
-        <div style={headerStyle}>
-          <h1 style={titleStyle}>Profile</h1>
-
-          {!loading && (
-            <div style={userBadgeStyle}>
-              <span style={userIconStyle}>
-                <User size={14} strokeWidth={2.2} />
-              </span>
-              <span>{userName}</span>
-            </div>
-          )}
+      <main style={pageStyle}>
+        <div style={{ marginBottom: 20 }}>
+          <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
+            My Profile
+          </h1>
         </div>
 
-        {!loading && (
-          <div style={{ maxWidth: 480, animation: 'blockSlideUp 0.38s ease both 0.06s', display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {/* Worker Profile — skills, certificates, resume (shared with the Guest profile page) */}
-            {authUserId && <WorkerProfileSections authId={authUserId} onToast={showToast} />}
-
-            {/* Payment Information */}
-            <div style={{ background: '#FFFFFF', borderRadius: 14, border: '1.5px solid #E5E7EB', padding: '20px 24px', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
-                <div style={{ width: 32, height: 32, borderRadius: 8, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <CreditCard size={16} color="#EA580C" />
-                </div>
-                <div>
-                  <p style={{ margin: 0, fontWeight: 700, fontSize: '0.9375rem', color: '#111827' }}>Payment Information</p>
-                  <p style={{ margin: 0, fontSize: '0.78rem', color: '#6B7280' }}>How you receive your pay</p>
-                </div>
-              </div>
-
-              {/* Method selector */}
-              <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
-                {(['paynow', 'bank_transfer'] as const).map(m => (
-                  <button key={m} onClick={() => setPaymentMethod(m)}
-                    style={{ flex: 1, padding: '9px 0', borderRadius: 8, border: `1.5px solid ${paymentMethod === m ? '#EA580C' : '#E5E7EB'}`, background: paymentMethod === m ? '#FFF7ED' : '#FAFAFA', color: paymentMethod === m ? '#EA580C' : '#6B7280', fontWeight: 700, fontSize: '0.8125rem', cursor: 'pointer' }}>
-                    {m === 'paynow' ? 'PayNow' : 'Bank Transfer'}
-                  </button>
-                ))}
-              </div>
-
-              {/* Account input */}
-              <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 6 }}>
-                {paymentMethod === 'paynow' ? 'PayNow Number (mobile / NRIC)' : 'Bank Account Number'}
-              </label>
-              <input
-                value={paymentAccount}
-                onChange={e => setPaymentAccount(e.target.value)}
-                placeholder={paymentMethod === 'paynow' ? 'e.g. +65 9123 4567 or S1234567A' : 'e.g. 123-456-789-0'}
-                style={{ width: '100%', padding: '10px 12px', border: '1.5px solid #E5E7EB', borderRadius: 8, fontSize: '0.9rem', color: '#111827', outline: 'none', boxSizing: 'border-box', background: '#FFFFFF' }}
-              />
-
-              {paymentError && (
-                <p style={{ margin: '8px 0 0', fontSize: '0.8125rem', color: '#DC2626' }}>{paymentError}</p>
-              )}
-
-              <button onClick={handleSavePayment} disabled={paymentSaving}
-                style={{ marginTop: 14, width: '100%', padding: '10px 0', background: paymentSaving ? '#9CA3AF' : '#EA580C', color: '#FFFFFF', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: '0.9375rem', cursor: paymentSaving ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                {paymentSaving ? 'Saving…' : <><Check size={15} /> Save Payment Info</>}
-              </button>
-            </div>
+        {paymentMissing && (
+          <div style={{ maxWidth: 1080, margin: '0 auto 16px', display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', background: '#FFF7ED', border: '1.5px solid #FED7AA', borderRadius: 12, color: '#9A3412', fontSize: '0.875rem', fontWeight: 700 }}>
+            <AlertTriangle size={16} style={{ flexShrink: 0, color: '#EA580C' }} />
+            Add your payment details below to unlock the rest of your account.
           </div>
         )}
+
+        <section style={{ maxWidth: 1080, margin: '0 auto', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 16, alignItems: 'start', animation: 'blockSlideUp 0.38s ease both 0.06s' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={paymentMissing ? lockedWrapperStyle : undefined}>
+              {internalUserId && <GuestPersonalInfoCard userId={internalUserId} onToast={showToast} />}
+            </div>
+            <div style={paymentMissing ? lockedWrapperStyle : undefined}>
+              {authId && <SkillsCard authId={authId} onToast={showToast} />}
+            </div>
+            {authId && internalUserId && paymentLoaded && (
+              <PaymentInformationCard
+                internalUserId={internalUserId}
+                initialMethod={paymentMethod}
+                initialAccount={paymentAccount}
+                highlighted={paymentMissing}
+                onToast={showToast}
+                onSaved={handlePaymentSaved}
+              />
+            )}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={paymentMissing ? lockedWrapperStyle : undefined}>
+              {authId && <CertificatesCard authId={authId} onToast={showToast} />}
+            </div>
+            <div style={paymentMissing ? lockedWrapperStyle : undefined}>
+              {authId && <ResumeCard authId={authId} onToast={showToast} />}
+            </div>
+          </div>
+        </section>
       </main>
 
       {toast && (
@@ -173,68 +248,11 @@ export default function CasualProfilePage() {
           {toast}
         </div>
       )}
-    </div>
+    </>
   )
 }
 
 const pageStyle: React.CSSProperties = {
-  display: 'flex',
   minHeight: '100vh',
-  background: '#F3F4F6',
-  fontFamily: 'var(--font-body)',
-}
-
-const mainStyle: React.CSSProperties = {
-  marginLeft: '64px',
-  flex: 1,
-  minHeight: '100vh',
-  padding: '24px 32px',
-}
-
-const headerStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  paddingBottom: '22px',
-  borderBottom: '1px solid #E5E7EB',
-  marginBottom: '24px',
-}
-
-const titleStyle: React.CSSProperties = {
-  margin: 0,
-  fontSize: '1.75rem',
-  fontWeight: 700,
-  color: '#111827',
-  letterSpacing: '-0.04em',
-}
-
-const userBadgeStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  gap: '8px',
-  padding: '5px 12px 5px 7px',
-  borderRadius: '999px',
-  background: '#FFFFFF',
-  border: '1px solid #E5E7EB',
-  boxShadow: '0 2px 8px rgba(15,23,42,0.12)',
-  color: '#111827',
-  fontSize: '0.82rem',
-  fontWeight: 700,
-}
-
-const userIconStyle: React.CSSProperties = {
-  width: 22,
-  height: 22,
-  borderRadius: '999px',
-  background: '#334155',
-  color: '#FFFFFF',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-}
-
-const emptyTextStyle: React.CSSProperties = {
-  margin: 0,
-  color: '#6B7280',
-  fontSize: '0.95rem',
+  padding: '20px 28px 28px',
 }

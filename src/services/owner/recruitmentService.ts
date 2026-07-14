@@ -2,8 +2,10 @@
 // RULE: Business logic only. No HTTP handling. No direct DB access.
 
 import { recruitmentRepository } from '@/repositories/owner/recruitmentRepository'
+import { workerApplicationRepository } from '@/repositories/guest/workerApplicationRepository'
 import { emailService } from '@/services/email/emailService'
-import { CasualWorkerStatus, JobApplicant, JobPosting, JobPostingInput, JobPostingPendingApproval, JobPostingSummary } from '@/types/Recruitment'
+import { assertWorkerEligibleForJob } from '@/services/shared/workerEligibility'
+import { CasualWorkerStatus, JobApplicant, JobPosting, JobPostingInput, JobPostingPendingApproval, JobPostingSummary, PoolInviteResult, PoolWorker } from '@/types/Recruitment'
 
 // A "confirmed" hire needs both sides: the Owner accepted the application AND the worker
 // confirmed the invitation. Accepted-but-not-yet-confirmed sits in a separate "awaiting" bucket
@@ -279,15 +281,26 @@ export const recruitmentService = {
     if (pending > 0 || awaiting > 0) {
       throw new Error('This job still has applications to resolve — decide the pending ones and wait for accepted workers to confirm before archiving')
     }
+    const posting = await recruitmentRepository.getJobPostingById(id)
+    if (!posting) throw new Error('Job posting not found')
     return recruitmentRepository.updateJobPosting(id, {
       status: 'archived',
       archived_at: new Date().toISOString(),
+      // Remember whether this was Open or Closed so Unarchive can restore it, instead of
+      // always reopening it to hiring.
+      archived_from_status: posting.status,
     })
   },
 
   async unarchiveJobPosting(id: string): Promise<JobPosting> {
     if (!id) throw new Error('job_id is required')
-    return recruitmentRepository.updateJobPosting(id, { status: 'open', archived_at: null })
+    const posting = await recruitmentRepository.getJobPostingById(id)
+    if (!posting) throw new Error('Job posting not found')
+    return recruitmentRepository.updateJobPosting(id, {
+      status: posting.archived_from_status === 'closed' ? 'closed' : 'open',
+      archived_at: null,
+      archived_from_status: null,
+    })
   },
 
   // Permanently removes a posting. If workers were already confirmed on it, their scheduled
@@ -375,6 +388,12 @@ export const recruitmentService = {
     }
     const applicant = await recruitmentRepository.getApplicantById(input.applicant_id)
     if (!applicant) throw new Error('Applicant not found')
+    // A worker who already confirmed the offer is a committed hire — reversing that goes through
+    // removeConfirmedWorker (mandatory reason, shift cancellation, opening reopened), not this
+    // quick reject.
+    if (input.decision === 'rejected' && applicant.invitation_status === 'accepted') {
+      throw new Error('This worker already confirmed the offer — use Remove Worker instead')
+    }
     const updated = await recruitmentRepository.updateApplicantStatus(input.applicant_id, input.decision)
     if (input.decision === 'accepted') {
       await recruitmentRepository.createJobInvitation({
@@ -400,6 +419,11 @@ export const recruitmentService = {
         console.error('[decideApplicant] acceptance email failed:', err)
       }
     } else if (input.decision === 'rejected') {
+      // If the applicant had already been Accepted (an invitation sent, awaiting the worker's
+      // reply), rescind it — a rejected applicant must not be able to still confirm a stale offer.
+      // A no-op for a first-time pending -> rejected decision (no invitation exists yet).
+      await recruitmentRepository.cancelSentInvitationByApplicant(input.applicant_id)
+
       // Close the loop so the worker isn't left waiting on "pending" forever. Never let an email
       // failure roll back the rejection.
       try {
@@ -433,6 +457,105 @@ export const recruitmentService = {
     if (!id) throw new Error('job_id is required')
     if (!rejection_reason?.trim()) throw new Error('rejection_reason is required')
     return recruitmentRepository.rejectJobPosting(id, rejection_reason.trim())
+  },
+
+  // The verified worker pool — people who already showed up and finished a shift here. These are
+  // the regulars an Owner can hand a new job to directly instead of posting it publicly.
+  async getPoolWorkers(company_id: string): Promise<PoolWorker[]> {
+    if (!company_id) throw new Error('company_id is required')
+    return recruitmentRepository.getVerifiedPoolWorkers(company_id)
+  },
+
+  // Hand a posting straight to hand-picked pool workers. Each worker still has to clear every hard
+  // gate the public apply flow enforces (ban, age, schedule clash) — an Owner must not be able to
+  // offer a shift to someone already booked elsewhere that day. Workers are processed
+  // independently so one ineligible pick never sinks the rest of the batch.
+  //
+  // The offer is not a booking: it lands as an invitation the worker still has to confirm, and
+  // openings stay first-come-first-served (invite 5 for 2 slots and the first 2 to confirm win).
+  async invitePoolWorkers(input: {
+    job_id: string
+    user_ids: string[]
+    sent_by: string
+    message?: string | null
+  }): Promise<PoolInviteResult[]> {
+    if (!input.job_id) throw new Error('job_id is required')
+    if (!input.sent_by) throw new Error('sent_by is required')
+    if (!input.user_ids?.length) throw new Error('At least one worker must be selected')
+
+    const job = await recruitmentRepository.getJobPostingById(input.job_id)
+    if (!job) throw new Error('Job posting not found')
+    if (job.status !== 'open') throw new Error('This job is not open for offers')
+
+    const results: PoolInviteResult[] = []
+    for (const user_id of input.user_ids) {
+      const contact = await workerApplicationRepository.getUserContact(user_id)
+      const full_name = contact?.full_name ?? ''
+      try {
+        const { profile, age } = await assertWorkerEligibleForJob({
+          user_id,
+          job,
+          selfApply: false, // the Owner already employed them — they vouch for the experience
+        })
+
+        // They may have already applied to this posting on their own — reuse that row rather than
+        // recording a second application for the same person.
+        const existing = await recruitmentRepository.getApplicantByJobAndUser(input.job_id, user_id)
+        if (existing && existing.status === 'accepted') {
+          results.push({ user_id, full_name, invited: false, reason: 'Already offered this job' })
+          continue
+        }
+
+        let applicantId: string
+        if (existing) {
+          await recruitmentRepository.updateApplicantStatus(existing.id, 'accepted')
+          applicantId = existing.id
+        } else {
+          const certificates = await workerApplicationRepository.getApplicantCertificates(user_id)
+          const created = await recruitmentRepository.createDirectApplicant({
+            job_id: input.job_id,
+            user_id,
+            resume_url: profile.resume_url,
+            skills_snapshot: profile.skills,
+            certificates_snapshot: certificates.map(cert => ({ name: cert.name, file_url: cert.file_url })),
+            age_at_apply: age,
+          })
+          applicantId = created.id
+        }
+
+        await recruitmentRepository.createJobInvitation({
+          job_id: input.job_id,
+          applicant_id: applicantId,
+          sent_by: input.sent_by,
+          message: input.message ?? 'You have worked with us before — we would like to offer you this job.',
+        })
+
+        // The worker isn't online 24/7; the email is what actually reaches them. Never let a failed
+        // send roll back the offer itself.
+        try {
+          if (contact?.email_address) {
+            await emailService.sendApplicationAcceptedEmail({
+              to: contact.email_address,
+              fullName: full_name,
+              jobTitle: job.title,
+              companyName: job.company_name ?? 'the company',
+            })
+          }
+        } catch (err) {
+          console.error('[invitePoolWorkers] offer email failed:', err)
+        }
+
+        results.push({ user_id, full_name, invited: true, reason: null })
+      } catch (err) {
+        results.push({
+          user_id,
+          full_name,
+          invited: false,
+          reason: err instanceof Error ? err.message : 'Could not offer this job',
+        })
+      }
+    }
+    return results
   },
 
   async getCasualWorkers(company_id: string): Promise<CasualWorkerStatus[]> {

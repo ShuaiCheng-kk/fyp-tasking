@@ -2,10 +2,12 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
-import { Zap, Shield, Star, X, Search, MapPin, Briefcase, Clock, Banknote, Timer, ChevronDown, LayoutGrid, LogIn, UserPlus, Users, FileText } from 'lucide-react';
+import { Zap, Shield, Star, Search, Briefcase, ChevronDown, LogIn, UserPlus } from 'lucide-react';
 import { hero, search, whyTasking, listings } from './content';
 import { JobPosting as BaseJobPosting } from '@/types/Recruitment';
 import ApplyJobModal from '@/components/guest/ApplyJobModal';
+import Toast from '@/components/Toast';
+import { JobCard, JobDetailPanel, resolveJobType } from '@/components/jobs/JobPresentation';
 import {
   ModalOverlay, ModalBox, ModalHeader,
   modalGhostButtonStyle, modalPrimaryButtonStyle,
@@ -29,432 +31,6 @@ type IconName = keyof typeof iconMap;
 // ─── Tab type ─────────────────────────────────────────────────────────────────
 
 type ActiveTab = 'all' | 'shift' | 'oneoff';
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function formatDate(dateStr: string) {
-  return new Date(dateStr).toLocaleDateString('en-SG', {
-    day: 'numeric', month: 'short', year: 'numeric',
-  });
-}
-
-function timeAgo(dateStr: string) {
-  const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-  if (seconds < 60) return 'just now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
-  return `${Math.floor(days / 30)}mo ago`;
-}
-
-function capitalize(str: string) {
-  return str.charAt(0).toUpperCase() + str.slice(1);
-}
-
-// ─── Company rating (deterministic seed from company_id) ─────────────────────
-// No ratings table yet — seed a stable pseudo-rating from the company_id string
-// so the same company always shows the same score. Replace with a real DB query
-// when company reviews are implemented.
-
-function seedRating(companyId: string): { rating: number; count: number } {
-  let hash = 0;
-  for (let i = 0; i < companyId.length; i++) {
-    hash = (hash * 31 + companyId.charCodeAt(i)) >>> 0;
-  }
-  // Rating between 3.2 and 5.0, one decimal place
-  const rating = Math.round((3.2 + (hash % 180) / 100) * 10) / 10;
-  // Review count between 12 and 340
-  const count = 12 + (hash % 329);
-  return { rating, count };
-}
-
-function StarRating({ rating, count, size = 13 }: { rating: number; count: number; size?: number }) {
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-      {[1, 2, 3, 4, 5].map(i => {
-        const fill = Math.min(1, Math.max(0, rating - (i - 1)));
-        return (
-          <span key={i} style={{ position: 'relative', display: 'inline-block', width: size, height: size, color: '#D1D5DB' }}>
-            {/* empty star */}
-            <Star size={size} fill="none" stroke="#D1D5DB" strokeWidth={1.5} style={{ position: 'absolute', top: 0, left: 0 }} />
-            {/* filled overlay clipped by fill fraction */}
-            {fill > 0 && (
-              <span style={{ position: 'absolute', top: 0, left: 0, width: `${fill * 100}%`, overflow: 'hidden', display: 'inline-block' }}>
-                <Star size={size} fill="#F97316" stroke="#F97316" strokeWidth={1.5} />
-              </span>
-            )}
-          </span>
-        );
-      })}
-      <span style={{ fontFamily: fB, fontSize: size - 1, fontWeight: 700, color: '#F97316', marginLeft: '2px' }}>{rating.toFixed(1)}</span>
-      <span style={{ fontFamily: fB, fontSize: size - 2, color: '#9CA3AF' }}>({count})</span>
-    </span>
-  );
-}
-
-// ─── Recurrence label ─────────────────────────────────────────────────────────
-
-function recurrenceLabel(job: JobPosting): string | null {
-  if (!job.is_recurring || !job.recurrence_interval || !job.recurrence_unit) return null;
-  const n = job.recurrence_interval;
-  const u = job.recurrence_unit;
-  return `Repeats every ${n === 1 ? u : `${n} ${u}s`}`;
-}
-
-// ─── Expiry info ─────────────────────────────────────────────────────────────
-
-function expiryInfo(job: JobPosting): {
-  label: string; diffDays: number | null; expired: boolean; urgent: boolean
-} | null {
-  // Closed / archived: show when it was closed
-  if ((job.status === 'closed' || job.status === 'archived') && job.archived_at) {
-    return { label: `Closed ${timeAgo(job.archived_at)}`, diffDays: null, expired: true, urgent: false };
-  }
-  // Open with expires_at
-  if (job.status === 'open' && job.expires_at) {
-    const diffMs = new Date(job.expires_at).getTime() - Date.now();
-    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-    if (diffDays < 0)   return { label: 'Expired',           diffDays, expired: true,  urgent: false };
-    if (diffDays === 0) return { label: 'Expires today',     diffDays, expired: false, urgent: true  };
-    if (diffDays === 1) return { label: 'Expires tomorrow',  diffDays, expired: false, urgent: true  };
-    if (diffDays <= 3)  return { label: `Expires in ${diffDays}d`, diffDays, expired: false, urgent: true  };
-    if (diffDays <= 7)  return { label: `Expires in ${diffDays}d`, diffDays, expired: false, urgent: false };
-    return { label: `Expires ${new Date(job.expires_at).toLocaleDateString('en-SG', { day: 'numeric', month: 'short' })}`, diffDays, expired: false, urgent: false };
-  }
-  return null;
-}
-
-// kept for backward compat — used in detail panel table row
-function closingInfo(job: JobPosting): { label: string; value: string; urgent?: boolean } | null {
-  if ((job.status === 'closed' || job.status === 'archived') && job.archived_at) {
-    return { label: 'Closed on', value: formatDate(job.archived_at) };
-  }
-  return null;
-}
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
-function Badge({ children, color = '#15803D', bg = '#DCFCE7', border }: { children: React.ReactNode; color?: string; bg?: string; border?: string }) {
-  return (
-    <span style={{
-      display: 'inline-block', background: bg, color,
-      fontFamily: fB, fontSize: '0.6875rem', fontWeight: 700,
-      padding: '3px 9px', borderRadius: '100px',
-      textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap',
-      border: border ? `1px solid ${border}` : undefined,
-    }}>
-      {children}
-    </span>
-  );
-}
-
-function Pill({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
-  return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: '4px',
-      fontFamily: fB, fontSize: '0.8125rem', fontWeight: 500, color: '#57534E',
-      background: '#F5F5F4', border: '1px solid #E7E5E4',
-      borderRadius: '100px', padding: '4px 11px',
-      ...style,
-    }}>
-      {children}
-    </span>
-  );
-}
-
-function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <p style={{ fontFamily: fB, fontWeight: 600, fontSize: '0.75rem', color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: '8px' }}>
-      {children}
-    </p>
-  );
-}
-
-// ─── Job Detail Panel ─────────────────────────────────────────────────────────
-
-function JobDetailPanel({
-  job,
-  onClose,
-  onApply,
-  canApply,
-}: {
-  job: JobPosting;
-  onClose: () => void;
-  onApply: (job: JobPosting) => void;
-  // False for signed-in company staff / platform admins — they can't take casual jobs, so the
-  // Apply action is hidden entirely rather than shown and then rejected.
-  canApply: boolean;
-}) {
-  const { rating, count } = seedRating(job.company_id);
-  const recur = recurrenceLabel(job);
-  const expiry = expiryInfo(job);
-  const closing = closingInfo(job);
-
-  return (
-    <div style={{
-      background: '#FFFFFF', border: '1px solid #EDE9E3', borderRadius: '20px',
-      padding: '32px', position: 'sticky', top: '24px',
-      maxHeight: 'calc(100vh - 48px)', overflowY: 'auto', display: 'flex',
-      flexDirection: 'column', gap: '28px',
-    }}>
-
-      {/* ── Header ── */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <h2 style={{ fontFamily: fH, fontWeight: 800, fontSize: '1.5rem', color: '#111827', lineHeight: 1.25, margin: '0 0 4px' }}>
-            {job.title}
-          </h2>
-          <p style={{ fontFamily: fB, fontSize: '0.9375rem', fontWeight: 500, color: '#6B7280', margin: '0 0 18px' }}>
-            {job.company_name ?? '—'}
-          </p>
-
-          {/* Icon rows */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {job.company_location && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <MapPin size={15} color="#9CA3AF" strokeWidth={1.75} style={{ flexShrink: 0 }} />
-                <span style={{ fontFamily: fB, fontSize: '0.9375rem', color: '#374151' }}>{job.company_location}</span>
-              </div>
-            )}
-            {job.department_name && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <LayoutGrid size={15} color="#9CA3AF" strokeWidth={1.75} style={{ flexShrink: 0 }} />
-                <span style={{ fontFamily: fB, fontSize: '0.9375rem', color: '#374151' }}>{job.department_name}</span>
-              </div>
-            )}
-            {job.salary_amount && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <Banknote size={15} color="#9CA3AF" strokeWidth={1.75} style={{ flexShrink: 0 }} />
-                <span style={{ fontFamily: fB, fontSize: '0.9375rem', fontWeight: 600, color: '#059669' }}>{formatSalary(job)}</span>
-              </div>
-            )}
-          </div>
-        </div>
-        <button onClick={onClose} aria-label="Close panel"
-          style={{ background: '#F3F4F6', border: 'none', borderRadius: '8px', width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>
-          <X size={16} color="#374151" />
-        </button>
-      </div>
-
-      {/* ── Expiry / closing notice ── */}
-      {expiry && (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: '10px',
-          background: expiry.expired ? '#F9FAFB' : '#FFFBEB',
-          border: `1px solid ${expiry.expired ? '#E5E7EB' : '#FCD34D'}`,
-          borderRadius: '10px', padding: '12px 16px',
-        }}>
-          <Timer size={14} color={expiry.expired ? '#9CA3AF' : '#D97706'} style={{ flexShrink: 0 }} />
-          <p style={{ fontFamily: fB, fontSize: '0.875rem', color: expiry.expired ? '#6B7280' : '#92400E', margin: 0, fontWeight: 600 }}>
-            {expiry.label}
-            {job.expires_at && !expiry.expired && ` — ${new Date(job.expires_at).toLocaleDateString('en-SG', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' })}`}
-          </p>
-        </div>
-      )}
-      {closing && !expiry && (
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: '10px',
-          background: '#F9FAFB', border: '1px solid #E5E7EB',
-          borderRadius: '10px', padding: '12px 16px',
-        }}>
-          <Clock size={14} color="#9CA3AF" style={{ flexShrink: 0 }} />
-          <p style={{ fontFamily: fB, fontSize: '0.875rem', color: '#6B7280', margin: 0 }}>
-            <strong>{closing.label}:</strong> {closing.value}
-          </p>
-        </div>
-      )}
-
-      {/* ── About this role ── */}
-      <div>
-        <SectionLabel>About this role</SectionLabel>
-        <p style={{ fontFamily: fB, fontSize: '0.9375rem', color: '#374151', lineHeight: 1.8, whiteSpace: 'pre-line', margin: 0 }}>
-          {job.description}
-        </p>
-      </div>
-
-      {/* ── Requirements ── */}
-      {job.requirements && (
-        <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: '24px' }}>
-          <SectionLabel>Requirements</SectionLabel>
-          <p style={{ fontFamily: fB, fontSize: '0.9375rem', color: '#374151', lineHeight: 1.8, whiteSpace: 'pre-line', margin: 0 }}>
-            {job.requirements}
-          </p>
-        </div>
-      )}
-
-      {/* ── Company profile ── */}
-      <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: '24px' }}>
-        <SectionLabel>Company profile</SectionLabel>
-        <div style={{
-          background: '#FAFAF9', border: '1px solid #EDE9E3',
-          borderRadius: '14px', padding: '20px 22px',
-          display: 'flex', flexDirection: 'column', gap: '14px',
-        }}>
-          <p style={{ fontFamily: fH, fontWeight: 700, fontSize: '1rem', color: '#111827', margin: 0 }}>
-            {job.company_name ?? '—'}
-          </p>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {job.company_location && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <MapPin size={14} color="#9CA3AF" strokeWidth={1.75} style={{ flexShrink: 0 }} />
-                <span style={{ fontFamily: fB, fontSize: '0.875rem', color: '#4B5563' }}>{job.company_location}</span>
-              </div>
-            )}
-            {job.company_address && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <MapPin size={14} color="#9CA3AF" strokeWidth={1.75} style={{ flexShrink: 0 }} />
-                <span style={{ fontFamily: fB, fontSize: '0.875rem', color: '#4B5563' }}>{job.company_address}</span>
-              </div>
-            )}
-            {job.company_size && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <Users size={14} color="#9CA3AF" strokeWidth={1.75} style={{ flexShrink: 0 }} />
-                <span style={{ fontFamily: fB, fontSize: '0.875rem', color: '#4B5563' }}>{job.company_size} employees</span>
-              </div>
-            )}
-            {job.company_industry && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <Briefcase size={14} color="#9CA3AF" strokeWidth={1.75} style={{ flexShrink: 0 }} />
-                <span style={{ fontFamily: fB, fontSize: '0.875rem', color: '#4B5563' }}>{job.company_industry}</span>
-              </div>
-            )}
-            {job.company_description && (
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', paddingTop: '4px', borderTop: '1px solid #EDE9E3', marginTop: '2px' }}>
-                <FileText size={14} color="#9CA3AF" strokeWidth={1.75} style={{ flexShrink: 0, marginTop: '3px' }} />
-                <span style={{ fontFamily: fB, fontSize: '0.875rem', color: '#6B7280', lineHeight: 1.7 }}>{job.company_description}</span>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* ── Company rating ── */}
-      <div style={{ borderTop: '1px solid #F0EBE3', paddingTop: '24px' }}>
-        <SectionLabel>Company rating</SectionLabel>
-        <div style={{ background: '#FFFBF5', border: '1px solid #FDE8C8', borderRadius: '12px', padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' }}>
-          <div>
-            <p style={{ fontFamily: fB, fontWeight: 600, fontSize: '0.9375rem', color: '#1C1917', margin: '0 0 6px' }}>
-              {job.company_name ?? 'This company'}
-            </p>
-            <StarRating rating={rating} count={count} size={14} />
-          </div>
-          <div style={{ textAlign: 'right' }}>
-            <p style={{ fontFamily: fH, fontWeight: 800, fontSize: '2rem', color: '#F97316', lineHeight: 1, margin: 0 }}>{rating.toFixed(1)}</p>
-            <p style={{ fontFamily: fB, fontSize: '0.75rem', color: '#9CA3AF', margin: '2px 0 0' }}>out of 5</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Actions */}
-      {canApply && (
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <button onClick={() => onApply(job)} className="btn-press cta-shimmer" style={{
-            flex: 1, display: 'block', textAlign: 'center',
-            background: '#F97316', color: '#FFFFFF', padding: '13px',
-            borderRadius: '10px', fontFamily: fB, fontWeight: 700,
-            fontSize: '0.9375rem', border: 'none', cursor: 'pointer',
-          }}>
-            Apply Now
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Job Card ─────────────────────────────────────────────────────────────────
-
-function JobCard({
-  job,
-  selected,
-  onClick,
-}: {
-  job: JobPosting;
-  selected: boolean;
-  onClick: () => void;
-}) {
-  const [hovered, setHovered] = useState(false);
-
-  return (
-    <div
-      onClick={onClick}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        background: '#FFFFFF',
-        border: `1.5px solid ${selected ? '#F97316' : hovered ? '#F97316' : '#EDE9E3'}`,
-        borderRadius: '16px', padding: '24px', cursor: 'pointer',
-        display: 'flex', flexDirection: 'column', gap: '14px',
-        transition: 'border-color 0.2s, box-shadow 0.2s, transform 0.2s',
-        boxShadow: selected
-          ? '0 0 0 3px rgba(249,115,22,0.15), 0 8px 24px rgba(249,115,22,0.1)'
-          : hovered
-            ? '0 8px 28px rgba(0,0,0,0.10), 0 2px 8px rgba(0,0,0,0.06)'
-            : '0 1px 4px rgba(0,0,0,0.04)',
-        transform: hovered && !selected ? 'translateY(-3px)' : 'translateY(0)',
-      }}
-    >
-
-      {/* Job type + department badges */}
-      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-        {resolveJobType(job) === 'shift'
-          ? <Badge color="#C2410C" bg="#FFF7ED" border="#FED7AA">Shift Job</Badge>
-          : <Badge color="#7C3AED" bg="#F5F3FF" border="#DDD6FE">One-Off Job</Badge>
-        }
-        {job.department_name && <Badge color="#1D4ED8" bg="#DBEAFE" border="#BFDBFE">{job.department_name}</Badge>}
-      </div>
-
-      {/* Title + company */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-        <p style={{ fontFamily: fH, fontWeight: 700, fontSize: '1.0625rem', color: '#111827', lineHeight: 1.35, margin: 0 }}>
-          {job.title}
-        </p>
-        <p style={{ fontFamily: fB, fontSize: '0.875rem', fontWeight: 500, color: '#6B7280', margin: 0 }}>
-          {job.company_name ?? '—'}
-        </p>
-      </div>
-
-      {/* Location + pay */}
-      {(job.company_location || job.salary_amount) && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-          {job.company_location && <Pill><MapPin size={11} />{job.company_location}</Pill>}
-          {formatSalary(job)    && <Pill style={{ color: '#065F46', background: '#ECFDF5', border: '1px solid #A7F3D0' }}>{formatSalary(job)}</Pill>}
-        </div>
-      )}
-
-      {/* Description — max 2 lines */}
-      <p style={{
-        fontFamily: fB, fontSize: '0.875rem', color: '#6B7280', lineHeight: 1.65,
-        display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
-        overflow: 'hidden', margin: 0,
-      }}>
-        {job.description}
-      </p>
-
-      {/* Posted time */}
-      <p style={{ fontFamily: fB, fontSize: '0.75rem', color: '#9CA3AF', margin: 0, paddingTop: '2px' }}>
-        Posted {timeAgo(job.created_at)}
-      </p>
-    </div>
-  );
-}
-
-// Resolve effective job type — prefer explicit form_type, fall back to is_recurring
-function resolveJobType(job: JobPosting): 'shift' | 'oneoff' {
-  if (job.form_type === 'shift' || job.form_type === 'oneoff') return job.form_type as 'shift' | 'oneoff';
-  return job.is_recurring ? 'shift' : 'oneoff';
-}
-
-// Format salary: shift → "$15/hr", one-off → "$80"
-function formatSalary(job: JobPosting): string | null {
-  if (!job.salary_amount) return null;
-  if (resolveJobType(job) === 'shift') return `$${job.salary_amount}/hr`;
-  return `$${job.salary_amount}`;
-}
 
 // ─── DropdownField ────────────────────────────────────────────────────────────
 
@@ -549,6 +125,8 @@ export default function JobBoardPage() {
   // an applicant has no way in from there.
   const [applyJobId, setApplyJobId] = useState<string | null>(null);
   const [authChoiceJob, setAuthChoiceJob] = useState<JobPosting | null>(null);
+  // True while fading out under the cream cover on the way to signin/get-started.
+  const [authLeaving, setAuthLeaving] = useState(false);
   const [toast, setToast] = useState('');
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -588,14 +166,22 @@ export default function JobBoardPage() {
   // reopens on this exact job when the worker comes back.
   const goToAuth = (job: JobPosting, destination: 'signin' | 'register') => {
     localStorage.setItem('apply_job_id', job.id);
-    window.location.href = destination === 'signin'
+    const href = destination === 'signin'
       ? `/signin?job_id=${job.id}`
       : `/get-started?role=guest&job_id=${job.id}`;
+    // Fade the board out under a cream cover (matching the auth pages' background) before the
+    // full-page navigation, so the hand-off doesn't cut hard from modal to sign-in form.
+    setAuthLeaving(true);
+    setTimeout(() => { window.location.href = href; }, 300);
   };
 
   // ── Fetch open jobs ──────────────────────────────────────────────────────
+  // Pass the signed-in worker's id so the board can hide postings from any company that has
+  // banned them (marked them "inactive"). Anonymous visitors see every open posting.
   useEffect(() => {
-    fetch('/api/jobs/public')
+    const authId = typeof window !== 'undefined' ? localStorage.getItem('tasking_user_id') : null;
+    const url = authId ? `/api/jobs/public?user_id=${encodeURIComponent(authId)}` : '/api/jobs/public';
+    fetch(url)
       .then(r => r.json())
       .then(d => { if (d.success) setJobs(d.jobs); })
       .catch(() => {})
@@ -637,6 +223,36 @@ export default function JobBoardPage() {
     return () => window.removeEventListener('keydown', handler);
   }, []);
 
+  // ── Card-list viewport: fill the screen with as many FULL cards as fit ────
+  // Card heights vary with how many badge rows wrap, so measure the rendered cards and grow
+  // the container card-by-card while it still fits in the viewport — it always cuts cleanly
+  // on a card boundary (never slices a card in half) while wasting no vertical space.
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const [listMaxHeight, setListMaxHeight] = useState<number | null>(null);
+  useEffect(() => {
+    if (!selectedJob) { setListMaxHeight(null); return; }
+    const measure = () => {
+      const el = listRef.current;
+      if (!el) return;
+      const cards = Array.from(el.children) as HTMLElement[];
+      if (cards.length === 0) return;
+      const gap = 16;
+      const available = window.innerHeight - 48; // sticky top offset + bottom breathing room
+      let height = 8; // top/bottom padding of the scroll container (4px each)
+      let fitted = 0;
+      for (const card of cards) {
+        const next = height + card.offsetHeight + (fitted > 0 ? gap : 0);
+        if (fitted > 0 && next > available) break;
+        height = next;
+        fitted++;
+      }
+      setListMaxHeight(height);
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [selectedJob]);
+
   // ── Filter logic ─────────────────────────────────────────────────────────
   const filtered = jobs.filter(job => {
     const q = searchQuery.toLowerCase();
@@ -647,6 +263,13 @@ export default function JobBoardPage() {
     if (q && ![job.title, job.description, job.company_location, job.company_industry, job.company_name]
       .filter(Boolean).some(v => v!.toLowerCase().includes(q))) return false;
     return true;
+  }).sort((a, b) => {
+    // Closing soonest first — an applicant's window matters more than posting recency.
+    // Jobs without a deadline sit after all deadlined ones, newest posted first.
+    if (a.expires_at && b.expires_at) return new Date(a.expires_at).getTime() - new Date(b.expires_at).getTime();
+    if (a.expires_at) return -1;
+    if (b.expires_at) return 1;
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
   });
 
   const countByFormType = useCallback((type: string) =>
@@ -804,11 +427,17 @@ export default function JobBoardPage() {
               No jobs match your search. Try adjusting the filters.
             </div>
           ) : (
-            /* Two-column layout: card list + sticky detail panel */
-            <div style={{ display: 'grid', gridTemplateColumns: selectedJob ? '1fr 420px' : '1fr', gap: '24px', alignItems: 'flex-start' }}>
+            /* Two-column layout: card list + sticky detail panel. With a job open, the list
+               collapses to a single column of cards at the same one-third width they have in the
+               closed grid, and the detail panel takes the remaining two thirds — the reader's
+               attention is on the detail, not the list. */
+            <div style={{ display: 'grid', gridTemplateColumns: selectedJob ? 'minmax(360px, 1fr) minmax(0, 1.6fr)' : '1fr', gap: '24px', alignItems: 'flex-start' }}>
 
-              {/* Card list */}
-              <div style={{ display: 'grid', gridTemplateColumns: selectedJob ? '1fr' : 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
+              {/* Card list — with a job open it becomes its own scroll container (like JobStreet):
+                  at most 4 full cards tall, scrolling the list never moves the detail panel. */}
+              <div ref={listRef} style={selectedJob
+                ? { display: 'grid', gridTemplateColumns: '1fr', gap: '16px', alignContent: 'start', position: 'sticky', top: '24px', maxHeight: listMaxHeight != null ? `${listMaxHeight}px` : 'calc(100vh - 48px)', overflowY: 'auto', overscrollBehavior: 'contain', paddingRight: '6px', paddingLeft: '4px', paddingTop: '4px', paddingBottom: '4px' }
+                : { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
                 {filtered.map(job => (
                   <JobCard
                     key={job.id}
@@ -824,7 +453,7 @@ export default function JobBoardPage() {
                 <JobDetailPanel
                   job={selectedJob}
                   onClose={() => setSelectedJob(null)}
-                  onApply={handleApply}
+                  onApply={(j) => handleApply(j as JobPosting)}
                   canApply={authChecked && canApply}
                 />
               )}
@@ -882,16 +511,10 @@ export default function JobBoardPage() {
         />
       )}
 
-      {toast && (
-        <div style={{
-          position: 'fixed', bottom: 28, left: '50%', transform: 'translateX(-50%)',
-          background: '#0F172A', color: '#FFFFFF', borderRadius: 999, padding: '12px 22px',
-          fontFamily: fB, fontSize: '0.875rem', fontWeight: 600, whiteSpace: 'nowrap', zIndex: 9999,
-          boxShadow: '0 4px 20px rgba(0,0,0,0.25)',
-        }}>
-          {toast}
-        </div>
-      )}
+      {/* Cream cover that fades in over everything while the auth navigation kicks in */}
+      {authLeaving && <div className="auth-leave-cover" />}
+
+      <Toast message={toast} />
     </>
   );
 }

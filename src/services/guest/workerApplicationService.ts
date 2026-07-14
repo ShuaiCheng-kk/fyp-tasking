@@ -5,50 +5,27 @@ import { workerApplicationRepository } from '@/repositories/guest/workerApplicat
 import { shiftService } from '@/services/owner/shiftService'
 import { recruitmentRepository } from '@/repositories/owner/recruitmentRepository'
 import { emailService } from '@/services/email/emailService'
-
-export type RelevantExperience = 'none' | 'less_than_1' | '1_to_2' | 'more_than_2'
+import {
+  assertWorkerEligibleForJob,
+  invitationHasExpired,
+  type ConflictSourceJob,
+} from '@/services/shared/workerEligibility'
 
 type SubmitApplicationInput = {
   job_id: string
   user_id: string
-  relevant_experience: RelevantExperience
+  // Worker's explicit "I meet this requirement" confirmation — only meaningful when the job
+  // has a hard experience minimum; ignored otherwise.
+  meets_experience_requirement?: boolean
   additional_note?: string | null
 }
 
-const RELEVANT_EXPERIENCE_VALUES: RelevantExperience[] = ['none', 'less_than_1', '1_to_2', 'more_than_2']
-
-// Guest User is the applicant's starting role; a Casual Worker is the same person after their
-// first job was confirmed, and they keep applying to new jobs. No other role may apply.
-const APPLICANT_ROLES = ['Guest User', 'Casual Worker']
 const MAX_NOTE_LENGTH = 1000
-
-// Workers can stack jobs across different companies, but shifts must not collide — and since
-// this platform is Singapore-wide, two hours is enough to travel between any two workplaces.
-const MIN_GAP_MINUTES = 120
-const DAY_END_MINUTES = 24 * 60 - 1
-// How far ahead a recurring job's occurrences are expanded for conflict checking.
-const RECURRING_HORIZON_DAYS = 60
-
-// A single occupied slot on the worker's timeline, dates and times both nominal wall-clock.
-type TimeWindow = { date: string; start: number; end: number }
-
-type ConflictSourceJob = {
-  form_type: string | null
-  is_recurring: boolean | null
-  shift_date: string | null
-  shift_days: string[] | null
-  shift_start_time: string | null
-  shift_end_time: string | null
-  job_start_time: string | null
-}
 
 export const workerApplicationService = {
   async submitApplication(input: SubmitApplicationInput) {
     if (!input.job_id) throw new Error('Job ID is required')
     if (!input.user_id) throw new Error('User ID is required')
-    if (!RELEVANT_EXPERIENCE_VALUES.includes(input.relevant_experience)) {
-      throw new Error('Please select your relevant experience for this role')
-    }
     const note = input.additional_note?.trim() || null
     if (note && note.length > MAX_NOTE_LENGTH) {
       throw new Error(`Additional note must be at most ${MAX_NOTE_LENGTH} characters`)
@@ -69,53 +46,15 @@ export const workerApplicationService = {
       throw new Error('You have already applied for this job.')
     }
 
-    const profile = await workerApplicationRepository.getApplicantProfile(input.user_id)
-    if (!profile) throw new Error('Worker profile not found')
-
-    // Only the two worker roles may apply. Company staff (Owner/Partner/Manager/Employee) and
-    // platform admins run the business — they never take casual jobs. The job board hides the
-    // Apply button from them, and this backs that up against a direct API call.
-    if (!APPLICANT_ROLES.includes(profile.role)) {
-      throw new Error('Company staff accounts cannot apply for jobs')
-    }
-
-    // Hard age gate — deterministic code against date of birth, never left to the AI matcher.
-    const age = profile.date_of_birth ? computeAge(profile.date_of_birth) : null
-    if (job.minimum_age != null) {
-      if (age == null) {
-        throw new Error('Add your date of birth to your profile to apply for this job')
-      }
-      if (age < job.minimum_age) {
-        throw new Error(`This job requires applicants to be at least ${job.minimum_age} years old`)
-      }
-    }
-
-    // Schedule-conflict gate: the applied job's time slots must not clash (with a 2h travel
-    // buffer) with the worker's confirmed shifts or their other active applications — checked
-    // across ALL companies, which only the platform can see.
-    const candidateWindows = jobPostingWindows(job)
-    if (candidateWindows.length > 0) {
-      const [activeJobs, shiftRows] = await Promise.all([
-        workerApplicationRepository.getActiveApplicationJobs(input.user_id),
-        workerApplicationRepository.getFutureShiftWindows(input.user_id),
-      ])
-      const occupied: TimeWindow[] = [
-        ...activeJobs.flatMap(activeJob => jobPostingWindows(activeJob)),
-        ...shiftRows.map(shift => ({
-          date: shift.shift_date,
-          start: toMinutes(shift.start_time),
-          end: shift.is_open_ended ? DAY_END_MINUTES : toMinutes(shift.end_time),
-        })),
-      ]
-      for (const candidate of candidateWindows) {
-        const clash = occupied.find(window => windowsConflict(candidate, window))
-        if (clash) {
-          throw new Error(
-            `This job clashes with a shift or application you already have on ${clash.date}. Keep at least 2 hours between jobs.`
-          )
-        }
-      }
-    }
+    // Every hard gate (role, per-company ban, age, experience, schedule conflict) lives in the
+    // shared eligibility module so an Owner-issued pool invite can't bypass a check this flow
+    // enforces. See services/shared/workerEligibility.ts.
+    const { profile, age } = await assertWorkerEligibleForJob({
+      user_id: input.user_id,
+      job,
+      selfApply: true,
+      meets_experience_requirement: input.meets_experience_requirement,
+    })
 
     // Snapshot the profile at apply time — later profile edits must never change what the
     // employer saw on this application.
@@ -125,7 +64,9 @@ export const workerApplicationService = {
       job_id: input.job_id,
       user_id: input.user_id,
       resume_url: profile.resume_url,
-      relevant_experience: input.relevant_experience,
+      // No longer collected per application — the experience gate replaced the picker; the
+      // column stays for older applications that did record a level.
+      relevant_experience: null,
       additional_note: note,
       skills_snapshot: profile.skills,
       certificates_snapshot: certificates.map(cert => ({ name: cert.name, file_url: cert.file_url })),
@@ -136,7 +77,79 @@ export const workerApplicationService = {
   async getApplicationsByUser(userId: string) {
     if (!userId) throw new Error('User ID is required')
 
-    return await workerApplicationRepository.getApplicationsByUser(userId)
+    const rows = await workerApplicationRepository.getApplicationsByUser(userId)
+
+    return (rows ?? [])
+      // Cases the worker should simply never see:
+      // 1. The posting was hard-deleted by the employer — the join comes back null, and a card
+      //    with placeholder text ("Job Opening" at "Company") tells the worker nothing.
+      // 2. The application is still 'pending' but the posting's deadline has passed — the sweep
+      //    archives the posting without resolving its applications, so without this filter the
+      //    application would sit in "Pending Review" forever for a job that can no longer hire.
+      // 3. The worker walked away themselves — 'withdrawn' covers withdrawing a pending
+      //    application, declining an offer, AND cancelling a confirmed shift. It was their own
+      //    decision, so it's just noise on their tracker; drop it rather than list an outcome.
+      // 4. An offer the worker never confirmed before the shift began. The worker was emailed the
+      //    moment the offer landed, so a missed offer is their own miss — it drops off the tracker
+      //    rather than becoming a History card. Two shapes of the same thing:
+      //      · invitation still 'sent' but the shift has since started — nothing marks these
+      //        'expired' in the background (respondToInvitation only does it lazily, if they ever
+      //        click Accept), so without this they'd sit in "Accept / Reject Job Offer" forever.
+      //      · invitation already stamped 'expired' — same situation, just already discovered.
+      // 5. The employer removed them from a job they'd confirmed. They're emailed the cancellation
+      //    (and the shift itself is cancelled), so the tracker doesn't repeat it.
+      //
+      // What survives all this is exactly one kind of History card: applications the worker didn't
+      // get — employer passed, role filled up, or the posting closed first ("Not Selected").
+      .filter((row: Record<string, unknown>) => {
+        const posting = row.job_postings as (ConflictSourceJob & { expires_at?: string | null }) | null
+        if (!posting) return false
+        if (row.status === 'withdrawn') return false
+        if (row.status === 'cancelled_by_employer') return false
+        if (row.status === 'pending' && posting.expires_at && new Date(posting.expires_at) < new Date()) return false
+
+        const invitations = row.job_invitations as { status: string; sent_at: string }[] | { status: string; sent_at: string } | null
+        const invitation = Array.isArray(invitations) ? invitations[0] : invitations
+        if (invitation?.status === 'expired') return false
+        if (invitation?.status === 'sent' && invitationHasExpired(posting, new Date(invitation.sent_at))) return false
+
+        return true
+      })
+      // Flatten the joined department / company onto job_postings so an application renders with
+      // the same shape (department_name, company_*) the public Job Board uses — same JobCard/detail view.
+      .map((row: Record<string, unknown>) => {
+        const posting = row.job_postings as Record<string, unknown>
+        const departments = posting.departments as { name: string } | { name: string }[] | null
+        const companies = posting.companies as
+          | { location: string | null; description: string | null; size: string | null; address: string | null; industry: string | null }
+          | Array<{ location: string | null; description: string | null; size: string | null; address: string | null; industry: string | null }>
+          | null
+        const dept = Array.isArray(departments) ? departments[0] : departments
+        const company = Array.isArray(companies) ? companies[0] : companies
+        const { departments: _d, companies: _c, ...rest } = posting
+        return {
+          ...row,
+          job_postings: {
+            ...rest,
+            department_name: dept?.name ?? null,
+            company_location: company?.location ?? null,
+            company_description: company?.description ?? null,
+            company_size: company?.size ?? null,
+            company_address: company?.address ?? null,
+            company_industry: company?.industry ?? null,
+          },
+        }
+      })
+  },
+
+  // Only an application still awaiting the employer's decision can be pulled back — once they've
+  // accepted or rejected it, withdrawing is no longer the worker's call to make.
+  async withdrawApplication(applicationId: string) {
+    if (!applicationId) throw new Error('Application ID is required')
+
+    const withdrawn = await workerApplicationRepository.withdrawPendingApplication(applicationId)
+    if (!withdrawn) throw new Error('Application not found or already processed.')
+    return withdrawn
   },
 
   async respondToInvitation(invitationId: string, response: 'accepted' | 'declined'): Promise<void> {
@@ -205,6 +218,10 @@ export const workerApplicationService = {
         created_by: job.created_by,
         publication_status: 'published',
         assigned_user_id: context.user_id,
+        // The job posting's responsible employee becomes this shift's supervisor — the same
+        // field taskRepository.getSupervisedCasualWorkerIds gates Employee->Casual Worker task
+        // assignment on, so without it the worker's supervisor could never assign them tasks.
+        supervisor_employee_id: job.assigned_employee_id ?? null,
         is_open_ended,
         source_job_posting_id: job.id,
       })
@@ -256,97 +273,4 @@ function addOneHour(time: string): string {
   const [h, m] = time.split(':').map(Number)
   const next = (h + 1) % 24
   return `${String(next).padStart(2, '0')}:${String(m ?? 0).padStart(2, '0')}`
-}
-
-function computeAge(dateOfBirth: string): number {
-  const dob = new Date(`${dateOfBirth.slice(0, 10)}T00:00:00`)
-  const now = new Date()
-  let age = now.getFullYear() - dob.getFullYear()
-  const hadBirthday =
-    now.getMonth() > dob.getMonth() ||
-    (now.getMonth() === dob.getMonth() && now.getDate() >= dob.getDate())
-  if (!hadBirthday) age -= 1
-  return age
-}
-
-function toMinutes(time: string): number {
-  const [h, m] = time.split(':').map(Number)
-  return h * 60 + (m || 0)
-}
-
-function localDateKey(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-}
-
-const WEEKDAY_INDEX: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 }
-
-// Expands a job posting into the concrete time slots it would occupy on the worker's timeline.
-//   one-off      -> start time to end of day (no fixed finish, reserved conservatively)
-//   single shift -> its date and times
-//   recurring    -> every occurrence (by shift_days weekdays, else weekly from shift_date)
-//                   within RECURRING_HORIZON_DAYS of `from`
-// Only slots on/after `from`'s date are returned — earlier occurrences can't clash with anything.
-function jobPostingWindows(job: ConflictSourceJob, from: Date = new Date()): TimeWindow[] {
-  const fromKey = localDateKey(from)
-
-  if (job.form_type === 'oneoff') {
-    if (!job.shift_date || !job.job_start_time || job.shift_date < fromKey) return []
-    return [{ date: job.shift_date, start: toMinutes(job.job_start_time), end: DAY_END_MINUTES }]
-  }
-
-  if (!job.shift_start_time || !job.shift_end_time) return []
-  const start = toMinutes(job.shift_start_time)
-  let end = toMinutes(job.shift_end_time)
-  if (end <= start) end = DAY_END_MINUTES
-
-  if (!job.is_recurring) {
-    if (!job.shift_date || job.shift_date < fromKey) return []
-    return [{ date: job.shift_date, start, end }]
-  }
-
-  const weekdays = (job.shift_days ?? [])
-    .map(day => WEEKDAY_INDEX[day.toLowerCase().slice(0, 3)])
-    .filter((idx): idx is number => idx !== undefined)
-  const anchor = job.shift_date ? new Date(`${job.shift_date}T00:00:00`) : new Date(from)
-  const anchorWeekday = anchor.getDay()
-
-  const windows: TimeWindow[] = []
-  const cursor = new Date(from)
-  cursor.setHours(0, 0, 0, 0)
-  if (anchor > cursor) cursor.setTime(anchor.getTime())
-  for (let i = 0; i < RECURRING_HORIZON_DAYS; i++) {
-    const matches = weekdays.length > 0
-      ? weekdays.includes(cursor.getDay())
-      : cursor.getDay() === anchorWeekday
-    if (matches) windows.push({ date: localDateKey(cursor), start, end })
-    cursor.setDate(cursor.getDate() + 1)
-  }
-  return windows
-}
-
-function windowsConflict(a: TimeWindow, b: TimeWindow): boolean {
-  if (a.date !== b.date) return false
-  const gap = Math.max(b.start - a.end, a.start - b.end)
-  return gap < MIN_GAP_MINUTES
-}
-
-// The invitation deadline is the FIRST shift occurrence after the invitation was sent — not
-// whatever occurrence happens to be next today. A weekly-Saturday offer sent on Tuesday is for
-// THIS Saturday; once that shift starts unconfirmed, the offer is dead and the employer re-sends
-// for the following week if they still want the worker. Jobs with no schedule never auto-expire.
-function invitationHasExpired(job: ConflictSourceJob, sentAt: Date): boolean {
-  if (!job.shift_date) return false
-  const windows = jobPostingWindows(job, sentAt)
-
-  const sentKey = localDateKey(sentAt)
-  const sentMinutes = sentAt.getHours() * 60 + sentAt.getMinutes()
-  const deadline = windows.find(window =>
-    window.date > sentKey || (window.date === sentKey && window.start > sentMinutes)
-  )
-  if (!deadline) return true
-
-  const now = new Date()
-  const nowKey = localDateKey(now)
-  const nowMinutes = now.getHours() * 60 + now.getMinutes()
-  return deadline.date < nowKey || (deadline.date === nowKey && deadline.start <= nowMinutes)
 }

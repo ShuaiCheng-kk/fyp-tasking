@@ -15,6 +15,10 @@ vi.mock('@/repositories/employee/employeeAttendanceRepository', () => ({
     getUpcomingAssignments: vi.fn(),
     createAttendanceRecord: vi.fn(),
     updateAttendanceRecord: vi.fn(),
+    getPendingClockOutReleases: vi.fn(),
+    getAttendanceRecordWithSupervisor: vi.fn(),
+    releaseClockOut: vi.fn(),
+    getUsersByIds: vi.fn(),
   },
 }))
 
@@ -278,5 +282,76 @@ describe('employeeAttendanceService — recordAbsence (UC49)', () => {
       absence_reason: 'Family emergency',
       status: 'submitted',
     }))
+  })
+})
+
+describe('employeeAttendanceService — Casual Worker Clock-Out Release (one-off jobs)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  describe('getClockOutReleaseQueue', () => {
+    it('attaches the worker name to each pending release', async () => {
+      vi.mocked(employeeAttendanceRepository.getUserByAuthId).mockResolvedValue(user)
+      vi.mocked(employeeAttendanceRepository.getPendingClockOutReleases).mockResolvedValue([
+        { id: 'ar-1', casual_worker_id: 'cw-1', clock_in_time: '2026-07-01T08:00:00Z', shift_title: 'Event Setup', shift_date: '2026-07-01', start_time: '08:00' },
+      ])
+      vi.mocked(employeeAttendanceRepository.getUsersByIds).mockResolvedValue([{ id: 'cw-1', full_name: 'Wei Jie Lim' }])
+
+      const result = await employeeAttendanceService.getClockOutReleaseQueue('auth-1')
+
+      expect(result).toEqual([{
+        id: 'ar-1', casual_worker_id: 'cw-1', clock_in_time: '2026-07-01T08:00:00Z',
+        shift_title: 'Event Setup', shift_date: '2026-07-01', start_time: '08:00',
+        worker_name: 'Wei Jie Lim',
+      }])
+    })
+  })
+
+  describe('releaseClockOut', () => {
+    const supervisedRecord = {
+      id: 'ar-1', clock_in_time: '2026-07-01T08:00:00Z', clock_out_time: null, clock_out_released_at: null,
+      shift_assignments: { supervisor_employee_id: 'emp-1', shifts: { is_open_ended: true } },
+    } as any
+
+    it('throws when the acting employee does not supervise this worker', async () => {
+      vi.mocked(employeeAttendanceRepository.getUserByAuthId).mockResolvedValue(user)
+      vi.mocked(employeeAttendanceRepository.getAttendanceRecordWithSupervisor).mockResolvedValue({
+        ...supervisedRecord, shift_assignments: { supervisor_employee_id: 'someone-else', shifts: { is_open_ended: true } },
+      })
+
+      await expect(employeeAttendanceService.releaseClockOut('auth-1', 'ar-1'))
+        .rejects.toThrow('You are not the supervisor for this worker')
+    })
+
+    it('throws when the shift is not open-ended', async () => {
+      vi.mocked(employeeAttendanceRepository.getUserByAuthId).mockResolvedValue(user)
+      vi.mocked(employeeAttendanceRepository.getAttendanceRecordWithSupervisor).mockResolvedValue({
+        ...supervisedRecord, shift_assignments: { supervisor_employee_id: 'emp-1', shifts: { is_open_ended: false } },
+      })
+
+      await expect(employeeAttendanceService.releaseClockOut('auth-1', 'ar-1'))
+        .rejects.toThrow('Clock-out release only applies to one-off jobs')
+    })
+
+    it('throws when already released', async () => {
+      vi.mocked(employeeAttendanceRepository.getUserByAuthId).mockResolvedValue(user)
+      vi.mocked(employeeAttendanceRepository.getAttendanceRecordWithSupervisor).mockResolvedValue({
+        ...supervisedRecord, clock_out_released_at: '2026-07-01T09:00:00Z',
+      })
+
+      await expect(employeeAttendanceService.releaseClockOut('auth-1', 'ar-1'))
+        .rejects.toThrow('Already released')
+    })
+
+    it('releases the clock-out for a supervised, open-ended, not-yet-released record', async () => {
+      vi.mocked(employeeAttendanceRepository.getUserByAuthId).mockResolvedValue(user)
+      vi.mocked(employeeAttendanceRepository.getAttendanceRecordWithSupervisor).mockResolvedValue(supervisedRecord)
+      vi.mocked(employeeAttendanceRepository.releaseClockOut).mockResolvedValue({ id: 'ar-1' } as any)
+
+      await employeeAttendanceService.releaseClockOut('auth-1', 'ar-1')
+
+      expect(employeeAttendanceRepository.releaseClockOut).toHaveBeenCalledWith('ar-1', 'emp-1')
+    })
   })
 })

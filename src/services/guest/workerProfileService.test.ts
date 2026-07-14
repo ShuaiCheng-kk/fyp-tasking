@@ -13,6 +13,7 @@ vi.mock('@/repositories/guest/workerProfileRepository', () => ({
     updateResumeUrlByAuthId: vi.fn(),
     getCertificatesByUserId: vi.fn(),
     addCertificate: vi.fn(),
+    updateCertificateFileUrl: vi.fn(),
     deleteCertificate: vi.fn(),
     uploadProfileFile: vi.fn(),
   },
@@ -169,6 +170,39 @@ describe('workerProfileService — Worker Profile', () => {
     it('rejects unsupported proof file types', async () => {
       await expect(workerProfileService.addCertificate('auth-1', 'Forklift Licence', makeFile('cert.gif', 'image/gif')))
         .rejects.toThrow('Certificate file must be PDF, DOC, DOCX, JPG, or PNG')
+    })
+  })
+
+  describe('replaceCertificateFile', () => {
+    it('uploads the new file and updates the certificate scoped to the resolved user', async () => {
+      vi.mocked(workerProfileRepository.uploadProfileFile).mockResolvedValue('https://cdn/cert-v2.pdf')
+      vi.mocked(workerProfileRepository.updateCertificateFileUrl).mockResolvedValue({
+        id: 'cert-1', user_id: 'user-1', name: 'Food Hygiene Certificate', file_url: 'https://cdn/cert-v2.pdf', created_at: '2026-07-01T00:00:00Z',
+      })
+
+      const cert = await workerProfileService.replaceCertificateFile('auth-1', 'cert-1', makeFile('cert-v2.pdf', 'application/pdf'))
+
+      expect(workerProfileRepository.uploadProfileFile).toHaveBeenCalledWith(
+        expect.any(File),
+        expect.stringMatching(/^profiles\/user-1\/certificates\/\d+-cert-v2\.pdf$/),
+      )
+      expect(workerProfileRepository.updateCertificateFileUrl).toHaveBeenCalledWith('cert-1', 'user-1', 'https://cdn/cert-v2.pdf')
+      expect(cert.file_url).toBe('https://cdn/cert-v2.pdf')
+    })
+
+    it('rejects unsupported file types', async () => {
+      await expect(workerProfileService.replaceCertificateFile('auth-1', 'cert-1', makeFile('cert.gif', 'image/gif')))
+        .rejects.toThrow('Certificate file must be PDF, DOC, DOCX, JPG, or PNG')
+    })
+
+    it('rejects files over 5MB', async () => {
+      await expect(workerProfileService.replaceCertificateFile('auth-1', 'cert-1', makeFile('cert.pdf', 'application/pdf', 6 * 1024 * 1024)))
+        .rejects.toThrow('smaller than 5MB')
+    })
+
+    it('throws when certificate_id is missing', async () => {
+      await expect(workerProfileService.replaceCertificateFile('auth-1', '', makeFile('cert.pdf', 'application/pdf')))
+        .rejects.toThrow('certificate_id is required')
     })
   })
 

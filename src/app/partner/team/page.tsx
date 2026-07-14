@@ -518,6 +518,8 @@ type TeamMember = {
   department_id: string | null
   profile_photo_url?: string | null
   worker_status?: string | null
+  casual_worker_verified_at?: string | null
+  casual_worker_blocked_at?: string | null
 }
 type ChangeDeptModal = { member: TeamMember } | null
 type ManageDeptModal = { member: TeamMember } | null
@@ -1139,7 +1141,7 @@ export default function TeamPage() {
 
   const managerCount      = teamMembers.filter(m => m.role === 'Manager').length
   const employeeCount     = teamMembers.filter(m => m.role === 'Employee').length
-  const casualWorkerCount = teamMembers.filter(m => m.role === 'Casual Worker').length
+  const casualWorkerCount = teamMembers.filter(m => m.role === 'Casual Worker' && m.casual_worker_verified_at).length
   const totalInternal     = managerCount + employeeCount
 
   function timeAgo(ts: string): string {
@@ -1375,7 +1377,7 @@ export default function TeamPage() {
 
           {/* ── CASUAL WORKERS ────────────────────────────────────────────────── */}
           {(() => {
-            const casualWorkers = teamMembers.filter(m => m.role === 'Casual Worker')
+            const casualWorkers = teamMembers.filter(m => m.role === 'Casual Worker' && m.casual_worker_verified_at)
             return (
               <div className="team-panel-card" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
@@ -1402,7 +1404,7 @@ export default function TeamPage() {
                       const deptName = worker.department_id
                         ? companyDepartments.find(d => d.id === worker.department_id)?.name ?? null
                         : null
-                      const status = worker.worker_status ?? 'active'
+                      const status = worker.casual_worker_blocked_at ? 'inactive' : 'active'
                       const statusColors: Record<string, { bg: string; text: string }> = {
                         active:   { bg: '#ECFDF5', text: '#047857' },
                         inactive: { bg: '#F3F4F6', text: '#4B5563' },

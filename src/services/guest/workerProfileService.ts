@@ -107,6 +107,25 @@ export const workerProfileService = {
     })
   },
 
+  // Swaps the proof file on an existing certificate (e.g. the worker attached the wrong scan)
+  // without losing the certificate row itself.
+  async replaceCertificateFile(authId: string, certificateId: string, file: File): Promise<WorkerCertificate> {
+    if (!authId) throw new Error('Missing user id')
+    if (!certificateId) throw new Error('certificate_id is required')
+    if (!file) throw new Error('Certificate file is required')
+    if (!CERTIFICATE_FILE_TYPES.includes(file.type)) {
+      throw new Error('Certificate file must be PDF, DOC, DOCX, JPG, or PNG')
+    }
+    if (file.size > MAX_FILE_SIZE) throw new Error('Certificate file must be smaller than 5MB')
+
+    const user = await workerProfileRepository.getByAuthId(authId)
+    if (!user) throw new Error('Worker not found')
+
+    const path = `profiles/${user.id}/certificates/${Date.now()}-${cleanFileName(file.name)}`
+    const fileUrl = await workerProfileRepository.uploadProfileFile(file, path)
+    return workerProfileRepository.updateCertificateFileUrl(certificateId, user.id, fileUrl)
+  },
+
   async removeCertificate(authId: string, certificateId: string): Promise<void> {
     if (!authId) throw new Error('Missing user id')
     if (!certificateId) throw new Error('certificate_id is required')

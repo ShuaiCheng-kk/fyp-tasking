@@ -25,8 +25,10 @@ export const candidateRecommendationService = {
     ])
     if (!jobPosting) throw new Error('Job posting not found')
 
-    // Only applicants still in play — rejected/withdrawn/cancelled ones don't need scoring.
-    const applicants = allApplicants.filter(a => a.status === 'pending' || a.status === 'accepted')
+    // Only applicants the Owner still has to decide on — once accepted (awaiting the worker's
+    // confirmation) or in any terminal state, the decision is already made, so there's nothing
+    // left for the AI to help with.
+    const applicants = allApplicants.filter(a => a.status === 'pending')
     if (applicants.length === 0) return []
 
     const results: CandidateRecommendation[] = []

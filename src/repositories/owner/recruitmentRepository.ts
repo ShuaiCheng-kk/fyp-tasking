@@ -2,7 +2,7 @@
 // RULE: Supabase queries only. No business logic.
 
 import { supabase } from '@/lib/supabase'
-import { CasualWorkerStatus, JobApplicant, JobInvitation, JobPosting, JobPostingInput, JobPostingPendingApproval } from '@/types/Recruitment'
+import { ApplicantCertificateSnapshot, CasualWorkerStatus, JobApplicant, JobInvitation, JobPosting, JobPostingInput, JobPostingPendingApproval, PoolWorker } from '@/types/Recruitment'
 
 export const recruitmentRepository = {
   async getPublicJobPostings(): Promise<JobPosting[]> {
@@ -168,7 +168,7 @@ export const recruitmentRepository = {
     if (error) throw new Error(error.message)
   },
 
-  async updateJobPosting(id: string, fields: Partial<JobPostingInput> & { status?: string; archived_at?: string | null }): Promise<JobPosting> {
+  async updateJobPosting(id: string, fields: Partial<JobPostingInput> & { status?: string; archived_at?: string | null; archived_from_status?: string | null }): Promise<JobPosting> {
     const { data, error } = await supabase
       .from('job_postings')
       .update(fields)
@@ -224,23 +224,38 @@ export const recruitmentRepository = {
   },
 
   async setApplicantStatus(id: string, status: string): Promise<void> {
-    const { error } = await supabase.from('job_applicants').update({ status }).eq('id', id)
+    const { error } = await supabase
+      .from('job_applicants')
+      .update({ status, decided_at: new Date().toISOString() })
+      .eq('id', id)
     if (error) throw new Error(error.message)
   },
 
   async cancelAcceptedInvitationByApplicant(applicant_id: string): Promise<void> {
     const { error } = await supabase
       .from('job_invitations')
-      .update({ status: 'cancelled' })
+      .update({ status: 'cancelled', responded_at: new Date().toISOString() })
       .eq('applicant_id', applicant_id)
       .eq('status', 'accepted')
+    if (error) throw new Error(error.message)
+  },
+
+  // Rescinds an offer the worker hasn't responded to yet (invitation still 'sent') — used when the
+  // Owner reverses an earlier Accept before the worker confirms. Without this the stale invitation
+  // would stay 'sent' forever, letting the worker still confirm a rescinded offer.
+  async cancelSentInvitationByApplicant(applicant_id: string): Promise<void> {
+    const { error } = await supabase
+      .from('job_invitations')
+      .update({ status: 'cancelled', responded_at: new Date().toISOString() })
+      .eq('applicant_id', applicant_id)
+      .eq('status', 'sent')
     if (error) throw new Error(error.message)
   },
 
   async cancelOpenInvitationsForJob(job_id: string): Promise<void> {
     const { error } = await supabase
       .from('job_invitations')
-      .update({ status: 'cancelled' })
+      .update({ status: 'cancelled', responded_at: new Date().toISOString() })
       .eq('job_id', job_id)
       .in('status', ['sent', 'accepted'])
     if (error) throw new Error(error.message)
@@ -249,7 +264,7 @@ export const recruitmentRepository = {
   async markPendingApplicantsJobClosed(job_id: string): Promise<void> {
     const { error } = await supabase
       .from('job_applicants')
-      .update({ status: 'job_closed' })
+      .update({ status: 'job_closed', decided_at: new Date().toISOString() })
       .eq('job_id', job_id)
       .eq('status', 'pending')
     if (error) throw new Error(error.message)
@@ -354,7 +369,7 @@ export const recruitmentRepository = {
   async getApplicantsByJob(job_id: string): Promise<JobApplicant[]> {
     const { data, error } = await supabase
       .from('job_applicants')
-      .select('*, users(full_name, email_address), job_invitations(status)')
+      .select('*, users(full_name, email_address, phone_number, profile_photo_url), job_invitations(status, sent_at)')
       .eq('job_id', job_id)
       // A withdrawn application means the worker walked away (withdrew, or declined the offer)
       // — nothing left for the employer to act on, so it's dropped from their list.
@@ -384,7 +399,7 @@ export const recruitmentRepository = {
   async getApplicantById(id: string): Promise<JobApplicant | null> {
     const { data, error } = await supabase
       .from('job_applicants')
-      .select('*, users(full_name, email_address)')
+      .select('*, users(full_name, email_address), job_invitations(status, sent_at)')
       .eq('id', id)
       .single()
     if (error) return null
@@ -394,7 +409,12 @@ export const recruitmentRepository = {
   async updateApplicantStatus(id: string, status: 'accepted' | 'rejected'): Promise<JobApplicant> {
     const { data, error } = await supabase
       .from('job_applicants')
-      .update({ status })
+      // Accepting isn't the end of the road — the offer that follows carries its own sent_at, and
+      // the application stays live until the worker answers it. Only a rejection resolves the
+      // application here, so only that stamps decided_at.
+      .update(status === 'rejected'
+        ? { status, decided_at: new Date().toISOString() }
+        : { status })
       .eq('id', id)
       .select('*, users(full_name, email_address)')
       .single()
@@ -579,16 +599,136 @@ export const recruitmentRepository = {
     if (error) throw new Error(error.message)
   },
 
+  // The company's verified worker pool: Casual Workers who have actually completed a shift here
+  // (verified_at) and are not banned (blocked_at). Enriched with how many shifts they've finished
+  // so the Owner can pick the regulars they trust.
+  async getVerifiedPoolWorkers(company_id: string): Promise<PoolWorker[]> {
+    const { data: cwdRows, error: cwdErr } = await supabase
+      .from('casualworker_departments')
+      .select('casual_worker_id, department_id, verified_at, departments(name)')
+      .eq('company_id', company_id)
+      .not('verified_at', 'is', null)
+      .is('blocked_at', null)
+    if (cwdErr) throw new Error(cwdErr.message)
+    if (!cwdRows || cwdRows.length === 0) return []
+
+    // A worker can sit in more than one department of the same company — keep the earliest
+    // verification (when they first proved themselves here).
+    const byWorker = new Map<string, { department_id: string | null; department_name: string | null; verified_at: string }>()
+    for (const row of cwdRows as any[]) {
+      const existing = byWorker.get(row.casual_worker_id)
+      if (!existing || row.verified_at < existing.verified_at) {
+        byWorker.set(row.casual_worker_id, {
+          department_id: row.department_id ?? null,
+          department_name: Array.isArray(row.departments) ? (row.departments[0]?.name ?? null) : (row.departments?.name ?? null),
+          verified_at: row.verified_at,
+        })
+      }
+    }
+    const workerIds = [...byWorker.keys()]
+
+    const { data: users, error: usersErr } = await supabase
+      .from('users')
+      .select('id, full_name, email_address, phone_number, profile_photo_url, skills')
+      .in('id', workerIds)
+      .eq('role', 'Casual Worker')
+    if (usersErr) throw new Error(usersErr.message)
+
+    // Completed shifts for THIS company — attendance rows with a clock-out, reached through the
+    // shift they belong to (attendance_records has no company_id of its own).
+    const { data: attendance, error: attErr } = await supabase
+      .from('attendance_records')
+      .select('casual_worker_id, clock_out_time, shift_assignments!inner(shifts!inner(company_id, shift_date))')
+      .in('casual_worker_id', workerIds)
+      .not('clock_out_time', 'is', null)
+      .eq('shift_assignments.shifts.company_id', company_id)
+    if (attErr) throw new Error(attErr.message)
+
+    const stats = new Map<string, { count: number; last: string | null }>()
+    for (const row of (attendance ?? []) as any[]) {
+      const shift = row.shift_assignments?.shifts
+      const date = Array.isArray(shift) ? shift[0]?.shift_date : shift?.shift_date
+      const current = stats.get(row.casual_worker_id) ?? { count: 0, last: null }
+      current.count += 1
+      if (date && (!current.last || date > current.last)) current.last = date
+      stats.set(row.casual_worker_id, current)
+    }
+
+    return ((users ?? []) as any[]).map(user => {
+      const meta = byWorker.get(user.id)!
+      const stat = stats.get(user.id) ?? { count: 0, last: null }
+      return {
+        id: user.id,
+        full_name: user.full_name,
+        email_address: user.email_address,
+        phone_number: user.phone_number ?? null,
+        profile_photo_url: user.profile_photo_url ?? null,
+        skills: user.skills ?? null,
+        department_id: meta.department_id,
+        department_name: meta.department_name,
+        verified_at: meta.verified_at,
+        completed_shifts: stat.count,
+        last_worked_date: stat.last,
+      }
+    }).sort((a, b) => b.completed_shifts - a.completed_shifts || a.full_name.localeCompare(b.full_name))
+  },
+
+  async getApplicantByJobAndUser(job_id: string, user_id: string): Promise<JobApplicant | null> {
+    const { data, error } = await supabase
+      .from('job_applicants')
+      .select('*')
+      .eq('job_id', job_id)
+      .eq('user_id', user_id)
+      .maybeSingle()
+    if (error) throw new Error(error.message)
+    return (data as JobApplicant | null) ?? null
+  },
+
+  // The Owner hand-picking a pool worker still needs a job_applicants row — job_invitations keys
+  // off one, and the whole confirm/FCFS/shift chain reads through it. So we record the application
+  // on the worker's behalf, already 'accepted' (the Owner chose them), with the same profile
+  // snapshot a self-submitted application would freeze.
+  async createDirectApplicant(input: {
+    job_id: string
+    user_id: string
+    resume_url: string | null
+    skills_snapshot: string | null
+    certificates_snapshot: ApplicantCertificateSnapshot[]
+    age_at_apply: number | null
+  }): Promise<JobApplicant> {
+    const { data, error } = await supabase
+      .from('job_applicants')
+      .insert({
+        job_id: input.job_id,
+        user_id: input.user_id,
+        resume_url: input.resume_url,
+        relevant_experience: null,
+        additional_note: null,
+        skills_snapshot: input.skills_snapshot,
+        certificates_snapshot: input.certificates_snapshot,
+        age_at_apply: input.age_at_apply,
+        status: 'accepted',
+      })
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    return data as JobApplicant
+  },
+
 }
 
 function mapApplicantRow(row: Record<string, unknown>): JobApplicant {
-  const user = row.users as { full_name: string; email_address: string } | null
-  const invitations = row.job_invitations as { status: string }[] | null | undefined
+  const user = row.users as { full_name: string; email_address: string; phone_number?: string | null; profile_photo_url?: string | null } | null
+  const invitations = row.job_invitations as { status: string; sent_at?: string | null }[] | null | undefined
   const { users: _users, job_invitations: _invitations, ...rest } = row
+  const lastInvitation = invitations && invitations.length > 0 ? invitations[invitations.length - 1] : null
   return {
     ...(rest as Omit<JobApplicant, 'full_name' | 'email_address'>),
     full_name: user?.full_name ?? '',
     email_address: user?.email_address ?? '',
-    invitation_status: invitations && invitations.length > 0 ? invitations[invitations.length - 1].status : null,
+    phone_number: user?.phone_number ?? null,
+    profile_photo_url: user?.profile_photo_url ?? null,
+    invitation_status: lastInvitation ? lastInvitation.status : null,
+    confirmed_at: lastInvitation?.sent_at ?? null,
   }
 }

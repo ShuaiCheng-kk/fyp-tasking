@@ -101,13 +101,20 @@ function SignInContent() {
       }
       localStorage.setItem('tasking_user_role', role);
 
-      // Came from the job board's Apply button: send workers straight back to that posting so the
-      // apply modal reopens in place, instead of dropping them on their dashboard.
+      // Came from the job board's Apply button: send them back to that posting so the apply modal
+      // reopens in place. This only applies to a Guest User — an applicant with no home page yet,
+      // who'd otherwise be stranded after signing in. A Casual Worker already has a workspace, and
+      // their role is what decides where they land: signing in always drops them on their own
+      // dashboard, never back into the applicant flow. They can re-open the job board themselves
+      // to apply again.
       const jobId = searchParams.get('job_id') || localStorage.getItem('apply_job_id');
-      if (jobId && (role === 'Guest User' || role === 'Casual Worker')) {
+      if (jobId && role === 'Guest User') {
         window.location.href = `/job-board?job_id=${jobId}`;
         return;
       }
+      // Anyone else: drop the stashed intent so a stale one can never hijack a later sign-in
+      // (it outlives logout otherwise, and would bounce them to the board instead of their app).
+      localStorage.removeItem('apply_job_id');
 
       const route = role === 'Owner' ? getOwnerLandingHref() : (ROLE_ROUTES[role] || '/owner/dashboard');
       window.location.href = route;
@@ -148,7 +155,7 @@ function SignInContent() {
 
   return (
     <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#FFFBF5', padding: '40px 24px' }}>
-      <div className="auth-card" style={{ background: '#FFFFFF', border: '1px solid #F0E8D8', borderRadius: '20px', padding: '48px 44px', width: '100%', maxWidth: '440px', boxShadow: '0 4px 32px rgba(0,0,0,0.06)' }}>
+      <div className="auth-card gs-card-enter" style={{ background: '#FFFFFF', border: '1px solid #F0E8D8', borderRadius: '20px', padding: '48px 44px', width: '100%', maxWidth: '440px', boxShadow: '0 4px 32px rgba(0,0,0,0.06)' }}>
 
         <TaskingLogo />
 

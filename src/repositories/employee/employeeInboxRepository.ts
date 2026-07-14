@@ -43,6 +43,23 @@ export const employeeInboxRepository = {
       if (row.users) contacts.push(row.users)
     }
 
+    // Casual Workers this Employee currently supervises (via shift_assignments.supervisor_employee_id,
+    // the same link Task assignment gates on) — they can only message their supervisor, so the
+    // supervisor must be able to see and reply to them.
+    const { data: cwAssignments } = await supabase
+      .from('shift_assignments')
+      .select('user_id, shifts!inner(department_id)')
+      .eq('supervisor_employee_id', user_id)
+      .eq('shifts.department_id', department_id)
+    const cwIds = [...new Set((cwAssignments ?? []).map((row: { user_id: string }) => row.user_id))]
+    if (cwIds.length > 0) {
+      const { data: cwUsers } = await supabase
+        .from('users')
+        .select('id, full_name, role, email_address')
+        .in('id', cwIds)
+      for (const u of (cwUsers ?? []) as any[]) contacts.push(u)
+    }
+
     return contacts
   },
 

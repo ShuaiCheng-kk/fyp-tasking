@@ -28,6 +28,11 @@ export interface AttendanceRecord {
   owner_reviewed_at: string | null
   owner_adjusted_clock_in_time: string | null
   owner_adjusted_clock_out_time: string | null
+  // Open-ended (one-off) jobs have no scheduled end time, so the supervising Employee must
+  // review the work and release the Casual Worker before Clock Out is allowed. Unused for
+  // fixed-end shifts, which keep the time-based gate instead.
+  clock_out_released_by: string | null
+  clock_out_released_at: string | null
   created_at: string
   updated_at: string
 }
@@ -51,6 +56,8 @@ export interface AttendanceRecordUpdate {
   employee_notes?: string | null
   manager_notes?: string | null
   status?: string
+  clock_out_released_by?: string | null
+  clock_out_released_at?: string | null
 }
 
 export interface AttendanceRecordCreate {

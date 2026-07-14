@@ -378,6 +378,8 @@ type TeamMember = {
   department_id: string | null
   profile_photo_url?: string | null
   worker_status?: string | null
+  casual_worker_verified_at?: string | null
+  casual_worker_blocked_at?: string | null
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -592,7 +594,7 @@ export default function ManagerTeamPage() {
 
   const totalInternal     = managerCount + employeeCount
 
-  const casualWorkers = teamMembers.filter(m => m.role === 'Casual Worker' && m.department_id === selectedDeptId)
+  const casualWorkers = teamMembers.filter(m => m.role === 'Casual Worker' && m.department_id === selectedDeptId && m.casual_worker_verified_at)
   const sendDisabled  = inviteLoading || !inviteEmail || !inviteDeptId
 
   return (
@@ -720,7 +722,7 @@ export default function ManagerTeamPage() {
               ) : (
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
                   {casualWorkers.map(worker => {
-                    const status = worker.worker_status ?? 'active'
+                    const status = worker.casual_worker_blocked_at ? 'inactive' : 'active'
                     const statusColors: Record<string, { bg: string; text: string }> = {
                       active:   { bg: '#ECFDF5', text: '#047857' },
                       inactive: { bg: '#F3F4F6', text: '#4B5563' },

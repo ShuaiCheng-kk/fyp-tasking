@@ -15,6 +15,10 @@ export async function GET(req: NextRequest) {
       const myShift = await employeeAttendanceService.getMyShift(user_id)
       return NextResponse.json({ success: true, myShift })
     }
+    if (resource === 'clockout_release_queue') {
+      const queue = await employeeAttendanceService.getClockOutReleaseQueue(user_id)
+      return NextResponse.json({ success: true, queue })
+    }
     const records = await employeeAttendanceService.getAttendanceRecords(user_id)
     return NextResponse.json({ success: true, records })
   } catch (err) {
@@ -37,12 +41,21 @@ export async function POST(req: NextRequest) {
   if (typeof b.user_id !== 'string' || !b.user_id) {
     return NextResponse.json({ success: false, message: 'user_id is required' }, { status: 400 })
   }
-  if (typeof b.shift_assignment_id !== 'string' || !b.shift_assignment_id) {
-    return NextResponse.json({ success: false, message: 'shift_assignment_id is required' }, { status: 400 })
-  }
 
   try {
     const authId = b.user_id
+
+    if (b.action === 'release_clockout') {
+      if (typeof b.attendance_record_id !== 'string' || !b.attendance_record_id) {
+        return NextResponse.json({ success: false, message: 'attendance_record_id is required' }, { status: 400 })
+      }
+      const record = await employeeAttendanceService.releaseClockOut(authId, b.attendance_record_id)
+      return NextResponse.json({ success: true, record })
+    }
+
+    if (typeof b.shift_assignment_id !== 'string' || !b.shift_assignment_id) {
+      return NextResponse.json({ success: false, message: 'shift_assignment_id is required' }, { status: 400 })
+    }
     const shift_assignment_id = b.shift_assignment_id
 
     if (b.action === 'clock_in') {

@@ -19,6 +19,7 @@ let shiftId: string
 let assignmentId: string
 let worker: SeededWorker
 let replacement: SeededWorker
+let supervisor: SeededWorker
 
 test.describe.configure({ mode: 'serial' })
 
@@ -41,6 +42,10 @@ async function createCasualWorker(label: string): Promise<SeededWorker> {
       role: 'Casual Worker',
       company_id: seeded.companyId,
       worker_status: 'active',
+      // The Casual Worker layout hard-gates every page except Profile until payment info is on
+      // file — without this, navigating straight to /casual/dashboard would redirect away.
+      payment_method: 'paynow',
+      payment_account: '+65 91234567',
     })
     .select('id')
     .single()
@@ -82,10 +87,33 @@ test.beforeAll(async () => {
   worker = await createCasualWorker('Worker')
   replacement = await createCasualWorker('Replacement')
 
+  const supervisorEmail = `test-module5-ui-supervisor-${Date.now()}@tasking-tests.local`
+  const { data: supervisorAuth, error: supervisorAuthError } = await admin.auth.admin.createUser({
+    email: supervisorEmail, password: 'Test-Password-123!', email_confirm: true,
+  })
+  if (supervisorAuthError || !supervisorAuth.user) throw new Error(`Failed to create supervisor auth user: ${supervisorAuthError?.message}`)
+  const { data: supervisorUser, error: supervisorUserError } = await admin
+    .from('users')
+    .insert({
+      supabase_auth_id: supervisorAuth.user.id,
+      full_name: 'Module 5 UI Supervisor',
+      email_address: supervisorEmail,
+      phone_number: null,
+      role: 'Employee',
+      company_id: seeded.companyId,
+      worker_status: 'active',
+    })
+    .select('id')
+    .single()
+  if (supervisorUserError || !supervisorUser) throw new Error(`Failed to create supervisor user row: ${supervisorUserError?.message}`)
+  supervisor = { authUserId: supervisorAuth.user.id, userId: supervisorUser.id as string, email: supervisorEmail }
+
   // UC49 gates Clock In to within 30 minutes before the shift starts, and Clock Out to once the
   // shift has reached its end time — so for a real-browser E2E run (no clock_time override like
   // the API tests have), the shift must be scheduled in the recent past relative to wall-clock
-  // "now", not a fixed future date, or both buttons would be hidden the whole test run.
+  // "now", not a fixed future date, or both buttons would be hidden the whole test run. Open-ended
+  // sidesteps the end-time gate entirely (both for Clock In and, once the supervisor releases it,
+  // Clock Out) so this stays robust regardless of how long setup takes before the test body runs.
   const now = new Date()
   const shiftStart = new Date(now.getTime() - 20 * 60000)
   const shiftEnd = new Date(now.getTime() - 5 * 60000)
@@ -112,7 +140,7 @@ test.beforeAll(async () => {
 
   const { data: assignment, error: assignmentError } = await admin
     .from('shift_assignments')
-    .insert({ shift_id: shiftId, user_id: worker.userId, assigned_by: seeded.ownerId })
+    .insert({ shift_id: shiftId, user_id: worker.userId, assigned_by: seeded.ownerId, supervisor_employee_id: supervisor.userId })
     .select('id')
     .single()
   if (assignmentError || !assignment) throw new Error(`Failed to create assignment: ${assignmentError?.message}`)
@@ -128,14 +156,14 @@ test.afterAll(async () => {
   await admin.from('shifts').delete().eq('id', shiftId)
   await admin.from('departments').delete().eq('id', departmentId)
 
-  for (const member of [worker, replacement]) {
+  for (const member of [worker, replacement, supervisor]) {
     await admin.from('users').delete().eq('id', member.userId)
     await admin.auth.admin.deleteUser(member.authUserId).catch(() => undefined)
   }
   await cleanupTestOwnerAndCompany(seeded)
 })
 
-test('casual worker can use Module 5 attendance actions from the UI', async ({ page }) => {
+test('casual worker can clock in and out for their current job from the Dashboard', async ({ page }) => {
   await signInForUi(page, {
     email: worker.email,
     password: 'Test-Password-123!',
@@ -143,45 +171,40 @@ test('casual worker can use Module 5 attendance actions from the UI', async ({ p
     companyId: seeded.companyId,
   })
 
+  // Clock In/Out now lives on the Dashboard, scoped to the single "current job" — the Attendance
+  // page is a pure past-work history log and Availability/leave-request/shift-swap no longer
+  // exist for the Casual Worker role (out of UC49-57's actor scope for CW).
+  await page.goto('/casual/dashboard')
+  await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible()
+  await expect(page.getByText('Module 5 UI Shift')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Clock In' }).click()
+  await expect(page.getByText('Clocked in.')).toBeVisible()
+
+  // This is an open-ended (one-off) job, so Clock Out is gated behind the supervising Employee
+  // reviewing and releasing the worker first.
+  await expect(page.getByText('Waiting for your supervisor to review your work')).toBeVisible()
+  const { data: record } = await admin
+    .from('attendance_records')
+    .select('id')
+    .eq('shift_assignment_id', assignmentId)
+    .single()
+  const release = await page.request.post('/api/employee/attendance', {
+    data: { action: 'release_clockout', user_id: supervisor.authUserId, attendance_record_id: record!.id },
+  })
+  expect(release.status()).toBe(200)
+
+  await page.reload()
+  await page.getByRole('button', { name: 'Clock Out' }).click()
+  await expect(page.getByText('Clocked out — see you next time.')).toBeVisible()
+
+  // The job is complete — Dashboard has nothing left to show for it.
+  await expect(page.getByText('No active job right now.')).toBeVisible()
+
+  // The completed job now shows up in Attendance history instead.
   await page.goto('/casual/attendance')
   await expect(page.getByRole('heading', { name: 'Attendance' })).toBeVisible()
-  const card = page.getByText('Module 5 UI Shift').locator('xpath=ancestor::section[1]')
-  await expect(card).toBeVisible()
-
-  await card.getByRole('button', { name: 'Clock In' }).click()
-  await expect(page.getByText('Clocked in successfully.')).toBeVisible()
-  await expect(card.getByText('Clocked in')).toBeVisible()
-
-  await card.getByRole('button', { name: 'Clock Out' }).click()
-  await expect(page.getByText('Timesheet submitted.')).toBeVisible()
-  await expect(card.getByText('Submitted')).toBeVisible()
-
-  await card.getByPlaceholder('Request reason').fill('UI needs time off')
-  await card.getByRole('button', { name: 'Submit' }).click()
-  await expect(page.getByText('Time-off request submitted.')).toBeVisible()
-
-  await card.getByRole('combobox').nth(1).selectOption({ label: 'Module 5 UI Replacement' })
-  await card.getByPlaceholder('Swap reason').fill('Replacement confirmed in UI')
-  await card.getByRole('button', { name: 'Request' }).click()
-  await expect(page.getByText('Shift swap request submitted.')).toBeVisible()
-})
-
-test('casual worker can manage availability from the UI', async ({ page }) => {
-  await signInForUi(page, {
-    email: worker.email,
-    password: 'Test-Password-123!',
-    authUserId: worker.authUserId,
-    companyId: seeded.companyId,
-  })
-
-  await page.goto('/casual/availability')
-  await expect(page.getByRole('heading', { name: 'Availability' })).toBeVisible()
-
-  await page.getByRole('combobox').selectOption('break_waiver')
-  await page.getByPlaceholder('Reason').fill('UI break waiver')
-  await page.getByRole('button', { name: 'Submit Request' }).click()
-  await expect(page.getByText('Break waiver request submitted.')).toBeVisible()
-  await expect(page.getByText('UI break waiver')).toBeVisible()
+  await expect(page.getByText('Module 5 UI Shift')).toBeVisible()
 })
 
 test('owner can review Module 5 work from the attendance UI', async ({ page }) => {

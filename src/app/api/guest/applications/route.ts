@@ -2,9 +2,7 @@
 // RULE: Only handles request/response. No business logic. No DB access.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { workerApplicationService, RelevantExperience } from '@/services/guest/workerApplicationService'
-
-const RELEVANT_EXPERIENCE_VALUES = ['none', 'less_than_1', '1_to_2', 'more_than_2']
+import { workerApplicationService } from '@/services/guest/workerApplicationService'
 
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>
@@ -16,7 +14,6 @@ export async function POST(req: NextRequest) {
 
   const jobId = body.job_id
   const userId = body.user_id
-  const relevantExperience = body.relevant_experience
 
   if (typeof jobId !== 'string' || !jobId) {
     return NextResponse.json({ success: false, message: 'job_id is required' }, { status: 400 })
@@ -24,18 +21,12 @@ export async function POST(req: NextRequest) {
   if (typeof userId !== 'string' || !userId) {
     return NextResponse.json({ success: false, message: 'user_id is required' }, { status: 400 })
   }
-  if (typeof relevantExperience !== 'string' || !RELEVANT_EXPERIENCE_VALUES.includes(relevantExperience)) {
-    return NextResponse.json(
-      { success: false, message: 'relevant_experience must be one of: none, less_than_1, 1_to_2, more_than_2' },
-      { status: 400 },
-    )
-  }
 
   try {
     const application = await workerApplicationService.submitApplication({
       job_id: jobId,
       user_id: userId,
-      relevant_experience: relevantExperience as RelevantExperience,
+      meets_experience_requirement: body.meets_experience_requirement === true,
       additional_note: typeof body.additional_note === 'string' ? body.additional_note : null,
     })
 
