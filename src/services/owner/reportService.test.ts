@@ -12,6 +12,7 @@ vi.mock('@/repositories/owner/reportRepository', () => ({
     getAttendanceByAssignmentIds: vi.fn(),
     getPriorAttendedCasualUserIds: vi.fn(),
     getLifetimeCompletedShiftsByUserIds: vi.fn(),
+    getWorkerCancellationsInRange: vi.fn(),
     getUsersByIds: vi.fn(),
     getJobPostingsCreatedInRange: vi.fn(),
     getApplicantsByJobIds: vi.fn(),
@@ -150,6 +151,7 @@ function primeMocks() {
   vi.mocked(reportRepository.getLifetimeCompletedShiftsByUserIds).mockImplementation(async (_company, ids) => (
     ids.map(id => ({ user_id: id, completed_shifts: id === 'cw1' ? 5 : 2 }))
   ))
+  vi.mocked(reportRepository.getWorkerCancellationsInRange).mockResolvedValue([])
   vi.mocked(reportRepository.getUsersByIds).mockImplementation(async ids => (ids.length ? users : []) as never)
   vi.mocked(reportRepository.getJobPostingsCreatedInRange).mockImplementation(async f => (inCurrentPeriod(f) ? postings : []) as never)
   vi.mocked(reportRepository.getApplicantsByJobIds).mockImplementation(async ids => (ids.length ? applicants : []) as never)
@@ -402,6 +404,59 @@ describe('reportService.getCompanyReport', () => {
     expect(report.previous_overview.casual_reliable_worker_rate).toBeNull()
     expect(report.previous_overview.casual_on_time_attendance_rate).toBeNull()
     expect(report.previous_overview.casual_on_time_task_completion_rate).toBeNull()
+  })
+
+  it('counts every shift assignment as "assigned", including rejected ones and no-shows', async () => {
+    const report = await reportService.getCompanyReport(FILTERS)
+    // cw1: a1 (accepted, s1) + a4 (rejected, s2) → 2 assigned, only 1 rejected.
+    const cw1 = report.casual.workers.find(w => w.user_id === 'cw1')!
+    expect(cw1.assigned_shifts).toBe(2)
+    expect(cw1.rejected_shifts).toBe(1)
+    // cw2: a3 (accepted, worked late) + a5 (accepted, absent) → 2 assigned, 0 rejected.
+    const cw2 = report.casual.workers.find(w => w.user_id === 'cw2')!
+    expect(cw2.assigned_shifts).toBe(2)
+    expect(cw2.rejected_shifts).toBe(0)
+  })
+
+  it('counts a task returned for rework once per task, regardless of status', async () => {
+    const withReturnedTask = deadlineTasks.map(t => (
+      t.id === 'dt3' ? { ...t, rejected_at: '2026-07-08T11:00:00Z' } : t // cw1's task was sent back
+    ))
+    vi.mocked(reportRepository.getTasksByDeadlineRange).mockImplementation(async f => (inCurrentPeriod(f) ? withReturnedTask : []) as never)
+    const report = await reportService.getCompanyReport(FILTERS)
+    const cw1 = report.casual.workers.find(w => w.user_id === 'cw1')!
+    expect(cw1.tasks_returned).toBe(1)
+    const cw2 = report.casual.workers.find(w => w.user_id === 'cw2')!
+    expect(cw2.tasks_returned).toBe(0)
+  })
+
+  it('counts confirmed-job cancellations against the worker who cancelled, from the date range only', async () => {
+    vi.mocked(reportRepository.getWorkerCancellationsInRange).mockResolvedValue([
+      { user_id: 'cw1' }, { user_id: 'cw1' }, { user_id: 'cw2' },
+    ])
+    const report = await reportService.getCompanyReport(FILTERS)
+    expect(reportRepository.getWorkerCancellationsInRange).toHaveBeenCalledWith('company-1', '2026-07-07', '2026-07-14')
+    const cw1 = report.casual.workers.find(w => w.user_id === 'cw1')!
+    expect(cw1.cancellations).toBe(2)
+    const cw2 = report.casual.workers.find(w => w.user_id === 'cw2')!
+    expect(cw2.cancellations).toBe(1)
+  })
+
+  it('surfaces a worker who only cancelled — no shift assignment at all this period', async () => {
+    // cw3 has no shift/task fixture anywhere — the repository lookup is the only thing that ever
+    // mentions them, exercising the path where casualStats gets a row purely from a cancellation.
+    const withCw3 = [...users, { id: 'cw3', full_name: 'Casual Three', role: 'Casual Worker', hourly_rate: null, skills: null }]
+    vi.mocked(reportRepository.getUsersByIds).mockImplementation(async ids => (
+      withCw3.filter(u => ids.includes(u.id)) as never
+    ))
+    vi.mocked(reportRepository.getWorkerCancellationsInRange).mockResolvedValue([{ user_id: 'cw3' }])
+    const report = await reportService.getCompanyReport(FILTERS)
+    const cw3 = report.casual.workers.find(w => w.user_id === 'cw3')!
+    expect(cw3).toBeDefined()
+    expect(cw3.full_name).toBe('Casual Three')
+    expect(cw3.cancellations).toBe(1)
+    expect(cw3.worked).toBe(0)
+    expect(cw3.assigned_shifts).toBe(0)
   })
 
   // ── "by Worker" chart data — CasualReliabilityRow's per-worker continuous fields ──

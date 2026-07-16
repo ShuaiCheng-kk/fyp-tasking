@@ -2866,7 +2866,7 @@ export default function OwnerShiftsPage() {
   }
 
   const renderTimeAxis = () => (
-    <div style={{ display: 'flex', background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', borderRadius: '12px 12px 0 0' }}>
+    <div style={{ display: 'flex', background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', borderRadius: '12px 12px 0 0', position: 'sticky', top: 0, zIndex: 5 }}>
       <div style={{ width: TL_NAME_COL, flexShrink: 0 }} />
       <div style={{ position: 'relative', height: 44, flex: 1 }}>
         {tlHourTicks.map(h => (
@@ -3029,10 +3029,10 @@ export default function OwnerShiftsPage() {
     const EDGE = '2px solid rgba(15,23,42,0.45)'
 
     return (
-      <div className="shift-tab-content" style={{ overflowX: 'auto', padding: '14px 16px 18px 18px' }}>
+      <div className="shift-tab-content" style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '14px 16px 18px 18px' }}>
         <div style={{ minWidth: 700, borderRadius: 12, overflow: 'hidden', border: `1px solid ${BORDER}` }}>
           {/* Header row */}
-          <div style={{ display: 'grid', gridTemplateColumns: `${NAME_COL}px repeat(7, 1fr)`, background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', height: 54 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: `${NAME_COL}px repeat(7, 1fr)`, background: 'linear-gradient(135deg, #0F172A 0%, #1E293B 100%)', height: 54, position: 'sticky', top: 0, zIndex: 5 }}>
             <div style={{ padding: '10px 14px', borderRight: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center' }} />
             {weekDates.map(date => {
               const d = new Date(`${date}T00:00:00`)
@@ -3175,7 +3175,7 @@ export default function OwnerShiftsPage() {
       dept.rows.sort((a, b) => roleRank(a.role) - roleRank(b.role) || a.full_name.localeCompare(b.full_name))
     }
     return (
-      <div className="shift-tab-content" style={{ overflowX: 'auto', padding: '14px 16px 18px 18px' }}>
+      <div className="shift-tab-content" style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '14px 16px 18px 18px' }}>
         <div style={{ minWidth: 860 }}>
           {renderTimeAxis()}
           <div style={{ borderLeft: EDGE, borderRight: EDGE, borderBottom: EDGE }}>
@@ -3323,7 +3323,7 @@ export default function OwnerShiftsPage() {
           </div>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 24, padding: '0 28px 24px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 24, padding: '0 28px 24px', flex: 1, minHeight: 0, overflow: 'hidden' }}>
           {initialReady && !companyId && (
             <div style={{ background: '#FFFBEB', borderRadius: 12, padding: '14px 16px', fontSize: 13, color: '#92400E', border: '1px solid #FDE68A' }}>
               No company is linked to your profile yet. If you just accepted an invitation, try signing out and signing in again.
@@ -3332,8 +3332,8 @@ export default function OwnerShiftsPage() {
 
           {companyId && (
             <>
-              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 326px) minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 326px) minmax(0, 1fr)', gap: 16, alignItems: 'stretch', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0, minHeight: 0, overflowY: 'auto' }}>
         <section className="shift-dept-panel" style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'visible' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: 12, padding: '16px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, flexWrap: 'wrap' }}>
             {selectedDepartment ? (
@@ -3620,7 +3620,7 @@ export default function OwnerShiftsPage() {
         </section>
         </div>
 
-        <section className="shift-timeline-panel" style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, display: 'flex', flexDirection: 'column' }}>
+        <section className="shift-timeline-panel" style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, flexWrap: 'wrap', flexShrink: 0 }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

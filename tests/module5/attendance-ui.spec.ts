@@ -114,6 +114,12 @@ test.beforeAll(async () => {
   // "now", not a fixed future date, or both buttons would be hidden the whole test run. Open-ended
   // sidesteps the end-time gate entirely (both for Clock In and, once the supervisor releases it,
   // Clock Out) so this stays robust regardless of how long setup takes before the test body runs.
+  // KNOWN NIGHT-ONLY FLAKE (00:00–08:30 UTC+8 local): the dashboard's current-job lookup keys
+  // on the LOCAL date (casualDashboardService), but the clock-in window (canClockIn on the page
+  // AND casualAttendanceService.clockIn) parses shift times as UTC ("T...Z") against real now —
+  // between local midnight and ~08:30 no shift row can satisfy both, so this test can only pass
+  // when local date == UTC date (daytime). Fixing it requires reconciling Module 5's timezone
+  // handling, which is pending the attendance-module pivot decision.
   const now = new Date()
   const shiftStart = new Date(now.getTime() - 20 * 60000)
   const shiftEnd = new Date(now.getTime() - 5 * 60000)

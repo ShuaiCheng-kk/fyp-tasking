@@ -20,27 +20,27 @@ Platform-level roles (outside the company hierarchy): **User Admin** and **Marke
 
 ## Module 1 — Shift UC1–11
 
-- UC1 Create Shift — O, P, M
-- UC2 Create Shift Template — O, P, M
-- UC3 Edit Shift — O, P, M
-- UC4 Delete Shift — O, P, M
-- UC5 Publish / Unpublish Schedule — O, P, M
-- UC6 Duplicate Shift — O, P, M
-- UC7 Set Recurring Shift — O, P, M
-- UC8 Create Split Shift — O, P, M
-- UC9 View Clopening Conflict Warning — O, P, M
-- UC10 Bulk Shift Editor — O, P, M
-- UC11 Generate AI Schedule Suggestion — O, P, M
+- UC1 Create Shift — O, P
+- UC2 Create Shift Template — O, P
+- UC3 Edit Shift — O, P
+- UC4 Delete Shift — O, P
+- UC5 Publish / Unpublish Schedule — O, P
+- UC6 Duplicate Shift — O, P
+- UC7 Set Recurring Shift — O, P
+- UC8 Create Split Shift — O, P
+- UC9 View Clopening Conflict Warning — O, P
+- UC10 Bulk Shift Editor — O, P
+- UC11 Generate AI Schedule Suggestion — O, P
 
 ## Module 2 — Task UC12–23
 
 - UC12 Assign Task — O, P, M, E
 - UC13 Edit Task — O, P, M, E
-- UC14 Create Task Template — O, P, M, E
+- UC14 Create Task Template — O, P, M
 - UC15 Delete Task — O, P, M, E
-- UC16 Duplicate Task — O, P, M, E
-- UC17 Set Recurring Task — O, P, M, E
-- UC18 Archive Task — O, P, M, E
+- UC16 Duplicate Task — O, P, M
+- UC17 Set Recurring Task — O, P, M
+- UC18 Archive Task — O, P, M
 - UC19 Create Sub Task — O, P, M, E
 - UC20 Generate AI Task Assignment Suggestion — O, P, M
 - UC21 View Workload Rebalancing Alert — O, P, M
@@ -52,9 +52,9 @@ Platform-level roles (outside the company hierarchy): **User Admin** and **Marke
 - UC24 Create Department — O
 - UC25 Edit Department — O
 - UC26 Delete Department — O
-- UC27 Send Direct Invitation — O, P, M
-- UC28 Search Members — O, P, M, E
-- UC29 Activate / Deactivate Casual Worker — O, P, M
+- UC27 Send Direct Invitation — O, P
+- UC28 Search Members — O, P, M
+- UC29 Activate / Deactivate Casual Worker — O, P
 - UC30 Remove Team Member — O, P
 - UC31 Change Member Department — O
 - UC32 Invite Members by CSV — O
@@ -63,10 +63,10 @@ Platform-level roles (outside the company hierarchy): **User Admin** and **Marke
 
 ## Module 4 — Recruitment UC35–48
 
-- UC35 Post Job Opening — O, P, M
+- UC35 Publish Job Opening — O, P
 - UC36 Create Job Template — O, P, M
 - UC37 Edit Job Template — O, P, M
-- UC38 Archive Job Opening — O, P, M
+- UC38 Archive Job Opening — O, P
 - UC39 Duplicate Draft Job — O, P, M
 - UC40 Save Job as Draft — O, P, M
 - UC41 Submit Job Posting for Approval — M
@@ -92,16 +92,16 @@ Platform-level roles (outside the company hierarchy): **User Admin** and **Marke
 
 ## Module 6 — Communication UC58–61
 
-- UC58 Post Announcement — O, P, M, E
-- UC59 Edit Own Announcement — O, P, M, E
-- UC60 Delete Own Announcement — O, P, M, E
+- UC58 Post Announcement — O, P, M
+- UC59 Edit Own Announcement — O, P, M
+- UC60 Delete Own Announcement — O, P, M
 - UC61 Send Direct Message — O, P, M, E, CW
 
 ## Module 7 — Report UC62–64
 
-- UC62 View Workforce Analytics — O, P, M
-- UC63 View AI Anomaly Detection Report — O, P, M
-- UC64 Export Report as CSV — O, P, M
+- UC62 View Workforce Analytics — O, P
+- UC63 View AI Anomaly Detection Report — O, P
+- UC64 Export Report — O, P
 
 ## Module 8 — Account & Authentication UC65–71
 
@@ -109,8 +109,8 @@ Platform-level roles (outside the company hierarchy): **User Admin** and **Marke
 - UC66 Sign In — All Users
 - UC67 Forgot / Reset Password — All Users
 - UC68 Email Verification — O, P, M, E, CW, GU
-- UC69 Edit Own Profile — O, P, M, E, CW
-- UC70 Accept Company Invitation — O, P, M, E, CW
+- UC69 Edit Own Profile — O, P, M, E, CW, GU
+- UC70 Accept Company Invitation — P, M, E
 - UC71 Logout — All Users
 
 ## Module 9 — Marketing CMS UC72–75

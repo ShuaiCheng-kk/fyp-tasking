@@ -14,6 +14,7 @@ import {
   ReportFilters,
   ReportOverview,
   ReportPeriod,
+  TaskWorkloadRow,
   WorkforceAnalyticsReport,
 } from '@/types/Report'
 
@@ -118,24 +119,32 @@ export function previousPeriod(period: ReportPeriod): ReportPeriod {
 interface PeriodData {
   overview: ReportOverview
   departments: DepartmentPerformanceRow[]
+  workload: TaskWorkloadRow[]
   casual: Omit<CompanyReport['casual'], 'pool'>
 }
 
 async function buildPeriodData(filters: ReportFilters, now: Date): Promise<PeriodData> {
-  const [departments, managers, shifts, tasks, postings, deadlineTasks] = await Promise.all([
+  const [departments, managers, shifts, tasks, postings, deadlineTasks, workerCancellations] = await Promise.all([
     reportRepository.getDepartments(filters.company_id),
     reportRepository.getDepartmentManagers(filters.company_id),
     reportRepository.getShifts(filters),
     reportRepository.getTasksInRange(filters),
     reportRepository.getJobPostingsCreatedInRange(filters),
     reportRepository.getTasksByDeadlineRange(filters),
+    reportRepository.getWorkerCancellationsInRange(filters.company_id, filters.date_from, isoDateAddDays(filters.date_to, 1)),
   ])
 
   const assignments = await reportRepository.getAssignmentsByShiftIds(shifts.map(s => s.id))
   // Task assignees for the On-time Task Completion Rate KPI aren't necessarily also shift
   // assignees in this window, so their ids are folded into the same user lookup.
   const deadlineTaskAssigneeIds = [...new Set(deadlineTasks.map(t => t.assigned_user_id).filter((id): id is string => !!id))]
-  const combinedUserIds = [...new Set([...assignments.map(a => a.user_id), ...deadlineTaskAssigneeIds])]
+  // Per-person workload counts every task in the range, whose assignee may be neither a shift
+  // assignee nor a deadline-task assignee in this window — so their ids join the same lookup.
+  const rangeTaskAssigneeIds = [...new Set(tasks.map(t => t.assigned_user_id).filter((id): id is string => !!id))]
+  // A worker who cancelled a confirmed job may have no shift assignment at all this period —
+  // their name still has to resolve for the risk list, so their ids join the lookup too.
+  const cancellingUserIds = [...new Set(workerCancellations.map(c => c.user_id))]
+  const combinedUserIds = [...new Set([...assignments.map(a => a.user_id), ...deadlineTaskAssigneeIds, ...rangeTaskAssigneeIds, ...cancellingUserIds])]
   const [attendance, users, applicants, invitations] = await Promise.all([
     reportRepository.getAttendanceByAssignmentIds(assignments.map(a => a.id)),
     reportRepository.getUsersByIds(combinedUserIds),
@@ -175,10 +184,14 @@ async function buildPeriodData(filters: ReportFilters, now: Date): Promise<Perio
       absent_count: 0,
       labor_cost: 0,
       internal_attendance_rate: null,
+      internal_attendance_late_rate: null,
+      internal_attendance_absent_rate: null,
       internal_task_on_time_rate: null,
       hiring_success_rate: null,
       average_time_to_fill_days: null,
       casual_labor_cost: 0,
+      internal_attendance_records: 0,
+      internal_tasks_due: 0,
     }
     deptRows.set(key, row)
     return row
@@ -217,15 +230,22 @@ async function buildPeriodData(filters: ReportFilters, now: Date): Promise<Perio
       const stats = casualStats.get(assignment.user_id) ?? {
         user_id: assignment.user_id,
         full_name: user?.full_name ?? '',
+        profile_photo_url: user?.profile_photo_url ?? null,
         worked: 0,
+        assigned_shifts: 0,
         rejected_shifts: 0,
         late: 0,
         absent: 0,
+        cancellations: 0,
+        tasks_returned: 0,
         rehire_count: 0,
         on_time_attendance_rate: null,
         on_time_task_completion_rate: null,
         skills: user?.skills ?? null,
       }
+      // Every assignment counts as "requested", whatever became of it — rejected, no-show, or a
+      // shift that hasn't ended yet. This measures how often managers reach for this worker.
+      stats.assigned_shifts += 1
       if (rejected) stats.rejected_shifts += 1
 
       if (verdict.countable && !rejected) {
@@ -288,7 +308,11 @@ async function buildPeriodData(filters: ReportFilters, now: Date): Promise<Perio
 
   deptRows.forEach((row, key) => {
     const bucket = deptInternalAttendance.get(key)
-    row.internal_attendance_rate = bucket ? percent(bucket.present, bucket.present + bucket.late + bucket.absent) : null
+    const total = bucket ? bucket.present + bucket.late + bucket.absent : 0
+    row.internal_attendance_records = total
+    row.internal_attendance_rate = bucket ? percent(bucket.present, total) : null
+    row.internal_attendance_late_rate = bucket ? percent(bucket.late, total) : null
+    row.internal_attendance_absent_rate = bucket ? percent(bucket.absent, total) : null
   })
 
   // ── Tasks ──────────────────────────────────────────────────────────────────
@@ -305,6 +329,28 @@ async function buildPeriodData(filters: ReportFilters, now: Date): Promise<Perio
       row.overdue_open += 1
     }
   }
+  // ── Per-person task load ───────────────────────────────────────────────────
+  // Bucketed by assignee, not department: how the period's work was divided between people is
+  // what this product is for, and every chart on the report aggregates it away.
+  const workloadByUser = new Map<string, TaskWorkloadRow>()
+  for (const task of topLevelTasks) {
+    if (!task.assigned_user_id) continue
+    const user = usersById.get(task.assigned_user_id)
+    if (!user) continue
+    const row = workloadByUser.get(task.assigned_user_id) ?? {
+      user_id: task.assigned_user_id,
+      full_name: user.full_name,
+      role: user.role,
+      department_id: task.department_id ?? null,
+      department_name: task.department_id ? (departmentNames.get(task.department_id) ?? 'Department') : 'No department',
+      tasks_assigned: 0,
+      tasks_open: 0,
+    }
+    row.tasks_assigned += 1
+    if (task.status !== 'Complete') row.tasks_open += 1
+    workloadByUser.set(task.assigned_user_id, row)
+  }
+
   // On-time rate needs both timestamps — computed per department over completed tasks
   // that actually had a deadline.
   const deptOnTime = new Map<string, { onTime: number; due: number }>()
@@ -333,7 +379,7 @@ async function buildPeriodData(filters: ReportFilters, now: Date): Promise<Perio
   // Casual Worker task performance is judged per WORKER (pool analytics), not per task — tracked
   // as on-time/due counts so both the pass/fail Reliable Worker Rate and the continuous
   // "On-Time Task Completion Rate by Worker" chart can be derived from the same numbers.
-  const casualTaskStats = new Map<string, { onTime: number; due: number }>()
+  const casualTaskStats = new Map<string, { onTime: number; due: number; returned: number }>()
   for (const task of deadlineTasks) {
     if (task.parent_task_id || task.is_archived || !task.due_at) continue
     const dueDateKey = formatDateKey(new Date(task.due_at))
@@ -342,9 +388,12 @@ async function buildPeriodData(filters: ReportFilters, now: Date): Promise<Perio
     if (assignee?.role === 'Casual Worker') {
       const taskOnTime = task.status === 'Complete' && !!task.completed_at
         && new Date(task.completed_at).getTime() <= new Date(task.due_at).getTime()
-      const bucket = casualTaskStats.get(task.assigned_user_id!) ?? { onTime: 0, due: 0 }
+      const bucket = casualTaskStats.get(task.assigned_user_id!) ?? { onTime: 0, due: 0, returned: 0 }
       bucket.due += 1
       if (taskOnTime) bucket.onTime += 1
+      // Work-quality signal: the assigner rejected this task in Review at least once. Same
+      // once-per-task counting as the internal rework_count (a task bounced twice counts once).
+      if (task.rejected_at) bucket.returned += 1
       casualTaskStats.set(task.assigned_user_id!, bucket)
       continue
     }
@@ -362,13 +411,49 @@ async function buildPeriodData(filters: ReportFilters, now: Date): Promise<Perio
   }
   deptRows.forEach((row, key) => {
     const bucket = deptInternalTaskOnTime.get(key)
+    row.internal_tasks_due = bucket ? bucket.due : 0
     row.internal_task_on_time_rate = bucket ? percent(bucket.onTime, bucket.due) : null
   })
+
+  // Confirmed-job cancellations, folded onto the same per-worker stats — a worker can cancel a
+  // job whose shift never got assigned to them this period (or at all), so this may create a
+  // stats row casualStats.assigned_shifts never touched.
+  const cancellationCounts = new Map<string, number>()
+  for (const c of workerCancellations) {
+    cancellationCounts.set(c.user_id, (cancellationCounts.get(c.user_id) ?? 0) + 1)
+  }
+  for (const [userId, count] of cancellationCounts) {
+    const stats = casualStats.get(userId) ?? {
+      user_id: userId,
+      full_name: usersById.get(userId)?.full_name ?? '',
+      profile_photo_url: usersById.get(userId)?.profile_photo_url ?? null,
+      worked: 0,
+      assigned_shifts: 0,
+      rejected_shifts: 0,
+      late: 0,
+      absent: 0,
+      cancellations: 0,
+      tasks_returned: 0,
+      rehire_count: 0,
+      on_time_attendance_rate: null,
+      on_time_task_completion_rate: null,
+      skills: usersById.get(userId)?.skills ?? null,
+    }
+    stats.cancellations = count
+    casualStats.set(userId, stats)
+  }
+  // Task-quality signal, transferred onto the same rows the attendance loop already built.
+  for (const [userId, taskStat] of casualTaskStats) {
+    const stats = casualStats.get(userId)
+    if (stats) stats.tasks_returned = taskStat.returned
+  }
 
   // ── Casual Worker Pool Analytics — every KPI counts each worker ONCE ───────
   // "Worked" = at least one countable (ended, non-rejected) shift assignment in the period;
   // an absent-only worker still belongs to this period's pool (casualStats.worked counts
   // attended shifts, casualStats.absent counts no-shows — either > 0 means they were used).
+  // A worker who only cancelled (no attended/absent shift this period) is surfaced separately by
+  // the "Workers Needing Attention" list, not folded into this population.
   const workedCasuals = [...casualStats.values()].filter(s => s.worked + s.absent > 0)
   // Rehired = already attended (clocked in on) a shift of this company before the period —
   // i.e. before their first worked shift inside the range — so not a first-time worker.
@@ -560,6 +645,7 @@ async function buildPeriodData(filters: ReportFilters, now: Date): Promise<Perio
     departments: [...deptRows.values()].sort((a, b) =>
       (b.assignments + b.tasks_total) - (a.assignments + a.tasks_total),
     ),
+    workload: [...workloadByUser.values()].sort((a, b) => b.tasks_assigned - a.tasks_assigned),
     casual: {
       funnel: { applied: totalApplied, accepted: totalAccepted, confirmed: totalConfirmed },
       fill_rate: percent(openingsFilled, openingsTotal),
@@ -600,6 +686,8 @@ export const reportService = {
       overview: current.overview,
       previous_overview: previous.overview,
       departments: current.departments,
+      previous_departments: previous.departments,
+      workload: current.workload,
       casual: { ...current.casual, pool: poolRows },
     }
   },

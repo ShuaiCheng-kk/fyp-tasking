@@ -2999,7 +2999,7 @@ export default function TeamPage() {
       <OwnerSidebar />
 
       {/* ── MAIN ───────────────────────────────────────────────────────────── */}
-      <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+      <main style={{ marginLeft: '64px', flex: 1, height: '100vh', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {/* Page header */}
         <div style={{ padding: '20px 28px 0', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
           <div>
@@ -3013,9 +3013,9 @@ export default function TeamPage() {
           </div>
         </div>
 
-        <div style={{ padding: '16px 28px 28px', display: 'flex', flexDirection: 'column', gap: 0 }}>
+        <div style={{ padding: '16px 28px 28px', display: 'flex', flexDirection: 'column', gap: 0, flex: 1, minHeight: 0, overflow: 'hidden' }}>
 
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', marginBottom: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', marginBottom: 20, flexShrink: 0 }}>
             <div
               ref={tabBarRef}
               style={{
@@ -3083,7 +3083,7 @@ export default function TeamPage() {
             </div>
           </div>
 
-          <div key={teamViewTab} style={{ animation: 'teamTabContentIn 0.24s ease-out both' }}>
+          <div key={teamViewTab} style={{ animation: 'teamTabContentIn 0.24s ease-out both', flex: 1, minHeight: 0, overflow: 'auto' }}>
           {teamViewTab === 'all' && (() => {
             const leftBlockIds = allBlockOrder.slice(0, 3)
             const rightBlockIds = allBlockOrder.slice(3)

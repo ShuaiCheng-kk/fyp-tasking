@@ -2,6 +2,9 @@ export interface AIAnomaly {
   id: string
   area: 'Dashboard' | 'Report' | 'Attendance' | 'Recruitment'
   severity: 'low' | 'medium' | 'high'
+  // Which department the finding is about — the UI renders this as a colored badge, so the
+  // title sentence never names the department itself.
+  department: string
   title: string
   evidence: string[]
   recommended_action: string

@@ -35,8 +35,8 @@ export default function ShowcaseCard({
           <div style={{ width: 30, height: 30, borderRadius: 9, background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             {icon}
           </div>
-          <div style={{ minWidth: 0, flexShrink: 0 }}>
-            <p style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', margin: 0, letterSpacing: '-0.2px', lineHeight: 1.2 }}>{title}</p>
+          <div style={{ minWidth: 0 }}>
+            <p style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', margin: 0, letterSpacing: '-0.2px', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</p>
           </div>
           {rightContent}
         </div>

@@ -84,10 +84,10 @@ export default function WorkerLayout({
 
   if (role === 'Guest User') {
     return (
-      <div style={{ minHeight: '100vh', background: '#F9FAFB' }}>
+      <div style={{ height: '100vh', overflow: 'hidden', background: '#F9FAFB' }}>
         <GuestSidebar />
 
-        <main style={{ marginLeft: 64, minHeight: '100vh' }}>
+        <main style={{ marginLeft: 64, height: '100vh', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           {children}
         </main>
       </div>
@@ -95,10 +95,10 @@ export default function WorkerLayout({
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: '#F9FAFB' }}>
+    <div style={{ height: '100vh', overflow: 'hidden', background: '#F9FAFB' }}>
       <CasualSidebar />
 
-      <main style={{ marginLeft: 64, minHeight: '100vh' }}>
+      <main style={{ marginLeft: 64, height: '100vh', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
         {children}
       </main>
     </div>

@@ -33,6 +33,12 @@ Platform-level roles — manage the SaaS platform itself, not scoped to a single
 
 **UI principle — applies to every role above:** there is exactly **one shared UI/component system** for the whole app. Owner is built first as the full feature superset; every other role (Partner, Manager, Employee, Marketing Admin, User Admin, Casual Worker, Guest) reuses the *same* components, layouts, and visual design — never a separate theme, never a rebuilt page. The only thing that changes per role is **which features/menu items are visible and which actions are permitted**, gated by permissions — not a visually distinct UI. Each role can still have its own Next.js route group (`src/app/owner/`, `src/app/partner/`, etc.) for access-control routing, but it must render the shared components, not a duplicated bespoke version.
 
+**How lower-role pages are derived from Owner (the mechanism for the principle above):**
+1. **Extract, don't copy.** When bringing a page to Partner/Manager/Employee, extract the Owner page's body into a shared view component under `src/components/<feature>/` that takes props for `sidebar`, role scope, and permissions. Each role's `page.tsx` becomes a thin wrapper (a few lines) passing its own sidebar and role params. Reference implementation: `CompanySettingsView` — `src/app/partner/settings/page.tsx` is 6 lines. Because layout, adaptive (自适应) behavior, hover motions, and breakpoints all live inside the shared component, every role inherits them automatically and stays in sync with future fixes.
+2. **Never copy-paste an Owner `page.tsx` into another role's folder.** The pre-existing `src/app/manager|employee|partner/` pages (2,000+-line standalone copies) are stale snapshots from before the July 2026 Owner rework — they have already drifted (no adaptive layout, old UI). When a role's module is built/reworked, **replace** its copied page with the shared-component pattern; do not patch the stale copy.
+3. **Which features each role gets comes from `docs/Use_Cases_List.md`** — the per-role feature/UC breakdown there is the checklist for what to include, hide, or gate when deriving a role's version of a page. Menu items and buttons a role lacks are hidden/gated via permission props, not by forking the component.
+4. **Workflow differences are logic-layer changes, not UI forks.** Example: Owner posts a job directly; a Manager's job posting instead goes to the Owner for approval before it becomes active. That difference lives in `service.ts`/`route.ts` (and any needed schema), plus permission props that change which buttons/labels/statuses the shared component shows — the page component itself is not duplicated or re-styled.
+
 **Subscription tier (Free/Paid) is a second, independent axis — same shared-UI principle, gated separately from role.** Build every feature assuming the Paid tier first (the full feature set per `docs/Use_Cases_List.md`), then gate Free-tier restrictions through **one shared mechanism** (e.g. a single `isFeatureEnabled(plan, ucId)` check or a `<PaidGate>` wrapper component) — never by duplicating "if Free, hide this" logic separately on each role's page. Role scope and tier gating both apply at once and independently: a Manager on a Free-plan company still only sees their own department (role scope) and, within that, only the Free-tier features (tier gating). Gating happens at the individual feature/action level inside the existing shared page (e.g. one button on the Shifts page shows an upgrade prompt instead of running) — never by building a separate "Free" page or duplicating a page per tier.
 
 ---
@@ -46,14 +52,14 @@ Platform-level roles — manage the SaaS platform itself, not scoped to a single
 **Conceptual map (tables and relationships, not exact columns — verify columns live):**
 - `shifts` / `shift_assignments` — a Shift and its assignment are separate tables; a shift can be assigned to one or more users via `shift_assignments`. There is no `assigned_user_id` on `shifts` itself.
 - `tasks` — belongs to a Shift; status flow `Todo` → `In Progress` → `Done`; supports sub-tasks via `parent_task_id`.
-- `attendance_records` — encodes the 4-tier approval chain described below.
+- `attendance_records` — clock in/out records. (The legacy 4-tier approval columns may still exist in the schema; the approval chain itself is cut — see below.)
 - `job_postings`, `job_applicants`, `job_invitations` — recruitment.
 - `manager_departments`, `employee_departments`, `casualworker_departments` — role↔department membership; authoritative for "who belongs to which department."
 
 **Business rules that hold regardless of column changes:**
 - **Task assignment is strictly one level down**: Owner→Manager, Manager→Employee, Employee→Casual Worker. No self-assign, no skipping levels.
 - **Both Employees and Casual Workers** are scheduled (via `shift_assignments`) and assigned tasks.
-- **Attendance approval = 4 tiers**: Casual Worker clocks in/out → supervising **Employee** confirms and submits → **Manager** reviews → **Owner** final approval. Each tier can approve, reject, or send back.
+- **Attendance has NO multi-tier approval chain** (the old 4-tier chain is cut — confirmed decision). Per `docs/Use_Cases_List.md` Module 5: Managers/Employees/Casual Workers clock in/out (UC49); Owner/Partner can modify clock times directly (UC56); approvals exist only for Shift Swap (UC52–53) and Fixed Day Off (UC54–55) requests, decided by O/P/M, optionally AI-assisted (UC57).
 
 **Local DB tooling — so schema changes never require manual copy-paste into the Supabase dashboard:**
 - The project uses the **Supabase CLI**, linked to the live project. Schema changes are written as migration files under `supabase/migrations/` and applied with `supabase db push` — directly from the terminal/VSCode.
@@ -82,8 +88,17 @@ Strictly follow MVC + Repository:
 - Announcements + Messages = one "Communication" module, two tabs.
 - Any clickable non-button surface (for example cards, badges, tiles, rows, and plan/subscription chips) must have a visible interaction motion such as hover lift, shadow, or border/accent change. Buttons already have their own button states; this rule is for clickable surfaces that might otherwise look static.
 - No subtitles/helper-text captions under section headings or toggles (e.g. a small gray line under a heading like "Repeat this shift" explaining what it does). The control and its label must be self-explanatory; don't add a second line of descriptive copy underneath.
+- Scrollbars are hover-revealed app-wide, via ONE global rule in `globals.css` (`*`-selector: `scrollbar-color` transparent until `:hover`, thin track space always reserved so content never shifts). Never add per-page/per-block always-visible scrollbar styling, and never re-implement this locally — every scrollable Block on every role's page inherits it automatically.
 - RLS disabled in dev; re-enable before production.
 - Read existing files before creating new ones. Don't change unrelated pages or API routes.
+
+**Layout adaptation rule ("自适应" / no-page-scroll) — applies to EVERY page, current and future.** When the user says "做自适应" / "adapt this page" (or when building any new page), apply this standard without further explanation needed:
+1. **The page itself never scrolls** — vertically or horizontally, on any screen size. `<main>` is locked to one viewport: `height:'100vh', overflow:'hidden', display:'flex', flexDirection:'column'`. Page header and tab bar are `flexShrink:0` and always visible.
+2. **Blocks scroll internally instead** — whichever panel's content overflows gets its own scrollbar: content area `flex:1, minHeight:0, overflow:'auto'` (or each parallel panel gets its own `overflowY:'auto'`). Wide tables/calendars scroll horizontally inside their own panel (`overflowX:'auto'` + inner `minWidth`), with sticky headers where useful.
+3. **Every flex/grid child on the scroll path needs `minHeight:0` (vertical) / `minWidth:0` (horizontal)** — without it the child refuses to shrink and blows the layout open instead of scrolling.
+4. **Width breakpoints via the `useIsCompactViewport` hook** (`src/hooks/useIsCompactViewport.ts`), not CSS media queries — the app uses inline styles which media queries can't override. Existing precedents: multi-column grids stack to one column below ~1300px; header action buttons collapse to icon buttons below ~1400px.
+5. **Verify at 1192×745** (the user's real laptop CSS viewport) with seeded data (`node scripts/seed.js`, login `owner@test.com`/`111111`) via a Playwright screenshot run: assert `document.documentElement.scrollHeight === clientHeight` and same for width, on every tab of the page.
+Reference implementations: the six owner pages (attendance, shifts, communication, tasks, team, recruitment) were converted to this pattern in July 2026 — copy their structure.
 
 ---
 
@@ -144,7 +159,7 @@ Modules 9 (Marketing CMS) and 10 (User & Company Admin) are **out of scope** —
 2. **Module 3 — Team / Company** (UC24–34) — departments, members, company profile that every other module references.
 3. **Module 1 — Shift** (UC1–11) — scheduling is the base Task and Attendance sit on.
 4. **Module 2 — Task** (UC12–23) — tasks are assigned on shifts.
-5. **Module 5 — Attendance** (UC49–57) — clock in/out and the approval chain depend on shift assignment existing.
+5. **Module 5 — Attendance** (UC49–57) — clock in/out, swap/day-off requests depend on shift assignment existing.
 6. **Module 4 — Recruitment** (UC35–48) — hiring pipeline that feeds Casual Workers, which Shift/Task/Attendance then consume for that role.
 7. **Module 6 — Communication** (UC58–61) — independent; announcements and messages.
 8. **Module 7 — Report** (UC62–64) — downstream consumer of Shift/Task/Attendance data; build last.

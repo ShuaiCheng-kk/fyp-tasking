@@ -14,6 +14,7 @@ export interface ReportUserRow {
   role: string
   hourly_rate: number | null
   skills: string | null
+  profile_photo_url: string | null
 }
 
 export interface ReportDepartmentManagerRow {
@@ -141,8 +142,23 @@ export const reportRepository = {
     return (data ?? []) as AttendanceRecord[]
   },
 
-  // Rehire Rate KPI: of the given casual workers, which ones actually attended (clocked in on)
+  // Returning Worker Rate KPI: of the given casual workers, which ones actually attended (clocked in on)
   // at least one non-rejected shift of this company dated BEFORE the period started.
+  // Confirmed jobs cancelled BY THE WORKER inside [date_from, date_to_exclusive) — employer-side
+  // cancels (cancelled_role='employer') are never returned, so they can't be pinned on the worker.
+  async getWorkerCancellationsInRange(company_id: string, date_from: string, date_to_exclusive: string): Promise<Array<{ user_id: string }>> {
+    const { data, error } = await supabase
+      .from('recruitment_cancellations')
+      .select('cancelled_by, job_postings!inner(company_id)')
+      .eq('job_postings.company_id', company_id)
+      .eq('cancelled_role', 'worker')
+      .not('cancelled_by', 'is', null)
+      .gte('created_at', date_from)
+      .lt('created_at', date_to_exclusive)
+    if (error) throw new Error(error.message)
+    return (data ?? []).map(row => ({ user_id: row.cancelled_by as string }))
+  },
+
   async getPriorAttendedCasualUserIds(company_id: string, user_ids: string[], before_date: string): Promise<string[]> {
     if (user_ids.length === 0) return []
     const { data, error } = await supabase
@@ -161,7 +177,7 @@ export const reportRepository = {
     if (ids.length === 0) return []
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, role, hourly_rate, skills')
+      .select('id, full_name, role, hourly_rate, skills, profile_photo_url')
       .in('id', ids)
     if (error) throw new Error(error.message)
     return (data ?? []) as ReportUserRow[]
