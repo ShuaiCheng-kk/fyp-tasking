@@ -1,86 +1,26 @@
-﻿'use client'
+'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import {
-  ChevronDown, CheckCircle, Eye,
-  Users, ClipboardList, Timer,
-  Activity, MessageCircle,
-  UserRound, UserCog, CheckCheck,
-  Target, Crown,
-} from 'lucide-react'
 import { createBrowserClient } from '@supabase/ssr'
+import {
+  ListChecks, CheckSquare, ClipboardList, UserPlus,
+  ArrowRightLeft, Calendar, Eye, Users, Check, ArrowRight, ArrowDown, CheckCircle2,
+  Clock, Hourglass, ChevronDown, ChevronUp, AlertCircle, Search,
+} from 'lucide-react'
+import DepartmentBadge from '@/components/DepartmentBadge'
+import { deptColor } from '@/lib/deptColor'
 import OwnerSidebar from '@/components/OwnerSidebar'
 import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
-import ScheduleTimeline from '@/components/ScheduleTimeline'
-import { TimelineRow } from '@/types/Timeline'
-import { Badge } from '@/components/ui/badge'
+import { ShowcaseCard } from '@/components/panel'
+import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
+import {
+  AttendanceDepartmentGroup, AttendancePersonRow, AttendanceRoleGroup,
+  OwnerDashboardSummary, TaskOverviewGroup, WaitingOnYouItem, WaitingOnYouItemId,
+} from '@/types/OwnerDashboard'
 
-// ─── Local types ──────────────────────────────────────────────────────────────
-
-type TaskItem = {
-  id: string
-  title: string
-  status: string
-  priority?: string | null
-  percentage_complete?: number
-  assignee_name?: string
-  assigned_user_id?: string | null
-  created_at?: string
-}
-
-type TaskStats = {
-  assigned: number
-  inProgress: number
-  review: number
-  complete: number
-  tasks?: TaskItem[]
-}
-
-type ActivityFeedEvent = {
-  id: string
-  type: 'task_updated'
-  actor_name: string
-  department: string
-  timestamp: string
-  description: string
-  status: string
-}
-
-type Company = {
-  id: string
-  name: string
-  plan: string
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function timeAgo(ts: string): string {
-  const diff = Math.floor((Date.now() - new Date(ts).getTime()) / 1000)
-  if (diff < 60) return 'just now'
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
-  return `${Math.floor(diff / 86400)}d ago`
-}
-
-function formatDateKey(date: Date): string {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
-
-import { deptColor } from '@/lib/deptColor'
-
-const PANEL_ORDER_KEY = 'owner_dashboard_panel_order'
-const ALL_PANELS = ['focus', 'team', 'activity', 'tasks'] as const
-type PanelId = typeof ALL_PANELS[number]
-function mergePanelOrder(saved: string[]): PanelId[] {
-  const valid = saved.filter((id): id is PanelId => (ALL_PANELS as readonly string[]).includes(id))
-  const missing = ALL_PANELS.filter(id => !valid.includes(id))
-  return [...valid, ...missing]
-}
+// ─── Spinner ──────────────────────────────────────────────────────────────────
 
 function Spinner({ size = 16, dark = false }: { size?: number; dark?: boolean }) {
   return (
@@ -91,1095 +31,883 @@ function Spinner({ size = 16, dark = false }: { size?: number; dark?: boolean })
   )
 }
 
-function roleRank(role: string): number {
-  if (role === 'Manager') return 0
-  if (role === 'Employee') return 1
-  return 2
-}
-
-function sortRowsByRole(rows: TimelineRow[]): TimelineRow[] {
-  return [...rows].sort((a, b) => roleRank(a.role) - roleRank(b.role) || a.full_name.localeCompare(b.full_name))
-}
-
-function priorityRank(priority?: string | null): number {
-  const value = priority ?? 'None'
-  if (value === 'Urgent') return 0
-  if (value === 'High') return 1
-  if (value === 'Medium') return 2
-  if (value === 'Low') return 3
-  return 4
-}
-
-function priorityBadgeClass(priority?: string | null): string {
-  const value = priority ?? 'None'
-  if (value === 'Urgent') return 'bg-red-100 text-red-700 border border-red-200'
-  if (value === 'High') return 'bg-orange-100 text-orange-700 border border-orange-200'
-  if (value === 'Medium') return 'bg-yellow-100 text-yellow-700 border border-yellow-200'
-  if (value === 'Low') return 'bg-gray-100 text-gray-500 border border-gray-200'
-  return 'bg-gray-50 text-gray-400 border border-gray-200'
-}
-
-// ─── Animated counter ────────────────────────────────────────────────────────
-
-function AnimatedNumber({ value, duration = 550 }: { value: number; duration?: number }) {
-  const [display, setDisplay] = useState(value)
-  const prevRef = useRef(value)
-  const rafRef  = useRef<number | null>(null)
-
-  useEffect(() => {
-    const from = prevRef.current
-    const to   = value
-    if (from === to) return
-    if (rafRef.current) cancelAnimationFrame(rafRef.current)
-    const start = performance.now()
-    const tick = (now: number) => {
-      const t = Math.min((now - start) / duration, 1)
-      const eased = 1 - (1 - t) ** 3       // ease-out cubic
-      setDisplay(Math.round(from + (to - from) * eased))
-      if (t < 1) rafRef.current = requestAnimationFrame(tick)
-      else prevRef.current = to
-    }
-    rafRef.current = requestAnimationFrame(tick)
-    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
-  }, [value, duration])
-
-  return <>{display.toLocaleString()}</>
-}
-
-// ─── Task status badge ────────────────────────────────────────────────────────
-
-function TaskStatusBadge({ status }: { status: string }) {
-  const styles: Record<string, { background: string; color: string }> = {
-    'In Progress': { background: '#EFF6FF', color: '#2563EB' },
-    'Review':      { background: '#FEFCE8', color: '#A16207' },
-    'Complete':    { background: '#F0FDF4', color: '#16A34A' },
-    'Assigned':    { background: '#F3F4F6', color: '#4B5563' },
-  }
-  const s = styles[status] ?? { background: '#F3F4F6', color: '#4B5563' }
+function EmptyRow({ text }: { text: string }) {
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', height: 22, borderRadius: 999, padding: '0 9px', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap', background: s.background, color: s.color }}>
-      {status}
+    <div style={{ background: '#F8FAFC', borderRadius: 14, padding: '20px 0', textAlign: 'center', fontSize: 12, fontWeight: 600, color: '#94A3B8' }}>
+      {text}
+    </div>
+  )
+}
+
+function CountChip({ value }: { value: string | number }) {
+  return (
+    <span style={{ fontSize: 13, fontWeight: 700, color: '#64748B', background: '#F1F5F9', borderRadius: 999, padding: '2px 10px', whiteSpace: 'nowrap' }}>
+      {value}
     </span>
+  )
+}
+
+// Same look as ShowcaseCard's built-in search input (Team page) — used in block headers where
+// the search must sit to the LEFT of the corner link action.
+function HeaderSearchInput({ value, onChange, width = 180 }: { value: string; onChange: (v: string) => void; width?: number }) {
+  return (
+    <div style={{ position: 'relative', flexShrink: 0 }}>
+      <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#9CA3AF', pointerEvents: 'none' }} />
+      <input
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        style={{ width, height: 34, borderRadius: 999, border: '1px solid #E5E7EB', background: '#F9FAFB', padding: '0 12px 0 32px', fontSize: 13, color: '#111827', outline: 'none', boxSizing: 'border-box' }}
+        onFocus={e => { e.currentTarget.style.borderColor = '#F97316'; e.currentTarget.style.background = '#FFFFFF' }}
+        onBlur={e => { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.background = '#F9FAFB' }}
+      />
+    </div>
+  )
+}
+
+function LinkAction({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{ background: 'none', border: 'none', color: '#F97316', fontSize: 13.5, fontWeight: 700, cursor: 'pointer', padding: '2px 4px', whiteSpace: 'nowrap' }}
+    >
+      {label}
+    </button>
+  )
+}
+
+// ─── Waiting On You ─────────────────────────────────────────────────────────────
+
+// Icons mirror what each destination page/block actually uses: Shift Swap cards use the ⇄
+// glyph (ArrowRightLeft), Off Day uses Calendar, Pending Approval uses ClipboardList,
+// the Applicants panel uses Users, and the Tasks Review status uses Eye.
+const WAITING_META: Record<WaitingOnYouItemId, { icon: React.ReactNode; accent: string; accentBg: string; sub: string }> = {
+  shift_swap:           { icon: <ArrowRightLeft size={26} />, accent: '#DC2626', accentBg: '#FEF2F2', sub: 'Swaps need your decision' },
+  off_day_deadline:     { icon: <Calendar size={26} />,       accent: '#CA8A04', accentBg: '#FEFCE8', sub: 'Time to plan next week' },
+  job_posting_approval: { icon: <ClipboardList size={26} />,  accent: '#0D9488', accentBg: '#F0FDFA', sub: 'New postings to review' },
+  applicant_accept:     { icon: <Users size={26} />,          accent: '#3B82F6', accentBg: '#EFF6FF', sub: 'Applicants awaiting review' },
+  task_review:          { icon: <Eye size={26} />,            accent: '#DB2777', accentBg: '#FDF2F8', sub: 'Tasks need your review' },
+}
+
+const WAITING_ROUTES: Record<WaitingOnYouItemId, string> = {
+  shift_swap: '/owner/attendance?tab=swaps',
+  off_day_deadline: '/owner/attendance?tab=fixedoff',
+  job_posting_approval: '/owner/recruitment?view=pending',
+  applicant_accept: '/owner/recruitment',
+  task_review: '/owner/tasks',
+}
+
+// Shared stat-action card look (Waiting On You + Recruitment Overview): icon badge with a big
+// count, label + arrow, sub line; count 0 flips into the green "All caught up" done state.
+function StatActionCard({ count, label, sub, icon, accent, accentBg, onClick }: {
+  count: number; label: string; sub: string; icon: React.ReactNode; accent: string; accentBg: string; onClick: () => void
+}) {
+  const done = count === 0
+  const meta = { icon, accent, accentBg, sub }
+  return (
+    <div
+      onClick={onClick}
+      style={{
+        flex: 1, minWidth: 150, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12,
+        padding: '18px 19px', borderRadius: 14,
+        background: done ? '#F0FDF4' : '#FFFFFF',
+        border: `1px solid ${done ? '#D1FAE5' : '#E5E7EB'}`,
+        cursor: 'pointer', transition: 'transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease',
+      }}
+      onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 6px 16px rgba(15,23,42,0.08)'; e.currentTarget.style.borderColor = done ? '#A7F3D0' : '#CBD5E1' }}
+      onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.borderColor = done ? '#D1FAE5' : '#E5E7EB' }}
+    >
+      {/* Top row: icon badge with the big count sitting to its right */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+        <span style={{
+          width: 56, height: 56, borderRadius: 15, background: done ? '#DCFCE7' : meta.accentBg,
+          color: done ? '#16A34A' : meta.accent, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+        }}>
+          {done ? <Check size={28} /> : meta.icon}
+        </span>
+        {!done && (
+          <span style={{ fontSize: 32, fontWeight: 800, lineHeight: 1, color: meta.accent, fontVariantNumeric: 'tabular-nums' }}>
+            {count}
+          </span>
+        )}
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+          <span style={{
+            fontSize: 15, fontWeight: 700, lineHeight: 1.3, color: '#0F172A',
+            textDecoration: done ? 'line-through' : 'none', textDecorationThickness: done ? '1.5px' : undefined,
+          }}>
+            {label}
+          </span>
+          {!done && (
+            <span style={{ color: meta.accent, display: 'flex', flexShrink: 0 }}>
+              <ArrowRight size={18} />
+            </span>
+          )}
+        </div>
+        <p style={{ fontSize: 12.5, fontWeight: 600, margin: '5px 0 0', color: done ? '#16A34A' : '#64748B' }}>
+          {done ? 'All caught up' : meta.sub}
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function WaitingOnYouCard({ item, onClick }: { item: WaitingOnYouItem; onClick: () => void }) {
+  const meta = WAITING_META[item.id]
+  return (
+    <StatActionCard
+      count={item.count}
+      label={item.label}
+      sub={meta.sub}
+      icon={meta.icon}
+      accent={meta.accent}
+      accentBg={meta.accentBg}
+      onClick={onClick}
+    />
+  )
+}
+
+// ─── Task Overview ──────────────────────────────────────────────────────────────
+
+// href: where "View all …" (and the group's task rows) deep-link on the Task page —
+// Overdue/Due Today preset the Kanban sort to Nearest Deadline; Delay Alert auto-highlights
+// the delayed tasks on the board (same as clicking the Task Delay Alert count there).
+const TASK_GROUP_META: Record<string, { color: string; chipBg: string; iconBg: string; bar: string; rowBg: string; viewAll: string; icon: React.ReactNode; sub: string; href: string }> = {
+  overdue:     { color: '#DC2626', chipBg: '#FEF2F2', iconBg: '#FEE2E2', bar: '#F87171', rowBg: '#FFFFFF', viewAll: 'View all overdue tasks', icon: <Clock size={26} />,        sub: 'Act now',  href: '/owner/tasks?sort=deadline' },
+  delay_alert: { color: '#EA580C', chipBg: '#FFF7ED', iconBg: '#FFEDD5', bar: '#FDBA74', rowBg: '#FFFBF5', viewAll: 'View all delay alerts',  icon: <Hourglass size={26} />,    sub: 'Due soon', href: '/owner/tasks?show=delay_alerts' },
+  due_today:   { color: '#2563EB', chipBg: '#EFF6FF', iconBg: '#DBEAFE', bar: '#93C5FD', rowBg: '#FFFFFF', viewAll: 'View all tasks due today', icon: <Calendar size={26} />,   sub: 'On today\'s plate', href: '/owner/tasks?sort=deadline' },
+  completed:   { color: '#16A34A', chipBg: '#F0FDF4', iconBg: '#DCFCE7', bar: '#86EFAC', rowBg: '#FFFFFF', viewAll: 'View all completed tasks', icon: <CheckCircle2 size={26} />, sub: 'Great job!', href: '/owner/tasks?show=completed_today' },
+}
+
+// Left summary card, one per non-empty group — white card, icon bubble, big count.
+// Display-only (not clickable); fills its pair-row's height (see the Task Overview body layout).
+function TaskStatCard({ group }: { group: TaskOverviewGroup }) {
+  const meta = TASK_GROUP_META[group.key]
+  return (
+    <div style={{
+      height: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      textAlign: 'center', gap: 10, padding: '18px 12px', borderRadius: 16,
+      background: '#FFFFFF', border: '1px solid #E5E7EB',
+    }}>
+      <span style={{
+        width: 56, height: 56, borderRadius: 999, background: meta.iconBg, color: meta.color,
+        display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginBottom: 4,
+      }}>
+        {meta.icon}
+      </span>
+      <div style={{ fontSize: 15, fontWeight: 700, color: '#0F172A' }}>{group.label}</div>
+      <div style={{ fontSize: 32, fontWeight: 800, color: meta.color, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>{group.count}</div>
+      <div style={{ fontSize: 12.5, fontWeight: 600, color: '#64748B' }}>{meta.sub}</div>
+    </div>
+  )
+}
+
+// "5 days overdue" / "Overdue today" — from the row's local-wall-clock due date
+// (same formatDateKey convention as the service; never a raw UTC slice).
+function taskOverdueLabel(due_at: string | null): string | null {
+  if (!due_at) return null
+  const dayKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  const diffDays = Math.round((new Date(`${dayKey(new Date(due_at))}T00:00:00`).getTime() - new Date(`${dayKey(new Date())}T00:00:00`).getTime()) / 86_400_000)
+  if (diffDays >= 0) return 'Overdue today'
+  return diffDays === -1 ? '1 day overdue' : `${-diffDays} days overdue`
+}
+
+// "17 Jul, 12:49PM" — exact clone of the Task page kanban card's deadline display.
+function formatTaskStamp(iso: string | null): string | null {
+  if (!iso) return null
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return null
+  const hour12 = d.getHours() % 12 || 12
+  const time = `${String(hour12).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}${d.getHours() < 12 ? 'AM' : 'PM'}`
+  return `${String(d.getDate()).padStart(2, '0')} ${d.toLocaleDateString('en-US', { month: 'short' })}, ${time}`
+}
+
+function TaskGroupSection({ group, onOpenTask }: { group: TaskOverviewGroup; onOpenTask: () => void }) {
+  const isCompleted = group.key === 'completed'
+  // Scrollable list whose viewport height snaps to a whole number of cards, so the resting
+  // view never shows a half-cut card. The down-chevron under it is a pure HINT (not a button)
+  // that there is more below the current scroll position — it fades out at the bottom.
+  const wrapRef = useRef<HTMLDivElement | null>(null)
+  const listRef = useRef<HTMLDivElement | null>(null)
+  const [listHeight, setListHeight] = useState<number | null>(null)
+  const [hasMoreBelow, setHasMoreBelow] = useState(false)
+  useEffect(() => {
+    const wrap = wrapRef.current
+    const list = listRef.current
+    if (!wrap || !list) return
+    const GAP = 10
+    const HINT_H = 28 // hint row height incl. its top margin — keep in sync with the hint div below
+    const measure = () => {
+      const first = list.firstElementChild as HTMLElement | null
+      // Fractional height (borders/subpixels included) — offsetHeight rounds down and clips
+      // the last visible card's bottom border. The +2px slack stays inside the 10px card gap.
+      const cardH = first?.getBoundingClientRect().height ?? 0
+      if (!cardH) return
+      const fit = Math.max(1, Math.floor((wrap.clientHeight - HINT_H + GAP) / (cardH + GAP)))
+      setListHeight(fit < group.tasks.length ? Math.ceil(fit * (cardH + GAP) - GAP) + 2 : null)
+    }
+    const updateHint = () => setHasMoreBelow(list.scrollTop + list.clientHeight < list.scrollHeight - 4)
+    measure()
+    updateHint()
+    list.addEventListener('scroll', updateHint, { passive: true })
+    const wrapObserver = new ResizeObserver(measure)
+    wrapObserver.observe(wrap)
+    const listObserver = new ResizeObserver(updateHint)
+    listObserver.observe(list)
+    return () => { list.removeEventListener('scroll', updateHint); wrapObserver.disconnect(); listObserver.disconnect() }
+  }, [group.tasks.length])
+  return (
+    <div ref={wrapRef} style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      <div
+        ref={listRef}
+        style={{
+          height: listHeight ?? undefined, flexGrow: listHeight == null ? 1 : 0, flexShrink: 0,
+          minHeight: 0, overflowY: 'auto', scrollbarGutter: 'stable', scrollSnapType: 'y proximity',
+        }}
+      >
+        {group.tasks.map(task => {
+          // Task page kanban card clone, re-arranged: top row = department badge + avatar + name,
+          // with the stamp pinned right (Overdue = how long overdue; others = the deadline);
+          // the title sits on its own line below.
+          const stamp = isCompleted
+            ? formatTaskStamp(task.completed_at)
+            : group.key === 'overdue'
+              ? taskOverdueLabel(task.due_at)
+              : formatTaskStamp(task.due_at)
+          const warning = !isCompleted && !!task.due_at &&
+            (new Date(task.due_at) < new Date() || new Date(task.due_at).getTime() - Date.now() <= 2 * 60 * 60 * 1000)
+          return (
+            <div
+              key={task.id}
+              onClick={onOpenTask}
+              className="task-card"
+              style={{
+                background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 10, padding: '14px 16px',
+                marginBottom: 10, cursor: 'pointer', scrollSnapAlign: 'start',
+                transition: 'transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 3px 10px rgba(15,23,42,0.07)' }}
+              onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none' }}
+            >
+              {task.department_id && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                  <DepartmentBadge departmentId={task.department_id} departmentName={task.department_name} />
+                </div>
+              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: 0, lineHeight: 1.4, minWidth: 0, flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{task.title}</p>
+                {stamp && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                    {warning ? <AlertCircle size={11} color="#EF4444" /> : <Clock size={11} color="#9CA3AF" />}
+                    <span style={{ fontSize: '0.7rem', fontWeight: 600, color: warning ? '#EF4444' : '#9CA3AF', whiteSpace: 'nowrap' }}>{stamp}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      {/* Scroll hint — display only, never interactive; height always reserved so nothing shifts */}
+      <div style={{
+        height: 18, marginTop: 10, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+        color: '#94A3B8', pointerEvents: 'none', opacity: hasMoreBelow ? 1 : 0, transition: 'opacity 0.15s ease',
+      }}>
+        <ChevronDown size={16} />
+      </div>
+    </div>
+  )
+}
+
+// ─── Attendance Overview (Internal + Casual Worker halves in one block) ─────────
+
+// 8-segment progress bar, matching the mockup's notched track.
+// Status colors mirror the Attendance page's weekly-grid capsules (present green / late amber /
+// absent red) so the dashboard reads the same as the page it links to.
+const PROGRESS_PRESENT_COLOR = '#10B981'
+const PROGRESS_LATE_COLOR = '#F59E0B'
+const PROGRESS_ABSENT_COLOR = '#EF4444'
+const PROGRESS_EMPTY_COLOR = '#E2E8F0'
+
+function SegmentedProgress({ present, late, absent, max, width, height = 8 }: {
+  present: number; late: number; absent: number; max: number; width?: number; height?: number
+}) {
+  // One segment per expected person: on-time check-ins (green) then late (amber) fill from the
+  // left; absent (red) pins to the far right — those people will never check in — and the gray
+  // gap in between is whoever hasn't started yet.
+  const segments = Math.max(1, max)
+  const fills = Array<string>(segments).fill(PROGRESS_EMPTY_COLOR)
+  for (let i = 0; i < Math.min(present, segments); i++) fills[i] = PROGRESS_PRESENT_COLOR
+  for (let i = present; i < Math.min(present + late, segments); i++) fills[i] = PROGRESS_LATE_COLOR
+  for (let i = Math.max(0, segments - absent); i < segments; i++) fills[i] = PROGRESS_ABSENT_COLOR
+  return (
+    <div style={{ display: 'flex', gap: segments > 20 ? 2 : 3, width, flex: width ? undefined : 1, minWidth: width ?? 40 }}>
+      {Array.from({ length: segments }, (_, i) => (
+        <div key={i} style={{ flex: 1, minWidth: 0, height, borderRadius: 999, background: fills[i] ?? PROGRESS_EMPTY_COLOR }} />
+      ))}
+    </div>
+  )
+}
+
+// Note-text colors match the progress-bar segment colors exactly (present green / late amber /
+// absent red), plus a neutral gray for people whose shift hasn't started.
+const PERSON_STATUS_META = {
+  present:     { label: 'Present', color: PROGRESS_PRESENT_COLOR },
+  late:        { label: 'Late',    color: PROGRESS_LATE_COLOR },
+  absent:      { label: 'Absent',  color: PROGRESS_ABSENT_COLOR },
+  not_started: { label: 'Not Yet', color: '#64748B' },
+} as const
+
+function initialsOf(name: string): string {
+  return name.split(' ').filter(Boolean).map(w => w[0]).slice(0, 2).join('').toUpperCase()
+}
+
+function formatShiftStart(hhmm: string): string {
+  const [h, m] = hhmm.split(':').map(Number)
+  const suffix = h >= 12 ? 'PM' : 'AM'
+  const h12 = h % 12 === 0 ? 12 : h % 12
+  return `${h12}:${String(m).padStart(2, '0')} ${suffix}`
+}
+
+function AttendanceDeptSection({ dept, open, onToggle, query = '' }: {
+  dept: AttendanceDepartmentGroup; open: boolean; onToggle: () => void; query?: string
+}) {
+  type RowStatus = keyof typeof PERSON_STATUS_META
+  const rows: { person: AttendancePersonRow; status: RowStatus; clockIn: string; note: string }[] = [
+    ...dept.present.map(p => ({ person: p, status: 'present' as const, clockIn: p.clock_in_label ?? '—', note: 'Present' })),
+    ...dept.late.map(p => ({ person: p, status: 'late' as const, clockIn: p.clock_in_label ?? '—', note: 'Late' })),
+    ...dept.absent.map(p => ({ person: p, status: 'absent' as const, clockIn: '—', note: 'Absent' })),
+    ...dept.not_started.map(p => ({ person: p, status: 'not_started' as const, clockIn: '—', note: '' })),
+  ]
+  const gridTemplate = 'repeat(4, minmax(0, 1fr))'
+  return (
+    <div
+      // Expanded card takes the full row width; collapsed cards sit two per row.
+      style={{ gridColumn: open ? '1 / -1' : 'auto', background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, transition: 'border-color 0.12s ease, box-shadow 0.12s ease' }}
+      onMouseEnter={e => { e.currentTarget.style.borderColor = '#CBD5E1'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(15,23,42,0.06)' }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = '#E5E7EB'; e.currentTarget.style.boxShadow = 'none' }}
+    >
+      {/* Same format as the Attendance Progress strip above: name + big count, bar underneath */}
+      <div onClick={onToggle} style={{ padding: '20px 18px', cursor: 'pointer' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span style={{
+            width: 30, height: 30, borderRadius: 9, flexShrink: 0,
+            background: `${dept.department_id ? deptColor(dept.department_id) : '#64748B'}1A`,
+            color: dept.department_id ? deptColor(dept.department_id) : '#64748B',
+            fontSize: 12.5, fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            {initialsOf(dept.department_name)}
+          </span>
+          <span style={{ fontSize: 14.5, fontWeight: 800, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{dept.department_name}</span>
+          <span style={{ marginLeft: 'auto', fontSize: 16, fontWeight: 800, color: '#0F172A', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', flexShrink: 0 }}>
+            {dept.checked_in} / {dept.expected}
+          </span>
+          {open
+            ? <ChevronUp size={16} style={{ color: '#64748B', flexShrink: 0 }} />
+            : <ChevronDown size={16} style={{ color: '#64748B', flexShrink: 0 }} />}
+        </div>
+        <div style={{ marginTop: 14 }}>
+          <SegmentedProgress
+            present={dept.present.length}
+            late={dept.late.length}
+            absent={dept.absent.length}
+            max={dept.expected}
+            height={24}
+          />
+        </div>
+      </div>
+      {open && (
+        <div style={{ padding: '0 12px 10px' }}>
+          {/* All three columns center-aligned so the label/content gaps read as equal */}
+          <div style={{ display: 'grid', gridTemplateColumns: gridTemplate, gap: 10, padding: '6px 10px', borderBottom: '1px solid #F1F5F9' }}>
+            {['Employee', 'Shift', 'Clock In', 'Note'].map(h => (
+              <span key={h} style={{ fontSize: 11.5, fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap', textAlign: 'center' }}>{h}</span>
+            ))}
+          </div>
+          {rows.map(({ person, status, clockIn, note }) => {
+            const meta = PERSON_STATUS_META[status]
+            const searchMatch = query.length > 0 && person.name.toLowerCase().includes(query)
+            return (
+              <div
+                key={`${status}-${person.user_id}`}
+                style={{
+                  display: 'grid', gridTemplateColumns: gridTemplate, gap: 10, alignItems: 'center',
+                  padding: '9px 10px', borderBottom: '1px solid #F8FAFC',
+                  background: searchMatch ? '#FFF7ED' : 'transparent', borderRadius: searchMatch ? 8 : 0,
+                }}
+              >
+                <span style={{ textAlign: 'center', fontSize: 12.5, fontWeight: 400, color: '#334155', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{person.name}</span>
+                <span style={{ textAlign: 'center', fontSize: 12, fontWeight: 400, color: '#334155', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                  {formatShiftStart(person.shift_start)}
+                </span>
+                {status === 'not_started' ? (
+                  // Shift hasn't started: one line centered across the Clock In + Note space.
+                  <span style={{ gridColumn: '3 / 5', textAlign: 'center', fontSize: 12, fontWeight: 400, color: '#64748B', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    Not started yet
+                  </span>
+                ) : status === 'absent' ? (
+                  <>
+                    <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <span style={{ width: 26, height: 2.5, borderRadius: 2, background: PROGRESS_ABSENT_COLOR }} />
+                    </span>
+                    <span style={{ textAlign: 'center', fontSize: 12, fontWeight: 600, color: meta.color, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{note}</span>
+                  </>
+                ) : (
+                  <>
+                    <span style={{ textAlign: 'center', fontSize: 12, fontWeight: 400, color: '#334155', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>{clockIn}</span>
+                    <span style={{ textAlign: 'center', fontSize: 12, fontWeight: 600, color: meta.color, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{note}</span>
+                  </>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function personsOf(dept: AttendanceDepartmentGroup): AttendancePersonRow[] {
+  return [...dept.present, ...dept.late, ...dept.absent, ...dept.not_started]
+}
+
+function AttendanceHalf({ title, accent, accentBg, group, search = '' }: {
+  title: string; accent: string; accentBg: string; group: AttendanceRoleGroup; search?: string
+}) {
+  // All departments start collapsed; they only expand when the user clicks one.
+  const [openDepts, setOpenDepts] = useState<Set<string> | null>(null)
+  const [hoverLegend, setHoverLegend] = useState<string | null>(null)
+  const query = search.trim().toLowerCase()
+  // While a name search is active, whichever departments contain a match are forced open so the
+  // highlighted rows are immediately visible; the user's own open/closed choices resume after.
+  const matchedOpen = query
+    ? new Set(group.departments.filter(d => personsOf(d).some(p => p.name.toLowerCase().includes(query))).map(d => d.department_name))
+    : null
+  const effectiveOpen = matchedOpen ?? openDepts ?? new Set<string>()
+  const toggle = (name: string) => {
+    if (query) return
+    const next = new Set(effectiveOpen)
+    if (next.has(name)) next.delete(name)
+    else next.add(name)
+    setOpenDepts(next)
+  }
+  return (
+    <div style={{ flex: 1, minWidth: 0, background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 16, padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* Half header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ width: 34, height: 34, borderRadius: 10, background: accentBg, color: accent, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <Users size={17} />
+        </span>
+        <span style={{ fontSize: 15.5, fontWeight: 800, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</span>
+      </div>
+      {/* Progress summary strip */}
+      {(() => {
+        const late = group.departments.reduce((n, d) => n + d.late.length, 0)
+        const absent = group.departments.reduce((n, d) => n + d.absent.length, 0)
+        const present = group.departments.reduce((n, d) => n + d.present.length, 0)
+        const buildGroups = (key: 'present' | 'late' | 'absent', detail: (p: AttendancePersonRow) => string | null) =>
+          group.departments
+            .filter(d => d[key].length > 0)
+            .map(d => ({
+              dept_id: d.department_id,
+              dept_name: d.department_name,
+              people: d[key].map(p => ({ user_id: p.user_id, name: p.name, detail: detail(p) })),
+            }))
+        const legend = [
+          { label: 'Present', count: present, dot: PROGRESS_PRESENT_COLOR, detailColor: '#15803D', groups: buildGroups('present', p => p.clock_in_label) },
+          { label: 'Late', count: late, dot: PROGRESS_LATE_COLOR, detailColor: '#C2410C', groups: buildGroups('late', p => p.minutes_late != null ? `${p.minutes_late} min late` : p.clock_in_label) },
+          { label: 'Absent', count: absent, dot: PROGRESS_ABSENT_COLOR, detailColor: '#B91C1C', groups: buildGroups('absent', () => 'No show') },
+        ]
+        return (
+          <div style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12, padding: '20px 18px', marginTop: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+              <span style={{ fontSize: 14.5, fontWeight: 800, color: '#0F172A', whiteSpace: 'nowrap' }}>Attendance Progress</span>
+              <span style={{ marginLeft: 'auto', fontSize: 16, fontWeight: 800, color: '#0F172A', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                {group.checked_in} / {group.expected}
+              </span>
+            </div>
+            <div style={{ marginTop: 14 }}>
+              <SegmentedProgress present={present} late={late} absent={absent} max={group.expected} height={24} />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 18, flexWrap: 'wrap' }}>
+              {legend.map(item => {
+                const hovered = hoverLegend === item.label
+                const showPop = hovered && item.groups.length > 0
+                return (
+                  <div
+                    key={item.label}
+                    style={{ position: 'relative' }}
+                    onMouseEnter={() => setHoverLegend(item.label)}
+                    onMouseLeave={() => setHoverLegend(null)}
+                  >
+                    <div style={{
+                      display: 'flex', alignItems: 'center', gap: 7, padding: '7px 12px',
+                      background: '#FFFFFF', border: `1px solid ${hovered ? '#CBD5E1' : '#E5E7EB'}`, borderRadius: 10,
+                      boxShadow: hovered ? '0 4px 12px rgba(15,23,42,0.08)' : 'none',
+                      transform: hovered ? 'translateY(-1px)' : 'none',
+                      transition: 'transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease',
+                      fontSize: 12, fontWeight: 700, color: '#334155', whiteSpace: 'nowrap', cursor: 'default',
+                    }}>
+                      <span style={{ width: 9, height: 9, borderRadius: 999, background: item.dot, flexShrink: 0 }} />
+                      {item.count} {item.label}
+                    </div>
+                    {showPop && (
+                      <div style={{
+                        position: 'absolute', top: 'calc(100% + 6px)', left: 0, zIndex: 40,
+                        background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 12,
+                        boxShadow: '0 12px 28px rgba(15,23,42,0.16)', padding: '12px 14px',
+                        minWidth: 240, maxWidth: 320, maxHeight: 280, overflowY: 'auto',
+                      }}>
+                        {item.groups.map((g, gi) => (
+                          <div key={g.dept_name} style={{ marginBottom: gi === item.groups.length - 1 ? 0 : 10 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                              <span style={{ width: 8, height: 8, borderRadius: 999, background: g.dept_id ? deptColor(g.dept_id) : '#94A3B8', flexShrink: 0 }} />
+                              <span style={{ fontSize: 11, fontWeight: 800, color: '#64748B', whiteSpace: 'nowrap' }}>{g.dept_name}</span>
+                            </div>
+                            {g.people.map(p => (
+                              <div key={`${g.dept_name}-${p.user_id}`} style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 14, padding: '3px 0 3px 14px' }}>
+                                <span style={{ fontSize: 12.5, fontWeight: 700, color: '#0F172A', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</span>
+                                {p.detail && (
+                                  <span style={{ fontSize: 11.5, fontWeight: 700, color: item.detailColor, whiteSpace: 'nowrap', flexShrink: 0 }}>{p.detail}</span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )
+      })()}
+      {/* Down arrow leading from the progress summary into the per-department breakdown —
+          same solid-circle style as the Task Overview connector arrows */}
+      <div style={{ display: 'flex', justifyContent: 'center', margin: '-2px 0' }}>
+        <span style={{
+          width: 36, height: 36, borderRadius: 999, background: '#F97316', color: '#FFFFFF',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+          boxShadow: '0 2px 6px rgba(15,23,42,0.22)',
+        }}>
+          <ArrowDown size={19} />
+        </span>
+      </div>
+      {/* Departments — two per row; alignItems start so expanding one card doesn't stretch its neighbor */}
+      {group.departments.length === 0 ? (
+        <EmptyRow text="No one scheduled today" />
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', columnGap: 12, rowGap: 22, alignItems: 'start' }}>
+          {group.departments.map(dept => (
+            <AttendanceDeptSection
+              key={dept.department_name}
+              dept={dept}
+              open={effectiveOpen.has(dept.department_name)}
+              onToggle={() => toggle(dept.department_name)}
+              query={query}
+            />
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+// Entrance animation — same blockSlideUp the other owner pages play on navigation.
+const pageKeyframes = `
+  @keyframes blockSlideUp { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
+`
+
 export default function OwnerDashboard() {
   const router = useRouter()
+  const isCompact = useIsCompactViewport(1200)
 
-  const [userId,        setUserId]        = useState('')
+  const [companyId, setCompanyId] = useState('')
   const [internalUserId, setInternalUserId] = useState('')
-  const [companyId,     setCompanyId]     = useState('')
-  const [ownerName,     setOwnerName]     = useState('')
-  const [companyName,   setCompanyName]   = useState('')
-  const [companies,     setCompanies]     = useState<Company[]>([])
-  const [currentPlan,   setCurrentPlan]   = useState('Free')
-  const [dashboardRole, setDashboardRole] = useState('')
-  const [initialReady,  setInitialReady]  = useState(false)
-  const [removalOverlay, setRemovalOverlay] = useState<{ companyName: string } | null>(null)
-  const [dropdownOpen,   setDropdownOpen]   = useState(false)
-  const dropdownRef = useRef<HTMLDivElement>(null)
+  const [currentPlan, setCurrentPlan] = useState('Free')
 
-  // Task stats
-  const [taskStats,        setTaskStats]        = useState<TaskStats | null>(null)
-  const [taskStatsLoading, setTaskStatsLoading] = useState(false)
-
-  // Activity feed
-  const [activityFeed,        setActivityFeed]        = useState<ActivityFeedEvent[]>([])
-  const [activityFeedLoading, setActivityFeedLoading] = useState(false)
-  const [markedFeedItems, setMarkedFeedItems] = useState<Set<string>>(() => {
-    try {
-      const stored = localStorage.getItem('tasking_marked_feed_items')
-      return stored ? new Set(JSON.parse(stored) as string[]) : new Set()
-    } catch { return new Set() }
-  })
-  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null)
-  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null)
-  const [chartReady, setChartReady] = useState(false)
-
-  // Timeline — rendering itself lives in the shared <ScheduleTimeline>; the dashboard only
-  // needs the row data back to compute its own Row-1 stat cards (Staff on Shift / Casual Workers).
-  const [timelineRows, setTimelineRows] = useState<TimelineRow[]>([])
-  const [timelineLoading, setTimelineLoading] = useState(false)
-  const [timelineRefreshKey, setTimelineRefreshKey] = useState(0)
-
-  // ── Dashboard panel order (horizontal drag) ───────────────────────────────
-  const [panelOrder, setPanelOrder] = useState<PanelId[]>([...ALL_PANELS])
-  const panelOrderRef = useRef<PanelId[]>([...ALL_PANELS])
-  const [panelDrag, setPanelDrag] = useState<{
-    fromIdx: number; panelId: PanelId; ghostX: number; insertAt: number
-  } | null>(null)
-  const panelDragRef = useRef<typeof panelDrag>(null)
-  const panelEls = useRef<Map<PanelId, HTMLDivElement>>(new Map())
-  const panelPrevRects = useRef<Map<PanelId, DOMRect>>(new Map())
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) setDropdownOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
-
-  const handleRemovalDetected = useCallback((removedCompanyName: string, availableCompanies: Company[]) => {
-    setRemovalOverlay({ companyName: removedCompanyName })
-    setTimeout(() => {
-      setRemovalOverlay(null)
-      if (availableCompanies.length === 0) {
-        fetch('/api/auth/signout', { method: 'POST' })
-        window.location.href = '/signout'
-      }
-    }, 3000)
-  }, [])
-
-  // ── Mount: resolve session → company context ───────────────────────────────
+  const [summary, setSummary] = useState<OwnerDashboardSummary | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [attendanceSearch, setAttendanceSearch] = useState('')
+  const [taskSearch, setTaskSearch] = useState('')
 
   useEffect(() => {
     let cancelled = false
     const run = async () => {
-      let userIdResolved = localStorage.getItem('tasking_user_id')
-      if (!userIdResolved) {
+      let authId = localStorage.getItem('tasking_user_id')
+      if (!authId) {
         const supabase = createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
         const { data: { session } } = await supabase.auth.getSession()
-        if (session?.user?.id) { userIdResolved = session.user.id; localStorage.setItem('tasking_user_id', userIdResolved) }
+        if (session?.user?.id) { authId = session.user.id; localStorage.setItem('tasking_user_id', authId) }
       }
-      if (!userIdResolved) { router.replace('/signin'); return }
-      if (cancelled) return
-      setUserId(userIdResolved)
-
-      fetch(`/api/user/me?user_id=${userIdResolved}`)
-        .then(r => r.json())
-        .then(d => {
-          if (!cancelled && d.success) {
-            if (d.user?.id) setInternalUserId(d.user.id)
-            if (d.user?.full_name) setOwnerName(d.user.full_name)
-          }
-        })
-        .catch(() => {})
-
-      const storedCid = localStorage.getItem(`tasking_company_id_${userIdResolved}`)
-      const qs = new URLSearchParams({ user_id: userIdResolved })
-      if (storedCid) qs.set('company_id', storedCid)
-
-      const res = await fetch(`/api/company/current?${qs}`)
-      if (!res.ok) { if (!cancelled) setInitialReady(true); return }
-      const data = await res.json()
-      if (cancelled) return
-      if (!data.success) { setInitialReady(true); return }
-
-      setDashboardRole(data.role || '')
-      const list: Company[] = (data.companies || []).map((c: Company) => ({ id: c.id, name: c.name, plan: c.plan }))
-      setCompanies(list)
-
-      if (data.company) {
-        const company = data.company
-        if (storedCid && !list.some(c => c.id === storedCid)) {
-          localStorage.setItem(`tasking_company_id_${userIdResolved}`, company.id)
-          setCompanyId(company.id); setCompanyName(company.name); setCurrentPlan(company.plan || 'Free')
-          setInitialReady(true)
-          const removedName = localStorage.getItem(`tasking_last_company_name_${storedCid}`) || 'your previous company'
-          handleRemovalDetected(removedName, list)
-          return
-        }
-        localStorage.setItem(`tasking_company_id_${userIdResolved}`, company.id)
-        localStorage.setItem(`tasking_last_company_name_${company.id}`, company.name)
-        setCompanyId(company.id); setCompanyName(company.name); setCurrentPlan(company.plan || 'Free')
-      } else if (storedCid && list.length > 0) {
-        const next = list[0]
-        localStorage.setItem(`tasking_company_id_${userIdResolved}`, next.id)
-        setCompanyId(next.id); setCompanyName(next.name); setCurrentPlan(next.plan || 'Free')
-      } else {
-        setCompanyId(''); setCompanyName('')
-      }
-      setInitialReady(true)
+      if (!authId) { router.replace('/signin'); return }
+      const meRes = await fetch(`/api/user/me?user_id=${authId}`)
+      const meData = await meRes.json()
+      if (!meData.success || cancelled) return
+      if (meData.user?.id) setInternalUserId(meData.user.id)
+      const cid = localStorage.getItem(`tasking_company_id_${authId}`) || meData.user.company_id || ''
+      if (!cid) return
+      setCompanyId(cid)
+      const companyRes = await fetch(`/api/company/current?user_id=${authId}&company_id=${cid}`)
+      const companyData = await companyRes.json()
+      if (!cancelled && companyData.success) setCurrentPlan(companyData.company?.plan ?? 'Free')
     }
     void run()
     return () => { cancelled = true }
-  }, [router, handleRemovalDetected])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router])
 
-  // ── Task stats + feed ──────────────────────────────────────────────────────
-
-  const fetchDashboardData = useCallback(async (cid: string) => {
-    if (!cid) return
-    setTaskStatsLoading(true)
-    setActivityFeedLoading(true)
+  const fetchSummary = useCallback(async (cid: string, ownerId: string) => {
+    setLoading(true)
+    setError('')
     try {
-      const [statsRes, feedRes] = await Promise.all([
-        fetch(`/api/task?company_id=${cid}&stats=true`),
-        fetch(`/api/task?company_id=${cid}&activity_feed=true`),
-      ])
-      const statsData = await statsRes.json()
-      const feedData  = await feedRes.json()
-      if (statsData.success) setTaskStats(statsData.stats)
-      if (feedData.success)  setActivityFeed(feedData.feed ?? [])
-      setLastRefreshed(new Date())
-    } catch {}
-    finally { setTaskStatsLoading(false); setActivityFeedLoading(false) }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (!companyId) return
-    const timer = window.setTimeout(() => { void fetchDashboardData(companyId) }, 0)
-    return () => window.clearTimeout(timer)
-  }, [companyId, fetchDashboardData])
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('tasking_marked_feed_items', JSON.stringify([...markedFeedItems]))
-    } catch {}
-  }, [markedFeedItems])
-
-  // ── Donut chart entrance ──────────────────────────────────────────────────
-  useEffect(() => {
-    const t = setTimeout(() => setChartReady(true), 480)
-    return () => clearTimeout(t)
+      const res = await fetch(`/api/owner/dashboard?company_id=${cid}&owner_id=${ownerId}`)
+      const data = await res.json()
+      if (data.success) setSummary(data.summary)
+      else setError(data.message || 'Failed to load dashboard')
+    } catch {
+      setError('Failed to load dashboard')
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
-  // ── Load panel order from localStorage ────────────────────────────────────
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(PANEL_ORDER_KEY)
-      if (saved) {
-        const merged = mergePanelOrder(JSON.parse(saved) as string[])
-        panelOrderRef.current = merged
-        setPanelOrder(merged)
+    if (!companyId || !internalUserId) return
+    void fetchSummary(companyId, internalUserId)
+  }, [companyId, internalUserId, fetchSummary])
+
+  const waitingCount = summary ? summary.waiting_on_you.filter(i => i.count > 0).length : 0
+  const waitingTotal = summary?.waiting_on_you.length ?? 5
+  const taskCount = summary ? summary.task_overview.reduce((sum, g) => sum + g.count, 0) : 0
+  // Task Overview search: filter every group's rows by task title; counts follow the filter.
+  const taskQuery = taskSearch.trim().toLowerCase()
+  const visibleTaskGroups = (summary?.task_overview ?? [])
+    .map(g => {
+      const tasks = taskQuery ? g.tasks.filter(t => t.title.toLowerCase().includes(taskQuery)) : g.tasks
+      return { ...g, tasks, count: taskQuery ? tasks.length : g.count }
+    })
+    .filter(g => g.count > 0)
+
+  // Blocks always render inside a viewport-locked grid on desktop: the page itself never
+  // scrolls — overflow lives inside each block. Compact viewports fall back to one
+  // naturally-sized column with normal page scrolling.
+  const gridStyle: React.CSSProperties = isCompact
+    ? { display: 'flex', flexDirection: 'column', gap: 16 }
+    : {
+        flex: 1, minHeight: 0, display: 'grid', gap: 16,
+        gridTemplateColumns: 'repeat(12, minmax(0, 1fr))',
+        // Row 1 hugs the Waiting On You cards' natural height (capped so short viewports
+        // still leave row 2 room); row 2 takes everything left.
+        gridTemplateRows: 'minmax(0, min(272px, 40%)) minmax(0, 1fr)',
       }
-    } catch {}
-  }, [])
 
-
-  // ── Supabase realtime: push updates on task / shift changes ──────────────
-  useEffect(() => {
-    if (!companyId) return
-    const client = createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    )
-    const channel = client
-      .channel('dashboard-realtime')
-      .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'tasks',
-        filter: `company_id=eq.${companyId}`,
-      }, () => { void fetchDashboardData(companyId) })
-      .on('postgres_changes', {
-        event: '*', schema: 'public', table: 'shift_assignments',
-      }, () => { setTimelineRefreshKey(k => k + 1) })
-      .subscribe()
-    return () => { void client.removeChannel(channel) }
-  }, [companyId, fetchDashboardData])
-
-  // ── Derived data ──────────────────────────────────────────────────────────
-
-  const todayActiveStaff    = timelineRows.filter(r => r.user_id && !['Owner', 'Partner'].includes(r.role) && r.shifts.length > 0)
-  const todayShiftCount     = todayActiveStaff.length
-  const casualWorkersCount  = todayActiveStaff.filter(r => r.role === 'Casual Worker').length
-
-  const totalTasks = taskStats
-    ? taskStats.assigned + taskStats.inProgress + taskStats.review + taskStats.complete
-    : 0
-
-  const completeCount = taskStats?.complete ?? 0
-
-  const todayTasks = [...(taskStats?.tasks ?? [])].sort((a, b) => {
-    const byPriority = priorityRank(a.priority) - priorityRank(b.priority)
-    if (byPriority !== 0) return byPriority
-    return new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime()
-  })
-  const priorityFocusTasks = todayTasks
-    .filter(task => task.priority === 'Urgent' || task.priority === 'High')
-    .sort((a, b) => {
-      if (a.status === 'Complete' && b.status !== 'Complete') return 1
-      if (a.status !== 'Complete' && b.status === 'Complete') return -1
-      return priorityRank(a.priority) - priorityRank(b.priority)
-    })
-  const priorityCompleteCount = priorityFocusTasks.filter(task => task.status === 'Complete').length
-  const priorityCompletionPct = priorityFocusTasks.length > 0
-    ? Math.round((priorityCompleteCount / priorityFocusTasks.length) * 100)
-    : 0
-  const focusAssignedCount    = priorityFocusTasks.filter(t => t.status === 'Assigned' || !t.status).length
-  const focusInProgressCount  = priorityFocusTasks.filter(t => t.status === 'In Progress').length
-  const focusReviewCount      = priorityFocusTasks.filter(t => t.status === 'Review').length
-  const focusDonutSegs = (() => {
-    const total = priorityFocusTasks.length
-    const raw = [
-      { count: focusAssignedCount,   color: '#94A3B8', label: 'Assigned' },
-      { count: focusInProgressCount, color: '#4F46E5', label: 'In Progress' },
-      { count: focusReviewCount,     color: '#D97706', label: 'Review' },
-      { count: priorityCompleteCount, color: '#059669', label: 'Complete' },
-    ]
-    let cumFrac = 0
-    return raw.map(seg => {
-      const frac = total > 0 ? seg.count / total : 0
-      const start = cumFrac
-      cumFrac += frac
-      return { ...seg, frac, start }
-    })
-  })()
-  const feedKey = (event: ActivityFeedEvent) => event.id ?? `${event.type}-${event.timestamp}-${event.description}`
-
-  const teamByDept: Record<string, { name: string; rows: TimelineRow[] }> = {}
-  for (const row of todayActiveStaff) {
-    if (!teamByDept[row.department_id]) teamByDept[row.department_id] = { name: row.department_name, rows: [] }
-    teamByDept[row.department_id].rows.push(row)
-  }
-  for (const group of Object.values(teamByDept)) {
-    group.rows = sortRowsByRole(group.rows)
-  }
-
-  // ── Panel drag handlers ───────────────────────────────────────────────────
-  const capturePanelRects = useCallback(() => {
-    panelEls.current.forEach((el, id) => {
-      if (el) panelPrevRects.current.set(id, el.getBoundingClientRect())
-    })
-  }, [])
-
-  const playPanelFlip = useCallback(() => {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        panelEls.current.forEach((el, id) => {
-          if (!el) return
-          const prev = panelPrevRects.current.get(id)
-          if (!prev) return
-          const curr = el.getBoundingClientRect()
-          const dx = prev.left - curr.left
-          if (Math.abs(dx) < 1) return
-          el.style.transition = 'none'
-          el.style.transform = `translateX(${dx}px)`
-          void el.offsetHeight
-          el.style.transition = 'transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1)'
-          el.style.transform = 'translateX(0px)'
-        })
-      })
-    })
-  }, [])
-
-  const calcPanelInsertAt = useCallback((mouseX: number): number => {
-    const ids = panelOrderRef.current
-    for (let i = 0; i < ids.length; i++) {
-      const el = panelEls.current.get(ids[i])
-      if (!el) continue
-      const rect = el.getBoundingClientRect()
-      if (mouseX < rect.left + rect.width / 2) return i
-    }
-    return ids.length - 1
-  }, [])
-
-  const startPanelDrag = useCallback((e: React.MouseEvent, fromIdx: number, panelId: PanelId) => {
-    e.preventDefault()
-    const initial = { fromIdx, panelId, ghostX: e.clientX, insertAt: fromIdx }
-    panelDragRef.current = initial
-    setPanelDrag(initial)
-    document.body.style.userSelect = 'none'
-    document.body.style.cursor = 'grabbing'
-
-    const onMove = (ev: MouseEvent) => {
-      const insertAt = calcPanelInsertAt(ev.clientX)
-      const next = { ...panelDragRef.current!, ghostX: ev.clientX, insertAt }
-      panelDragRef.current = next
-      setPanelDrag(next)
-    }
-    const onUp = () => {
-      document.removeEventListener('mousemove', onMove)
-      document.removeEventListener('mouseup', onUp)
-      document.body.style.userSelect = ''
-      document.body.style.cursor = ''
-      const d = panelDragRef.current
-      if (d && d.fromIdx !== d.insertAt) {
-        capturePanelRects()
-        const next = [...panelOrderRef.current]
-        const [moved] = next.splice(d.fromIdx, 1)
-        next.splice(d.insertAt, 0, moved)
-        panelOrderRef.current = next as PanelId[]
-        setPanelOrder(next as PanelId[])
-        try { localStorage.setItem(PANEL_ORDER_KEY, JSON.stringify(next)) } catch {}
-        playPanelFlip()
-      }
-      panelDragRef.current = null
-      setPanelDrag(null)
-    }
-    document.addEventListener('mousemove', onMove)
-    document.addEventListener('mouseup', onUp)
-  }, [calcPanelInsertAt, capturePanelRects, playPanelFlip])
-
-  const getPanelShift = (idx: number, fromIdx: number, insertAt: number): number => {
-    if (fromIdx === insertAt || idx === fromIdx) return 0
-    const el = panelEls.current.get(panelOrder[fromIdx])
-    const w = el ? el.getBoundingClientRect().width + 16 : 0
-    if (fromIdx < insertAt) {
-      if (idx > fromIdx && idx <= insertAt) return -w
-    } else {
-      if (idx >= insertAt && idx < fromIdx) return w
-    }
-    return 0
-  }
-
-  // ── Render ────────────────────────────────────────────────────────────────
+  const cellStyle = (span: number): React.CSSProperties => isCompact
+    ? { display: 'flex', flexDirection: 'column' }
+    : { gridColumn: `span ${span}`, minHeight: 0, display: 'flex', flexDirection: 'column' }
 
   return (
-    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: '#F1F5F9', fontFamily: 'inherit' }}>
-      <style>{`
-        @keyframes dotPulse {
-          0%   { box-shadow: 0 0 0 0 rgba(52,211,153,0.55); }
-          70%  { box-shadow: 0 0 0 5px rgba(52,211,153,0); }
-          100% { box-shadow: 0 0 0 0 rgba(52,211,153,0); }
-        }
-        @keyframes fadeSlideUp {
-          from { opacity: 0; transform: translateY(18px); }
-          to   { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(6px); }
-          to   { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes scaleIn {
-          from { opacity: 0; transform: scale(0.94); }
-          to   { opacity: 1; transform: scale(1); }
-        }
-        @keyframes slideInLeft {
-          from { opacity: 0; transform: translateX(-14px); }
-          to   { opacity: 1; transform: translateX(0); }
-        }
-        @keyframes numberPop {
-          0%   { transform: scale(1); }
-          40%  { transform: scale(1.18); }
-          100% { transform: scale(1); }
-        }
-        @keyframes iconBounce {
-          0%, 100% { transform: translateY(0); }
-          40%      { transform: translateY(-4px); }
-          70%      { transform: translateY(-2px); }
-        }
-        /* ── Stat cards ── */
-        .stat-card {
-          transition: box-shadow 0.22s ease, transform 0.22s ease, background 0.18s ease;
-          cursor: default;
-        }
-        .stat-card:hover {
-          box-shadow: 0 8px 28px rgba(0,0,0,0.10), 0 0 0 1.5px rgba(249,115,22,0.18) !important;
-          transform: translateY(-3px) scale(1.015);
-        }
-        .stat-card:hover .stat-icon {
-          animation: iconBounce 0.5s ease forwards;
-        }
-        /* ── Panel cards (Focus / Team / Feed / Tasks) ── */
-        .panel-card {
-          transition: box-shadow 0.22s ease, transform 0.22s ease;
-        }
-        .panel-card:hover {
-          box-shadow: 0 8px 32px rgba(0,0,0,0.09), 0 0 0 1.5px rgba(0,0,0,0.07) !important;
-          transform: translateY(-2px);
-        }
-        /* ── Feed items ── */
-        .feed-item {
-          transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
-        }
-        .feed-item:hover {
-          background: #F8FAFC !important;
-          transform: translateX(2px);
-          box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-        }
-        /* ── Task items ── */
-        .task-item {
-          transition: background 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
-        }
-        .task-item:hover {
-          background: #F8FAFC !important;
-          transform: translateX(2px);
-          box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-        }
-        /* ── Team member rows ── */
-        .team-row {
-          transition: background 0.15s ease, transform 0.12s ease;
-        }
-        .team-row:hover {
-          background: #FFF7ED !important;
-          transform: translateX(2px);
-        }
-        /* ── Dept cards (schedule grid) ── */
-        .dept-card {
-          transition: box-shadow 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
-        }
-        .dept-card:hover {
-          box-shadow: 0 6px 24px rgba(0,0,0,0.10) !important;
-          transform: translateY(-3px);
-          border-color: #FDBA74 !important;
-        }
-        /* ── Mark/read buttons ── */
-        .mark-btn {
-          transition: background 0.15s ease, color 0.15s ease, transform 0.12s ease;
-        }
-        .mark-btn:hover {
-          transform: scale(1.05);
-        }
-        /* ── Message button ── */
-        .msg-btn {
-          transition: color 0.15s ease, transform 0.15s ease, background 0.15s ease !important;
-        }
-        .msg-btn:hover {
-          transform: scale(1.18) !important;
-        }
-        /* ── Staggered entrance for stat cards ── */
-        .stat-card:nth-child(1) { animation: fadeSlideUp 0.38s ease both; animation-delay: 0.04s; }
-        .stat-card:nth-child(2) { animation: fadeSlideUp 0.38s ease both; animation-delay: 0.08s; }
-        .stat-card:nth-child(3) { animation: fadeSlideUp 0.38s ease both; animation-delay: 0.12s; }
-        .stat-card:nth-child(4) { animation: fadeSlideUp 0.38s ease both; animation-delay: 0.16s; }
-        .stat-card:nth-child(5) { animation: fadeSlideUp 0.38s ease both; animation-delay: 0.20s; }
-        .stat-card:nth-child(6) { animation: fadeSlideUp 0.38s ease both; animation-delay: 0.24s; }
-        /* ── Staggered entrance for panel cards ── */
-        .panel-card:nth-child(1) { animation: scaleIn 0.40s ease both; animation-delay: 0.18s; }
-        .panel-card:nth-child(2) { animation: scaleIn 0.40s ease both; animation-delay: 0.24s; }
-        .panel-card:nth-child(3) { animation: scaleIn 0.40s ease both; animation-delay: 0.30s; }
-        .panel-card:nth-child(4) { animation: scaleIn 0.40s ease both; animation-delay: 0.36s; }
-        /* ── Feed items stagger ── */
-        .feed-item:nth-child(1) { animation: slideInLeft 0.28s ease both; animation-delay: 0.05s; }
-        .feed-item:nth-child(2) { animation: slideInLeft 0.28s ease both; animation-delay: 0.10s; }
-        .feed-item:nth-child(3) { animation: slideInLeft 0.28s ease both; animation-delay: 0.15s; }
-        .feed-item:nth-child(4) { animation: slideInLeft 0.28s ease both; animation-delay: 0.20s; }
-        .feed-item:nth-child(5) { animation: slideInLeft 0.28s ease both; animation-delay: 0.25s; }
-      `}</style>
+    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: '#F1F5F9' }}>
+      <style>{pageKeyframes}</style>
       <OwnerSidebar />
+      {/* main is always viewport-locked (no page scroll at any width) — the header stays put and
+          the block area below scrolls internally when the compact single-column layout is active */}
+      <main style={{ marginLeft: '64px', flex: 1, height: '100vh', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', animation: 'blockSlideUp 0.38s ease both 0.04s' }}>
 
-      <main
-        style={{ marginLeft: 64, height: '100vh', overflowX: 'hidden', overflowY: 'auto', display: 'flex', flexDirection: 'column', flex: 1, padding: '20px 28px 32px', gap: 0 }}
-      >
-
-        {/* ── Page header ────────────────────────────────────────── */}
-        <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, flexShrink: 0 }}>
-          <div>
-            <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#F97316', marginBottom: 4 }}>
-              {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
-            </p>
-            <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
-              {companyName ? `Today's Overview for ${companyName}` : "Today's Overview"}
-            </h1>
-          </div>
-
-          {/* Right: user + plan */}
-          <div data-owner-header-badges style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+        {/* Page header */}
+        <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
+          <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
+            Today&apos;s Overview
+          </h1>
+          <div data-owner-header-badges style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, paddingTop: 4 }}>
             {internalUserId && <OwnerUserBadge userId={internalUserId} companyId={companyId} />}
             {companyId && <OwnerPlanBadge plan={currentPlan} currentCompanyId={companyId} />}
           </div>
         </div>
 
-        {/* ── Content ──────────────────────────────────────────────────── */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 24, flex: 1, overflow: 'visible', minHeight: 0 }}>
+        {error && (
+          <div style={{ margin: '0 28px 12px', padding: '12px 16px', background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 10, fontSize: '0.875rem', fontWeight: 600, flexShrink: 0 }}>
+            {error}
+          </div>
+        )}
 
-          {initialReady && !companyId && (
-            <div style={{ background: '#FFFBEB', borderRadius: 12, padding: '14px 16px', fontSize: 13, color: '#92400E', border: '1px solid #FDE68A' }}>
-              No company is linked to your profile yet. If you just accepted an invitation, try signing out and signing in again.
+        <div style={{ padding: '4px 28px 24px', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', overflowY: isCompact ? 'auto' : undefined }}>
+          <div style={gridStyle}>
+
+            {/* ── Row 1 · Waiting On You (5 cards) ── */}
+            <div style={cellStyle(8)}>
+              <ShowcaseCard
+                fillHeight={!isCompact}
+                icon={<ListChecks size={15} style={{ color: '#F97316' }} />}
+                title="Waiting On You"
+                rightContent={<CountChip value={`${waitingCount}/${waitingTotal}`} />}
+                actions={loading ? <Spinner size={14} dark /> : undefined}
+              >
+                {!summary ? (
+                  <EmptyRow text={loading ? 'Loading…' : 'No data yet'} />
+                ) : (
+                  <div style={{ display: 'flex', gap: 12, minHeight: '100%', flexWrap: isCompact ? 'wrap' : 'nowrap', overflowX: isCompact ? undefined : 'auto' }}>
+                    {summary.waiting_on_you.map(item => (
+                      <WaitingOnYouCard
+                        key={item.id}
+                        item={item}
+                        onClick={() => router.push(WAITING_ROUTES[item.id])}
+                      />
+                    ))}
+                  </div>
+                )}
+              </ShowcaseCard>
             </div>
-          )}
 
-          {companyId && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 24, flex: 1, overflow: 'visible', minHeight: 0 }}>
-              {/* ── Last refreshed chip ── */}
-              {lastRefreshed && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0, marginBottom: -8 }}>
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10B981', flexShrink: 0, display: 'inline-block', animation: 'dotPulse 1.4s ease-out infinite', marginLeft: 5 }} />
-                  <span style={{ fontSize: 10, fontWeight: 500, color: '#94A3B8', letterSpacing: '0.03em' }}>
-                    Updated {timeAgo(lastRefreshed.toISOString())}
-                  </span>
+            {/* ── Row 1 · Recruitment Overview ── */}
+            <div style={cellStyle(4)}>
+              <ShowcaseCard
+                fillHeight={!isCompact}
+                icon={<UserPlus size={15} style={{ color: '#F97316' }} />}
+                title="Recruitment Overview"
+                actions={<LinkAction label="To Recruitment Page →" onClick={() => router.push('/owner/recruitment')} />}
+              >
+                {!summary ? (
+                  <EmptyRow text={loading ? 'Loading…' : 'No data yet'} />
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: isCompact ? 'column' : 'row', gap: 16, alignItems: 'stretch' }}>
+                    <StatActionCard
+                      count={summary.recruitment_overview.deadline_today.length}
+                      label="Applications Close Today"
+                      sub="Postings stop taking applicants"
+                      icon={<ClipboardList size={26} />}
+                      accent="#DC2626"
+                      accentBg="#FEF2F2"
+                      onClick={() => {
+                        const ids = summary.recruitment_overview.deadline_today.map(r => r.job_id)
+                        router.push(ids.length > 0 ? `/owner/recruitment?highlight=${ids.join(',')}` : '/owner/recruitment')
+                      }}
+                    />
+                    <StatActionCard
+                      count={summary.recruitment_overview.starting_soon.length}
+                      label="Job Starting Soon"
+                      sub="Understaffed, starts within 2 days"
+                      icon={<Hourglass size={26} />}
+                      accent="#D97706"
+                      accentBg="#FFF7ED"
+                      onClick={() => {
+                        const ids = summary.recruitment_overview.starting_soon.map(r => r.job_id)
+                        router.push(ids.length > 0 ? `/owner/recruitment?highlight=${ids.join(',')}` : '/owner/recruitment')
+                      }}
+                    />
+                  </div>
+                )}
+              </ShowcaseCard>
+            </div>
+
+            {/* ── Row 2 · Task Overview ── */}
+            <div style={cellStyle(4)}>
+              <ShowcaseCard
+                fillHeight={!isCompact}
+                icon={<CheckSquare size={15} style={{ color: '#F97316' }} />}
+                title="Task Overview"
+                actions={
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                    <HeaderSearchInput value={taskSearch} onChange={setTaskSearch} width={140} />
+                    <LinkAction label="To Task Page →" onClick={() => router.push('/owner/tasks')} />
+                  </div>
+                }
+              >
+                {!summary ? (
+                  <EmptyRow text={loading ? 'Loading…' : 'No data yet'} />
+                ) : taskCount === 0 ? (
+                  <EmptyRow text="Nothing overdue, at risk, or due today" />
+                ) : visibleTaskGroups.length === 0 ? (
+                  <EmptyRow text="No tasks match your search" />
+                ) : (
+                  /* Pair rows: stat card → colored arrow → detail panel (its "View all" link sits
+                     BELOW the panel). Rows share the block's full height equally; a group with
+                     many tasks scrolls inside its own panel instead of stretching the page. */
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 16, height: '100%' }}>
+                    {visibleTaskGroups.map(group => (
+                      <div key={group.key} style={{ display: 'flex', alignItems: 'stretch', flex: 1, minHeight: 250 }}>
+                        <div style={{ width: 176, flexShrink: 0 }}>
+                          <TaskStatCard group={group} />
+                        </div>
+                        <div style={{ width: 48, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <span style={{
+                            width: 26, height: 26, borderRadius: 999, background: TASK_GROUP_META[group.key].color, color: '#FFFFFF',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                            boxShadow: '0 2px 6px rgba(15,23,42,0.22)',
+                          }}>
+                            <ArrowRight size={14} />
+                          </span>
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                          <TaskGroupSection group={group} onOpenTask={() => router.push(TASK_GROUP_META[group.key].href)} />
+                          <button
+                            onClick={() => router.push(TASK_GROUP_META[group.key].href)}
+                            style={{
+                              background: 'none', border: 'none', cursor: 'pointer', padding: '8px 0 0',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7,
+                              fontSize: 12.5, fontWeight: 700, color: TASK_GROUP_META[group.key].color, flexShrink: 0,
+                            }}
+                          >
+                            {TASK_GROUP_META[group.key].viewAll} <ArrowRight size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </ShowcaseCard>
+            </div>
+
+            {/* ── Row 2 · Attendance Overview (Internal + Casual Worker halves) ── */}
+            <div style={cellStyle(8)}>
+              <div style={{
+                flex: isCompact ? undefined : 1, minHeight: 0, minWidth: 0, display: 'flex', flexDirection: 'column',
+                background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, boxShadow: '0 1px 4px rgba(0,0,0,0.05)',
+              }}>
+                <div style={{ minHeight: 78, padding: '20px 24px 14px', display: 'flex', alignItems: 'center', gap: 16, flexShrink: 0 }}>
+                  <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <Users size={15} style={{ color: '#F97316' }} />
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <p style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', margin: 0, letterSpacing: '-0.2px', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Attendance Overview</p>
+                  </div>
+                  <div style={{ marginLeft: 'auto', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 14 }}>
+                    <HeaderSearchInput value={attendanceSearch} onChange={setAttendanceSearch} />
+                    <LinkAction label="Go to Attendance Page →" onClick={() => router.push('/owner/attendance')} />
+                  </div>
                 </div>
-              )}
-
-              {/* ── ROW 1: Stat cards ─────────────── */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, minmax(0, 1fr))', gap: 14, flexShrink: 0 }}>
-                {[
-                  {
-                    label: 'Staff on Shift',
-                    value: timelineLoading ? null : todayShiftCount,
-                    icon: <Users size={16} style={{ color: '#F97316' }} />,
-                    accentBg: '#FFF7ED',
-                  },
-                  {
-                    label: 'Casual Workers',
-                    value: timelineLoading ? null : casualWorkersCount,
-                    icon: <UserRound size={16} style={{ color: '#EC4899' }} />,
-                    accentBg: '#FDF2F8',
-                  },
-                  {
-                    label: 'Total Tasks',
-                    value: taskStatsLoading ? null : totalTasks,
-                    icon: <ClipboardList size={16} style={{ color: '#3B82F6' }} />,
-                    accentBg: '#EFF6FF',
-                  },
-                  {
-                    label: 'Tasks In Progress',
-                    value: taskStatsLoading ? null : (taskStats?.inProgress ?? 0),
-                    icon: <Timer size={16} style={{ color: '#8B5CF6' }} />,
-                    accentBg: '#F5F3FF',
-                  },
-                  {
-                    label: 'Tasks In Review',
-                    value: taskStatsLoading ? null : (taskStats?.review ?? 0),
-                    icon: <Eye size={16} style={{ color: '#F59E0B' }} />,
-                    accentBg: '#FFFBEB',
-                  },
-                  {
-                    label: 'Tasks Complete',
-                    value: taskStatsLoading ? null : (taskStats?.complete ?? 0),
-                    icon: <CheckCircle size={16} style={{ color: '#10B981' }} />,
-                    accentBg: '#ECFDF5',
-                  },
-                ].map(card => (
-                  <article key={card.label} className="stat-card" style={{
-                    background: '#fff',
-                    borderRadius: 16,
-                    padding: '16px 18px',
-                    boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 10,
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <p style={{ fontSize: 11, fontWeight: 600, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.07em', margin: 0 }}>{card.label}</p>
-                      <div className="stat-icon" style={{ width: 32, height: 32, borderRadius: 10, background: card.accentBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                        {card.icon}
-                      </div>
-                    </div>
-                    <p style={{ fontSize: 28, fontWeight: 800, color: '#0F172A', lineHeight: 1, margin: 0, letterSpacing: '-0.5px' }}>
-                      {card.value === null ? <Spinner size={14} dark /> : <AnimatedNumber value={card.value} />}
-                    </p>
-                  </article>
-                ))}
-              </div>
-
-              {/* ── ROW 2: Timeline full width ─── */}
-              <div style={{ flexShrink: 0 }}>
-                <ScheduleTimeline
-                  companyId={companyId}
-                  dateFrom={formatDateKey(new Date())}
-                  dateTo={formatDateKey(new Date())}
-                  title="Schedule"
-                  refreshKey={timelineRefreshKey}
-                  onRowsChange={setTimelineRows}
-                  onLoadingChange={setTimelineLoading}
-                />
-              </div>
-
-              {/* ── ROW 3: 4 draggable panels ─── */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 16, alignItems: 'start', position: 'relative', paddingBottom: 16 }}>
-                {panelOrder.map((panelId, idx) => {
-                  const isDragging = panelDrag?.panelId === panelId
-                  const shift = panelDrag ? getPanelShift(idx, panelDrag.fromIdx, panelDrag.insertAt) : 0
-                  const PANEL_META: Record<PanelId, { label: string; icon: React.ReactNode }> = {
-                    focus:    { label: 'Focus',     icon: <Target size={15} style={{ color: '#EA580C' }} /> },
-                    team:     { label: 'Team',      icon: <Users size={15} style={{ color: '#F97316' }} /> },
-                    activity: { label: 'Live Feed', icon: <Activity size={15} style={{ color: '#F97316' }} /> },
-                    tasks:    { label: 'Tasks',     icon: <ClipboardList size={15} style={{ color: '#F97316' }} /> },
-                  }
-                  const meta = PANEL_META[panelId]
-                  return (
-                  <div
-                    key={panelId}
-                    ref={el => { if (el) panelEls.current.set(panelId, el as HTMLDivElement); else panelEls.current.delete(panelId) }}
-                    className="panel-card"
-                    style={{
-                      background: '#fff', borderRadius: 20, padding: 20,
-                      boxShadow: '0 1px 4px rgba(0,0,0,0.05), 0 0 0 1px rgba(0,0,0,0.04)',
-                      display: 'flex', flexDirection: 'column',
-                      height: 360,
-                      overflow: 'hidden',
-                      transform: isDragging ? 'scale(0.97)' : `translateX(${shift}px)`,
-                      transition: isDragging
-                        ? 'opacity 0.12s, transform 0.12s'
-                        : 'transform 0.18s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
-                      opacity: isDragging ? 0.25 : 1,
-                      cursor: panelDrag ? 'grabbing' : 'default',
-                    }}
-                  >
-                    {/* Panel header — icon is drag handle */}
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: panelId === 'focus' ? 18 : 16, flexShrink: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <div
-                          onMouseDown={e => startPanelDrag(e, idx, panelId)}
-                          title="Drag to reorder"
-                          style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'grab', flexShrink: 0 }}
-                        >
-                          {meta.icon}
-                        </div>
-                        <span style={{ fontSize: 14, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px' }}>{meta.label}</span>
-                        {panelId === 'activity' && (
-                          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10B981', flexShrink: 0, display: 'inline-block', animation: 'dotPulse 1.4s ease-out infinite' }} />
-                        )}
-                      </div>
-                      {panelId === 'activity' && activityFeed.length > 0 && (
-                        <button
-                          type="button"
-                          className="mark-btn"
-                          onClick={() => setMarkedFeedItems(new Set(activityFeed.map(event => feedKey(event))))}
-                          style={{ cursor: 'pointer', borderRadius: 999, border: '1px solid #E2E8F0', background: '#fff', padding: '5px 14px', fontSize: 11, fontWeight: 600, color: '#64748B', transition: 'all 0.15s' }}
-                          onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = '#F8FAFC' }}
-                          onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = '#fff' }}
-                        >
-                          Mark all read
-                        </button>
-                      )}
-                    </div>
-
-                    {/* ── Focus content ── */}
-                    {panelId === 'focus' && (
-                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 4 }}>
-                    {taskStatsLoading ? (
-                      <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}><Spinner size={20} dark /></div>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-
-                        {/* Donut chart */}
-                        {(() => {
-                          const total = priorityFocusTasks.length
-                          const RM = 55, SW = 16, CX = 80, CY = 80
-                          const C = 2 * Math.PI * RM
-                          return (
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 20 }}>
-                              {/* SVG donut */}
-                              <div style={{ flexShrink: 0 }}>
-                                <svg width={160} height={160} viewBox="0 0 160 160">
-                                  {total === 0 ? (
-                                    <circle cx={CX} cy={CY} r={RM} fill="none" stroke="#F3F4F6" strokeWidth={SW} />
-                                  ) : (
-                                    focusDonutSegs.map((seg, i) => {
-                                      if (seg.count === 0) return null
-                                      return (
-                                        <circle
-                                          key={i}
-                                          cx={CX} cy={CY} r={RM}
-                                          fill="none"
-                                          stroke={seg.color}
-                                          strokeWidth={SW}
-                                          strokeDasharray={`${seg.frac * C} ${C}`}
-                                          transform={`rotate(${-90 + seg.start * 360} ${CX} ${CY})`}
-                                          strokeLinecap="butt"
-                                        />
-                                      )
-                                    })
-                                  )}
-                                  <text x={CX} y={CY - 10} textAnchor="middle" dominantBaseline="middle" fill="#0F172A" fontSize="24" fontWeight="800" fontFamily="inherit">{total}</text>
-                                  <text x={CX} y={CY + 12} textAnchor="middle" dominantBaseline="middle" fill="#94A3B8" fontSize="11" fontWeight="500" fontFamily="inherit">tasks</text>
-                                </svg>
-                              </div>
-                              {/* Legend */}
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                                {focusDonutSegs.map(seg => (
-                                  <div key={seg.label} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                    <div style={{ width: 10, height: 10, borderRadius: 3, background: seg.color, flexShrink: 0 }} />
-                                    <span style={{ fontSize: 12, color: '#374151', width: 68 }}>{seg.label}</span>
-                                    <span style={{ fontSize: 14, fontWeight: 800, color: seg.count > 0 ? seg.color : '#D1D5DB' }}>{seg.count}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )
-                        })()}
-
-                        {/* Task list */}
-                        {priorityFocusTasks.length === 0 ? (
-                          <div style={{ padding: '32px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
-                            <Target size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
-                            <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No urgent or high priority tasks</p>
-                          </div>
-                        ) : (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                            {priorityFocusTasks.map(task => {
-                              const stageMap: Record<string, { color: string; bg: string; label: string }> = {
-                                'Assigned':    { color: '#64748B', bg: '#F1F5F9', label: 'Assigned' },
-                                'In Progress': { color: '#4F46E5', bg: '#EEF2FF', label: 'In Progress' },
-                                'Review':      { color: '#D97706', bg: '#FFFBEB', label: 'Review' },
-                                'Complete':    { color: '#059669', bg: '#ECFDF5', label: 'Complete' },
-                              }
-                              const stage = stageMap[task.status ?? 'Assigned'] ?? stageMap['Assigned']
-                              const { color: stageColor, bg: stageBg, label: stageLabel } = stage
-                              const isComplete = task.status === 'Complete'
-                              const isExpanded = expandedTaskId === task.id
-                              const pStyle = task.priority === 'Urgent'
-                                ? { bg: '#FEE2E2', color: '#B91C1C', border: '#FECACA' }
-                                : { bg: '#FFEDD5', color: '#C2410C', border: '#FDBA74' }
-                              return (
-                                <div
-                                  key={task.id}
-                                  className="task-item"
-                                  style={{ borderRadius: 12, border: '1px solid #EBEBEB', padding: '10px 12px', background: '#FAFAFA', cursor: 'pointer' }}
-                                  onClick={() => setExpandedTaskId(isExpanded ? null : task.id)}
-                                >
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                    {/* Priority badge */}
-                                    <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, width: 60, height: 24, borderRadius: 8, fontSize: 11, fontWeight: 700, background: pStyle.bg, color: pStyle.color, border: `1px solid ${pStyle.border}` }}>
-                                      {task.priority}
-                                    </span>
-                                    {/* Title */}
-                                    <span style={{ fontSize: 12, fontWeight: 600, color: isComplete ? '#94A3B8' : '#0F172A', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: isComplete ? 'line-through' : 'none' }}>
-                                      {task.title}
-                                    </span>
-                                    {/* Assignee */}
-                                    {task.assignee_name && (
-                                      <span style={{ fontSize: 11, fontWeight: 600, color: '#374151', flexShrink: 0 }}>{task.assignee_name}</span>
-                                    )}
-                                    {/* Status badge */}
-                                    <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, minWidth: 76, height: 24, borderRadius: 999, fontSize: 11, fontWeight: 600, background: stageBg, color: stageColor }}>
-                                      {stageLabel}
-                                    </span>
-                                  </div>
-                                  {isExpanded && task.assignee_name && task.assigned_user_id && (
-                                    <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #F1F5F9' }}>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation()
-                                          router.push(`/owner/communication?tab=messages&partner_id=${task.assigned_user_id}&prefill=${encodeURIComponent(`Regarding: "${task.title}"`)}`)
-                                        }}
-                                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, borderRadius: 8, border: '1px solid #E2E8F0', background: '#fff', padding: '5px 10px', fontSize: 11, color: '#64748B', cursor: 'pointer' }}
-                                      >
-                                        <MessageCircle size={11} />
-                                        Send Message
-                                      </button>
-                                    </div>
-                                  )}
-                                </div>
-                              )
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    </div>
-                    )} {/* end focus */}
-
-                    {/* ── Team content ── */}
-                    {panelId === 'team' && (
-                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 4 }}>
-                  {timelineLoading ? (
-                    <div style={{ display: 'flex', justifyContent: 'center', padding: '24px 0' }}><Spinner size={16} dark /></div>
-                  ) : todayShiftCount === 0 ? (
-                    <div style={{ padding: '32px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
-                      <Users size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
-                      <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No one is on shift today</p>
-                    </div>
+                <div style={{ borderTop: '1px solid #E5E7EB', flexShrink: 0 }} />
+                <div style={{ flex: 1, minHeight: 0, padding: '18px 20px 16px', overflowY: 'auto' }}>
+                  {!summary ? (
+                    <EmptyRow text={loading ? 'Loading…' : 'No data yet'} />
                   ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                      {Object.entries(teamByDept).map(([deptId, { name: deptName, rows }]) => (
-                        <div key={deptId}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 10px 6px', borderBottom: '2px solid #374151', marginBottom: 2 }}>
-                            <span style={{ width: 8, height: 8, borderRadius: 2, background: deptColor(deptId), flexShrink: 0, display: 'inline-block' }} />
-                            <span style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: '#94A3B8' }}>{deptName}</span>
-                          </div>
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2px 4px' }}>
-                          {rows.map((row, i) => (
-                            <div
-                              key={`${row.user_id}_${i}`}
-                              data-testid="team-member-row"
-                              className="team-row"
-                              style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 8px', borderRadius: 10, minWidth: 0 }}
-                            >
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, flexShrink: 0, background: row.role === 'Manager' ? '#FFF7ED' : '#F3F4F6', color: row.role === 'Manager' ? '#EA580C' : '#4B5563', borderRadius: 999 }}>
-                                {row.role === 'Manager' ? <UserCog size={13} /> : <UserRound size={13} />}
-                              </div>
-                              <p style={{ fontSize: 13, fontWeight: 700, margin: 0, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }}>{row.full_name}</p>
-                              <button
-                                onClick={() => router.push(`/owner/communication?tab=messages&partner_id=${row.user_id}`)}
-                                aria-label={`Message ${row.full_name}`}
-                                className="msg-btn"
-                                style={{ flexShrink: 0, cursor: 'pointer', background: 'transparent', border: 'none', padding: 4, borderRadius: 6, color: '#CBD5E1', transition: 'color 0.15s' }}
-                                onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = '#F97316' }}
-                                onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = '#CBD5E1' }}
-                              >
-                                <MessageCircle size={14} />
-                              </button>
-                            </div>
-                          ))}
-                          </div>
-                        </div>
-                      ))}
+                    <div style={{ display: 'flex', flexDirection: isCompact ? 'column' : 'row', gap: 32, alignItems: 'stretch', minHeight: '100%' }}>
+                      <AttendanceHalf
+                        title="Internal Attendance"
+                        accent="#2563EB"
+                        accentBg="#EFF6FF"
+                        group={summary.attendance_overview.internal}
+                        search={attendanceSearch}
+                      />
+                      <AttendanceHalf
+                        title="Casual Worker Attendance"
+                        accent="#16A34A"
+                        accentBg="#F0FDF4"
+                        group={summary.attendance_overview.casual}
+                        search={attendanceSearch}
+                      />
                     </div>
                   )}
-                  </div>
-                    )} {/* end team */}
-
-                    {/* ── Activity content ── */}
-                    {panelId === 'activity' && (
-                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 4 }}>
-                    {activityFeedLoading ? (
-                      <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}><Spinner size={16} dark /></div>
-                    ) : activityFeed.length === 0 ? (
-                      <div style={{ padding: '32px 16px', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
-                        <Activity size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
-                        <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No activity yet today</p>
-                      </div>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {activityFeed.map((event) => {
-                          const statusColors: Record<string, { dot: string; bg: string }> = {
-                            'In Progress': { dot: '#4F46E5', bg: '#EEF2FF' },
-                            'Review':      { dot: '#D97706', bg: '#FFFBEB' },
-                            'Complete':    { dot: '#059669', bg: '#ECFDF5' },
-                          }
-                          const matchedStatus = Object.keys(statusColors).find(s => event.description.endsWith(s))
-                          const { dot: dotColor, bg: dotBg } = statusColors[matchedStatus ?? ''] ?? { dot: '#4F46E5', bg: '#EEF2FF' }
-                          const key = feedKey(event)
-                          const isMarked = markedFeedItems.has(key)
-                          return (
-                            <div key={key} className="feed-item" style={{ borderRadius: 14, border: `1px solid ${isMarked ? '#F1F5F9' : '#F1F5F9'}`, background: isMarked ? '#FAFAFA' : '#fff', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                                <div style={{ width: 28, height: 28, borderRadius: 8, background: isMarked ? '#F1F5F9' : dotBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                  <div style={{ width: 7, height: 7, borderRadius: 999, background: isMarked ? '#CBD5E1' : dotColor }} />
-                                </div>
-                                <p style={{ margin: 0, fontSize: 12, color: isMarked ? '#94A3B8' : '#334155', lineHeight: 1.5, flex: 1 }}>{event.description}</p>
-                              </div>
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <span style={{ fontSize: 10, color: '#94A3B8', fontWeight: 500 }}>{timeAgo(event.timestamp)}</span>
-                                <button
-                                  type="button"
-                                  className="mark-btn"
-                                  onClick={() => setMarkedFeedItems(prev => new Set(prev).add(key))}
-                                  style={{ cursor: isMarked ? 'default' : 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4, width: 70, height: 24, borderRadius: 999, border: isMarked ? '1px solid #BBF7D0' : '1px solid #E2E8F0', background: isMarked ? '#F0FDF4' : '#F8FAFC', color: isMarked ? '#16A34A' : '#64748B', fontSize: 11, fontWeight: 600 }}
-                                >
-                                  <CheckCheck size={11} />
-                                  {isMarked ? 'Done' : 'Mark'}
-                                </button>
-                              </div>
-                            </div>
-                          )
-                        })}
-                      </div>
-                    )}
-                    </div>
-                    )} {/* end activity */}
-
-                    {/* ── Tasks content ── */}
-                    {panelId === 'tasks' && (
-                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 4 }}>
-                    {taskStatsLoading ? (
-                      <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}><Spinner size={16} dark /></div>
-                    ) : todayTasks.length === 0 ? (
-                      <div style={{ padding: '32px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
-                        <ClipboardList size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
-                        <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No tasks assigned today</p>
-                      </div>
-                    ) : (() => {
-                        const medLowTasks = todayTasks.filter(t => t.priority === 'Medium' || t.priority === 'Low')
-                        const pMap: Record<string, { bg: string; color: string; border: string }> = {
-                          Medium: { bg: '#FEF9C3', color: '#A16207', border: '#FDE047' },
-                          Low:    { bg: '#F3F4F6', color: '#6B7280', border: '#E5E7EB' },
-                        }
-                        const sMap: Record<string, { bg: string; color: string }> = {
-                          'Assigned':    { bg: '#F1F5F9', color: '#64748B' },
-                          'In Progress': { bg: '#EEF2FF', color: '#4F46E5' },
-                          'Review':      { bg: '#FFFBEB', color: '#D97706' },
-                          'Complete':    { bg: '#ECFDF5', color: '#059669' },
-                        }
-                        if (medLowTasks.length === 0) return (
-                          <div style={{ padding: '32px 0', textAlign: 'center', background: '#F8FAFC', borderRadius: 14 }}>
-                            <ClipboardList size={24} style={{ color: '#CBD5E1', margin: '0 auto 8px', display: 'block' }} />
-                            <p style={{ fontSize: 12, color: '#94A3B8', margin: 0 }}>No medium or low priority tasks</p>
-                          </div>
-                        )
-                        return (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                            {medLowTasks.map(task => {
-                              const isExpanded = expandedTaskId === task.id
-                              const ps = pMap[task.priority ?? ''] ?? { bg: '#F3F4F6', color: '#9CA3AF', border: '#E5E7EB' }
-                              const sc = sMap[task.status ?? 'Assigned'] ?? sMap['Assigned']
-                              return (
-                                <div
-                                  key={task.id}
-                                  data-testid="task-list-item"
-                                  className="task-item"
-                                  style={{ borderRadius: 12, border: '1px solid #EBEBEB', background: '#FAFAFA', padding: '10px 12px', cursor: 'pointer' }}
-                                  onClick={() => setExpandedTaskId(isExpanded ? null : task.id)}
-                                >
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                    {/* Priority badge */}
-                                    <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, width: 60, height: 24, borderRadius: 8, fontSize: 11, fontWeight: 700, background: ps.bg, color: ps.color, border: `1px solid ${ps.border}` }}>
-                                      {task.priority}
-                                    </span>
-                                    {/* Title */}
-                                    <span style={{ fontSize: 12, fontWeight: 600, color: '#0F172A', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                      {task.title}
-                                    </span>
-                                    {/* Assignee */}
-                                    {task.assignee_name && (
-                                      <span style={{ fontSize: 11, fontWeight: 600, color: '#374151', flexShrink: 0 }}>{task.assignee_name}</span>
-                                    )}
-                                    {/* Status badge */}
-                                    <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, minWidth: 76, height: 24, borderRadius: 999, fontSize: 11, fontWeight: 600, background: sc.bg, color: sc.color }}>
-                                      {task.status ?? 'Assigned'}
-                                    </span>
-                                  </div>
-                                  {isExpanded && (
-                                    <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid #F1F5F9' }}>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation()
-                                          if (task.assigned_user_id) {
-                                            router.push(`/owner/communication?tab=messages&partner_id=${task.assigned_user_id}&prefill=${encodeURIComponent(`Regarding: "${task.title}"`)}`)
-                                          }
-                                        }}
-                                        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, borderRadius: 8, border: '1px solid #E2E8F0', background: '#fff', padding: '5px 10px', fontSize: 11, color: '#64748B', cursor: 'pointer' }}
-                                      >
-                                        <MessageCircle size={11} />
-                                        Send Message
-                                      </button>
-                                    </div>
-                                  )}
-                                </div>
-                              )
-                            })}
-                          </div>
-                        )
-                      })()}
-                    </div>
-                    )} {/* end tasks */}
-
-                  </div>
-                  )
-                })}
-
-                {/* Floating ghost that follows cursor during panel drag */}
-                {panelDrag && (() => {
-                  const labels: Record<PanelId, string> = { focus: 'Focus', team: 'Team', activity: 'Live Feed', tasks: 'Tasks' }
-                  return (
-                    <div style={{
-                      position: 'fixed',
-                      left: panelDrag.ghostX - 60,
-                      top: 80,
-                      background: '#F97316',
-                      color: '#fff',
-                      padding: '8px 18px',
-                      borderRadius: 10,
-                      fontSize: 13,
-                      fontWeight: 700,
-                      pointerEvents: 'none',
-                      zIndex: 9999,
-                      boxShadow: '0 6px 20px rgba(0,0,0,0.25)',
-                      opacity: 0.92,
-                      whiteSpace: 'nowrap',
-                    }}>
-                      {labels[panelDrag.panelId]}
-                    </div>
-                  )
-                })()}
-
+                </div>
               </div>
             </div>
-          )}
-        </div>
-      </main>
 
-      {/* ── REMOVAL OVERLAY ───────────────────────────────────────── */}
-      {removalOverlay && (
-        <div className="fixed inset-0 z-[200] bg-black/70 backdrop-blur-sm flex items-center justify-center">
-          <div className="bg-white rounded-2xl px-12 py-10 shadow-2xl max-w-md text-center">
-            <h2 className="text-base font-bold text-gray-900 mb-2.5">You have been removed</h2>
-            <p className="text-sm text-gray-500 leading-relaxed mb-5">
-              You were removed from <strong className="text-gray-900">{removalOverlay.companyName}</strong>. Switching to your other company…
-            </p>
-            <div className="h-1 bg-gray-100 rounded-full overflow-hidden">
-              <div className="h-full w-full rounded-full bg-orange-500 transition-all duration-200" />
-            </div>
           </div>
         </div>
-      )}
+      </main>
     </div>
   )
 }

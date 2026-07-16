@@ -263,6 +263,7 @@ async function main() {
     'inbox',
     'job_invitations',
     'job_applicants',
+    'recruitment_cancellations',
     'job_postings',
     'job_templates',
     'employee_off_day_requests',
@@ -645,20 +646,39 @@ async function main() {
     return ids
   }
 
+  // TODAY's attendance story — so the Owner Dashboard's Attendance Overview shows real variety
+  // (checked-in / late / absent / not started) instead of everyone sitting in "Not Started".
+  // Slot order per dept = [managerA, managerB, employeeA, employeeB] (staffEmails order below).
+  // 'absent' works by giving that person an early shift today ('00:00'–'01:00' UTC-nominal =
+  // 08:00–09:00 UTC+8 local) that has already ended with no clock-in — that is exactly
+  // getAttendanceExceptions' "no clock-in by shift end" absent rule, and it keeps the person
+  // OUT of the checked-in count (an invalid late clock-in would wrongly count as checked in).
+  const TODAY_INTERNAL_OUTCOMES = [
+    ['present', 'late', 'absent', 'not_started'],  // Operations
+    ['present', 'present', 'late', 'not_started'], // Marketing
+    ['late', 'present', 'absent', 'not_started'],  // Engineering
+    ['present', 'late', 'present', 'absent'],      // Customer Support
+  ]
+  const TODAY_LATE_MINUTES = [12, 25, 18, 32] // per dept — Late cards show different minutes
+
   const shiftRows = []
   const shiftMeta = []
   for (let dayOffset = -SHIFT_DAYS_PAST; dayOffset <= SHIFT_DAYS_FUTURE; dayOffset++) {
     const shiftDate = addDays(TODAY, dayOffset)
     const shiftDateStr = dateKey(shiftDate)
     const isPast = dayOffset < 0
+    const isToday = dayOffset === 0
 
     for (let deptIdx = 0; deptIdx < deptByIndex.length; deptIdx++) {
       const dept = deptByIndex[deptIdx]
       const staffEmails = [...managersByDept[deptIdx], ...employeesByDept[deptIdx]]
-      for (const email of staffEmails) {
+      for (let slotIdx = 0; slotIdx < staffEmails.length; slotIdx++) {
+        const email = staffEmails[slotIdx]
         const isManager = managerEmails.includes(email)
-        const startTime = isManager ? '09:00' : '11:00'
-        const endTime = isManager ? '17:00' : '18:00'
+        const todayOutcome = isToday ? TODAY_INTERNAL_OUTCOMES[deptIdx][slotIdx] : null
+        let startTime = isManager ? '09:00' : '11:00'
+        let endTime = isManager ? '17:00' : '18:00'
+        if (todayOutcome === 'absent') { startTime = '00:00'; endTime = '01:00' }
         shiftRows.push({
           company_id: company.id,
           department_id: dept.id,
@@ -670,7 +690,7 @@ async function main() {
           publication_status: 'published',
           created_by: ownerUser.id,
         })
-        shiftMeta.push({ shiftDateStr, startTime, endTime, email, userId: userIdMap[email].internalId, deptIdx, isPast })
+        shiftMeta.push({ shiftDateStr, startTime, endTime, email, userId: userIdMap[email].internalId, deptIdx, isPast, isToday, todayOutcome })
       }
     }
   }
@@ -697,6 +717,8 @@ async function main() {
       userId: m.userId,
       deptIdx: m.deptIdx,
       isPast: m.isPast,
+      isToday: m.isToday,
+      todayOutcome: m.todayOutcome,
     })
   }
   console.log(`  ✓ 生成 ${assignmentInfo.length} 个 shift + assignment（过去 ${SHIFT_DAYS_PAST} 天 + 未来 ${SHIFT_DAYS_FUTURE} 天，含周末）`)
@@ -755,15 +777,92 @@ async function main() {
       owner_reviewed_at: ownerStatus === 'pending' ? null : new Date().toISOString(),
     })
   }
+  // TODAY's internal records — mid-shift snapshots per TODAY_INTERNAL_OUTCOMES: 'present' and
+  // 'late' get a clocked-in-not-yet-out record (status 'clocked_in', clock_out null — exactly
+  // what casualAttendanceService.clockIn writes); 'absent' and 'not_started' get no record.
+  for (const a of assignmentInfo.filter(x => x.isToday)) {
+    if (a.todayOutcome !== 'present' && a.todayOutcome !== 'late') continue
+    const clockInBase = new Date(`${a.shiftDate}T${a.startTime}:00Z`)
+    const minutesAfterStart = a.todayOutcome === 'late' ? TODAY_LATE_MINUTES[a.deptIdx] : 3
+    attendanceRows.push({
+      shift_assignment_id: a.assignmentId,
+      casual_worker_id: a.userId,
+      confirmed_by_employee_id: a.userId,
+      submitted_by_employee_id: a.userId,
+      clock_in_time: new Date(clockInBase.getTime() + minutesAfterStart * 60000).toISOString(),
+      clock_out_time: null,
+      status: 'clocked_in',
+      manager_notes: null,
+      owner_status: 'pending',
+      owner_reviewed_by: null,
+      owner_reviewed_at: null,
+    })
+  }
   await chunkInsert('attendance_records', attendanceRows, false)
   const attendanceCount = attendanceRows.length
-  console.log(`  ✓ 生成 ${attendanceCount} 条 attendance_records（混合 approved/pending/manager_reviewed/rejected/late，~5% 缺勤无记录）`)
+  console.log(`  ✓ 生成 ${attendanceCount} 条 attendance_records（混合 approved/pending/manager_reviewed/rejected/late，~5% 缺勤无记录；含今天的 clocked_in/late/absent/not-started 分布）`)
 
   // ── Step 11b: Casual Worker Shifts + Attendance Records ─────────────────
   // 每个 active CW 分配到一个部门，过去 7 天生成 shifts（混合 Shift Job / One-Off）
   // 每个 CW 由同部门的 Employee 负责 supervise。
   console.log('\nStep 11b: 生成 Casual Worker Shifts + Attendance Records...')
   const activeCWEmails = ['cw1@test.com','cw2@test.com','cw3@test.com','cw4@test.com','cw5@test.com','cw6@test.com','cw7@test.com']
+
+  // Per-worker "story" — deliberately varied instead of one global random-ish bucket, so the
+  // Owner Report's Casual Worker Pool blocks (Top Reliable / Needing Attention / Most Requested /
+  // Task Quality) each have a real, differentiated cast instead of everyone landing in the same
+  // bucket. workDays = which weekdays (0=Sun..6=Sat) this worker is even scheduled on — any 7
+  // consecutive calendar days contain each weekday exactly once, so this alone spreads
+  // assigned_shifts across a real range (3–7) regardless of which week the report is viewed for.
+  // outcome(dayOfWeek) decides the attendance result for a day this worker IS scheduled; applied
+  // uniformly across the whole shift history (not just the report's default window) so the trait
+  // reads as consistent, not a one-week fluke, and the previous-period comparison isn't skewed.
+  const CW_STORY = {
+    'cw1@test.com': { // Alicia Tan — the star: full availability, always on time.
+      workDays: new Set([0, 1, 2, 3, 4, 5, 6]),
+      outcome: () => 'present',
+    },
+    'cw2@test.com': { // Nadia Wong — no-show pattern: skips Sundays, ghosts Tue + Fri.
+      workDays: new Set([1, 2, 3, 4, 5, 6]),
+      outcome: dow => (dow === 2 || dow === 5 ? 'absent' : 'present'),
+    },
+    'cw3@test.com': { // Hui Min Lee — shows up but chronically late (Mon/Wed/Fri), skips Saturdays.
+      workDays: new Set([0, 1, 2, 3, 4, 5]),
+      outcome: dow => (dow === 1 || dow === 3 || dow === 5 ? 'late' : 'present'),
+    },
+    'cw4@test.com': { // Farah Hassan — limited availability (Mon/Wed/Fri only) but clean when she's in;
+      // her one blemish is a cancelled confirmed job, seeded separately in Step 15d.
+      workDays: new Set([1, 3, 5]),
+      outcome: () => 'present',
+    },
+    'cw5@test.com': { // Ethan Ong — full availability like Alicia (most requested), but late every Thursday
+      // — demonstrates "most requested" and "most reliable" are NOT the same ranking.
+      workDays: new Set([0, 1, 2, 3, 4, 5, 6]),
+      outcome: dow => (dow === 4 ? 'late' : 'present'),
+    },
+    'cw6@test.com': { // Daniel Goh — perfect attendance (Mon-Fri); his story is task QUALITY, not
+      // punctuality — see the Task Quality seed in Step 13c.
+      workDays: new Set([1, 2, 3, 4, 5]),
+      outcome: () => 'present',
+    },
+    'cw7@test.com': { // Siti Nur — narrower availability (Tue-Fri) but clean attendance AND clean task
+      // quality — the "quality star" contrast to Alicia's "attendance star".
+      workDays: new Set([2, 3, 4, 5]),
+      outcome: () => 'present',
+    },
+  }
+  // TODAY's CW attendance story (only applies to workers whose workDays include today) — same
+  // idea as TODAY_INTERNAL_OUTCOMES: the dashboard's Casual Worker half should show variety too.
+  // cw2 absent-today reinforces her no-show persona; cw6/cw4 not-started keeps their clean record.
+  const CW_TODAY_OUTCOME = {
+    'cw1@test.com': 'present',
+    'cw2@test.com': 'absent',
+    'cw3@test.com': 'present',
+    'cw4@test.com': 'not_started',
+    'cw5@test.com': 'late',
+    'cw6@test.com': 'not_started',
+    'cw7@test.com': 'present',
+  }
   // 每 dept 分配约 1-2 个 CW
   const cwByDept = [
     ['cw1@test.com', 'cw2@test.com'], // dept[0]
@@ -798,14 +897,20 @@ async function main() {
       })
       if (cwdErr) console.warn(`  ⚠ casualworker_departments 失败 (${cwEmail}): ${cwdErr.message}`)
 
+      const story = CW_STORY[cwEmail]
       for (let dayOffset = -SHIFT_DAYS_PAST; dayOffset <= 0; dayOffset++) {
         const shiftDate = addDays(TODAY, dayOffset)
+        if (!story.workDays.has(shiftDate.getDay())) continue // not scheduled this weekday
         const shiftDateStr = dateKey(shiftDate)
         const isPast = dayOffset < 0
+        const isToday = dayOffset === 0
+        const todayOutcome = isToday ? CW_TODAY_OUTCOME[cwEmail] : null
 
-        // CW shift times vary by dept slot
-        const startTime = cwIdx % 2 === 0 ? '09:00' : '13:00'
-        const endTime   = cwIdx % 2 === 0 ? '17:00' : '21:00'
+        // CW shift times vary by dept slot; absent-today = early shift already over, no clock-in
+        // (same trick as the internal side — see TODAY_INTERNAL_OUTCOMES above).
+        let startTime = cwIdx % 2 === 0 ? '09:00' : '13:00'
+        let endTime   = cwIdx % 2 === 0 ? '17:00' : '21:00'
+        if (todayOutcome === 'absent') { startTime = '00:00'; endTime = '01:00' }
 
         cwShiftRows.push({
           company_id: company.id,
@@ -820,7 +925,7 @@ async function main() {
           flat_rate: isOneOff ? 120.00 : null,
           created_by: ownerUser.id,
         })
-        cwShiftMeta.push({ shiftDateStr, startTime, endTime, email: cwEmail, userId: cwId, supervisorId, deptIdx, isPast })
+        cwShiftMeta.push({ shiftDateStr, startTime, endTime, email: cwEmail, userId: cwId, supervisorId, deptIdx, isPast, isToday, todayOutcome, dayOfWeek: shiftDate.getDay() })
       }
     }
   }
@@ -853,6 +958,9 @@ async function main() {
       supervisorId: m.supervisorId,
       deptIdx: m.deptIdx,
       isPast: m.isPast,
+      isToday: m.isToday,
+      todayOutcome: m.todayOutcome,
+      dayOfWeek: m.dayOfWeek,
     })
   }
   console.log(`  ✓ 生成 ${cwShiftCount} 个 CW shift + assignment`)
@@ -861,23 +969,27 @@ async function main() {
   const cwPastAssignments = cwAssignmentInfo.filter(a => a.isPast)
   const cwAttendanceRows = []
   const cwWorkedDeptPairs = new Map() // casual_worker_id -> Set<department_id>（有完整打卡的组合）
+  let cwReviewCounter = 0 // drives status/ownerStatus variety only — independent of the attendance
+  // outcome below, since classifyAttendance() (reportService.ts) never looks at status/owner_status;
+  // those fields only feed the Attendance module's own approval-chain UI.
   for (let i = 0; i < cwPastAssignments.length; i++) {
     const a = cwPastAssignments[i]
-    const bucket = i % 10
-    if (bucket === 0) continue // 10% absent — no record
+    const outcome = CW_STORY[a.email].outcome(a.dayOfWeek) // 'present' | 'late' | 'absent' — per this worker's story
+    if (outcome === 'absent') continue // no attendance_records row at all — matches classifyAttendance's "no clock-in" rule
 
     const clockInBase  = new Date(`${a.shiftDate}T${a.startTime}:00Z`)
     const clockOutBase = new Date(`${a.shiftDate}T${a.endTime}:00Z`)
-    const isLate = bucket === 1 // 10% late
+    const isLate = outcome === 'late'
     const clockInTime  = new Date(clockInBase.getTime()  + (isLate ? 18 : 3) * 60000)
     const clockOutTime = new Date(clockOutBase.getTime() + 2 * 60000)
 
-    // status/ownerStatus buckets: 1=submitted(pending, untouched), 2=manager_reviewed(pending,
-    // manager already looked at it), 3-4=owner_rejected, 5-9=owner_approved.
+    // status/ownerStatus buckets: 0-1=submitted(pending, untouched), 2=manager_reviewed(pending,
+    // manager already looked at it), 3-4=owner_rejected, 5-8=owner_approved.
+    const reviewBucket = cwReviewCounter++ % 9
     let status, ownerStatus
-    if (bucket < 2) { status = 'submitted'; ownerStatus = 'pending' }
-    else if (bucket < 3) { status = 'manager_reviewed'; ownerStatus = 'pending' }
-    else if (bucket < 5) { status = 'owner_rejected'; ownerStatus = 'rejected' }
+    if (reviewBucket < 2) { status = 'submitted'; ownerStatus = 'pending' }
+    else if (reviewBucket < 3) { status = 'manager_reviewed'; ownerStatus = 'pending' }
+    else if (reviewBucket < 5) { status = 'owner_rejected'; ownerStatus = 'rejected' }
     else { status = 'owner_approved'; ownerStatus = 'approved' }
     const managerNotes = status === 'manager_reviewed' ? 'Checked with the shift supervisor — hours look correct.' : null
 
@@ -902,6 +1014,24 @@ async function main() {
     deptSet.add(deptByIndex[a.deptIdx].id)
     cwWorkedDeptPairs.set(a.userId, deptSet)
   }
+  // TODAY's CW records — mid-shift snapshots per CW_TODAY_OUTCOME (mirrors the internal side).
+  for (const a of cwAssignmentInfo.filter(x => x.isToday)) {
+    if (a.todayOutcome !== 'present' && a.todayOutcome !== 'late') continue
+    const clockInBase = new Date(`${a.shiftDate}T${a.startTime}:00Z`)
+    cwAttendanceRows.push({
+      shift_assignment_id: a.assignmentId,
+      casual_worker_id: a.userId,
+      confirmed_by_employee_id: a.userId,
+      submitted_by_employee_id: a.userId,
+      clock_in_time: new Date(clockInBase.getTime() + (a.todayOutcome === 'late' ? 18 : 3) * 60000).toISOString(),
+      clock_out_time: null,
+      status: 'clocked_in',
+      manager_notes: null,
+      owner_status: 'pending',
+      owner_reviewed_by: null,
+      owner_reviewed_at: null,
+    })
+  }
   await chunkInsert('attendance_records', cwAttendanceRows, false)
   const cwAttCount = cwAttendanceRows.length
   // Mirrors casualAttendanceService.clockOut's side effect: a completed clock-in + clock-out
@@ -920,7 +1050,7 @@ async function main() {
       if (verifyErr) console.warn(`  ⚠ casualworker_departments verified_at 更新失败 (${cwId}): ${verifyErr.message}`)
     }
   }
-  console.log(`  ✓ 生成 ${cwAttCount} 条 CW attendance_records（混合 approved/pending/manager_reviewed/rejected/late，10% 缺勤）`)
+  console.log(`  ✓ 生成 ${cwAttCount} 条 CW attendance_records（混合 approved/pending/manager_reviewed/rejected 审批状态；出勤本身按 CW_STORY 每人固定人设 —— cw1 全勤准时/cw2 常缺勤/cw3 常迟到/cw4 出勤干净但会取消工作/cw5 全勤但周四迟到/cw6+cw7 出勤干净）`)
 
   // ── Step 12: Communication — Announcements ──────────────────────────────
   console.log('\nStep 12: 生成 Announcements...')
@@ -1285,6 +1415,59 @@ async function main() {
   }
   console.log(`  ✓ 生成 ${historicalTaskCount} 条历史 tasks（供 Report：on-time/late/overdue/rework 混合，跨 4 个部门 + Manager/Employee 混排，task_date 在过去 3~26 天，覆盖当期与上期窗口）`)
 
+  // ── Casual Worker 历史任务（供 Owner Report 的 Task Quality block）──────────
+  // historicalTaskDefs above only ever assigns Manager/Employee — the report's Casual tab had
+  // ZERO deadline tasks to show (On-Time Task Completion Rate KPI = "No data", Task Quality block
+  // empty). Two contrasting per-worker stories, due dates inside the report's default 7-day
+  // window: Daniel Goh (cw6) — clean attendance but a real quality problem (2 of 3 tasks sent
+  // back for rework); Siti Nur (cw7) — clean on every axis (0 returned), the "Clean" contrast.
+  let cwTaskCount = 0
+  function cwTaskDueAtMs(daysAgo, dueOffsetH) {
+    const dateStr = dateKey(addDays(TODAY, -daysAgo))
+    return new Date(`${dateStr}T00:00:00Z`).getTime() + dueOffsetH * 3600000
+  }
+  const cwTaskDefs = [
+    // Daniel Goh (cw6, Engineering) — task QUALITY problem, not punctuality.
+    { assignee: 'cw6@test.com', deptIdx: 2, title: 'Re-image front-desk kiosk', description: 'Wipe and re-image the front-desk clock-in kiosk with the standard build.',
+      daysAgo: 6, dueOffsetH: 10, rejectedBeforeDueH: 3, completedAfterDueH: 5 }, // sent back, fixed LATE — misses the deadline
+    { assignee: 'cw6@test.com', deptIdx: 2, title: 'Label patch panel ports', description: 'Label every port on the server-room patch panel to match the wiring diagram.',
+      daysAgo: 4, dueOffsetH: 8, rejectedBeforeDueH: 20, completedBeforeDueH: 2 }, // sent back, but fixed with time to spare — still ON time
+    { assignee: 'cw6@test.com', deptIdx: 2, title: 'Test spare barcode scanners', description: 'Charge and test-scan the spare handheld barcode scanners.',
+      daysAgo: 2, dueOffsetH: 6, completedBeforeDueH: 2 }, // clean, on time, no rework
+    // Siti Nur (cw7, Customer Support) — clean on every axis.
+    { assignee: 'cw7@test.com', deptIdx: 3, title: 'Restock roadshow flyers', description: 'Restock the flyer racks at the mall roadshow booth before the weekend rush.',
+      daysAgo: 5, dueOffsetH: 8, completedBeforeDueH: 2 },
+    { assignee: 'cw7@test.com', deptIdx: 3, title: 'Log roadshow foot traffic', description: 'Tally hourly foot traffic at the booth and log it in the shared sheet.',
+      daysAgo: 3, dueOffsetH: 6, completedBeforeDueH: 2 },
+  ]
+  for (const def of cwTaskDefs) {
+    const dueAtMs = cwTaskDueAtMs(def.daysAgo, def.dueOffsetH)
+    const completedAt = def.completedAfterDueH != null
+      ? new Date(dueAtMs + def.completedAfterDueH * 3600000).toISOString()
+      : new Date(dueAtMs - def.completedBeforeDueH * 3600000).toISOString()
+    const rejectedAt = def.rejectedBeforeDueH != null ? new Date(dueAtMs - def.rejectedBeforeDueH * 3600000).toISOString() : null
+    const id = await insertTask({
+      company_id: company.id,
+      department_id: deptByIndex[def.deptIdx].id,
+      title: def.title,
+      description: def.description,
+      assigned_user_id: mgrId(def.assignee),
+      assigned_by: mgrId(employeesByDept[def.deptIdx][0]), // the dept's supervising Employee (CLAUDE.md: Employee → Casual Worker only)
+      status: 'Complete',
+      percentage_complete: 100,
+      is_completed: true,
+      completed_at: completedAt,
+      priority: 'Medium',
+      due_at: new Date(dueAtMs).toISOString(),
+      task_date: dateKey(addDays(TODAY, -def.daysAgo)),
+      created_at: new Date(dueAtMs - 48 * 3600000).toISOString(),
+      rejection_reason: rejectedAt ? 'Sent back once before this was approved — needed another pass.' : null,
+      rejected_at: rejectedAt,
+    })
+    if (id) cwTaskCount++
+  }
+  console.log(`  ✓ 生成 ${cwTaskCount} 条 Casual Worker 历史 tasks（供 Report Task Quality：cw6 Daniel Goh 2/3 返工，cw7 Siti Nur 全部干净，due_at 落在默认 7 天窗口内）`)
+
   console.log(`  ✓ 生成 ${taskCount} 条 tasks（含 sub-tasks、${archivedCount} 条 archived、多 assignee、rejection 返工、3 条 Delay Alert 触发项、Operations 超载触发 Workload Suggestion）`)
   console.log(`  ✓ 生成 ${taskTemplateCount} 条 task_templates`)
 
@@ -1315,8 +1498,8 @@ async function main() {
   console.log(`\n业务数据（基于运行当天 ${dateKey(TODAY)} 动态生成）：`)
   console.log(`  Shifts:      ${assignmentInfo.length} 个（Internal Staff，过去 ${SHIFT_DAYS_PAST} 天 + 未来 ${SHIFT_DAYS_FUTURE} 天，含周末）`)
   console.log(`  Attendance:  ${attendanceCount} 条（Internal Staff，混合 approved/pending/manager_reviewed/rejected/late，~5% 缺勤）`)
-  console.log(`  CW Shifts:   ${cwShiftCount} 个（Casual Worker，过去 ${SHIFT_DAYS_PAST} 天，含周末，含 Shift Job + One-Off）`)
-  console.log(`  CW Attend.:  ${cwAttCount} 条（Casual Worker，混合 approved/pending/manager_reviewed/rejected/late，10% 缺勤）`)
+  console.log(`  CW Shifts:   ${cwShiftCount} 个（Casual Worker，过去 ${SHIFT_DAYS_PAST} 天，各人按 CW_STORY 每周固定工作日，含 Shift Job + One-Off）`)
+  console.log(`  CW Attend.:  ${cwAttCount} 条（Casual Worker，出勤结果按 CW_STORY 每人固定人设，审批状态混合 approved/pending/manager_reviewed/rejected）`)
   console.log(`  Announcements: ${announcementCount} 条`)
   console.log(`  Messages:    ${messageCount} 条`)
   console.log(`  Tasks:       ${taskCount} 条（Owner→Manager 14 + 子任务 + archived 2 + Manager→Employee 3 + Employee→CW 2）`)
@@ -1792,6 +1975,24 @@ async function main() {
     }))
   })
 
+  // Overdue — the most recently CLOSED submission week (deadline already passed) keeps a few
+  // still-pending requests, so the Owner Dashboard's "Schedule Next Week" card has real pending
+  // data to show. Only uses requesters the w=1 historical week skips ((i+1)%3===0), so nobody
+  // gets both a decided and a pending row for the same week.
+  const closedWeekStart = addDays(activeWeekStart, -7)
+  const overdueClosedWeekSeeders = allRequesters.flatMap((email, i) => {
+    if ((i + 1) % 3 !== 0) return []
+    const quota = requesterQuota.get(email)
+    return pickWeekdaysForQuota(quota, i).map(weekday => ({
+      email,
+      weekStart: closedWeekStart,
+      weekday,
+      status: 'pending',
+      source: 'submitted',
+      submittedHoursAgo: 24 * 6 + i,
+    }))
+  })
+
   // Historical — past 4 weeks, already decided (Approve / Modify only, matching the current
   // product), so the Weekly Day Off Calendar heatmap has real past data to show alongside the
   // upcoming week's live requests.
@@ -1817,7 +2018,7 @@ async function main() {
     })
   }
 
-  const fixedOffSeeders = [...pendingFixedOffSeeders, ...historicalFixedOffSeeders]
+  const fixedOffSeeders = [...pendingFixedOffSeeders, ...overdueClosedWeekSeeders, ...historicalFixedOffSeeders]
   let fixedOffCount = 0
   for (const fo of fixedOffSeeders) {
     const userId = userIdMap[fo.email].internalId
@@ -1838,7 +2039,7 @@ async function main() {
     if (foErr) console.warn(`  ! employee_off_day_requests failed (${fo.email}): ${foErr.message}`)
     else fixedOffCount++
   }
-  console.log(`  ok seeded ${fixedOffCount} employee_off_day_requests (${pendingFixedOffSeeders.length} pending for week ${activeWeekStartKey} + ${historicalFixedOffSeeders.length} historical across 4 past weeks)`)
+  console.log(`  ok seeded ${fixedOffCount} employee_off_day_requests (${pendingFixedOffSeeders.length} pending for week ${activeWeekStartKey} + ${overdueClosedWeekSeeders.length} overdue pending for closed week ${dateKey(closedWeekStart)} + ${historicalFixedOffSeeders.length} historical across 4 past weeks)`)
 
   // ── Step 15: Job Postings（Recruitment 页面全部状态的数据）──────────────
   // 状态 → 页面位置：open = Active Jobs 标签，closed = Closed Jobs 标签，archived =
@@ -1928,6 +2129,35 @@ async function main() {
       shift_start_time: '09:00', shift_end_time: '17:00', break_start_time: '12:00', break_end_time: '13:00',
       recurrence_interval: 1, recurrence_unit: 'week', createdBy: 'owner', createdDaysAgo: 7,
       experience_required: 'Preferred', minimum_age: 16, uniform_type: 'none',
+    },
+
+    // ── Dashboard Recruitment Overview 专用（status: open）——
+    // deadlineToday = 申请截止日就是今天（Deadline Today 列表）；
+    // startDays 1/2 = 明天/后天开工且 confirmed < openings（Starting Soon, Understaffed 列表）──
+    {
+      dept: 1, status: 'open', form: 'oneoff', title: 'Inventory Count Crew',
+      description: 'Overnight stocktake crew for the quarterly inventory count at the main warehouse.',
+      requirements: 'Detail-oriented; comfortable using a barcode scanner.',
+      employment_type: 'casual', salary_amount: 120, urgency: 'high', estimated_hours: '6',
+      job_start_time: '21:00', createdBy: 'owner', createdDaysAgo: 7, assignedEmployeeIdx: 2, openings: 3, deadlineToday: true, startDays: 4,
+      experience_required: 'Not Required', minimum_age: 18, uniform_type: 'none',
+    },
+    {
+      dept: 2, status: 'open', form: 'shift', is_recurring: false, title: 'Weekend Market Booth Helper',
+      description: 'Help run our weekend market booth — set up, serve customers and pack down.',
+      requirements: 'Friendly and comfortable handling cash.',
+      employment_type: 'casual', salary_amount: 15, assignedEmployeeIdx: 6, openings: 3, deadlineDays: 1, startDays: 2,
+      shift_start_time: '08:00', shift_end_time: '16:00', break_start_time: '12:00', break_end_time: '12:30',
+      createdBy: 'owner', createdDaysAgo: 3,
+      experience_required: 'Not Required', minimum_age: 16, uniform_type: 'dress_code', uniform_details: 'Plain white top, dark pants',
+    },
+    {
+      dept: 3, status: 'open', form: 'oneoff', title: 'Delivery Surge Runner',
+      description: 'Extra runner to cover tomorrow\'s delivery surge from the flash sale.',
+      requirements: 'Own transport preferred. Familiar with the city center area.',
+      employment_type: 'casual', salary_amount: 90, urgency: 'high', estimated_hours: '4',
+      job_start_time: '10:00', createdBy: 'owner', createdDaysAgo: 2, assignedEmployeeIdx: 4, openings: 2, deadlineDays: 1, startDays: 1,
+      experience_required: 'Not Required', minimum_age: 18, uniform_type: 'none',
     },
 
     // ── Closed Jobs（status: closed）— 同样多元：不同部门 / 形态 / requirements，
@@ -2171,7 +2401,10 @@ async function main() {
       ? userIdMap[allEmployeeEmailsFlat[def.assignedEmployeeIdx]].internalId
       : null
     const isShift = def.form === 'shift'
-    const expiresAt = def.deadlineDays != null ? addDays(TODAY, def.deadlineDays).toISOString() : null
+    // deadlineToday → 今天 23:59（还没过期但 Dashboard 的 Deadline Today 会命中）
+    const expiresAt = def.deadlineToday
+      ? new Date(addDays(TODAY, 1).getTime() - 60000).toISOString()
+      : def.deadlineDays != null ? addDays(TODAY, def.deadlineDays).toISOString() : null
     const isArchived = def.status === 'archived'
 
     const { data: jp, error: jpErr } = await supabase.from('job_postings').insert({
@@ -2195,7 +2428,7 @@ async function main() {
       salary_type: def.salary_amount == null ? null : (isShift ? 'per hour' : 'flat rate'),
       urgency: isShift ? null : (def.urgency ?? 'normal'),
       estimated_hours: isShift ? null : (def.estimated_hours ?? null),
-      shift_date: jobStartDateKey,
+      shift_date: def.startDays != null ? dateKey(addDays(TODAY, def.startDays)) : jobStartDateKey,
       shift_start_time: isShift ? (def.shift_start_time ?? null) : null,
       shift_end_time: isShift ? (def.shift_end_time ?? null) : null,
       break_start_time: isShift ? (def.break_start_time ?? null) : null,
@@ -2475,6 +2708,31 @@ async function main() {
     else cwJobLinkCount++
   }
   console.log(`  ✓ 关联了 ${cwJobLinkCount} 个 CW shift 到对应的 job_posting`)
+
+  // ── Step 15d: 一条 Casual Worker 取消已确认工作的记录 ─────────────────────
+  // 供 Owner Report 的 Casual Worker Pool → Workers Needing Attention 演示"取消"这个独立
+  // 风险维度：Farah Hassan (cw4) 在 CW_STORY 里出勤是干净的（Step 11b），但她另外把一个已
+  // 确认的工作取消了——展示"出勤没问题 ≠ 没有风险信号"。cancelled_role='worker' 确保这条
+  // 记录只会算在 worker 头上，不会被误记成雇主取消（reportRepository.getWorkerCancellationsInRange
+  // 就是靠这个字段过滤的）。applicant_id 留空——这条记录不依赖 Step 15b 那套复杂的申请/邀约
+  // 状态机，recruitmentCancellationService 本身在找不到 applicant 时也是这样处理的。
+  console.log('\nStep 15d: 生成 Casual Worker 取消已确认工作记录...')
+  const cancelledJobId = postingIdByTitle.get('Promo Day Staff')
+  if (cancelledJobId) {
+    const { error: cancelErr } = await supabase.from('recruitment_cancellations').insert({
+      job_id: cancelledJobId,
+      applicant_id: null,
+      cancelled_by: userIdMap['cw4@test.com'].internalId,
+      cancelled_role: 'worker',
+      scope: 'worker',
+      reason: 'Family emergency came up — had to back out.',
+      created_at: addDays(TODAY, -3).toISOString(),
+    })
+    if (cancelErr) console.warn(`  ⚠ 创建 recruitment_cancellation 失败: ${cancelErr.message}`)
+    else console.log('  ✓ Farah Hassan (cw4) 取消了 "Promo Day Staff" 的已确认工作')
+  } else {
+    console.warn('  ⚠ 找不到 "Promo Day Staff" job_posting，跳过 recruitment_cancellation 演示数据')
+  }
 
   // ── Step 16: Job Templates（Owner 自己配置的可复用招聘模板）──────────────
   // 20 条贴合 Sunrise Hospitality Group（酒店/餐饮/活动公司）的模板，覆盖全部 4 个部门、

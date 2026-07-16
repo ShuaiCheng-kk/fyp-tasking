@@ -4,6 +4,7 @@ import { Fragment, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { createBrowserClient } from '@supabase/ssr'
 import { ArrowRight, Check, CheckCircle2, Clock, Mail } from 'lucide-react'
+import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 import ApplyJobModal from '@/components/guest/ApplyJobModal'
 import { JobCard, JobDetailPanel, JobView } from '@/components/jobs/JobPresentation'
 import { FLOW_STEPS, FlowTone, getApplicationFlowState } from '@/components/guest/ApplicationFlow'
@@ -143,6 +144,7 @@ type RawApplication = {
 
 function ApplicationsContent() {
   const searchParams = useSearchParams()
+  const isCompact = useIsCompactViewport(1366)
   const [showApplyModal, setShowApplyModal] = useState(false)
   const [jobId, setJobId] = useState<string | null>(null)
   const [applications, setApplications] = useState<Application[]>([])
@@ -379,13 +381,13 @@ function ApplicationsContent() {
 
       <main style={pageStyle}>
         {/* Page header — title left, matching the Owner pages */}
-        <div style={{ marginBottom: 20 }}>
+        <div style={{ marginBottom: 20, flexShrink: 0 }}>
           <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
             Applications
           </h1>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', marginBottom: 20, flexShrink: 0 }}>
           <div style={pillTabBarStyle}>
             {(['ongoing', 'closed'] as const).map(tab => {
               const active = viewTab === tab
@@ -426,7 +428,9 @@ function ApplicationsContent() {
                         </div>
                         <span style={stepPanelTitleStyle}>{label}</span>
                       </div>
-                      <div style={stepPanelBodyStyle}>
+                      {/* One card per row on compact laptops — two 140px-wide cards side by side
+                          would be unreadable once the three panels split ~1070px between them. */}
+                      <div style={{ ...stepPanelBodyStyle, gridTemplateColumns: isCompact ? 'minmax(0, 1fr)' : 'repeat(2, minmax(0, 1fr))' }}>
                         {cards.map(app => (
                           <JobCard
                             key={app.id}
@@ -457,7 +461,7 @@ function ApplicationsContent() {
               })}
             </div>
           ) : closedApplications.length === 0 ? null : (
-            <div style={applicationsGridStyle}>
+            <div style={{ ...applicationsGridStyle, gridTemplateColumns: isCompact ? 'repeat(3, minmax(0, 1fr))' : 'repeat(4, minmax(0, 1fr))' }}>
               {closedApplications.map((app) => {
                 const state = getApplicationFlowState(app)
                 return (
@@ -652,46 +656,61 @@ function CardTimeline({ app }: { app: Application }) {
 // No fontFamily override here — Owner pages don't set one either, so this page inherits the
 // same ambient system font as the rest of the app instead of forcing Inter over it (that's what
 // was making this page's pill tabs render in a visibly different typeface than Owner's).
+// The guest layout's <main> is locked to one viewport (100vh, overflow hidden) — this page fills
+// it as a flex column; header/tabs stay fixed and the section below scrolls internally.
 const pageStyle: React.CSSProperties = {
-  minHeight: '100vh',
+  flex: 1,
+  minHeight: 0,
+  display: 'flex',
+  flexDirection: 'column',
+  overflow: 'hidden',
   padding: '20px 28px 28px',
 }
 
 const sectionStyle: React.CSSProperties = {
   width: '100%',
+  flex: 1,
+  minHeight: 0,
+  display: 'flex',
+  flexDirection: 'column',
+  overflow: 'hidden',
 }
 
-// Exactly 4 columns, always — a hardcoded px width only holds "4 per row" on one specific screen
-// width, so this fixes the COLUMN COUNT instead (guaranteed 4-across on any monitor) and lets
-// each column's width follow from that. maxWidth caps how wide the 4 cards get on an ultra-wide
-// screen; below that they shrink together, same as the fixed-width look the user asked for.
+// 4 columns on desktop (3 below the compact breakpoint — set at render). The grid is the History
+// tab's scroll container: the page itself never scrolls, this block does. maxWidth caps how wide
+// the cards get on an ultra-wide screen; below that they shrink together.
 const applicationsGridStyle: React.CSSProperties = {
   display: 'grid',
   gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
   gap: 16,
   maxWidth: 1800,
+  flex: '1 1 auto',
+  minHeight: 0,
+  overflowY: 'auto',
+  alignContent: 'start',
 }
 
 // The Ongoing tab's 3-block pipeline — one panel per step (Pending Review / Accept-Reject Job
 // Offer / Confirmed) with a circular arrow between them. Like the Owner Task page's Kanban, the
 // three panels stretch edge-to-edge across the page (equal flex columns), each wide enough to
 // fit two job cards per row.
-// stretch: the row is only as tall as the fullest block (content-hugging), and the other two
-// blocks stretch to match it, so the three columns always share one height.
+// The row fills the section's remaining height — all three step panels share that one height
+// (same full-height column look as the Owner Task page's Kanban).
 const stepsRowStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'stretch',
   width: '100%',
+  flex: 1,
+  minHeight: 0,
   paddingBottom: 8,
 }
 
-// Each panel hugs its content (a one-card column keeps the row one card tall), but is capped at
-// roughly the viewport height — past that the card list scrolls inside the panel instead of
-// growing it.
+// Each panel is bounded by the row's height — past that the card list scrolls inside the panel
+// instead of growing it (the page itself never scrolls).
 const stepPanelStyle: React.CSSProperties = {
   flex: 1,
   minWidth: 0,
-  maxHeight: 'calc(100vh - 240px)',
+  minHeight: 0,
   display: 'flex',
   flexDirection: 'column',
   background: '#FFFFFF',

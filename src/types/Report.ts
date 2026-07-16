@@ -86,10 +86,38 @@ export interface DepartmentPerformanceRow {
   // ── Internal Analytics (Company Overview drill-down blocks) — Manager+Employee, department-scoped ──
   // Same definitions as the matching ReportOverview fields, bucketed per department.
   internal_attendance_rate: number | null
+  internal_attendance_late_rate: number | null
+  internal_attendance_absent_rate: number | null
   internal_task_on_time_rate: number | null
   hiring_success_rate: number | null
   average_time_to_fill_days: number | null
   casual_labor_cost: number
+  // ── Sample sizes behind the rates above ───────────────────────────────────
+  // The bar charts plot the rate alone, so 0% over 1 task and 0% over 40 tasks render
+  // identically. Anomaly detection needs the denominator to tell a real problem from a
+  // rounding artefact of a tiny sample.
+  // Attendance records counted for internal_attendance_* (present + late + absent).
+  internal_attendance_records: number
+  // Internal tasks whose deadline fell in the period — denominator of internal_task_on_time_rate.
+  internal_tasks_due: number
+}
+
+// ── 任务负载（按人）─────────────────────────────────────────────────────────
+// One row per person who was assigned at least one task during the period. Every chart on the
+// report aggregates by department, so how that period's work was split BETWEEN PEOPLE appears
+// nowhere in the UI — which is what makes a department that ran on one member's back detectable
+// at all. This is a record of what happened, like everything else on this page; current
+// workload belongs on the dashboard, not in a report.
+export interface TaskWorkloadRow {
+  user_id: string
+  full_name: string
+  role: string
+  department_id: string | null
+  department_name: string
+  // Top-level, non-archived tasks assigned to this person in the period.
+  tasks_assigned: number
+  // Of those, the ones not yet Complete.
+  tasks_open: number
 }
 
 // ── 右·临时工 ────────────────────────────────────────────────────────────────
@@ -116,10 +144,20 @@ export interface RecruitmentPostingRow {
 export interface CasualReliabilityRow {
   user_id: string
   full_name: string
+  profile_photo_url: string | null
   worked: number
+  // Every shift assignment made to this worker in the period — including rejected ones and shifts
+  // that haven't ended yet. Answers "how often was this person scheduled?", not "did they show up?".
+  assigned_shifts: number
   rejected_shifts: number
   late: number
   absent: number
+  // Confirmed jobs this worker cancelled during the period (recruitment_cancellations,
+  // cancelled_role='worker' only — employer-side cancels never count against the worker).
+  cancellations: number
+  // Deadline-in-period tasks the assigner rejected in Review at least once (tasks.rejected_at) —
+  // the work-quality signal: completed is not the same as completed WELL.
+  tasks_returned: number
   // ── Pool Analytics (charted "by Worker", never by department) ──────────────
   // Lifetime shifts actually attended (clocked in AND out) for this company, all-time — not
   // scoped to the selected period. Powers "Rehire Count by Worker".
@@ -167,6 +205,13 @@ export interface CompanyReport {
   overview: ReportOverview
   previous_overview: ReportOverview
   departments: DepartmentPerformanceRow[]
+  // Same rows for previous_period. The charts only plot the current period and the KPI cards
+  // only trend company-wide totals, so a department's own period-over-period movement is
+  // invisible in the UI — this is what anomaly detection compares against. Already computed
+  // for previous_overview, so carrying it costs no extra query.
+  previous_departments: DepartmentPerformanceRow[]
+  // Per-person task load for the current period — see TaskWorkloadRow.
+  workload: TaskWorkloadRow[]
   casual: CasualReport
 }
 

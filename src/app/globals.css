@@ -542,3 +542,22 @@ a {
 
 /* Hide AdminSidebar scrollbar (Webkit) */
 .admin-sidebar-body::-webkit-scrollbar { display: none; }
+
+/* ── Hover-revealed scrollbars, app-wide ─────────────────────────────────────
+   Every scrollable block keeps its scrollbar INVISIBLE until the pointer is over that block —
+   a page full of Blocks otherwise shows a permanent scrollbar per Block, which reads as clutter.
+   Transparent (not display:none): the thin track's space stays reserved, so content never shifts
+   sideways when the thumb fades in. :hover on the scrolling element is enough — hovering anything
+   inside it also sets :hover on it. More-specific per-component scrollbar styles still win. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+*:hover {
+  scrollbar-color: #CBD5E1 transparent;
+}
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: transparent; border-radius: 99px; }
+*:hover::-webkit-scrollbar-thumb { background: #CBD5E1; }
+

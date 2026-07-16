@@ -1597,7 +1597,7 @@ export default function OwnerCommunicationPage() {
               <div style={{ maxHeight: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12, overflowY: 'auto' }}>
 
                 {/* My Announcements */}
-                <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+                <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', background: '#FFFFFF', borderRadius: 14, border: '1px solid #E5E7EB', boxShadow: '0 1px 4px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '16px 18px', borderBottom: '1px solid #E2E8F0', flexShrink: 0 }}>
                     <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       <Megaphone size={15} style={{ color: '#F97316' }} />
@@ -1622,7 +1622,7 @@ export default function OwnerCommunicationPage() {
                     </button>
                   </div>
 
-                  <div style={{ overflowY: 'auto', maxHeight: 438, padding: '14px 10px 10px' }}>
+                  <div style={{ overflowY: 'auto', flex: 1, minHeight: 0, padding: '14px 10px 10px' }}>
                     {myAnnouncements.length === 0 ? (
                       <div style={{ height: 120, borderRadius: 12, background: '#F8FAFC', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#94A3B8', gap: 8, fontWeight: 600, fontSize: 13 }}>
                         <Megaphone size={24} strokeWidth={1.5} />

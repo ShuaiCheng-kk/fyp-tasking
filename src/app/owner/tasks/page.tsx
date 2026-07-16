@@ -8,7 +8,7 @@ import {
   CheckCircle, Clock, Eye, Layers, Users,
   Crown, UserCog, UserRound, Pencil, Trash2, CalendarDays, ChevronLeft, ChevronRight,
   Sparkles, Check, Archive, ArchiveRestore, Repeat, Copy, GitBranch, Bell, ArrowRightLeft, LayoutTemplate, AlertTriangle, RefreshCw, MailOpen, Search,
-  CalendarClock, Filter as FilterIcon, Flag, RotateCw,
+  CalendarClock, Filter as FilterIcon, Flag, RotateCw, Info,
 } from 'lucide-react'
 import { AiAssignSuggestion } from '@/types/AI'
 import { createBrowserClient } from '@supabase/ssr'
@@ -26,6 +26,39 @@ import { TimelineRow, TimelineShiftBlock } from '@/types/Timeline'
 const TASK_ORANGE = '#F97316'
 const TASK_BORDER = '#E2E8F0'
 const TASK_TEXT   = '#0F172A'
+
+// Same pattern as the Report page's ChartInfo: the notification cards' decorative glyphs carried no
+// meaning, so each earns its place by explaining what the card does, on hover. Deliberately a hover
+// affordance rather than a caption line under the title — see CLAUDE.md's no-subtitles rule.
+const CARD_INFO_BG = '#F3F4F6'
+function CardInfo({ text }: { text: string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <span
+      style={{ position: 'relative', display: 'inline-flex' }}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <Info size={15} style={{ color: '#6B7280' }} />
+      {open && (
+        <span
+          role="tooltip"
+          style={{
+            position: 'absolute', top: 'calc(100% + 10px)', left: -8, zIndex: 30,
+            width: 'max-content', maxWidth: 240, pointerEvents: 'none',
+            background: '#FFFFFF', color: '#374151',
+            border: '1px solid #E5E7EB', borderRadius: 10,
+            boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+            padding: '8px 11px', fontSize: 12, fontWeight: 500, lineHeight: 1.5,
+            fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
+          }}
+        >
+          {text}
+        </span>
+      )}
+    </span>
+  )
+}
 
 function formatDeadlineTime(value: string | null | undefined): string {
   if (!value) return ''
@@ -992,6 +1025,10 @@ function TaskCard({
   // Rejected in Review and back to In Progress — the assignee owes rework on this one.
   const needsRework = !isSubTask && !!task.rejection_reason && task.status === 'In Progress'
   const hasTopRowBadges = !!(priority && task.priority) || !!dept || !!subTaskCount || needsRework
+  // Review cards pulse to nudge the viewer toward the pending sign-off — every Review card on the
+  // board, regardless of who assigned it. Skipped in the compact calendar (too noisy in a dense
+  // grid) and when the delay-alert highlight ring is already on.
+  const reviewPulse = clickable && !highlighted && !compact && task.status === 'Review'
 
   return (
     <div style={{ position: 'relative', marginBottom: noOuterMargin ? 0 : (showStack ? 22 : 14), height: fillHeight ? '100%' : undefined }}>
@@ -1003,7 +1040,7 @@ function TaskCard({
       )}
       <div
         onClick={clickable ? onClick : undefined}
-        className="task-card"
+        className={reviewPulse ? 'task-card task-card-review-pulse' : 'task-card'}
         style={{
           background: '#FFFFFF',
           border: highlighted ? '1.5px solid #F97316' : '1px solid #E5E7EB',
@@ -1065,25 +1102,25 @@ function TaskCard({
       )}
 
       {/* Title */}
-      <p title={compact ? task.title : undefined} style={{ fontWeight: 600, fontSize: isSubTask ? (compact ? '0.75rem' : '0.8rem') : (compact ? '0.8rem' : '0.875rem'), color: '#111827', margin: (!compact || (!isSubTask && task.due_at)) ? (compact ? '0 0 8px' : '0 0 16px') : 0, lineHeight: compact ? 1.55 : 1.4, paddingRight: !clickable || !isOwner || hasTopRowBadges ? 0 : 24, ...(compact ? { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as const, overflow: 'hidden', minHeight: '3.1em' } : {}) }}>
+      <p title={compact ? task.title : undefined} style={{ fontWeight: 600, fontSize: isSubTask ? (compact ? '0.75rem' : '0.8rem') : (compact ? '0.8rem' : '0.875rem'), color: '#111827', margin: (!compact || (!isSubTask && task.due_at)) ? '0 0 8px' : 0, lineHeight: compact ? 1.55 : 1.4, paddingRight: !clickable || !isOwner || hasTopRowBadges ? 0 : 24, ...(compact ? { display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' as const, overflow: 'hidden', minHeight: '3.1em' } : {}) }}>
         {task.title}
       </p>
 
       {/* Footer: assignee + deadline time (compact cards drop the assignee and the date) */}
       {(!compact || (!isSubTask && task.due_at)) && (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: compact ? 'flex-end' : 'space-between', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: compact ? 'flex-end' : 'space-between', gap: 8, minHeight: compact ? undefined : 26 }}>
         {!compact && (assignees.length > 0 ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
             <div style={{ display: 'flex', flexShrink: 0 }}>
               {assignees.slice(0, 3).map((assignee, i) => (
-                <div key={assignee.id} className="task-card-icon" style={{ width: 18, height: 18, borderRadius: '50%', background: assignee.profile_photo_url ? 'transparent' : '#FFF3E8', border: '1.5px solid #F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden', marginLeft: i === 0 ? 0 : -6, boxShadow: i === 0 ? undefined : '0 0 0 1.5px #FFFFFF' }}>
+                <div key={assignee.id} className="task-card-icon" style={{ width: 26, height: 26, borderRadius: '50%', background: assignee.profile_photo_url ? 'transparent' : '#FFF3E8', border: '1.5px solid #F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden', marginLeft: i === 0 ? 0 : -8, boxShadow: i === 0 ? undefined : '0 0 0 1.5px #FFFFFF' }}>
                   {assignee.profile_photo_url
                     ? <img src={assignee.profile_photo_url} alt={assignee.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                    : <UserCog size={10} color="#F97316" strokeWidth={2} />}
+                    : <UserCog size={14} color="#F97316" strokeWidth={2} />}
                 </div>
               ))}
               {assignees.length > 3 && (
-                <div style={{ width: 18, height: 18, borderRadius: '50%', background: '#F1F5F9', border: '1.5px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginLeft: -6, boxShadow: '0 0 0 1.5px #FFFFFF', fontSize: '0.55rem', fontWeight: 700, color: '#64748B' }}>
+                <div style={{ width: 26, height: 26, borderRadius: '50%', background: '#F1F5F9', border: '1.5px solid #E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginLeft: -8, boxShadow: '0 0 0 1.5px #FFFFFF', fontSize: '0.65rem', fontWeight: 700, color: '#64748B' }}>
                   +{assignees.length - 3}
                 </div>
               )}
@@ -2177,6 +2214,42 @@ export default function OwnerTasksPage() {
     setHighlightedDelayTaskIds(new Set(delayAlerts.map(a => a.task_id)))
   }, [delayAlerts])
 
+  // Deep links from the dashboard's Task Overview: ?sort=deadline|priority|newest presets the
+  // Kanban sort; ?show=delay_alerts highlights the delayed tasks once the board data arrives;
+  // ?show=completed_today floats today's completed tasks to the top of the Complete column
+  // (same highlight treatment the Task Delay Alert count uses).
+  const [pendingDelayHighlight, setPendingDelayHighlight] = useState(false)
+  const [pendingCompletedHighlight, setPendingCompletedHighlight] = useState(false)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const sort = params.get('sort')
+    if (sort === 'deadline' || sort === 'priority' || sort === 'newest') setKanbanSortBy(sort)
+    if (params.get('show') === 'delay_alerts') setPendingDelayHighlight(true)
+    if (params.get('show') === 'completed_today') setPendingCompletedHighlight(true)
+  }, [])
+  useEffect(() => {
+    if (pendingDelayHighlight && delayAlerts.length > 0) {
+      showDelayHighlights()
+      setPendingDelayHighlight(false)
+    }
+  }, [pendingDelayHighlight, delayAlerts, showDelayHighlights])
+  useEffect(() => {
+    if (!pendingCompletedHighlight || !kanban) return
+    const todayKey = formatDateKey(new Date())
+    // Top-level tasks only — matches the dashboard's Completed group, which excludes sub-tasks
+    // (they have no card of their own on the board, so there'd be nothing to highlight).
+    const completedToday = (kanban.Complete ?? []).filter(t => {
+      if (t.parent_task_id) return false
+      const stamp = t.completed_at ?? t.updated_at
+      return stamp ? formatDateKey(new Date(stamp)) === todayKey : false
+    })
+    if (completedToday.length > 0) {
+      setBoardViewMode('kanban')
+      setHighlightedDelayTaskIds(new Set(completedToday.map(t => t.id)))
+    }
+    setPendingCompletedHighlight(false)
+  }, [pendingCompletedHighlight, kanban])
+
   // Step 2 — the Owner has seen the delayed tasks (they can only follow up in person, not act on
   // the board), so Mark as read dismisses exactly those alerts and the card turns green. A task
   // that becomes delayed later, or whose deadline is edited, alerts again.
@@ -2801,7 +2874,7 @@ export default function OwnerTasksPage() {
     }
 
     return (
-      <div className="task-tab-content" style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '14px 16px 18px' }}>
+      <div className="task-tab-content" style={{ flex: 1, minWidth: 0, minHeight: 0, overflow: 'auto', padding: '14px 16px 18px' }}>
         {/* overflow: clip (not hidden) rounds the grid's corners like the Shifts Calendar while
             still letting the date header stick — hidden would break position: sticky. */}
         <div style={{ minWidth: 1240, border: `1px solid ${TASK_BORDER}`, borderRadius: 12, overflow: 'clip', background: '#FFFFFF' }}>
@@ -3217,6 +3290,16 @@ export default function OwnerTasksPage() {
           animation: iconBounce 0.45s ease forwards;
         }
 
+        /* Review-column cards breathe a soft orange glow — the assigner owes a sign-off on these.
+           The orange border is permanent (the card reads as flagged even between pulses); only the
+           glow breathes. Pauses on hover so the card sits still once the user is attending to it. */
+        @keyframes reviewCardPulse {
+          0%, 100% { border-color: #FDBA74; box-shadow: 0 0 0 0 rgba(234,88,12,0.05); }
+          50%      { border-color: #F97316; box-shadow: 0 0 0 6px rgba(234,88,12,0.18), 0 8px 24px rgba(234,88,12,0.18); }
+        }
+        .task-card-review-pulse { animation: reviewCardPulse 1.8s ease-in-out infinite; }
+        .task-card-review-pulse:hover { animation: none; border-color: #FDBA74 !important; }
+
         /* Kanban column */
         .kanban-col {
           transition: box-shadow 0.18s ease;
@@ -3289,7 +3372,7 @@ export default function OwnerTasksPage() {
         .member-card:nth-child(5) { animation-delay: 0.25s; }
       `}</style>
 
-      <main style={{ marginLeft: '64px', flex: 1, height: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', animation: 'blockSlideUp 0.38s ease both 0.04s' }}>
+      <main style={{ marginLeft: '64px', flex: 1, height: '100vh', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', animation: 'blockSlideUp 0.38s ease both 0.04s' }}>
 
         {/* Page header — matches Dashboard style */}
         <div style={{ padding: '20px 28px 16px', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24 }}>
@@ -3381,7 +3464,7 @@ export default function OwnerTasksPage() {
           </div>
         </div>
 
-        <div style={{ padding: '0 28px 28px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        <div style={{ padding: '0 28px 28px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
           {!initialReady || kanbanLoading ? (
             <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', flex: 1 }}>
               <Spinner size={24} dark />
@@ -3392,7 +3475,7 @@ export default function OwnerTasksPage() {
               {/* ── SIDEBAR PANEL ──────────────────────────────────────────── */}
               {/* Keyed on the view mode so switching Kanban ⇄ Deadline Calendar replays the
                   same tabContentIn entrance the board content gets — matching the Shifts page. */}
-              <div key={`sidebar-${boardViewMode}`} className="task-tab-content" style={{ width: 326, flexShrink: 0, alignSelf: 'flex-start', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div key={`sidebar-${boardViewMode}`} className="task-tab-content" style={{ width: 326, flexShrink: 0, alignSelf: 'stretch', minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {boardViewMode === 'calendar' ? (
                 <>
                 {/* ── Deadline Summary (Deadline Calendar sidebar) ── */}
@@ -3577,7 +3660,8 @@ export default function OwnerTasksPage() {
                 </>
                 ) : (
                 <>
-                <section className="task-side-section" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'hidden', animationDelay: '0.05s' }}>
+                {/* overflow visible so the CardInfo hover tooltips aren't clipped at the section edge */}
+                <section className="task-side-section" style={{ background: '#FFFFFF', border: '1px solid #E5E7EB', borderRadius: 14, overflow: 'visible', animationDelay: '0.05s' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 18px', borderBottom: '1px solid #F3F4F6' }}>
                     <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       <Bell size={15} style={{ color: '#F97316' }} />
@@ -3598,8 +3682,8 @@ export default function OwnerTasksPage() {
                       const hasIssue = workloadSuggestions.length > 0
                       return (
                         <div className="task-side-card" style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#F9FAFB', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 10, animationDelay: '0.12s' }}>
-                          <span style={{ width: 28, height: 28, borderRadius: 9, background: '#EEF2FF', color: '#4F46E5', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                            <ArrowRightLeft size={14} />
+                          <span style={{ width: 28, height: 28, borderRadius: 9, background: CARD_INFO_BG, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            <CardInfo text="Spots members with too many tasks and suggests who to move work to" />
                           </span>
                           <div style={{ minWidth: 0, flex: 1 }}>
                             <p style={{ margin: 0, fontSize: '0.9375rem', fontWeight: 600, color: '#374151', lineHeight: 1.2 }}>Workload Suggestion</p>
@@ -3624,8 +3708,8 @@ export default function OwnerTasksPage() {
                       const hasIssue = delayAlerts.length > 0
                       return (
                         <div className="task-side-card" style={{ border: '1px solid #E5E7EB', borderRadius: 12, background: '#F9FAFB', padding: '11px 12px', display: 'flex', alignItems: 'center', gap: 10, animationDelay: '0.18s' }}>
-                          <span style={{ width: 28, height: 28, borderRadius: 9, background: hasIssue ? '#FEF2F2' : '#F0FDF4', color: hasIssue ? '#DC2626' : '#16A34A', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                            <Bell size={14} />
+                          <span style={{ width: 28, height: 28, borderRadius: 9, background: CARD_INFO_BG, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            <CardInfo text="Warns when a task has used most of its time but still isn't done — click the title to set the threshold" />
                           </span>
                           <div style={{ minWidth: 0, flex: 1 }}>
                             {/* Clicking the label opens the threshold modal (Task Delay Alert Threshold) */}
@@ -4073,11 +4157,13 @@ export default function OwnerTasksPage() {
                       return (
                         <Fragment key={col}>
                         {colIdx > 0 && (
-                          <div style={{ flexShrink: 0, width: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <svg width="24" height="18" viewBox="0 0 24 18" fill="none" xmlns="http://www.w3.org/2000/svg">
-                              <line x1="0" y1="9" x2="17" y2="9" stroke="#94A3B8" strokeWidth="2"/>
-                              <polyline points="11,3 19,9 11,15" fill="none" stroke="#94A3B8" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round"/>
-                            </svg>
+                          /* Stage-flow arrow between columns — same orange chip the Recruitment
+                             template layout uses, in a wider gutter so it reads as a step marker
+                             instead of being pinched between the boards. */
+                          <div style={{ flexShrink: 0, width: 48, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'linear-gradient(135deg, #F97316, #EA580C)', color: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 6px rgba(249,115,22,0.35)' }}>
+                              <ArrowRight size={15} strokeWidth={2.5} />
+                            </div>
                           </div>
                         )}
                         <div className="kanban-col" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: '#F7F8FA', borderRadius: '12px', overflow: 'hidden', minHeight: 0, height: '100%', border: '1px solid #F0F1F3', animationDelay: `${0.06 + colIdx * 0.05}s` }}>
@@ -5585,16 +5671,16 @@ export default function OwnerTasksPage() {
                                 )}
                               </div>
                             )}
-                            <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: '0 0 12px', lineHeight: 1.4, paddingRight: hasBadges ? 0 : actionsWidth, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            <p style={{ fontWeight: 600, fontSize: '0.875rem', color: '#111827', margin: '0 0 4px', lineHeight: 1.4, paddingRight: hasBadges ? 0 : actionsWidth, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                               {task.title}
                             </p>
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, minHeight: 26 }}>
                               {assignee ? (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-                                  <div className="task-card-icon" style={{ width: 18, height: 18, borderRadius: '50%', background: assignee.profile_photo_url ? 'transparent' : '#FFF3E8', border: '1.5px solid #F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
+                                  <div className="task-card-icon" style={{ width: 26, height: 26, borderRadius: '50%', background: assignee.profile_photo_url ? 'transparent' : '#FFF3E8', border: '1.5px solid #F97316', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
                                     {assignee.profile_photo_url
                                       ? <img src={assignee.profile_photo_url} alt={assignee.full_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                      : <UserCog size={10} color="#F97316" strokeWidth={2} />}
+                                      : <UserCog size={14} color="#F97316" strokeWidth={2} />}
                                   </div>
                                   <span style={{ fontSize: '0.7rem', color: '#374151', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                                     {assignees.map(a => a.full_name).join(', ')}

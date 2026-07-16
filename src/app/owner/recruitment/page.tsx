@@ -24,6 +24,7 @@ import { CandidateRecommendation } from '@/types/AI'
 import { JobApplicant, JobPostingPendingApproval, JobPostingSummary, PoolInviteResult, PoolWorker } from '@/types/Recruitment'
 import { JobTemplate, JobTemplateUsageStats } from '@/types/JobTemplate'
 import { deptColor, setDeptColorOverrides } from '@/lib/deptColor'
+import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 import DepartmentBadge from '@/components/DepartmentBadge'
 import RoleAvatar from '@/components/RoleAvatar'
 import DatePickerField from '@/components/DatePickerField'
@@ -241,15 +242,17 @@ function ApplicantCard({ applicant, actions, onOpenDetail, children, dateLabel =
   dateLabel?: string
   dateValue?: string | null
 }) {
+  const isCompactCard = useIsCompactViewport(1400)
   const sectionLabel: React.CSSProperties = { display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: '#374151', margin: 0 }
   const divider = <div style={{ width: 1, alignSelf: 'stretch', background: '#E5E7EB', flexShrink: 0 }} />
   return (
     <div style={{ background: '#FFFFFF', border: '1.5px solid #E5E7EB', borderRadius: 16, padding: '14px 16px', marginBottom: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div style={{ display: 'flex', alignItems: 'stretch', gap: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'stretch', gap: isCompactCard ? 8 : 14, flexWrap: 'wrap' }}>
         {/* Avatar + name — fixed-width column so the divider lines up across every card no matter
-            how long the name is. Clicking opens the full detail modal. */}
+            how long the name is. Clicking opens the full detail modal. Narrower below the compact
+            breakpoint so the date + actions columns still have room instead of squishing. */}
         <button type="button" onClick={onOpenDetail} title="View applicant details"
-          style={{ width: 132, flexShrink: 0, border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+          style={{ width: isCompactCard ? 76 : 132, flexShrink: 0, border: 'none', background: 'transparent', padding: 0, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
           <ApplicantAvatar applicant={applicant} size={54} />
           <strong style={{ color: '#111827', fontSize: '0.82rem', lineHeight: 1.25, textAlign: 'center', wordBreak: 'break-word' }}>{applicant.full_name}</strong>
         </button>
@@ -712,6 +715,7 @@ function RTimePicker({ value, onChange, min, max }: { value: string; onChange: (
 
 export default function OwnerRecruitmentPage() {
   const router = useRouter()
+  const isCompactApplicantActions = useIsCompactViewport(1400)
 
   // auth / company
   const [internalUserId, setInternalUserId] = useState('')
@@ -759,6 +763,21 @@ export default function OwnerRecruitmentPage() {
   // Job Sources accordion: which card's dropdown is expanded. Template opens by default;
   // opening one automatically closes the others — never more than one open at a time.
   const [openSource, setOpenSource] = useState<'none' | 'pending' | 'drafts' | 'archived' | 'templates'>('none')
+  // ?view=pending deep-links from the dashboard's Review Job Postings card straight to
+  // the Post tab with the Pending Approval source expanded.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('view') === 'pending') {
+      setActiveTab('post')
+      setOpenSource('pending')
+    }
+  }, [])
+  // ?highlight=<id,id,…> deep-links from the dashboard's Recruitment Overview cards: the named
+  // postings are pinned to the top of the Active Jobs list and visually highlighted.
+  const [highlightIds, setHighlightIds] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    const raw = new URLSearchParams(window.location.search).get('highlight')
+    if (raw) setHighlightIds(new Set(raw.split(',').filter(Boolean)))
+  }, [])
   const [loading, setLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
   const [aiLoading, setAiLoading] = useState(false)
@@ -1921,12 +1940,15 @@ export default function OwnerRecruitmentPage() {
 
   const jobsDepts = useMemo(() => ['all', ...Array.from(new Set(jobsPostings.map(p => p.department_name).filter(Boolean)))] as string[], [jobsPostings])
   const filteredJobsPostings = useMemo(() => jobsDeptFilter === 'all' ? jobsPostings : jobsPostings.filter(p => p.department_name === jobsDeptFilter), [jobsPostings, jobsDeptFilter])
-  // Needs-attention (unprocessed applications) cards float to the top; Array.sort is stable, so
-  // each group keeps the order the API already gave it (newest posted first) — clearing every
-  // pending application on a card drops it back into that normal order automatically.
+  // Dashboard-highlighted postings pin to the very top, then needs-attention (unprocessed
+  // applications) cards; Array.sort is stable, so each group keeps the order the API already
+  // gave it (newest posted first) — clearing every pending application on a card drops it back
+  // into that normal order automatically.
   const sortedJobsPostings = useMemo(
-    () => [...filteredJobsPostings].sort((a, b) => (b.pending_count > 0 ? 1 : 0) - (a.pending_count > 0 ? 1 : 0)),
-    [filteredJobsPostings],
+    () => [...filteredJobsPostings].sort((a, b) =>
+      ((highlightIds.has(b.id) ? 2 : 0) + (b.pending_count > 0 ? 1 : 0)) -
+      ((highlightIds.has(a.id) ? 2 : 0) + (a.pending_count > 0 ? 1 : 0))),
+    [filteredJobsPostings, highlightIds],
   )
 
   // ── render ───────────────────────────────────────────────────────────────────
@@ -2089,6 +2111,7 @@ export default function OwnerRecruitmentPage() {
                   const active = isSelected
                   const dc = p.department_id ? deptColor(p.department_id) : '#94A3B8'
                   const needsAttention = p.pending_count > 0
+                  const highlighted = highlightIds.has(p.id)
                   return (
                     <div key={p.id} style={{ position: 'relative' }}>
                     {/* Needs-attention alert dot — floats outside the card's left edge, vertically centered;
@@ -2104,16 +2127,16 @@ export default function OwnerRecruitmentPage() {
                       style={{
                         display: 'flex', flexDirection: 'column', gap: 10,
                         marginLeft: needsAttention ? 18 : 0,
-                        border: `1px solid ${active ? dc : PANEL_BORDER}`,
+                        border: `1px solid ${active ? dc : highlighted ? '#F97316' : PANEL_BORDER}`,
                         borderRadius: 10, padding: '14px 16px',
-                        background: active ? `${dc}0d` : '#F9FAFB',
+                        background: active ? `${dc}0d` : highlighted ? '#FFF7ED' : '#F9FAFB',
                         cursor: 'pointer', overflow: 'hidden',
                         transition: 'box-shadow 0.18s, transform 0.18s, border-color 0.18s, background 0.18s, margin-left 0.18s',
                         animation: `deptCardIn 0.28s ease both ${idx * 55}ms`,
-                        boxShadow: active ? `0 4px 16px ${dc}22` : undefined,
+                        boxShadow: active ? `0 4px 16px ${dc}22` : highlighted ? '0 0 0 3px rgba(249,115,22,0.16)' : undefined,
                       }}
                       onMouseEnter={e => { if (!active) { e.currentTarget.style.transform = 'translateY(-3px)'; e.currentTarget.style.boxShadow = '0 10px 28px rgba(15,23,42,0.11)'; e.currentTarget.style.borderColor = dc } }}
-                      onMouseLeave={e => { if (!active) { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.borderColor = PANEL_BORDER } }}
+                      onMouseLeave={e => { if (!active) { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = highlighted ? '0 0 0 3px rgba(249,115,22,0.16)' : 'none'; e.currentTarget.style.borderColor = highlighted ? '#F97316' : PANEL_BORDER } }}
                     >
                       {/* Department + job type badge row */}
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
@@ -2369,27 +2392,31 @@ export default function OwnerRecruitmentPage() {
 
                 {/* Applicants — same treatment: pinned, with the list scrolling inside the panel */}
                 <div className="recruitment-panel" style={{ background: '#FFFFFF', borderRadius: 16, boxShadow: cardShadow, overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: panelMaxHeight ?? undefined }}>
-                  <div style={{ height: LIST_HEADER_HEIGHT, padding: '0 18px', boxSizing: 'border-box', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                  <div style={{ height: LIST_HEADER_HEIGHT, padding: '0 18px', boxSizing: 'border-box', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, overflow: 'hidden' }}>
                     <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       <Users size={15} style={{ color: '#F97316' }} />
                     </div>
-                    <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2 }}>Applicants</span>
+                    <span style={{ fontSize: 18, fontWeight: 700, color: '#0F172A', letterSpacing: '-0.2px', lineHeight: 1.2, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Applicants</span>
                     {/* Hand the job straight to workers who already worked here, alongside the AI
-                        assessment of whoever applied on the public board. */}
+                        assessment of whoever applied on the public board. Below the compact
+                        breakpoint the buttons drop their text label (icon + title tooltip only)
+                        so they never spill past the panel edge into the next column. */}
                     {activeTab !== 'closed' && (
                       <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                         <button
                           onClick={openPoolModal}
-                          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: 'linear-gradient(135deg, #059669, #047857)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
+                          title="Invite from Pool"
+                          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: 'linear-gradient(135deg, #059669, #047857)', color: '#FFFFFF', height: 36, padding: isCompactApplicantActions ? 0 : '0 14px', width: isCompactApplicantActions ? 36 : undefined, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
                         >
-                          <UserCheck size={15} strokeWidth={2.5} /> Invite from Pool
+                          <UserCheck size={15} strokeWidth={2.5} /> {!isCompactApplicantActions && 'Invite from Pool'}
                         </button>
                         <button
                           onClick={recommendCandidates}
                           disabled={aiLoading || applicants.length === 0}
-                          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 36, padding: '0 14px', fontSize: 13, fontWeight: 700, cursor: aiLoading || applicants.length === 0 ? 'default' : 'pointer', opacity: aiLoading || applicants.length === 0 ? 0.6 : 1 }}
+                          title="AI Assessment"
+                          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, border: 0, borderRadius: 10, background: 'linear-gradient(135deg, #7C3AED, #6D28D9)', color: '#FFFFFF', height: 36, padding: isCompactApplicantActions ? 0 : '0 14px', width: isCompactApplicantActions ? 36 : undefined, fontSize: 13, fontWeight: 700, cursor: aiLoading || applicants.length === 0 ? 'default' : 'pointer', opacity: aiLoading || applicants.length === 0 ? 0.6 : 1 }}
                         >
-                          {aiLoading ? <Spinner size={14} /> : <Sparkles size={15} strokeWidth={2.5} />} AI Assessment
+                          {aiLoading ? <Spinner size={14} /> : <Sparkles size={15} strokeWidth={2.5} />} {!isCompactApplicantActions && 'AI Assessment'}
                         </button>
                       </div>
                     )}

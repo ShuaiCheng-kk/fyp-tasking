@@ -49,13 +49,15 @@ export default function GuestWorkerProfilePage() {
 
       <main style={pageStyle}>
         {/* Page header — title left, matching the Owner pages */}
-        <div style={{ marginBottom: 20 }}>
+        <div style={{ marginBottom: 20, flexShrink: 0 }}>
           <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
             My Profile
           </h1>
         </div>
 
-        <section style={{ maxWidth: 1080, margin: '0 auto', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 16, alignItems: 'start', animation: 'blockSlideUp 0.38s ease both 0.06s' }}>
+        {/* The profile grid is the page's scroll block — the header above stays fixed and this
+            section scrolls internally once the cards outgrow the viewport. */}
+        <section style={{ maxWidth: 1080, margin: '0 auto', width: '100%', flex: '1 1 auto', minHeight: 0, overflowY: 'auto', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 16, alignItems: 'start', animation: 'blockSlideUp 0.38s ease both 0.06s' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {internalUserId && <GuestPersonalInfoCard userId={internalUserId} onToast={showToast} />}
             {authId && <SkillsCard authId={authId} onToast={showToast} />}
@@ -86,7 +88,12 @@ export default function GuestWorkerProfilePage() {
 
 // No fontFamily override — Owner pages don't set one either, so this page inherits the same
 // ambient system font as the rest of the app instead of forcing Inter over it.
+// The guest layout's <main> is locked to one viewport — this page fills it as a flex column.
 const pageStyle: React.CSSProperties = {
-  minHeight: '100vh',
+  flex: 1,
+  minHeight: 0,
+  display: 'flex',
+  flexDirection: 'column',
+  overflow: 'hidden',
   padding: '20px 28px 28px',
 }

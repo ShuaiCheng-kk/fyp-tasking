@@ -14,6 +14,7 @@ import OwnerPlanBadge from '@/components/owner/PlanBadge'
 import OwnerUserBadge from '@/components/owner/OwnerUserBadge'
 import Spinner from '@/components/Spinner'
 import { deptColor } from '@/lib/deptColor'
+import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 import {
   AttendanceDashboardRecord,
   AttendanceRequestStatus,
@@ -808,8 +809,13 @@ export default function OwnerAttendancePage() {
   const [companyId, setCompanyId] = useState('')
   const [currentPlan, setCurrentPlan] = useState('Free')
 
-  // top-level tab
+  // top-level tab; ?tab=swaps|fixedoff deep-links from the dashboard's Waiting On You cards
   const [mainTab, setMainTab] = useState<'records' | 'swaps' | 'fixedoff'>('records')
+  useEffect(() => {
+    const tab = new URLSearchParams(window.location.search).get('tab')
+    if (tab === 'swaps' || tab === 'fixedoff') setMainTab(tab)
+  }, [])
+  const isCompactReqLayout = useIsCompactViewport(1300)
 
   // ── Records tab state ────────────────────────────────────────────────────
   const [recordsKeyword, setRecordsKeyword] = useState('')
@@ -1977,7 +1983,7 @@ export default function OwnerAttendancePage() {
       <OwnerSidebar />
       {/* On the Off Day tab the page itself never scrolls — the tab locks to one viewport and each
            block scrolls internally instead. */}
-      <main style={{ marginLeft: '64px', flex: 1, minHeight: '100vh', overflowY: 'auto', display: 'flex', flexDirection: 'column', ...(mainTab === 'fixedoff' || mainTab === 'swaps' ? { height: '100vh', minHeight: 0, overflowY: 'hidden' } : {}) }}>
+      <main style={{ marginLeft: '64px', flex: 1, height: '100vh', minHeight: 0, overflowY: 'hidden', display: 'flex', flexDirection: 'column' }}>
 
         {/* ── Page header ────────────────────────────────────────────────── */}
         <div style={{ padding: '20px 28px 16px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 24, flexShrink: 0 }}>
@@ -1999,10 +2005,10 @@ export default function OwnerAttendancePage() {
         {mainTab === 'records' && (() => {
           return (
           <>
-<div style={{ padding: '0 28px 28px', display: 'grid', gridTemplateColumns: 'minmax(300px, 326px) minmax(0, 1fr)', gap: 16, alignItems: 'start' }}>
+<div style={{ padding: '0 28px 28px', display: 'grid', gridTemplateColumns: 'minmax(300px, 326px) minmax(0, 1fr)', gap: 16, flex: 1, minHeight: 0, overflow: 'hidden' }}>
 
             {/* ── LEFT: Department + Casual Worker panels ── */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minHeight: 0, overflowY: 'auto' }}>
             <section style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden' }}>
               <div style={{ padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
                 <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -2110,7 +2116,7 @@ export default function OwnerAttendancePage() {
             </div>{/* /left column */}
 
             {/* ── RIGHT: AR Timeline — exact Shift page structure ── */}
-            <section style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, display: 'flex', flexDirection: 'column' }}>
+            <section style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
 
               {/* Section header with borderBottom — same as Shift page */}
               {(() => {
@@ -2185,7 +2191,7 @@ export default function OwnerAttendancePage() {
               })()}
 
               {/* Timeline body — exact Shift page renderCalendarView structure */}
-              <div style={{ overflowX: 'auto', padding: '14px 16px 18px 18px' }}>
+              <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '14px 16px 18px 18px' }}>
                 <div style={{ minWidth: 700, borderRadius: 12, overflow: 'hidden', border: `1px solid ${PANEL_BORDER}` }}>
 
                   {/* Column header row */}
@@ -2345,14 +2351,14 @@ export default function OwnerAttendancePage() {
             REQUESTS TAB
         ══════════════════════════════════════════════════════════════════ */}
         {(mainTab === 'swaps' || mainTab === 'fixedoff') && (
-          <div style={{ padding: '0 28px 28px', display: 'grid', gridTemplateColumns: reqTab === 'fixedoff' && offDayQueueEmpty ? 'minmax(400px, 1fr) minmax(380px, 620px)' : 'minmax(260px, 326px) minmax(400px, 1fr) minmax(380px, 620px)', gridTemplateRows: 'auto minmax(0, 1fr)', gap: 16, alignItems: 'start', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+          <div style={{ padding: '0 28px 28px', display: 'grid', gridTemplateColumns: isCompactReqLayout ? '1fr' : reqTab === 'fixedoff' && offDayQueueEmpty ? 'minmax(400px, 1fr) minmax(380px, 620px)' : 'minmax(260px, 326px) minmax(400px, 1fr) minmax(380px, 620px)', gridTemplateRows: isCompactReqLayout ? 'auto' : 'auto minmax(0, 1fr)', gap: 16, alignItems: 'start', flex: 1, minHeight: 0, overflow: isCompactReqLayout ? 'auto' : 'hidden' }}>
             <div style={{ display: 'contents' }}>
 
             {/* ── LEFT: Requests queue. Spans both grid rows and stretches on both tabs so the
                  queue fills the full page height (same block design as Off Day). Hidden entirely
                  on the Off Day tab while nothing is pending. ── */}
             {!(reqTab === 'fixedoff' && offDayQueueEmpty) && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, gridColumn: '1', gridRow: '1 / span 2', alignSelf: 'stretch', minHeight: 0 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, gridColumn: '1', gridRow: isCompactReqLayout ? 'auto' : '1 / span 2', alignSelf: isCompactReqLayout ? 'auto' : 'stretch', minHeight: 0 }}>
               {/* ── Requests queue — one card per pending swap, oldest first (same set + order
                    activeSwapRequest cycles through); clicking a card selects it, driving the
                    Action Needed / Current Shifts / Task Changes blocks. ── */}
@@ -2552,7 +2558,7 @@ export default function OwnerAttendancePage() {
             <div style={{ minWidth: 0, display: 'contents' }}>
 
               {reqError && (
-                <div style={{ gridColumn: reqTab === 'fixedoff' && offDayQueueEmpty ? '1 / -1' : '2 / 4', padding: 12, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 8, fontSize: '0.84rem', fontWeight: 800 }}>{reqError}</div>
+                <div style={{ gridColumn: isCompactReqLayout ? '1' : reqTab === 'fixedoff' && offDayQueueEmpty ? '1 / -1' : '2 / 4', padding: 12, background: '#FEF2F2', border: '1px solid #FECACA', color: '#B91C1C', borderRadius: 8, fontSize: '0.84rem', fontWeight: 800 }}>{reqError}</div>
               )}
 
               {/* ── Shift Swaps ─────────────────────────────────────────────── */}
@@ -2789,7 +2795,7 @@ export default function OwnerAttendancePage() {
                           const clampedIndex = Math.min(actionIndex, Math.max(actionNeeded.length - 1, 0))
                           const currentSwap = actionNeeded[clampedIndex] ?? null
                           return (
-                        <div style={{ gridColumn: '2', gridRow: '1 / span 2', alignSelf: 'stretch', minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                        <div style={{ gridColumn: isCompactReqLayout ? '1' : '2', gridRow: isCompactReqLayout ? 'auto' : '1 / span 2', alignSelf: isCompactReqLayout ? 'auto' : 'stretch', minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
                         <section style={{ background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                           <div style={{ padding: '14px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
                             <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -2850,7 +2856,7 @@ export default function OwnerAttendancePage() {
                           const processedDepts = ['all', ...Array.from(new Set(processed.map(r => r.department_name).filter(Boolean)))] as string[]
                           const filteredProcessed = processedDeptFilter === 'all' ? processed : processed.filter(r => r.department_name === processedDeptFilter)
                           return (
-                          <section style={{ gridColumn: '3', gridRow: '1 / span 2', alignSelf: 'start', maxHeight: '100%', minHeight: 0, background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                          <section style={{ gridColumn: isCompactReqLayout ? '1' : '3', gridRow: isCompactReqLayout ? 'auto' : '1 / span 2', alignSelf: 'start', maxHeight: isCompactReqLayout ? undefined : '100%', minHeight: 0, background: '#FFFFFF', border: `1px solid ${PANEL_BORDER}`, borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                             <div style={{ padding: '11px 18px', borderBottom: `1px solid ${PANEL_BORDER}`, display: 'flex', alignItems: 'center', gap: 8 }}>
                               <div style={{ width: 30, height: 30, borderRadius: 9, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                                 <CheckCheck size={15} style={{ color: '#F97316' }} />
@@ -3128,7 +3134,7 @@ export default function OwnerAttendancePage() {
                 return (
                   <>
                     {reqLoading ? (
-                      <div style={{ gridColumn: '2 / 4', padding: '32px', textAlign: 'center', color: '#9CA3AF', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}><Spinner size={16} dark /> Loading...</div>
+                      <div style={{ gridColumn: isCompactReqLayout ? '1' : '2 / 4', padding: '32px', textAlign: 'center', color: '#9CA3AF', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}><Spinner size={16} dark /> Loading...</div>
                     ) : (
                       <>
                         {/* Request card + Calendar share one grid cell (col 2, spanning both rows)
@@ -3136,7 +3142,7 @@ export default function OwnerAttendancePage() {
                              AI Insights column — splitting them into separate row-1/row-2 grid items
                              let the grid's row-track sizing inflate row 1 to fit AI Insights, leaving
                              a dead gap above the Calendar. ── */}
-                        <div style={{ gridColumn: offDayQueueEmpty ? '1' : '2', gridRow: '1 / span 2', alignSelf: 'stretch', minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+                        <div style={{ gridColumn: isCompactReqLayout ? '1' : offDayQueueEmpty ? '1' : '2', gridRow: isCompactReqLayout ? 'auto' : '1 / span 2', alignSelf: isCompactReqLayout ? 'auto' : 'stretch', minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
                         {!offDayQueueEmpty && (() => {
                           const hasActionNeeded = actionNeeded.length > 0
                           // displayWeekStart (outer scope) — the oldest week that still has a pending
@@ -3403,7 +3409,7 @@ export default function OwnerAttendancePage() {
 
                         {/* ── Request Overview + Details share one grid cell (col 3, spanning both
                              rows), same reasoning as the col-2 wrapper above. ── */}
-                        <div style={{ gridColumn: offDayQueueEmpty ? '2' : '3', gridRow: '1 / span 2', alignSelf: 'stretch', minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+                        <div style={{ gridColumn: isCompactReqLayout ? '1' : offDayQueueEmpty ? '2' : '3', gridRow: isCompactReqLayout ? 'auto' : '1 / span 2', alignSelf: isCompactReqLayout ? 'auto' : 'stretch', minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
                         {(() => {
                           const detailRequests = dayOffDetailDate
                             ? fixedOffDayRequests
