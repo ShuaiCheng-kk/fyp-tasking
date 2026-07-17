@@ -150,7 +150,7 @@ describe('ownerDashboardService.getDashboardSummary', () => {
       expect(delayAlert.tasks).toEqual([])
     })
 
-    it('buckets a not-yet-overdue delay-alerted task under Delay Alert, not Due Today', async () => {
+    it('buckets a not-yet-overdue delay-alerted task under Delay Alert', async () => {
       vi.mocked(taskService.getKanbanTasks).mockResolvedValue({
         ...emptyKanban,
         Assigned: [{ id: 't2', title: 'Not started', due_at: '2026-07-16T23:00:00Z', assigned_user_id: 'u1' } as any],
@@ -163,7 +163,7 @@ describe('ownerDashboardService.getDashboardSummary', () => {
       const result = await ownerDashboardService.getDashboardSummary('company-1', 'owner-1')
 
       expect(result.task_overview.find(g => g.key === 'delay_alert')!.tasks.map(t => t.id)).toEqual(['t2'])
-      expect(result.task_overview.find(g => g.key === 'due_today')!.tasks).toEqual([])
+      expect(result.task_overview.find(g => g.key === 'overdue')!.tasks).toEqual([])
     })
 
     it('counts a Complete task as Completed only if it finished today', async () => {

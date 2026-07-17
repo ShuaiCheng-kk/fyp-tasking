@@ -170,12 +170,11 @@ function WaitingOnYouCard({ item, onClick }: { item: WaitingOnYouItem; onClick: 
 // ─── Task Overview ──────────────────────────────────────────────────────────────
 
 // href: where "View all …" (and the group's task rows) deep-link on the Task page —
-// Overdue/Due Today preset the Kanban sort to Nearest Deadline; Delay Alert auto-highlights
+// Overdue presets the Kanban sort to Nearest Deadline; Delay Alert auto-highlights
 // the delayed tasks on the board (same as clicking the Task Delay Alert count there).
 const TASK_GROUP_META: Record<string, { color: string; chipBg: string; iconBg: string; bar: string; rowBg: string; viewAll: string; icon: React.ReactNode; sub: string; href: string }> = {
   overdue:     { color: '#DC2626', chipBg: '#FEF2F2', iconBg: '#FEE2E2', bar: '#F87171', rowBg: '#FFFFFF', viewAll: 'View all overdue tasks', icon: <Clock size={26} />,        sub: 'Act now',  href: '/owner/tasks?sort=deadline' },
   delay_alert: { color: '#EA580C', chipBg: '#FFF7ED', iconBg: '#FFEDD5', bar: '#FDBA74', rowBg: '#FFFBF5', viewAll: 'View all delay alerts',  icon: <Hourglass size={26} />,    sub: 'Due soon', href: '/owner/tasks?show=delay_alerts' },
-  due_today:   { color: '#2563EB', chipBg: '#EFF6FF', iconBg: '#DBEAFE', bar: '#93C5FD', rowBg: '#FFFFFF', viewAll: 'View all tasks due today', icon: <Calendar size={26} />,   sub: 'On today\'s plate', href: '/owner/tasks?sort=deadline' },
   completed:   { color: '#16A34A', chipBg: '#F0FDF4', iconBg: '#DCFCE7', bar: '#86EFAC', rowBg: '#FFFFFF', viewAll: 'View all completed tasks', icon: <CheckCircle2 size={26} />, sub: 'Great job!', href: '/owner/tasks?show=completed_today' },
 }
 
