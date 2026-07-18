@@ -83,6 +83,30 @@ function formatClockTime(value: string | null) {
   return roundToFiveMinutes(value).toLocaleTimeString('en-SG', { hour: 'numeric', minute: '2-digit', hour12: true }).toUpperCase()
 }
 
+const pageKeyframes = `
+  @keyframes attendanceFadeSlideUp { from { opacity: 0; transform: translateY(14px) } to { opacity: 1; transform: translateY(0) } }
+  @keyframes attendanceFadeIn { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes attendanceLiveDotPulse { 0%, 100% { opacity: 1; transform: scale(1) } 50% { opacity: 0.35; transform: scale(0.7) } }
+  @keyframes attendanceSpin { to { transform: rotate(360deg) } }
+  .attendance-page-btn { transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease; }
+  .attendance-page-btn:not(:disabled):hover { background: #FFF7ED; color: #EA580C; }
+  .attendance-page-btn:not(:disabled):active { transform: scale(0.92); }
+`
+
+function Spinner({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 18 18" style={{ display: 'inline-block', animation: 'attendanceSpin 0.7s linear infinite' }}>
+      <circle cx="9" cy="9" r="7" stroke="rgba(249,115,22,0.2)" strokeWidth="2.5" fill="none" />
+      <path d="M9 2a7 7 0 0 1 7 7" stroke="#F97316" strokeWidth="2.5" strokeLinecap="round" fill="none" />
+    </svg>
+  )
+}
+
+// Small pulsing dot next to "Working" badges — signals the shift is still live/ongoing.
+function LiveDot() {
+  return <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#EA580C', display: 'inline-block', animation: 'attendanceLiveDotPulse 1.4s ease-in-out infinite' }} />
+}
+
 export default function CasualAttendancePage() {
   const router = useRouter()
   const isCompact = useIsCompactViewport(1300)
@@ -157,13 +181,18 @@ export default function CasualAttendancePage() {
 
   return (
     <main style={pageStyle}>
+      <style>{pageKeyframes}</style>
       <div style={{ marginBottom: 16, flexShrink: 0 }}>
         <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
           Attendance
         </h1>
       </div>
 
-      {loading ? null : history.length === 0 ? (
+      {loading ? (
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Spinner size={26} />
+        </div>
+      ) : history.length === 0 ? (
         <p style={{ margin: 0, color: '#6B7280', fontSize: '0.95rem' }}>No attendance records yet.</p>
       ) : (
         <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 16 }}>
@@ -172,7 +201,7 @@ export default function CasualAttendancePage() {
             <TitledBlock
               icon={<Wallet size={15} color="#F97316" />}
               title="Total Earned"
-              containerStyle={{ flexShrink: 0 }}
+              containerStyle={{ flexShrink: 0, animation: 'attendanceFadeSlideUp 0.35s ease both' }}
             >
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
                 <span style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.875rem', fontWeight: 800, color: '#374151', background: '#F3F4F6', border: '1px solid #E5E7EB', borderRadius: 999, padding: '6px 14px', whiteSpace: 'nowrap' }}>
@@ -188,11 +217,11 @@ export default function CasualAttendancePage() {
             <TitledBlock
               icon={<History size={15} color="#F97316" />}
               title="Records"
-              containerStyle={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
+              containerStyle={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', animation: 'attendanceFadeSlideUp 0.35s ease both', animationDelay: '0.05s' }}
               bodyStyle={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10 }}
             >
               <div ref={listRef} style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {pageEntries.map(entry => {
+              {pageEntries.map((entry, i) => {
                 const active = entry.id === selectedId
                 const hovered = entry.id === hoveredId
                 const day = new Date(`${entry.shift_date}T00:00:00`)
@@ -210,13 +239,16 @@ export default function CasualAttendancePage() {
                       boxShadow: hovered && !active ? '0 6px 16px rgba(0,0,0,0.07)' : '0 1px 3px rgba(0,0,0,0.04)',
                       transform: hovered && !active ? 'translateY(-1px)' : 'none',
                       transition: 'transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease, background 0.15s ease',
+                      animation: 'attendanceFadeIn 0.3s ease both',
+                      animationDelay: `${Math.min(i * 0.04, 0.3)}s`,
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                       <span style={{ fontSize: '0.72rem', fontWeight: 700, color: active ? '#EA580C' : '#111827' }}>
                         {dateLabel}
                       </span>
-                      <span style={{ ...(entry.status === 'working' ? workingBadgeStyle : completedBadgeStyle), flexShrink: 0 }}>
+                      <span style={{ ...(entry.status === 'working' ? workingBadgeStyle : completedBadgeStyle), flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                        {entry.status === 'working' && <LiveDot />}
                         {entry.status === 'working' ? 'Working' : 'Completed'}
                       </span>
                     </div>
@@ -241,14 +273,14 @@ export default function CasualAttendancePage() {
 
               <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, paddingTop: 2 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                <button type="button" onClick={() => setPage(Math.max(1, safePage - 1))} disabled={safePage === 1}
+                <button type="button" className="attendance-page-btn" onClick={() => setPage(Math.max(1, safePage - 1))} disabled={safePage === 1}
                   style={{ ...pageButtonStyle, color: safePage === 1 ? '#D1D5DB' : '#6B7280', cursor: safePage === 1 ? 'default' : 'pointer' }}>
                   <ChevronLeft size={14} />
                 </button>
                 {pageItems(safePage, totalPages).map((item, i) => item === '…' ? (
                   <span key={`gap-${i}`} style={{ fontSize: '0.78rem', color: '#9CA3AF', padding: '0 2px' }}>…</span>
                 ) : (
-                  <button key={item} type="button" onClick={() => setPage(item)}
+                  <button key={item} type="button" className="attendance-page-btn" onClick={() => setPage(item)}
                     style={{
                       ...pageButtonStyle,
                       border: item === safePage ? '1.5px solid #F97316' : '1.5px solid transparent',
@@ -258,7 +290,7 @@ export default function CasualAttendancePage() {
                     {item}
                   </button>
                 ))}
-                <button type="button" onClick={() => setPage(Math.min(totalPages, safePage + 1))} disabled={safePage === totalPages}
+                <button type="button" className="attendance-page-btn" onClick={() => setPage(Math.min(totalPages, safePage + 1))} disabled={safePage === totalPages}
                   style={{ ...pageButtonStyle, color: safePage === totalPages ? '#D1D5DB' : '#6B7280', cursor: safePage === totalPages ? 'default' : 'pointer' }}>
                   <ChevronRight size={14} />
                 </button>
@@ -271,7 +303,7 @@ export default function CasualAttendancePage() {
               (Job Detail / Supervisor / Attendance Timeline / Payment Summary) the same way the
               Dashboard lays out separate TitledBlocks, instead of one big wrapper card. ===== */}
           <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-            {selected && <RecordDetail entry={selected} isCompact={isCompact} detailJob={detailJob} />}
+            {selected && <RecordDetail key={selected.id} entry={selected} isCompact={isCompact} detailJob={detailJob} />}
           </div>
         </div>
       )}
@@ -343,8 +375,13 @@ function RecordDetail({ entry, isCompact, detailJob }: {
           <TitledBlock
             icon={<Briefcase size={15} color="#F97316" />}
             title="Job Detail"
-            headerRight={<span style={entry.status === 'working' ? workingBadgeLargeStyle : completedBadgeLargeStyle}>{entry.status === 'working' ? 'Working' : 'Completed'}</span>}
-            containerStyle={{ height: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column' }}
+            headerRight={
+              <span style={{ ...(entry.status === 'working' ? workingBadgeLargeStyle : completedBadgeLargeStyle), display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                {entry.status === 'working' && <LiveDot />}
+                {entry.status === 'working' ? 'Working' : 'Completed'}
+              </span>
+            }
+            containerStyle={{ height: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', animation: 'attendanceFadeSlideUp 0.35s ease both' }}
             bodyStyle={{ flex: 1, minHeight: 0, overflowY: 'auto' }}
           >
             <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: '#111827', letterSpacing: '-0.02em' }}>
@@ -385,7 +422,7 @@ function RecordDetail({ entry, isCompact, detailJob }: {
 
         <div style={{ flex: isCompact ? undefined : 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
           {(entry.supervisor_name || entry.poster_name) && (
-            <TitledBlock icon={<UserCheck size={15} color="#F97316" />} title="Supervisor" containerStyle={{ flexShrink: 0 }}>
+            <TitledBlock icon={<UserCheck size={15} color="#F97316" />} title="Supervisor" containerStyle={{ flexShrink: 0, animation: 'attendanceFadeSlideUp 0.35s ease both', animationDelay: '0.06s' }}>
               <div style={{ display: 'flex', flexDirection: isCompact ? 'column' : 'row', alignItems: 'stretch', gap: 14 }}>
                 {entry.supervisor_name && (
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -408,26 +445,26 @@ function RecordDetail({ entry, isCompact, detailJob }: {
           <TitledBlock
             icon={<Clock size={15} color="#F97316" />}
             title="Attendance Timeline"
-            containerStyle={{ flexShrink: 0, boxSizing: 'border-box' }}
+            containerStyle={{ flexShrink: 0, boxSizing: 'border-box', animation: 'attendanceFadeSlideUp 0.35s ease both', animationDelay: '0.12s' }}
           >
             <div style={{ position: 'relative', paddingLeft: 18 }}>
               <div style={{ position: 'absolute', left: 3, top: 18, bottom: 18, width: 2, background: '#E5E7EB', borderRadius: 1 }} />
-              <TimelineRow icon={<Clock size={16} color="#16A34A" />} iconBg="#DCFCE7" label="Clock In" time={formatClockTime(entry.clock_in_time)} />
-              <TimelineRow icon={<Coffee size={16} color="#EA580C" />} iconBg="#FFEDD5" label="Break Start" time={formatClockTime(entry.break_in_time)} />
-              <TimelineRow icon={<Coffee size={16} color="#2563EB" />} iconBg="#DBEAFE" label="Break End" time={formatClockTime(entry.break_out_time)} />
-              <TimelineRow icon={<Clock size={16} color="#DC2626" />} iconBg="#FEE2E2" label="Clock Out" time={formatClockTime(entry.clock_out_time)} last />
+              <TimelineRow icon={<Clock size={16} color="#16A34A" />} iconBg="#DCFCE7" label="Clock In" time={formatClockTime(entry.clock_in_time)} delay={0} />
+              <TimelineRow icon={<Coffee size={16} color="#EA580C" />} iconBg="#FFEDD5" label="Break Start" time={formatClockTime(entry.break_in_time)} delay={0.05} />
+              <TimelineRow icon={<Coffee size={16} color="#2563EB" />} iconBg="#DBEAFE" label="Break End" time={formatClockTime(entry.break_out_time)} delay={0.1} />
+              <TimelineRow icon={<Clock size={16} color="#DC2626" />} iconBg="#FEE2E2" label="Clock Out" time={formatClockTime(entry.clock_out_time)} delay={0.15} last />
             </div>
           </TitledBlock>
 
           {/* ── Payment Summary — stacked below Attendance Timeline, same width as the rest of
               this right column. ── */}
-          <TitledBlock icon={<Wallet size={15} color="#F97316" />} title="Payment Summary" containerStyle={{ flexShrink: 0 }}>
+          <TitledBlock icon={<Wallet size={15} color="#F97316" />} title="Payment Summary" containerStyle={{ flexShrink: 0, animation: 'attendanceFadeSlideUp 0.35s ease both', animationDelay: '0.18s' }}>
             <div style={{ position: 'relative', paddingLeft: 18 }}>
               <div style={{ position: 'absolute', left: 3, top: 18, bottom: 18, width: 2, background: '#E5E7EB', borderRadius: 1 }} />
-              <TimelineRow icon={<DollarSign size={16} color="#EA580C" />} iconBg="#FFEDD5" label={entry.flat_rate !== null ? 'Flat Rate' : 'Hourly Rate'} time={rateLabel} />
-              <TimelineRow icon={<Clock size={16} color="#2563EB" />} iconBg="#DBEAFE" label="Hours Worked" time={hoursWorkedLabel} />
-              <TimelineRow icon={<Coffee size={16} color="#EA580C" />} iconBg="#FFEDD5" label="Break Time" time={breakLabel} />
-              <TimelineRow icon={<Wallet size={16} color="#16A34A" />} iconBg="#DCFCE7" label="Total Earnings" time={entry.pay !== null ? `$${entry.pay.toFixed(2)}` : '–'} last />
+              <TimelineRow icon={<DollarSign size={16} color="#EA580C" />} iconBg="#FFEDD5" label={entry.flat_rate !== null ? 'Flat Rate' : 'Hourly Rate'} time={rateLabel} delay={0} />
+              <TimelineRow icon={<Clock size={16} color="#2563EB" />} iconBg="#DBEAFE" label="Hours Worked" time={hoursWorkedLabel} delay={0.05} />
+              <TimelineRow icon={<Coffee size={16} color="#EA580C" />} iconBg="#FFEDD5" label="Break Time" time={breakLabel} delay={0.1} />
+              <TimelineRow icon={<Wallet size={16} color="#16A34A" />} iconBg="#DCFCE7" label="Total Earnings" time={entry.pay !== null ? `$${entry.pay.toFixed(2)}` : '–'} delay={0.15} last />
             </div>
           </TitledBlock>
         </div>
@@ -447,15 +484,16 @@ function DetailRow({ icon, label, value, last = false }: { icon: React.ReactNode
   )
 }
 
-function TimelineRow({ icon, iconBg, label, time, last = false }: {
+function TimelineRow({ icon, iconBg, label, time, last = false, delay = 0 }: {
   icon: React.ReactNode
   iconBg: string
   label: string
   time: string
   last?: boolean
+  delay?: number
 }) {
   return (
-    <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: last ? 'none' : '1px solid #F3F4F6' }}>
+    <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: last ? 'none' : '1px solid #F3F4F6', animation: 'attendanceFadeSlideUp 0.3s ease both', animationDelay: `${delay}s` }}>
       <span style={{ position: 'absolute', left: -18, top: '50%', transform: 'translateY(-50%)', width: 8, height: 8, borderRadius: '50%', background: '#D1D5DB' }} />
       <div style={{ width: 38, height: 38, borderRadius: 11, background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
         {icon}
