@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
-  Briefcase, Building2, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock, Coffee,
+  Briefcase, Building2, CalendarDays, ChevronLeft, ChevronRight, Clock, Coffee,
   DollarSign, FileText, History, Mail, Phone, UserCheck, UserRound, Wallet,
 } from 'lucide-react'
 import { TitledBlock } from '@/components/panel'
@@ -268,9 +268,8 @@ export default function CasualAttendancePage() {
           </div>
 
           {/* ===== Right — selected record detail, split into its own independent blocks
-              (Job Detail / Supervisor / Attendance Timeline / Payment Summary / Completed Tasks)
-              the same way the Dashboard lays out separate TitledBlocks, instead of one big
-              wrapper card. ===== */}
+              (Job Detail / Supervisor / Attendance Timeline / Payment Summary) the same way the
+              Dashboard lays out separate TitledBlocks, instead of one big wrapper card. ===== */}
           <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
             {selected && <RecordDetail entry={selected} isCompact={isCompact} detailJob={detailJob} />}
           </div>
@@ -420,8 +419,8 @@ function RecordDetail({ entry, isCompact, detailJob }: {
             </div>
           </TitledBlock>
 
-          {/* ── Payment Summary + Completed Tasks — stacked below Attendance Timeline, same
-              width as the rest of this right column. ── */}
+          {/* ── Payment Summary — stacked below Attendance Timeline, same width as the rest of
+              this right column. ── */}
           <TitledBlock icon={<Wallet size={15} color="#F97316" />} title="Payment Summary" containerStyle={{ flexShrink: 0 }}>
             <div style={{ position: 'relative', paddingLeft: 18 }}>
               <div style={{ position: 'absolute', left: 3, top: 18, bottom: 18, width: 2, background: '#E5E7EB', borderRadius: 1 }} />
@@ -430,21 +429,6 @@ function RecordDetail({ entry, isCompact, detailJob }: {
               <TimelineRow icon={<Coffee size={16} color="#EA580C" />} iconBg="#FFEDD5" label="Break Time" time={breakLabel} />
               <TimelineRow icon={<Wallet size={16} color="#16A34A" />} iconBg="#DCFCE7" label="Total Earnings" time={entry.pay !== null ? `$${entry.pay.toFixed(2)}` : '–'} last />
             </div>
-          </TitledBlock>
-
-          <TitledBlock icon={<CheckCircle2 size={15} color="#F97316" />} title="Completed Tasks" containerStyle={{ flexShrink: 0 }}>
-            {entry.completed_tasks.length === 0 ? (
-              <p style={{ margin: 0, fontSize: '0.845rem', color: '#6B7280' }}>No completed tasks for this job.</p>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {entry.completed_tasks.map(title => (
-                  <span key={title} style={{ display: 'inline-flex', alignItems: 'center', gap: 9, fontSize: '0.875rem', fontWeight: 600, color: '#111827', minWidth: 0 }}>
-                    <CheckCircle2 size={16} color="#16A34A" style={{ flexShrink: 0 }} />
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
-                  </span>
-                ))}
-              </div>
-            )}
           </TitledBlock>
         </div>
       </div>
