@@ -73,6 +73,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true, record })
     }
 
+    if (b.action === 'break_in') {
+      const record = await casualAttendanceService.breakIn({ authId: payload.authId, shift_assignment_id: payload.shift_assignment_id, break_time: payload.clock_time })
+      return NextResponse.json({ success: true, record })
+    }
+
+    if (b.action === 'break_out') {
+      const record = await casualAttendanceService.breakOut({ authId: payload.authId, shift_assignment_id: payload.shift_assignment_id, break_time: payload.clock_time })
+      return NextResponse.json({ success: true, record })
+    }
+
     return NextResponse.json({ success: false, message: 'Unsupported attendance action' }, { status: 400 })
   } catch (error) {
     return NextResponse.json(

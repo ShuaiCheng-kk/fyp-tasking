@@ -118,6 +118,53 @@ describe('attendanceService', () => {
       }))
     })
 
+    it('writes adjusted clock times and updated break times on a modified decision (UC56)', async () => {
+      vi.mocked(attendanceRepository.getAttendanceRecordById).mockResolvedValue({
+        id: 'rec-1', clock_in_time: '2026-07-01T09:00:00Z', clock_out_time: '2026-07-01T17:00:00Z',
+        break_in_time: '2026-07-01T12:00:00Z', break_out_time: '2026-07-01T12:30:00Z',
+        owner_adjusted_clock_in_time: null, owner_adjusted_clock_out_time: null,
+      } as any)
+      vi.mocked(attendanceRepository.updateAttendanceRecord).mockResolvedValue({ id: 'rec-1' } as any)
+
+      await attendanceService.finalReviewAttendance({
+        id: 'rec-1', owner_id: 'owner-1', decision: 'modified',
+        clock_in_time: '2026-07-01T09:05:00Z', clock_out_time: '2026-07-01T17:10:00Z',
+        break_in_time: '2026-07-01T12:15:00Z', break_out_time: '2026-07-01T12:45:00Z',
+      })
+
+      expect(attendanceRepository.updateAttendanceRecord).toHaveBeenCalledWith('rec-1', expect.objectContaining({
+        owner_adjusted_clock_in_time: '2026-07-01T09:05:00Z',
+        owner_adjusted_clock_out_time: '2026-07-01T17:10:00Z',
+        break_in_time: '2026-07-01T12:15:00Z',
+        break_out_time: '2026-07-01T12:45:00Z',
+        status: 'owner_modified',
+      }))
+    })
+
+    it('keeps existing break times when a modified decision omits them, and never touches them on approve', async () => {
+      vi.mocked(attendanceRepository.getAttendanceRecordById).mockResolvedValue({
+        id: 'rec-1', clock_in_time: '2026-07-01T09:00:00Z', clock_out_time: '2026-07-01T17:00:00Z',
+        break_in_time: '2026-07-01T12:00:00Z', break_out_time: '2026-07-01T12:30:00Z',
+        owner_adjusted_clock_in_time: null, owner_adjusted_clock_out_time: null,
+      } as any)
+      vi.mocked(attendanceRepository.updateAttendanceRecord).mockResolvedValue({ id: 'rec-1' } as any)
+
+      await attendanceService.finalReviewAttendance({ id: 'rec-1', owner_id: 'owner-1', decision: 'modified' })
+
+      expect(attendanceRepository.updateAttendanceRecord).toHaveBeenCalledWith('rec-1', expect.objectContaining({
+        break_in_time: '2026-07-01T12:00:00Z',
+        break_out_time: '2026-07-01T12:30:00Z',
+      }))
+
+      await attendanceService.finalReviewAttendance({ id: 'rec-1', owner_id: 'owner-1', decision: 'approved' })
+
+      expect(attendanceRepository.updateAttendanceRecord).toHaveBeenLastCalledWith('rec-1', expect.objectContaining({
+        break_in_time: '2026-07-01T12:00:00Z',
+        break_out_time: '2026-07-01T12:30:00Z',
+        owner_status: 'approved',
+      }))
+    })
+
     it('rejects an invalid decision value before touching the repository', async () => {
       vi.mocked(attendanceRepository.getAttendanceRecordById).mockResolvedValue({ id: 'rec-1' } as any)
 

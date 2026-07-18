@@ -803,8 +803,10 @@ async function main() {
   console.log(`  ✓ 生成 ${attendanceCount} 条 attendance_records（混合 approved/pending/manager_reviewed/rejected/late，~5% 缺勤无记录；含今天的 clocked_in/late/absent/not-started 分布）`)
 
   // ── Step 11b: Casual Worker Shifts + Attendance Records ─────────────────
-  // 每个 active CW 分配到一个部门，过去 7 天生成 shifts（混合 Shift Job / One-Off）
-  // 每个 CW 由同部门的 Employee 负责 supervise。
+  // 每个 active CW 分配到一个部门，过去 28 天 + 今天 + 未来 7 天生成 shifts（混合 Shift Job /
+  // One-Off）。未来的班没有 attendance record —— Casual Dashboard 的"当前工作"取的是第一个
+  // 还没 clock out 的班（今天已打卡的班，之后顺延到未来的班），所以未来几天必须有班，
+  // 否则 seed 跑完第二天 Dashboard 就变空。每个 CW 由同部门的 Employee 负责 supervise。
   console.log('\nStep 11b: 生成 Casual Worker Shifts + Attendance Records...')
   const activeCWEmails = ['cw1@test.com','cw2@test.com','cw3@test.com','cw4@test.com','cw5@test.com','cw6@test.com','cw7@test.com']
 
@@ -898,7 +900,7 @@ async function main() {
       if (cwdErr) console.warn(`  ⚠ casualworker_departments 失败 (${cwEmail}): ${cwdErr.message}`)
 
       const story = CW_STORY[cwEmail]
-      for (let dayOffset = -SHIFT_DAYS_PAST; dayOffset <= 0; dayOffset++) {
+      for (let dayOffset = -SHIFT_DAYS_PAST; dayOffset <= SHIFT_DAYS_FUTURE; dayOffset++) {
         const shiftDate = addDays(TODAY, dayOffset)
         if (!story.workDays.has(shiftDate.getDay())) continue // not scheduled this weekday
         const shiftDateStr = dateKey(shiftDate)
@@ -1004,6 +1006,10 @@ async function main() {
       submitted_by_employee_id: a.userId,
       clock_in_time: clockInTime.toISOString(),
       clock_out_time: clockOutTime.toISOString(),
+      // 完成班次统一带一段 30 分钟午休（clock in 后 3.5 小时开始）——喂 CW Attendance 详情的
+      // Break Time 行/时间线和 Owner 报表的扣时逻辑
+      break_in_time: new Date(clockInTime.getTime() + 3.5 * 3600000).toISOString(),
+      break_out_time: new Date(clockInTime.getTime() + 4 * 3600000).toISOString(),
       status,
       manager_notes: managerNotes,
       owner_status: ownerStatus,
@@ -1113,7 +1119,37 @@ async function main() {
       else messageCount++
     }
   }
-  console.log(`  ✓ 生成 ${messageCount} 条 messages（${deptByIndex.length} 组 Manager-Employee 对话）`)
+  // ── cw1 ↔ supervising Employee 对话（Casual Dashboard 的 Message 面板数据）──
+  // CasualMessagePanel 只拉 CW 与当前工作 supervisor 之间的单线程对话；cw1 在 dept[0]，
+  // supervisor 就是上面 Step 11b 用的 employeesByDept[0][0]。created_at 显式错开，保证顺序稳定。
+  const cw1MsgId = userIdMap['cw1@test.com'].internalId
+  const cw1MsgName = casualWorkers.find(c => c.email === 'cw1@test.com').full_name
+  const cw1SupervisorEmail = employeesByDept[0][0]
+  const cw1SupervisorId = userIdMap[cw1SupervisorEmail].internalId
+  const cw1SupervisorName = accounts.find(a => a.email === cw1SupervisorEmail).full_name
+  const CW_MESSAGE_THREAD = [
+    { fromCW: false, content: 'Hi Alicia, for tomorrow please come in through the loading bay entrance — the front door is being repainted.' },
+    { fromCW: true,  content: 'Got it! Same start time at 9am?' },
+    { fromCW: false, content: 'Yes, 9am. Grab a hi-vis vest from the rack next to the roller door when you arrive.' },
+    { fromCW: true,  content: 'Noted, see you tomorrow.' },
+    { fromCW: false, content: 'One more thing — the recycling bins from last night still need sorting, I have added it to your task list.' },
+  ]
+  for (let i = 0; i < CW_MESSAGE_THREAD.length; i++) {
+    const m = CW_MESSAGE_THREAD[i]
+    const { error: msgErr } = await supabase.from('messages').insert({
+      from_user_id: m.fromCW ? cw1MsgId : cw1SupervisorId,
+      to_user_id: m.fromCW ? cw1SupervisorId : cw1MsgId,
+      company_id: company.id,
+      content: m.content,
+      is_read: i < CW_MESSAGE_THREAD.length - 1, // last message left unread
+      sender_name: m.fromCW ? cw1MsgName : cw1SupervisorName,
+      created_at: new Date(Date.now() - (CW_MESSAGE_THREAD.length - i) * 8 * 60000).toISOString(),
+    })
+    if (msgErr) console.warn(`  ⚠ 创建 cw1 message 失败: ${msgErr.message}`)
+    else messageCount++
+  }
+
+  console.log(`  ✓ 生成 ${messageCount} 条 messages（${deptByIndex.length} 组 Manager-Employee 对话 + cw1↔supervisor 对话）`)
 
   // ── Step 13b: Tasks + Sub-tasks + Task Templates + Archive ──────────────
   // 专门覆盖 Task 页面的测试点：
@@ -1274,13 +1310,38 @@ async function main() {
     if (id) taskCount++
   }
 
-  // ── Employee → Casual Worker 任务（employee1 的 Task 页面数据）──
+  // ── Employee → Casual Worker 任务（employee1 的 Task 页面数据 + cw1 的 Casual Dashboard 看板）──
+  // CasualTaskBoard 按当前工作的 shift_id 拉任务，所以 cw1 的任务必须挂在她"今天的班"上，
+  // 四列（Assigned / In Progress / Review / Complete）各有真实卡片，含一条带 rejection_reason
+  // 的返工提示；再给下一个未来班挂两条 Assigned —— 今天的班 clock out 之后看板依然有内容。
+  const cw1TodayShift = cwAssignmentInfo.find(a => a.email === 'cw1@test.com' && a.isToday) ?? null
+  const cw1NextShift = cwAssignmentInfo
+    .filter(a => a.email === 'cw1@test.com' && !a.isPast && !a.isToday)
+    .sort((x, y) => x.shiftDate.localeCompare(y.shiftDate))[0] ?? null
+  // cw1 最近一个已完成班 —— 喂 CW Attendance 历史详情的 Completed Tasks 卡
+  const cw1PastShift = cwAssignmentInfo
+    .filter(a => a.email === 'cw1@test.com' && a.isPast)
+    .sort((x, y) => y.shiftDate.localeCompare(x.shiftDate))[0] ?? null
   const employeeTaskDefs = [
-    { assignee: 'cw1@test.com', title: 'Sort recycling bins', description: 'Separate and tag the recycling bins behind the loading bay.', priority: 'Medium', status: 'Assigned', createdH: -20, dueH: 5, taskDate: todayKey }, // employee1 视角的 Delay Alert
+    { assignee: 'cw1@test.com', shiftInfo: cw1TodayShift, title: 'Sort recycling bins', description: 'Separate and tag the recycling bins behind the loading bay.', priority: 'Medium', status: 'Assigned', createdH: -20, dueH: 5, taskDate: todayKey }, // employee1 视角的 Delay Alert；cw1 看板 Assigned 列
+    { assignee: 'cw1@test.com', shiftInfo: cw1TodayShift, title: 'Restock beverage fridge', description: 'Refill the beverage fridge from the storeroom pallets.', priority: 'High', status: 'In Progress', pct: 33, createdH: -6, dueH: 8, taskDate: todayKey, subTasks: ['Clear expired stock', 'Restock cold drinks', 'Wipe down shelves'] }, // cw1 看板 sub-task 展开示例
+    { assignee: 'cw1@test.com', shiftInfo: cw1TodayShift, title: 'Flatten delivery cartons', description: 'Flatten and bundle the morning delivery cartons for collection.', priority: 'Low', status: 'In Progress', pct: 33, createdH: -7, dueH: 7, taskDate: todayKey, rejection: 'Cartons must be tied in bundles of ten — please redo the loose stack.' },
+    { assignee: 'cw1@test.com', shiftInfo: cw1TodayShift, title: 'Mop storeroom floor', description: 'Mop and dry the back storeroom floor before the afternoon delivery.', priority: 'Medium', status: 'Review', pct: 66, createdH: -5, dueH: 6, taskDate: todayKey },
+    { assignee: 'cw1@test.com', shiftInfo: cw1TodayShift, title: 'Set up outdoor seating', description: 'Arrange the outdoor tables, chairs and umbrellas before opening.', priority: 'High', status: 'Complete', pct: 100, completed: true, createdH: -10, dueH: -2, taskDate: todayKey },
+    ...(cw1NextShift ? [
+      { assignee: 'cw1@test.com', shiftInfo: cw1NextShift, title: 'Prepare opening checklist', description: 'Run through the opening checklist before doors open.', priority: 'Medium', status: 'Assigned', createdH: -2, dueH: 30, taskDate: cw1NextShift.shiftDate },
+      { assignee: 'cw1@test.com', shiftInfo: cw1NextShift, title: 'Wipe down espresso bar', description: 'Clean and polish the espresso bar counter and machines.', priority: 'Low', status: 'Assigned', createdH: -2, dueH: 32, taskDate: cw1NextShift.shiftDate },
+    ] : []),
+    ...(cw1PastShift ? [
+      { assignee: 'cw1@test.com', shiftInfo: cw1PastShift, title: 'Sort recycling bins', description: 'Separate and tag the recycling bins behind the loading bay.', priority: 'Medium', status: 'Complete', pct: 100, completed: true, createdH: -50, dueH: -26, taskDate: cw1PastShift.shiftDate },
+      { assignee: 'cw1@test.com', shiftInfo: cw1PastShift, title: 'Restock beverage fridge', description: 'Refill the beverage fridge from the storeroom pallets.', priority: 'High', status: 'Complete', pct: 100, completed: true, createdH: -50, dueH: -25, taskDate: cw1PastShift.shiftDate },
+      { assignee: 'cw1@test.com', shiftInfo: cw1PastShift, title: 'General cleanliness check', description: 'Walk the floor and clear any mess before handover.', priority: 'Low', status: 'Complete', pct: 100, completed: true, createdH: -49, dueH: -24, taskDate: cw1PastShift.shiftDate },
+    ] : []),
     { assignee: 'cw2@test.com', title: 'Wipe down display counters', description: 'Clean and polish all glass display counters.', priority: 'Low', status: 'In Progress', pct: 30, createdH: -5, dueH: 20, taskDate: todayKey },
   ]
   for (const def of employeeTaskDefs) {
     const id = await insertTask({
+      shift_id: def.shiftInfo?.shiftId ?? null,
       company_id: company.id,
       department_id: deptByIndex[0].id,
       title: def.title,
@@ -1289,12 +1350,40 @@ async function main() {
       assigned_by: mgrId('employee1@test.com'),
       status: def.status,
       percentage_complete: def.pct ?? 0,
+      is_completed: def.completed ?? false,
+      completed_at: def.completed ? hoursFromNow(-2) : null,
       priority: def.priority,
       due_at: hoursFromNow(def.dueH),
       task_date: def.taskDate,
       created_at: hoursFromNow(def.createdH),
+      rejection_reason: def.rejection ?? null,
+      rejected_at: def.rejection ? hoursFromNow(-3) : null,
     })
-    if (id) taskCount++
+    if (!id) continue
+    taskCount++
+
+    if (def.subTasks) {
+      for (let s = 0; s < def.subTasks.length; s++) {
+        const subId = await insertTask({
+          shift_id: def.shiftInfo?.shiftId ?? null,
+          company_id: company.id,
+          department_id: deptByIndex[0].id,
+          parent_task_id: id,
+          sequence_order: s + 1,
+          title: def.subTasks[s],
+          description: null,
+          assigned_user_id: mgrId(def.assignee),
+          assigned_by: mgrId('employee1@test.com'),
+          status: s === 0 ? 'Complete' : 'Assigned',
+          percentage_complete: s === 0 ? 100 : 0,
+          is_completed: s === 0,
+          priority: def.priority,
+          task_date: def.taskDate,
+          created_at: hoursFromNow(def.createdH),
+        })
+        if (subId) taskCount++
+      }
+    }
   }
 
   // ── Task Templates ──
@@ -1498,7 +1587,7 @@ async function main() {
   console.log(`\n业务数据（基于运行当天 ${dateKey(TODAY)} 动态生成）：`)
   console.log(`  Shifts:      ${assignmentInfo.length} 个（Internal Staff，过去 ${SHIFT_DAYS_PAST} 天 + 未来 ${SHIFT_DAYS_FUTURE} 天，含周末）`)
   console.log(`  Attendance:  ${attendanceCount} 条（Internal Staff，混合 approved/pending/manager_reviewed/rejected/late，~5% 缺勤）`)
-  console.log(`  CW Shifts:   ${cwShiftCount} 个（Casual Worker，过去 ${SHIFT_DAYS_PAST} 天，各人按 CW_STORY 每周固定工作日，含 Shift Job + One-Off）`)
+  console.log(`  CW Shifts:   ${cwShiftCount} 个（Casual Worker，过去 ${SHIFT_DAYS_PAST} 天 + 未来 ${SHIFT_DAYS_FUTURE} 天，各人按 CW_STORY 每周固定工作日，含 Shift Job + One-Off）`)
   console.log(`  CW Attend.:  ${cwAttCount} 条（Casual Worker，出勤结果按 CW_STORY 每人固定人设，审批状态混合 approved/pending/manager_reviewed/rejected）`)
   console.log(`  Announcements: ${announcementCount} 条`)
   console.log(`  Messages:    ${messageCount} 条`)

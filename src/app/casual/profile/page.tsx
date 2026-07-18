@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Check, CreditCard } from 'lucide-react'
 import GuestPersonalInfoCard from '@/components/guest/GuestPersonalInfoCard'
 import { SkillsCard, CertificatesCard, ResumeCard } from '@/components/worker/WorkerProfileSections'
+import { TitledBlock } from '@/components/panel'
 
 const pageKeyframes = `
   @keyframes blockSlideUp { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
@@ -19,14 +20,6 @@ const pageKeyframes = `
 `
 
 type PaymentMethod = 'paynow' | 'bank_transfer'
-
-const cardStyle: React.CSSProperties = {
-  background: '#FFFFFF',
-  borderRadius: 14,
-  border: '1.5px solid #E5E7EB',
-  padding: '20px 24px',
-  boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-}
 
 // Locks out interaction and visually recedes a card the worker shouldn't be touching yet, without
 // unmounting it (their data is still there once the gate lifts).
@@ -85,22 +78,16 @@ function PaymentInformationCard({
   }
 
   return (
-    <div style={{
-      ...cardStyle,
-      ...(highlighted ? { border: '2px solid #F97316', boxShadow: '0 0 0 4px rgba(249,115,22,0.12)' } : null),
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 18 }}>
-        <div style={{ width: 32, height: 32, borderRadius: 8, background: '#FFF7ED', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <CreditCard size={16} color="#EA580C" />
-        </div>
-        <p style={{ margin: 0, fontWeight: 700, fontSize: '0.9375rem', color: '#111827' }}>Payment Information</p>
-        {highlighted && (
-          <span style={{ marginLeft: 'auto', fontSize: '0.72rem', fontWeight: 800, color: '#EA580C', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 999, padding: '3px 10px' }}>
-            Complete this first
-          </span>
-        )}
-      </div>
-
+    <TitledBlock
+      icon={<CreditCard size={15} color="#F97316" />}
+      title="Payment Information"
+      containerStyle={highlighted ? { border: '2px solid #F97316', boxShadow: '0 0 0 4px rgba(249,115,22,0.12)' } : undefined}
+      headerRight={highlighted && (
+        <span style={{ fontSize: '0.72rem', fontWeight: 800, color: '#EA580C', background: '#FFF7ED', border: '1px solid #FED7AA', borderRadius: 999, padding: '3px 10px' }}>
+          Complete this first
+        </span>
+      )}
+    >
       <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
         {(['paynow', 'bank_transfer'] as const).map(m => (
           <button key={m} type="button" onClick={() => setPaymentMethod(m)}
@@ -132,7 +119,7 @@ function PaymentInformationCard({
           {saving ? <Spinner /> : <Check size={13} />} {saving ? 'Saving…' : 'Save Payment Info'}
         </button>
       </div>
-    </div>
+    </TitledBlock>
   )
 }
 
@@ -181,6 +168,12 @@ export default function CasualProfilePage() {
   const paymentMissing = paymentLoaded && !paymentAccount
 
   const handlePaymentSaved = (savedAccount: string) => {
+    // First-time completion (the gate case): the whole account just unlocked, so land the
+    // worker on their dashboard instead of leaving them on the now-unlocked profile page.
+    if (paymentMissing) {
+      window.location.href = '/casual/dashboard'
+      return
+    }
     setPaymentAccount(savedAccount)
     // Saving happens without a navigation, so the layout's payment-gate check (keyed on
     // pathname) never re-runs on its own — tell it to re-check now so the sidebar unlocks.
@@ -192,20 +185,27 @@ export default function CasualProfilePage() {
       <style>{pageKeyframes}</style>
 
       <main style={pageStyle}>
-        <div style={{ marginBottom: 20 }}>
+        <div style={{ marginBottom: 20, flexShrink: 0 }}>
           <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
             My Profile
           </h1>
         </div>
 
         {paymentMissing && (
-          <div style={{ maxWidth: 1080, margin: '0 auto 16px', display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', background: '#FFF7ED', border: '1.5px solid #FED7AA', borderRadius: 12, color: '#9A3412', fontSize: '0.875rem', fontWeight: 700 }}>
+          <div style={{ maxWidth: 1080, margin: '0 auto 16px', width: '100%', flexShrink: 0, boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px', background: '#FFF7ED', border: '1.5px solid #FED7AA', borderRadius: 12, color: '#9A3412', fontSize: '0.875rem', fontWeight: 700 }}>
             <AlertTriangle size={16} style={{ flexShrink: 0, color: '#EA580C' }} />
             Add your payment details below to unlock the rest of your account.
           </div>
         )}
 
-        <section style={{ maxWidth: 1080, margin: '0 auto', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 16, alignItems: 'start', animation: 'blockSlideUp 0.38s ease both 0.06s' }}>
+        {/* The profile grid is the page's scroll block — the header (and banner) above stay fixed
+            and this section scrolls internally once the cards outgrow the viewport, same pattern
+            as Guest's Worker Profile page and the Owner pages.
+            Keyed on paymentLoaded (the last of the page's fetches to resolve) so this block — and
+            its entrance animation — mounts fresh right when the real cards are ready, instead of
+            animating an already-empty shell the instant the page mounts and settling long before
+            the API round-trip actually returns anything to show. */}
+        <section key={paymentLoaded ? 'ready' : 'loading'} style={{ maxWidth: 1080, margin: '0 auto', width: '100%', flex: '1 1 auto', minHeight: 0, overflowY: 'auto', display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 16, alignItems: 'start', animation: 'blockSlideUp 0.38s ease both' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div style={paymentMissing ? lockedWrapperStyle : undefined}>
               {internalUserId && <GuestPersonalInfoCard userId={internalUserId} onToast={showToast} />}
@@ -253,6 +253,10 @@ export default function CasualProfilePage() {
 }
 
 const pageStyle: React.CSSProperties = {
-  minHeight: '100vh',
+  height: '100vh',
+  overflow: 'hidden',
+  display: 'flex',
+  flexDirection: 'column',
+  boxSizing: 'border-box',
   padding: '20px 28px 28px',
 }

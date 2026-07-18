@@ -107,6 +107,8 @@ export interface AttendanceReviewInput {
   owner_notes?: string | null
   clock_in_time?: string | null
   clock_out_time?: string | null
+  break_in_time?: string | null
+  break_out_time?: string | null
 }
 
 export interface AttendanceDashboardRecord {

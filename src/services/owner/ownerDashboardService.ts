@@ -137,15 +137,11 @@ async function buildTaskOverview(company_id: string, owner_id: string): Promise<
   const now = Date.now()
   const todayKey = formatDateKey(new Date())
 
-  const delayedTaskIds = new Set(delayAlerts.map(a => a.task_id))
   // Longest-overdue first — the task that has been waiting the longest needs attention first.
   const overdue = openTasks
     .filter(t => t.due_at && new Date(t.due_at).getTime() < now)
     .sort((a, b) => new Date(a.due_at!).getTime() - new Date(b.due_at!).getTime())
   const overdueIds = new Set(overdue.map(t => t.id))
-  const dueToday = openTasks.filter(t =>
-    !overdueIds.has(t.id) && !delayedTaskIds.has(t.id) && t.due_at && formatDateKey(new Date(t.due_at)) === todayKey,
-  )
   const completedToday = topLevel(kanban.Complete).filter(t => {
     const stamp = t.completed_at ?? t.updated_at
     return stamp ? formatDateKey(new Date(stamp)) === todayKey : false
@@ -153,7 +149,7 @@ async function buildTaskOverview(company_id: string, owner_id: string): Promise<
 
   const delayedById = new Map(openTasks.map(t => [t.id, t]))
   const delayedTasks = delayAlerts.map(a => delayedById.get(a.task_id)).filter((t): t is Task => !!t)
-  const rowedTasks = [...overdue, ...dueToday, ...completedToday, ...delayedTasks]
+  const rowedTasks = [...overdue, ...completedToday, ...delayedTasks]
 
   const nameLookupIds = new Set<string>()
   const deptLookupIds = new Set<string>()
@@ -189,7 +185,6 @@ async function buildTaskOverview(company_id: string, owner_id: string): Promise<
   return [
     { key: 'overdue', label: 'Overdue', count: overdue.length, tasks: overdue.map(toRow) },
     { key: 'delay_alert', label: 'Delay Alert', count: delayRows.length, tasks: delayRows },
-    { key: 'due_today', label: 'Due Today', count: dueToday.length, tasks: dueToday.map(toRow) },
     { key: 'completed', label: 'Completed', count: completedToday.length, tasks: completedToday.map(toRow) },
   ]
 }

@@ -52,11 +52,12 @@ export const casualDashboardRepository = {
     id: string
     company_name: string | null
     location: string | null
+    created_by: string | null
   }[]> {
     if (ids.length === 0) return []
     const { data, error } = await supabase
       .from('job_postings')
-      .select('id, company_name, location')
+      .select('id, company_name, location, created_by')
       .in('id', ids)
     if (error) throw new Error(error.message)
     return data ?? []
@@ -65,13 +66,15 @@ export const casualDashboardRepository = {
   async getUsersByIds(ids: string[]): Promise<{
     id: string
     full_name: string
+    role: string
     phone_number: string | null
     email_address: string
+    profile_photo_url: string | null
   }[]> {
     if (ids.length === 0) return []
     const { data, error } = await supabase
       .from('users')
-      .select('id, full_name, phone_number, email_address')
+      .select('id, full_name, role, phone_number, email_address, profile_photo_url')
       .in('id', ids)
     if (error) throw new Error(error.message)
     return data ?? []

@@ -28,7 +28,7 @@ export interface TaskOverviewRow {
   completed_at: string | null
 }
 
-export type TaskOverviewGroupKey = 'overdue' | 'delay_alert' | 'due_today' | 'completed'
+export type TaskOverviewGroupKey = 'overdue' | 'delay_alert' | 'completed'
 
 export interface TaskOverviewGroup {
   key: TaskOverviewGroupKey

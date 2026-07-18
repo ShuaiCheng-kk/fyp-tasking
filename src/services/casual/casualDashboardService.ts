@@ -3,6 +3,7 @@
 
 import { casualDashboardRepository } from '@/repositories/casual/casualDashboardRepository'
 import { casualAttendanceRepository } from '@/repositories/casual/casualAttendanceRepository'
+import { AttendanceRecord } from '@/types/Attendance'
 
 export interface CurrentJobView {
   assignment_id: string
@@ -16,6 +17,9 @@ export interface CurrentJobView {
   is_open_ended: boolean
   company_name: string | null
   location: string | null
+  // The posting this job was hired from — lets the worker re-open the full job detail (pay,
+  // description, requirements) from the dashboard. Null for shifts not created from a posting.
+  job_posting_id: string | null
   // Read LIVE from the assignment's supervisor_employee_id (never snapshotted) — if the
   // supervisor is replaced before the shift, the worker must see the current person's contact.
   supervisor: {
@@ -23,10 +27,70 @@ export interface CurrentJobView {
     full_name: string
     phone_number: string | null
     email_address: string
+    profile_photo_url: string | null
+  } | null
+  // Who published the posting this job was hired from — an Owner, or a Manager whose posting
+  // the Owner approved. Read live from job_postings.created_by; null for shifts with no posting.
+  posted_by: {
+    id: string
+    full_name: string
+    role: string
+    phone_number: string | null
+    email_address: string
+    profile_photo_url: string | null
   } | null
   clock_in_time: string | null
   clock_out_time: string | null
+  break_in_time: string | null
+  break_out_time: string | null
   clock_out_released_at: string | null
+}
+
+type UpcomingAssignment = Awaited<ReturnType<typeof casualDashboardRepository.getUpcomingAssignments>>[number]
+
+// How many days ahead (inclusive of today) the dashboard's Upcoming Jobs timeline covers.
+const UPCOMING_WINDOW_DAYS = 7
+
+function localDateKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+// A Casual Worker only ever works one job at a time — the earliest assignment from today onward
+// that hasn't been clocked out of yet IS the current job. Once they clock out, it drops out and
+// the next chronological assignment becomes current. Shared by the dashboard (job card) and by
+// work-action gates that must resolve the same current job (e.g. messaging the supervisor).
+// `all` is the full sorted upcoming list (with attendance records) — the dashboard builds its
+// 7-day timeline from it, so the current-job pick and the timeline can never disagree.
+export async function findCurrentAssignment(userId: string): Promise<{
+  assignment: UpcomingAssignment
+  record: AttendanceRecord | null
+  all: { assignment: UpcomingAssignment; record: AttendanceRecord | null }[]
+} | null> {
+  const today = new Date()
+  const todayKey = localDateKey(today)
+  const unsortedAssignments = await casualDashboardRepository.getUpcomingAssignments(userId, todayKey)
+
+  // Earliest first — sorted here rather than trusted from the repository, since ordering across
+  // a joined table isn't guaranteed by every query shape.
+  const assignments = [...unsortedAssignments].sort((a, b) =>
+    (a.shift.shift_date + a.shift.start_time).localeCompare(b.shift.shift_date + b.shift.start_time)
+  )
+
+  const records = await casualAttendanceRepository.getAttendanceRecordsByAssignmentIds(assignments.map(a => a.id))
+  const recordsByAssignment = new Map(records.map(r => [r.shift_assignment_id, r]))
+
+  const active = assignments.find(a => {
+    const record = recordsByAssignment.get(a.id)
+    return !record?.clock_out_time
+  })
+
+  if (!active) return null
+
+  return {
+    assignment: active,
+    record: recordsByAssignment.get(active.id) ?? null,
+    all: assignments.map(a => ({ assignment: a, record: recordsByAssignment.get(a.id) ?? null })),
+  }
 }
 
 export const casualDashboardService = {
@@ -38,63 +102,64 @@ export const casualDashboardService = {
       throw new Error('Casual worker not found')
     }
 
-    const today = new Date()
-    const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-    const unsortedAssignments = await casualDashboardRepository.getUpcomingAssignments(user.id, todayKey)
+    const current = await findCurrentAssignment(user.id)
+    if (!current) {
+      return { user, current_job: null as CurrentJobView | null, upcoming_jobs: [] as CurrentJobView[] }
+    }
 
-    // Earliest first — sorted here rather than trusted from the repository, since ordering across
-    // a joined table isn't guaranteed by every query shape.
-    const assignments = [...unsortedAssignments].sort((a, b) =>
-      (a.shift.shift_date + a.shift.start_time).localeCompare(b.shift.shift_date + b.shift.start_time)
+    // The timeline shows every job in the next 7 days (today inclusive, completed ones too, so a
+    // finished morning job still appears greyed out). The current job is always included even
+    // when it starts beyond the window — otherwise a worker whose only job is next week would
+    // see an empty dashboard.
+    const windowEnd = new Date()
+    windowEnd.setDate(windowEnd.getDate() + (UPCOMING_WINDOW_DAYS - 1))
+    const windowEndKey = localDateKey(windowEnd)
+    const timeline = current.all.filter(
+      entry => entry.assignment.shift.shift_date <= windowEndKey || entry.assignment.id === current.assignment.id
     )
 
-    const records = await casualAttendanceRepository.getAttendanceRecordsByAssignmentIds(assignments.map(a => a.id))
-    const recordsByAssignment = new Map(records.map(r => [r.shift_assignment_id, r]))
+    const postingIds = [...new Set(timeline.map(e => e.assignment.shift.source_job_posting_id).filter((id): id is string => !!id))]
+    const supervisorIds = [...new Set(timeline.map(e => e.assignment.supervisor_employee_id).filter((id): id is string => !!id))]
+    // Postings first — their created_by ids (the Owner/Manager who posted) join the user fetch.
+    const postings = await casualDashboardRepository.getJobPostingsByIds(postingIds)
+    const posterIds = [...new Set(postings.map(p => p.created_by).filter((id): id is string => !!id))]
+    const users = await casualDashboardRepository.getUsersByIds([...new Set([...supervisorIds, ...posterIds])])
+    const postingById = new Map(postings.map(p => [p.id, p]))
+    const userById = new Map(users.map(u => [u.id, u]))
 
-    // A Casual Worker only ever works one job at a time — the earliest assignment that hasn't
-    // been clocked out of yet IS the current job. Once they clock out, it drops out of this list
-    // and the next chronological assignment becomes current.
-    const active = assignments.find(a => {
-      const record = recordsByAssignment.get(a.id)
-      return !record?.clock_out_time
+    const upcoming_jobs: CurrentJobView[] = timeline.map(({ assignment, record }) => {
+      const job = assignment.shift.source_job_posting_id ? postingById.get(assignment.shift.source_job_posting_id) ?? null : null
+      const supervisor = assignment.supervisor_employee_id ? userById.get(assignment.supervisor_employee_id) ?? null : null
+      const poster = job?.created_by ? userById.get(job.created_by) ?? null : null
+      return {
+        assignment_id: assignment.id,
+        shift_id: assignment.shift.id,
+        company_id: assignment.shift.company_id,
+        department_id: assignment.shift.department_id,
+        title: assignment.shift.title,
+        shift_date: assignment.shift.shift_date,
+        start_time: assignment.shift.start_time,
+        end_time: assignment.shift.end_time,
+        is_open_ended: assignment.shift.is_open_ended,
+        company_name: job?.company_name ?? null,
+        location: job?.location ?? null,
+        job_posting_id: assignment.shift.source_job_posting_id,
+        supervisor: supervisor
+          ? { id: supervisor.id, full_name: supervisor.full_name, phone_number: supervisor.phone_number, email_address: supervisor.email_address, profile_photo_url: supervisor.profile_photo_url }
+          : null,
+        posted_by: poster
+          ? { id: poster.id, full_name: poster.full_name, role: poster.role, phone_number: poster.phone_number, email_address: poster.email_address, profile_photo_url: poster.profile_photo_url }
+          : null,
+        clock_in_time: record?.clock_in_time ?? null,
+        clock_out_time: record?.clock_out_time ?? null,
+        break_in_time: record?.break_in_time ?? null,
+        break_out_time: record?.break_out_time ?? null,
+        clock_out_released_at: record?.clock_out_released_at ?? null,
+      }
     })
 
-    if (!active) {
-      return { user, current_job: null as CurrentJobView | null }
-    }
+    const current_job = upcoming_jobs.find(j => j.assignment_id === current.assignment.id) ?? null
 
-    const record = recordsByAssignment.get(active.id) ?? null
-
-    const jobs = active.shift.source_job_posting_id
-      ? await casualDashboardRepository.getJobPostingsByIds([active.shift.source_job_posting_id])
-      : []
-    const job = jobs[0] ?? null
-
-    const supervisors = active.supervisor_employee_id
-      ? await casualDashboardRepository.getUsersByIds([active.supervisor_employee_id])
-      : []
-    const supervisor = supervisors[0] ?? null
-
-    const current_job: CurrentJobView = {
-      assignment_id: active.id,
-      shift_id: active.shift.id,
-      company_id: active.shift.company_id,
-      department_id: active.shift.department_id,
-      title: active.shift.title,
-      shift_date: active.shift.shift_date,
-      start_time: active.shift.start_time,
-      end_time: active.shift.end_time,
-      is_open_ended: active.shift.is_open_ended,
-      company_name: job?.company_name ?? null,
-      location: job?.location ?? null,
-      supervisor: supervisor
-        ? { id: supervisor.id, full_name: supervisor.full_name, phone_number: supervisor.phone_number, email_address: supervisor.email_address }
-        : null,
-      clock_in_time: record?.clock_in_time ?? null,
-      clock_out_time: record?.clock_out_time ?? null,
-      clock_out_released_at: record?.clock_out_released_at ?? null,
-    }
-
-    return { user, current_job }
+    return { user, current_job, upcoming_jobs }
   },
 }

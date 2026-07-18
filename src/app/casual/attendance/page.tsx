@@ -1,18 +1,59 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Building2, CalendarDays, Clock, DollarSign } from 'lucide-react'
+import {
+  Briefcase, Building2, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock, Coffee,
+  DollarSign, FileText, History, Mail, Phone, UserCheck, UserRound, Wallet,
+} from 'lucide-react'
+import { TitledBlock } from '@/components/panel'
+import { JobDetailPanel, JobView } from '@/components/jobs/JobPresentation'
+import RoleAvatar from '@/components/RoleAvatar'
+import { useIsCompactViewport } from '@/hooks/useIsCompactViewport'
 
 type HistoryEntry = {
   id: string
   title: string | null
+  job_posting_id: string | null
   company_name: string | null
+  location: string | null
+  supervisor_name: string | null
+  supervisor_phone: string | null
+  supervisor_email: string | null
+  supervisor_photo_url: string | null
+  poster_name: string | null
+  poster_role: string | null
+  poster_phone: string | null
+  poster_email: string | null
+  poster_photo_url: string | null
+  is_open_ended: boolean
   shift_date: string
+  start_time: string
+  end_time: string
+  status: 'working' | 'completed'
   clock_in_time: string | null
   clock_out_time: string | null
+  break_in_time: string | null
+  break_out_time: string | null
   hours: number | null
+  hourly_rate: number | null
+  flat_rate: number | null
   pay: number | null
+  notes: string | null
+  completed_tasks: string[]
+}
+
+// Windowed page numbers ("1 … 4 5 6 … 9") so the pagination row never overflows the block.
+function pageItems(current: number, total: number): (number | '…')[] {
+  if (total <= 5) return Array.from({ length: total }, (_, i) => i + 1)
+  const items: (number | '…')[] = [1]
+  const lo = Math.max(2, current - 1)
+  const hi = Math.min(total - 1, current + 1)
+  if (lo > 2) items.push('…')
+  for (let p = lo; p <= hi; p++) items.push(p)
+  if (hi < total - 1) items.push('…')
+  items.push(total)
+  return items
 }
 
 function formatDate(dateKey: string) {
@@ -21,15 +62,58 @@ function formatDate(dateKey: string) {
   })
 }
 
+// Shift times are stored UTC-nominal on purpose — format the raw HH:MM, never via Date.
+function formatShiftTime(time: string) {
+  const [h, m] = time.split(':').map(Number)
+  const ap = h < 12 ? 'AM' : 'PM'
+  const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
+  return `${h12}:${String(m).padStart(2, '0')} ${ap}`
+}
+
+// Clock times are stored raw in the DB; every attendance display snaps them to the nearest
+// 5-minute slot (same convention as the Owner Attendance page's isoToAmPm/fmtTime).
+const FIVE_MINUTES_MS = 5 * 60000
+
+function roundToFiveMinutes(iso: string): Date {
+  return new Date(Math.round(new Date(iso).getTime() / FIVE_MINUTES_MS) * FIVE_MINUTES_MS)
+}
+
 function formatClockTime(value: string | null) {
-  if (!value) return '—'
-  return new Date(value).toLocaleTimeString('en-SG', { hour: 'numeric', minute: '2-digit', hour12: true })
+  if (!value) return '–'
+  return roundToFiveMinutes(value).toLocaleTimeString('en-SG', { hour: 'numeric', minute: '2-digit', hour12: true }).toUpperCase()
 }
 
 export default function CasualAttendancePage() {
   const router = useRouter()
+  const isCompact = useIsCompactViewport(1300)
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [loading, setLoading] = useState(true)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [hoveredId, setHoveredId] = useState<string | null>(null)
+  const [page, setPage] = useState(1)
+  // Records per page is derived from the list's real height so the cards always fill the block
+  // exactly — no dead space under the last card, no internal scrolling.
+  const [pageSize, setPageSize] = useState(8)
+  const listRef = useRef<HTMLDivElement | null>(null)
+  // Full posting detail for the selected record's Job Detail block — same inline JobDetailPanel
+  // the Dashboard shows for a not-yet-started job. Re-fetched per selection, cleared immediately
+  // on change so a previous record's posting never flashes under the newly selected one.
+  const [detailJob, setDetailJob] = useState<JobView | null>(null)
+
+  useEffect(() => {
+    const el = listRef.current
+    if (!el) return
+    const GAP = 10
+    const compute = () => {
+      const card = el.firstElementChild as HTMLElement | null
+      const cardHeight = card ? card.offsetHeight : 100
+      setPageSize(Math.max(1, Math.floor((el.clientHeight + GAP) / (cardHeight + GAP))))
+    }
+    compute()
+    const observer = new ResizeObserver(compute)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [loading, history.length])
 
   useEffect(() => {
     const uid = localStorage.getItem('tasking_user_id')
@@ -40,61 +124,155 @@ export default function CasualAttendancePage() {
     const load = async () => {
       const res = await fetch(`/api/casual/attendance?resource=history&user_id=${uid}`)
       const data = await res.json()
-      if (data.success) setHistory(data.history)
+      if (data.success) {
+        setHistory(data.history)
+        if (data.history.length > 0) setSelectedId(data.history[0].id)
+      }
       setLoading(false)
     }
     void load()
   }, [router])
 
-  const totalPay = history.reduce((sum, h) => sum + (h.pay ?? 0), 0)
+  const selected = history.find(e => e.id === selectedId) ?? null
+
+  useEffect(() => {
+    setDetailJob(null)
+    if (!selected?.job_posting_id) return
+    let stale = false
+    ;(async () => {
+      const res = await fetch(`/api/recruitment?resource=job_posting&job_id=${selected.job_posting_id}`)
+      const data = await res.json()
+      if (!stale && data.success) setDetailJob(data.posting as JobView)
+    })()
+    return () => { stale = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.job_posting_id])
+
+  const totalEarned = history.reduce((sum, e) => sum + (e.pay ?? 0), 0)
+  const completedCount = history.filter(e => e.status === 'completed').length
+
+  const totalPages = Math.max(1, Math.ceil(history.length / pageSize))
+  const safePage = Math.min(page, totalPages)
+  const pageEntries = history.slice((safePage - 1) * pageSize, safePage * pageSize)
 
   return (
     <main style={pageStyle}>
-      <div style={{ marginBottom: 20 }}>
+      <div style={{ marginBottom: 16, flexShrink: 0 }}>
         <h1 className="mb-0 font-heading text-3xl font-bold tracking-tight text-gray-950">
           Attendance
         </h1>
       </div>
 
       {loading ? null : history.length === 0 ? (
-        <p style={{ margin: 0, color: '#6B7280', fontSize: '0.95rem' }}>No completed jobs yet.</p>
+        <p style={{ margin: 0, color: '#6B7280', fontSize: '0.95rem' }}>No attendance records yet.</p>
       ) : (
-        <div style={{ maxWidth: 720, display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <div style={summaryCardStyle}>
-            <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#6B7280' }}>Total earned</span>
-            <span style={{ fontSize: '1.375rem', fontWeight: 800, color: '#111827' }}>${totalPay.toFixed(2)}</span>
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: 16 }}>
+          {/* ===== Left rail — month earnings + paginated record list ===== */}
+          <div style={{ width: 390, flexShrink: 0, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <TitledBlock
+              icon={<Wallet size={15} color="#F97316" />}
+              title="Total Earned"
+              containerStyle={{ flexShrink: 0 }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.875rem', fontWeight: 800, color: '#374151', background: '#F3F4F6', border: '1px solid #E5E7EB', borderRadius: 999, padding: '6px 14px', whiteSpace: 'nowrap' }}>
+                  {completedCount} Jobs
+                </span>
+                <span style={{ fontSize: '0.9rem', fontWeight: 700, color: '#9CA3AF' }}>/</span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', fontSize: '0.875rem', fontWeight: 800, color: '#15803D', background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 999, padding: '6px 14px', whiteSpace: 'nowrap' }}>
+                  ${totalEarned.toFixed(2)}
+                </span>
+              </div>
+            </TitledBlock>
+
+            <TitledBlock
+              icon={<History size={15} color="#F97316" />}
+              title="Records"
+              containerStyle={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
+              bodyStyle={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 10 }}
+            >
+              <div ref={listRef} style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {pageEntries.map(entry => {
+                const active = entry.id === selectedId
+                const hovered = entry.id === hoveredId
+                const day = new Date(`${entry.shift_date}T00:00:00`)
+                const dateLabel = `${String(day.getDate()).padStart(2, '0')} ${day.toLocaleDateString('en-SG', { month: 'short' })}`
+                return (
+                  <div
+                    key={entry.id}
+                    onClick={() => setSelectedId(entry.id)}
+                    onMouseEnter={() => setHoveredId(entry.id)}
+                    onMouseLeave={() => setHoveredId(null)}
+                    style={{
+                      padding: '14px 16px', borderRadius: 12, cursor: 'pointer', flexShrink: 0,
+                      background: active ? '#FFF7ED' : '#FFFFFF',
+                      border: `1.5px solid ${active ? '#FDBA74' : hovered ? '#FDBA74' : '#E5E7EB'}`,
+                      boxShadow: hovered && !active ? '0 6px 16px rgba(0,0,0,0.07)' : '0 1px 3px rgba(0,0,0,0.04)',
+                      transform: hovered && !active ? 'translateY(-1px)' : 'none',
+                      transition: 'transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease, background 0.15s ease',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                      <span style={{ fontSize: '0.72rem', fontWeight: 700, color: active ? '#EA580C' : '#111827' }}>
+                        {dateLabel}
+                      </span>
+                      <span style={{ ...(entry.status === 'working' ? workingBadgeStyle : completedBadgeStyle), flexShrink: 0 }}>
+                        {entry.status === 'working' ? 'Working' : 'Completed'}
+                      </span>
+                    </div>
+                    <p style={{ margin: '7px 0 0', fontWeight: 700, fontSize: '0.9rem', color: '#111827', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {entry.title || 'Job'}
+                    </p>
+                    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, marginTop: 7 }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.75rem', color: '#111827', whiteSpace: 'nowrap' }}>
+                        <Clock size={11} color="#F97316" />
+                        {formatClockTime(entry.clock_in_time)} – {formatClockTime(entry.clock_out_time)}
+                      </span>
+                      {entry.pay !== null && (
+                        <span style={{ fontSize: '0.845rem', fontWeight: 800, color: '#111827', flexShrink: 0 }}>
+                          ${entry.pay.toFixed(2)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+              </div>
+
+              <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, paddingTop: 2 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                <button type="button" onClick={() => setPage(Math.max(1, safePage - 1))} disabled={safePage === 1}
+                  style={{ ...pageButtonStyle, color: safePage === 1 ? '#D1D5DB' : '#6B7280', cursor: safePage === 1 ? 'default' : 'pointer' }}>
+                  <ChevronLeft size={14} />
+                </button>
+                {pageItems(safePage, totalPages).map((item, i) => item === '…' ? (
+                  <span key={`gap-${i}`} style={{ fontSize: '0.78rem', color: '#9CA3AF', padding: '0 2px' }}>…</span>
+                ) : (
+                  <button key={item} type="button" onClick={() => setPage(item)}
+                    style={{
+                      ...pageButtonStyle,
+                      border: item === safePage ? '1.5px solid #F97316' : '1.5px solid transparent',
+                      color: item === safePage ? '#EA580C' : '#6B7280',
+                      fontWeight: item === safePage ? 800 : 600,
+                    }}>
+                    {item}
+                  </button>
+                ))}
+                <button type="button" onClick={() => setPage(Math.min(totalPages, safePage + 1))} disabled={safePage === totalPages}
+                  style={{ ...pageButtonStyle, color: safePage === totalPages ? '#D1D5DB' : '#6B7280', cursor: safePage === totalPages ? 'default' : 'pointer' }}>
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+              </div>
+            </TitledBlock>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {history.map(entry => (
-              <div key={entry.id} style={cardStyle}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
-                  <div>
-                    <p style={{ margin: 0, fontWeight: 700, fontSize: '1rem', color: '#111827' }}>{entry.title || 'Job'}</p>
-                    {entry.company_name && (
-                      <p style={{ margin: '3px 0 0', fontSize: '0.8125rem', color: '#6B7280', display: 'flex', alignItems: 'center', gap: 5 }}>
-                        <Building2 size={13} /> {entry.company_name}
-                      </p>
-                    )}
-                  </div>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: '0.75rem', fontWeight: 700, color: '#6B7280', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 999, padding: '4px 11px', whiteSpace: 'nowrap' }}>
-                    <CalendarDays size={12} /> {formatDate(entry.shift_date)}
-                  </span>
-                </div>
-
-                <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', fontSize: '0.8425rem', color: '#374151' }}>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                    <Clock size={13} color="#F97316" /> {formatClockTime(entry.clock_in_time)} – {formatClockTime(entry.clock_out_time)}
-                    {entry.hours !== null && <span style={{ color: '#9CA3AF' }}>({entry.hours}h)</span>}
-                  </span>
-                  {entry.pay !== null && (
-                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontWeight: 700, color: '#15803D' }}>
-                      <DollarSign size={13} /> ${entry.pay.toFixed(2)}
-                    </span>
-                  )}
-                </div>
-              </div>
-            ))}
+          {/* ===== Right — selected record detail, split into its own independent blocks
+              (Job Detail / Supervisor / Attendance Timeline / Payment Summary / Completed Tasks)
+              the same way the Dashboard lays out separate TitledBlocks, instead of one big
+              wrapper card. ===== */}
+          <div style={{ flex: 1, minWidth: 0, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+            {selected && <RecordDetail entry={selected} isCompact={isCompact} detailJob={detailJob} />}
           </div>
         </div>
       )}
@@ -102,22 +280,266 @@ export default function CasualAttendancePage() {
   )
 }
 
+function RecordDetail({ entry, isCompact, detailJob }: {
+  entry: HistoryEntry
+  isCompact: boolean
+  detailJob: JobView | null
+}) {
+  const rateLabel = entry.flat_rate !== null
+    ? `$${entry.flat_rate.toFixed(2)} flat`
+    : entry.hourly_rate !== null ? `$${entry.hourly_rate.toFixed(2)} / hour` : '–'
+  const breakLabel = entry.break_in_time
+    ? `${formatClockTime(entry.break_in_time)} – ${formatClockTime(entry.break_out_time)}`
+    : '—'
+  // Derived from the same 5-minute-rounded punch times shown above (Clock In/Out, Break Start/
+  // End) rather than the raw backend `hours` figure — otherwise the duration shown here wouldn't
+  // reconcile with the rounded clock times displayed right next to it.
+  const roundedHoursWorked = entry.clock_in_time && entry.clock_out_time
+    ? (() => {
+        let ms = roundToFiveMinutes(entry.clock_out_time!).getTime() - roundToFiveMinutes(entry.clock_in_time!).getTime()
+        if (entry.break_in_time && entry.break_out_time) {
+          ms -= roundToFiveMinutes(entry.break_out_time).getTime() - roundToFiveMinutes(entry.break_in_time).getTime()
+        }
+        return ms > 0 ? ms / 3600000 : 0
+      })()
+    : null
+  const hoursWorkedLabel = roundedHoursWorked !== null
+    ? `${Math.floor(roundedHoursWorked)}h ${Math.round((roundedHoursWorked - Math.floor(roundedHoursWorked)) * 60)}m`
+    : '–'
+
+  // Same avatar/name/contact-links layout as the Dashboard's Supervisor block contactRow.
+  const contactRow = (
+    person: { full_name: string; phone_number: string | null; email_address: string | null; profile_photo_url: string | null },
+    role: string,
+    roleLabel: string | null,
+  ) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+      <RoleAvatar role={role} size={56} photoUrl={person.profile_photo_url} />
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <p style={{ fontWeight: 700, fontSize: '1rem', color: '#0F172A', margin: 0 }}>
+          {person.full_name}
+          {roleLabel && <span style={{ marginLeft: 8, fontWeight: 600, fontSize: '0.75rem', color: '#6B7280' }}>{roleLabel}</span>}
+        </p>
+        {person.phone_number && (
+          <a href={`tel:${person.phone_number}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 10, fontSize: '0.9rem', color: '#111827', textDecoration: 'none' }}>
+            <Phone size={15} color="#F97316" style={{ flexShrink: 0 }} /> {person.phone_number}
+          </a>
+        )}
+        {person.email_address && (
+          <a href={`mailto:${person.email_address}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 10, fontSize: '0.9rem', color: '#111827', textDecoration: 'none', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <Mail size={15} color="#F97316" style={{ flexShrink: 0 }} /> {person.email_address}
+          </a>
+        )}
+      </div>
+    </div>
+  )
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* ── Row 1 — Job Detail (left) beside Supervisor + Attendance Timeline stacked on the
+          right — independent TitledBlocks, same split and same shared component the Dashboard
+          uses for a not-yet-started job, instead of one wrapper card. ── */}
+      <div style={{ display: 'flex', flexDirection: isCompact ? 'column' : 'row', gap: 16, alignItems: 'stretch' }}>
+        <div style={{ flex: isCompact ? undefined : 1.2, minWidth: 0 }}>
+          <TitledBlock
+            icon={<Briefcase size={15} color="#F97316" />}
+            title="Job Detail"
+            headerRight={<span style={entry.status === 'working' ? workingBadgeLargeStyle : completedBadgeLargeStyle}>{entry.status === 'working' ? 'Working' : 'Completed'}</span>}
+            containerStyle={{ height: '100%', boxSizing: 'border-box', display: 'flex', flexDirection: 'column' }}
+            bodyStyle={{ flex: 1, minHeight: 0, overflowY: 'auto' }}
+          >
+            <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: '#111827', letterSpacing: '-0.02em' }}>
+              {entry.title || 'Job'}
+            </h2>
+            <p style={{ margin: '6px 0 0', fontSize: '0.845rem', color: '#4B5563', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Building2 size={14} color="#6B7280" /> {entry.company_name ?? '—'}
+            </p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 10, flexWrap: 'wrap', fontSize: '0.845rem', color: '#374151' }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <CalendarDays size={14} color="#F97316" /> {formatDate(entry.shift_date)}
+              </span>
+              <span style={{ width: 1, height: 15, background: '#E5E7EB' }} />
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <Clock size={14} color="#F97316" />
+                {formatShiftTime(entry.start_time)}{entry.is_open_ended ? ' — until done' : ` – ${formatShiftTime(entry.end_time)}`}
+              </span>
+            </div>
+            {entry.job_posting_id ? (
+              <div style={{ marginTop: 16, borderTop: '1px solid #F3F4F6', paddingTop: 16 }}>
+                {detailJob
+                  ? <JobDetailPanel
+                      job={{ ...detailJob, shift_date: entry.shift_date, shift_start_time: entry.start_time, shift_end_time: entry.end_time }}
+                      variant="inline"
+                    />
+                  : <p style={{ margin: 0, fontSize: '0.8125rem', color: '#6B7280' }}>Loading job details…</p>}
+              </div>
+            ) : (
+              <div style={{ borderTop: '1px solid #F3F4F6', marginTop: 14 }}>
+                <DetailRow icon={<CalendarDays size={15} color="#F97316" />} label="Job Type" value={entry.is_open_ended ? 'One-off Job' : 'Shift Job'} />
+                <DetailRow icon={<DollarSign size={15} color="#F97316" />} label="Rate" value={rateLabel} />
+                <DetailRow icon={<Coffee size={15} color="#F97316" />} label="Break Time" value={breakLabel} />
+                <DetailRow icon={<UserRound size={15} color="#F97316" />} label="Supervisor" value={entry.supervisor_name ?? '—'} last />
+              </div>
+            )}
+          </TitledBlock>
+        </div>
+
+        <div style={{ flex: isCompact ? undefined : 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {(entry.supervisor_name || entry.poster_name) && (
+            <TitledBlock icon={<UserCheck size={15} color="#F97316" />} title="Supervisor" containerStyle={{ flexShrink: 0 }}>
+              <div style={{ display: 'flex', flexDirection: isCompact ? 'column' : 'row', alignItems: 'stretch', gap: 14 }}>
+                {entry.supervisor_name && (
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {contactRow({ full_name: entry.supervisor_name, phone_number: entry.supervisor_phone, email_address: entry.supervisor_email, profile_photo_url: entry.supervisor_photo_url }, 'Employee', null)}
+                  </div>
+                )}
+                {entry.supervisor_name && entry.poster_name && (
+                  <div style={isCompact ? { height: 1, background: '#F3F4F6' } : { width: 1, background: '#F3F4F6' }} />
+                )}
+                {/* The poster is the fallback contact if the supervisor can't be reached. */}
+                {entry.poster_name && (
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {contactRow({ full_name: entry.poster_name, phone_number: entry.poster_phone, email_address: entry.poster_email, profile_photo_url: entry.poster_photo_url }, entry.poster_role ?? 'Employee', 'Backup Contact')}
+                  </div>
+                )}
+              </div>
+            </TitledBlock>
+          )}
+
+          <TitledBlock
+            icon={<Clock size={15} color="#F97316" />}
+            title="Attendance Timeline"
+            containerStyle={{ flexShrink: 0, boxSizing: 'border-box' }}
+          >
+            <div style={{ position: 'relative', paddingLeft: 18 }}>
+              <div style={{ position: 'absolute', left: 3, top: 18, bottom: 18, width: 2, background: '#E5E7EB', borderRadius: 1 }} />
+              <TimelineRow icon={<Clock size={16} color="#16A34A" />} iconBg="#DCFCE7" label="Clock In" time={formatClockTime(entry.clock_in_time)} />
+              <TimelineRow icon={<Coffee size={16} color="#EA580C" />} iconBg="#FFEDD5" label="Break Start" time={formatClockTime(entry.break_in_time)} />
+              <TimelineRow icon={<Coffee size={16} color="#2563EB" />} iconBg="#DBEAFE" label="Break End" time={formatClockTime(entry.break_out_time)} />
+              <TimelineRow icon={<Clock size={16} color="#DC2626" />} iconBg="#FEE2E2" label="Clock Out" time={formatClockTime(entry.clock_out_time)} last />
+            </div>
+          </TitledBlock>
+
+          {/* ── Payment Summary + Completed Tasks — stacked below Attendance Timeline, same
+              width as the rest of this right column. ── */}
+          <TitledBlock icon={<Wallet size={15} color="#F97316" />} title="Payment Summary" containerStyle={{ flexShrink: 0 }}>
+            <div style={{ position: 'relative', paddingLeft: 18 }}>
+              <div style={{ position: 'absolute', left: 3, top: 18, bottom: 18, width: 2, background: '#E5E7EB', borderRadius: 1 }} />
+              <TimelineRow icon={<DollarSign size={16} color="#EA580C" />} iconBg="#FFEDD5" label={entry.flat_rate !== null ? 'Flat Rate' : 'Hourly Rate'} time={rateLabel} />
+              <TimelineRow icon={<Clock size={16} color="#2563EB" />} iconBg="#DBEAFE" label="Hours Worked" time={hoursWorkedLabel} />
+              <TimelineRow icon={<Coffee size={16} color="#EA580C" />} iconBg="#FFEDD5" label="Break Time" time={breakLabel} />
+              <TimelineRow icon={<Wallet size={16} color="#16A34A" />} iconBg="#DCFCE7" label="Total Earnings" time={entry.pay !== null ? `$${entry.pay.toFixed(2)}` : '–'} last />
+            </div>
+          </TitledBlock>
+
+          <TitledBlock icon={<CheckCircle2 size={15} color="#F97316" />} title="Completed Tasks" containerStyle={{ flexShrink: 0 }}>
+            {entry.completed_tasks.length === 0 ? (
+              <p style={{ margin: 0, fontSize: '0.845rem', color: '#6B7280' }}>No completed tasks for this job.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {entry.completed_tasks.map(title => (
+                  <span key={title} style={{ display: 'inline-flex', alignItems: 'center', gap: 9, fontSize: '0.875rem', fontWeight: 600, color: '#111827', minWidth: 0 }}>
+                    <CheckCircle2 size={16} color="#16A34A" style={{ flexShrink: 0 }} />
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </TitledBlock>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function DetailRow({ icon, label, value, last = false }: { icon: React.ReactNode; label: string; value: string; last?: boolean }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '11px 0', borderBottom: last ? 'none' : '1px solid #F3F4F6' }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 9, fontSize: '0.845rem', fontWeight: 600, color: '#374151', flexShrink: 0 }}>
+        {icon} {label}
+      </span>
+      <span style={{ fontSize: '0.845rem', fontWeight: 700, color: '#111827', textAlign: 'right', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</span>
+    </div>
+  )
+}
+
+function TimelineRow({ icon, iconBg, label, time, last = false }: {
+  icon: React.ReactNode
+  iconBg: string
+  label: string
+  time: string
+  last?: boolean
+}) {
+  return (
+    <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: last ? 'none' : '1px solid #F3F4F6' }}>
+      <span style={{ position: 'absolute', left: -18, top: '50%', transform: 'translateY(-50%)', width: 8, height: 8, borderRadius: '50%', background: '#D1D5DB' }} />
+      <div style={{ width: 38, height: 38, borderRadius: 11, background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        {icon}
+      </div>
+      <span style={{ flex: 1, fontSize: '0.9rem', fontWeight: 400, color: '#111827' }}>{label}</span>
+      <span style={{ fontSize: '0.9rem', fontWeight: 400, color: '#111827', flexShrink: 0 }}>{time}</span>
+    </div>
+  )
+}
+
 const pageStyle: React.CSSProperties = {
-  minHeight: '100vh',
-  padding: '20px 28px 28px',
-}
-
-const cardStyle: React.CSSProperties = {
-  background: '#FFFFFF',
-  borderRadius: 14,
-  border: '1.5px solid #E5E7EB',
-  padding: '18px 22px',
-  boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-}
-
-const summaryCardStyle: React.CSSProperties = {
-  ...cardStyle,
+  height: '100vh',
+  overflow: 'hidden',
   display: 'flex',
   flexDirection: 'column',
-  gap: 4,
+  padding: '20px 28px 20px',
+  boxSizing: 'border-box',
 }
+
+const pageButtonStyle: React.CSSProperties = {
+  minWidth: 28,
+  height: 28,
+  padding: '0 6px',
+  borderRadius: 8,
+  border: '1.5px solid transparent',
+  background: 'transparent',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  fontSize: '0.78rem',
+  fontWeight: 600,
+  color: '#6B7280',
+  cursor: 'pointer',
+}
+
+const badgeBaseStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  fontSize: '0.68rem',
+  fontWeight: 700,
+  borderRadius: 999,
+  padding: '3px 9px',
+  whiteSpace: 'nowrap',
+}
+
+const workingBadgeStyle: React.CSSProperties = {
+  ...badgeBaseStyle,
+  color: '#C2410C',
+  background: '#FFF7ED',
+  border: '1px solid #FED7AA',
+}
+
+const completedBadgeStyle: React.CSSProperties = {
+  ...badgeBaseStyle,
+  color: '#15803D',
+  background: '#F0FDF4',
+  border: '1px solid #BBF7D0',
+}
+
+const workingBadgeLargeStyle: React.CSSProperties = {
+  ...workingBadgeStyle,
+  fontSize: '0.8rem',
+  padding: '6px 14px',
+}
+
+const completedBadgeLargeStyle: React.CSSProperties = {
+  ...completedBadgeStyle,
+  fontSize: '0.8rem',
+  padding: '6px 14px',
+}
+
